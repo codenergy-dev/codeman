@@ -1,7 +1,7 @@
 ---
 status: pending
 created_at: 2026-09-23T14:18:00-03:00
-updated_at: 2026-09-23T14:18:00-03:00
+updated_at: 2026-09-23T16:05:00-03:00
 commit: null
 ---
 
@@ -33,11 +33,17 @@ Constraints:
 Answer these before step 1 starts.
 
 1. **Agent harness.** Options: (a) write our own agent loop against the OpenRouter API; (b) wrap an existing open-source CLI agent that supports OpenRouter. Trade-off: (a) is more work but fully auditable and small; (b) is faster but adds a large third-party dependency with broad permissions. Recommendation: (a), keeping the tool set minimal (read, search, edit files, run commands in the workspace).
+   **Answer:** (b), using OpenCode by default. Codeman talks to the harness through a small interface so other harnesses can be added later. OpenCode must still be audited (see `AGENTS.md`) before it is added.
 2. **Implementation language and action type.** Options: TypeScript JavaScript action, or a Docker container action. Recommendation: TypeScript action; it starts fast, runs on every runner OS, and uses GitHub's official toolkit.
+   **Answer:** open.
 3. **Project documentation.** `AGENTS.md` makes `docs/` the single source of truth, while lat.md uses a `lat.md/` directory. Options: (a) plain markdown in `docs/`; (b) adopt lat.md and accept a second directory; (c) adopt lat.md only if it can be configured to use `docs/`. Recommendation: (a) for the MVP, revisit after step 4.
+   **Answer:** (a). Measure how well `docs/` works as the tool evolves; try lat.md or another approach later if it falls short.
 4. **Long-term memory.** Options: (a) no separate memory for the MVP (issues, plans and `docs/` only); (b) ai-memory, persisted on an orphan branch. Recommendation: (a). ai-memory is a persistent server built for multi-agent, multi-machine handoff; on an ephemeral runner it would need to be restored and saved on every run. Add memory only when a concrete gap appears.
+   **Answer:** (a), `docs/` only. ai-memory or another agent memory may be tested later if needed.
 5. **Trigger model.** Options: (a) daily cron only; (b) cron plus `issue_comment` events from authorized users. Recommendation: (b). With cron only, each question and answer costs a full day.
+   **Answer:** cron, `workflow_dispatch` and `issue_comment`.
 6. **Budget defaults.** Proposed defaults: per-task key limit of US$ 2 expiring in 24 hours, a monthly cap per repository, and a maximum of 50 agent iterations per run. Confirm or adjust.
+   **Answer:** per-task key limit of US$ 2 expiring in 24 hours and a monthly cap per repository. No iteration limit: the harness manages its own iterations.
 
 ## Design
 
@@ -94,7 +100,7 @@ Done when: the action runs on a test repository, lists open issues labeled `code
 
 ### 2. Planning only
 
-- [ ] Agent loop with OpenRouter and a per-task, budget-capped key.
+- [ ] Harness interface with an OpenCode adapter, using OpenRouter and a per-task, budget-capped key.
 - [ ] For each opted-in issue without a plan: read the issue and repository, write `plans/YYYY-MM-DD-title.md` on the task branch, post the decisions as a comment, and set `codeman:awaiting-decision`.
 - [ ] Parse `/codeman` commands from authorized users; record answers in the plan; set `codeman:ready` when none remain.
 - [ ] Prompt-injection tests: issues and comments from unauthorized users must not change behavior.
