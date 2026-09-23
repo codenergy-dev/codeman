@@ -1,7 +1,7 @@
 ---
-status: pending
+status: in progress
 created_at: 2026-09-23T14:18:00-03:00
-updated_at: 2026-09-23T16:30:00-03:00
+updated_at: 2026-09-23T17:45:00-03:00
 commit: null
 ---
 
@@ -33,7 +33,7 @@ Constraints:
 Answer these before step 1 starts.
 
 1. **Agent harness.** Options: (a) write our own agent loop against the OpenRouter API; (b) wrap an existing open-source CLI agent that supports OpenRouter. Trade-off: (a) is more work but fully auditable and small; (b) is faster but adds a large third-party dependency with broad permissions. Recommendation: (a), keeping the tool set minimal (read, search, edit files, run commands in the workspace).
-   **Answer:** (b), using OpenCode by default. Codeman talks to the harness through a small interface so other harnesses can be added later. OpenCode must still be audited (see `AGENTS.md`) before it is added.
+   **Answer:** (b), using OpenCode by default. Codeman talks to the harness through a small interface so other harnesses can be added later. Use OpenCode v1 (`opencode-ai`); v2 (`@opencode/cli`) is still a preview without tagged releases. The dependency audit is in `docs/dependencies.md`.
 2. **Implementation language and action type.** Options: TypeScript JavaScript action, or a Docker container action. Recommendation: TypeScript action; it starts fast, runs on every runner OS, and uses GitHub's official toolkit.
    **Answer:** TypeScript action.
 3. **Project documentation.** `AGENTS.md` makes `docs/` the single source of truth, while lat.md uses a `lat.md/` directory. Options: (a) plain markdown in `docs/`; (b) adopt lat.md and accept a second directory; (c) adopt lat.md only if it can be configured to use `docs/`. Recommendation: (a) for the MVP, revisit after step 4.
@@ -98,10 +98,10 @@ At the start of each task, a job creates an OpenRouter API key with a spending l
 
 ### 1. Foundation
 
-- [ ] Repository with `README.md`, `AGENTS.md`, `docs/` and `plans/`.
-- [ ] Action skeleton in the language chosen in decision 2, with pinned dependencies and CI (lint, tests, build).
-- [ ] GitHub App registered with the permissions above; installation documented in `docs/`.
-- [ ] Workflow template for target repositories: cron, `workflow_dispatch` and (per decision 5) `issue_comment`, with `concurrency` set so only one run per repository is active.
+- [x] Repository with `README.md`, `AGENTS.md`, `docs/` and `plans/`.
+- [x] Action skeleton in the language chosen in decision 2, with pinned dependencies and CI (lint, tests, build).
+- [ ] GitHub App registered with the permissions above; installation documented in `docs/`. (Documented; registration is pending and is done by a maintainer.)
+- [x] Workflow template for target repositories: cron, `workflow_dispatch` and (per decision 5) `issue_comment`, with `concurrency` set so only one run per repository is active.
 
 Done when: the action runs on a test repository, lists open issues labeled `codeman` and exits without changes.
 
@@ -135,6 +135,7 @@ Done when: an issue that requires a macOS runner completes end to end, with a hu
 
 - [ ] Run Codeman on two or three real repositories for a few weeks.
 - [ ] Revisit decisions 3 (documentation) and 4 (memory) with evidence.
+- [ ] Re-evaluate OpenCode v2 once it becomes the main release, with tagged releases traceable to source.
 - [ ] Write a follow-up plan for anything that should change.
 
 ## Out of scope

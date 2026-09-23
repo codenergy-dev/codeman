@@ -1,0 +1,29 @@
+{
+  "name": "codeman",
+  "version": "0.1.0",
+  "private": true,
+  "description": "GitHub Action that runs an AI agent on issues and pull requests, asking a human for decisions before it acts.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "node scripts/build.ts",
+    "lint": "biome ci .",
+    "format": "biome check --write .",
+    "typecheck": "tsc",
+    "test": "node --test \"src/**/*.test.ts\"",
+    "check": "npm run lint && npm run typecheck && npm test && npm run build"
+  },
+  "dependencies": {
+    "@actions/core": "3.0.1",
+    "@actions/github": "9.1.1"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.14",
+    "@types/node": "24.13.6",
+    "esbuild": "0.28.2",
+    "typescript": "6.0.3"
+  }
+}

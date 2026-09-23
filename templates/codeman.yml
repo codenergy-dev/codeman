@@ -1,0 +1,40 @@
+# Codeman workflow for a target repository. Copy it to .github/workflows/codeman.yml.
+# Setup: https://github.com/codenergy-dev/codeman/blob/main/docs/installation.md
+name: Codeman
+
+on:
+  schedule:
+    - cron: "0 9 * * *"
+  workflow_dispatch:
+  issue_comment:
+    types: [created]
+
+# One active run per repository. Each run reads the state of every task, so a
+# queued run that GitHub replaces loses no work.
+concurrency:
+  group: codeman
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  codeman:
+    # Comments only start a run when they are a /codeman command from a maintainer.
+    if: >-
+      github.event_name != 'issue_comment' || (
+        startsWith(github.event.comment.body, '/codeman') &&
+        contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app-token
+        with:
+          client-id: ${{ vars.CODEMAN_APP_CLIENT_ID }}
+          private-key: ${{ secrets.CODEMAN_APP_PRIVATE_KEY }}
+          permission-issues: read
+      # Replace COMMIT_SHA with a full commit SHA of codenergy-dev/codeman.
+      - uses: codenergy-dev/codeman@COMMIT_SHA
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}

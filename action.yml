@@ -1,0 +1,13 @@
+name: Codeman
+description: Runs an AI agent on opted-in issues and pull requests, asking a human for decisions before it acts.
+author: codenergy
+inputs:
+  github-token:
+    description: GitHub App installation token used to call the GitHub API.
+    required: true
+runs:
+  using: node24
+  main: dist/index.js
+branding:
+  icon: git-pull-request
+  color: gray-dark
