@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-09-23T14:18:00-03:00
-updated_at: 2026-09-24T09:00:00-03:00
+updated_at: 2026-09-24T13:30:00-03:00
 commit: null
 ---
 
@@ -48,10 +48,15 @@ Answer these before step 1 starts.
 Answer these before step 2 starts.
 
 7. **OpenCode version.** CVE-2026-88624 (path traversal in the local server's `DELETE /experimental/worktree`) still has no fixed version; the latest release is 1.18.32. Options: (a) pin 1.18.32 now and upgrade when a fix ships; (b) wait for a fix. Recommendation: (a). The endpoint lets a caller delete directories, and in Codeman the only process that can reach it is the agent, which already runs shell commands on a disposable runner with no write token. The flaw adds no new capability there.
+   **Answer:** (a), pin 1.18.32.
 8. **Agent and apply split.** Step 3 splits the run into a read-only agent job and an apply job, but step 2 already writes a plan file and posts comments. Options: (a) do the split in step 2; (b) give the agent the App token in step 2 and split in step 3. Recommendation: (a). The agent reads issue text that may be untrusted and can run shell commands, so it could read any token in its job.
+   **Answer:** (a), with the work split into separate jobs so the workflow graph shows each stage of the loop. Values passed between jobs appear in plain text in the logs, so the task key travels encrypted with a second secret (`CODEMAN_OPENROUTER_KEY_ENCRYPTION_SECRET`). The management key never enters the agent job, and the agent runs as an unprivileged user without `sudo`.
 9. **Monthly cap per repository.** OpenRouter keys support `limit` (USD) and `expires_at`, but the usage of a deleted key is lost, so a monthly total cannot be computed. Options: (a) disable task keys at the end instead of deleting them, name them `codeman/<owner>/<repo>/<issue>/<run>`, and add up this month's usage of the keys for the repository before creating a new one; (b) keep deleting keys and drop the monthly cap. Recommendation: (a). Also choose the default monthly cap; it is an action input, so each repository can change it.
+   **Answer:** (a), default US$ 20 per month. The workflow template exposes the model and the budgets as `workflow_dispatch` inputs, with defaults for scheduled and comment runs. OpenRouter reports `usage_monthly` per key, so the total is the sum of that field over the repository's keys, including disabled ones.
 10. **Model.** Options: (a) a required `model` input with no default, so each repository chooses; (b) a default model in Codeman. Recommendation: (a), which keeps Codeman model-agnostic and avoids a default that goes stale.
+   **Answer:** (a). The template sets the model the repository uses by default, and a maintainer can choose the model for one task with `/codeman model <id>`.
 11. **Management key storage.** The OpenRouter management key can create keys without limits, so only the job that creates and disables task keys may read it. Recommendation: store it as `CODEMAN_OPENROUTER_MANAGEMENT_KEY` in a GitHub Environment named `codeman`, restricted to the default branch, and use that environment only in that job.
+   **Answer:** the secrets and variables may live at organization level, visible only to selected repositories. Names: `CODEMAN_GITHUB_APP_CLIENT_ID`, `CODEMAN_GITHUB_APP_PRIVATE_KEY`, `CODEMAN_OPENROUTER_MANAGEMENT_KEY`, `CODEMAN_OPENROUTER_KEY_ENCRYPTION_SECRET`. Only the key jobs reference the management key.
 
 ## Design
 
@@ -117,17 +122,21 @@ Result (2026-09-24): done. On a private test repository, the action listed one o
 
 ### 2. Planning only
 
-- [ ] Harness interface with an OpenCode adapter, using OpenRouter and a per-task, budget-capped key.
-- [ ] For each opted-in issue without a plan: read the issue and repository, write `plans/YYYY-MM-DD-title.md` on the task branch, post the decisions as a comment, and set `codeman:awaiting-decision`.
-- [ ] Parse `/codeman` commands from authorized users; record answers in the plan; set `codeman:ready` when none remain.
-- [ ] Prompt-injection tests: issues and comments from unauthorized users must not change behavior.
+- [x] Workflow split into jobs: `select` (pick one task, no LLM) → `open-key` → `agent` (read-only) → `apply` (validate and write), plus `close-key`, which always runs. One task per run.
+- [x] Harness interface with an OpenCode adapter, using OpenRouter and a per-task, budget-capped key. OpenCode runs as an unprivileged user on the runner.
+- [x] `/codeman model <id>` lets a maintainer choose the model for one task.
+- [x] For each opted-in issue without a plan: read the issue and repository, write `plans/YYYY-MM-DD-title.md` on the task branch, post the decisions as a comment, and set `codeman:awaiting-decision`.
+- [x] Parse `/codeman` commands from authorized users; record answers in the plan; set `codeman:ready` when none remain.
+- [x] Prompt-injection tests: issues and comments from unauthorized users must not change behavior.
 
 Done when: on the test repository, an ambiguous issue gets a plan and relevant decisions, and answering them moves it to `codeman:ready`. No code is written in this step.
+
+Result: implemented and unit-tested; the sandbox test runs in CI. The end-to-end check on the test repository is pending.
 
 ### 3. Implementation
 
 - [ ] For `codeman:ready` tasks: implement on the task branch, update `docs/`, keep the plan current.
-- [ ] Split into an agent job (read-only, produces a patch) and an apply job (validates and pushes).
+- [ ] Extend the apply job to validate and push code changes (the jobs are split in step 2).
 - [ ] Open a pull request linked to the issue, with a suggested commit message and a summary of the plan.
 - [ ] Handle pull request review comments as new decisions or follow-up work.
 

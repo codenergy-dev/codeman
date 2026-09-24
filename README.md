@@ -2,7 +2,7 @@
 
 Codeman is a GitHub Action that lets an AI agent work on your issues and pull requests, but asks you to make the important decisions first.
 
-> Status: early development. Right now Codeman only lists the issues it would work on; it does not plan or write code yet.
+> Status: early development. Codeman plans and records decisions; it does not write code yet.
 
 ## Why
 
@@ -18,14 +18,16 @@ Codeman turns ambiguity into questions instead. The flow it is being built for:
    /codeman decide 1=a 2=b
    ```
 
-   or accept every recommendation with `/codeman approve`.
+   or accept every recommendation with `/codeman approve`. To use a different model for one task, comment `/codeman model <openrouter-model-id>`.
 4. Codeman implements the plan and opens a pull request. You review it and merge it; Codeman never merges.
 
 Only maintainers (owners, members and collaborators) can steer Codeman. Comments from anyone else are ignored.
 
 ## Getting started
 
-You need a GitHub App for Codeman, its credentials in your repository, and a workflow. [docs/installation.md](docs/installation.md) walks through all three.
+You need a GitHub App for Codeman, an [OpenRouter](https://openrouter.ai) account, their credentials in your repository or organization, and a workflow. [docs/installation.md](docs/installation.md) walks through each one.
+
+Codeman is model-agnostic: it reaches models through OpenRouter, and each task gets its own key with a spending limit, inside a monthly budget per repository.
 
 The workflow runs once a day, when you start it manually, and when a maintainer comments a `/codeman` command:
 

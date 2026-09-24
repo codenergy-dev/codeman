@@ -2,9 +2,67 @@ name: Codeman
 description: Runs an AI agent on opted-in issues and pull requests, asking a human for decisions before it acts.
 author: codenergy
 inputs:
-  github-token:
-    description: GitHub App installation token used to call the GitHub API.
+  step:
+    description: "Which job of the Codeman workflow this is: select, open-key, agent, apply or close-key."
     required: true
+  github-token:
+    description: "(select, apply) GitHub App installation token."
+  app-slug:
+    description: "(select) Slug of the GitHub App, used to recognize Codeman's own comments."
+  model:
+    description: "(select) Default OpenRouter model ID. Maintainers can override it per task with /codeman model."
+  task-budget:
+    description: "(open-key) Spending limit of each task key, in USD."
+    default: "2"
+  monthly-budget:
+    description: "(open-key) Spending limit per repository per calendar month, in USD."
+    default: "20"
+  key-expiry-hours:
+    description: "(open-key) Hours until a task key expires."
+    default: "24"
+  task:
+    description: "(open-key) Issue number of the selected task."
+  management-key:
+    description: "(open-key, close-key) OpenRouter management key."
+  encryption-secret:
+    description: "(open-key, agent) Secret that encrypts the task key between jobs. At least 32 characters."
+  encrypted-key:
+    description: "(agent) The task key, encrypted by open-key."
+  key-hash:
+    description: "(close-key) Hash of the task key to disable."
+  harness:
+    description: "(agent) Agent harness to run."
+    default: opencode
+  agent-minutes:
+    description: "(agent) Minutes the agent may run before it is stopped. Keep it below the job's timeout."
+    default: "50"
+  key-job-result:
+    description: "(apply) Result of the open-key job."
+  key-status:
+    description: "(apply) Status output of the open-key job."
+  key-reason:
+    description: "(apply) Reason output of the open-key job."
+  agent-job-result:
+    description: "(apply) Result of the agent job."
+  workdir:
+    description: "Directory for Codeman's files. Defaults to RUNNER_TEMP/codeman."
+outputs:
+  action:
+    description: "(select) What this run does: plan, record or none."
+  task:
+    description: "(select) Issue number of the selected task."
+  model:
+    description: "(select) Model for the selected task."
+  base-sha:
+    description: "(select) Commit the agent starts from."
+  status:
+    description: "(open-key) opened or over-budget."
+  reason:
+    description: "(open-key) Why no key was created."
+  key-hash:
+    description: "(open-key) Hash of the task key."
+  encrypted-key:
+    description: "(open-key) The task key, encrypted."
 runs:
   using: node24
   main: dist/index.js

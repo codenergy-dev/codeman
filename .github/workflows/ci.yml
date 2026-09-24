@@ -24,6 +24,9 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test
+        env:
+          # Runs the sandbox test, which creates a system user with sudo.
+          CODEMAN_SANDBOX_TEST: "1"
       - run: npm run build
       - name: Check that dist/ matches the source
         run: |

@@ -34,27 +34,26 @@ Pinned to full commit SHAs.
 
 | Action | Version | Used in |
 | --- | --- | --- |
-| `actions/checkout` | v7.0.1 | CI |
+| `actions/checkout` | v7.0.1 | CI, target repository workflow |
 | `actions/setup-node` | v7.0.0 | CI |
 | `actions/create-github-app-token` | v3.2.0 | Target repository workflow |
+| `actions/upload-artifact` | v7.0.1 | Target repository workflow |
+| `actions/download-artifact` | v8.0.1 | Target repository workflow |
 
 ## Agent harness: OpenCode
 
-Not added yet. The version is pinned when the harness is integrated.
-
-- **Choice:** OpenCode v1 (`opencode-ai`, latest audited: 1.18.32). MIT; repository [anomalyco/opencode](https://github.com/anomalyco/opencode); very active, with near-daily releases.
+- **Version:** OpenCode v1 1.18.32 (`opencode-ai`), pinned in [`src/harness/opencode.ts`](../src/harness/opencode.ts) with the npm `dist.integrity` of each platform package (`opencode-linux-x64`, `opencode-linux-arm64`). MIT; repository [anomalyco/opencode](https://github.com/anomalyco/opencode); very active, with near-daily releases.
 - **v2** (`@opencode/cli`, 2.0.x) was not adopted: it is a preview, has no tagged GitHub releases, and the published binaries cannot be traced to a source commit. Re-evaluate it once it becomes the main release.
-- **Distribution:** an npm package whose `postinstall` selects a per-platform package containing one compiled binary (about 185 MB). No npm provenance attestation, only registry signatures.
+- **Distribution:** the `opencode-ai` npm package runs a `postinstall` script that selects a per-platform package containing one compiled binary (about 185 MB). Codeman skips that package and its script: it downloads the platform package from the npm registry and checks its integrity before extracting it. There is no npm provenance attestation, only registry signatures.
 - **Known vulnerabilities:**
   - CVE-2026-22812 (high): unauthenticated local HTTP server allowed command execution. Fixed in 1.0.216.
   - CVE-2026-22813 (critical): XSS in the web UI. Fixed in 1.1.10.
-  - CVE-2026-88624 (critical): path traversal in `DELETE /experimental/worktree`, reported for 1.18.26 and earlier. No fixed version was published at the time of the audit. Confirm a fixed version before pinning.
-- **Permissions:** runs any shell command as the runner user. Its permission system is not a sandbox, and most permissions default to `allow`. It loads configuration and plugins from `opencode.json` and `.opencode/` in the repository.
+  - CVE-2026-88624 (critical): path traversal in the local server's `DELETE /experimental/worktree`, reported for 1.18.26 and earlier. No fixed version existed on 2026-09-24. Accepted for 1.18.32: only the agent, which already runs shell commands in a sandbox with no write token, can reach that server. Upgrade once a fix ships.
+- **Permissions:** it runs any shell command as the user that starts it. Its permission system is not a sandbox, and most permissions default to `allow`. It loads configuration and plugins from `opencode.json` and `.opencode/` in the repository.
 
-How Codeman must use it:
+How Codeman uses it:
 
-1. Download the platform package from the npm registry and verify its pinned `sha512` integrity. Never run the `postinstall` script.
-2. Pass configuration through `OPENCODE_CONFIG_CONTENT`: `autoupdate: false`, `share: "disabled"`, only the `openrouter` provider, and `deny` for `webfetch`, `websearch`, `external_directory` and `question`.
-3. Reject patches that change `opencode.json` or `.opencode/`.
-4. Run it in a job whose `GITHUB_TOKEN` is read-only and whose only secret is the budget-capped OpenRouter key.
-5. Call it as a child process (`opencode run --format json`); do not add `@opencode-ai/sdk`.
+1. It runs as the unprivileged `codeman-agent` user (see [architecture](architecture.md#agent-sandbox)).
+2. Configuration goes through `OPENCODE_CONFIG_CONTENT`, which overrides the repository's: `autoupdate: false`, `share: "disabled"`, only the `openrouter` provider, and `deny` for `webfetch`, `websearch`, `external_directory`, `question` and `doom_loop`. No permission is left as `ask`, because nobody is there to answer.
+3. The apply job accepts only the files a stage allows (the plan, while planning), so the agent cannot change `opencode.json` or `.opencode/`.
+4. It is called as a child process (`opencode run --format json`); `@opencode-ai/sdk` is not used.
