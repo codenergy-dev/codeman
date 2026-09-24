@@ -53,6 +53,7 @@ test("the agent is contained and its changes are collected safely", {
     "sudo -n true 2>/dev/null && echo yes > sudo.txt",
     `cat /proc/${process.pid}/environ > environ.txt 2>/dev/null`,
     'echo "$OPENROUTER_API_KEY" > key.txt',
+    "env > env.txt",
     "(sleep 300 >/dev/null 2>&1 &)",
     "exit 0",
   ].join("\n");
@@ -91,6 +92,9 @@ test("the agent is contained and its changes are collected safely", {
   const environ = readFileSync(join(out, "tree", "environ.txt"), "utf8");
   assert.ok(!environ.includes("runner-only-secret"), "the agent cannot read the runner's env");
   assert.equal(readFileSync(join(out, "tree", "key.txt"), "utf8").trim(), "sk-test");
+  const agentEnv = readFileSync(join(out, "tree", "env.txt"), "utf8");
+  assert.ok(!agentEnv.includes("/home/runner"), "no path from the runner's environment");
+  assert.match(agentEnv, /^XDG_CONFIG_HOME=\/home\/codeman-agent\/\.config$/m);
 
   assert.equal(
     copyAgentFile(`${worktree}/.codeman/output.json`, join(out, "output.json"), 1024),

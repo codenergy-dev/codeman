@@ -20311,17 +20311,41 @@ function writeAsAgent(file, content) {
 function killAgentProcesses() {
   spawnSync("sudo", ["-n", "pkill", "-KILL", "-u", AGENT_USER]);
 }
+var AGENT_ENV = {
+  HOME: AGENT_HOME,
+  USER: AGENT_USER,
+  LOGNAME: AGENT_USER,
+  SHELL: "/bin/bash",
+  PATH: SAFE_PATH,
+  LANG: "C.UTF-8",
+  TMPDIR: "/tmp",
+  XDG_CONFIG_HOME: `${AGENT_HOME}/.config`,
+  XDG_DATA_HOME: `${AGENT_HOME}/.local/share`,
+  XDG_STATE_HOME: `${AGENT_HOME}/.local/state`,
+  XDG_CACHE_HOME: `${AGENT_HOME}/.cache`
+};
+var LAUNCHER = `keep=" $1 "; shift
+for name in $(compgen -e); do
+  case "$keep" in *" $name "*) ;; *) unset "$name" 2>/dev/null ;; esac
+done
+export ${Object.entries(AGENT_ENV).map(([name, value]) => `${name}='${value}'`).join(" ")}
+cd "$1" || exit 1; shift
+exec "$@"`;
 async function runAsAgent(command, cwd, timeoutMs) {
+  const keep = Object.keys(command.env);
   const args = [
     "-n",
-    `--preserve-env=${Object.keys(command.env).join(",")}`,
+    `--preserve-env=${keep.join(",")}`,
     "-u",
     AGENT_USER,
     "-H",
     "--",
-    "/usr/bin/env",
-    `--chdir=${cwd}`,
-    `PATH=${SAFE_PATH}`,
+    "/bin/bash",
+    "-c",
+    LAUNCHER,
+    "codeman-agent",
+    keep.join(" "),
+    cwd,
     command.file,
     ...command.args
   ];

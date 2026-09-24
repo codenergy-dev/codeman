@@ -54,21 +54,56 @@ export function killAgentProcesses(): void {
   spawnSync("sudo", ["-n", "pkill", "-KILL", "-u", AGENT_USER]);
 }
 
+/** The agent's whole environment, besides the harness's own variables. */
+export const AGENT_ENV: Record<string, string> = {
+  HOME: AGENT_HOME,
+  USER: AGENT_USER,
+  LOGNAME: AGENT_USER,
+  SHELL: "/bin/bash",
+  PATH: SAFE_PATH,
+  LANG: "C.UTF-8",
+  TMPDIR: "/tmp",
+  XDG_CONFIG_HOME: `${AGENT_HOME}/.config`,
+  XDG_DATA_HOME: `${AGENT_HOME}/.local/share`,
+  XDG_STATE_HOME: `${AGENT_HOME}/.local/state`,
+  XDG_CACHE_HOME: `${AGENT_HOME}/.cache`,
+};
+
+/**
+ * Runs as the agent: drops every exported variable except the harness's (sudo's PAM session
+ * adds the runner's /etc/environment, whose paths point into the runner's home), sets
+ * AGENT_ENV, enters the directory and runs the command. Arguments: kept names, directory,
+ * command. Secrets stay in the environment, never in argv.
+ */
+export const LAUNCHER = `keep=" $1 "; shift
+for name in $(compgen -e); do
+  case "$keep" in *" $name "*) ;; *) unset "$name" 2>/dev/null ;; esac
+done
+export ${Object.entries(AGENT_ENV)
+  .map(([name, value]) => `${name}='${value}'`)
+  .join(" ")}
+cd "$1" || exit 1; shift
+exec "$@"`;
+
 export async function runAsAgent(
   command: HarnessCommand,
   cwd: string,
   timeoutMs: number,
 ): Promise<{ exitCode: number | null; timedOut: boolean }> {
+  const keep = Object.keys(command.env);
   const args = [
     "-n",
-    `--preserve-env=${Object.keys(command.env).join(",")}`,
+    `--preserve-env=${keep.join(",")}`,
     "-u",
     AGENT_USER,
     "-H",
     "--",
-    "/usr/bin/env",
-    `--chdir=${cwd}`,
-    `PATH=${SAFE_PATH}`,
+    "/bin/bash",
+    "-c",
+    LAUNCHER,
+    "codeman-agent",
+    keep.join(" "),
+    cwd,
     command.file,
     ...command.args,
   ];

@@ -51,6 +51,7 @@ Only `agent` runs an LLM. The jobs that write to GitHub never run one, and they 
 The agent reads text from the issue, which anyone may have written, and runs shell commands. It runs as `codeman-agent`, a user without `sudo`, on a copy of the checkout in that user's home.
 
 - It cannot read the runner's processes, so it cannot reach the job's tokens or the secrets of other steps.
+- Its environment is rebuilt from an allowlist: its own `HOME` and XDG directories, a fixed `PATH`, and the harness's variables. Nothing else from the runner passes, including what `sudo`'s PAM session adds from `/etc/environment`.
 - The task key reaches it only through its environment. It is the only credential the agent holds.
 - When the harness exits or reaches its time limit, every process of that user is killed.
 - Codeman finds changes with `git status`, using the original checkout's `.git` against the agent's copy; the agent's `.git` is never used. Changed files are copied without following symlinks.
