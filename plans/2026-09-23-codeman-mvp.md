@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-09-23T14:18:00-03:00
-updated_at: 2026-09-23T17:45:00-03:00
+updated_at: 2026-09-24T09:00:00-03:00
 commit: null
 ---
 
@@ -44,6 +44,14 @@ Answer these before step 1 starts.
    **Answer:** cron, `workflow_dispatch` and `issue_comment`.
 6. **Budget defaults.** Proposed defaults: per-task key limit of US$ 2 expiring in 24 hours, a monthly cap per repository, and a maximum of 50 agent iterations per run. Confirm or adjust.
    **Answer:** per-task key limit of US$ 2 expiring in 24 hours and a monthly cap per repository. No iteration limit: the harness manages its own iterations. Jobs time out after 60 minutes; unfinished work is pushed to the task branch so the next run continues from there (see Budget).
+
+Answer these before step 2 starts.
+
+7. **OpenCode version.** CVE-2026-88624 (path traversal in the local server's `DELETE /experimental/worktree`) still has no fixed version; the latest release is 1.18.32. Options: (a) pin 1.18.32 now and upgrade when a fix ships; (b) wait for a fix. Recommendation: (a). The endpoint lets a caller delete directories, and in Codeman the only process that can reach it is the agent, which already runs shell commands on a disposable runner with no write token. The flaw adds no new capability there.
+8. **Agent and apply split.** Step 3 splits the run into a read-only agent job and an apply job, but step 2 already writes a plan file and posts comments. Options: (a) do the split in step 2; (b) give the agent the App token in step 2 and split in step 3. Recommendation: (a). The agent reads issue text that may be untrusted and can run shell commands, so it could read any token in its job.
+9. **Monthly cap per repository.** OpenRouter keys support `limit` (USD) and `expires_at`, but the usage of a deleted key is lost, so a monthly total cannot be computed. Options: (a) disable task keys at the end instead of deleting them, name them `codeman/<owner>/<repo>/<issue>/<run>`, and add up this month's usage of the keys for the repository before creating a new one; (b) keep deleting keys and drop the monthly cap. Recommendation: (a). Also choose the default monthly cap; it is an action input, so each repository can change it.
+10. **Model.** Options: (a) a required `model` input with no default, so each repository chooses; (b) a default model in Codeman. Recommendation: (a), which keeps Codeman model-agnostic and avoids a default that goes stale.
+11. **Management key storage.** The OpenRouter management key can create keys without limits, so only the job that creates and disables task keys may read it. Recommendation: store it as `CODEMAN_OPENROUTER_MANAGEMENT_KEY` in a GitHub Environment named `codeman`, restricted to the default branch, and use that environment only in that job.
 
 ## Design
 
@@ -100,10 +108,12 @@ At the start of each task, a job creates an OpenRouter API key with a spending l
 
 - [x] Repository with `README.md`, `AGENTS.md`, `docs/` and `plans/`.
 - [x] Action skeleton in the language chosen in decision 2, with pinned dependencies and CI (lint, tests, build).
-- [ ] GitHub App registered with the permissions above; installation documented in `docs/`. (Documented; registration is pending and is done by a maintainer.)
+- [x] GitHub App registered with the permissions above; installation documented in `docs/`.
 - [x] Workflow template for target repositories: cron, `workflow_dispatch` and (per decision 5) `issue_comment`, with `concurrency` set so only one run per repository is active.
 
 Done when: the action runs on a test repository, lists open issues labeled `codeman` and exits without changes.
+
+Result (2026-09-24): done. On a private test repository, the action listed one opted-in issue in state `new` and changed nothing.
 
 ### 2. Planning only
 
