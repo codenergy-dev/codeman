@@ -65,7 +65,7 @@ The agent reads text from the issue, which anyone may have written, and runs she
 
 ## Planning
 
-1. `select` picks a `new` task (or one left in `planning` by an interrupted run) and chooses the branch `codeman/<issue>-<slug>` and the plan path `plans/<date>-<slug>.md`.
+1. `select` picks a `new` task, one left in `planning` by an interrupted run, or one with a `/codeman replan` request, and chooses the branch `codeman/<issue>-<slug>` and the plan path `plans/<date>-<slug>.md`.
 2. `agent` gives the harness a task file with the rules, the issue and the maintainer comments. The agent writes the plan and `.codeman/output.json`, which lists the decisions: a title, a question, 2 to 6 options and a recommendation each.
 3. `apply` accepts only the plan file; other changes are ignored and listed in the status comment. It validates `output.json` strictly, commits the plan to the task branch through the Git Data API, and sets `codeman:awaiting-decision`, or `codeman:ready` when there are no decisions.
 
@@ -73,15 +73,19 @@ If the agent fails, runs out of time or produces an invalid result, the task bec
 
 ## Commands
 
-Maintainers steer a task with comments. Each line that starts with `/codeman` is a command; quoted lines and code blocks are ignored.
+Maintainers steer a task with comments while it is `codeman:awaiting-decision` or `codeman:ready`. Each line that starts with `/codeman`, outside a fenced code block, is a command; one comment may hold several.
 
 | Command | Effect |
 | --- | --- |
-| `/codeman decide 1=a 2=b` | Answers decisions 1 and 2. |
+| `/codeman decide 1 a` | Answers decision 1 with option `a`. Several at once: `/codeman decide 1 a 2 b`. `1=a` also works. |
 | `/codeman approve` | Accepts the recommendation for every unanswered decision. |
+| `/codeman answer 2 <text>` | Answers decision 2 in the maintainer's own words instead of an option. The text continues on the following lines, up to the next command. |
+| `/codeman replan <text>` | Sends the task back to planning. The agent revises the plan with the text (which may continue on the following lines), the maintainer comments and the answers given so far; answered decisions are written into the plan as settled, and only open or new decisions are listed. |
 | `/codeman model <id>` | Uses this OpenRouter model for the task from now on. The last valid one wins. |
 
-Only comments from owners, members and collaborators count, both for commands and for the text the agent sees. Answers are recorded in the status comment and in an `## Answers` section of the plan. When no decision is pending, the task becomes `codeman:ready`.
+Text after `decide` or `approve` is not part of the command: the agent sees it later as a maintainer comment, but it is not recorded as an answer. Use `answer` or `replan` when the text matters.
+
+Only comments from owners, members and collaborators count, both for commands and for the text the agent sees. Answers are recorded in the status comment and in an `## Answers` section of the plan. When no decision is pending, the task becomes `codeman:ready`. A `replan` in a batch of new commands wins: the run plans again instead of only recording answers.
 
 ## Status comment
 

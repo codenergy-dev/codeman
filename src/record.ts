@@ -5,8 +5,10 @@ export interface Option {
   label: string;
 }
 
+/** An answer is either one of the options or free text from `/codeman answer`. */
 export interface Answer {
-  option: string;
+  option?: string;
+  text?: string;
   by: string;
 }
 
@@ -40,7 +42,7 @@ export function pendingDecisions(record: TaskRecord): Decision[] {
 }
 
 /**
- * Applies decision commands in order. Model commands are read elsewhere and ignored here.
+ * Applies decision commands in order. `model` and `replan` are read elsewhere and ignored here.
  * Returns the updated record and a message for each command that could not be applied.
  */
 export function applyCommands(
@@ -70,6 +72,10 @@ export function applyCommands(
           decision.answer = { option, by: author };
         }
       }
+    } else if (command.kind === "answer") {
+      const decision = decisions.find((candidate) => candidate.id === command.id);
+      if (decision) decision.answer = { text: command.text, by: author };
+      else errors.push(`Decision ${command.id} does not exist.`);
     }
   }
 
@@ -83,9 +89,20 @@ const ANSWERS_END = "<!-- codeman:answers:end -->";
 export function writeAnswers(plan: string, record: TaskRecord): string {
   const answered = record.decisions.filter((decision) => decision.answer);
   if (answered.length === 0) return plan;
-  const lines = answered.map((decision) => {
-    const option = decision.options.find((candidate) => candidate.key === decision.answer?.option);
-    return `- Decision ${decision.id} (${oneLineTitle(decision.title)}): (${decision.answer?.option}) ${oneLineTitle(option?.label ?? "")}, chosen by ${decision.answer?.by}.`;
+  const lines = answered.flatMap((decision) => {
+    const head = `- Decision ${decision.id} (${oneLineTitle(decision.title)}):`;
+    const answer = decision.answer;
+    if (answer?.text !== undefined) {
+      // Quoted under the list item; `<!--` is escaped so the text cannot end this block.
+      const quoted = answer.text
+        .split("\n")
+        .map((line) => `  > ${line.replace(/<!--/g, "&lt;!--")}`);
+      return [`${head} answered by ${answer.by}:`, "", ...quoted, ""];
+    }
+    const option = decision.options.find((candidate) => candidate.key === answer?.option);
+    return [
+      `${head} (${answer?.option}) ${oneLineTitle(option?.label ?? "")}, chosen by ${answer?.by}.`,
+    ];
   });
   const block = [ANSWERS_START, ...lines, ANSWERS_END].join("\n");
 

@@ -47,11 +47,14 @@ export function renderStatus(view: StatusView): string {
         const suffix = tags.length > 0 ? ` _(${tags.join(", ")})_` : "";
         lines.push(`- **${option.key})** ${inlineText(option.label)}${suffix}`);
       }
+      if (decision.answer?.text !== undefined) {
+        lines.push("", `Answered by ${decision.answer.by}: ${inlineText(decision.answer.text)}`);
+      }
       lines.push("");
     }
     if (view.state === "awaiting-decision" && pendingDecisions(record).length > 0) {
       lines.push(
-        "Answer with `/codeman decide 1=a 2=b`, or accept every recommendation with `/codeman approve`. Only owners, members and collaborators can answer.",
+        "Answer with `/codeman decide 1 a` (several at once: `/codeman decide 1 a 2 b`), or accept every recommendation with `/codeman approve`. To answer in your own words, use `/codeman answer 1 <text>`; to have the plan revised, use `/codeman replan <what to change>`. Only owners, members and collaborators can answer.",
         "",
       );
     }

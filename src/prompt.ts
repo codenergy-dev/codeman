@@ -24,8 +24,30 @@ export function planPrompt(task: TaskContext): string {
           .map((comment) => quote(`COMMENT by ${comment.author}`, comment.body))
           .join("\n\n");
   const previous = task.record
-    ? `A previous plan exists at \`${task.planPath}\`. Update it instead of starting over.`
+    ? `A previous plan exists at \`${task.planPath}\`. Update it instead of starting over: apply the revision requests and settled decisions below, if any, and remove its \`## Answers\` section.`
     : `Create the plan at \`${task.planPath}\`.`;
+  const settled = task.settled.flatMap((decision) => {
+    if (!decision.answer) return [];
+    const option = decision.options.find((candidate) => candidate.key === decision.answer?.option);
+    const answer = decision.answer.text ?? option?.label ?? "";
+    return [quote(`DECISION ${decision.id}: ${decision.title.replace(/\s+/g, " ")}`, answer)];
+  });
+  const revision =
+    task.replan.length === 0 && settled.length === 0
+      ? ""
+      : `
+## Revision
+
+This run writes a new version of the plan. Apply the revision requests, if any. Write the settled decisions into the plan as decided, and do not list them as decisions again. List only decisions that are still open or that the revision raises.
+
+### Revision requests
+
+${task.replan.map((text) => quote("REQUEST", text || "(no text: revise the plan using the maintainer comments)")).join("\n\n") || "(none)"}
+
+### Settled decisions
+
+${settled.join("\n\n") || "(none)"}
+`;
 
   return `# Codeman task: plan issue #${task.number}
 
@@ -76,5 +98,5 @@ ${quote("ISSUE BODY", task.body)}
 ## Maintainer comments
 
 ${comments}
-`;
+${revision}`;
 }

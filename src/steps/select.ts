@@ -2,6 +2,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import * as core from "@actions/core";
 import { isModelId } from "../commands.ts";
+import { applyCommands } from "../record.ts";
 import { stateOf } from "../state.ts";
 import { renderStatus } from "../status.ts";
 import {
@@ -10,7 +11,10 @@ import {
   type CommentLike,
   chooseTask,
   commandsAfter,
+  DECIDING,
   findStatus,
+  pendingWork,
+  replanRequests,
   type TaskContext,
   taskModel,
   toTask,
@@ -40,16 +44,16 @@ export async function select(): Promise<void> {
       core.warning(`${line}: ${result.error}`);
       continue;
     }
-    let hasNewCommands: boolean | undefined;
-    if (result.state === "awaiting-decision") {
+    let pending: Candidate["pending"];
+    if (DECIDING.has(result.state)) {
       const all = await repo.listComments(task.number);
       comments.set(task.number, all);
       const record = findStatus(all, bot)?.record;
-      hasNewCommands =
-        record !== undefined &&
-        commandsAfter(authorizedComments(all), record.processedCommentId).length > 0;
+      if (record) {
+        pending = pendingWork(commandsAfter(authorizedComments(all), record.processedCommentId));
+      }
     }
-    candidates.push({ number: task.number, state: result.state, hasNewCommands });
+    candidates.push({ number: task.number, state: result.state, pending });
     core.info(`${line} [${result.state}]`);
   }
 
@@ -64,8 +68,17 @@ export async function select(): Promise<void> {
   if (!task) throw new Error(`Task #${choice.number} disappeared.`);
   const all = comments.get(task.number) ?? (await repo.listComments(task.number));
   const status = findStatus(all, bot);
-  const record = status?.record;
   const maintainerComments = authorizedComments(all);
+  // A new plan keeps the answers given so far and says what to change.
+  const sources =
+    choice.action === "plan" && status?.record
+      ? commandsAfter(maintainerComments, status.record.processedCommentId)
+      : [];
+  const record = status?.record;
+  const replan = replanRequests(sources);
+  const settled = record
+    ? applyCommands(record, sources).record.decisions.filter((decision) => decision.answer)
+    : [];
   const fromState = stateOf(task.labels);
   if (!fromState.ok) throw new Error(fromState.error);
 
@@ -95,6 +108,8 @@ export async function select(): Promise<void> {
     baseSha,
     planPath: record?.planPath ?? `plans/${new Date().toISOString().slice(0, 10)}-${slug}.md`,
     record: record ?? null,
+    replan,
+    settled,
     statusCommentId: status?.id ?? null,
     runUrl: runUrl(),
   };
@@ -109,7 +124,10 @@ export async function select(): Promise<void> {
         record,
         model,
         runUrl: context.runUrl,
-        message: "Codeman is reading the issue and writing a plan.",
+        message:
+          replan.length > 0
+            ? "Codeman is revising the plan, as requested."
+            : "Codeman is reading the issue and writing a plan.",
       }),
     );
   }

@@ -7,6 +7,8 @@ import {
   chooseTask,
   commandsAfter,
   findStatus,
+  pendingWork,
+  replanRequests,
   taskModel,
   toTask,
 } from "./tasks.ts";
@@ -107,15 +109,15 @@ test("records answers before planning, oldest task first", () => {
   assert.deepEqual(
     chooseTask([
       { number: 1, state: "new" },
-      { number: 3, state: "awaiting-decision", hasNewCommands: true },
-      { number: 2, state: "awaiting-decision", hasNewCommands: true },
+      { number: 3, state: "awaiting-decision", pending: "record" },
+      { number: 2, state: "ready", pending: "record" },
     ]),
     { number: 2, action: "record" },
   );
   assert.deepEqual(
     chooseTask([
       { number: 5, state: "planning" },
-      { number: 4, state: "awaiting-decision", hasNewCommands: false },
+      { number: 4, state: "awaiting-decision" },
       { number: 9, state: "new" },
     ]),
     { number: 5, action: "plan" },
@@ -135,4 +137,27 @@ test("only the App's own comment counts as the status comment", () => {
   const real = comment(2, encodeStatus(record), "NONE", "codeman[bot]");
   assert.deepEqual(findStatus([forged, real], "codeman[bot]"), { id: 2, record });
   assert.equal(findStatus([forged], "codeman[bot]"), undefined);
+});
+
+test("a task with a replan request goes back to planning", () => {
+  assert.deepEqual(
+    chooseTask([
+      { number: 1, state: "awaiting-decision" },
+      { number: 2, state: "ready", pending: "replan" },
+      { number: 3, state: "new" },
+    ]),
+    { number: 2, action: "plan" },
+  );
+});
+
+test("replan wins over answers in the same batch", () => {
+  const comments = authorizedComments([
+    comment(1, "/codeman decide 1 a"),
+    comment(2, "/codeman replan\nSplit step 2 in two."),
+  ]);
+  assert.equal(pendingWork(commandsAfter(comments, 0)), "replan");
+  assert.equal(pendingWork(commandsAfter(comments, 1)), "replan");
+  assert.equal(pendingWork(commandsAfter(comments.slice(0, 1), 0)), "record");
+  assert.equal(pendingWork([]), undefined);
+  assert.deepEqual(replanRequests(commandsAfter(comments, 0)), ["Split step 2 in two."]);
 });

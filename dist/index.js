@@ -20575,7 +20575,26 @@ function planPrompt(task) {
   const nonce = randomBytes2(6).toString("hex");
   const quote = (label, text) => [`<<<${label} ${nonce}`, text.trim() || "(empty)", `>>>${label} ${nonce}`].join("\n");
   const comments = task.comments.length === 0 ? "(none)" : task.comments.map((comment) => quote(`COMMENT by ${comment.author}`, comment.body)).join("\n\n");
-  const previous = task.record ? `A previous plan exists at \`${task.planPath}\`. Update it instead of starting over.` : `Create the plan at \`${task.planPath}\`.`;
+  const previous = task.record ? `A previous plan exists at \`${task.planPath}\`. Update it instead of starting over: apply the revision requests and settled decisions below, if any, and remove its \`## Answers\` section.` : `Create the plan at \`${task.planPath}\`.`;
+  const settled = task.settled.flatMap((decision) => {
+    if (!decision.answer) return [];
+    const option = decision.options.find((candidate) => candidate.key === decision.answer?.option);
+    const answer = decision.answer.text ?? option?.label ?? "";
+    return [quote(`DECISION ${decision.id}: ${decision.title.replace(/\s+/g, " ")}`, answer)];
+  });
+  const revision = task.replan.length === 0 && settled.length === 0 ? "" : `
+## Revision
+
+This run writes a new version of the plan. Apply the revision requests, if any. Write the settled decisions into the plan as decided, and do not list them as decisions again. List only decisions that are still open or that the revision raises.
+
+### Revision requests
+
+${task.replan.map((text) => quote("REQUEST", text || "(no text: revise the plan using the maintainer comments)")).join("\n\n") || "(none)"}
+
+### Settled decisions
+
+${settled.join("\n\n") || "(none)"}
+`;
   return `# Codeman task: plan issue #${task.number}
 
 You are Codeman, an agent that plans work on the repository in the current directory. In this run you write a plan. You do not implement anything.
@@ -20625,7 +20644,7 @@ ${quote("ISSUE BODY", task.body)}
 ## Maintainer comments
 
 ${comments}
-`;
+${revision}`;
 }
 
 // src/steps/common.ts
@@ -25171,6 +25190,10 @@ function applyCommands(record, sources) {
           decision.answer = { option, by: author };
         }
       }
+    } else if (command.kind === "answer") {
+      const decision = decisions.find((candidate) => candidate.id === command.id);
+      if (decision) decision.answer = { text: command.text, by: author };
+      else errors.push(`Decision ${command.id} does not exist.`);
     }
   }
   return { record: { ...record, decisions, processedCommentId }, errors };
@@ -25180,9 +25203,17 @@ var ANSWERS_END = "<!-- codeman:answers:end -->";
 function writeAnswers(plan, record) {
   const answered = record.decisions.filter((decision) => decision.answer);
   if (answered.length === 0) return plan;
-  const lines = answered.map((decision) => {
-    const option = decision.options.find((candidate) => candidate.key === decision.answer?.option);
-    return `- Decision ${decision.id} (${oneLineTitle(decision.title)}): (${decision.answer?.option}) ${oneLineTitle(option?.label ?? "")}, chosen by ${decision.answer?.by}.`;
+  const lines = answered.flatMap((decision) => {
+    const head = `- Decision ${decision.id} (${oneLineTitle(decision.title)}):`;
+    const answer = decision.answer;
+    if (answer?.text !== void 0) {
+      const quoted = answer.text.split("\n").map((line) => `  > ${line.replace(/<!--/g, "&lt;!--")}`);
+      return [`${head} answered by ${answer.by}:`, "", ...quoted, ""];
+    }
+    const option = decision.options.find((candidate) => candidate.key === answer?.option);
+    return [
+      `${head} (${answer?.option}) ${oneLineTitle(option?.label ?? "")}, chosen by ${answer?.by}.`
+    ];
   });
   const block = [ANSWERS_START, ...lines, ANSWERS_END].join("\n");
   const start = plan.indexOf(ANSWERS_START);
@@ -25255,11 +25286,14 @@ function renderStatus(view) {
         const suffix = tags.length > 0 ? ` _(${tags.join(", ")})_` : "";
         lines.push(`- **${option.key})** ${inlineText(option.label)}${suffix}`);
       }
+      if (decision.answer?.text !== void 0) {
+        lines.push("", `Answered by ${decision.answer.by}: ${inlineText(decision.answer.text)}`);
+      }
       lines.push("");
     }
     if (view.state === "awaiting-decision" && pendingDecisions(record).length > 0) {
       lines.push(
-        "Answer with `/codeman decide 1=a 2=b`, or accept every recommendation with `/codeman approve`. Only owners, members and collaborators can answer.",
+        "Answer with `/codeman decide 1 a` (several at once: `/codeman decide 1 a 2 b`), or accept every recommendation with `/codeman approve`. To answer in your own words, use `/codeman answer 1 <text>`; to have the plan revised, use `/codeman replan <what to change>`. Only owners, members and collaborators can answer.",
         ""
       );
     }
@@ -25277,42 +25311,55 @@ function renderStatus(view) {
 
 // src/commands.ts
 var MODEL_ID = /^~?[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._:-]*$/i;
-var ANSWER = /^(\d{1,2})=([a-z])$/i;
+var DECISION_ID = /^\d{1,2}$/;
+var OPTION_KEY = /^[a-z]$/i;
+var ASSIGNMENT = /^(\d{1,2})=([a-z])$/i;
+var ANSWER = /^\/codeman\s+answer(?:\s+(\S+))?\s*(.*)$/i;
+var REPLAN = /^\/codeman\s+replan\b\s*(.*)$/i;
+var MAX_TEXT = 2e3;
 function isModelId(text) {
   return text.length <= 100 && MODEL_ID.test(text);
 }
 function parseCommands(body) {
   const commands = [];
   let fenced = false;
+  let open2;
+  const close = () => {
+    if (open2) commands.push(finishText(open2));
+    open2 = void 0;
+  };
   for (const raw of body.split(/\r?\n/)) {
     const line = raw.trim();
-    if (/^(```|~~~)/.test(line)) {
-      fenced = !fenced;
+    const fence = /^(```|~~~)/.test(line);
+    if (!fenced && !fence && line.split(/\s+/)[0]?.toLowerCase() === "/codeman") {
+      close();
+      const parsed = parseLine(line);
+      if ("lines" in parsed) open2 = parsed;
+      else commands.push(parsed);
       continue;
     }
-    if (fenced) continue;
-    const [prefix, name, ...args] = line.split(/\s+/);
-    if (prefix?.toLowerCase() !== "/codeman") continue;
-    commands.push(parseCommand(line, name?.toLowerCase(), args));
+    if (fence) fenced = !fenced;
+    open2?.lines.push(raw);
   }
+  close();
   return commands;
 }
-function parseCommand(text, name, args) {
-  const invalid = (reason) => ({ kind: "invalid", text, reason });
-  switch (name) {
+function parseLine(line) {
+  const [, name, ...args] = line.split(/\s+/);
+  const invalid = (reason) => ({ kind: "invalid", text: line, reason });
+  switch (name?.toLowerCase()) {
     case "approve":
       return args.length === 0 ? { kind: "approve" } : invalid("`approve` takes no arguments.");
-    case "decide": {
-      if (args.length === 0) return invalid("`decide` needs answers such as `1=a 2=b`.");
-      const answers = /* @__PURE__ */ new Map();
-      for (const arg of args) {
-        const match = ANSWER.exec(arg);
-        if (!match?.[1] || !match[2])
-          return invalid(`\`${arg}\` is not an answer such as \`1=a\`.`);
-        answers.set(Number(match[1]), match[2].toLowerCase());
-      }
-      return { kind: "decide", answers };
+    case "decide":
+      return parseDecide(args, invalid);
+    case "answer": {
+      const [, id = "", first = ""] = ANSWER.exec(line) ?? [];
+      if (!DECISION_ID.test(id))
+        return invalid("`answer` needs a decision number, such as `answer 2 <text>`.");
+      return { line, kind: "answer", id: Number(id), lines: [first] };
     }
+    case "replan":
+      return { line, kind: "replan", lines: [REPLAN.exec(line)?.[1] ?? ""] };
     case "model": {
       const [model, ...rest] = args;
       if (!model || rest.length > 0 || !isModelId(model)) {
@@ -25321,8 +25368,34 @@ function parseCommand(text, name, args) {
       return { kind: "model", model };
     }
     default:
-      return invalid("Unknown command. Use `approve`, `decide` or `model`.");
+      return invalid("Unknown command. Use `decide`, `approve`, `answer`, `replan` or `model`.");
   }
+}
+function parseDecide(args, invalid) {
+  if (args.length === 0) return invalid("`decide` needs answers such as `1 a` or `1=a`.");
+  const answers = /* @__PURE__ */ new Map();
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index] ?? "";
+    const next = args[index + 1] ?? "";
+    const assignment = ASSIGNMENT.exec(arg);
+    if (assignment?.[1] && assignment[2]) {
+      answers.set(Number(assignment[1]), assignment[2].toLowerCase());
+    } else if (DECISION_ID.test(arg) && OPTION_KEY.test(next)) {
+      answers.set(Number(arg), next.toLowerCase());
+      index++;
+    } else {
+      return invalid(`\`${arg}\` is not an answer such as \`1 a\` or \`1=a\`.`);
+    }
+  }
+  return { kind: "decide", answers };
+}
+function finishText(open2) {
+  const text = open2.lines.join("\n").trim();
+  const invalid = (reason) => ({ kind: "invalid", text: open2.line, reason });
+  if (text.length > MAX_TEXT) return invalid(`The text must have at most ${MAX_TEXT} characters.`);
+  if (open2.kind === "replan") return { kind: "replan", text };
+  if (text === "") return invalid("`answer` needs text after the decision number.");
+  return { kind: "answer", id: open2.id ?? 0, text };
 }
 
 // src/tasks.ts
@@ -25365,13 +25438,21 @@ function taskModel(comments, fallback) {
   }
   return model;
 }
+var DECIDING = /* @__PURE__ */ new Set(["awaiting-decision", "ready"]);
+function pendingWork(sources) {
+  if (sources.some(({ command }) => command.kind === "replan")) return "replan";
+  return sources.length > 0 ? "record" : void 0;
+}
+function replanRequests(sources) {
+  return sources.flatMap(({ command }) => command.kind === "replan" ? [command.text] : []);
+}
 function chooseTask(candidates) {
   const sorted = [...candidates].sort((a, b) => a.number - b.number);
-  const record = sorted.find(
-    (task) => task.state === "awaiting-decision" && task.hasNewCommands === true
-  );
+  const record = sorted.find((task) => task.pending === "record");
   if (record) return { number: record.number, action: "record" };
-  const plan = sorted.find((task) => task.state === "new" || task.state === "planning");
+  const plan = sorted.find(
+    (task) => task.state === "new" || task.state === "planning" || task.pending === "replan"
+  );
   if (plan) return { number: plan.number, action: "plan" };
   return void 0;
 }
@@ -25641,14 +25722,16 @@ async function select() {
       warning(`${line}: ${result.error}`);
       continue;
     }
-    let hasNewCommands;
-    if (result.state === "awaiting-decision") {
+    let pending;
+    if (DECIDING.has(result.state)) {
       const all2 = await repo.listComments(task2.number);
       comments.set(task2.number, all2);
       const record2 = findStatus(all2, bot)?.record;
-      hasNewCommands = record2 !== void 0 && commandsAfter(authorizedComments(all2), record2.processedCommentId).length > 0;
+      if (record2) {
+        pending = pendingWork(commandsAfter(authorizedComments(all2), record2.processedCommentId));
+      }
     }
-    candidates.push({ number: task2.number, state: result.state, hasNewCommands });
+    candidates.push({ number: task2.number, state: result.state, pending });
     info(`${line} [${result.state}]`);
   }
   const choice = chooseTask(candidates);
@@ -25661,8 +25744,11 @@ async function select() {
   if (!task) throw new Error(`Task #${choice.number} disappeared.`);
   const all = comments.get(task.number) ?? await repo.listComments(task.number);
   const status2 = findStatus(all, bot);
-  const record = status2?.record;
   const maintainerComments = authorizedComments(all);
+  const sources = choice.action === "plan" && status2?.record ? commandsAfter(maintainerComments, status2.record.processedCommentId) : [];
+  const record = status2?.record;
+  const replan = replanRequests(sources);
+  const settled = record ? applyCommands(record, sources).record.decisions.filter((decision) => decision.answer) : [];
   const fromState = stateOf(task.labels);
   if (!fromState.ok) throw new Error(fromState.error);
   const slug = slugify(task.title);
@@ -25690,6 +25776,8 @@ async function select() {
     baseSha,
     planPath: record?.planPath ?? `plans/${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}-${slug}.md`,
     record: record ?? null,
+    replan,
+    settled,
     statusCommentId: status2?.id ?? null,
     runUrl: runUrl()
   };
@@ -25703,7 +25791,7 @@ async function select() {
         record,
         model,
         runUrl: context3.runUrl,
-        message: "Codeman is reading the issue and writing a plan."
+        message: replan.length > 0 ? "Codeman is revising the plan, as requested." : "Codeman is reading the issue and writing a plan."
       })
     );
   }

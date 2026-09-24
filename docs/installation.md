@@ -71,4 +71,4 @@ The agent job needs a Linux runner (x64 or arm64).
 
 1. Open an issue that leaves something to decide, and label it `codeman`.
 2. Run the workflow manually. Codeman posts a status comment, writes a plan on the branch `codeman/<issue>-<slug>`, and lists its decisions.
-3. Answer in a comment, for example `/codeman decide 1=a` or `/codeman approve`. The comment starts a new run, which records the answers. When none is pending, the issue gets `codeman:ready`.
+3. Answer in a comment, for example `/codeman decide 1 a` or `/codeman approve`. The comment starts a new run, which records the answers. When none is pending, the issue gets `codeman:ready`.

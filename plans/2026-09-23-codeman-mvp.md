@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-09-23T14:18:00-03:00
-updated_at: 2026-09-24T18:00:00-03:00
+updated_at: 2026-09-25T10:00:00-03:00
 commit: null
 ---
 
@@ -59,6 +59,7 @@ Answer these before step 2 starts.
    **Answer:** the secrets and variables may live at organization level, visible only to selected repositories. Names: `CODEMAN_GITHUB_APP_CLIENT_ID`, `CODEMAN_GITHUB_APP_PRIVATE_KEY`, `CODEMAN_OPENROUTER_MANAGEMENT_KEY`, `CODEMAN_OPENROUTER_KEY_ENCRYPTION_SECRET`. Only the key jobs reference the management key.
 12. **Agent sandbox: ai-jail.** [ai-jail](https://github.com/akitaonrails/ai-jail) (GPL-3.0, Rust, v2.1.0) wraps bubblewrap, Landlock and seccomp, and can limit egress to listed hosts (`--allow-host`). Compared with the current unprivileged user, it hides the host filesystem and processes, and it can block the agent from sending repository contents anywhere but OpenRouter. Costs: two more dependencies (the ai-jail binary and the `bubblewrap` package); an AppArmor profile for `bwrap` on Ubuntu 24.04 runners; Linux x86_64 only; built for interactive use, with no stated CI support; and filtered egress has no DNS inside the sandbox, so OpenCode must honor `HTTPS_PROXY`. The license allows this use: Codeman runs the upstream binary as a separate program and does not distribute it. Options: (a) run a spike on a GitHub runner, then add ai-jail on top of the unprivileged user if it passes; (b) keep the unprivileged user only. Recommendation: (a).
 13. **Free-text answers.** Today only command lines count: text written next to `/codeman approve` is not recorded, and the agent sees it later only as a loose comment that may contradict the recorded answers. Options: (a) `/codeman answer <n> <text>` records a free-text answer to decision `n`, in place of an option; the text may continue on the following lines of the comment; (b) (a) plus `/codeman replan <text>`, which sends the task back to planning so the agent revises the plan and its decisions with the maintainers' comments; (c) keep options only. Recommendation: (b). `answer` covers a better answer than the listed options without an LLM; `replan` covers text that changes the scope, which only the agent can turn into a new plan.
+   **Answer:** (b). Also, `decide` accepts `1 a` as well as `1=a`, several answers in one command (`1 a 2 b`), and several commands in one comment. Commands also work while the task is `codeman:ready`.
 
 ## Design
 
@@ -127,8 +128,10 @@ Result (2026-09-24): done. On a private test repository, the action listed one o
 - [x] Workflow split into jobs: `select` (pick one task, no LLM) → `open-key` → `agent` (read-only) → `apply` (validate and write), plus `close-key`, which always runs. One task per run.
 - [x] Harness interface with an OpenCode adapter, using OpenRouter and a per-task, budget-capped key. OpenCode runs as an unprivileged user on the runner.
 - [x] `/codeman model <id>` lets a maintainer choose the model for one task.
+- [x] `/codeman answer <n> <text>` records a free-text answer; `/codeman replan <text>` sends the task back to planning with the answers given so far (decision 13).
 - [x] For each opted-in issue without a plan: read the issue and repository, write `plans/YYYY-MM-DD-title.md` on the task branch, post the decisions as a comment, and set `codeman:awaiting-decision`.
 - [x] Parse `/codeman` commands from authorized users; record answers in the plan; set `codeman:ready` when none remain.
+- [ ] End-to-end check of decisions: partial `decide`, `answer`, `replan` and `approve` on the test repository.
 - [x] Prompt-injection tests: issues and comments from unauthorized users must not change behavior.
 
 Done when: on the test repository, an ambiguous issue gets a plan and relevant decisions, and answering them moves it to `codeman:ready`. No code is written in this step.

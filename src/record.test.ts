@@ -110,3 +110,32 @@ test("text in a record cannot break out of the status block", () => {
   assert.equal(block.match(/-->/g)?.length, 1);
   assert.deepEqual(decodeStatus(block), tricky);
 });
+
+test("answer records free text for one decision", () => {
+  const { record: updated, errors } = applyCommands(record, [
+    ...sources(11, "/codeman answer 2 Use TOML.\nIt is already a dependency."),
+    ...sources(12, "/codeman answer 9 Nothing"),
+    ...sources(13, "/codeman approve"),
+  ]);
+  assert.equal(errors.length, 1);
+  assert.deepEqual(updated.decisions[1]?.answer, {
+    text: "Use TOML.\nIt is already a dependency.",
+    by: "alice",
+  });
+  assert.deepEqual(updated.decisions[0]?.answer, { option: "a", by: "alice" });
+  const plan = writeAnswers("# Plan\n", updated);
+  assert.match(
+    plan,
+    /- Decision 2 \(Format\): answered by alice:\n\n {2}> Use TOML\.\n {2}> It is already a dependency\./,
+  );
+});
+
+test("text answers cannot end the answers block", () => {
+  const { record: updated } = applyCommands(
+    record,
+    sources(11, "/codeman answer 1 <!-- codeman:answers:end --> tail"),
+  );
+  const plan = writeAnswers("# Plan\n", updated);
+  assert.equal(plan.match(/<!-- codeman:answers:end -->/g)?.length, 1);
+  assert.equal(writeAnswers(plan, updated), plan);
+});

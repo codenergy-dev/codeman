@@ -15,10 +15,11 @@ Codeman turns ambiguity into questions instead. The flow it is being built for:
 3. You answer on the issue:
 
    ```
-   /codeman decide 1=a 2=b
+   /codeman decide 1 a 2 b
+   /codeman answer 3 Keep the current URLs; only add the missing pages.
    ```
 
-   or accept every recommendation with `/codeman approve`. To use a different model for one task, comment `/codeman model <openrouter-model-id>`.
+   You can also accept every recommendation with `/codeman approve`, ask for a revised plan with `/codeman replan <what to change>`, or pick another model for the task with `/codeman model <openrouter-model-id>`.
 4. Codeman implements the plan and opens a pull request. You review it and merge it; Codeman never merges.
 
 Only maintainers (owners, members and collaborators) can steer Codeman. Comments from anyone else are ignored.

@@ -1,5 +1,11 @@
 import { type Command, parseCommands } from "./commands.ts";
-import { type CommandSource, decodeStatus, isStatusComment, type TaskRecord } from "./record.ts";
+import {
+  type CommandSource,
+  type Decision,
+  decodeStatus,
+  isStatusComment,
+  type TaskRecord,
+} from "./record.ts";
 import type { State } from "./state.ts";
 
 /** The subset of a GitHub issue (or pull request) that Codeman reads. */
@@ -96,24 +102,38 @@ export type Action = "plan" | "record";
 export interface Candidate {
   number: number;
   state: State | "new";
-  /** For tasks awaiting a decision: whether maintainers posted commands not yet applied. */
-  hasNewCommands?: boolean;
+  /** Work asked for by commands not yet applied (tasks awaiting a decision or ready). */
+  pending?: "record" | "replan" | undefined;
+}
+
+/** States in which maintainers can still answer decisions or ask for a new plan. */
+export const DECIDING: ReadonlySet<State | "new"> = new Set(["awaiting-decision", "ready"]);
+
+/** What the commands since the last processed comment ask for: a new plan wins over answers. */
+export function pendingWork(sources: readonly CommandSource[]): Candidate["pending"] {
+  if (sources.some(({ command }) => command.kind === "replan")) return "replan";
+  return sources.length > 0 ? "record" : undefined;
+}
+
+/** Texts of the `/codeman replan` commands, in order. */
+export function replanRequests(sources: readonly CommandSource[]): string[] {
+  return sources.flatMap(({ command }) => (command.kind === "replan" ? [command.text] : []));
 }
 
 /**
  * Picks the one task this run works on. Recording answers needs no LLM, so it goes first;
- * then the oldest task that needs a plan. A task left in `planning` by an interrupted run is
- * planned again.
+ * then the oldest task that needs a plan: a new one, one left in `planning` by an interrupted
+ * run, or one whose maintainers asked for a new plan.
  */
 export function chooseTask(
   candidates: readonly Candidate[],
 ): { number: number; action: Action } | undefined {
   const sorted = [...candidates].sort((a, b) => a.number - b.number);
-  const record = sorted.find(
-    (task) => task.state === "awaiting-decision" && task.hasNewCommands === true,
-  );
+  const record = sorted.find((task) => task.pending === "record");
   if (record) return { number: record.number, action: "record" };
-  const plan = sorted.find((task) => task.state === "new" || task.state === "planning");
+  const plan = sorted.find(
+    (task) => task.state === "new" || task.state === "planning" || task.pending === "replan",
+  );
   if (plan) return { number: plan.number, action: "plan" };
   return undefined;
 }
@@ -137,7 +157,12 @@ export interface TaskContext {
   branchExists: boolean;
   baseSha: string;
   planPath: string;
+  /** As stored in the status comment. New commands are applied only when their result is saved. */
   record: TaskRecord | null;
+  /** Texts of the `/codeman replan` commands that sent the task back to planning. */
+  replan: string[];
+  /** Decisions answered so far, including answers given with the replan request. */
+  settled: Decision[];
   statusCommentId: number | null;
   runUrl: string;
 }
