@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-09-23T14:18:00-03:00
-updated_at: 2026-09-24T15:00:00-03:00
+updated_at: 2026-09-24T18:00:00-03:00
 commit: null
 ---
 
@@ -58,6 +58,7 @@ Answer these before step 2 starts.
 11. **Management key storage.** The OpenRouter management key can create keys without limits, so only the job that creates and disables task keys may read it. Recommendation: store it as `CODEMAN_OPENROUTER_MANAGEMENT_KEY` in a GitHub Environment named `codeman`, restricted to the default branch, and use that environment only in that job.
    **Answer:** the secrets and variables may live at organization level, visible only to selected repositories. Names: `CODEMAN_GITHUB_APP_CLIENT_ID`, `CODEMAN_GITHUB_APP_PRIVATE_KEY`, `CODEMAN_OPENROUTER_MANAGEMENT_KEY`, `CODEMAN_OPENROUTER_KEY_ENCRYPTION_SECRET`. Only the key jobs reference the management key.
 12. **Agent sandbox: ai-jail.** [ai-jail](https://github.com/akitaonrails/ai-jail) (GPL-3.0, Rust, v2.1.0) wraps bubblewrap, Landlock and seccomp, and can limit egress to listed hosts (`--allow-host`). Compared with the current unprivileged user, it hides the host filesystem and processes, and it can block the agent from sending repository contents anywhere but OpenRouter. Costs: two more dependencies (the ai-jail binary and the `bubblewrap` package); an AppArmor profile for `bwrap` on Ubuntu 24.04 runners; Linux x86_64 only; built for interactive use, with no stated CI support; and filtered egress has no DNS inside the sandbox, so OpenCode must honor `HTTPS_PROXY`. The license allows this use: Codeman runs the upstream binary as a separate program and does not distribute it. Options: (a) run a spike on a GitHub runner, then add ai-jail on top of the unprivileged user if it passes; (b) keep the unprivileged user only. Recommendation: (a).
+13. **Free-text answers.** Today only command lines count: text written next to `/codeman approve` is not recorded, and the agent sees it later only as a loose comment that may contradict the recorded answers. Options: (a) `/codeman answer <n> <text>` records a free-text answer to decision `n`, in place of an option; the text may continue on the following lines of the comment; (b) (a) plus `/codeman replan <text>`, which sends the task back to planning so the agent revises the plan and its decisions with the maintainers' comments; (c) keep options only. Recommendation: (b). `answer` covers a better answer than the listed options without an LLM; `replan` covers text that changes the scope, which only the agent can turn into a new plan.
 
 ## Design
 
