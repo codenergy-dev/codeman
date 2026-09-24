@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-09-23T14:18:00-03:00
-updated_at: 2026-09-25T10:00:00-03:00
+updated_at: 2026-09-25T14:00:00-03:00
 commit: null
 ---
 
@@ -84,7 +84,7 @@ Each Codeman comment carries a hidden marker (`<!-- codeman:... -->`) linking it
 
 - The agent posts decisions as a numbered list, each with options and a recommendation.
 - An authorized user answers with a command such as `/codeman decide 1=a 2=b`, or `/codeman approve` to accept every recommendation.
-- Only comments from users with `OWNER`, `MEMBER` or `COLLABORATOR` association count. Everything else is ignored.
+- Only comments from users with write access to the repository (`admin`, `maintain` or `write`) count. Everything else is ignored. (Changed from `OWNER`, `MEMBER` or `COLLABORATOR` association: an App token sees private organization members as `CONTRIBUTOR`, and `MEMBER` also covered members with read-only access.)
 
 ### Permissions
 

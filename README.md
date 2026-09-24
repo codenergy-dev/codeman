@@ -22,7 +22,7 @@ Codeman turns ambiguity into questions instead. The flow it is being built for:
    You can also accept every recommendation with `/codeman approve`, ask for a revised plan with `/codeman replan <what to change>`, or pick another model for the task with `/codeman model <openrouter-model-id>`.
 4. Codeman implements the plan and opens a pull request. You review it and merge it; Codeman never merges.
 
-Only maintainers (owners, members and collaborators) can steer Codeman. Comments from anyone else are ignored.
+Only maintainers (people with write access to the repository) can steer Codeman. Comments from anyone else are ignored.
 
 ## Getting started
 

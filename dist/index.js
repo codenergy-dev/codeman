@@ -24868,6 +24868,19 @@ var Repository = class {
       per_page: 100
     });
   }
+  /** The user's legacy permission on the repository: admin, write, read or none. */
+  async permission(username) {
+    try {
+      const { data } = await this.#octokit.rest.repos.getCollaboratorPermissionLevel({
+        ...this.#scope,
+        username
+      });
+      return data.permission;
+    } catch (error2) {
+      if (status(error2) === 404) return "none";
+      throw error2;
+    }
+  }
   async defaultBranch() {
     const { data } = await this.#octokit.rest.repos.get(this.#scope);
     return data.default_branch;
@@ -25293,7 +25306,7 @@ function renderStatus(view) {
     }
     if (view.state === "awaiting-decision" && pendingDecisions(record).length > 0) {
       lines.push(
-        "Answer with `/codeman decide 1 a` (several at once: `/codeman decide 1 a 2 b`), or accept every recommendation with `/codeman approve`. To answer in your own words, use `/codeman answer 1 <text>`; to have the plan revised, use `/codeman replan <what to change>`. Only owners, members and collaborators can answer.",
+        "Answer with `/codeman decide 1 a` (several at once: `/codeman decide 1 a 2 b`), or accept every recommendation with `/codeman approve`. To answer in your own words, use `/codeman answer 1 <text>`; to have the plan revised, use `/codeman replan <what to change>`. Only people with write access to the repository can answer.",
         ""
       );
     }
@@ -25409,10 +25422,19 @@ function toTask(issue2) {
     labels: issue2.labels.map((label) => typeof label === "string" ? label : label.name ?? "").filter((name) => name !== "")
   };
 }
-var AUTHORIZED = /* @__PURE__ */ new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
-function authorizedComments(comments) {
+var MAINTAINER_PERMISSIONS = /* @__PURE__ */ new Set(["admin", "write"]);
+function commenters(comments) {
+  return [
+    ...new Set(
+      comments.flatMap(
+        (comment) => comment.user && comment.user.type !== "Bot" ? [comment.user.login] : []
+      )
+    )
+  ];
+}
+function authorizedComments(comments, maintainers) {
   return comments.flatMap(
-    (comment) => AUTHORIZED.has(comment.author_association) && comment.user ? [
+    (comment) => comment.user && comment.user.type !== "Bot" && maintainers.has(comment.user.login) ? [
       {
         id: comment.id,
         author: comment.user.login,
@@ -25713,6 +25735,15 @@ async function select() {
   if (!isModelId(defaultModel)) throw new Error(`"${defaultModel}" is not an OpenRouter model ID.`);
   const tasks = (await repo.listOptedIn()).map(toTask).filter((task2) => task2.kind === "issue");
   info(`Found ${tasks.length} open issue(s) labeled "codeman".`);
+  const permissions = /* @__PURE__ */ new Map();
+  const maintainersAmong = async (all2) => {
+    const logins = commenters(all2);
+    for (const login of logins) {
+      if (!permissions.has(login)) permissions.set(login, repo.permission(login));
+    }
+    const levels = await Promise.all(logins.map((login) => permissions.get(login)));
+    return new Set(logins.filter((_, index) => MAINTAINER_PERMISSIONS.has(levels[index] ?? "")));
+  };
   const candidates = [];
   const comments = /* @__PURE__ */ new Map();
   for (const task2 of tasks) {
@@ -25728,7 +25759,10 @@ async function select() {
       comments.set(task2.number, all2);
       const record2 = findStatus(all2, bot)?.record;
       if (record2) {
-        pending = pendingWork(commandsAfter(authorizedComments(all2), record2.processedCommentId));
+        const maintainers = await maintainersAmong(all2);
+        pending = pendingWork(
+          commandsAfter(authorizedComments(all2, maintainers), record2.processedCommentId)
+        );
       }
     }
     candidates.push({ number: task2.number, state: result.state, pending });
@@ -25744,7 +25778,7 @@ async function select() {
   if (!task) throw new Error(`Task #${choice.number} disappeared.`);
   const all = comments.get(task.number) ?? await repo.listComments(task.number);
   const status2 = findStatus(all, bot);
-  const maintainerComments = authorizedComments(all);
+  const maintainerComments = authorizedComments(all, await maintainersAmong(all));
   const sources = choice.action === "plan" && status2?.record ? commandsAfter(maintainerComments, status2.record.processedCommentId) : [];
   const record = status2?.record;
   const replan = replanRequests(sources);

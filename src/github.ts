@@ -44,6 +44,20 @@ export class Repository {
     });
   }
 
+  /** The user's legacy permission on the repository: admin, write, read or none. */
+  async permission(username: string): Promise<string> {
+    try {
+      const { data } = await this.#octokit.rest.repos.getCollaboratorPermissionLevel({
+        ...this.#scope,
+        username,
+      });
+      return data.permission;
+    } catch (error) {
+      if (status(error) === 404) return "none";
+      throw error;
+    }
+  }
+
   async defaultBranch(): Promise<string> {
     const { data } = await this.#octokit.rest.repos.get(this.#scope);
     return data.default_branch;

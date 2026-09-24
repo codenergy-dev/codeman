@@ -44,8 +44,7 @@ export function toTask(issue: IssueLike): Task {
 export interface CommentLike {
   id: number;
   body?: string | undefined;
-  author_association: string;
-  user: { login: string } | null;
+  user: { login: string; type?: string } | null;
   created_at: string;
 }
 
@@ -56,12 +55,31 @@ export interface TaskComment {
   createdAt: string;
 }
 
-const AUTHORIZED = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
+/** Repository permissions that make a user a maintainer. `maintain` is reported as `write`. */
+export const MAINTAINER_PERMISSIONS: ReadonlySet<string> = new Set(["admin", "write"]);
 
-/** Comments from maintainers. Everything else is ignored, including by the agent. */
-export function authorizedComments(comments: readonly CommentLike[]): TaskComment[] {
+/** Human commenters, whose permission on the repository decides whether their comments count. */
+export function commenters(comments: readonly CommentLike[]): string[] {
+  return [
+    ...new Set(
+      comments.flatMap((comment) =>
+        comment.user && comment.user.type !== "Bot" ? [comment.user.login] : [],
+      ),
+    ),
+  ];
+}
+
+/**
+ * Comments from maintainers: users with write access to the repository. Everything else is
+ * ignored, including by the agent. (`author_association` is not used: GitHub computes it for
+ * the reader, and an App token sees private organization members as contributors.)
+ */
+export function authorizedComments(
+  comments: readonly CommentLike[],
+  maintainers: ReadonlySet<string>,
+): TaskComment[] {
   return comments.flatMap((comment) =>
-    AUTHORIZED.has(comment.author_association) && comment.user
+    comment.user && comment.user.type !== "Bot" && maintainers.has(comment.user.login)
       ? [
           {
             id: comment.id,

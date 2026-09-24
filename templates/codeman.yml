@@ -37,11 +37,13 @@ jobs:
   # Picks one task and decides what to do. No LLM.
   select:
     name: Select task
-    # Comments only start a run when they contain a /codeman command from a maintainer.
+    # Comments only start a run when they mention /codeman and are not from a bot. Whether the
+    # author may steer Codeman is checked in the job, from their permission on the repository:
+    # author_association hides private organization members.
     if: >-
       github.event_name != 'issue_comment' || (
         contains(github.event.comment.body, '/codeman') &&
-        contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)
+        github.event.comment.user.type != 'Bot'
       )
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -57,6 +59,8 @@ jobs:
           private-key: ${{ secrets.CODEMAN_GITHUB_APP_PRIVATE_KEY }}
           permission-contents: read
           permission-issues: write
+          # Reads commenters' permission on the repository.
+          permission-metadata: read
       - uses: codenergy-dev/codeman@COMMIT_SHA
         id: codeman
         with:

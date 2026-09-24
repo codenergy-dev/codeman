@@ -11,8 +11,10 @@ import {
   type CommentLike,
   chooseTask,
   commandsAfter,
+  commenters,
   DECIDING,
   findStatus,
+  MAINTAINER_PERMISSIONS,
   pendingWork,
   replanRequests,
   type TaskContext,
@@ -35,6 +37,17 @@ export async function select(): Promise<void> {
   const tasks = (await repo.listOptedIn()).map(toTask).filter((task) => task.kind === "issue");
   core.info(`Found ${tasks.length} open issue(s) labeled "codeman".`);
 
+  // Permission per commenter, asked once per run.
+  const permissions = new Map<string, Promise<string>>();
+  const maintainersAmong = async (all: readonly CommentLike[]): Promise<Set<string>> => {
+    const logins = commenters(all);
+    for (const login of logins) {
+      if (!permissions.has(login)) permissions.set(login, repo.permission(login));
+    }
+    const levels = await Promise.all(logins.map((login) => permissions.get(login)));
+    return new Set(logins.filter((_, index) => MAINTAINER_PERMISSIONS.has(levels[index] ?? "")));
+  };
+
   const candidates: Candidate[] = [];
   const comments = new Map<number, CommentLike[]>();
   for (const task of tasks) {
@@ -50,7 +63,10 @@ export async function select(): Promise<void> {
       comments.set(task.number, all);
       const record = findStatus(all, bot)?.record;
       if (record) {
-        pending = pendingWork(commandsAfter(authorizedComments(all), record.processedCommentId));
+        const maintainers = await maintainersAmong(all);
+        pending = pendingWork(
+          commandsAfter(authorizedComments(all, maintainers), record.processedCommentId),
+        );
       }
     }
     candidates.push({ number: task.number, state: result.state, pending });
@@ -68,7 +84,7 @@ export async function select(): Promise<void> {
   if (!task) throw new Error(`Task #${choice.number} disappeared.`);
   const all = comments.get(task.number) ?? (await repo.listComments(task.number));
   const status = findStatus(all, bot);
-  const maintainerComments = authorizedComments(all);
+  const maintainerComments = authorizedComments(all, await maintainersAmong(all));
   // A new plan keeps the answers given so far and says what to change.
   const sources =
     choice.action === "plan" && status?.record

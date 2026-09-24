@@ -54,7 +54,7 @@ export function renderStatus(view: StatusView): string {
     }
     if (view.state === "awaiting-decision" && pendingDecisions(record).length > 0) {
       lines.push(
-        "Answer with `/codeman decide 1 a` (several at once: `/codeman decide 1 a 2 b`), or accept every recommendation with `/codeman approve`. To answer in your own words, use `/codeman answer 1 <text>`; to have the plan revised, use `/codeman replan <what to change>`. Only owners, members and collaborators can answer.",
+        "Answer with `/codeman decide 1 a` (several at once: `/codeman decide 1 a 2 b`), or accept every recommendation with `/codeman approve`. To answer in your own words, use `/codeman answer 1 <text>`; to have the plan revised, use `/codeman replan <what to change>`. Only people with write access to the repository can answer.",
         "",
       );
     }

@@ -22,7 +22,7 @@ A task with more than one state label is invalid: Codeman reports a warning and 
 
 ## Runs
 
-- Triggers: a daily schedule, `workflow_dispatch`, and `issue_comment` when the comment contains `/codeman` and its author is an `OWNER`, `MEMBER` or `COLLABORATOR`.
+- Triggers: a daily schedule, `workflow_dispatch`, and `issue_comment` when the comment contains `/codeman` and its author is not a bot. Anyone can start a run this way, but `select` ignores comments from non-maintainers, so the run finds nothing new to do.
 - Only one run per repository is active (`concurrency`). GitHub keeps at most one queued run and replaces older queued runs.
 - Each run reads the state of every task from GitHub instead of reacting only to the event that started it. A replaced or failed run therefore loses no work; the next run picks it up.
 - Each run works on one task. Recording answers comes first, because it needs no LLM; then the oldest task that needs a plan.
@@ -85,7 +85,7 @@ Maintainers steer a task with comments while it is `codeman:awaiting-decision` o
 
 Text after `decide` or `approve` is not part of the command: the agent sees it later as a maintainer comment, but it is not recorded as an answer. Use `answer` or `replan` when the text matters.
 
-Only comments from owners, members and collaborators count, both for commands and for the text the agent sees. Answers are recorded in the status comment and in an `## Answers` section of the plan. When no decision is pending, the task becomes `codeman:ready`. A `replan` in a batch of new commands wins: the run plans again instead of only recording answers.
+Only comments from maintainers count, both for commands and for the text the agent sees. A maintainer is a user with `admin`, `maintain` or `write` access to the repository, read from `GET /repos/{owner}/{repo}/collaborators/{user}/permission`. The `author_association` field is not used: GitHub computes it for the reader, and an App token sees private organization members as `CONTRIBUTOR`. Answers are recorded in the status comment and in an `## Answers` section of the plan. When no decision is pending, the task becomes `codeman:ready`. A `replan` in a batch of new commands wins: the run plans again instead of only recording answers.
 
 ## Status comment
 

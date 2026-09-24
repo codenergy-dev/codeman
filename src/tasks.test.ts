@@ -6,6 +6,7 @@ import {
   type CommentLike,
   chooseTask,
   commandsAfter,
+  commenters,
   findStatus,
   pendingWork,
   replanRequests,
@@ -13,12 +14,16 @@ import {
   toTask,
 } from "./tasks.ts";
 
-const comment = (
-  id: number,
-  body: string,
-  author_association = "MEMBER",
-  login = `user${id}`,
-): CommentLike => ({ id, body, author_association, user: { login }, created_at: "2026-09-24" });
+const comment = (id: number, body: string, login = "alice", type = "User"): CommentLike => ({
+  id,
+  body,
+  user: { login, type },
+  created_at: "2026-09-24",
+});
+
+/** Users with write access in these tests. */
+const maintainers = new Set(["alice", "bob", "codeman[bot]"]);
+const authorized = (comments: CommentLike[]) => authorizedComments(comments, maintainers);
 
 const record: TaskRecord = {
   branch: "codeman/1-x",
@@ -57,34 +62,47 @@ test("detects pull requests", () => {
   assert.equal(task.kind, "pull_request");
 });
 
-test("keeps only comments from owners, members and collaborators", () => {
-  const comments = authorizedComments([
-    comment(1, "a", "OWNER"),
-    comment(2, "b", "MEMBER"),
-    comment(3, "c", "COLLABORATOR"),
-    comment(4, "d", "CONTRIBUTOR"),
-    comment(5, "e", "NONE"),
-    comment(6, "f", "FIRST_TIME_CONTRIBUTOR"),
-    { ...comment(7, "g", "OWNER"), user: null },
+test("keeps only comments from users with write access", () => {
+  const comments = authorized([
+    comment(1, "a", "alice"),
+    comment(2, "b", "bob"),
+    comment(3, "c", "mallory"),
+    comment(4, "d", "codeman[bot]", "Bot"),
+    { ...comment(5, "e"), user: null },
   ]);
   assert.deepEqual(
-    comments.map((c) => c.id),
-    [1, 2, 3],
+    comments.map((c) => [c.id, c.author]),
+    [
+      [1, "alice"],
+      [2, "bob"],
+    ],
+  );
+});
+
+test("lists human commenters once, to look up their permission", () => {
+  assert.deepEqual(
+    commenters([
+      comment(1, "a", "alice"),
+      comment(2, "b", "mallory"),
+      comment(3, "c", "alice"),
+      comment(4, "d", "codeman[bot]", "Bot"),
+    ]),
+    ["alice", "mallory"],
   );
 });
 
 test("unauthorized commands never reach the task", () => {
-  const comments = authorizedComments([
-    comment(1, "/codeman approve", "NONE"),
-    comment(2, "/codeman model evil/model", "CONTRIBUTOR"),
-    comment(3, "/codeman decide 1=b", "FIRST_TIMER"),
+  const comments = authorized([
+    comment(1, "/codeman approve", "mallory"),
+    comment(2, "/codeman model evil/model", "eve"),
+    comment(3, "/codeman decide 1=b", "codeman[bot]", "Bot"),
   ]);
   assert.deepEqual(commandsAfter(comments, 0), []);
   assert.equal(taskModel(comments, "default/model"), "default/model");
 });
 
 test("lists commands after a comment, in order", () => {
-  const comments = authorizedComments([
+  const comments = authorized([
     comment(3, "/codeman decide 1=b"),
     comment(1, "/codeman approve"),
     comment(2, "just a note"),
@@ -97,7 +115,7 @@ test("lists commands after a comment, in order", () => {
 });
 
 test("the last valid model command wins", () => {
-  const comments = authorizedComments([
+  const comments = authorized([
     comment(1, "/codeman model a/one"),
     comment(2, "/codeman model b/two"),
     comment(3, "/codeman model not-a-model"),
@@ -133,8 +151,8 @@ test("records answers before planning, oldest task first", () => {
 });
 
 test("only the App's own comment counts as the status comment", () => {
-  const forged = comment(1, encodeStatus({ ...record, branch: "evil" }), "OWNER", "mallory");
-  const real = comment(2, encodeStatus(record), "NONE", "codeman[bot]");
+  const forged = comment(1, encodeStatus({ ...record, branch: "evil" }), "mallory");
+  const real = comment(2, encodeStatus(record), "codeman[bot]", "Bot");
   assert.deepEqual(findStatus([forged, real], "codeman[bot]"), { id: 2, record });
   assert.equal(findStatus([forged], "codeman[bot]"), undefined);
 });
@@ -151,7 +169,7 @@ test("a task with a replan request goes back to planning", () => {
 });
 
 test("replan wins over answers in the same batch", () => {
-  const comments = authorizedComments([
+  const comments = authorized([
     comment(1, "/codeman decide 1 a"),
     comment(2, "/codeman replan\nSplit step 2 in two."),
   ]);
