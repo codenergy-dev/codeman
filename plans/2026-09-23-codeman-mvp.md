@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-09-23T14:18:00-03:00
-updated_at: 2026-09-25T14:00:00-03:00
+updated_at: 2026-09-25T16:00:00-03:00
 commit: null
 ---
 
@@ -60,6 +60,15 @@ Answer these before step 2 starts.
 12. **Agent sandbox: ai-jail.** [ai-jail](https://github.com/akitaonrails/ai-jail) (GPL-3.0, Rust, v2.1.0) wraps bubblewrap, Landlock and seccomp, and can limit egress to listed hosts (`--allow-host`). Compared with the current unprivileged user, it hides the host filesystem and processes, and it can block the agent from sending repository contents anywhere but OpenRouter. Costs: two more dependencies (the ai-jail binary and the `bubblewrap` package); an AppArmor profile for `bwrap` on Ubuntu 24.04 runners; Linux x86_64 only; built for interactive use, with no stated CI support; and filtered egress has no DNS inside the sandbox, so OpenCode must honor `HTTPS_PROXY`. The license allows this use: Codeman runs the upstream binary as a separate program and does not distribute it. Options: (a) run a spike on a GitHub runner, then add ai-jail on top of the unprivileged user if it passes; (b) keep the unprivileged user only. Recommendation: (a).
 13. **Free-text answers.** Today only command lines count: text written next to `/codeman approve` is not recorded, and the agent sees it later only as a loose comment that may contradict the recorded answers. Options: (a) `/codeman answer <n> <text>` records a free-text answer to decision `n`, in place of an option; the text may continue on the following lines of the comment; (b) (a) plus `/codeman replan <text>`, which sends the task back to planning so the agent revises the plan and its decisions with the maintainers' comments; (c) keep options only. Recommendation: (b). `answer` covers a better answer than the listed options without an LLM; `replan` covers text that changes the scope, which only the agent can turn into a new plan.
    **Answer:** (b). Also, `decide` accepts `1 a` as well as `1=a`, several answers in one command (`1 a 2 b`), and several commands in one comment. Commands also work while the task is `codeman:ready`.
+
+Answer these before step 3 starts.
+
+14. **What the agent may change.** The apply job commits only what passes a policy. Options: (a) any path except protected ones: `.github/`, `.codeman/`, the harness configuration (`opencode.json`, `opencode.jsonc`, `.opencode/`), and agent instructions (`AGENTS.md`, `CLAUDE.md`, `.claude/`, `.agents/`); only regular files; at most 1 MiB per file and 300 files per run; (b) an allowlist of paths per repository. Recommendation: (a), with an input to protect more paths. Agent instructions are protected because later runs on the same branch would follow the changed version before any human reviewed it; a task that must change them can say so in the pull request.
+15. **The project's tools.** The agent needs the repository's toolchain to build and test. Options: (a) the target workflow sets tools up in the agent job before Codeman (for example `actions/setup-node`), and Codeman passes that job's `PATH` to the agent, and nothing else from its environment; (b) the agent installs tools itself, without `sudo`; (c) a container image per repository. Recommendation: (a). It reuses the setup the repository's CI already has, and the template gets a marked place for it.
+16. **Pull request and CI.** Options: (a) when the agent reports the work as done, open the pull request (not a draft), linked with `Closes #<issue>`, with the plan summary and a suggested squash commit message, and set `codeman:done`; a failing CI is handled like any review feedback (decision 17); (b) open a draft, watch CI in later runs, and mark it ready only when CI passes, retrying fixes automatically. Recommendation: (a) for the MVP. The prompt requires the agent to run the repository's tests and linters before it reports done; automatic CI fixing can come later, with evidence of how often it is needed.
+17. **Review feedback.** Options: (a) `/codeman fix <text>` on the pull request (a comment or a review body) sends the task back to `codeman:in-progress`; the agent gets the text and every maintainer review comment since the last run, with file and line, and pushes to the same branch; (b) any review that requests changes does the same automatically. Recommendation: (a). It is explicit, like the decisions protocol, and a review can hold several comments before work starts. `/codeman replan` also works on the pull request.
+18. **Unfinished work.** Decision 6 pushes partial work when time runs out, and the next run continues. Options: (a) at most 3 implementation runs per task (or per `fix` request) before it becomes `codeman:blocked`; the limit is an input; (b) no limit besides the budgets. Recommendation: (a). A task that needs more than three runs is probably too big or stuck, and each run costs up to the task budget.
+19. **Chaining runs.** One run handles one task, so after `/codeman approve` the implementation waits for the next trigger (the daily schedule, a comment or a manual run). Options: (a) at the end of a run, if another task can move, `apply` starts the workflow again (`workflow_dispatch`, which needs `actions: write` for that job's `GITHUB_TOKEN`); (b) wait for the next trigger. Recommendation: (a). Approving and seeing the work start is the expected flow, and the budgets and states bound the loop: blocked, done and awaiting tasks never start a run.
 
 ## Design
 
@@ -136,7 +145,7 @@ Result (2026-09-24): done. On a private test repository, the action listed one o
 
 Done when: on the test repository, an ambiguous issue gets a plan and relevant decisions, and answering them moves it to `codeman:ready`. No code is written in this step.
 
-Result: implemented and unit-tested; the sandbox test runs in CI. The end-to-end check on the test repository is pending.
+Result (2026-09-25): done. On a private test repository, an issue got a plan with four decisions, and `/codeman decide` moved it to `codeman:ready` with the answers recorded on the task branch. `answer` and `replan` are covered by unit tests; their end-to-end check is still open.
 
 ### 3. Implementation
 
