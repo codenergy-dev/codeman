@@ -137,7 +137,7 @@ Only comments from maintainers count, both for commands and for the text the age
 
 Codeman keeps one comment per task up to date: state, plan and pull request links, decisions, answers, the agent's last report, problems and the model. A hidden block in it stores the task record (branch, plan path, decisions, answers, last processed comment, pull request). Codeman reads that block only from comments written by its own GitHub App, because anyone can post a comment containing it.
 
-Text written by the agent or by users is rendered as inert Markdown: one line, no HTML, links, images or formatting, and no @mentions.
+Text written by the agent or by users is rendered as inert Markdown: no HTML, links, images or formatting, and no @mentions. Short fields are collapsed to one line; the agent's report keeps its line breaks, so its lists survive.
 
 ## Untrusted input
 

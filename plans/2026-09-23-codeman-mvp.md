@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-09-23T14:18:00-03:00
-updated_at: 2026-09-25T19:30:00-03:00
+updated_at: 2026-09-25T21:00:00-03:00
 commit: null
 ---
 
@@ -187,7 +187,9 @@ Each part ends with an end-to-end check on the test repository.
 - [x] Agent environment: the job's `PATH`; the runner's home closed to other users; sandbox test extended to the runner's home, temporary files and Docker socket.
 - [x] Apply: `.codemanignore` policy and file limits; commit to the task branch, also when the agent fails or runs out of time; propose `.codemanignore` when missing; warn about removed protected paths.
 - [x] Open the pull request (`Closes #<issue>`, plan summary, suggested squash message) and set `codeman:done`. The apply token gets `pull-requests: write`.
-- [ ] End-to-end check on the test repository: a simple issue reaches an open pull request.
+- [x] End-to-end check on the test repository: a simple issue reaches an open pull request.
+
+Result (2026-09-25): done. On a private test repository, a `codeman:ready` issue was implemented in one run and got a pull request, and the issue moved to `codeman:done`. Fix after the check: the agent's report on the status comment now keeps its line breaks.
 
 3b. Unfinished work and feedback
 

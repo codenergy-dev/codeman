@@ -20274,6 +20274,9 @@ function slugify(text, max = 40) {
 function inlineText(text) {
   return oneLine(text).replace(/[\\`*_{}[\]()<>#+!|~]/g, (char) => `\\${char}`).replace(/@/g, "@\u200B");
 }
+function inertLines(text) {
+  return text.split(/\r?\n/).map((line) => inlineText(line)).join("\n");
+}
 
 // src/sandbox.ts
 var AGENT_USER = "codeman-agent";
@@ -25468,7 +25471,7 @@ function pullRequestBody(view) {
     "",
     "### Changes",
     "",
-    lines(view.summary),
+    inertLines(view.summary),
     "",
     "### Suggested squash commit message",
     "",
@@ -25478,9 +25481,6 @@ function pullRequestBody(view) {
     "",
     `<sub>Opened by Codeman \xB7 [Last run](${view.runUrl})</sub>`
   ].join("\n");
-}
-function lines(text) {
-  return text.split(/\r?\n/).map((line) => inlineText(line)).join("\n");
 }
 
 // src/record.ts
@@ -25523,7 +25523,7 @@ var ANSWERS_END = "<!-- codeman:answers:end -->";
 function writeAnswers(plan, record) {
   const answered = record.decisions.filter((decision) => decision.answer);
   if (answered.length === 0) return plan;
-  const lines2 = answered.flatMap((decision) => {
+  const lines = answered.flatMap((decision) => {
     const head = `- Decision ${decision.id} (${oneLineTitle(decision.title)}):`;
     const answer = decision.answer;
     if (answer?.text !== void 0) {
@@ -25535,7 +25535,7 @@ function writeAnswers(plan, record) {
       `${head} (${answer?.option}) ${oneLineTitle(option?.label ?? "")}, chosen by ${answer?.by}.`
     ];
   });
-  const block = [ANSWERS_START, ...lines2, ANSWERS_END].join("\n");
+  const block = [ANSWERS_START, ...lines, ANSWERS_END].join("\n");
   const start = plan.indexOf(ANSWERS_START);
   const end = plan.indexOf(ANSWERS_END);
   if (start !== -1 && end > start) {
@@ -25589,48 +25589,48 @@ var HEADINGS = {
 };
 function renderStatus(view) {
   const { record } = view;
-  const lines2 = [encodeStatus(record), `### Codeman: ${HEADINGS[view.state]}`, ""];
-  if (view.message) lines2.push(view.message, "");
-  if (record && view.planUrl) lines2.push(`Plan: [${record.planPath}](${view.planUrl})`, "");
+  const lines = [encodeStatus(record), `### Codeman: ${HEADINGS[view.state]}`, ""];
+  if (view.message) lines.push(view.message, "");
+  if (record && view.planUrl) lines.push(`Plan: [${record.planPath}](${view.planUrl})`, "");
   if (record?.pullRequest && view.pullRequestUrl) {
-    lines2.push(`Pull request: [#${record.pullRequest}](${view.pullRequestUrl})`, "");
+    lines.push(`Pull request: [#${record.pullRequest}](${view.pullRequestUrl})`, "");
   }
-  if (record) lines2.push(inlineText(record.summary), "");
+  if (record) lines.push(inlineText(record.summary), "");
   if (record && record.decisions.length > 0) {
-    lines2.push("#### Decisions", "");
+    lines.push("#### Decisions", "");
     for (const decision of record.decisions) {
-      lines2.push(`**${decision.id}. ${inlineText(decision.title)}**`, "");
-      lines2.push(inlineText(decision.question), "");
+      lines.push(`**${decision.id}. ${inlineText(decision.title)}**`, "");
+      lines.push(inlineText(decision.question), "");
       for (const option of decision.options) {
         const tags = [
           option.key === decision.recommendation ? "recommended" : "",
           option.key === decision.answer?.option ? `chosen by ${decision.answer.by}` : ""
         ].filter(Boolean);
         const suffix = tags.length > 0 ? ` _(${tags.join(", ")})_` : "";
-        lines2.push(`- **${option.key})** ${inlineText(option.label)}${suffix}`);
+        lines.push(`- **${option.key})** ${inlineText(option.label)}${suffix}`);
       }
       if (decision.answer?.text !== void 0) {
-        lines2.push("", `Answered by ${decision.answer.by}: ${inlineText(decision.answer.text)}`);
+        lines.push("", `Answered by ${decision.answer.by}: ${inlineText(decision.answer.text)}`);
       }
-      lines2.push("");
+      lines.push("");
     }
     if (view.state === "awaiting-decision" && pendingDecisions(record).length > 0) {
-      lines2.push(
+      lines.push(
         "Answer with `/codeman decide 1 a` (several at once: `/codeman decide 1 a 2 b`), or accept every recommendation with `/codeman approve`. To answer in your own words, use `/codeman answer 1 <text>`; to have the plan revised, use `/codeman replan <what to change>`. Only people with write access to the repository can answer.",
         ""
       );
     }
   }
-  if (view.report) lines2.push("#### Last run", "", inlineText(view.report), "");
+  if (view.report) lines.push("#### Last run", "", inertLines(view.report), "");
   if (view.errors && view.errors.length > 0) {
-    lines2.push("#### Problems", "");
-    for (const error2 of view.errors) lines2.push(`- ${inlineText(error2)}`);
-    lines2.push("");
+    lines.push("#### Problems", "");
+    for (const error2 of view.errors) lines.push(`- ${inlineText(error2)}`);
+    lines.push("");
   }
-  lines2.push(
+  lines.push(
     `<sub>Model: \`${view.model.replace(/`/g, "")}\` (change it with \`/codeman set model <id>\`) \xB7 [Last run](${view.runUrl})</sub>`
   );
-  return lines2.join("\n");
+  return lines.join("\n");
 }
 
 // src/settings.ts

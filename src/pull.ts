@@ -1,4 +1,4 @@
-import { inlineText } from "./text.ts";
+import { inertLines, inlineText } from "./text.ts";
 
 export interface PullRequestView {
   issue: number;
@@ -31,7 +31,7 @@ export function pullRequestBody(view: PullRequestView): string {
     "",
     "### Changes",
     "",
-    lines(view.summary),
+    inertLines(view.summary),
     "",
     "### Suggested squash commit message",
     "",
@@ -41,12 +41,4 @@ export function pullRequestBody(view: PullRequestView): string {
     "",
     `<sub>Opened by Codeman · [Last run](${view.runUrl})</sub>`,
   ].join("\n");
-}
-
-/** Inert Markdown that keeps the text's line breaks. */
-function lines(text: string): string {
-  return text
-    .split(/\r?\n/)
-    .map((line) => inlineText(line))
-    .join("\n");
 }

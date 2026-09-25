@@ -1,6 +1,6 @@
 import { encodeStatus, pendingDecisions, type TaskRecord } from "./record.ts";
 import type { State } from "./state.ts";
-import { inlineText } from "./text.ts";
+import { inertLines, inlineText } from "./text.ts";
 
 export interface StatusView {
   state: State | "new";
@@ -66,7 +66,7 @@ export function renderStatus(view: StatusView): string {
     }
   }
 
-  if (view.report) lines.push("#### Last run", "", inlineText(view.report), "");
+  if (view.report) lines.push("#### Last run", "", inertLines(view.report), "");
 
   if (view.errors && view.errors.length > 0) {
     lines.push("#### Problems", "");

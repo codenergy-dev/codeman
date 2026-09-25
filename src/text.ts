@@ -30,3 +30,11 @@ export function inlineText(text: string): string {
     .replace(/[\\`*_{}[\]()<>#+!|~]/g, (char) => `\\${char}`)
     .replace(/@/g, "@\u200b");
 }
+
+/** Like `inlineText`, but keeps the text's line breaks, so lists and paragraphs survive. */
+export function inertLines(text: string): string {
+  return text
+    .split(/\r?\n/)
+    .map((line) => inlineText(line))
+    .join("\n");
+}

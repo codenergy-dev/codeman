@@ -90,3 +90,15 @@ test("shows free-text answers as inert text", () => {
   });
   assert.match(body, /Answered by bob: Use @\u200bops \\<b\\>x\\<\/b\\>/);
 });
+
+test("the agent's report keeps its lines and stays inert", () => {
+  const body = renderStatus({
+    ...view,
+    state: "in-progress",
+    report: "Changes:\n- Added @everyone ![x](http://t)\n- Fixed <b>tests</b>",
+  });
+  assert.match(body, /#### Last run\n\nChanges:\n- Added /);
+  assert.ok(!body.includes("@everyone"));
+  assert.ok(!body.includes("![x]"));
+  assert.ok(!body.includes("<b>"));
+});
