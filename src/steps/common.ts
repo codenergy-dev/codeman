@@ -41,3 +41,7 @@ export function runUrl(): string {
 export function fileUrl(task: TaskContext, path: string): string {
   return `${github.context.serverUrl}/${task.owner}/${task.repo}/blob/${task.branch}/${path}`;
 }
+
+export function pullUrl(task: TaskContext, number: number): string {
+  return `${github.context.serverUrl}/${task.owner}/${task.repo}/pull/${number}`;
+}

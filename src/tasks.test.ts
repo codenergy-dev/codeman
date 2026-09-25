@@ -10,7 +10,7 @@ import {
   findStatus,
   pendingWork,
   replanRequests,
-  taskModel,
+  taskSettings,
   toTask,
 } from "./tasks.ts";
 
@@ -98,7 +98,7 @@ test("unauthorized commands never reach the task", () => {
     comment(3, "/codeman decide 1=b", "codeman[bot]", "Bot"),
   ]);
   assert.deepEqual(commandsAfter(comments, 0), []);
-  assert.equal(taskModel(comments, "default/model"), "default/model");
+  assert.deepEqual(taskSettings(comments), {});
 });
 
 test("lists commands after a comment, in order", () => {
@@ -114,13 +114,13 @@ test("lists commands after a comment, in order", () => {
   );
 });
 
-test("the last valid model command wins", () => {
+test("the last valid setting command wins", () => {
   const comments = authorized([
-    comment(1, "/codeman model a/one"),
-    comment(2, "/codeman model b/two"),
-    comment(3, "/codeman model not-a-model"),
+    comment(1, "/codeman model a/one\n/codeman set task-budget 5"),
+    comment(2, "/codeman set model b/two"),
+    comment(3, "/codeman model not-a-model\n/codeman set max-runs 0"),
   ]);
-  assert.equal(taskModel(comments, "default/model"), "b/two");
+  assert.deepEqual(taskSettings(comments), { model: "b/two", "task-budget": 5 });
 });
 
 test("records answers before planning, oldest task first", () => {
@@ -142,12 +142,34 @@ test("records answers before planning, oldest task first", () => {
   );
   assert.equal(
     chooseTask([
-      { number: 1, state: "ready" },
+      { number: 1, state: "awaiting-decision" },
       { number: 2, state: "blocked" },
       { number: 3, state: "done" },
     ]),
     undefined,
   );
+});
+
+test("implements after planning, work in progress first", () => {
+  assert.deepEqual(
+    chooseTask([
+      { number: 1, state: "ready" },
+      { number: 4, state: "in-progress" },
+      { number: 6, state: "new" },
+    ]),
+    { number: 6, action: "plan" },
+  );
+  assert.deepEqual(
+    chooseTask([
+      { number: 1, state: "ready" },
+      { number: 4, state: "in-progress" },
+    ]),
+    { number: 4, action: "implement" },
+  );
+  assert.deepEqual(chooseTask([{ number: 1, state: "ready" }]), {
+    number: 1,
+    action: "implement",
+  });
 });
 
 test("only the App's own comment counts as the status comment", () => {

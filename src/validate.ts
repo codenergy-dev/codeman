@@ -35,7 +35,7 @@ export function decodeText(content: Buffer): string | undefined {
   }
 }
 
-function isManifest(value: unknown): value is Manifest {
+export function isManifest(value: unknown): value is Manifest {
   if (typeof value !== "object" || value === null) return false;
   const manifest = value as Partial<Manifest>;
   return (

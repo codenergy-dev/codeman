@@ -1,0 +1,17 @@
+# Codeman settings for a target repository. Copy it to .codeman/settings.yml.
+# Only `name: value` lines are accepted. Workflow inputs and `/codeman set` take precedence.
+# Reference: https://github.com/codenergy-dev/codeman/blob/main/docs/architecture.md#settings
+
+# OpenRouter model ID. Required here or as a workflow input.
+model: deepseek/deepseek-v4.1-flash
+
+# Spending limit per task and per calendar month for this repository, in USD.
+task-budget: 2
+monthly-budget: 20
+
+# Consecutive implementation runs before a task is blocked.
+max-runs: 3
+
+# Limits on what one run may change.
+max-files: 300
+max-file-bytes: 1048576

@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
+import { homedir } from "node:os";
 import { createInterface } from "node:readline";
 import * as core from "@actions/core";
 import type { HarnessCommand } from "./harness/harness.ts";
@@ -24,11 +25,16 @@ export function sudo(args: readonly string[], input?: string): string {
   return result.stdout;
 }
 
+/**
+ * Creates the agent's user, and closes the runner's home to other users: it holds the job's
+ * temporary files, the workspace and tool configuration.
+ */
 export function createAgentUser(): void {
   if (spawnSync("id", ["-u", AGENT_USER]).status !== 0) {
     sudo(["useradd", "--create-home", "--shell", "/bin/bash", AGENT_USER]);
   }
   sudo(["chmod", "700", AGENT_HOME]);
+  sudo(["chmod", "o-rwx", homedir()]);
 }
 
 /** Installs an executable that the agent can run but not change. */
@@ -54,36 +60,55 @@ export function killAgentProcesses(): void {
   spawnSync("sudo", ["-n", "pkill", "-KILL", "-u", AGENT_USER]);
 }
 
+/**
+ * The job's PATH, so the agent can use the runner's tools and those set up by earlier steps,
+ * without entries in the runner's home, which the agent cannot read.
+ */
+export function agentPath(jobPath: string, runnerHome: string): string {
+  const entries = [...jobPath.split(":"), ...SAFE_PATH.split(":")].filter(
+    (entry) =>
+      entry.startsWith("/") &&
+      !entry.includes("'") &&
+      entry !== runnerHome &&
+      !entry.startsWith(`${runnerHome}/`),
+  );
+  return [...new Set(entries)].join(":");
+}
+
 /** The agent's whole environment, besides the harness's own variables. */
-export const AGENT_ENV: Record<string, string> = {
-  HOME: AGENT_HOME,
-  USER: AGENT_USER,
-  LOGNAME: AGENT_USER,
-  SHELL: "/bin/bash",
-  PATH: SAFE_PATH,
-  LANG: "C.UTF-8",
-  TMPDIR: "/tmp",
-  XDG_CONFIG_HOME: `${AGENT_HOME}/.config`,
-  XDG_DATA_HOME: `${AGENT_HOME}/.local/share`,
-  XDG_STATE_HOME: `${AGENT_HOME}/.local/state`,
-  XDG_CACHE_HOME: `${AGENT_HOME}/.cache`,
-};
+export function agentEnv(path: string): Record<string, string> {
+  return {
+    HOME: AGENT_HOME,
+    USER: AGENT_USER,
+    LOGNAME: AGENT_USER,
+    SHELL: "/bin/bash",
+    PATH: path,
+    LANG: "C.UTF-8",
+    TMPDIR: "/tmp",
+    XDG_CONFIG_HOME: `${AGENT_HOME}/.config`,
+    XDG_DATA_HOME: `${AGENT_HOME}/.local/share`,
+    XDG_STATE_HOME: `${AGENT_HOME}/.local/state`,
+    XDG_CACHE_HOME: `${AGENT_HOME}/.cache`,
+  };
+}
 
 /**
  * Runs as the agent: drops every exported variable except the harness's (sudo's PAM session
- * adds the runner's /etc/environment, whose paths point into the runner's home), sets
- * AGENT_ENV, enters the directory and runs the command. Arguments: kept names, directory,
- * command. Secrets stay in the environment, never in argv.
+ * adds the runner's /etc/environment, whose paths point into the runner's home), sets `env`,
+ * enters the directory and runs the command. Arguments: kept names, directory, command.
+ * Secrets stay in the environment, never in argv. Values must not contain `'`.
  */
-export const LAUNCHER = `keep=" $1 "; shift
+export function launcher(env: Record<string, string>): string {
+  return `keep=" $1 "; shift
 for name in $(compgen -e); do
   case "$keep" in *" $name "*) ;; *) unset "$name" 2>/dev/null ;; esac
 done
-export ${Object.entries(AGENT_ENV)
-  .map(([name, value]) => `${name}='${value}'`)
-  .join(" ")}
+export ${Object.entries(env)
+    .map(([name, value]) => `${name}='${value}'`)
+    .join(" ")}
 cd "$1" || exit 1; shift
 exec "$@"`;
+}
 
 export async function runAsAgent(
   command: HarnessCommand,
@@ -100,7 +125,7 @@ export async function runAsAgent(
     "--",
     "/bin/bash",
     "-c",
-    LAUNCHER,
+    launcher(agentEnv(agentPath(process.env.PATH ?? "", homedir()))),
     "codeman-agent",
     keep.join(" "),
     cwd,

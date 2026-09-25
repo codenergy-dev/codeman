@@ -29,6 +29,8 @@ export interface TaskRecord {
   decisions: Decision[];
   /** Comments up to this ID have had their commands applied. */
   processedCommentId: number;
+  /** The task's pull request, once opened. */
+  pullRequest?: number | undefined;
 }
 
 export interface CommandSource {

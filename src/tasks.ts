@@ -6,6 +6,7 @@ import {
   isStatusComment,
   type TaskRecord,
 } from "./record.ts";
+import type { PartialSettings, Settings } from "./settings.ts";
 import type { State } from "./state.ts";
 
 /** The subset of a GitHub issue (or pull request) that Codeman reads. */
@@ -106,16 +107,16 @@ export function commandsAfter(comments: readonly TaskComment[], afterId: number)
     );
 }
 
-/** The model for a task: the last valid `/codeman model` command, or the repository default. */
-export function taskModel(comments: readonly TaskComment[], fallback: string): string {
-  let model = fallback;
+/** Settings chosen for one task with `/codeman set` or `/codeman model`: the last one wins. */
+export function taskSettings(comments: readonly TaskComment[]): PartialSettings {
+  const settings: PartialSettings = {};
   for (const { command } of commandsAfter(comments, 0)) {
-    if (command.kind === "model") model = command.model;
+    if (command.kind === "set") Object.assign(settings, { [command.name]: command.value });
   }
-  return model;
+  return settings;
 }
 
-export type Action = "plan" | "record";
+export type Action = "plan" | "record" | "implement";
 
 export interface Candidate {
   number: number;
@@ -141,7 +142,8 @@ export function replanRequests(sources: readonly CommandSource[]): string[] {
 /**
  * Picks the one task this run works on. Recording answers needs no LLM, so it goes first;
  * then the oldest task that needs a plan: a new one, one left in `planning` by an interrupted
- * run, or one whose maintainers asked for a new plan.
+ * run, or one whose maintainers asked for a new plan; then the oldest task to implement, with
+ * work in progress before ready tasks.
  */
 export function chooseTask(
   candidates: readonly Candidate[],
@@ -153,6 +155,10 @@ export function chooseTask(
     (task) => task.state === "new" || task.state === "planning" || task.pending === "replan",
   );
   if (plan) return { number: plan.number, action: "plan" };
+  const implement =
+    sorted.find((task) => task.state === "in-progress" && !task.pending) ??
+    sorted.find((task) => task.state === "ready" && !task.pending);
+  if (implement) return { number: implement.number, action: "implement" };
   return undefined;
 }
 
@@ -170,6 +176,9 @@ export interface TaskContext {
   comments: TaskComment[];
   fromState: State | "new";
   model: string;
+  settings: Settings;
+  /** The repository's `.codemanignore`, read from the default branch; null when it has none. */
+  ignore: string | null;
   defaultBranch: string;
   branch: string;
   branchExists: boolean;

@@ -143,6 +143,31 @@ export class Repository {
     return commit.data.sha;
   }
 
+  /** The open pull request from `branch`, if any. */
+  async findPullRequest(branch: string): Promise<number | undefined> {
+    const { data } = await this.#octokit.rest.pulls.list({
+      ...this.#scope,
+      head: `${this.owner}:${branch}`,
+      state: "open",
+      per_page: 1,
+    });
+    return data[0]?.number;
+  }
+
+  async openPullRequest(options: {
+    head: string;
+    base: string;
+    title: string;
+    body: string;
+  }): Promise<number> {
+    const { data } = await this.#octokit.rest.pulls.create({ ...this.#scope, ...options });
+    return data.number;
+  }
+
+  async updatePullRequest(number: number, options: { title: string; body: string }): Promise<void> {
+    await this.#octokit.rest.pulls.update({ ...this.#scope, pull_number: number, ...options });
+  }
+
   /** Leaves exactly one state label on the issue (none for `new`). */
   async setState(issue: number, labels: readonly string[], state: State | "new"): Promise<void> {
     for (const other of STATES) {

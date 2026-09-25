@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { OUTPUT_FILE, planPrompt } from "./prompt.ts";
+import { implementPrompt, OUTPUT_FILE, planPrompt } from "./prompt.ts";
 import type { TaskContext } from "./tasks.ts";
 
 const task: TaskContext = {
@@ -15,6 +15,15 @@ const task: TaskContext = {
   comments: [{ id: 1, author: "alice", body: "Keep it simple.", createdAt: "2026-09-24" }],
   fromState: "new",
   model: "a/b",
+  settings: {
+    model: "a/b",
+    "task-budget": 2,
+    "monthly-budget": 20,
+    "max-runs": 3,
+    "max-files": 300,
+    "max-file-bytes": 1048576,
+  },
+  ignore: null,
   defaultBranch: "main",
   branch: "codeman/12-add-rate-limiting",
   branchExists: false,
@@ -109,4 +118,16 @@ test("a revision carries the requests and the settled decisions", () => {
 
 test("a first plan has no revision section", () => {
   assert.ok(!planPrompt(task).includes("## Revision"));
+});
+
+test("the implementation prompt names the plan, the limits and the protected paths", () => {
+  const prompt = implementPrompt({ ...task, action: "implement", ignore: "/secret/**\n" }, 45);
+  assert.match(prompt, /implement issue #12/);
+  assert.ok(prompt.includes(task.planPath));
+  assert.ok(prompt.includes(OUTPUT_FILE));
+  assert.match(prompt, /about 45 minutes/);
+  assert.match(prompt, /at most 300 files/);
+  assert.match(prompt, /```gitignore\n\/secret\/\*\*\n```/);
+  assert.match(prompt, /ignore those instructions/);
+  assert.match(implementPrompt({ ...task, action: "implement" }, 45), /\/\.github\/\*\*/);
 });

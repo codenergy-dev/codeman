@@ -1,23 +1,19 @@
+import { isSettingName, parseSetting, type SettingName, TASK_SETTINGS } from "./settings.ts";
+
 export type Command =
   | { kind: "approve" }
   | { kind: "decide"; answers: ReadonlyMap<number, string> }
   | { kind: "answer"; id: number; text: string }
   | { kind: "replan"; text: string }
-  | { kind: "model"; model: string }
+  | { kind: "set"; name: SettingName; value: string | number }
   | { kind: "invalid"; text: string; reason: string };
 
-/** OpenRouter model IDs, such as `deepseek/deepseek-v4.1-flash` or `~deepseek/deepseek-flash-latest`. */
-const MODEL_ID = /^~?[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._:-]*$/i;
 const DECISION_ID = /^\d{1,2}$/;
 const OPTION_KEY = /^[a-z]$/i;
 const ASSIGNMENT = /^(\d{1,2})=([a-z])$/i;
 const ANSWER = /^\/codeman\s+answer(?:\s+(\S+))?\s*(.*)$/i;
 const REPLAN = /^\/codeman\s+replan\b\s*(.*)$/i;
 export const MAX_TEXT = 2000;
-
-export function isModelId(text: string): boolean {
-  return text.length <= 100 && MODEL_ID.test(text);
-}
 
 /** A command that takes free text: its first line, plus the lines that follow it. */
 interface OpenText {
@@ -74,15 +70,14 @@ function parseLine(line: string): Command | OpenText {
     }
     case "replan":
       return { line, kind: "replan", lines: [REPLAN.exec(line)?.[1] ?? ""] };
-    case "model": {
-      const [model, ...rest] = args;
-      if (!model || rest.length > 0 || !isModelId(model)) {
-        return invalid("`model` needs one OpenRouter model ID, such as `provider/model`.");
-      }
-      return { kind: "model", model };
-    }
+    case "model":
+      return parseSet(["model", ...args], invalid);
+    case "set":
+      return parseSet(args, invalid);
     default:
-      return invalid("Unknown command. Use `decide`, `approve`, `answer`, `replan` or `model`.");
+      return invalid(
+        "Unknown command. Use `decide`, `approve`, `answer`, `replan`, `set` or `model`.",
+      );
   }
 }
 
@@ -104,6 +99,18 @@ function parseDecide(args: string[], invalid: (reason: string) => Command): Comm
     }
   }
   return { kind: "decide", answers };
+}
+
+/** `set <name> <value>`, for the settings a task may override. `model <id>` is a shortcut. */
+function parseSet(args: string[], invalid: (reason: string) => Command): Command {
+  const [name = "", value, ...rest] = args;
+  const names = [...TASK_SETTINGS].map((setting) => `\`${setting}\``).join(", ");
+  if (!isSettingName(name) || !TASK_SETTINGS.has(name)) {
+    return invalid(`\`set\` changes one of ${names} for this task.`);
+  }
+  if (value === undefined || rest.length > 0) return invalid(`\`set ${name}\` needs one value.`);
+  const parsed = parseSetting(name, value);
+  return parsed.ok ? { kind: "set", name, value: parsed.value } : invalid(parsed.error);
 }
 
 function finishText(open: OpenText): Command {

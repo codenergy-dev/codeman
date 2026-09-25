@@ -8,8 +8,11 @@ export interface StatusView {
   model: string;
   runUrl: string;
   planUrl?: string | undefined;
+  pullRequestUrl?: string | undefined;
   /** A note from Codeman itself (trusted text). */
   message?: string | undefined;
+  /** The agent's summary of its last run. Rendered as untrusted text. */
+  report?: string | undefined;
   /** Problems with commands or the agent's output. Rendered as untrusted text. */
   errors?: readonly string[] | undefined;
 }
@@ -32,6 +35,9 @@ export function renderStatus(view: StatusView): string {
 
   if (view.message) lines.push(view.message, "");
   if (record && view.planUrl) lines.push(`Plan: [${record.planPath}](${view.planUrl})`, "");
+  if (record?.pullRequest && view.pullRequestUrl) {
+    lines.push(`Pull request: [#${record.pullRequest}](${view.pullRequestUrl})`, "");
+  }
   if (record) lines.push(inlineText(record.summary), "");
 
   if (record && record.decisions.length > 0) {
@@ -60,6 +66,8 @@ export function renderStatus(view: StatusView): string {
     }
   }
 
+  if (view.report) lines.push("#### Last run", "", inlineText(view.report), "");
+
   if (view.errors && view.errors.length > 0) {
     lines.push("#### Problems", "");
     for (const error of view.errors) lines.push(`- ${inlineText(error)}`);
@@ -67,7 +75,7 @@ export function renderStatus(view: StatusView): string {
   }
 
   lines.push(
-    `<sub>Model: \`${view.model.replace(/`/g, "")}\` (change it with \`/codeman model <id>\`) · [Last run](${view.runUrl})</sub>`,
+    `<sub>Model: \`${view.model.replace(/`/g, "")}\` (change it with \`/codeman set model <id>\`) · [Last run](${view.runUrl})</sub>`,
   );
   return lines.join("\n");
 }

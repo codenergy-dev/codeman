@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-09-23T14:18:00-03:00
-updated_at: 2026-09-25T17:30:00-03:00
+updated_at: 2026-09-25T19:30:00-03:00
 commit: null
 ---
 
@@ -65,7 +65,7 @@ Answer these before step 2 starts.
 Answer these before step 3 starts.
 
 14. **What the agent may change.** The apply job commits only what passes a policy. Options: (a) any path except protected ones: `.github/`, `.codeman/`, the harness configuration (`opencode.json`, `opencode.jsonc`, `.opencode/`), and agent instructions (`AGENTS.md`, `CLAUDE.md`, `.claude/`, `.agents/`); only regular files; at most 1 MiB per file and 300 files per run; (b) an allowlist of paths per repository. Recommendation: (a), with an input to protect more paths. Agent instructions are protected because later runs on the same branch would follow the changed version before any human reviewed it; a task that must change them can say so in the pull request.
-   **Answer:** each repository decides, in a `.codemanignore` file at its root with `.gitignore` syntax, including `!` to re-allow a path. Apply drops every change that matches it. When the file is missing, Codeman proposes one with the protected paths of (a). The run summary warns about each of those paths that a repository's file no longer protects. File limits are optional settings in `.codeman/settings.json`, which also holds fallbacks for the model and the budgets (see Settings).
+   **Answer:** each repository decides, in a `.codemanignore` file at its root with `.gitignore` syntax, including `!` to re-allow a path. Apply drops every change that matches it. When the file is missing, Codeman proposes one with the protected paths of (a). The run summary warns about each of those paths that a repository's file no longer protects. File limits are optional settings in `.codeman/settings.yml`, which also holds fallbacks for the model and the budgets (see Settings).
 15. **The project's tools.** The agent needs the repository's toolchain to build and test. Options: (a) the target workflow sets tools up in the agent job before Codeman (for example `actions/setup-node`), and Codeman passes that job's `PATH` to the agent, and nothing else from its environment; (b) the agent installs tools itself, without `sudo`; (c) a container image per repository. Recommendation: (a). It reuses the setup the repository's CI already has, and the template gets a marked place for it.
    **Answer:** do not restrict the agent's tools for now: GitHub's runners already have most of what projects need, and each project has its own needs. The agent gets the job's `PATH`, so it can use the runner's tools and any setup step in the agent job. Protecting secrets and sensitive data is the priority. Revisit tool access in step 5.
 16. **Pull request and CI.** Options: (a) when the agent reports the work as done, open the pull request (not a draft), linked with `Closes #<issue>`, with the plan summary and a suggested squash commit message, and set `codeman:done`; a failing CI is handled like any review feedback (decision 17); (b) open a draft, watch CI in later runs, and mark it ready only when CI passes, retrying fixes automatically. Recommendation: (a) for the MVP. The prompt requires the agent to run the repository's tests and linters before it reports done; automatic CI fixing can come later, with evidence of how often it is needed.
@@ -73,15 +73,17 @@ Answer these before step 3 starts.
 17. **Review feedback.** Options: (a) `/codeman fix <text>` on the pull request (a comment or a review body) sends the task back to `codeman:in-progress`; the agent gets the text and every maintainer review comment since the last run, with file and line, and pushes to the same branch; (b) any review that requests changes does the same automatically. Recommendation: (a). It is explicit, like the decisions protocol, and a review can hold several comments before work starts. `/codeman replan` also works on the pull request.
    **Answer:** (a) and (b): a maintainer review that requests changes also counts as a fix request, because it is the usual GitHub flow.
 18. **Unfinished work.** Decision 6 pushes partial work when time runs out, and the next run continues. Options: (a) at most 3 implementation runs per task (or per `fix` request) before it becomes `codeman:blocked`; the limit is an input; (b) no limit besides the budgets. Recommendation: (a). A task that needs more than three runs is probably too big or stuck, and each run costs up to the task budget.
-   **Answer:** a limit on consecutive runs, default 3, to stop endless retries. After that the task is `codeman:blocked`, and a maintainer can grant another round with `/codeman continue <text>`. The limit is a workflow input with a fallback in `.codeman/settings.json`, and a maintainer can override it for one task with a command, as with the model.
+   **Answer:** a limit on consecutive runs, default 3, to stop endless retries. After that the task is `codeman:blocked`, and a maintainer can grant another round with `/codeman continue <text>`. The limit is a workflow input with a fallback in `.codeman/settings.yml`, and a maintainer can override it for one task with a command, as with the model.
 19. **Chaining runs.** One run handles one task, so after `/codeman approve` the implementation waits for the next trigger (the daily schedule, a comment or a manual run). Options: (a) at the end of a run, if another task can move, `apply` starts the workflow again (`workflow_dispatch`, which needs `actions: write` for that job's `GITHUB_TOKEN`); (b) wait for the next trigger. Recommendation: (a). Approving and seeing the work start is the expected flow, and the budgets and states bound the loop: blocked, done and awaiting tasks never start a run.
    **Answer:** (a).
 
 Answer these before step 3 starts. They follow from the answers to 14, 17 and 18.
 
-20. **`.codemanignore` details.** Options: (a) apply reads `.codemanignore` and `.codeman/settings.json` from the default branch, never from the task branch; the agent can never change `.codemanignore` or `.codeman/`, whatever the file says, since it must not edit its own rules; every other path in the proposed file can be removed, with a warning; when the file is missing, Codeman uses the proposed file and commits it to the task's pull request, so a human reviews it on merge; (b) the same, but every proposed path can be removed. Recommendation: (a). If the agent could edit the rules, or if they were read from its branch, one run could unlock the next. Changes under `.github/workflows/` also stay blocked in step 3 whatever the file says, because apply's token has no `workflows` permission; step 4 revisits this.
-21. **Settings and overrides.** Options: (a) each value comes from, in order: a command on the task, the `workflow_dispatch` input, `.codeman/settings.json`, Codeman's default (budgets US$ 2 and US$ 20, 3 runs; no default model, per decision 10). Settings use the input names: `model`, `task-budget`, `monthly-budget`, `max-runs`, `max-files`, `max-file-bytes`. The template stops writing its own defaults into the inputs, so the settings file takes effect, and the model moves to the settings file. `/codeman set <name> <value>` overrides `model`, `task-budget` or `max-runs` for one task; `/codeman model <id>` stays as a shortcut. The monthly budget covers the whole repository, so a task cannot change it; (b) keep the template defaults and use the settings file only for the file limits. Recommendation: (a).
+20. **`.codemanignore` details.** Options: (a) apply reads `.codemanignore` and `.codeman/settings.yml` from the default branch, never from the task branch; the agent can never change `.codemanignore` or `.codeman/`, whatever the file says, since it must not edit its own rules; every other path in the proposed file can be removed, with a warning; when the file is missing, Codeman uses the proposed file and commits it to the task's pull request, so a human reviews it on merge; (b) the same, but every proposed path can be removed. Recommendation: (a). If the agent could edit the rules, or if they were read from its branch, one run could unlock the next. Changes under `.github/workflows/` also stay blocked in step 3 whatever the file says, because apply's token has no `workflows` permission; step 4 revisits this.
+21. **Settings and overrides.** Options: (a) each value comes from, in order: a command on the task, the `workflow_dispatch` input, `.codeman/settings.yml`, Codeman's default (budgets US$ 2 and US$ 20, 3 runs; no default model, per decision 10). Settings use the input names: `model`, `task-budget`, `monthly-budget`, `max-runs`, `max-files`, `max-file-bytes`. The template stops writing its own defaults into the inputs, so the settings file takes effect, and the model moves to the settings file. `/codeman set <name> <value>` overrides `model`, `task-budget` or `max-runs` for one task; `/codeman model <id>` stays as a shortcut. The monthly budget covers the whole repository, so a task cannot change it; (b) keep the template defaults and use the settings file only for the file limits. Recommendation: (a).
 22. **Trigger for reviews.** A review is not an issue comment, so decision 17 needs a new trigger. Options: (a) the template listens to `pull_request_review` (`submitted`); `select` runs only for reviews that request changes or contain `/codeman`, on pull requests whose branch lives in the same repository and starts with `codeman/`; (b) no new trigger: reviews wait for the schedule or a comment. Recommendation: (a). Reviews on pull requests from forks get no secrets, so the condition keeps those runs from failing.
+
+Answers to 20, 21 and 22: (a), with the settings file in YAML: `.codeman/settings.yml`. It holds flat `name: value` pairs, so Codeman reads it with a small strict parser instead of a YAML dependency. The proposed `.codemanignore` writes directories as `dir/**`, so a repository can re-allow a file inside one with `!`.
 
 ## Design
 
@@ -113,7 +115,7 @@ Each Codeman comment carries a hidden marker (`<!-- codeman:... -->`) linking it
 - A GitHub App (`codeman[bot]`) with the minimum permissions: contents, issues, pull requests, workflows (write).
 - The agent job runs with read-only access. It produces a patch and a list of declared outputs (comments, labels, pull request). A separate job without any LLM validates and applies them.
 - The agent never pushes to the default branch. It works on `codeman/<issue-number>-<slug>` branches.
-- Runner network egress is restricted to GitHub and OpenRouter where possible.
+- The agent's network is not restricted for now (decision 12).
 
 ### On-demand workflows
 
@@ -180,11 +182,12 @@ Each part ends with an end-to-end check on the test repository.
 
 3a. Implementation and pull request
 
-- [ ] Settings: `.codeman/settings.json`, inputs and `/codeman set`, in the order of decision 21.
-- [ ] Implementation prompt and output (`done`, `partial`, `blocked`); the agent updates `docs/` and keeps the plan current.
-- [ ] Agent environment: the job's `PATH`; sandbox test extended to the runner's home, temporary files and Docker socket.
-- [ ] Apply: `.codemanignore` policy and file limits; commit to the task branch; propose `.codemanignore` when missing; warn about removed protected paths.
-- [ ] Open the pull request (`Closes #<issue>`, plan summary, suggested squash message) and set `codeman:done`. The apply token gets `pull-requests: write`.
+- [x] Settings: `.codeman/settings.yml`, inputs and `/codeman set`, in the order of decision 21.
+- [x] Implementation prompt and output (`done`, `partial`, `blocked`); the agent updates `docs/` and keeps the plan current.
+- [x] Agent environment: the job's `PATH`; the runner's home closed to other users; sandbox test extended to the runner's home, temporary files and Docker socket.
+- [x] Apply: `.codemanignore` policy and file limits; commit to the task branch, also when the agent fails or runs out of time; propose `.codemanignore` when missing; warn about removed protected paths.
+- [x] Open the pull request (`Closes #<issue>`, plan summary, suggested squash message) and set `codeman:done`. The apply token gets `pull-requests: write`.
+- [ ] End-to-end check on the test repository: a simple issue reaches an open pull request.
 
 3b. Unfinished work and feedback
 

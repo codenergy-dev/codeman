@@ -10,13 +10,13 @@ inputs:
   app-slug:
     description: "(select) Slug of the GitHub App, used to recognize Codeman's own comments."
   model:
-    description: "(select) Default OpenRouter model ID. Maintainers can override it per task with /codeman model."
+    description: "(select) OpenRouter model ID. Empty uses .codeman/settings.yml. Maintainers can override it per task with /codeman set."
   task-budget:
-    description: "(open-key) Spending limit of each task key, in USD."
-    default: "2"
+    description: "(select, open-key) Spending limit of each task key, in USD. In select, empty uses .codeman/settings.yml or 2."
   monthly-budget:
-    description: "(open-key) Spending limit per repository per calendar month, in USD."
-    default: "20"
+    description: "(select, open-key) Spending limit per repository per calendar month, in USD. In select, empty uses .codeman/settings.yml or 20."
+  max-runs:
+    description: "(select) Consecutive implementation runs before a task is blocked. Empty uses .codeman/settings.yml or 3."
   key-expiry-hours:
     description: "(open-key) Hours until a task key expires."
     default: "24"
@@ -48,13 +48,19 @@ inputs:
     description: "Directory for Codeman's files. Defaults to RUNNER_TEMP/codeman."
 outputs:
   action:
-    description: "(select) What this run does: plan, record or none."
+    description: "(select) What this run does: plan, implement, record or none."
+  needs-agent:
+    description: "(select) Whether this run needs a key and the agent: true or false."
   task:
     description: "(select) Issue number of the selected task."
   model:
     description: "(select) Model for the selected task."
   base-sha:
     description: "(select) Commit the agent starts from."
+  task-budget:
+    description: "(select) Resolved spending limit of the task key, in USD."
+  monthly-budget:
+    description: "(select) Resolved monthly spending limit, in USD."
   status:
     description: "(open-key) opened or over-budget."
   reason:

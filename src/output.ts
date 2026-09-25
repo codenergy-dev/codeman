@@ -1,4 +1,5 @@
 import type { Decision } from "./record.ts";
+import { truncate } from "./text.ts";
 
 /** What the agent reports after planning, in `.codeman/output.json`. */
 export interface PlanOutput {
@@ -15,6 +16,7 @@ const LIMITS = {
   question: 1000,
   label: 300,
   options: 6,
+  commitMessage: 2000,
 };
 
 /** Validates the agent's output strictly: it is produced by an LLM that read untrusted text. */
@@ -40,6 +42,47 @@ export function parsePlanOutput(text: string): Parsed<PlanOutput> {
     decisions.push(decision.value);
   }
   return { ok: true, value: { summary: summary.value, decisions } };
+}
+
+/** What the agent reports after an implementation run, in `.codeman/output.json`. */
+export interface ImplementOutput {
+  status: "done" | "partial" | "blocked";
+  summary: string;
+  /** Message for this run's commit; when done, the suggested squash message too. */
+  commitMessage: string;
+  /** When blocked: what a human must do. */
+  reason?: string;
+}
+
+const STATUSES: ReadonlySet<string> = new Set(["done", "partial", "blocked"]);
+
+export function parseImplementOutput(text: string): Parsed<ImplementOutput> {
+  let data: unknown;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    return { ok: false, error: "output.json is not valid JSON." };
+  }
+  if (!isObject(data)) return { ok: false, error: "output.json must be an object." };
+  if (typeof data.status !== "string" || !STATUSES.has(data.status)) {
+    return { ok: false, error: "status must be done, partial or blocked." };
+  }
+  const summary = string(data.summary, "summary", LIMITS.summary);
+  if (!summary.ok) return summary;
+  const message = string(data.commitMessage, "commitMessage", LIMITS.commitMessage);
+  if (!message.ok) return message;
+  const [subject = "", ...body] = message.value.split(/\r?\n/);
+  const commitMessage = [truncate(subject.trim(), 72), ...body].join("\n").trim();
+
+  const status = data.status as ImplementOutput["status"];
+  if (status !== "blocked")
+    return { ok: true, value: { status, summary: summary.value, commitMessage } };
+  const reason = string(data.reason, "reason", LIMITS.summary);
+  if (!reason.ok) return reason;
+  return {
+    ok: true,
+    value: { status, summary: summary.value, commitMessage, reason: reason.value },
+  };
 }
 
 function parseDecision(item: unknown, id: number): Parsed<Decision> {

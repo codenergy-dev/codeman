@@ -1,8 +1,16 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import * as core from "@actions/core";
-import { isModelId } from "../commands.ts";
+import { IGNORE_FILE, unprotected } from "../policy.ts";
 import { applyCommands } from "../record.ts";
+import {
+  isSettingName,
+  type PartialSettings,
+  parseSetting,
+  parseSettings,
+  resolveSettings,
+  SETTINGS_FILE,
+} from "../settings.ts";
 import { stateOf } from "../state.ts";
 import { renderStatus } from "../status.ts";
 import {
@@ -18,7 +26,7 @@ import {
   pendingWork,
   replanRequests,
   type TaskContext,
-  taskModel,
+  taskSettings,
   toTask,
 } from "../tasks.ts";
 import { oneLine, slugify } from "../text.ts";
@@ -31,8 +39,15 @@ import { repository, runUrl, taskFile } from "./common.ts";
 export async function select(): Promise<void> {
   const repo = repository();
   const bot = `${core.getInput("app-slug", { required: true })}[bot]`;
-  const defaultModel = core.getInput("model", { required: true });
-  if (!isModelId(defaultModel)) throw new Error(`"${defaultModel}" is not an OpenRouter model ID.`);
+  const inputs = inputSettings();
+  // Rules and settings come from the default branch, where the agent cannot change them.
+  const defaultBranch = await repo.defaultBranch();
+  const settingsText = await repo.readFile(defaultBranch, SETTINGS_FILE);
+  const fileSettings =
+    settingsText === undefined ? { ok: true as const, value: {} } : parseSettings(settingsText);
+  if (!fileSettings.ok) throw new Error(fileSettings.error);
+  const ignore = (await repo.readFile(defaultBranch, IGNORE_FILE)) ?? null;
+  await warnUnprotected(ignore);
 
   const tasks = (await repo.listOptedIn()).map(toTask).filter((task) => task.kind === "issue");
   core.info(`Found ${tasks.length} open issue(s) labeled "codeman".`);
@@ -100,11 +115,12 @@ export async function select(): Promise<void> {
 
   const slug = slugify(task.title);
   const branch = record?.branch ?? `codeman/${task.number}-${slug}`;
-  const defaultBranch = await repo.defaultBranch();
   const branchSha = await repo.branchSha(branch);
   const baseSha = branchSha ?? (await repo.branchSha(defaultBranch));
   if (!baseSha) throw new Error(`Branch ${defaultBranch} not found.`);
-  const model = taskModel(maintainerComments, defaultModel);
+  const settings = resolveSettings(taskSettings(maintainerComments), inputs, fileSettings.value);
+  if (!settings.ok) throw new Error(settings.error);
+  const model = settings.value.model;
 
   const context: TaskContext = {
     version: 1,
@@ -118,6 +134,8 @@ export async function select(): Promise<void> {
     comments: maintainerComments,
     fromState: fromState.state,
     model,
+    settings: settings.value,
+    ignore,
     defaultBranch,
     branch,
     branchExists: branchSha !== undefined,
@@ -130,20 +148,23 @@ export async function select(): Promise<void> {
     runUrl: runUrl(),
   };
 
-  if (choice.action === "plan") {
-    await repo.setState(task.number, task.labels, "planning");
+  if (choice.action !== "record") {
+    const state = choice.action === "plan" ? "planning" : "in-progress";
+    await repo.setState(task.number, task.labels, state);
     context.statusCommentId = await repo.upsertComment(
       task.number,
       context.statusCommentId,
       renderStatus({
-        state: "planning",
+        state,
         record,
         model,
         runUrl: context.runUrl,
         message:
-          replan.length > 0
-            ? "Codeman is revising the plan, as requested."
-            : "Codeman is reading the issue and writing a plan.",
+          choice.action === "implement"
+            ? "Codeman is implementing the plan."
+            : replan.length > 0
+              ? "Codeman is revising the plan, as requested."
+              : "Codeman is reading the issue and writing a plan.",
       }),
     );
   }
@@ -153,5 +174,47 @@ export async function select(): Promise<void> {
   core.setOutput("task", String(task.number));
   core.setOutput("model", model);
   core.setOutput("base-sha", baseSha);
+  core.setOutput("needs-agent", String(choice.action !== "record"));
+  core.setOutput("task-budget", String(settings.value["task-budget"]));
+  core.setOutput("monthly-budget", String(settings.value["monthly-budget"]));
   core.info(`Selected #${task.number} to ${choice.action}, with model ${model}.`);
+}
+
+/** Settings given as workflow inputs. Empty inputs fall back to the settings file. */
+function inputSettings(): PartialSettings {
+  const settings: PartialSettings = {};
+  for (const name of ["model", "task-budget", "monthly-budget", "max-runs"]) {
+    const text = core.getInput(name);
+    if (text === "" || !isSettingName(name)) continue;
+    const parsed = parseSetting(name, text);
+    if (!parsed.ok) throw new Error(`Input ${parsed.error}`);
+    Object.assign(settings, { [name]: parsed.value });
+  }
+  return settings;
+}
+
+/** Warns about each path Codeman proposes to protect that the repository's rules allow. */
+async function warnUnprotected(ignore: string | null): Promise<void> {
+  if (ignore === null) {
+    core.info(
+      `The repository has no ${IGNORE_FILE}; Codeman uses its own and proposes it in the next pull request.`,
+    );
+    return;
+  }
+  const paths = unprotected(ignore);
+  for (const path of paths) {
+    core.warning(
+      `${IGNORE_FILE} lets the agent change ${oneLine(path)}, which Codeman proposes to protect.`,
+    );
+  }
+  if (paths.length > 0) {
+    await core.summary
+      .addHeading("Paths the agent may change", 3)
+      .addRaw(
+        `${IGNORE_FILE} does not protect these paths, which Codeman proposes to protect:`,
+        true,
+      )
+      .addList(paths)
+      .write();
+  }
 }

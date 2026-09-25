@@ -4,7 +4,14 @@ import * as core from "@actions/core";
 import { collectChanges, copyAgentFile, type Manifest } from "../collect.ts";
 import { decrypt } from "../crypto.ts";
 import { harnesses } from "../harness/index.ts";
-import { HARNESS_PROMPT, OUTPUT_DIR, OUTPUT_FILE, planPrompt, TASK_FILE } from "../prompt.ts";
+import {
+  HARNESS_PROMPT,
+  implementPrompt,
+  OUTPUT_DIR,
+  OUTPUT_FILE,
+  planPrompt,
+  TASK_FILE,
+} from "../prompt.ts";
 import {
   AGENT_HOME,
   copyToAgent,
@@ -47,7 +54,8 @@ export async function agent(): Promise<void> {
 
   const worktree = `${AGENT_HOME}/work`;
   copyToAgent(workspace, worktree);
-  writeAsAgent(`${worktree}/${TASK_FILE}`, planPrompt(task));
+  const prompt = task.action === "implement" ? implementPrompt(task, minutes) : planPrompt(task);
+  writeAsAgent(`${worktree}/${TASK_FILE}`, prompt);
 
   core.info(`Running ${harness.name} with ${task.model} for up to ${minutes} minutes.`);
   const run = await runAsAgent(
@@ -81,6 +89,7 @@ export async function agent(): Promise<void> {
 
   core.info(`Changed ${changes.length} file(s):`);
   for (const change of changes) core.info(`  ${change.status} ${oneLine(change.path)}`);
+  // The result is kept either way: apply commits unfinished work so the next run continues.
   if (run.timedOut) core.setFailed(`The agent did not finish within ${minutes} minutes.`);
   else if (run.exitCode !== 0) core.setFailed(`The agent exited with code ${run.exitCode}.`);
 }

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { isModelId, parseCommands } from "./commands.ts";
+import { parseCommands } from "./commands.ts";
+import { isModelId } from "./settings.ts";
 
 test("parses approve", () => {
   assert.deepEqual(parseCommands("/codeman approve"), [{ kind: "approve" }]);
@@ -17,10 +18,18 @@ test("parses decide", () => {
   ]);
 });
 
-test("parses model", () => {
+test("parses set, with model as a shortcut", () => {
   assert.deepEqual(parseCommands("/codeman model deepseek/deepseek-v4.1-flash"), [
-    { kind: "model", model: "deepseek/deepseek-v4.1-flash" },
+    { kind: "set", name: "model", value: "deepseek/deepseek-v4.1-flash" },
   ]);
+  assert.deepEqual(
+    parseCommands("/codeman set model a/b\n/codeman set task-budget 3.5\n/codeman set max-runs 5"),
+    [
+      { kind: "set", name: "model", value: "a/b" },
+      { kind: "set", name: "task-budget", value: 3.5 },
+      { kind: "set", name: "max-runs", value: 5 },
+    ],
+  );
 });
 
 test("reports invalid commands", () => {
@@ -34,8 +43,16 @@ test("reports invalid commands", () => {
     "/codeman model a/b c/d",
     "/codeman model $(rm -rf /)",
     "/codeman merge",
+    "/codeman set",
+    "/codeman set monthly-budget 100",
+    "/codeman set max-files 1000",
+    "/codeman set task-budget -1",
+    "/codeman set task-budget 1e400",
+    "/codeman set max-runs 2.5",
+    "/codeman set max-runs 2 3",
+    "/codeman set model a",
   ].map((line) => parseCommands(line)[0]?.kind);
-  assert.deepEqual(kinds, Array(9).fill("invalid"));
+  assert.deepEqual(kinds, Array(17).fill("invalid"));
 });
 
 test("finds commands among other lines, skipping quotes and code blocks", () => {

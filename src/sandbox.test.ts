@@ -8,7 +8,7 @@ import {
   readFileSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { collectChanges, copyAgentFile } from "./collect.ts";
@@ -39,6 +39,9 @@ test("the agent is contained and its changes are collected safely", {
   git("add", ".");
   git("commit", "-qm", "init");
   process.env.CODEMAN_RUNNER_SECRET = "runner-only-secret";
+  const home = homedir();
+  const runnerTemp = process.env.RUNNER_TEMP ?? `${home}/work/_temp`;
+  process.env.PATH = `${home}/.cargo/bin:/opt/codeman-test/bin:${process.env.PATH ?? ""}`;
 
   createAgentUser();
   const worktree = `${AGENT_HOME}/work`;
@@ -54,6 +57,9 @@ test("the agent is contained and its changes are collected safely", {
     `cat /proc/${process.pid}/environ > environ.txt 2>/dev/null`,
     'echo "$OPENROUTER_API_KEY" > key.txt',
     "env > env.txt",
+    `ls -A '${home}' >/dev/null 2>&1 && echo yes > home.txt`,
+    `ls -A '${runnerTemp}' >/dev/null 2>&1 && echo yes > temp.txt`,
+    "[ -w /var/run/docker.sock ] && echo yes > docker.txt",
     "(sleep 300 >/dev/null 2>&1 &)",
     "exit 0",
   ].join("\n");
@@ -95,6 +101,14 @@ test("the agent is contained and its changes are collected safely", {
   const agentEnv = readFileSync(join(out, "tree", "env.txt"), "utf8");
   assert.ok(!agentEnv.includes("/home/runner"), "no path from the runner's environment");
   assert.match(agentEnv, /^XDG_CONFIG_HOME=\/home\/codeman-agent\/\.config$/m);
+  assert.match(
+    agentEnv,
+    /^PATH=\/opt\/codeman-test\/bin:/m,
+    "the job's PATH, without the runner's home",
+  );
+  assert.ok(!byPath.has("home.txt"), "the agent cannot read the runner's home");
+  assert.ok(!byPath.has("temp.txt"), "the agent cannot read the job's temporary files");
+  assert.ok(!byPath.has("docker.txt"), "the agent cannot use Docker");
 
   assert.equal(
     copyAgentFile(`${worktree}/.codeman/output.json`, join(out, "output.json"), 1024),

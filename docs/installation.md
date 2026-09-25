@@ -50,20 +50,16 @@ openssl rand -base64 32
 
 It encrypts each task key while it travels from the job that creates it to the agent job; see [architecture](architecture.md#budget).
 
-## 4. Add the workflow
+## 4. Add the workflow and settings
 
 1. Copy [`templates/codeman.yml`](../templates/codeman.yml) to `.github/workflows/codeman.yml` in the target repository.
 2. Replace every `COMMIT_SHA` with a full commit SHA of this repository. Pin a SHA, not a branch or tag, so the code that runs cannot change without a review.
-3. Adjust the defaults at the top of the workflow:
+3. If the agent needs tools that the runner image lacks, set them up in the `agent` job, where the template marks the place (for example `actions/setup-node`). Tools installed inside the runner's home, such as Rust through `rustup`, are out of the agent's reach; install them system-wide instead.
+4. Copy [`templates/settings.yml`](../templates/settings.yml) to `.codeman/settings.yml` and choose the model. See [settings](architecture.md#settings) for every value.
+5. Optionally, add a `.codemanignore` with the paths the agent may not change; see [change policy](architecture.md#change-policy). Without one, Codeman uses its own rules and proposes them in its first pull request.
+6. Create a `codeman` label in the target repository.
 
-   | Variable | Default | Meaning |
-   | --- | --- | --- |
-   | `CODEMAN_MODEL` | `deepseek/deepseek-v4.1-flash` | OpenRouter model ID used unless a task sets another with `/codeman model` |
-   | `CODEMAN_TASK_BUDGET` | `2` | Spending limit per task, in USD |
-   | `CODEMAN_MONTHLY_BUDGET` | `20` | Spending limit per calendar month for the repository, in USD |
-
-   Scheduled and comment runs use these defaults. A manual run (**Actions → Codeman → Run workflow**) can override each one.
-4. Create a `codeman` label in the target repository.
+Codeman reads `.codeman/settings.yml` and `.codemanignore` from the default branch. A manual run (**Actions → Codeman → Run workflow**) can override the model and the budgets for that run.
 
 The agent job needs a Linux runner (x64 or arm64).
 
@@ -72,3 +68,4 @@ The agent job needs a Linux runner (x64 or arm64).
 1. Open an issue that leaves something to decide, and label it `codeman`.
 2. Run the workflow manually. Codeman posts a status comment, writes a plan on the branch `codeman/<issue>-<slug>`, and lists its decisions.
 3. Answer in a comment, for example `/codeman decide 1 a` or `/codeman approve`. The comment starts a new run, which records the answers. When none is pending, the issue gets `codeman:ready`.
+4. The next run implements the plan on the task branch. When the agent reports the work as done, Codeman opens a pull request that closes the issue, and the issue gets `codeman:done`. Unfinished work is committed, and the following run continues it.
