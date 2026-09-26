@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-09-23T14:18:00-03:00
-updated_at: 2026-09-25T23:00:00-03:00
+updated_at: 2026-09-26T10:00:00-03:00
 commit: null
 ---
 
@@ -197,7 +197,9 @@ Result (2026-09-25): done. On a private test repository, a `codeman:ready` issue
 - [x] `/codeman fix <text>` and reviews that request changes, with review comments in the prompt; `/codeman replan` on the pull request.
 - [x] `pull_request_review` trigger in the template (decision 22). A review event runs the workflow file of the pull request's branch, which may be older than the default branch's; so the review run has one job, without secrets, that starts the default branch's workflow with `workflow_dispatch` (`actions: write` on its `GITHUB_TOKEN`, as decision 19 already grants for chaining).
 - [x] A request is handled once its run ends, whatever the outcome, so a failing request cannot start run after run; a run stopped by the monthly budget leaves it for later.
-- [ ] End-to-end check on the test repository: a review that requests changes and a `/codeman fix` are applied to the pull request.
+- [x] End-to-end check on the test repository: a review that requests changes and a `/codeman fix` are applied to the pull request.
+
+Result (2026-09-26): done. On a private test repository, a review that requested changes and a `/codeman fix` comment were both applied to the task's pull request. Fix found by the check: `select` needs `pull-requests: read` to list reviews. The first review did not start a run, probably because the pull request's merge ref still held the old workflow; it was handled by a manual run.
 
 3c. Chaining
 
