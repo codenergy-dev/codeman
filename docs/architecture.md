@@ -39,7 +39,7 @@ select ──▶ open-key ──▶ agent ──▶ apply
 
 | Job | Does | Credentials |
 | --- | --- | --- |
-| `select` | Reads the settings and `.codemanignore` from the default branch, picks the task and the action (`plan`, `implement`, `record` or `none`), sets `codeman:planning` or `codeman:in-progress`, and writes the task context (`task.json`) as an artifact. | App token: issues write, contents read |
+| `select` | Reads the settings and `.codemanignore` from the default branch, picks the task and the action (`plan`, `implement`, `record` or `none`), sets `codeman:planning` or `codeman:in-progress`, and writes the task context (`task.json`) as an artifact. | App token: issues write, contents and pull requests read |
 | `open-key` | Checks the monthly budget and creates the task's OpenRouter key. | OpenRouter management key, encryption secret |
 | `agent` | Runs the harness on a copy of the checkout and uploads what it changed as an artifact, even when the agent fails or runs out of time. | Read-only `GITHUB_TOKEN`, the task key |
 | `apply` | Validates the agent's result and writes it: commits, pull request, labels, status comment. When the action is `record`, it applies the maintainers' answers instead. | App token: contents, issues and pull requests write |

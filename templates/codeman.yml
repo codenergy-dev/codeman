@@ -90,6 +90,8 @@ jobs:
           private-key: ${{ secrets.CODEMAN_GITHUB_APP_PRIVATE_KEY }}
           permission-contents: read
           permission-issues: write
+          # Reads reviews on Codeman's pull requests.
+          permission-pull-requests: read
           # Reads commenters' permission on the repository.
           permission-metadata: read
       - uses: codenergy-dev/codeman@COMMIT_SHA
