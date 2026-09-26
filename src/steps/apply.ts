@@ -40,6 +40,7 @@ async function keyFailed(task: TaskContext, repo: Repository): Promise<boolean> 
     // Not the task's fault: go back to where it was, and try again in a later run.
     await finish(repo, task, task.fromState === "planning" ? "new" : task.fromState, {
       message: `${core.getInput("key-reason") || "No key was created."} Codeman will try again in a later run.`,
+      retry: true,
     });
     return true;
   }
@@ -82,7 +83,10 @@ async function applyPlan(task: TaskContext, repo: Repository): Promise<void> {
     summary: output.value.summary,
     decisions: output.value.decisions,
     // Commands posted before this plan existed do not answer its decisions.
-    processedCommentId: Math.max(0, ...task.comments.map((comment) => comment.id)),
+    processedCommentId: task.processed.commentId,
+    processedReviewId: task.processed.reviewId,
+    pullRequest: task.record?.pullRequest,
+    runs: 0,
   };
   const state = record.decisions.length > 0 ? "awaiting-decision" : "ready";
   const ignored = checked.value.ignored.map((path) => `Ignored a change to ${path}.`);
@@ -118,6 +122,20 @@ async function applyImplementation(task: TaskContext, repo: Repository): Promise
     ? parseImplementOutput(readFileSync(outputFile, "utf8").slice(0, MAX_OUTPUT_BYTES))
     : { ok: false as const, error: "The agent did not write output.json." };
 
+  // Runs in a row that did not finish; a `fix` or `continue` request starts a new count.
+  const runs = (task.resume ? 0 : (task.record.runs ?? 0)) + 1;
+  const maxRuns = task.settings["max-runs"];
+  const record: TaskRecord = { ...task.record, runs };
+  const unfinished = (message: string, report?: string): Promise<void> =>
+    runs >= maxRuns
+      ? finish(repo, task, "blocked", {
+          record,
+          message: `${message} The agent has run ${runs} times in a row without finishing the task (\`max-runs\` is ${maxRuns}). Comment \`/codeman continue <guidance>\` to allow ${maxRuns} more runs.`,
+          report,
+          errors: dropped,
+        })
+      : finish(repo, task, "in-progress", { record, message, report, errors: dropped });
+
   const changes = readChanges(join(dir, "tree"), checked.value.accepted, task.settings);
   let head = task.baseSha;
   if (changes.length > 0) {
@@ -132,25 +150,19 @@ async function applyImplementation(task: TaskContext, repo: Repository): Promise
 
   if (!output.ok) {
     if (manifest.timedOut) {
-      return finish(repo, task, "in-progress", {
-        message: "The agent ran out of time. Its work so far is committed; the next run continues.",
-        errors: dropped,
-      });
+      return unfinished("The agent ran out of time. Its work so far is committed.");
     }
     const exit = manifest.exitCode === 0 ? "" : ` The agent exited with code ${manifest.exitCode}.`;
-    return blocked(repo, task, `${output.error}${exit}`, dropped);
+    return blocked(repo, task, `${output.error}${exit}`, dropped, record);
   }
 
   const { status, summary, reason } = output.value;
   if (status === "partial") {
-    return finish(repo, task, "in-progress", {
-      message: "Work so far is committed to the task branch; the next run continues.",
-      report: summary,
-      errors: dropped,
-    });
+    return unfinished("Work so far is committed to the task branch.", summary);
   }
   if (status === "blocked") {
     return finish(repo, task, "blocked", {
+      record,
       message: `The agent needs a maintainer. ${retryHint(task)}`,
       report: summary,
       errors: [`The agent reports: ${reason ?? ""}`, ...dropped],
@@ -188,8 +200,9 @@ async function applyImplementation(task: TaskContext, repo: Repository): Promise
     await repo.updatePullRequest(pullRequest, { title, body });
   }
   await finish(repo, task, "done", {
-    record: { ...task.record, pullRequest },
-    message: "The work is done. Review the pull request.",
+    record: { ...record, pullRequest, runs: 0 },
+    message:
+      "The work is done. Review the pull request. To ask for changes, submit a review that requests them, or comment `/codeman fix <what to change>` on the pull request.",
     report: summary,
     errors: dropped,
   });
@@ -249,11 +262,11 @@ async function recordAnswers(task: TaskContext, repo: Repository): Promise<void>
   });
 }
 
-/** How a maintainer sends a blocked task back to where it was. */
+/** How a maintainer sends a blocked task back to work. */
 function retryHint(task: TaskContext): string {
-  return task.action === "implement"
-    ? "Replace the `codeman:blocked` label with `codeman:in-progress` to try again."
-    : "Remove the `codeman:blocked` label to try again.";
+  if (task.action === "implement") return "Comment `/codeman continue <guidance>` to try again.";
+  if (task.record) return "Comment `/codeman replan <what to change>` to try again.";
+  return "Remove the `codeman:blocked` label to try again.";
 }
 
 function blocked(
@@ -261,9 +274,11 @@ function blocked(
   task: TaskContext,
   error: string,
   more: readonly string[] = [],
+  record?: TaskRecord,
 ): Promise<void> {
   core.error(oneLine(error));
   return finish(repo, task, "blocked", {
+    record,
     message: `Codeman could not use the agent's result. ${retryHint(task)}`,
     errors: [error, ...more],
   });
@@ -273,9 +288,25 @@ async function finish(
   repo: Repository,
   task: TaskContext,
   state: State | "new",
-  view: { record?: TaskRecord; message?: string; report?: string; errors?: string[] },
+  view: {
+    record?: TaskRecord | undefined;
+    message?: string;
+    report?: string | undefined;
+    errors?: string[];
+    /** The run could not start: leave the new requests for the next one. */
+    retry?: boolean;
+  },
 ): Promise<void> {
-  const record = view.record ?? task.record ?? undefined;
+  let record = view.record ?? task.record ?? undefined;
+  if (record && task.action !== "record" && !view.retry) {
+    // Handled, whatever the outcome: a failing request must not start run after run.
+    record = {
+      ...record,
+      processedCommentId: Math.max(record.processedCommentId, task.processed.commentId),
+      processedReviewId: Math.max(record.processedReviewId ?? 0, task.processed.reviewId),
+    };
+  }
+  const errors = [...(task.action === "record" ? [] : task.problems), ...(view.errors ?? [])];
   await repo.setState(task.number, await repo.currentLabels(task.number), state);
   await repo.upsertComment(
     task.number,
@@ -289,7 +320,7 @@ async function finish(
       pullRequestUrl: record?.pullRequest ? pullUrl(task, record.pullRequest) : undefined,
       message: view.message,
       report: view.report,
-      errors: view.errors,
+      errors,
     }),
   );
   core.info(`#${task.number} is now ${state}.`);

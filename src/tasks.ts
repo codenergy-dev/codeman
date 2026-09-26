@@ -56,11 +56,39 @@ export interface TaskComment {
   createdAt: string;
 }
 
+/** The subset of a pull request review that Codeman reads. */
+export interface ReviewLike {
+  id: number;
+  body?: string | null;
+  state: string;
+  user: { login: string; type?: string } | null;
+}
+
+/** The subset of a pull request review comment (on a line of the diff) that Codeman reads. */
+export interface ReviewCommentLike {
+  pull_request_review_id: number | null;
+  path: string;
+  line?: number | null;
+  original_line?: number | null;
+  body: string;
+}
+
+export interface TaskReview {
+  id: number;
+  author: string;
+  /** GitHub's review state, such as `CHANGES_REQUESTED` or `COMMENTED`. */
+  state: string;
+  body: string;
+  comments: { path: string; line: number | null; body: string }[];
+}
+
 /** Repository permissions that make a user a maintainer. `maintain` is reported as `write`. */
 export const MAINTAINER_PERMISSIONS: ReadonlySet<string> = new Set(["admin", "write"]);
 
 /** Human commenters, whose permission on the repository decides whether their comments count. */
-export function commenters(comments: readonly CommentLike[]): string[] {
+export function commenters(
+  comments: readonly { user: { login: string; type?: string } | null }[],
+): string[] {
   return [
     ...new Set(
       comments.flatMap((comment) =>
@@ -93,6 +121,57 @@ export function authorizedComments(
   );
 }
 
+/** Submitted reviews from maintainers, newer than `afterId`, with their line comments. */
+export function authorizedReviews(
+  reviews: readonly ReviewLike[],
+  comments: readonly ReviewCommentLike[],
+  maintainers: ReadonlySet<string>,
+  afterId: number,
+): TaskReview[] {
+  return reviews
+    .filter(
+      (review) =>
+        review.id > afterId &&
+        review.state !== "PENDING" &&
+        review.user &&
+        review.user.type !== "Bot" &&
+        maintainers.has(review.user.login),
+    )
+    .sort((a, b) => a.id - b.id)
+    .map((review) => ({
+      id: review.id,
+      author: review.user?.login ?? "",
+      state: review.state,
+      body: review.body ?? "",
+      comments: comments
+        .filter((comment) => comment.pull_request_review_id === review.id)
+        .map((comment) => ({
+          path: comment.path,
+          line: comment.line ?? comment.original_line ?? null,
+          body: comment.body,
+        })),
+    }));
+}
+
+/**
+ * Commands in review bodies. A review that requests changes without a `fix` command counts as
+ * one, with the review's text.
+ */
+export function reviewCommands(reviews: readonly TaskReview[]): CommandSource[] {
+  return reviews.flatMap((review) => {
+    const commands = parseCommands(review.body);
+    const implicit: Command[] =
+      review.state === "CHANGES_REQUESTED" && !commands.some((command) => command.kind === "fix")
+        ? [{ kind: "fix", text: review.body.trim() }]
+        : [];
+    return [...commands, ...implicit].map((command) => ({
+      commentId: 0,
+      author: review.author,
+      command,
+    }));
+  });
+}
+
 /** Commands from maintainer comments newer than `afterId`, in order. */
 export function commandsAfter(comments: readonly TaskComment[], afterId: number): CommandSource[] {
   return comments
@@ -121,17 +200,57 @@ export type Action = "plan" | "record" | "implement";
 export interface Candidate {
   number: number;
   state: State | "new";
-  /** Work asked for by commands not yet applied (tasks awaiting a decision or ready). */
-  pending?: "record" | "replan" | undefined;
+  /** Work asked for by commands not yet handled. */
+  pending?: Pending | undefined;
+  /** Whether the task has a plan with every decision answered. */
+  planned?: boolean | undefined;
 }
 
-/** States in which maintainers can still answer decisions or ask for a new plan. */
+/**
+ * `record`: apply answers. `replan`: write the plan again. `resume`: go on after a `fix` or
+ * `continue` request, with a fresh run count.
+ */
+export type Pending = "record" | "replan" | "resume";
+
+/** States in which maintainers can still answer decisions. */
 export const DECIDING: ReadonlySet<State | "new"> = new Set(["awaiting-decision", "ready"]);
 
-/** What the commands since the last processed comment ask for: a new plan wins over answers. */
-export function pendingWork(sources: readonly CommandSource[]): Candidate["pending"] {
-  if (sources.some(({ command }) => command.kind === "replan")) return "replan";
-  return sources.length > 0 ? "record" : undefined;
+/** States in which `fix` and `continue` resume the work. */
+export const RESUMABLE: ReadonlySet<State | "new"> = new Set([
+  "ready",
+  "in-progress",
+  "blocked",
+  "done",
+]);
+
+/**
+ * What the commands since the last handled comment and review ask for, in the task's state.
+ * A new plan wins, then resuming, then answers. Anything else waits for its state.
+ */
+export function pendingWork(
+  sources: readonly CommandSource[],
+  state: State | "new",
+): Pending | undefined {
+  const kinds = new Set(sources.map(({ command }) => command.kind));
+  if (kinds.has("replan")) return "replan";
+  if (RESUMABLE.has(state) && (kinds.has("fix") || kinds.has("continue"))) return "resume";
+  if (DECIDING.has(state) && sources.length > 0) return "record";
+  return undefined;
+}
+
+/** Texts of `fix` and `continue` requests, in order. */
+export function resumeRequests(sources: readonly CommandSource[]): Request[] {
+  return sources.flatMap(({ author, command }) =>
+    command.kind === "fix" || command.kind === "continue"
+      ? [{ kind: command.kind, author, text: command.text }]
+      : [],
+  );
+}
+
+export interface Request {
+  kind: "fix" | "continue";
+  author: string;
+  text: string;
 }
 
 /** Texts of the `/codeman replan` commands, in order. */
@@ -142,8 +261,8 @@ export function replanRequests(sources: readonly CommandSource[]): string[] {
 /**
  * Picks the one task this run works on. Recording answers needs no LLM, so it goes first;
  * then the oldest task that needs a plan: a new one, one left in `planning` by an interrupted
- * run, or one whose maintainers asked for a new plan; then the oldest task to implement, with
- * work in progress before ready tasks.
+ * run, or one whose maintainers asked for a new plan; then the oldest task to implement:
+ * resumed or in progress before ready. A resumed task without a finished plan plans again.
  */
 export function chooseTask(
   candidates: readonly Candidate[],
@@ -152,12 +271,19 @@ export function chooseTask(
   const record = sorted.find((task) => task.pending === "record");
   if (record) return { number: record.number, action: "record" };
   const plan = sorted.find(
-    (task) => task.state === "new" || task.state === "planning" || task.pending === "replan",
+    (task) =>
+      task.state === "new" ||
+      task.state === "planning" ||
+      task.pending === "replan" ||
+      (task.pending === "resume" && !task.planned),
   );
   if (plan) return { number: plan.number, action: "plan" };
   const implement =
-    sorted.find((task) => task.state === "in-progress" && !task.pending) ??
-    sorted.find((task) => task.state === "ready" && !task.pending);
+    sorted.find(
+      (task) =>
+        (task.pending === "resume" && task.planned) ||
+        (task.state === "in-progress" && !task.pending),
+    ) ?? sorted.find((task) => task.state === "ready" && !task.pending);
   if (implement) return { number: implement.number, action: "implement" };
   return undefined;
 }
@@ -172,8 +298,18 @@ export interface TaskContext {
   title: string;
   body: string;
   url: string;
-  /** Maintainer comments only. */
+  /** Maintainer comments only, on the issue and on its pull request. */
   comments: TaskComment[];
+  /** Maintainer reviews on the pull request since the last run that handled reviews. */
+  reviews: TaskReview[];
+  /** `fix` and `continue` requests that resume the work, with a fresh run count. */
+  requests: Request[];
+  /** Whether this run resumes the work after a `fix` or `continue` request. */
+  resume: boolean;
+  /** Everything up to these IDs is handled once this run ends, unless it could not start. */
+  processed: { commentId: number; reviewId: number };
+  /** Problems with the new commands, for the status comment. */
+  problems: string[];
   fromState: State | "new";
   model: string;
   settings: Settings;

@@ -20830,6 +20830,7 @@ ${revision}`;
 function implementPrompt(task, minutes) {
   const quote = quoter();
   const rules = task.ignore ?? DEFAULT_IGNORE;
+  const requests = requestsSection(task, quote);
   return `# Codeman task: implement issue #${task.number}
 
 You are Codeman, an agent that implements approved plans on the repository in the current directory. The plan at \`${task.planPath}\` is approved: its decisions are answered in its \`## Answers\` section. The current directory is the task branch \`${task.branch}\`, which may already hold work from earlier runs.
@@ -20852,9 +20853,9 @@ ${rules.trim()}
 
 ## Steps
 
-1. Read the plan, then the issue and the maintainer comments below.
+1. Read the plan, then the issue, the maintainer comments${requests ? " and the requests" : ""} below.
 2. Check what earlier runs did: the plan's progress notes and \`git log\`.
-3. Implement the next steps of the plan. Update \`docs/\` (or wherever the repository keeps its documentation) when behavior changes.
+3. ${requests ? "Address every request and review comment under Requests; then implement the plan's remaining steps, if any." : "Implement the next steps of the plan."} Update \`docs/\` (or wherever the repository keeps its documentation) when behavior changes.
 4. Keep the plan current: mark the steps you finished and add a short progress note for the next run.
 5. Run the repository's tests, linters and build, as its documentation and CI define them, and fix what fails.
 6. Write \`${OUTPUT_FILE}\` in this exact shape:
@@ -20871,6 +20872,30 @@ ${rules.trim()}
    \`status\` is \`done\` when every step of the plan is finished and the checks pass, \`partial\` when work remains for another run, and \`blocked\` when you cannot go on without a maintainer. \`commitMessage\` describes this run's changes; when done, it describes the whole task, as the suggested squash commit message.
 
 ${issueSection(task, quote)}
+${requests}`;
+}
+function requestsSection(task, quote) {
+  if (task.requests.length === 0 && task.reviews.length === 0) return "";
+  const requests = task.requests.map(
+    (request2) => quote(`${request2.kind.toUpperCase()} by ${request2.author}`, request2.text || "(no text)")
+  );
+  const reviews = task.reviews.map((review) => {
+    const comments = review.comments.map(
+      (comment) => quote(
+        `LINE COMMENT on ${comment.path.replace(/\s+/g, " ")}${comment.line ? `:${comment.line}` : ""}`,
+        comment.body
+      )
+    );
+    return [quote(`REVIEW by ${review.author} (${review.state})`, review.body), ...comments].join(
+      "\n\n"
+    );
+  });
+  return `
+## Requests
+
+Maintainers asked for the following since the last run, on the issue or on the pull request. They refine the approved plan: if one needs a decision the plan does not cover, report \`blocked\` and explain what must be decided.
+
+${[...requests, ...reviews].join("\n\n")}
 `;
 }
 
@@ -25095,6 +25120,20 @@ var Repository = class {
       per_page: 100
     });
   }
+  listReviews(pullRequest) {
+    return this.#octokit.paginate(this.#octokit.rest.pulls.listReviews, {
+      ...this.#scope,
+      pull_number: pullRequest,
+      per_page: 100
+    });
+  }
+  listReviewComments(pullRequest) {
+    return this.#octokit.paginate(this.#octokit.rest.pulls.listReviewComments, {
+      ...this.#scope,
+      pull_number: pullRequest,
+      per_page: 100
+    });
+  }
   /** The user's legacy permission on the repository: admin, write, read or none. */
   async permission(username) {
     try {
@@ -25726,7 +25765,7 @@ var DECISION_ID = /^\d{1,2}$/;
 var OPTION_KEY = /^[a-z]$/i;
 var ASSIGNMENT = /^(\d{1,2})=([a-z])$/i;
 var ANSWER = /^\/codeman\s+answer(?:\s+(\S+))?\s*(.*)$/i;
-var REPLAN = /^\/codeman\s+replan\b\s*(.*)$/i;
+var OPEN_TEXT = /^\/codeman\s+\S+\s*(.*)$/i;
 var MAX_TEXT = 2e3;
 function parseCommands(body) {
   const commands = [];
@@ -25767,14 +25806,20 @@ function parseLine(line) {
       return { line, kind: "answer", id: Number(id), lines: [first] };
     }
     case "replan":
-      return { line, kind: "replan", lines: [REPLAN.exec(line)?.[1] ?? ""] };
+    case "fix":
+    case "continue":
+      return {
+        line,
+        kind: name.toLowerCase(),
+        lines: [OPEN_TEXT.exec(line)?.[1] ?? ""]
+      };
     case "model":
       return parseSet(["model", ...args], invalid);
     case "set":
       return parseSet(args, invalid);
     default:
       return invalid(
-        "Unknown command. Use `decide`, `approve`, `answer`, `replan`, `set` or `model`."
+        "Unknown command. Use `decide`, `approve`, `answer`, `replan`, `fix`, `continue`, `set` or `model`."
       );
   }
 }
@@ -25810,7 +25855,7 @@ function finishText(open2) {
   const text = open2.lines.join("\n").trim();
   const invalid = (reason) => ({ kind: "invalid", text: open2.line, reason });
   if (text.length > MAX_TEXT) return invalid(`The text must have at most ${MAX_TEXT} characters.`);
-  if (open2.kind === "replan") return { kind: "replan", text };
+  if (open2.kind !== "answer") return { kind: open2.kind, text };
   if (text === "") return invalid("`answer` needs text after the decision number.");
   return { kind: "answer", id: open2.id ?? 0, text };
 }
@@ -25848,6 +25893,32 @@ function authorizedComments(comments, maintainers) {
     ] : []
   );
 }
+function authorizedReviews(reviews, comments, maintainers, afterId) {
+  return reviews.filter(
+    (review) => review.id > afterId && review.state !== "PENDING" && review.user && review.user.type !== "Bot" && maintainers.has(review.user.login)
+  ).sort((a, b) => a.id - b.id).map((review) => ({
+    id: review.id,
+    author: review.user?.login ?? "",
+    state: review.state,
+    body: review.body ?? "",
+    comments: comments.filter((comment) => comment.pull_request_review_id === review.id).map((comment) => ({
+      path: comment.path,
+      line: comment.line ?? comment.original_line ?? null,
+      body: comment.body
+    }))
+  }));
+}
+function reviewCommands(reviews) {
+  return reviews.flatMap((review) => {
+    const commands = parseCommands(review.body);
+    const implicit = review.state === "CHANGES_REQUESTED" && !commands.some((command) => command.kind === "fix") ? [{ kind: "fix", text: review.body.trim() }] : [];
+    return [...commands, ...implicit].map((command) => ({
+      commentId: 0,
+      author: review.author,
+      command
+    }));
+  });
+}
 function commandsAfter(comments, afterId) {
   return comments.filter((comment) => comment.id > afterId).sort((a, b) => a.id - b.id).flatMap(
     (comment) => parseCommands(comment.body).map((command) => ({
@@ -25865,9 +25936,23 @@ function taskSettings(comments) {
   return settings;
 }
 var DECIDING = /* @__PURE__ */ new Set(["awaiting-decision", "ready"]);
-function pendingWork(sources) {
-  if (sources.some(({ command }) => command.kind === "replan")) return "replan";
-  return sources.length > 0 ? "record" : void 0;
+var RESUMABLE = /* @__PURE__ */ new Set([
+  "ready",
+  "in-progress",
+  "blocked",
+  "done"
+]);
+function pendingWork(sources, state) {
+  const kinds = new Set(sources.map(({ command }) => command.kind));
+  if (kinds.has("replan")) return "replan";
+  if (RESUMABLE.has(state) && (kinds.has("fix") || kinds.has("continue"))) return "resume";
+  if (DECIDING.has(state) && sources.length > 0) return "record";
+  return void 0;
+}
+function resumeRequests(sources) {
+  return sources.flatMap(
+    ({ author, command }) => command.kind === "fix" || command.kind === "continue" ? [{ kind: command.kind, author, text: command.text }] : []
+  );
 }
 function replanRequests(sources) {
   return sources.flatMap(({ command }) => command.kind === "replan" ? [command.text] : []);
@@ -25877,10 +25962,12 @@ function chooseTask(candidates) {
   const record = sorted.find((task) => task.pending === "record");
   if (record) return { number: record.number, action: "record" };
   const plan = sorted.find(
-    (task) => task.state === "new" || task.state === "planning" || task.pending === "replan"
+    (task) => task.state === "new" || task.state === "planning" || task.pending === "replan" || task.pending === "resume" && !task.planned
   );
   if (plan) return { number: plan.number, action: "plan" };
-  const implement = sorted.find((task) => task.state === "in-progress" && !task.pending) ?? sorted.find((task) => task.state === "ready" && !task.pending);
+  const implement = sorted.find(
+    (task) => task.pending === "resume" && task.planned || task.state === "in-progress" && !task.pending
+  ) ?? sorted.find((task) => task.state === "ready" && !task.pending);
   if (implement) return { number: implement.number, action: "implement" };
   return void 0;
 }
@@ -25909,7 +25996,8 @@ async function keyFailed(task, repo) {
   }
   if (getInput("key-status") !== "opened") {
     await finish(repo, task, task.fromState === "planning" ? "new" : task.fromState, {
-      message: `${getInput("key-reason") || "No key was created."} Codeman will try again in a later run.`
+      message: `${getInput("key-reason") || "No key was created."} Codeman will try again in a later run.`,
+      retry: true
     });
     return true;
   }
@@ -25946,7 +26034,10 @@ async function applyPlan(task, repo) {
     summary: output.value.summary,
     decisions: output.value.decisions,
     // Commands posted before this plan existed do not answer its decisions.
-    processedCommentId: Math.max(0, ...task.comments.map((comment) => comment.id))
+    processedCommentId: task.processed.commentId,
+    processedReviewId: task.processed.reviewId,
+    pullRequest: task.record?.pullRequest,
+    runs: 0
   };
   const state = record.decisions.length > 0 ? "awaiting-decision" : "ready";
   const ignored = checked.value.ignored.map((path) => `Ignored a change to ${path}.`);
@@ -25973,6 +26064,15 @@ async function applyImplementation(task, repo) {
   );
   const outputFile = join6(dir, "output.json");
   const output = existsSync3(outputFile) ? parseImplementOutput(readFileSync3(outputFile, "utf8").slice(0, MAX_OUTPUT_BYTES)) : { ok: false, error: "The agent did not write output.json." };
+  const runs = (task.resume ? 0 : task.record.runs ?? 0) + 1;
+  const maxRuns = task.settings["max-runs"];
+  const record = { ...task.record, runs };
+  const unfinished = (message, report) => runs >= maxRuns ? finish(repo, task, "blocked", {
+    record,
+    message: `${message} The agent has run ${runs} times in a row without finishing the task (\`max-runs\` is ${maxRuns}). Comment \`/codeman continue <guidance>\` to allow ${maxRuns} more runs.`,
+    report,
+    errors: dropped
+  }) : finish(repo, task, "in-progress", { record, message, report, errors: dropped });
   const changes = readChanges(join6(dir, "tree"), checked.value.accepted, task.settings);
   let head = task.baseSha;
   if (changes.length > 0) {
@@ -25986,24 +26086,18 @@ async function applyImplementation(task, repo) {
   }
   if (!output.ok) {
     if (manifest.timedOut) {
-      return finish(repo, task, "in-progress", {
-        message: "The agent ran out of time. Its work so far is committed; the next run continues.",
-        errors: dropped
-      });
+      return unfinished("The agent ran out of time. Its work so far is committed.");
     }
     const exit = manifest.exitCode === 0 ? "" : ` The agent exited with code ${manifest.exitCode}.`;
-    return blocked(repo, task, `${output.error}${exit}`, dropped);
+    return blocked(repo, task, `${output.error}${exit}`, dropped, record);
   }
   const { status: status2, summary: summary2, reason } = output.value;
   if (status2 === "partial") {
-    return finish(repo, task, "in-progress", {
-      message: "Work so far is committed to the task branch; the next run continues.",
-      report: summary2,
-      errors: dropped
-    });
+    return unfinished("Work so far is committed to the task branch.", summary2);
   }
   if (status2 === "blocked") {
     return finish(repo, task, "blocked", {
+      record,
       message: `The agent needs a maintainer. ${retryHint(task)}`,
       report: summary2,
       errors: [`The agent reports: ${reason ?? ""}`, ...dropped]
@@ -26042,8 +26136,8 @@ The paths Codeman's agent may not change. Review them before merging.`
     await repo.updatePullRequest(pullRequest, { title, body });
   }
   await finish(repo, task, "done", {
-    record: { ...task.record, pullRequest },
-    message: "The work is done. Review the pull request.",
+    record: { ...record, pullRequest, runs: 0 },
+    message: "The work is done. Review the pull request. To ask for changes, submit a review that requests them, or comment `/codeman fix <what to change>` on the pull request.",
     report: summary2,
     errors: dropped
   });
@@ -26091,17 +26185,28 @@ async function recordAnswers(task, repo) {
   });
 }
 function retryHint(task) {
-  return task.action === "implement" ? "Replace the `codeman:blocked` label with `codeman:in-progress` to try again." : "Remove the `codeman:blocked` label to try again.";
+  if (task.action === "implement") return "Comment `/codeman continue <guidance>` to try again.";
+  if (task.record) return "Comment `/codeman replan <what to change>` to try again.";
+  return "Remove the `codeman:blocked` label to try again.";
 }
-function blocked(repo, task, error2, more = []) {
+function blocked(repo, task, error2, more = [], record) {
   error(oneLine(error2));
   return finish(repo, task, "blocked", {
+    record,
     message: `Codeman could not use the agent's result. ${retryHint(task)}`,
     errors: [error2, ...more]
   });
 }
 async function finish(repo, task, state, view) {
-  const record = view.record ?? task.record ?? void 0;
+  let record = view.record ?? task.record ?? void 0;
+  if (record && task.action !== "record" && !view.retry) {
+    record = {
+      ...record,
+      processedCommentId: Math.max(record.processedCommentId, task.processed.commentId),
+      processedReviewId: Math.max(record.processedReviewId ?? 0, task.processed.reviewId)
+    };
+  }
+  const errors = [...task.action === "record" ? [] : task.problems, ...view.errors ?? []];
   await repo.setState(task.number, await repo.currentLabels(task.number), state);
   await repo.upsertComment(
     task.number,
@@ -26115,7 +26220,7 @@ async function finish(repo, task, state, view) {
       pullRequestUrl: record?.pullRequest ? pullUrl(task, record.pullRequest) : void 0,
       message: view.message,
       report: view.report,
-      errors: view.errors
+      errors
     })
   );
   info(`#${task.number} is now ${state}.`);
@@ -26237,16 +26342,42 @@ async function select() {
   const tasks = (await repo.listOptedIn()).map(toTask).filter((task2) => task2.kind === "issue");
   info(`Found ${tasks.length} open issue(s) labeled "codeman".`);
   const permissions = /* @__PURE__ */ new Map();
-  const maintainersAmong = async (all2) => {
-    const logins = commenters(all2);
+  const maintainersAmong = async (logins) => {
     for (const login of logins) {
       if (!permissions.has(login)) permissions.set(login, repo.permission(login));
     }
     const levels = await Promise.all(logins.map((login) => permissions.get(login)));
     return new Set(logins.filter((_, index) => MAINTAINER_PERMISSIONS.has(levels[index] ?? "")));
   };
+  const conversations = /* @__PURE__ */ new Map();
+  const conversation = (number) => {
+    let loaded = conversations.get(number);
+    if (!loaded) {
+      loaded = (async () => {
+        const comments = await repo.listComments(number);
+        const status2 = findStatus(comments, bot);
+        const pullRequest = status2?.record?.pullRequest;
+        const reviews2 = pullRequest ? await repo.listReviews(pullRequest) : [];
+        if (pullRequest) comments.push(...await repo.listComments(pullRequest));
+        const maintainers = await maintainersAmong(commenters([...comments, ...reviews2]));
+        return { comments, reviews: reviews2, status: status2, maintainers };
+      })();
+      conversations.set(number, loaded);
+    }
+    return loaded;
+  };
+  const newCommands = (talk2, reviews2) => {
+    const record2 = talk2.status?.record;
+    if (!record2) return [];
+    return [
+      ...commandsAfter(
+        authorizedComments(talk2.comments, talk2.maintainers),
+        record2.processedCommentId
+      ),
+      ...reviewCommands(reviews2)
+    ];
+  };
   const candidates = [];
-  const comments = /* @__PURE__ */ new Map();
   for (const task2 of tasks) {
     const line = `#${task2.number} ${oneLine(task2.title)}`;
     const result = stateOf(task2.labels);
@@ -26254,20 +26385,23 @@ async function select() {
       warning(`${line}: ${result.error}`);
       continue;
     }
-    let pending;
-    if (DECIDING.has(result.state)) {
-      const all2 = await repo.listComments(task2.number);
-      comments.set(task2.number, all2);
-      const record2 = findStatus(all2, bot)?.record;
+    const candidate = { number: task2.number, state: result.state };
+    if (result.state !== "new" && result.state !== "planning") {
+      const talk2 = await conversation(task2.number);
+      const record2 = talk2.status?.record;
       if (record2) {
-        const maintainers = await maintainersAmong(all2);
-        pending = pendingWork(
-          commandsAfter(authorizedComments(all2, maintainers), record2.processedCommentId)
+        const reviews2 = authorizedReviews(
+          talk2.reviews,
+          [],
+          talk2.maintainers,
+          record2.processedReviewId ?? 0
         );
+        candidate.pending = pendingWork(newCommands(talk2, reviews2), result.state);
+        candidate.planned = pendingDecisions(record2).length === 0;
       }
     }
-    candidates.push({ number: task2.number, state: result.state, pending });
-    info(`${line} [${result.state}]`);
+    candidates.push(candidate);
+    info(`${line} [${result.state}]${candidate.pending ? ` (${candidate.pending})` : ""}`);
   }
   const choice = chooseTask(candidates);
   setOutput("action", choice?.action ?? "none");
@@ -26277,13 +26411,27 @@ async function select() {
   }
   const task = tasks.find((candidate) => candidate.number === choice.number);
   if (!task) throw new Error(`Task #${choice.number} disappeared.`);
-  const all = comments.get(task.number) ?? await repo.listComments(task.number);
-  const status2 = findStatus(all, bot);
-  const maintainerComments = authorizedComments(all, await maintainersAmong(all));
-  const sources = choice.action === "plan" && status2?.record ? commandsAfter(maintainerComments, status2.record.processedCommentId) : [];
-  const record = status2?.record;
-  const replan = replanRequests(sources);
-  const settled = record ? applyCommands(record, sources).record.decisions.filter((decision) => decision.answer) : [];
+  const pending = candidates.find((candidate) => candidate.number === task.number)?.pending;
+  const talk = await conversation(task.number);
+  const record = talk.status?.record;
+  const maintainerComments = authorizedComments(talk.comments, talk.maintainers).sort(
+    (a, b) => a.id - b.id
+  );
+  const reviewComments = record?.pullRequest ? await repo.listReviewComments(record.pullRequest) : [];
+  const reviews = authorizedReviews(
+    talk.reviews,
+    reviewComments,
+    talk.maintainers,
+    record?.processedReviewId ?? 0
+  );
+  const sources = newCommands(talk, reviews);
+  const replan = choice.action === "plan" ? replanRequests(sources) : [];
+  const settled = choice.action === "plan" && record ? applyCommands(record, sources).record.decisions.filter((decision) => decision.answer) : [];
+  const resume = pending === "resume";
+  const requests = choice.action === "implement" ? resumeRequests(sources) : [];
+  const problems = sources.flatMap(
+    ({ command }) => command.kind === "invalid" ? [`${command.text}: ${command.reason}`] : []
+  );
   const fromState = stateOf(task.labels);
   if (!fromState.ok) throw new Error(fromState.error);
   const slug = slugify(task.title);
@@ -26304,6 +26452,17 @@ async function select() {
     body: task.body,
     url: task.url,
     comments: maintainerComments,
+    reviews,
+    requests,
+    resume,
+    processed: {
+      commentId: Math.max(
+        record?.processedCommentId ?? 0,
+        ...maintainerComments.map((comment) => comment.id)
+      ),
+      reviewId: Math.max(record?.processedReviewId ?? 0, ...reviews.map((review) => review.id))
+    },
+    problems,
     fromState: fromState.state,
     model,
     settings: settings.value,
@@ -26316,7 +26475,7 @@ async function select() {
     record: record ?? null,
     replan,
     settled,
-    statusCommentId: status2?.id ?? null,
+    statusCommentId: talk.status?.id ?? null,
     runUrl: runUrl()
   };
   if (choice.action !== "record") {
@@ -26330,7 +26489,7 @@ async function select() {
         record,
         model,
         runUrl: context3.runUrl,
-        message: choice.action === "implement" ? "Codeman is implementing the plan." : replan.length > 0 ? "Codeman is revising the plan, as requested." : "Codeman is reading the issue and writing a plan."
+        message: startMessage(context3)
       })
     );
   }
@@ -26343,6 +26502,15 @@ async function select() {
   setOutput("task-budget", String(settings.value["task-budget"]));
   setOutput("monthly-budget", String(settings.value["monthly-budget"]));
   info(`Selected #${task.number} to ${choice.action}, with model ${model}.`);
+}
+function startMessage(task) {
+  if (task.action === "implement") {
+    if (task.requests.some((request2) => request2.kind === "fix") || task.reviews.length > 0) {
+      return "Codeman is working on the requested changes.";
+    }
+    return task.resume ? "Codeman is continuing the work, as requested." : "Codeman is implementing the plan.";
+  }
+  return task.replan.length > 0 ? "Codeman is revising the plan, as requested." : "Codeman is reading the issue and writing a plan.";
 }
 function inputSettings() {
   const settings = {};

@@ -15,7 +15,7 @@ Each task has at most one state label. A task without one has not started yet (`
 | `codeman:ready` | All decisions answered; next run implements. |
 | `codeman:in-progress` | Agent is implementing. |
 | `codeman:awaiting-workflow` | Waiting for an on-demand workflow to finish. |
-| `codeman:blocked` | Needs human attention; the status comment says why and how to retry. |
+| `codeman:blocked` | Needs human attention; the status comment says why and how to go on (usually `/codeman continue`). |
 | `codeman:done` | Pull request opened. |
 
 A task with more than one state label is invalid: Codeman reports a warning and leaves it alone.
@@ -23,9 +23,10 @@ A task with more than one state label is invalid: Codeman reports a warning and 
 ## Runs
 
 - Triggers: a daily schedule, `workflow_dispatch`, and `issue_comment` when the comment contains `/codeman` and its author is not a bot. Anyone can start a run this way, but `select` ignores comments from non-maintainers, so the run finds nothing new to do.
+- Reviews also trigger a run: `pull_request_review`, on a pull request from a `codeman/` branch of the same repository, when the review requests changes or mentions `/codeman`. A review event runs the workflow file of the pull request's branch, which may be older than the default branch's, so its only job, `forward-review`, starts the default branch's workflow with `workflow_dispatch`. It holds no secrets; its `GITHUB_TOKEN` has `actions: write` only.
 - Only one run per repository is active (`concurrency`). GitHub keeps at most one queued run and replaces older queued runs.
 - Each run reads the state of every task from GitHub instead of reacting only to the event that started it. A replaced or failed run therefore loses no work; the next run picks it up.
-- Each run works on one task. Recording answers comes first, because it needs no LLM; then the oldest task that needs a plan; then the oldest task to implement, `codeman:in-progress` before `codeman:ready`.
+- Each run works on one task. Recording answers comes first, because it needs no LLM; then the oldest task that needs a plan; then the oldest task to implement: resumed with `fix` or `continue`, or `codeman:in-progress`, before `codeman:ready`.
 
 ## Jobs
 
@@ -80,8 +81,19 @@ If the agent fails, runs out of time or produces an invalid result, the task bec
 3. `apply` filters the changes through the [change policy](#change-policy) and commits the rest to the task branch through the Git Data API. It commits even when the agent failed or ran out of time, so no work is lost.
 4. Then, by status:
    - `done`: Codeman adds its proposed `.codemanignore` if the repository has none, opens a pull request from the task branch (`Closes #<issue>`, the plan's summary, the agent's summary and a suggested squash commit message), and sets `codeman:done`.
-   - `partial`, or out of time: the task stays `codeman:in-progress`, and the next run continues it.
-   - `blocked`, or an invalid result: `codeman:blocked`, with the reason. Replace the label with `codeman:in-progress` to try again.
+   - `partial`, or out of time: the task stays `codeman:in-progress`, and the next run continues it, up to `max-runs` runs in a row. Then it becomes `codeman:blocked`, and a maintainer can grant another round with `/codeman continue <guidance>`.
+   - `blocked`, or an invalid result: `codeman:blocked`, with the reason. `/codeman continue <guidance>` tries again.
+
+### Feedback
+
+After the pull request is open, maintainers ask for changes in either of these ways:
+
+- a review that requests changes; its text is the request;
+- `/codeman fix <what to change>` in a comment on the pull request or the issue, or in a review's text.
+
+The task goes back to `codeman:in-progress` with a new run count. The agent gets the requests and every maintainer review since the last run that handled reviews, with the line comments and their file and line. It pushes to the same branch, and when it reports done again, Codeman updates the pull request's description. `/codeman replan` also works on the pull request.
+
+Codeman records the last comment and review it handled. A request is handled once a run for it ends, whatever the outcome, so a failing request does not start run after run; when the monthly budget stopped the run from starting, the request waits for a later run.
 
 ## Change policy
 
@@ -110,7 +122,7 @@ Each value comes from the first of these that sets it:
 | `model` | none; required | OpenRouter model ID |
 | `task-budget` | `2` | Spending limit of each task key, in USD |
 | `monthly-budget` | `20` | Spending limit per calendar month for the repository, in USD |
-| `max-runs` | `3` | Consecutive implementation runs before a task is blocked (not enforced yet) |
+| `max-runs` | `3` | Implementation runs in a row without finishing before a task is blocked |
 | `max-files` | `300` | Files one run may change |
 | `max-file-bytes` | `1048576` | Size limit of each changed file |
 
@@ -118,7 +130,7 @@ The settings file accepts only `name: value` lines, comments and blank lines; se
 
 ## Commands
 
-Maintainers steer a task with comments while it is `codeman:awaiting-decision` or `codeman:ready`. Each line that starts with `/codeman`, outside a fenced code block, is a command; one comment may hold several.
+Maintainers steer a task with comments on its issue or on its pull request, and with review texts. Each line that starts with `/codeman`, outside a fenced code block, is a command; one comment may hold several. Answers (`decide`, `approve`, `answer`) count while the task is `codeman:awaiting-decision` or `codeman:ready`; `fix` and `continue` once it is ready or later; `replan` and `set` in any state.
 
 | Command | Effect |
 | --- | --- |
@@ -126,6 +138,8 @@ Maintainers steer a task with comments while it is `codeman:awaiting-decision` o
 | `/codeman approve` | Accepts the recommendation for every unanswered decision. |
 | `/codeman answer 2 <text>` | Answers decision 2 in the maintainer's own words instead of an option. The text continues on the following lines, up to the next command. |
 | `/codeman replan <text>` | Sends the task back to planning. The agent revises the plan with the text (which may continue on the following lines), the maintainer comments and the answers given so far; answered decisions are written into the plan as settled, and only open or new decisions are listed. |
+| `/codeman fix <text>` | Asks for changes to the implementation. Also a review that requests changes. See [feedback](#feedback). |
+| `/codeman continue <text>` | Resumes a blocked or unfinished task with a new run count. The text is optional guidance for the agent. |
 | `/codeman set <name> <value>` | Changes `model`, `task-budget` or `max-runs` for this task from now on. The last valid one wins. |
 | `/codeman model <id>` | Short for `/codeman set model <id>`. |
 
@@ -135,7 +149,7 @@ Only comments from maintainers count, both for commands and for the text the age
 
 ## Status comment
 
-Codeman keeps one comment per task up to date: state, plan and pull request links, decisions, answers, the agent's last report, problems and the model. A hidden block in it stores the task record (branch, plan path, decisions, answers, last processed comment, pull request). Codeman reads that block only from comments written by its own GitHub App, because anyone can post a comment containing it.
+Codeman keeps one comment per task up to date: state, plan and pull request links, decisions, answers, the agent's last report, problems and the model. A hidden block in it stores the task record (branch, plan path, decisions, answers, last handled comment and review, pull request, runs in a row). Codeman reads that block only from comments written by its own GitHub App, because anyone can post a comment containing it.
 
 Text written by the agent or by users is rendered as inert Markdown: no HTML, links, images or formatting, and no @mentions. Short fields are collapsed to one line; the agent's report keeps its line breaks, so its lists survive.
 

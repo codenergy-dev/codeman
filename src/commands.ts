@@ -5,6 +5,8 @@ export type Command =
   | { kind: "decide"; answers: ReadonlyMap<number, string> }
   | { kind: "answer"; id: number; text: string }
   | { kind: "replan"; text: string }
+  | { kind: "fix"; text: string }
+  | { kind: "continue"; text: string }
   | { kind: "set"; name: SettingName; value: string | number }
   | { kind: "invalid"; text: string; reason: string };
 
@@ -12,21 +14,21 @@ const DECISION_ID = /^\d{1,2}$/;
 const OPTION_KEY = /^[a-z]$/i;
 const ASSIGNMENT = /^(\d{1,2})=([a-z])$/i;
 const ANSWER = /^\/codeman\s+answer(?:\s+(\S+))?\s*(.*)$/i;
-const REPLAN = /^\/codeman\s+replan\b\s*(.*)$/i;
+const OPEN_TEXT = /^\/codeman\s+\S+\s*(.*)$/i;
 export const MAX_TEXT = 2000;
 
 /** A command that takes free text: its first line, plus the lines that follow it. */
 interface OpenText {
   line: string;
-  kind: "answer" | "replan";
+  kind: "answer" | "replan" | "fix" | "continue";
   id?: number;
   lines: string[];
 }
 
 /**
  * Reads `/codeman` commands from a comment. A command is a line that starts with `/codeman`
- * outside a fenced code block. `answer` and `replan` take free text: the rest of their line
- * and every following line up to the next command.
+ * outside a fenced code block. `answer`, `replan`, `fix` and `continue` take free text: the
+ * rest of their line and every following line up to the next command.
  */
 export function parseCommands(body: string): Command[] {
   const commands: Command[] = [];
@@ -69,14 +71,20 @@ function parseLine(line: string): Command | OpenText {
       return { line, kind: "answer", id: Number(id), lines: [first] };
     }
     case "replan":
-      return { line, kind: "replan", lines: [REPLAN.exec(line)?.[1] ?? ""] };
+    case "fix":
+    case "continue":
+      return {
+        line,
+        kind: name.toLowerCase() as OpenText["kind"],
+        lines: [OPEN_TEXT.exec(line)?.[1] ?? ""],
+      };
     case "model":
       return parseSet(["model", ...args], invalid);
     case "set":
       return parseSet(args, invalid);
     default:
       return invalid(
-        "Unknown command. Use `decide`, `approve`, `answer`, `replan`, `set` or `model`.",
+        "Unknown command. Use `decide`, `approve`, `answer`, `replan`, `fix`, `continue`, `set` or `model`.",
       );
   }
 }
@@ -117,7 +125,7 @@ function finishText(open: OpenText): Command {
   const text = open.lines.join("\n").trim();
   const invalid = (reason: string): Command => ({ kind: "invalid", text: open.line, reason });
   if (text.length > MAX_TEXT) return invalid(`The text must have at most ${MAX_TEXT} characters.`);
-  if (open.kind === "replan") return { kind: "replan", text };
+  if (open.kind !== "answer") return { kind: open.kind, text };
   if (text === "") return invalid("`answer` needs text after the decision number.");
   return { kind: "answer", id: open.id ?? 0, text };
 }

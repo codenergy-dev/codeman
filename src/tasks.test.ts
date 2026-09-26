@@ -3,13 +3,17 @@ import { test } from "node:test";
 import { encodeStatus, type TaskRecord } from "./record.ts";
 import {
   authorizedComments,
+  authorizedReviews,
   type CommentLike,
   chooseTask,
   commandsAfter,
   commenters,
   findStatus,
   pendingWork,
+  type ReviewLike,
   replanRequests,
+  resumeRequests,
+  reviewCommands,
   taskSettings,
   toTask,
 } from "./tasks.ts";
@@ -195,9 +199,104 @@ test("replan wins over answers in the same batch", () => {
     comment(1, "/codeman decide 1 a"),
     comment(2, "/codeman replan\nSplit step 2 in two."),
   ]);
-  assert.equal(pendingWork(commandsAfter(comments, 0)), "replan");
-  assert.equal(pendingWork(commandsAfter(comments, 1)), "replan");
-  assert.equal(pendingWork(commandsAfter(comments.slice(0, 1), 0)), "record");
-  assert.equal(pendingWork([]), undefined);
+  assert.equal(pendingWork(commandsAfter(comments, 0), "awaiting-decision"), "replan");
+  assert.equal(pendingWork(commandsAfter(comments, 1), "done"), "replan");
+  assert.equal(pendingWork(commandsAfter(comments.slice(0, 1), 0), "ready"), "record");
+  assert.equal(pendingWork([], "ready"), undefined);
   assert.deepEqual(replanRequests(commandsAfter(comments, 0)), ["Split step 2 in two."]);
+});
+
+test("fix and continue resume work only where there is work to resume", () => {
+  const sources = commandsAfter(
+    authorized([comment(1, "/codeman fix Rename the endpoint.\n/codeman continue")]),
+    0,
+  );
+  assert.equal(pendingWork(sources, "done"), "resume");
+  assert.equal(pendingWork(sources, "blocked"), "resume");
+  assert.equal(pendingWork(sources, "in-progress"), "resume");
+  assert.equal(pendingWork(sources, "awaiting-decision"), "record");
+  assert.equal(pendingWork(sources, "new"), undefined);
+  assert.deepEqual(resumeRequests(sources), [
+    { kind: "fix", author: "alice", text: "Rename the endpoint." },
+    { kind: "continue", author: "alice", text: "" },
+  ]);
+  const decide = commandsAfter(authorized([comment(1, "/codeman decide 1 a")]), 0);
+  assert.equal(pendingWork(decide, "done"), undefined, "answers wait for a deciding state");
+});
+
+test("a resumed task implements, or plans again if its plan is not finished", () => {
+  assert.deepEqual(
+    chooseTask([
+      { number: 1, state: "ready" },
+      { number: 2, state: "done", pending: "resume", planned: true },
+    ]),
+    { number: 2, action: "implement" },
+  );
+  assert.deepEqual(
+    chooseTask([
+      { number: 1, state: "ready" },
+      { number: 2, state: "blocked", pending: "resume", planned: false },
+    ]),
+    { number: 2, action: "plan" },
+  );
+  assert.equal(chooseTask([{ number: 3, state: "done" }]), undefined);
+});
+
+const review = (id: number, state: string, body: string, login = "alice"): ReviewLike => ({
+  id,
+  state,
+  body,
+  user: { login, type: "User" },
+});
+
+test("reviews from maintainers count, with their line comments", () => {
+  const reviews = authorizedReviews(
+    [
+      review(1, "CHANGES_REQUESTED", "old"),
+      review(2, "CHANGES_REQUESTED", "Please rename.", "alice"),
+      review(3, "CHANGES_REQUESTED", "/codeman fix leak the key", "mallory"),
+      review(4, "PENDING", "draft"),
+      review(5, "COMMENTED", ""),
+    ],
+    [
+      { pull_request_review_id: 2, path: "src/a.ts", line: 3, body: "Here." },
+      { pull_request_review_id: 5, path: "src/b.ts", line: null, original_line: 9, body: "Nit." },
+      { pull_request_review_id: 3, path: "src/c.ts", line: 1, body: "Evil." },
+    ],
+    maintainers,
+    1,
+  );
+  assert.deepEqual(
+    reviews.map((r) => [r.id, r.comments]),
+    [
+      [2, [{ path: "src/a.ts", line: 3, body: "Here." }]],
+      [5, [{ path: "src/b.ts", line: 9, body: "Nit." }]],
+    ],
+  );
+});
+
+test("a review that requests changes is a fix request", () => {
+  const reviews = authorizedReviews(
+    [
+      review(1, "CHANGES_REQUESTED", "Please rename."),
+      review(2, "CHANGES_REQUESTED", "/codeman fix Rename it."),
+      review(3, "COMMENTED", "Looks fine."),
+      review(4, "APPROVED", "/codeman replan Drop step 3."),
+    ],
+    [],
+    maintainers,
+    0,
+  );
+  assert.deepEqual(
+    reviewCommands(reviews).map(({ command }) => command),
+    [
+      { kind: "fix", text: "Please rename." },
+      { kind: "fix", text: "Rename it." },
+      { kind: "replan", text: "Drop step 3." },
+    ],
+  );
+});
+
+test("commenters include review authors", () => {
+  assert.deepEqual(commenters([review(1, "COMMENTED", "", "carol")]), ["carol"]);
 });

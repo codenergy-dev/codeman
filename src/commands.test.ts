@@ -152,3 +152,13 @@ test("replan takes optional text", () => {
     { kind: "replan", text: "Split step 2.\nAnd drop step 4." },
   ]);
 });
+
+test("fix and continue take optional text", () => {
+  assert.deepEqual(parseCommands("/codeman fix Rename the endpoint.\nAlso update docs."), [
+    { kind: "fix", text: "Rename the endpoint.\nAlso update docs." },
+  ]);
+  assert.deepEqual(parseCommands("/codeman continue\n/codeman FIX"), [
+    { kind: "continue", text: "" },
+    { kind: "fix", text: "" },
+  ]);
+});

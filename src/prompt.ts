@@ -119,6 +119,7 @@ ${revision}`;
 export function implementPrompt(task: TaskContext, minutes: number): string {
   const quote = quoter();
   const rules = task.ignore ?? DEFAULT_IGNORE;
+  const requests = requestsSection(task, quote);
   return `# Codeman task: implement issue #${task.number}
 
 You are Codeman, an agent that implements approved plans on the repository in the current directory. The plan at \`${task.planPath}\` is approved: its decisions are answered in its \`## Answers\` section. The current directory is the task branch \`${task.branch}\`, which may already hold work from earlier runs.
@@ -141,9 +142,9 @@ ${rules.trim()}
 
 ## Steps
 
-1. Read the plan, then the issue and the maintainer comments below.
+1. Read the plan, then the issue, the maintainer comments${requests ? " and the requests" : ""} below.
 2. Check what earlier runs did: the plan's progress notes and \`git log\`.
-3. Implement the next steps of the plan. Update \`docs/\` (or wherever the repository keeps its documentation) when behavior changes.
+3. ${requests ? "Address every request and review comment under Requests; then implement the plan's remaining steps, if any." : "Implement the next steps of the plan."} Update \`docs/\` (or wherever the repository keeps its documentation) when behavior changes.
 4. Keep the plan current: mark the steps you finished and add a short progress note for the next run.
 5. Run the repository's tests, linters and build, as its documentation and CI define them, and fix what fails.
 6. Write \`${OUTPUT_FILE}\` in this exact shape:
@@ -160,5 +161,31 @@ ${rules.trim()}
    \`status\` is \`done\` when every step of the plan is finished and the checks pass, \`partial\` when work remains for another run, and \`blocked\` when you cannot go on without a maintainer. \`commitMessage\` describes this run's changes; when done, it describes the whole task, as the suggested squash commit message.
 
 ${issueSection(task, quote)}
+${requests}`;
+}
+
+/** `fix` and `continue` requests and review comments since the last run, if any. */
+function requestsSection(task: TaskContext, quote: Quote): string {
+  if (task.requests.length === 0 && task.reviews.length === 0) return "";
+  const requests = task.requests.map((request) =>
+    quote(`${request.kind.toUpperCase()} by ${request.author}`, request.text || "(no text)"),
+  );
+  const reviews = task.reviews.map((review) => {
+    const comments = review.comments.map((comment) =>
+      quote(
+        `LINE COMMENT on ${comment.path.replace(/\s+/g, " ")}${comment.line ? `:${comment.line}` : ""}`,
+        comment.body,
+      ),
+    );
+    return [quote(`REVIEW by ${review.author} (${review.state})`, review.body), ...comments].join(
+      "\n\n",
+    );
+  });
+  return `
+## Requests
+
+Maintainers asked for the following since the last run, on the issue or on the pull request. They refine the approved plan: if one needs a decision the plan does not cover, report \`blocked\` and explain what must be decided.
+
+${[...requests, ...reviews].join("\n\n")}
 `;
 }

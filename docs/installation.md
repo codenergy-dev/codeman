@@ -69,3 +69,4 @@ The agent job needs a Linux runner (x64 or arm64).
 2. Run the workflow manually. Codeman posts a status comment, writes a plan on the branch `codeman/<issue>-<slug>`, and lists its decisions.
 3. Answer in a comment, for example `/codeman decide 1 a` or `/codeman approve`. The comment starts a new run, which records the answers. When none is pending, the issue gets `codeman:ready`.
 4. The next run implements the plan on the task branch. When the agent reports the work as done, Codeman opens a pull request that closes the issue, and the issue gets `codeman:done`. Unfinished work is committed, and the following run continues it.
+5. Review the pull request. A review that requests changes, or a `/codeman fix <what to change>` comment, starts a run that pushes the changes to the same branch.

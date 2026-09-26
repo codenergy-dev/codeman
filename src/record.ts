@@ -29,11 +29,16 @@ export interface TaskRecord {
   decisions: Decision[];
   /** Comments up to this ID have had their commands applied. */
   processedCommentId: number;
+  /** Reviews on the pull request up to this ID have been handled. */
+  processedReviewId?: number | undefined;
   /** The task's pull request, once opened. */
   pullRequest?: number | undefined;
+  /** Implementation runs in a row that did not finish the task. */
+  runs?: number | undefined;
 }
 
 export interface CommandSource {
+  /** The comment the command came from; 0 for a pull request review. */
   commentId: number;
   author: string;
   command: Command;

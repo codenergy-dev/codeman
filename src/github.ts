@@ -1,6 +1,6 @@
 import type { getOctokit } from "@actions/github";
 import { OPT_IN_LABEL, STATES, type State, stateLabel } from "./state.ts";
-import type { CommentLike, IssueLike } from "./tasks.ts";
+import type { CommentLike, IssueLike, ReviewCommentLike, ReviewLike } from "./tasks.ts";
 
 type Octokit = ReturnType<typeof getOctokit>;
 
@@ -40,6 +40,22 @@ export class Repository {
     return this.#octokit.paginate(this.#octokit.rest.issues.listComments, {
       ...this.#scope,
       issue_number: issue,
+      per_page: 100,
+    });
+  }
+
+  listReviews(pullRequest: number): Promise<ReviewLike[]> {
+    return this.#octokit.paginate(this.#octokit.rest.pulls.listReviews, {
+      ...this.#scope,
+      pull_number: pullRequest,
+      per_page: 100,
+    });
+  }
+
+  listReviewComments(pullRequest: number): Promise<ReviewCommentLike[]> {
+    return this.#octokit.paginate(this.#octokit.rest.pulls.listReviewComments, {
+      ...this.#scope,
+      pull_number: pullRequest,
       per_page: 100,
     });
   }

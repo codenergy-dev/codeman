@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import * as core from "@actions/core";
 import { IGNORE_FILE, unprotected } from "../policy.ts";
-import { applyCommands } from "../record.ts";
+import { applyCommands, type CommandSource, pendingDecisions } from "../record.ts";
 import {
   isSettingName,
   type PartialSettings,
@@ -15,17 +15,21 @@ import { stateOf } from "../state.ts";
 import { renderStatus } from "../status.ts";
 import {
   authorizedComments,
+  authorizedReviews,
   type Candidate,
   type CommentLike,
   chooseTask,
   commandsAfter,
   commenters,
-  DECIDING,
   findStatus,
   MAINTAINER_PERMISSIONS,
   pendingWork,
+  type ReviewLike,
   replanRequests,
+  resumeRequests,
+  reviewCommands,
   type TaskContext,
+  type TaskReview,
   taskSettings,
   toTask,
 } from "../tasks.ts";
@@ -52,10 +56,9 @@ export async function select(): Promise<void> {
   const tasks = (await repo.listOptedIn()).map(toTask).filter((task) => task.kind === "issue");
   core.info(`Found ${tasks.length} open issue(s) labeled "codeman".`);
 
-  // Permission per commenter, asked once per run.
+  // Permission per user, asked once per run.
   const permissions = new Map<string, Promise<string>>();
-  const maintainersAmong = async (all: readonly CommentLike[]): Promise<Set<string>> => {
-    const logins = commenters(all);
+  const maintainersAmong = async (logins: readonly string[]): Promise<Set<string>> => {
     for (const login of logins) {
       if (!permissions.has(login)) permissions.set(login, repo.permission(login));
     }
@@ -63,8 +66,37 @@ export async function select(): Promise<void> {
     return new Set(logins.filter((_, index) => MAINTAINER_PERMISSIONS.has(levels[index] ?? "")));
   };
 
+  // Everything maintainers said about a task: on the issue and on its pull request.
+  const conversations = new Map<number, Promise<Conversation>>();
+  const conversation = (number: number): Promise<Conversation> => {
+    let loaded = conversations.get(number);
+    if (!loaded) {
+      loaded = (async () => {
+        const comments = await repo.listComments(number);
+        const status = findStatus(comments, bot);
+        const pullRequest = status?.record?.pullRequest;
+        const reviews = pullRequest ? await repo.listReviews(pullRequest) : [];
+        if (pullRequest) comments.push(...(await repo.listComments(pullRequest)));
+        const maintainers = await maintainersAmong(commenters([...comments, ...reviews]));
+        return { comments, reviews, status, maintainers };
+      })();
+      conversations.set(number, loaded);
+    }
+    return loaded;
+  };
+  const newCommands = (talk: Conversation, reviews: readonly TaskReview[]): CommandSource[] => {
+    const record = talk.status?.record;
+    if (!record) return [];
+    return [
+      ...commandsAfter(
+        authorizedComments(talk.comments, talk.maintainers),
+        record.processedCommentId,
+      ),
+      ...reviewCommands(reviews),
+    ];
+  };
+
   const candidates: Candidate[] = [];
-  const comments = new Map<number, CommentLike[]>();
   for (const task of tasks) {
     const line = `#${task.number} ${oneLine(task.title)}`;
     const result = stateOf(task.labels);
@@ -72,20 +104,23 @@ export async function select(): Promise<void> {
       core.warning(`${line}: ${result.error}`);
       continue;
     }
-    let pending: Candidate["pending"];
-    if (DECIDING.has(result.state)) {
-      const all = await repo.listComments(task.number);
-      comments.set(task.number, all);
-      const record = findStatus(all, bot)?.record;
+    const candidate: Candidate = { number: task.number, state: result.state };
+    if (result.state !== "new" && result.state !== "planning") {
+      const talk = await conversation(task.number);
+      const record = talk.status?.record;
       if (record) {
-        const maintainers = await maintainersAmong(all);
-        pending = pendingWork(
-          commandsAfter(authorizedComments(all, maintainers), record.processedCommentId),
+        const reviews = authorizedReviews(
+          talk.reviews,
+          [],
+          talk.maintainers,
+          record.processedReviewId ?? 0,
         );
+        candidate.pending = pendingWork(newCommands(talk, reviews), result.state);
+        candidate.planned = pendingDecisions(record).length === 0;
       }
     }
-    candidates.push({ number: task.number, state: result.state, pending });
-    core.info(`${line} [${result.state}]`);
+    candidates.push(candidate);
+    core.info(`${line} [${result.state}]${candidate.pending ? ` (${candidate.pending})` : ""}`);
   }
 
   const choice = chooseTask(candidates);
@@ -97,19 +132,33 @@ export async function select(): Promise<void> {
 
   const task = tasks.find((candidate) => candidate.number === choice.number);
   if (!task) throw new Error(`Task #${choice.number} disappeared.`);
-  const all = comments.get(task.number) ?? (await repo.listComments(task.number));
-  const status = findStatus(all, bot);
-  const maintainerComments = authorizedComments(all, await maintainersAmong(all));
-  // A new plan keeps the answers given so far and says what to change.
-  const sources =
-    choice.action === "plan" && status?.record
-      ? commandsAfter(maintainerComments, status.record.processedCommentId)
-      : [];
-  const record = status?.record;
-  const replan = replanRequests(sources);
-  const settled = record
-    ? applyCommands(record, sources).record.decisions.filter((decision) => decision.answer)
+  const pending = candidates.find((candidate) => candidate.number === task.number)?.pending;
+  const talk = await conversation(task.number);
+  const record = talk.status?.record;
+  const maintainerComments = authorizedComments(talk.comments, talk.maintainers).sort(
+    (a, b) => a.id - b.id,
+  );
+  const reviewComments = record?.pullRequest
+    ? await repo.listReviewComments(record.pullRequest)
     : [];
+  const reviews = authorizedReviews(
+    talk.reviews,
+    reviewComments,
+    talk.maintainers,
+    record?.processedReviewId ?? 0,
+  );
+  const sources = newCommands(talk, reviews);
+  // A new plan keeps the answers given so far and says what to change.
+  const replan = choice.action === "plan" ? replanRequests(sources) : [];
+  const settled =
+    choice.action === "plan" && record
+      ? applyCommands(record, sources).record.decisions.filter((decision) => decision.answer)
+      : [];
+  const resume = pending === "resume";
+  const requests = choice.action === "implement" ? resumeRequests(sources) : [];
+  const problems = sources.flatMap(({ command }) =>
+    command.kind === "invalid" ? [`${command.text}: ${command.reason}`] : [],
+  );
   const fromState = stateOf(task.labels);
   if (!fromState.ok) throw new Error(fromState.error);
 
@@ -132,6 +181,17 @@ export async function select(): Promise<void> {
     body: task.body,
     url: task.url,
     comments: maintainerComments,
+    reviews,
+    requests,
+    resume,
+    processed: {
+      commentId: Math.max(
+        record?.processedCommentId ?? 0,
+        ...maintainerComments.map((comment) => comment.id),
+      ),
+      reviewId: Math.max(record?.processedReviewId ?? 0, ...reviews.map((review) => review.id)),
+    },
+    problems,
     fromState: fromState.state,
     model,
     settings: settings.value,
@@ -144,7 +204,7 @@ export async function select(): Promise<void> {
     record: record ?? null,
     replan,
     settled,
-    statusCommentId: status?.id ?? null,
+    statusCommentId: talk.status?.id ?? null,
     runUrl: runUrl(),
   };
 
@@ -159,12 +219,7 @@ export async function select(): Promise<void> {
         record,
         model,
         runUrl: context.runUrl,
-        message:
-          choice.action === "implement"
-            ? "Codeman is implementing the plan."
-            : replan.length > 0
-              ? "Codeman is revising the plan, as requested."
-              : "Codeman is reading the issue and writing a plan.",
+        message: startMessage(context),
       }),
     );
   }
@@ -178,6 +233,27 @@ export async function select(): Promise<void> {
   core.setOutput("task-budget", String(settings.value["task-budget"]));
   core.setOutput("monthly-budget", String(settings.value["monthly-budget"]));
   core.info(`Selected #${task.number} to ${choice.action}, with model ${model}.`);
+}
+
+interface Conversation {
+  comments: CommentLike[];
+  reviews: ReviewLike[];
+  status: ReturnType<typeof findStatus>;
+  maintainers: Set<string>;
+}
+
+function startMessage(task: TaskContext): string {
+  if (task.action === "implement") {
+    if (task.requests.some((request) => request.kind === "fix") || task.reviews.length > 0) {
+      return "Codeman is working on the requested changes.";
+    }
+    return task.resume
+      ? "Codeman is continuing the work, as requested."
+      : "Codeman is implementing the plan.";
+  }
+  return task.replan.length > 0
+    ? "Codeman is revising the plan, as requested."
+    : "Codeman is reading the issue and writing a plan.";
 }
 
 /** Settings given as workflow inputs. Empty inputs fall back to the settings file. */

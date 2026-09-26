@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-09-23T14:18:00-03:00
-updated_at: 2026-09-25T21:00:00-03:00
+updated_at: 2026-09-25T23:00:00-03:00
 commit: null
 ---
 
@@ -193,9 +193,11 @@ Result (2026-09-25): done. On a private test repository, a `codeman:ready` issue
 
 3b. Unfinished work and feedback
 
-- [ ] Consecutive run limit (`max-runs`) and `/codeman continue <text>`.
-- [ ] `/codeman fix <text>` and reviews that request changes, with review comments in the prompt; `/codeman replan` on the pull request.
-- [ ] `pull_request_review` trigger in the template (decision 22).
+- [x] Consecutive run limit (`max-runs`) and `/codeman continue <text>`, which also replaces swapping labels to retry a blocked task.
+- [x] `/codeman fix <text>` and reviews that request changes, with review comments in the prompt; `/codeman replan` on the pull request.
+- [x] `pull_request_review` trigger in the template (decision 22). A review event runs the workflow file of the pull request's branch, which may be older than the default branch's; so the review run has one job, without secrets, that starts the default branch's workflow with `workflow_dispatch` (`actions: write` on its `GITHUB_TOKEN`, as decision 19 already grants for chaining).
+- [x] A request is handled once its run ends, whatever the outcome, so a failing request cannot start run after run; a run stopped by the monthly budget leaves it for later.
+- [ ] End-to-end check on the test repository: a review that requests changes and a `/codeman fix` are applied to the pull request.
 
 3c. Chaining
 
