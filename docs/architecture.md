@@ -26,6 +26,7 @@ A task with more than one state label is invalid: Codeman reports a warning and 
 - Reviews also trigger a run: `pull_request_review`, on a pull request from a `codeman/` branch of the same repository, when the review requests changes or mentions `/codeman`. A review event runs the workflow file of the pull request's branch, which may be older than the default branch's, so its only job, `forward-review`, starts the default branch's workflow with `workflow_dispatch`. It holds no secrets; its `GITHUB_TOKEN` has `actions: write` only.
 - Only one run per repository is active (`concurrency`). GitHub keeps at most one queued run and replaces older queued runs.
 - Each run reads the state of every task from GitHub instead of reacting only to the event that started it. A replaced or failed run therefore loses no work; the next run picks it up.
+- When a run moved a task (it recorded answers, or the agent ran), the `next-run` job starts another run with `workflow_dispatch`, carrying over a manual run's inputs. That run's `select` picks the next task, or stops without an LLM when none can move. Runs without a key (monthly budget reached, or the key job failed) start no other run, because the same task would be picked again without moving. The loop is bounded by the budgets, `max-runs` and the states: tasks that are blocked, done or awaiting an answer never start a run.
 - Each run works on one task. Recording answers comes first, because it needs no LLM; then the oldest task that needs a plan; then the oldest task to implement: resumed with `fix` or `continue`, or `codeman:in-progress`, before `codeman:ready`.
 
 ## Jobs
@@ -33,7 +34,7 @@ A task with more than one state label is invalid: Codeman reports a warning and 
 Each stage of a run is its own job, so the workflow graph shows where a run is and where it stopped.
 
 ```
-select ──▶ open-key ──▶ agent ──▶ apply
+select ──▶ open-key ──▶ agent ──▶ apply ──▶ next-run
                └───────────┴────────▶ close-key
 ```
 
@@ -43,6 +44,7 @@ select ──▶ open-key ──▶ agent ──▶ apply
 | `open-key` | Checks the monthly budget and creates the task's OpenRouter key. | OpenRouter management key, encryption secret |
 | `agent` | Runs the harness on a copy of the checkout and uploads what it changed as an artifact, even when the agent fails or runs out of time. | Read-only `GITHUB_TOKEN`, the task key |
 | `apply` | Validates the agent's result and writes it: commits, pull request, labels, status comment. When the action is `record`, it applies the maintainers' answers instead. | App token: contents, issues and pull requests write |
+| `next-run` | Starts another run when this one moved a task. | `GITHUB_TOKEN` with `actions: write` |
 | `close-key` | Disables the task key. Runs whatever happened before. | OpenRouter management key |
 
 Only `agent` runs an LLM. The jobs that write to GitHub never run one, and they treat everything the agent produced as untrusted.

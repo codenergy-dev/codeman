@@ -22,10 +22,21 @@ import { fileUrl, pullUrl, readTask, repository, resultDir } from "./common.ts";
 export async function apply(): Promise<void> {
   const task = readTask();
   const repo = repository();
+  const chain = chains(task.action, core.getInput("key-job-result"), core.getInput("key-status"));
   if (task.action === "record") await recordAnswers(task, repo);
   else if (await keyFailed(task, repo)) return;
   else if (task.action === "implement") await applyImplementation(task, repo);
   else await applyPlan(task, repo);
+  core.setOutput("chain", String(chain));
+}
+
+/**
+ * Whether to start another run once this one is applied. The next run's `select` finds out
+ * whether any task can move, and stops without an LLM if none can. A run without a key moved
+ * nothing: another one would pick the same task again, and again.
+ */
+export function chains(action: TaskContext["action"], keyJob: string, keyStatus: string): boolean {
+  return action === "record" || (keyJob === "success" && keyStatus === "opened");
 }
 
 /** Handles a run in which no key was created. Returns true if it did. */

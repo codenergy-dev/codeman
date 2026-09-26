@@ -25982,10 +25982,15 @@ function findStatus(comments, bot) {
 async function apply() {
   const task = readTask();
   const repo = repository();
+  const chain = chains(task.action, getInput("key-job-result"), getInput("key-status"));
   if (task.action === "record") await recordAnswers(task, repo);
   else if (await keyFailed(task, repo)) return;
   else if (task.action === "implement") await applyImplementation(task, repo);
   else await applyPlan(task, repo);
+  setOutput("chain", String(chain));
+}
+function chains(action, keyJob, keyStatus) {
+  return action === "record" || keyJob === "success" && keyStatus === "opened";
 }
 async function keyFailed(task, repo) {
   if (getInput("key-job-result") !== "success") {

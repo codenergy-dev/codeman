@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-09-23T14:18:00-03:00
-updated_at: 2026-09-26T10:00:00-03:00
+updated_at: 2026-09-26T11:00:00-03:00
 commit: null
 ---
 
@@ -199,11 +199,15 @@ Result (2026-09-25): done. On a private test repository, a `codeman:ready` issue
 - [x] A request is handled once its run ends, whatever the outcome, so a failing request cannot start run after run; a run stopped by the monthly budget leaves it for later.
 - [x] End-to-end check on the test repository: a review that requests changes and a `/codeman fix` are applied to the pull request.
 
-Result (2026-09-26): done. On a private test repository, a review that requested changes and a `/codeman fix` comment were both applied to the task's pull request. Fix found by the check: `select` needs `pull-requests: read` to list reviews. The first review did not start a run, probably because the pull request's merge ref still held the old workflow; it was handled by a manual run.
+Result (2026-09-26): done. On a private test repository, a review that requested changes and a `/codeman fix` comment were both applied to the task's pull request. Fix found by the check: `select` needs `pull-requests: read` to list reviews. The first review did not start a run, because the pull request's merge ref still held the old workflow; it was handled by a manual run. After that, a review that requested changes started `forward-review`, which ran the workflow on its own.
 
 3c. Chaining
 
-- [ ] Apply starts the workflow again when another task can move. The apply job's `GITHUB_TOKEN` gets `actions: write`.
+- [x] Apply starts the workflow again when another task can move. The apply job's `GITHUB_TOKEN` gets `actions: write`.
+  - Apply does not compute what can move; the next run's `select` does, and a run with nothing to do stops there without an LLM. So apply asks for another run whenever this one moved a task: after recording answers, or after the agent ran.
+  - No new run when no key was created (monthly budget reached, or the key job failed): the same task would be picked again without moving, run after run.
+  - The new run starts from a separate `next-run` job, so the graph shows it, with `actions: write` on its `GITHUB_TOKEN` and no secrets. A manual run's inputs carry over to the runs it starts.
+- [ ] End-to-end check on the test repository: `/codeman approve` on a new plan leads to an open pull request without another trigger, and the chain stops with "Nothing to do".
 
 Done when: a simple issue goes from opt-in to an open pull request that passes the repository's CI, and a fix request on that pull request is applied.
 

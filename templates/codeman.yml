@@ -179,6 +179,8 @@ jobs:
     if: always() && needs.select.result == 'success' && needs.select.outputs.action != 'none'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    outputs:
+      chain: ${{ steps.codeman.outputs.chain }}
     steps:
       - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         id: app-token
@@ -200,6 +202,7 @@ jobs:
           name: codeman-result
           path: ${{ runner.temp }}/codeman/result
       - uses: codenergy-dev/codeman@COMMIT_SHA
+        id: codeman
         with:
           step: apply
           github-token: ${{ steps.app-token.outputs.token }}
@@ -207,6 +210,32 @@ jobs:
           key-status: ${{ needs.open-key.outputs.status }}
           key-reason: ${{ needs.open-key.outputs.reason }}
           agent-job-result: ${{ needs.agent.result }}
+
+  # Starts another run when this one moved a task, so the next task (or the next step of this
+  # one) does not wait for the schedule. That run stops early when nothing can move. No secrets.
+  next-run:
+    name: Next run
+    needs: apply
+    if: needs.apply.outputs.chain == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - run: >-
+          gh workflow run "$WORKFLOW" --repo "$REPOSITORY" --ref "$REF"
+          -f model="$MODEL" -f task-budget="$TASK_BUDGET"
+          -f monthly-budget="$MONTHLY_BUDGET" -f max-runs="$MAX_RUNS"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORKFLOW: ${{ github.workflow }}
+          REPOSITORY: ${{ github.repository }}
+          REF: ${{ github.ref_name }}
+          # A manual run's inputs carry over; other runs have none.
+          MODEL: ${{ inputs.model }}
+          TASK_BUDGET: ${{ inputs.task-budget }}
+          MONTHLY_BUDGET: ${{ inputs.monthly-budget }}
+          MAX_RUNS: ${{ inputs.max-runs }}
 
   # Disables the task key, whatever happened. Disabled keys still count towards the monthly budget.
   close-key:
