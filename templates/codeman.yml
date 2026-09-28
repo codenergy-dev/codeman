@@ -216,7 +216,9 @@ jobs:
   next-run:
     name: Next run
     needs: apply
-    if: needs.apply.outputs.chain == 'true'
+    # always(): without it, the skipped open-key and agent jobs of a run that only records
+    # answers would skip this job too, even though apply succeeded.
+    if: always() && needs.apply.result == 'success' && needs.apply.outputs.chain == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
