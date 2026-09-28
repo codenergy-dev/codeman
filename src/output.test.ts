@@ -22,6 +22,17 @@ test("accepts a valid output", () => {
   assert.equal(result.ok && result.value.decisions.length, 2);
 });
 
+test("reads the conversation's language, and ignores an invalid one", () => {
+  const language = (value: unknown) => {
+    const result = parse({ summary: "s", decisions: [], language: value });
+    return result.ok ? result.value.language : "rejected";
+  };
+  assert.equal(language("pt-BR"), "pt-BR");
+  assert.equal(language("Portuguese"), undefined);
+  assert.equal(language(3), undefined);
+  assert.equal(language(undefined), undefined);
+});
+
 test("accepts a plan without decisions", () => {
   assert.ok(parse({ summary: "Clear issue.", decisions: [] }).ok);
 });

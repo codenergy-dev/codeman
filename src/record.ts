@@ -1,4 +1,5 @@
 import type { Command } from "./commands.ts";
+import type { CommandError } from "./problems.ts";
 import type { Spending } from "./spend.ts";
 import type { Stage } from "./stages.ts";
 
@@ -55,6 +56,8 @@ export interface TaskRecord {
   commitMessage?: string | undefined;
   /** What each agent run spent, for the status comment's table. */
   spending?: Spending | undefined;
+  /** The language of the task's conversation, as the planning agent reported it. */
+  language?: string | undefined;
   /** The newest run comment on the issue. */
   reportCommentId?: number | undefined;
   /** Workflows a maintainer accepted since the last stage run, for the next one to know. */
@@ -79,15 +82,15 @@ export function pendingDecisions(record: TaskRecord): Decision[] {
 export function applyCommands(
   record: TaskRecord,
   sources: readonly CommandSource[],
-): { record: TaskRecord; errors: string[] } {
+): { record: TaskRecord; errors: CommandError[] } {
   const decisions = record.decisions.map((decision) => ({ ...decision }));
-  const errors: string[] = [];
+  const errors: CommandError[] = [];
   let processedCommentId = record.processedCommentId;
 
   for (const { commentId, author, command } of sources) {
     processedCommentId = Math.max(processedCommentId, commentId);
     if (command.kind === "invalid") {
-      errors.push(`${command.text}: ${command.reason}`);
+      errors.push({ text: command.text, problem: command.problem });
     } else if (command.kind === "approve") {
       for (const decision of decisions) {
         decision.answer ??= { option: decision.recommendation, by: author };
@@ -96,9 +99,9 @@ export function applyCommands(
       for (const [id, option] of command.answers) {
         const decision = decisions.find((candidate) => candidate.id === id);
         if (!decision) {
-          errors.push(`Decision ${id} does not exist.`);
+          errors.push({ problem: { kind: "no-decision", id } });
         } else if (!decision.options.some((candidate) => candidate.key === option)) {
-          errors.push(`Decision ${id} has no option \`${option}\`.`);
+          errors.push({ problem: { kind: "no-option", id, option } });
         } else {
           decision.answer = { option, by: author };
         }
@@ -106,7 +109,7 @@ export function applyCommands(
     } else if (command.kind === "answer") {
       const decision = decisions.find((candidate) => candidate.id === command.id);
       if (decision) decision.answer = { text: command.text, by: author };
-      else errors.push(`Decision ${command.id} does not exist.`);
+      else errors.push({ problem: { kind: "no-decision", id: command.id } });
     }
   }
 

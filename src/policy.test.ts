@@ -114,12 +114,12 @@ test("drops protected, special and large files, and keeps the plan", () => {
   assert.deepEqual(
     Object.fromEntries(result.value.dropped.map(({ path, reason }) => [path, reason])),
     {
-      ".codemanignore": "Codeman's own settings",
-      ".codeman/settings.yml": "Codeman's own settings",
-      link: "not a regular file",
-      "big.bin": "larger than 1000 bytes",
-      "../escape": "not a valid path in the repository",
-      "a//b": "not a valid path in the repository",
+      ".codemanignore": { kind: "codeman-settings" },
+      ".codeman/settings.yml": { kind: "codeman-settings" },
+      link: { kind: "not-a-file" },
+      "big.bin": { kind: "too-large", max: 1000 },
+      "../escape": { kind: "invalid-path" },
+      "a//b": { kind: "invalid-path" },
     },
   );
 });
@@ -127,9 +127,7 @@ test("drops protected, special and large files, and keeps the plan", () => {
 test("uses the proposed rules when the repository has none", () => {
   const result = checkChanges(manifest([file("AGENTS.md")]), policy);
   assert.ok(result.ok);
-  assert.deepEqual(result.value.dropped, [
-    { path: "AGENTS.md", reason: "protected by .codemanignore" },
-  ]);
+  assert.deepEqual(result.value.dropped, [{ path: "AGENTS.md", reason: { kind: "protected" } }]);
 });
 
 test("commits nothing when the run changes too many files", () => {
@@ -156,8 +154,8 @@ test("workflow files are staged when the rules allow them, and never deleted", (
     [".github/workflows/deploy.yml"],
   );
   assert.deepEqual(result.value.dropped, [
-    { path: ".github/workflows/ci.yml", reason: "deleting a workflow is left to a maintainer" },
-    { path: ".github/CODEOWNERS", reason: "protected by .codemanignore" },
+    { path: ".github/workflows/ci.yml", reason: { kind: "workflow-deletion" } },
+    { path: ".github/CODEOWNERS", reason: { kind: "protected" } },
   ]);
   assert.equal(stagedPath(".github/workflows/deploy.yml"), ".codeman/workflows/deploy.yml");
   assert.equal(workflowPath(".codeman/workflows/deploy.yml"), ".github/workflows/deploy.yml");

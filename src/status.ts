@@ -1,10 +1,12 @@
-import { usd } from "./budget.ts";
+import type { Messages } from "./i18n/index.ts";
 import { encodeStatus, pendingDecisions, type TaskRecord } from "./record.ts";
 import { type SpendRow, spendTable } from "./spend.ts";
 import type { State } from "./state.ts";
 import { inertLines, inlineText } from "./text.ts";
 
 export interface StatusView {
+  /** The task's language. */
+  t: Messages;
   state: State | "new";
   record?: TaskRecord | undefined;
   model: string;
@@ -28,82 +30,58 @@ export interface Cost {
   budget: number;
 }
 
-const HEADINGS: Record<State | "new", string> = {
-  new: "Waiting to start",
-  planning: "Writing the plan",
-  "awaiting-decision": "Waiting for your decisions",
-  ready: "Ready to implement",
-  designing: "Designing",
-  coding: "Writing the code",
-  testing: "Testing",
-  reviewing: "Reviewing",
-  "in-progress": "Implementing",
-  "awaiting-workflow": "Waiting for a workflow",
-  blocked: "Blocked",
-  done: "Done",
-};
-
 /**
  * The task's panel: the single comment Codeman keeps up to date on each task, with where the
  * task is now. What each run did goes in a run comment of its own.
  */
 export function renderStatus(view: StatusView): string {
-  const { record } = view;
-  const lines = [encodeStatus(record), `### Codeman: ${HEADINGS[view.state]}`, ""];
+  const { record, t } = view;
+  const lines = [encodeStatus(record), `### Codeman: ${t.heading(view.state)}`, ""];
 
   if (view.message) lines.push(view.message, "");
-  if (record && view.planUrl) lines.push(`Plan: [${record.planPath}](${view.planUrl})`, "");
+  if (record && view.planUrl) lines.push(`${t.plan}: [${record.planPath}](${view.planUrl})`, "");
   if (record?.pullRequest && view.pullRequestUrl) {
-    lines.push(`Pull request: [#${record.pullRequest}](${view.pullRequestUrl})`, "");
+    lines.push(`${t.pullRequest}: [#${record.pullRequest}](${view.pullRequestUrl})`, "");
   }
   if (record) lines.push(inlineText(record.summary), "");
 
   if (record && record.decisions.length > 0) {
-    lines.push("#### Decisions", "");
+    lines.push(`#### ${t.decisions}`, "");
     for (const decision of record.decisions) {
       lines.push(`**${decision.id}. ${inlineText(decision.title)}**`, "");
       lines.push(inlineText(decision.question), "");
       for (const option of decision.options) {
         const tags = [
-          option.key === decision.recommendation ? "recommended" : "",
-          option.key === decision.answer?.option ? `chosen by ${decision.answer.by}` : "",
+          option.key === decision.recommendation ? t.recommended : "",
+          option.key === decision.answer?.option ? t.chosenBy(decision.answer.by) : "",
         ].filter(Boolean);
         const suffix = tags.length > 0 ? ` _(${tags.join(", ")})_` : "";
         lines.push(`- **${option.key})** ${inlineText(option.label)}${suffix}`);
       }
       if (decision.answer?.text !== undefined) {
-        lines.push("", `Answered by ${decision.answer.by}: ${inlineText(decision.answer.text)}`);
+        lines.push("", t.answeredBy(decision.answer.by, inlineText(decision.answer.text)));
       }
       lines.push("");
     }
     if (view.state === "awaiting-decision" && pendingDecisions(record).length > 0) {
-      lines.push(
-        "Answer with `/codeman decide 1 a` (several at once: `/codeman decide 1 a 2 b`), or accept every recommendation with `/codeman approve`. To answer in your own words, use `/codeman answer 1 <text>`; to have the plan revised, use `/codeman replan <what to change>`. Only people with write access to the repository can answer.",
-        "",
-      );
+      lines.push(t.howToAnswer, "");
     }
   }
 
   if (view.staged && view.staged.length > 0) {
-    lines.push("#### Workflows to review", "");
+    lines.push(`#### ${t.workflowsToReview}`, "");
     for (const path of view.staged) lines.push(`- ${inlineText(path)}`);
-    lines.push(
-      "",
-      "The agent wrote these workflows. They are staged under `.codeman/workflows/` on the task branch and do not run. A workflow runs with the repository's secrets, so read them in the pull request or on the branch first. To move them into `.github/workflows/`, comment `/codeman accept-workflows`.",
-      "",
-    );
+    lines.push("", t.workflowsHelp, "");
   }
 
   if (record?.spending?.rows.length || view.cost?.task !== undefined) {
-    lines.push("#### Spending", "", ...spendTable(record?.spending, view.cost?.task), "");
-    if (view.cost?.task !== undefined)
-      lines.push(`${spentText({ ...view.cost, run: undefined })}.`, "");
+    lines.push(`#### ${t.spending}`, "", ...spendTable(t, record?.spending, view.cost?.task), "");
+    if (view.cost?.task !== undefined) {
+      lines.push(`${spentText(t, { ...view.cost, run: undefined })}.`, "");
+    }
   }
 
-  const report = view.reportUrl ? ` · [Last report](${view.reportUrl})` : "";
-  lines.push(
-    `<sub>Model: \`${modelName(view.model)}\` (change it with \`/codeman set model <id>\`) · [Last run](${view.runUrl})${report}</sub>`,
-  );
+  lines.push(t.panelFooter(modelName(view.model), view.runUrl, view.reportUrl));
   return lines.join("\n");
 }
 
@@ -124,6 +102,8 @@ export function runCommentText(body: string): string {
 }
 
 export interface RunView {
+  /** The task's language. */
+  t: Messages;
   /** What the run worked on, such as "Test stage" (trusted text). */
   title: string;
   /** The task's state once the run ended. */
@@ -143,26 +123,32 @@ export interface RunView {
 
 /** What one run did, posted as a new comment so the issue keeps the task's history. */
 export function renderRun(view: RunView): string {
-  const lines = [RUN_MARKER, `### Codeman: ${view.title}`, "", `Now: ${HEADINGS[view.state]}.`, ""];
+  const { t } = view;
+  const lines = [RUN_MARKER, `### Codeman: ${view.title}`, "", t.now(t.heading(view.state)), ""];
   if (view.message) lines.push(view.message, "");
-  if (view.report) lines.push("#### Report", "", inertLines(view.report), "");
+  if (view.report) lines.push(`#### ${t.report}`, "", inertLines(view.report), "");
   if (view.errors && view.errors.length > 0) {
-    lines.push("#### Problems", "");
+    lines.push(`#### ${t.problems}`, "");
     for (const error of view.errors) lines.push(`- ${inlineText(error)}`);
     lines.push("");
   }
-  if (view.spend) lines.push("#### Cost", "", ...spendTable({ rows: [view.spend] }), "");
+  if (view.spend) {
+    lines.push(`#### ${t.costHeading}`, "", ...spendTable(t, { rows: [view.spend] }), "");
+  }
   const spent =
     view.cost?.task === undefined
-      ? ""
-      : ` · ${spentText(view.spend ? { ...view.cost, run: undefined } : view.cost)}`;
-  lines.push(`<sub>Model: \`${modelName(view.model)}\`${spent} · [Run](${view.runUrl})</sub>`);
+      ? undefined
+      : spentText(t, view.spend ? { ...view.cost, run: undefined } : view.cost);
+  lines.push(t.runFooter(modelName(view.model), spent, view.runUrl));
   return lines.join("\n");
 }
 
-function spentText(cost: Cost): string {
-  const run = cost.run === undefined ? "" : `${usd(cost.run)} this run, `;
-  return `Spent: ${run}${usd(cost.task ?? 0)} of ${usd(cost.budget)} for the task`;
+function spentText(t: Messages, cost: Cost): string {
+  return t.spent({
+    run: cost.run === undefined ? undefined : t.money(cost.run),
+    task: t.money(cost.task ?? 0),
+    budget: t.money(cost.budget),
+  });
 }
 
 function modelName(model: string): string {

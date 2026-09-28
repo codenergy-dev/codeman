@@ -52,13 +52,22 @@ const PROBES = [
   ".agents/skills/skill/SKILL.md",
 ];
 
+/** Why apply drops a change. Rendered in the task's language. */
+export type DropReason =
+  | { kind: "invalid-path" }
+  | { kind: "codeman-settings" }
+  | { kind: "protected" }
+  | { kind: "not-a-file" }
+  | { kind: "too-large"; max: number }
+  | { kind: "workflow-deletion" };
+
 /** Why a change is never applied, whatever `.codemanignore` says; undefined if it may be. */
-function hardRule(path: string): string | undefined {
+function hardRule(path: string): DropReason | undefined {
   const segments = path.split("/");
   if (path.startsWith("/") || segments.some((part) => ["", ".", "..", ".git"].includes(part))) {
-    return "not a valid path in the repository";
+    return { kind: "invalid-path" };
   }
-  if (path === IGNORE_FILE || segments[0] === ".codeman") return "Codeman's own settings";
+  if (path === IGNORE_FILE || segments[0] === ".codeman") return { kind: "codeman-settings" };
   return undefined;
 }
 
@@ -140,7 +149,7 @@ export interface CheckedChanges {
    * run, with the repository's secrets, before anyone read it.
    */
   staged: Change[];
-  dropped: { path: string; reason: string }[];
+  dropped: { path: string; reason: DropReason }[];
 }
 
 /**
@@ -166,14 +175,14 @@ export function checkChanges(manifest: unknown, policy: Policy): Parsed<CheckedC
   const staged: Change[] = [];
   for (const change of candidates) {
     const workflow = change.path.startsWith(WORKFLOWS_DIR);
-    const reason = ignored.has(change.path)
-      ? `protected by ${IGNORE_FILE}`
+    const reason: DropReason | undefined = ignored.has(change.path)
+      ? { kind: "protected" }
       : change.status !== "deleted" && change.type !== "file"
-        ? "not a regular file"
+        ? { kind: "not-a-file" }
         : (change.size ?? 0) > policy.maxFileBytes
-          ? `larger than ${policy.maxFileBytes} bytes`
+          ? { kind: "too-large", max: policy.maxFileBytes }
           : workflow && change.status === "deleted"
-            ? "deleting a workflow is left to a maintainer"
+            ? { kind: "workflow-deletion" }
             : undefined;
     if (reason) dropped.push({ path: change.path, reason });
     else if (workflow) staged.push(change);

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { en } from "./i18n/en.ts";
 import { encodeStatus, type TaskRecord } from "./record.ts";
 import { renderRun } from "./status.ts";
 import {
@@ -191,7 +192,7 @@ test("the history is the App's run comments, the newest that fit, oldest first",
   const run = (id: number, title: string, login = "codeman[bot]") =>
     comment(
       id,
-      renderRun({ title, state: "coding", model: "a/b", runUrl: "https://x/runs/1" }),
+      renderRun({ t: en, title, state: "coding", model: "a/b", runUrl: "https://x/runs/1" }),
       login,
     );
   const comments = [

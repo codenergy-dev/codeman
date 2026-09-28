@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import * as core from "@actions/core";
+import { type Messages, messages, taskLanguage } from "../i18n/index.ts";
 import { IGNORE_FILE, unprotected } from "../policy.ts";
 import { applyCommands, type CommandSource, pendingDecisions } from "../record.ts";
 import {
@@ -185,7 +186,7 @@ export async function select(): Promise<void> {
         ? "code"
         : (record?.stage ?? stageOfState(fromStateOf(task.labels)) ?? firstStage(task.labels));
   const problems = sources.flatMap(({ command }) =>
-    command.kind === "invalid" ? [`${command.text}: ${command.reason}`] : [],
+    command.kind === "invalid" ? [{ text: command.text, problem: command.problem }] : [],
   );
   const fromState = stateOf(task.labels);
   if (!fromState.ok) throw new Error(fromState.error);
@@ -245,17 +246,19 @@ export async function select(): Promise<void> {
 
   const needsAgent = choice.action === "plan" || choice.action === "implement";
   if (needsAgent) {
+    const t = messages(taskLanguage(settings.value.language, record?.language));
     const state = stage ? STAGE_STATE[stage] : "planning";
     await repo.setState(task.number, task.labels, state);
     context.statusCommentId = await repo.upsertComment(
       task.number,
       context.statusCommentId,
       renderStatus({
+        t,
         state,
         record,
         model,
         runUrl: context.runUrl,
-        message: startMessage(context),
+        message: startMessage(t, context),
         cost: { task: record?.spent, budget: settings.value["task-budget"] },
         reportUrl: reportUrl(task.url, record),
       }),
@@ -274,13 +277,6 @@ export async function select(): Promise<void> {
   core.info(`Selected #${task.number} to ${choice.action}, with model ${model}.`);
 }
 
-const STAGE_MESSAGES: Record<Stage, string> = {
-  design: "Codeman is designing: flows and screens, if the task needs them.",
-  code: "Codeman is writing the code.",
-  test: "Codeman is testing the work.",
-  review: "Codeman is reviewing the work.",
-};
-
 /** Where work starts without a recorded stage: design, or code once a task was done. */
 function firstStage(labels: readonly string[]): Stage {
   return fromStateOf(labels) === "done" ? "code" : "design";
@@ -298,21 +294,15 @@ interface Conversation {
   maintainers: Set<string>;
 }
 
-function startMessage(task: TaskContext): string {
+function startMessage(t: Messages, task: TaskContext): string {
   if (task.action === "implement") {
-    if (task.workflowRuns?.length) {
-      return "Codeman is going on with the results of the workflows it asked for.";
-    }
+    if (task.workflowRuns?.length) return t.startWithWorkflowResults;
     if (task.requests.some((request) => request.kind === "fix") || task.reviews.length > 0) {
-      return "Codeman is working on the requested changes.";
+      return t.startWithChanges;
     }
-    return task.resume
-      ? "Codeman is continuing the work, as requested."
-      : STAGE_MESSAGES[task.stage ?? "code"];
+    return task.resume ? t.startContinue : t.startStage(task.stage ?? "code");
   }
-  return task.replan.length > 0
-    ? "Codeman is revising the plan, as requested."
-    : "Codeman is reading the issue and writing a plan.";
+  return t.startPlan(task.replan.length > 0);
 }
 
 /** Settings given as workflow inputs. Empty inputs fall back to the settings file. */

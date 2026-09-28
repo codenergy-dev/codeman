@@ -1,4 +1,11 @@
-import { isSettingName, parseSetting, type SettingName, TASK_SETTINGS } from "./settings.ts";
+import type { CommandProblem } from "./problems.ts";
+import {
+  isSettingName,
+  parseSetting,
+  type SettingName,
+  settingKind,
+  TASK_SETTINGS,
+} from "./settings.ts";
 
 export type Command =
   | { kind: "approve" }
@@ -9,7 +16,7 @@ export type Command =
   | { kind: "fix"; text: string }
   | { kind: "continue"; text: string }
   | { kind: "set"; name: SettingName; value: string | number }
-  | { kind: "invalid"; text: string; reason: string };
+  | { kind: "invalid"; text: string; problem: CommandProblem };
 
 const DECISION_ID = /^\d{1,2}$/;
 const OPTION_KEY = /^[a-z]$/i;
@@ -59,20 +66,21 @@ export function parseCommands(body: string): Command[] {
 
 function parseLine(line: string): Command | OpenText {
   const [, name, ...args] = line.split(/\s+/);
-  const invalid = (reason: string): Command => ({ kind: "invalid", text: line, reason });
+  const invalid = (problem: CommandProblem): Command => ({ kind: "invalid", text: line, problem });
   switch (name?.toLowerCase()) {
     case "approve":
-      return args.length === 0 ? { kind: "approve" } : invalid("`approve` takes no arguments.");
+      return args.length === 0
+        ? { kind: "approve" }
+        : invalid({ kind: "takes-no-arguments", command: "approve" });
     case "decide":
       return parseDecide(args, invalid);
     case "accept-workflows":
       return args.length === 0
         ? { kind: "accept-workflows" }
-        : invalid("`accept-workflows` takes no arguments.");
+        : invalid({ kind: "takes-no-arguments", command: "accept-workflows" });
     case "answer": {
       const [, id = "", first = ""] = ANSWER.exec(line) ?? [];
-      if (!DECISION_ID.test(id))
-        return invalid("`answer` needs a decision number, such as `answer 2 <text>`.");
+      if (!DECISION_ID.test(id)) return invalid({ kind: "answer-needs-number" });
       return { line, kind: "answer", id: Number(id), lines: [first] };
     }
     case "replan":
@@ -88,15 +96,13 @@ function parseLine(line: string): Command | OpenText {
     case "set":
       return parseSet(args, invalid);
     default:
-      return invalid(
-        "Unknown command. Use `decide`, `approve`, `answer`, `replan`, `fix`, `continue`, `accept-workflows`, `set` or `model`.",
-      );
+      return invalid({ kind: "unknown-command" });
   }
 }
 
 /** Accepts `1=a`, `1 a`, and several of either in one command: `1=a 2 b`. */
-function parseDecide(args: string[], invalid: (reason: string) => Command): Command {
-  if (args.length === 0) return invalid("`decide` needs answers such as `1 a` or `1=a`.");
+function parseDecide(args: string[], invalid: (problem: CommandProblem) => Command): Command {
+  if (args.length === 0) return invalid({ kind: "decide-needs-answers" });
   const answers = new Map<number, string>();
   for (let index = 0; index < args.length; index++) {
     const arg = args[index] ?? "";
@@ -108,29 +114,34 @@ function parseDecide(args: string[], invalid: (reason: string) => Command): Comm
       answers.set(Number(arg), next.toLowerCase());
       index++;
     } else {
-      return invalid(`\`${arg}\` is not an answer such as \`1 a\` or \`1=a\`.`);
+      return invalid({ kind: "not-an-answer", arg });
     }
   }
   return { kind: "decide", answers };
 }
 
 /** `set <name> <value>`, for the settings a task may override. `model <id>` is a shortcut. */
-function parseSet(args: string[], invalid: (reason: string) => Command): Command {
+function parseSet(args: string[], invalid: (problem: CommandProblem) => Command): Command {
   const [name = "", value, ...rest] = args;
-  const names = [...TASK_SETTINGS].map((setting) => `\`${setting}\``).join(", ");
   if (!isSettingName(name) || !TASK_SETTINGS.has(name)) {
-    return invalid(`\`set\` changes one of ${names} for this task.`);
+    return invalid({ kind: "set-which", names: [...TASK_SETTINGS] });
   }
-  if (value === undefined || rest.length > 0) return invalid(`\`set ${name}\` needs one value.`);
+  if (value === undefined || rest.length > 0) return invalid({ kind: "set-one-value", name });
   const parsed = parseSetting(name, value);
-  return parsed.ok ? { kind: "set", name, value: parsed.value } : invalid(parsed.error);
+  return parsed.ok
+    ? { kind: "set", name, value: parsed.value }
+    : invalid({ kind: "invalid-setting", name, type: settingKind(name) });
 }
 
 function finishText(open: OpenText): Command {
   const text = open.lines.join("\n").trim();
-  const invalid = (reason: string): Command => ({ kind: "invalid", text: open.line, reason });
-  if (text.length > MAX_TEXT) return invalid(`The text must have at most ${MAX_TEXT} characters.`);
+  const invalid = (problem: CommandProblem): Command => ({
+    kind: "invalid",
+    text: open.line,
+    problem,
+  });
+  if (text.length > MAX_TEXT) return invalid({ kind: "text-too-long", max: MAX_TEXT });
   if (open.kind !== "answer") return { kind: open.kind, text };
-  if (text === "") return invalid("`answer` needs text after the decision number.");
+  if (text === "") return invalid({ kind: "answer-needs-text" });
   return { kind: "answer", id: open.id ?? 0, text };
 }

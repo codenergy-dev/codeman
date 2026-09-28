@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { en } from "./i18n/en.ts";
 import { decodeStatus, isStatusComment, type TaskRecord } from "./record.ts";
 import { isRunComment, renderRun, renderStatus, reportUrl, runCommentText } from "./status.ts";
 
@@ -35,6 +36,7 @@ const record: TaskRecord = {
 };
 
 const view = {
+  t: en,
   state: "awaiting-decision" as const,
   record,
   model: "deepseek/deepseek-v4.1-flash",
@@ -107,6 +109,7 @@ test("links the newest run comment of a record", () => {
 });
 
 const run = {
+  t: en,
   title: "Test stage",
   state: "reviewing" as const,
   model: "a/b",

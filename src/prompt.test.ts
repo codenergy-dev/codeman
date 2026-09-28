@@ -27,6 +27,7 @@ const task: TaskContext = {
     "max-runs": 3,
     "max-files": 300,
     "max-file-bytes": 1048576,
+    language: "auto",
   },
   ignore: null,
   defaultBranch: "main",
@@ -282,5 +283,32 @@ test("a stage reads the reports of earlier runs as data", () => {
   assert.match(
     prompt,
     /<<<RUN REPORT of 2026-09-27 [0-9a-f]{12}\n### Codeman: Plan\n>>>RUN REPORT/,
+  );
+});
+
+test("the agent writes to the maintainers in the conversation's language", () => {
+  const plan = planPrompt(task);
+  assert.match(plan, /Set `language` to its BCP 47 tag/);
+  assert.match(plan, /The plan file follows the rules for documentation instead/);
+  const fixed = planPrompt({ ...task, settings: { ...task.settings, language: "pt-BR" } });
+  assert.match(
+    fixed,
+    /in Brazilian Portuguese: Codeman shows them to the maintainers\. Set `language` to `pt-BR`/,
+  );
+
+  const record = {
+    branch: task.branch,
+    planPath: task.planPath,
+    summary: "",
+    decisions: [],
+    processedCommentId: 0,
+    language: "pt-BR",
+  };
+  const stage = stagePrompt({ ...task, action: "implement", stage: "code", record }, 45);
+  assert.match(stage, /in Brazilian Portuguese \(`pt-BR`\), the language of the conversation/);
+  assert.match(stage, /`commitMessage`, follow the rules for their own language/);
+  assert.match(
+    stagePrompt({ ...task, action: "implement", stage: "code" }, 45),
+    /in English \(`en`\)/,
   );
 });

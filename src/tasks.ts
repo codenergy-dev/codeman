@@ -1,4 +1,5 @@
 import { type Command, parseCommands } from "./commands.ts";
+import type { CommandError } from "./problems.ts";
 import {
   type CommandSource,
   type Decision,
@@ -386,8 +387,8 @@ export interface TaskContext {
   resume: boolean;
   /** Everything up to these IDs is handled once this run ends, unless it could not start. */
   processed: { commentId: number; reviewId: number };
-  /** Problems with the new commands, for the status comment. */
-  problems: string[];
+  /** Problems with the new commands, for the run comment. */
+  problems: CommandError[];
   /** For `implement`: the stage this run works on. */
   stage?: Stage | undefined;
   /** For `accept`: the comment that accepted the staged workflows. */

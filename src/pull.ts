@@ -1,6 +1,9 @@
-import { inertLines, inlineText } from "./text.ts";
+import type { Messages } from "./i18n/index.ts";
+import { inertLines, inlineText, oneLine } from "./text.ts";
 
 export interface PullRequestView {
+  /** The task's language. */
+  t: Messages;
   issue: number;
   planPath: string;
   planUrl: string;
@@ -14,40 +17,43 @@ export interface PullRequestView {
   spent?: string | undefined;
 }
 
-export function pullRequestTitle(commitMessage: string): string {
-  return commitMessage.split("\n")[0]?.trim() || "Codeman task";
+/** The issue's title, so both carry the same words, in the language they were written in. */
+export function pullRequestTitle(issueTitle: string): string {
+  return oneLine(issueTitle).trim().slice(0, 256) || "Codeman task";
 }
 
 /** The pull request's description. Text from the agent is rendered inert. */
 export function pullRequestBody(view: PullRequestView): string {
+  const { t } = view;
   const longest = Math.max(0, ...(view.commitMessage.match(/`+/g) ?? []).map((run) => run.length));
   const fence = "`".repeat(Math.max(3, longest + 1));
   return [
     `Closes #${view.issue}`,
     "",
-    "### Plan",
+    `### ${t.plan}`,
     "",
     inlineText(view.planSummary),
     "",
-    `Full plan: [${view.planPath}](${view.planUrl})`,
+    `${t.fullPlan}: [${view.planPath}](${view.planUrl})`,
     "",
-    "### Changes",
+    `### ${t.changes}`,
     "",
     inertLines(view.summary),
     "",
     ...(view.commitMessage
-      ? ["### Suggested squash commit message", "", `${fence}text`, view.commitMessage, fence, ""]
+      ? [`### ${t.squashMessage}`, "", `${fence}text`, view.commitMessage, fence, ""]
       : []),
-    pullRequestFooter(view.runUrl, view.spent),
+    pullRequestFooter(t, view.runUrl, view.spent),
   ].join("\n");
 }
 
-const FOOTER = /^<sub>Opened by Codeman\b.*$/m;
+const FOOTER_MARKER = "<!-- codeman:footer -->";
+/** The footer, in any language; older descriptions have it without the marker, in English. */
+const FOOTER = /^(?:<!-- codeman:footer -->|<sub>Opened by Codeman\b).*$/m;
 
 /** The description's last line, which Codeman updates on every run. */
-export function pullRequestFooter(runUrl: string, spent?: string): string {
-  const cost = spent ? ` · Spent: ${spent}` : "";
-  return `<sub>Opened by Codeman${cost} · [Last run](${runUrl})</sub>`;
+export function pullRequestFooter(t: Messages, runUrl: string, spent?: string): string {
+  return `${FOOTER_MARKER}${t.pullRequestFooter(spent, runUrl)}`;
 }
 
 /** Replaces the footer in a description; leaves the description alone if it has none. */

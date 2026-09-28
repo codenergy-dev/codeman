@@ -1,4 +1,5 @@
 import type { Decision } from "./record.ts";
+import { isLanguageTag } from "./settings.ts";
 import type { Stage } from "./stages.ts";
 import { truncate } from "./text.ts";
 
@@ -6,6 +7,8 @@ import { truncate } from "./text.ts";
 export interface PlanOutput {
   summary: string;
   decisions: Decision[];
+  /** The conversation's language, as a BCP 47 tag, when the agent reported a valid one. */
+  language?: string | undefined;
 }
 
 export type Parsed<T> = { ok: true; value: T } | { ok: false; error: string };
@@ -34,7 +37,10 @@ export function parsePlanOutput(text: string): Parsed<PlanOutput> {
   if (!summary.ok) return summary;
   const decisions = parseDecisions(data.decisions);
   if (!decisions.ok) return decisions;
-  return { ok: true, value: { summary: summary.value, decisions: decisions.value } };
+  // Optional: without it, Codeman keeps talking in the language it used so far.
+  const language =
+    typeof data.language === "string" && isLanguageTag(data.language) ? data.language : undefined;
+  return { ok: true, value: { summary: summary.value, decisions: decisions.value, language } };
 }
 
 /** What a stage's agent reports, in `.codeman/output.json`. */

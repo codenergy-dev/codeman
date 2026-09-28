@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { en } from "./i18n/en.ts";
 import { addRow, type SpendRow, spendTable } from "./spend.ts";
 
 const row = (cost: number | undefined, run = 1): SpendRow => ({
@@ -15,7 +16,7 @@ const row = (cost: number | undefined, run = 1): SpendRow => ({
 });
 
 test("a row shows the run, its stage, model, cost and limits", () => {
-  const lines = spendTable({ rows: [row(0.0123)] });
+  const lines = spendTable(en, { rows: [row(0.0123)] });
   assert.equal(
     lines[0],
     "| Run | Stage | Model | Cost | Key limit | Task budget | Monthly budget |",
@@ -27,7 +28,7 @@ test("a row shows the run, its stage, model, cost and limits", () => {
 });
 
 test("unknown values show a dash, and the model cannot break the table", () => {
-  const [, , line] = spendTable({
+  const [, , line] = spendTable(en, {
     rows: [
       {
         ...row(undefined),
@@ -54,11 +55,14 @@ test("the oldest rows fold into one past the limit", () => {
   );
   assert.equal(spending.earlier?.runs, 2);
   assert.ok(Math.abs((spending.earlier?.cost ?? 0) - 0.3) < 1e-9);
-  assert.match(spendTable(spending)[2] ?? "", /^\| Earlier runs \(2\) \| \| \| US\$ 0\.300 \|/);
+  assert.match(spendTable(en, spending)[2] ?? "", /^\| Earlier runs \(2\) \| \| \| US\$ 0\.300 \|/);
 });
 
 test("a last row shows what runs without a row spent", () => {
   const spending = { rows: [row(0.1)] };
-  assert.equal(spendTable(spending, 0.1).length, 3, "nothing missing");
-  assert.equal(spendTable(spending, 0.35).at(-1), "| Runs without a row | | | US$ 0.250 | | | |");
+  assert.equal(spendTable(en, spending, 0.1).length, 3, "nothing missing");
+  assert.equal(
+    spendTable(en, spending, 0.35).at(-1),
+    "| Runs without a row | | | US$ 0.250 | | | |",
+  );
 });

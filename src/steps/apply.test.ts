@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { en } from "../i18n/en.ts";
 import type { TaskRecord } from "../record.ts";
 import { afterAccept, chains } from "./apply.ts";
 
@@ -25,18 +26,18 @@ test("accepting workflows resumes a blocked stage", () => {
   const workflows = [".github/workflows/deploy.yml"];
   const accepted = { by: "alice", workflows };
 
-  const blocked = afterAccept("blocked", record, "alice", workflows);
+  const blocked = afterAccept(en, "blocked", record, "alice", workflows);
   assert.equal(blocked.state, "testing");
   assert.equal(blocked.record.runs, 0, "a fresh run count");
   assert.deepEqual(blocked.record.accepted, accepted);
   assert.match(blocked.message, /test stage goes on/);
 
-  const waiting = afterAccept("awaiting-workflow", record, "alice", workflows);
+  const waiting = afterAccept(en, "awaiting-workflow", record, "alice", workflows);
   assert.equal(waiting.state, "awaiting-workflow", "waits for the runs");
   assert.equal(waiting.record.runs, 2);
   assert.deepEqual(waiting.record.accepted, accepted);
 
-  const planning = afterAccept("blocked", { ...record, stage: undefined }, "alice", workflows);
+  const planning = afterAccept(en, "blocked", { ...record, stage: undefined }, "alice", workflows);
   assert.equal(planning.state, "blocked", "no stage to resume");
   assert.equal(planning.message, "");
 });

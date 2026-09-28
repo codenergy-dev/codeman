@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { DEFAULTS, parseSettings, resolveSettings } from "./settings.ts";
+import {
+  DEFAULTS,
+  parseSetting,
+  parseSettings,
+  resolveSettings,
+  TASK_SETTINGS,
+} from "./settings.ts";
 
 test("reads flat settings, with comments and quotes", () => {
   const parsed = parseSettings(
@@ -66,4 +72,12 @@ test("resolves commands, then inputs, then the file, then the defaults", () => {
 test("a model is required", () => {
   const resolved = resolveSettings({}, {}, {});
   assert.ok(!resolved.ok && resolved.error.includes(".codeman/settings.yml"));
+});
+
+test("the language is auto or a language tag, and a task may set it", () => {
+  assert.deepEqual(parseSetting("language", "auto"), { ok: true, value: "auto" });
+  assert.deepEqual(parseSetting("language", "pt-BR"), { ok: true, value: "pt-BR" });
+  assert.equal(parseSetting("language", "português").ok, false);
+  assert.equal(parseSetting("language", "pt_BR").ok, false);
+  assert.ok(TASK_SETTINGS.has("language"));
 });

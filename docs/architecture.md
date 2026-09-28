@@ -106,7 +106,7 @@ After planning, a task goes through four stages, one run and one agent each, in 
 2. The agent writes `.codeman/output.json`: a status, a summary and, when it changed files, a commit message. Each stage may report only some statuses: `done`, `skipped`, `partial` (more work for another run of the same stage), `blocked`, `awaiting-workflow` (code and test), `decisions` (design and review) and `changes` (review).
 3. `apply` filters the changes through the [change policy](#change-policy) and commits the rest to the task branch through the Git Data API, even when the agent failed or ran out of time, so no work is lost. Review's changes are discarded.
 4. Then, by status:
-   - `done` or `skipped`: the next stage runs next, with this stage's summary (or reason) as its notes. When code ends, Codeman opens the pull request as a draft (`Closes #<issue>`, the plan's summary, and the code stage's commit message as the suggested squash message), so the repository's CI runs during test and review. Repositories without draft pull requests get a regular one.
+   - `done` or `skipped`: the next stage runs next, with this stage's summary (or reason) as its notes. When code ends, Codeman opens the pull request as a draft, titled like the issue (`Closes #<issue>`, the plan's summary, and the code stage's commit message as the suggested squash message), so the repository's CI runs during test and review. Repositories without draft pull requests get a regular one.
    - `done` from review: Codeman adds its proposed `.codemanignore` if the repository has none, updates the pull request's description, marks it ready for review, posts the review report on it, and sets `codeman:done`.
    - `changes` from review: the report goes on the pull request, and the code stage works on it next. After `max-runs` rounds in a row, the task becomes `codeman:blocked`.
    - `decisions`: the task becomes `codeman:awaiting-decision`, with the new decisions after the plan's. When they are answered, design goes on; after review, code does, with the review's report.
@@ -153,7 +153,7 @@ A workflow file runs as soon as it reaches a branch, if it listens to `push`, an
 
 Each value comes from the first of these that sets it:
 
-1. A `/codeman set` command on the task (only `model`, `task-budget` and `max-runs`).
+1. A `/codeman set` command on the task (only `model`, `task-budget`, `max-runs` and `language`).
 2. The workflow's inputs, in a manual run.
 3. `.codeman/settings.yml` on the default branch.
 4. Codeman's default.
@@ -166,6 +166,7 @@ Each value comes from the first of these that sets it:
 | `max-runs` | `3` | Implementation runs in a row without finishing before a task is blocked |
 | `max-files` | `300` | Files one run may change |
 | `max-file-bytes` | `1048576` | Size limit of each changed file |
+| `language` | `auto` | The language Codeman talks to maintainers in, as a BCP 47 tag such as `pt-BR`; `auto` uses the conversation's. See [conversation language](#conversation-language) |
 
 The settings file accepts only `name: value` lines, comments and blank lines; see [`templates/settings.yml`](../templates/settings.yml). Anything else stops the run with an error, so the file never means something other than what it looks like.
 
@@ -182,7 +183,7 @@ Maintainers steer a task with comments on its issue or on its pull request, and 
 | `/codeman fix <text>` | Asks for changes to the implementation. Also a review that requests changes. See [feedback](#feedback). |
 | `/codeman accept-workflows` | Moves the workflows the agent staged under `.codeman/workflows/` into `.github/workflows/`, after a maintainer has read them. See [on-demand workflows](#on-demand-workflows). |
 | `/codeman continue <text>` | Resumes a blocked or unfinished task with a new run count. The text is optional guidance for the agent. |
-| `/codeman set <name> <value>` | Changes `model`, `task-budget` or `max-runs` for this task from now on. The last valid one wins. |
+| `/codeman set <name> <value>` | Changes `model`, `task-budget`, `max-runs` or `language` for this task from now on. The last valid one wins. |
 | `/codeman model <id>` | Short for `/codeman set model <id>`. |
 
 Text after `decide` or `approve` is not part of the command: the agent sees it later as a maintainer comment, but it is not recorded as an answer. Use `answer` or `replan` when the text matters.
@@ -198,6 +199,15 @@ Each run that moves the task also posts a new comment on the issue, so the issue
 Each stage's agent reads Codeman's earlier run comments on the task, oldest first, up to 20,000 characters (older ones are dropped first). Only comments by the App with the run marker count, and the agent treats them as data: the agents that wrote them read untrusted text.
 
 Text written by the agent or by users is rendered as inert Markdown: no HTML, links, images or formatting, and no @mentions. Short fields are collapsed to one line; the agent's report keeps its line breaks, so its lists survive.
+
+## Conversation language
+
+Codeman talks to maintainers in the task's language: the fixed texts of the status and run comments, the pull request's description and review comments, and what the agent writes for them (summaries, reasons, decisions, reports). Code, comments, commit messages and documentation, the plan included, follow the [agent rules](#agent-rules) instead.
+
+- With `language: auto` (the default), the planning agent reports the conversation's language, from the issue and the maintainer comments, and the task record keeps it. Until then, Codeman writes in English. Any other value of `language` wins over the reported one.
+- Fixed texts come from catalogs in `src/i18n/`: English and Brazilian Portuguese. A language without a catalog uses its base language's (`pt-PT` uses Brazilian Portuguese), or else English. Numbers and dates follow the language.
+- Commands, labels, file paths, the workflow's logs and technical details of an invalid agent result stay in English.
+- The pull request's title is the issue's title.
 
 ## Untrusted input
 

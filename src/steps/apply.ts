@@ -1,9 +1,10 @@
 import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import * as core from "@actions/core";
-import { usd } from "../budget.ts";
+import { MIN_RUN_BUDGET, runLimit } from "../budget.ts";
 import type { Change } from "../collect.ts";
 import type { FileChange, Repository } from "../github.ts";
+import { type Messages, messages, taskLanguage } from "../i18n/index.ts";
 import { parsePlanOutput, parseStageOutput } from "../output.ts";
 import {
   checkChanges,
@@ -14,6 +15,7 @@ import {
   WORKFLOWS_DIR,
   workflowPath,
 } from "../policy.ts";
+import type { CommandError } from "../problems.ts";
 import { pullRequestBody, pullRequestFooter, pullRequestTitle } from "../pull.ts";
 import { applyCommands, pendingDecisions, type TaskRecord, writeAnswers } from "../record.ts";
 import { addRow, type SpendRow } from "../spend.ts";
@@ -55,22 +57,32 @@ export function chains(action: TaskContext["action"], keyJob: string, keyStatus:
 
 /** Handles a run in which no key was created. Returns true if it did. */
 async function keyFailed(task: TaskContext, repo: Repository): Promise<boolean> {
+  const t = say(task);
   if (core.getInput("key-job-result") !== "success") {
+    await finish(repo, task, "blocked", { message: `${t.noKey} ${retryHint(t, task)}` });
+    return true;
+  }
+  const status = core.getInput("key-status");
+  const spent = amount("task-spent") ?? 0;
+  const budget = task.settings["task-budget"];
+  if (status === "task-budget-spent") {
     await finish(repo, task, "blocked", {
-      message: `Codeman could not create the OpenRouter key for this task. See the run log. ${retryHint(task)}`,
+      message: t.taskBudgetSpent(t.money(spent), t.money(budget), t.money(MIN_RUN_BUDGET)),
     });
     return true;
   }
-  if (core.getInput("key-status") === "task-budget-spent") {
-    await finish(repo, task, "blocked", {
-      message: `${core.getInput("key-reason")} Then comment \`/codeman continue\`.`,
-    });
-    return true;
-  }
-  if (core.getInput("key-status") !== "opened") {
+  if (status !== "opened") {
     // Not the task's fault: go back to where it was, and try again in a later run.
+    const reason =
+      status === "over-budget"
+        ? t.monthlyBudgetReached(
+            t.money(amount("month-spent") ?? 0),
+            t.money(task.settings["monthly-budget"]),
+            t.money(runLimit(budget, spent) ?? 0),
+          )
+        : t.noKey;
     await finish(repo, task, task.fromState === "planning" ? "new" : task.fromState, {
-      message: `${core.getInput("key-reason") || "No key was created."} Codeman will try again in a later run.`,
+      message: t.tryLater(reason),
       retry: true,
     });
     return true;
@@ -80,9 +92,8 @@ async function keyFailed(task: TaskContext, repo: Repository): Promise<boolean> 
 
 async function applyPlan(task: TaskContext, repo: Repository): Promise<void> {
   if (core.getInput("agent-job-result") !== "success") {
-    return finish(repo, task, "blocked", {
-      message: `The agent did not finish the plan. See the run log. ${retryHint(task)}`,
-    });
+    const t = say(task);
+    return finish(repo, task, "blocked", { message: `${t.planUnfinished} ${retryHint(t, task)}` });
   }
 
   const dir = resultDir();
@@ -118,9 +129,11 @@ async function applyPlan(task: TaskContext, repo: Repository): Promise<void> {
     processedReviewId: task.processed.reviewId,
     pullRequest: task.record?.pullRequest,
     runs: 0,
+    language: output.value.language ?? task.record?.language,
   };
   const state = record.decisions.length > 0 ? "awaiting-decision" : "ready";
-  const ignored = checked.value.ignored.map((path) => `Ignored a change to ${path}.`);
+  const t = say(task, record);
+  const ignored = checked.value.ignored.map((path) => t.ignoredChange(path));
   await finish(repo, task, state, { record, errors: ignored });
 }
 
@@ -131,12 +144,11 @@ async function applyPlan(task: TaskContext, repo: Repository): Promise<void> {
 async function applyStage(task: TaskContext, repo: Repository): Promise<void> {
   if (!task.record) return blocked(repo, task, "The task has no record of its plan.");
   const stage = task.stage ?? "code";
+  const t = say(task);
   const dir = resultDir();
   const manifest = readJson(join(dir, "manifest.json"));
   if (!isManifest(manifest)) {
-    return finish(repo, task, "blocked", {
-      message: `The agent produced no result. See the run log. ${retryHint(task)}`,
-    });
+    return finish(repo, task, "blocked", { message: `${t.noResult} ${retryHint(t, task)}` });
   }
   // Review's merge and checks stay in its sandbox.
   const checked =
@@ -149,9 +161,7 @@ async function applyStage(task: TaskContext, repo: Repository): Promise<void> {
           planPath: task.planPath,
         });
   if (!checked.ok) return blocked(repo, task, checked.error);
-  const dropped = checked.value.dropped.map(
-    ({ path, reason }) => `Dropped the change to ${path}: ${reason}.`,
-  );
+  const dropped = checked.value.dropped.map(({ path, reason }) => t.droppedChange(path, reason));
 
   const outputFile = join(dir, "output.json");
   const output = existsSync(outputFile)
@@ -175,7 +185,7 @@ async function applyStage(task: TaskContext, repo: Repository): Promise<void> {
     runs >= maxRuns
       ? finish(repo, task, "blocked", {
           record,
-          message: `${message} The ${stage} stage has run ${runs} times in a row without finishing (\`max-runs\` is ${maxRuns}). Comment \`/codeman continue <guidance>\` to allow ${maxRuns} more runs.`,
+          message: `${message} ${t.maxRuns(stage, runs, maxRuns)}`,
           report,
           errors: dropped,
         })
@@ -204,7 +214,7 @@ async function applyStage(task: TaskContext, repo: Repository): Promise<void> {
 
   if (!output.ok) {
     if (manifest.timedOut) {
-      return unfinished("The agent ran out of time. Its work so far is committed.");
+      return unfinished(t.outOfTime);
     }
     const exit = manifest.exitCode === 0 ? "" : ` The agent exited with code ${manifest.exitCode}.`;
     return blocked(repo, task, `${output.error}${exit}`, dropped, record);
@@ -213,13 +223,13 @@ async function applyStage(task: TaskContext, repo: Repository): Promise<void> {
   const { status, summary, reason } = output.value;
   switch (status) {
     case "partial":
-      return unfinished("Work so far is committed to the task branch.", summary);
+      return unfinished(t.partial, summary);
     case "blocked":
       return finish(repo, task, "blocked", {
         record,
-        message: `The ${stage} stage needs a maintainer. ${retryHint(task)}`,
+        message: `${t.stageNeedsMaintainer(stage)} ${retryHint(t, task)}`,
         report: summary,
-        errors: [`The agent reports: ${reason ?? ""}`, ...dropped],
+        errors: [t.agentReports(reason ?? ""), ...dropped],
       });
     case "awaiting-workflow": {
       const workflows = output.value.workflows ?? [];
@@ -229,17 +239,11 @@ async function applyStage(task: TaskContext, repo: Repository): Promise<void> {
       ]);
       const missing = workflows.filter((path) => !present.has(path));
       if (missing.length > 0) {
-        return blocked(
-          repo,
-          task,
-          `The agent waits for workflows that are not on the branch: ${missing.join(", ")}.`,
-          dropped,
-          record,
-        );
+        return blocked(repo, task, t.missingWorkflows(missing.join(", ")), dropped, record);
       }
       return finish(repo, task, "awaiting-workflow", {
         record: { ...record, runs: runs - 1, awaiting: workflows },
-        message: `The ${stage} stage needs ${workflows.join(", ")} to run: ${reason ?? ""} Codeman goes on when their runs on the task branch finish. \`/codeman continue <guidance>\` goes on without them.`,
+        message: t.awaitingWorkflows(stage, workflows.join(", "), reason ?? ""),
         report: summary,
         errors: dropped,
       });
@@ -251,7 +255,7 @@ async function applyStage(task: TaskContext, repo: Repository): Promise<void> {
         ...decision,
         id: decision.id + offset,
       }));
-      if (stage === "review") await postReview(repo, task, record, summary, reason);
+      if (stage === "review") await postReview(repo, t, task, record, summary, reason);
       return finish(repo, task, "awaiting-decision", {
         record: {
           ...record,
@@ -260,18 +264,18 @@ async function applyStage(task: TaskContext, repo: Repository): Promise<void> {
           runs: 0,
           handoff: stage === "review" ? { stage, text: truncate(summary, 4000) } : record.handoff,
         },
-        message: `The ${stage} stage needs ${added.length} decision(s) from the maintainers.`,
+        message: t.stageDecisions(stage, added.length),
         report: summary,
         errors: dropped,
       });
     }
     case "changes": {
       const rounds = (record.reviewRounds ?? 0) + 1;
-      await postReview(repo, task, record, summary, reason);
+      await postReview(repo, t, task, record, summary, reason);
       if (rounds > maxRuns) {
         return finish(repo, task, "blocked", {
           record: { ...record, reviewRounds: rounds },
-          message: `Review sent the work back to the code stage ${rounds} times in a row (\`max-runs\` is ${maxRuns}). Comment \`/codeman continue <guidance>\` to go on.`,
+          message: t.reviewRounds(rounds, maxRuns),
           report: summary,
         });
       }
@@ -283,7 +287,7 @@ async function applyStage(task: TaskContext, repo: Repository): Promise<void> {
           reviewRounds: rounds,
           handoff: { stage, text: truncate(`${reason ?? ""}\n\n${summary}`, 4000) },
         },
-        message: "Review asked for changes; the code stage works on them next.",
+        message: t.reviewAskedChanges,
         report: summary,
       });
     }
@@ -293,7 +297,7 @@ async function applyStage(task: TaskContext, repo: Repository): Promise<void> {
     // done or skipped: hand over to the next stage.
     const next = nextStage(stage) ?? "review";
     // Kept short: the record lives in the status comment, which GitHub limits in size.
-    const text = truncate(status === "skipped" ? `Skipped: ${reason ?? ""}` : summary, 2000);
+    const text = truncate(status === "skipped" ? t.skipped(reason ?? "") : summary, 2000);
     const updated: TaskRecord = {
       ...record,
       stage: next,
@@ -310,7 +314,7 @@ async function applyStage(task: TaskContext, repo: Repository): Promise<void> {
     }
     return finish(repo, task, STAGE_STATE[next], {
       record: updated,
-      message: `${STAGE_NAMES[stage]} ${status === "skipped" ? "skipped" : "done"}. Next: ${next}.`,
+      message: t.stageFinished(stage, status === "skipped", next),
       report: text,
       errors: dropped,
     });
@@ -335,12 +339,11 @@ async function applyStage(task: TaskContext, repo: Repository): Promise<void> {
     reviewRounds: 0,
     handoff: undefined,
   };
-  await postReview(repo, { ...task, record: done }, done, summary, undefined);
+  await postReview(repo, t, { ...task, record: done }, done, summary, undefined);
   await finish(repo, task, "done", {
     pullRequestWritten: true,
     record: done,
-    message:
-      "The work is done and reviewed. Review the pull request. To ask for changes, submit a review that requests them, or comment `/codeman fix <what to change>` on the pull request.",
+    message: t.workDone,
     report: summary,
   });
 }
@@ -362,23 +365,21 @@ async function openPullRequest(
   record: TaskRecord,
   mode: "draft" | "ready",
 ): Promise<number> {
-  const title = pullRequestTitle(record.commitMessage ?? task.title);
+  const t = say(task, record);
+  const title = pullRequestTitle(task.title);
   const body = pullRequestBody({
+    t,
     issue: task.number,
     planPath: task.planPath,
     planUrl: fileUrl(task, task.planPath),
     planSummary: record.summary,
     summary:
       mode === "ready"
-        ? [
-            `Code: ${record.reports?.code ?? "(no report)"}`,
-            "",
-            `Tests: ${record.reports?.test ?? "(no report)"}`,
-          ].join("\n")
-        : "Codeman is still working on this pull request: test and review come next. It becomes ready for review when they pass.",
+        ? t.readySummary(record.reports?.code, record.reports?.test)
+        : t.draftSummary,
     commitMessage: record.commitMessage ?? "",
     runUrl: task.runUrl,
-    spent: spentLine(task, runCosts(task).task),
+    spent: spentLine(t, task, runCosts(task).task),
   });
   const existing = await repo.findPullRequest(task.branch);
   if (existing === undefined) {
@@ -398,6 +399,7 @@ async function openPullRequest(
 /** Posts the review report on the pull request, as inert text. */
 async function postReview(
   repo: Repository,
+  t: Messages,
   task: TaskContext,
   record: TaskRecord,
   report: string,
@@ -406,12 +408,12 @@ async function postReview(
   const pullRequest = record.pullRequest ?? (await repo.findPullRequest(task.branch));
   if (pullRequest === undefined) return;
   const body = [
-    "### Codeman review",
+    `### ${t.reviewHeading}`,
     "",
     inertLines(report),
-    ...(changes ? ["", "#### Changes asked of the code stage", "", inertLines(changes)] : []),
+    ...(changes ? ["", `#### ${t.reviewChanges}`, "", inertLines(changes)] : []),
     "",
-    `<sub>[Run](${task.runUrl})</sub>`,
+    `<sub>[${t.run}](${task.runUrl})</sub>`,
   ].join("\n");
   await repo.comment(pullRequest, body);
 }
@@ -424,6 +426,7 @@ async function postReview(
 async function acceptWorkflows(task: TaskContext, repo: Repository): Promise<void> {
   const accept = task.accept;
   if (!task.record || !accept) return blocked(repo, task, "Nothing to accept.");
+  const t = say(task);
   const done = (message: string, errors: string[] = []): Promise<void> =>
     finish(repo, task, task.fromState, {
       record: { ...task.record, acceptedCommentId: accept.id } as TaskRecord,
@@ -434,16 +437,14 @@ async function acceptWorkflows(task: TaskContext, repo: Repository): Promise<voi
 
   const head = await repo.branchSha(task.branch);
   const staged = head ? await repo.filesUnder(head, STAGED_WORKFLOWS_DIR) : new Map();
-  if (staged.size === 0) return done("There are no staged workflows to accept.");
+  if (staged.size === 0) return done(t.nothingStaged);
   const before = await repo.commitAt(task.branch, accept.createdAt);
   const seen = before ? await repo.filesUnder(before, STAGED_WORKFLOWS_DIR) : new Map();
   const changed = [...staged]
     .filter(([path, file]) => seen.get(path)?.sha !== file.sha)
     .map(([path]) => workflowPath(path));
   if (changed.length > 0 || !head) {
-    return done("The staged workflows changed after they were accepted.", [
-      `Changed after ${accept.author}'s comment: ${changed.join(", ")}. Read them again, then comment \`/codeman accept-workflows\` again.`,
-    ]);
+    return done(t.stagedChanged, [t.stagedChangedDetail(accept.author, changed.join(", "))]);
   }
 
   const moved = [...staged.keys()].map(workflowPath);
@@ -457,11 +458,10 @@ async function acceptWorkflows(task: TaskContext, repo: Repository): Promise<voi
     ]),
     message: `Accept workflows for #${task.number}\n\nAccepted by ${accept.author} in comment ${accept.id}.`,
   });
-  const next = afterAccept(task.fromState, task.record, accept.author, moved);
+  const next = afterAccept(t, task.fromState, task.record, accept.author, moved);
   await finish(repo, task, next.state, {
     record: { ...next.record, acceptedCommentId: accept.id },
-    message:
-      `${accept.author} accepted ${moved.join(", ")}, now in \`.github/workflows/\` on the task branch. ${next.message}`.trim(),
+    message: `${t.accepted(accept.author, moved.join(", "))} ${next.message}`.trim(),
     retry: true,
   });
 }
@@ -472,6 +472,7 @@ async function acceptWorkflows(task: TaskContext, repo: Repository): Promise<voi
  * accepting answers what it most likely waited for.
  */
 export function afterAccept(
+  t: Messages,
   state: State | "new",
   record: TaskRecord,
   by: string,
@@ -479,13 +480,13 @@ export function afterAccept(
 ): { state: State | "new"; record: TaskRecord; message: string } {
   const accepted = { ...record, accepted: { by, workflows } };
   if (state === "awaiting-workflow") {
-    return { state, record: accepted, message: "Codeman goes on when their runs finish." };
+    return { state, record: accepted, message: t.acceptWaits };
   }
   if (state === "blocked" && record.stage) {
     return {
       state: STAGE_STATE[record.stage],
       record: { ...accepted, runs: 0 },
-      message: `The ${record.stage} stage goes on.`,
+      message: t.acceptResumes(record.stage),
     };
   }
   return { state, record: accepted, message: "" };
@@ -535,21 +536,29 @@ async function recordAnswers(task: TaskContext, repo: Repository): Promise<void>
   }
 
   const pending = pendingDecisions(record).length;
+  const t = say(task);
   await finish(repo, task, pending === 0 ? "ready" : "awaiting-decision", {
     record,
-    errors,
-    message:
-      pending === 0
-        ? "All decisions are answered. Codeman implements the plan in its next run."
-        : `${pending} decision(s) still need an answer.`,
+    errors: errors.map((error) => commandError(t, error)),
+    message: pending === 0 ? t.allAnswered : t.stillPending(pending),
   });
 }
 
 /** How a maintainer sends a blocked task back to work. */
-function retryHint(task: TaskContext): string {
-  if (task.action === "implement") return "Comment `/codeman continue <guidance>` to try again.";
-  if (task.record) return "Comment `/codeman replan <what to change>` to try again.";
-  return "Remove the `codeman:blocked` label to try again.";
+function retryHint(t: Messages, task: TaskContext): string {
+  if (task.action === "implement") return t.continueHint;
+  if (task.record) return t.replanHint;
+  return t.removeLabelHint;
+}
+
+/** The task's messages, in the language of its settings, or else of its record. */
+function say(task: TaskContext, record: TaskRecord | null | undefined = task.record): Messages {
+  return messages(taskLanguage(task.settings.language, record?.language));
+}
+
+/** A problem with a command, in the task's language. */
+export function commandError(t: Messages, error: CommandError): string {
+  return `${error.text ? `${error.text}: ` : ""}${t.commandProblem(error.problem)}`;
 }
 
 function blocked(
@@ -560,9 +569,10 @@ function blocked(
   record?: TaskRecord,
 ): Promise<void> {
   core.error(oneLine(error));
+  const t = say(task, record);
   return finish(repo, task, "blocked", {
     record,
-    message: `Codeman could not use the agent's result. ${retryHint(task)}`,
+    message: `${t.couldNotUse} ${retryHint(t, task)}`,
     errors: [error, ...more],
   });
 }
@@ -598,7 +608,9 @@ async function finish(
       processedReviewId: Math.max(record.processedReviewId ?? 0, task.processed.reviewId),
     };
   }
-  const errors = [...(task.action === "record" ? [] : task.problems), ...(view.errors ?? [])];
+  const t = say(task, record);
+  const problems = task.action === "record" ? [] : task.problems;
+  const errors = [...problems.map((error) => commandError(t, error)), ...(view.errors ?? [])];
   // Workflows the agent wrote that wait for a maintainer, as they are on the branch now.
   const staged =
     task.action === "implement" || task.action === "accept"
@@ -620,7 +632,8 @@ async function finish(
     const id = await repo.comment(
       task.number,
       renderRun({
-        title: runTitle(task),
+        t,
+        title: t.runTitle({ action: task.action, stage: task.stage, revised: !!task.record }),
         state,
         model: task.model,
         runUrl: task.runUrl,
@@ -637,6 +650,7 @@ async function finish(
     task.number,
     task.statusCommentId,
     renderStatus({
+      t,
       state,
       record,
       model: task.model,
@@ -652,24 +666,10 @@ async function finish(
   if (record?.pullRequest && !view.pullRequestWritten) {
     await repo.updatePullRequestFooter(
       record.pullRequest,
-      pullRequestFooter(task.runUrl, spentLine(task, record.spent)),
+      pullRequestFooter(t, task.runUrl, spentLine(t, task, record.spent)),
     );
   }
   core.info(`#${task.number} is now ${state}.`);
-}
-
-/** What a run worked on, as its comment's title. */
-function runTitle(task: TaskContext): string {
-  switch (task.action) {
-    case "plan":
-      return task.record ? "Plan revised" : "Plan";
-    case "implement":
-      return `${(task.stage ?? "code").replace(/^./, (first) => first.toUpperCase())} stage`;
-    case "record":
-      return "Answers recorded";
-    case "accept":
-      return "Workflows accepted";
-  }
 }
 
 /**
@@ -706,8 +706,10 @@ function amount(name: string): number | undefined {
   return Number.isFinite(value) ? value : undefined;
 }
 
-function spentLine(task: TaskContext, spent: number | undefined): string | undefined {
-  return spent === undefined ? undefined : `${usd(spent)} of ${usd(task.settings["task-budget"])}`;
+function spentLine(t: Messages, task: TaskContext, spent: number | undefined): string | undefined {
+  return spent === undefined
+    ? undefined
+    : t.of(t.money(spent), t.money(task.settings["task-budget"]));
 }
 
 function readJson(file: string): unknown {

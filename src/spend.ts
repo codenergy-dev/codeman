@@ -1,4 +1,4 @@
-import { usd } from "./budget.ts";
+import type { Messages } from "./i18n/index.ts";
 import type { Stage } from "./stages.ts";
 
 /** What one agent run spent, and the limits that applied to it. */
@@ -44,40 +44,29 @@ export function addRow(spending: Spending | undefined, row: SpendRow, max = MAX_
  * The spend table in Markdown. With the task's total from OpenRouter, a last row shows what
  * runs without a row spent, such as a run whose apply failed.
  */
-export function spendTable(spending: Spending | undefined, total?: number): string[] {
+export function spendTable(t: Messages, spending: Spending | undefined, total?: number): string[] {
   const rows = spending?.rows ?? [];
   const earlier = spending?.earlier;
   const lines = [
-    "| Run | Stage | Model | Cost | Key limit | Task budget | Monthly budget |",
+    `| ${t.tableHeader.join(" | ")} |`,
     "| --- | --- | --- | ---: | ---: | ---: | --- |",
   ];
   if (earlier) {
-    lines.push(`| Earlier runs (${earlier.runs}) | | | ${cost(earlier.cost)} | | | |`);
+    lines.push(`| ${t.earlierRuns(earlier.runs)} | | | ${t.cost(earlier.cost)} | | | |`);
   }
   for (const row of rows) {
     const month =
       row.monthSpent === undefined
-        ? usd(row.monthlyBudget)
-        : `${usd(row.monthSpent)} of ${usd(row.monthlyBudget)}`;
+        ? t.money(row.monthlyBudget)
+        : t.of(t.money(row.monthSpent), t.money(row.monthlyBudget));
+    const when = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(row.at) ? t.dateTime(row.at) : "—";
     lines.push(
-      `| [${when(row.at)}](${row.runUrl}) | ${row.stage} | \`${row.model.replace(/[`|\s]/g, "")}\` | ${row.cost === undefined ? "—" : cost(row.cost)} | ${row.keyLimit === undefined ? "—" : usd(row.keyLimit)} | ${usd(row.taskBudget)} | ${month} |`,
+      `| [${when}](${row.runUrl}) | ${t.stage(row.stage)} | \`${row.model.replace(/[`|\s]/g, "")}\` | ${row.cost === undefined ? "—" : t.cost(row.cost)} | ${row.keyLimit === undefined ? "—" : t.money(row.keyLimit)} | ${t.money(row.taskBudget)} | ${month} |`,
     );
   }
   const recorded = rows.reduce((sum, row) => sum + (row.cost ?? 0), earlier?.cost ?? 0);
   if (total !== undefined && total - recorded >= 0.001) {
-    lines.push(`| Runs without a row | | | ${cost(total - recorded)} | | | |`);
+    lines.push(`| ${t.runsWithoutRow} | | | ${t.cost(total - recorded)} | | | |`);
   }
   return lines;
-}
-
-/** Costs of a few cents are common, so they keep a third decimal. */
-function cost(amount: number): string {
-  return `US$ ${amount.toFixed(3)}`;
-}
-
-/** `2026-09-28T19:40:12.345Z` → `2026-09-28 19:40 UTC`. */
-function when(at: string): string {
-  return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(at)
-    ? `${at.slice(0, 10)} ${at.slice(11, 16)} UTC`
-    : "—";
 }

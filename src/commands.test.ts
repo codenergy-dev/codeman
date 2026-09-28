@@ -167,3 +167,14 @@ test("accept-workflows takes no arguments", () => {
   assert.deepEqual(parseCommands("/codeman accept-workflows"), [{ kind: "accept-workflows" }]);
   assert.equal(parseCommands("/codeman accept-workflows all")[0]?.kind, "invalid");
 });
+
+test("a task can set its language, and a bad one is a problem to render", () => {
+  assert.deepEqual(parseCommands("/codeman set language pt-BR"), [
+    { kind: "set", name: "language", value: "pt-BR" },
+  ]);
+  assert.deepEqual(parseCommands("/codeman set language portuguese!")[0], {
+    kind: "invalid",
+    text: "/codeman set language portuguese!",
+    problem: { kind: "invalid-setting", name: "language", type: "language" },
+  });
+});

@@ -10,6 +10,8 @@ export interface Settings {
   "max-runs": number;
   "max-files": number;
   "max-file-bytes": number;
+  /** The language Codeman talks to maintainers in: a BCP 47 tag, or `auto` for the issue's. */
+  language: string;
 }
 
 export type SettingName = keyof Settings;
@@ -22,6 +24,7 @@ export const DEFAULTS: Omit<Settings, "model"> = {
   "max-runs": 3,
   "max-files": 300,
   "max-file-bytes": 1024 * 1024,
+  language: "auto",
 };
 
 /** Settings a maintainer can change for one task with `/codeman set`. */
@@ -29,6 +32,7 @@ export const TASK_SETTINGS: ReadonlySet<SettingName> = new Set([
   "model",
   "task-budget",
   "max-runs",
+  "language",
 ]);
 
 const NAMES: readonly SettingName[] = [
@@ -38,6 +42,7 @@ const NAMES: readonly SettingName[] = [
   "max-runs",
   "max-files",
   "max-file-bytes",
+  "language",
 ];
 
 /** OpenRouter model IDs, such as `deepseek/deepseek-v4.1-flash` or `~deepseek/deepseek-flash-latest`. */
@@ -45,6 +50,19 @@ const MODEL_ID = /^~?[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._:-]*$/i;
 
 export function isModelId(text: string): boolean {
   return text.length <= 100 && MODEL_ID.test(text);
+}
+
+/** BCP 47 language tags, such as `pt-BR`, without the rarer extensions. */
+const LANGUAGE_TAG = /^[a-z]{2,3}(-[a-z0-9]{2,8}){0,3}$/i;
+
+export function isLanguageTag(text: string): boolean {
+  return LANGUAGE_TAG.test(text);
+}
+
+/** What kind of value a setting takes. */
+export function settingKind(name: SettingName): "model" | "language" | "number" | "integer" {
+  if (name === "model" || name === "language") return name;
+  return name === "task-budget" || name === "monthly-budget" ? "number" : "integer";
 }
 
 export function isSettingName(name: string): name is SettingName {
@@ -61,8 +79,16 @@ export function parseSetting(name: SettingName, text: string): Parsed<string | n
           error: `\`${name}\` must be an OpenRouter model ID, such as \`provider/model\`.`,
         };
   }
+  if (name === "language") {
+    return text === "auto" || isLanguageTag(text)
+      ? { ok: true, value: text }
+      : {
+          ok: false,
+          error: `\`${name}\` must be \`auto\` or a language tag, such as \`pt-BR\`.`,
+        };
+  }
   const value = Number(text);
-  const integer = name !== "task-budget" && name !== "monthly-budget";
+  const integer = settingKind(name) === "integer";
   if (
     text === "" ||
     !Number.isFinite(value) ||
