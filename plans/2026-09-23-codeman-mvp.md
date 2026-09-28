@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-09-23T14:18:00-03:00
-updated_at: 2026-09-27T10:00:00-03:00
+updated_at: 2026-09-28T10:00:00-03:00
 commit: null
 ---
 
@@ -207,7 +207,7 @@ Result (2026-09-26): done. On a private test repository, a review that requested
   - Apply does not compute what can move; the next run's `select` does, and a run with nothing to do stops there without an LLM. So apply asks for another run whenever this one moved a task: after recording answers, or after the agent ran.
   - No new run when no key was created (monthly budget reached, or the key job failed): the same task would be picked again without moving, run after run.
   - The new run starts from a separate `next-run` job, so the graph shows it, with `actions: write` on its `GITHUB_TOKEN` and no secrets. A manual run's inputs carry over to the runs it starts.
-- [ ] End-to-end check on the test repository: `/codeman approve` on a new plan leads to an open pull request without another trigger, and the chain stops with "Nothing to do". First attempt (2026-09-27): after `/codeman decide`, `next-run` was skipped. A job's implicit `success()` covers every job before it in the chain, and a run that only records answers skips `open-key` and `agent`; `next-run` now uses `always()` and checks `apply`'s result.
+- [x] End-to-end check on the test repository: `/codeman approve` on a new plan leads to an open pull request without another trigger, and the chain stops with "Nothing to do". First attempt (2026-09-27): after `/codeman decide`, `next-run` was skipped. A job's implicit `success()` covers every job before it in the chain, and a run that only records answers skips `open-key` and `agent`; `next-run` now uses `always()` and checks `apply`'s result. Second attempt (2026-09-28): on a new issue, answering the decisions started the implementation without another trigger.
 
 Done when: a simple issue goes from opt-in to an open pull request that passes the repository's CI, and a fix request on that pull request is applied.
 
