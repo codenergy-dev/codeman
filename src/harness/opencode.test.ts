@@ -41,3 +41,18 @@ test("locks the configuration down", () => {
   }
   assert.ok(!Object.values(config.permission).includes("ask"));
 });
+
+test("loads Codeman's rules as instructions, next to the repository's AGENTS.md", () => {
+  const command = openCode.command({
+    executable: "/opt/codeman/opencode",
+    model: "a/b",
+    apiKey: "k",
+    prompt: "p",
+    instructions: "/home/codeman-agent/work/.codeman/rules.md",
+  });
+  const config = JSON.parse(command.env.OPENCODE_CONFIG_CONTENT ?? "") as {
+    instructions?: string[];
+  };
+  assert.deepEqual(config.instructions, ["/home/codeman-agent/work/.codeman/rules.md"]);
+  assert.equal("instructions" in openCodeConfig("a/b"), false);
+});

@@ -66,6 +66,13 @@ The agent reads text from the issue, which anyone may have written, and runs she
 - When the harness exits or reaches its time limit, every process of that user is killed.
 - Codeman finds changes with `git status`, using the original checkout's `.git` against the agent's copy; the agent's `.git` is never used. Changed files are copied without following symlinks.
 
+## Agent rules
+
+Every agent run gets Codeman's working rules: the `##` sections of Codeman's own [`AGENTS.md`](../AGENTS.md) (language, documentation, plans, commits, third-party code, decisions), after a short section on applying them without a person to ask. The agent job writes them to `.codeman/rules.md` in the agent's copy, and the harness loads that file as instructions next to the repository's `AGENTS.md` (OpenCode: the `instructions` setting). The repository's files are not changed.
+
+- The repository's `AGENTS.md` (or `CLAUDE.md`) wins for its own conventions, such as where documentation lives or which language it uses. The rules in the task file always hold: plan path and format, output file, protected paths, no secrets.
+- A section the repository's file already contains is left out: when 60% or more of its three-word sequences appear there, ignoring case and punctuation. So a repository that copied Codeman's `AGENTS.md`, even with edits, does not get it twice. The job's log lists the sections left out.
+
 ## Budget
 
 - The task budget (default US$ 2) covers the whole task, from the first plan to the last fix, across all its runs.

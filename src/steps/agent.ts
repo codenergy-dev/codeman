@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import * as core from "@actions/core";
 import { collectChanges, copyAgentFile, type Manifest } from "../collect.ts";
@@ -9,10 +9,12 @@ import {
   OUTPUT_DIR,
   OUTPUT_FILE,
   planPrompt,
+  RULES_PATH,
   stagePrompt,
   TASK_FILE,
 } from "../prompt.ts";
 import { downloadResults, RESULTS_DIR } from "../results.ts";
+import { agentRules, readRules } from "../rules.ts";
 import {
   AGENT_HOME,
   copyToAgent,
@@ -64,10 +66,21 @@ export async function agent(): Promise<void> {
   }
   const prompt = task.action === "implement" ? stagePrompt(task, minutes) : planPrompt(task);
   writeAsAgent(`${worktree}/${TASK_FILE}`, prompt);
+  const rules = agentRules(readRules(), repositoryRules(workspace));
+  if (rules.omitted.length > 0) {
+    core.info(`The repository's instructions already cover: ${rules.omitted.join(", ")}.`);
+  }
+  writeAsAgent(`${worktree}/${RULES_PATH}`, rules.text);
 
   core.info(`Running ${harness.name} with ${task.model} for up to ${minutes} minutes.`);
   const run = await runAsAgent(
-    harness.command({ executable, model: task.model, apiKey, prompt: HARNESS_PROMPT }),
+    harness.command({
+      executable,
+      model: task.model,
+      apiKey,
+      prompt: HARNESS_PROMPT,
+      instructions: `${worktree}/${RULES_PATH}`,
+    }),
     worktree,
     minutes * 60_000,
   );
@@ -100,4 +113,13 @@ export async function agent(): Promise<void> {
   // The result is kept either way: apply commits unfinished work so the next run continues.
   if (run.timedOut) core.setFailed(`The agent did not finish within ${minutes} minutes.`);
   else if (run.exitCode !== 0) core.setFailed(`The agent exited with code ${run.exitCode}.`);
+}
+
+/** The repository's own instructions, as the harness finds them: `AGENTS.md`, else `CLAUDE.md`. */
+function repositoryRules(workspace: string): string | undefined {
+  for (const name of ["AGENTS.md", "CLAUDE.md"]) {
+    const file = join(workspace, name);
+    if (existsSync(file) && lstatSync(file).isFile()) return readFileSync(file, "utf8");
+  }
+  return undefined;
 }

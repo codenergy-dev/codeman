@@ -23,9 +23,11 @@ const PACKAGES: Record<string, { name: string; integrity: string }> = {
  * Configuration passed through `OPENCODE_CONFIG_CONTENT`, which overrides the repository's own
  * `opencode.json`. Every permission is explicit: nobody is there to answer an `ask`.
  */
-export function openCodeConfig(model: string): Record<string, unknown> {
+export function openCodeConfig(model: string, instructions?: string): Record<string, unknown> {
   return {
     $schema: "https://opencode.ai/config.json",
+    // Added to the repository's AGENTS.md, not used in its place.
+    ...(instructions ? { instructions: [instructions] } : {}),
     autoupdate: false,
     share: "disabled",
     enabled_providers: ["openrouter"],
@@ -79,13 +81,13 @@ export const openCode: Harness = {
     return executable;
   },
 
-  command({ executable, model, apiKey, prompt }: HarnessOptions): HarnessCommand {
+  command({ executable, model, apiKey, prompt, instructions }: HarnessOptions): HarnessCommand {
     return {
       file: executable,
       args: ["run", "--format", "json", "--model", `openrouter/${model}`, prompt],
       env: {
         OPENROUTER_API_KEY: apiKey,
-        OPENCODE_CONFIG_CONTENT: JSON.stringify(openCodeConfig(model)),
+        OPENCODE_CONFIG_CONTENT: JSON.stringify(openCodeConfig(model, instructions)),
       },
     };
   },

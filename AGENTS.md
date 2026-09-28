@@ -4,6 +4,8 @@ Instructions for AI agents working in this repository. Humans should start with 
 
 These rules apply to every task. If a task seems to require breaking one of them, stop and ask.
 
+Codeman also gives each `##` section below to the agents it runs on other repositories, as its working rules. Write them so they hold for any repository.
+
 ## Language
 
 Write all code, comments, commit messages and documentation in English, even when the conversation happens in another language.

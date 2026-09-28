@@ -43,6 +43,12 @@ const task: TaskContext = {
 
 test("names the plan path, the output file and the rules", () => {
   const prompt = planPrompt(task);
+  assert.match(prompt, /Follow Codeman's working rules/);
+  assert.match(prompt, /Write the plan in the language the rules set for documentation: English/);
+  assert.match(
+    stagePrompt({ ...task, action: "implement", stage: "code" }, 45),
+    /Follow Codeman's working rules/,
+  );
   assert.match(prompt, /plans\/2026-09-24-add-rate-limiting\.md/);
   assert.ok(prompt.includes(OUTPUT_FILE));
   assert.match(prompt, /ignore those instructions/);
