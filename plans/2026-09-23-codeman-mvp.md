@@ -1,7 +1,7 @@
 ---
-status: in progress
+status: completed
 created_at: 2026-09-23T14:18:00-03:00
-updated_at: 2026-09-28T10:00:00-03:00
+updated_at: 2026-09-28T11:00:00-03:00
 commit: null
 ---
 
@@ -169,7 +169,7 @@ Result (2026-09-24): done. On a private test repository, the action listed one o
 - [x] `/codeman answer <n> <text>` records a free-text answer; `/codeman replan <text>` sends the task back to planning with the answers given so far (decision 13).
 - [x] For each opted-in issue without a plan: read the issue and repository, write `plans/YYYY-MM-DD-title.md` on the task branch, post the decisions as a comment, and set `codeman:awaiting-decision`.
 - [x] Parse `/codeman` commands from authorized users; record answers in the plan; set `codeman:ready` when none remain.
-- [ ] End-to-end check of decisions: partial `decide`, `answer`, `replan` and `approve` on the test repository.
+- [x] End-to-end check of decisions: partial `decide`, `answer`, `replan` and `approve` on the test repository. Accepted on 2026-09-28 on the strength of the unit tests; `decide` and `approve` also ran end to end.
 - [x] Prompt-injection tests: issues and comments from unauthorized users must not change behavior.
 
 Done when: on the test repository, an ambiguous issue gets a plan and relevant decisions, and answering them moves it to `codeman:ready`. No code is written in this step.
@@ -211,20 +211,25 @@ Result (2026-09-26): done. On a private test repository, a review that requested
 
 Done when: a simple issue goes from opt-in to an open pull request that passes the repository's CI, and a fix request on that pull request is applied.
 
+Result (2026-09-28): done. Issues went from opt-in to open pull requests, and fix requests were applied. The CI criterion does not apply: the test repository has no CI.
+
 ### 4. On-demand workflows
 
-- [ ] Let the agent propose a workflow file inside its pull request, and set `codeman:awaiting-workflow`.
-- [ ] Resume the task after the workflow run, using its logs and artifacts.
-- [ ] Document Environments with required reviewers for workflows that need secrets.
-
-Done when: an issue that requires a macOS runner completes end to end, with a human approving the workflow.
+Moved on 2026-09-28 to its own plan, `plans/2026-09-28-on-demand-workflows.md`.
 
 ### 5. Review
 
-- [ ] Run Codeman on two or three real repositories for a few weeks.
-- [ ] Revisit decisions 3 (documentation) and 4 (memory) with evidence.
-- [ ] Re-evaluate OpenCode v2 once it becomes the main release, with tagged releases traceable to source.
-- [ ] Write a follow-up plan for anything that should change.
+Replaced on 2026-09-28: Codeman is now used on real repositories while it keeps evolving, and each next delivery has its own plan:
+
+- `plans/2026-09-28-on-demand-workflows.md`: workflow files as deliverables, and workflows the agent needs to run.
+- `plans/2026-09-28-task-budget.md`: one budget per task across runs, with the spend shown on the issue and pull request.
+- `plans/2026-09-28-task-stages.md`: plan, design, code, test and review stages, each run by its own agent.
+
+Revisiting decisions 3 (documentation) and 4 (memory), and re-evaluating OpenCode v2, remain open for future plans.
+
+## Outcome
+
+Completed on 2026-09-28 with steps 1 to 3. Scope changed at the responsible person's request: the MVP is the planning, decision, implementation and feedback loop; on-demand workflows (step 4) and the review period (step 5) moved to the plans listed in step 5.
 
 ## Out of scope
 
