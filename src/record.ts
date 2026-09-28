@@ -52,6 +52,8 @@ export interface TaskRecord {
   reports?: Partial<Record<Stage, string>> | undefined;
   /** The suggested squash commit message, from the code stage. */
   commitMessage?: string | undefined;
+  /** Workflows a maintainer accepted since the last stage run, for the next one to know. */
+  accepted?: { by: string; workflows: string[] } | undefined;
 }
 
 export interface CommandSource {

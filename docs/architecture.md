@@ -91,7 +91,7 @@ After planning, a task goes through four stages, one run and one agent each, in 
 | --- | --- |
 | Design | Flowcharts in Mermaid (`docs/flows/*.md`), screen drafts in plain HTML (`docs/design/*.html`) and their images (`docs/screenshots/*.png`, rendered with the runner's headless Chrome), linked from the plan. It may ask the maintainers decisions, such as a choice between two layouts. |
 | Code | The implementation, with unit tests for the code it writes, and the documentation it changes. |
-| Test | Integration and end-to-end tests where they apply, more unit tests where coverage is thin, and every check the repository has. |
+| Test | Integration and end-to-end tests where they apply, more unit tests where coverage is thin, and every check the repository has. What can only be tested outside the task branch (a deploy, a release) goes in a "Manual tests" section of its report, which the pull request's description shows; it is no reason to block. |
 | Review | A critical review against the plan and the decisions, and a merge of the default branch in its sandbox to find conflicts and integration problems early. It changes nothing; its report goes on the pull request. It is not an approval to merge. |
 
 1. `select` picks the task and its stage (the task record keeps it; a `fix` request always goes to code), and sets the stage's label. The agent starts from the head of the task branch, with the default branch's history, and gets the notes the previous stage left.
@@ -103,7 +103,7 @@ After planning, a task goes through four stages, one run and one agent each, in 
    - `changes` from review: the report goes on the pull request, and the code stage works on it next. After `max-runs` rounds in a row, the task becomes `codeman:blocked`.
    - `decisions`: the task becomes `codeman:awaiting-decision`, with the new decisions after the plan's. When they are answered, design goes on; after review, code does, with the review's report.
    - `partial`, or out of time: the stage runs again, up to `max-runs` runs in a row. Then the task becomes `codeman:blocked`, and a maintainer can grant another round with `/codeman continue <guidance>`.
-   - `blocked`, or an invalid result: `codeman:blocked`, with the reason. `/codeman continue <guidance>` tries the stage again.
+   - `blocked`, or an invalid result: `codeman:blocked`, with the reason. `/codeman continue <guidance>` tries the stage again, and so does accepting the task's staged workflows.
 
 ### Feedback
 
@@ -136,7 +136,8 @@ A workflow file runs as soon as it reaches a branch, if it listens to `push`, an
 
 - When the agent writes or changes a file directly under `.github/workflows/`, and `.codemanignore` allows it, apply commits it to `.codeman/workflows/` on the task branch instead, where it does not run. The status comment lists these files. Deleting a workflow is left to a maintainer.
 - After reading them in the pull request or on the branch, a maintainer comments `/codeman accept-workflows`. The next run moves them into `.github/workflows/` with a token that may write workflows, which apply requests only for this. If a staged file changed after the comment, nothing moves, and the maintainer must read them again and comment again. Codeman records the accepted comment, and the commit names who accepted.
-- A workflow can be what the task delivers (a deploy workflow, for example), or something the agent needs: another operating system, a device, a secret. In that case the agent writes a workflow that runs on pushes to the task branch and reports `awaiting-workflow`, with the workflows it waits for. The task becomes `codeman:awaiting-workflow`.
+- A workflow can be what the task delivers (a deploy workflow, for example), or something the agent needs: another operating system, a device, a secret. In that case the agent writes a workflow that runs on pushes to the task branch and reports `awaiting-workflow`, with the workflows it waits for. The task becomes `codeman:awaiting-workflow`. The agent never waits for a workflow that deploys, publishes or releases: from the task branch, it would ship work nobody reviewed.
+- Accepting workflows of a blocked task resumes the stage that blocked, with a new run count. The stage's agent is told which workflows were accepted, and by whom.
 - Once accepted, the workflow runs on the push that moved it. When every awaited workflow has a finished run on the branch's head, the next run resumes the task. The agent job downloads each run's job conclusions, the last 64 KiB of the log of each job that did not succeed, and the artifacts, up to 50 MiB in total; the agent finds them in `.codeman/results/`. They came from code on the branch, so the agent treats them as data. `/codeman continue <guidance>` resumes the task without waiting.
 - A workflow that needs secrets should take them from a GitHub Environment with required reviewers, so a human also approves each run.
 

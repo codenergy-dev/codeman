@@ -456,10 +456,38 @@ async function acceptWorkflows(task: TaskContext, repo: Repository): Promise<voi
     ]),
     message: `Accept workflows for #${task.number}\n\nAccepted by ${accept.author} in comment ${accept.id}.`,
   });
-  const waiting = task.fromState === "awaiting-workflow";
-  await done(
-    `${accept.author} accepted ${moved.join(", ")}, now in \`.github/workflows/\` on the task branch.${waiting ? " Codeman goes on when their runs finish." : ""}`,
-  );
+  const next = afterAccept(task.fromState, task.record, accept.author, moved);
+  await finish(repo, task, next.state, {
+    record: { ...next.record, acceptedCommentId: accept.id },
+    message:
+      `${accept.author} accepted ${moved.join(", ")}, now in \`.github/workflows/\` on the task branch. ${next.message}`.trim(),
+    retry: true,
+  });
+}
+
+/**
+ * Where a task goes once a maintainer accepted its staged workflows. A task that waits for
+ * them goes on when their runs finish; a blocked stage resumes, with a fresh run count, since
+ * accepting answers what it most likely waited for.
+ */
+export function afterAccept(
+  state: State | "new",
+  record: TaskRecord,
+  by: string,
+  workflows: string[],
+): { state: State | "new"; record: TaskRecord; message: string } {
+  const accepted = { ...record, accepted: { by, workflows } };
+  if (state === "awaiting-workflow") {
+    return { state, record: accepted, message: "Codeman goes on when their runs finish." };
+  }
+  if (state === "blocked" && record.stage) {
+    return {
+      state: STAGE_STATE[record.stage],
+      record: { ...accepted, runs: 0 },
+      message: `The ${record.stage} stage goes on.`,
+    };
+  }
+  return { state, record: accepted, message: "" };
 }
 
 /** Reads the accepted changes from the agent's result. Each file is checked again. */
@@ -556,6 +584,9 @@ async function finish(
   const cost = runCosts(task);
   let record = view.record ?? task.record ?? undefined;
   if (record && cost.task !== undefined) record = { ...record, spent: cost.task };
+  // A stage ran and saw the accepted workflows.
+  if (record && task.action === "implement" && !view.retry)
+    record = { ...record, accepted: undefined };
   if (record && task.action !== "record" && !view.retry) {
     // Handled, whatever the outcome: a failing request must not start run after run.
     record = {

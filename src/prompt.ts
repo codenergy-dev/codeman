@@ -141,7 +141,8 @@ const STAGE_WORK: Record<Stage, (task: TaskContext) => string> = {
 
 1. Read what the task changed: \`git diff origin/${task.defaultBranch}...HEAD\`. Decide whether tests are missing: integration or end-to-end tests where the change crosses components or reaches users, and unit tests where coverage of the change is thin. If none are missing, report \`skipped\` and say why.
 2. Write the missing tests, following the repository's conventions and tools. Do not add a new test framework unless the plan says so.
-3. Run every check the repository has. Fix failing tests. If a test fails because the code is wrong, fix the code only when the fix is small and clear, and say so in the summary; otherwise report \`blocked\`.`,
+3. Run every check the repository has. Fix failing tests. If a test fails because the code is wrong, fix the code only when the fix is small and clear, and say so in the summary; otherwise report \`blocked\`.
+4. Some changes can only be tested outside the task branch: a deploy, a release, production data or services. Test what you can, report \`done\`, and end your summary with a "Manual tests" section: the steps a maintainer follows to test the rest, after the merge if need be. That alone is no reason to report \`blocked\`.`,
   review: (
     task,
   ) => `Your stage is **review**: judge the work critically, as an independent reviewer. You change nothing: every file change you make is discarded.
@@ -192,6 +193,9 @@ export function stagePrompt(task: TaskContext, minutes: number): string {
   const handoff = task.record?.handoff
     ? `\n## Notes from the ${task.record.handoff.stage} stage\n\n${quote(`${task.record.handoff.stage.toUpperCase()} NOTES`, task.record.handoff.text)}\n`
     : "";
+  const accepted = task.record?.accepted
+    ? `\n## Accepted workflows\n\nMaintainer ${task.record.accepted.by} read and accepted the workflows the agent wrote. They are now in \`.github/workflows/\` on the task branch: ${task.record.accepted.workflows.map((path) => `\`${path.replace(/[\s`]+/g, " ")}\``).join(", ")}.\n`
+    : "";
   return `# Codeman task: ${stage} stage of issue #${task.number}
 
 You are Codeman, an agent that carries out approved plans on the repository in the current directory, one stage at a time: plan, design, code, test and review. Each stage is a different agent. The plan at \`${task.planPath}\` is approved: its decisions are answered in its \`## Answers\` section. The current directory is the task branch \`${task.branch}\`, which may already hold work from earlier stages and runs. The default branch is \`${task.defaultBranch}\`, available as \`origin/${task.defaultBranch}\`.
@@ -205,7 +209,7 @@ ${UNTRUSTED_RULE}
 - Changes to the paths below are discarded, as are changes under \`.codeman/\` (except \`${OUTPUT_FILE}\`), symbolic links, files over ${task.settings["max-file-bytes"]} bytes, and \`.codemanignore\`. A run may change at most ${task.settings["max-files"]} files, or nothing is committed.
 - Never write secrets or environment variable values into any file.
 - Workflow files you write under \`.github/workflows/\` are not committed there: Codeman stages them under \`.codeman/workflows/\` until a maintainer reads and accepts them, because a workflow runs with the repository's secrets. Deleting a workflow is left to a maintainer.
-- If the task needs work this runner cannot do (another operating system, a device, a secret), write a workflow for it that runs on pushes to \`${task.branch}\`, with \`paths\` filters so it does not run on unrelated pushes, and report \`awaiting-workflow\`. Codeman gives you its results in a later run. A workflow that needs secrets must use a GitHub Environment.
+- If the task needs work this runner cannot do (another operating system, a device, a secret), write a workflow for it that runs on pushes to \`${task.branch}\`, with \`paths\` filters so it does not run on unrelated pushes, and report \`awaiting-workflow\`. Codeman gives you its results in a later run. A workflow that needs secrets must use a GitHub Environment. Never wait for a workflow that deploys, publishes or releases: run from the task branch, it would ship work nobody reviewed. Such a workflow is part of the change, and runs after the merge.
 - You have about ${minutes} minutes. Well before that, leave the work in a consistent state, update the plan and write \`${OUTPUT_FILE}\`. Unfinished work is committed and the next run of this stage continues it.
 
 Protected paths (\`.gitignore\` syntax):
@@ -225,7 +229,7 @@ Keep the plan current: mark what you finished and add a short progress note for 
 ${outputShape(stage)}
 
 ${issueSection(task, quote)}
-${handoff}${requests}${workflowResultsSection(task)}`;
+${handoff}${accepted}${requests}${workflowResultsSection(task)}`;
 }
 
 /** The runs of the workflows the agent asked for, whose results are in RESULTS_DIR. */

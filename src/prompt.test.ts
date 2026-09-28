@@ -195,6 +195,8 @@ test("each stage gets its own instructions and statuses", () => {
   assert.match(prompt("design"), /`decisions`/);
   assert.match(prompt("code"), /unit tests/);
   assert.match(prompt("test"), /git diff origin\/main\.\.\.HEAD/);
+  assert.match(prompt("test"), /"Manual tests" section/);
+  assert.match(prompt("code"), /Never wait for a workflow that deploys/);
   assert.match(prompt("review"), /merge --no-commit --no-ff origin\/main/);
   assert.match(prompt("review"), /status` is one of `done`, `changes`, `blocked`, `decisions`/);
   for (const stage of ["design", "code", "test", "review"] as const) {
@@ -221,4 +223,29 @@ test("the next stage gets the notes of the previous one", () => {
   );
   assert.match(prompt, /## Notes from the code stage/);
   assert.match(prompt, /Added the limiter; no integration tests yet\./);
+});
+
+test("a resumed stage learns which workflows were accepted", () => {
+  const record = {
+    branch: task.branch,
+    planPath: task.planPath,
+    summary: "",
+    decisions: [],
+    processedCommentId: 0,
+  };
+  const base = { ...task, action: "implement" as const, stage: "test" as const, record };
+  assert.ok(!stagePrompt(base, 45).includes("## Accepted workflows"));
+  const prompt = stagePrompt(
+    {
+      ...base,
+      record: {
+        ...record,
+        accepted: { by: "alice", workflows: [".github/workflows/deploy.yml", "a`b\nc.yml"] },
+      },
+    },
+    45,
+  );
+  assert.match(prompt, /## Accepted workflows/);
+  assert.match(prompt, /Maintainer alice read and accepted/);
+  assert.match(prompt, /`\.github\/workflows\/deploy\.yml`, `a b c\.yml`/);
 });
