@@ -215,15 +215,15 @@ Result (2026-09-28): done. Issues went from opt-in to open pull requests, and fi
 
 ### 4. On-demand workflows
 
-Moved on 2026-09-28 to its own plan, `plans/2026-09-28-on-demand-workflows.md`.
+Moved on 2026-09-28 to its own plan, `docs/plans/2026-09-28-on-demand-workflows.md`.
 
 ### 5. Review
 
 Replaced on 2026-09-28: Codeman is now used on real repositories while it keeps evolving, and each next delivery has its own plan:
 
-- `plans/2026-09-28-on-demand-workflows.md`: workflow files as deliverables, and workflows the agent needs to run.
-- `plans/2026-09-28-task-budget.md`: one budget per task across runs, with the spend shown on the issue and pull request.
-- `plans/2026-09-28-task-stages.md`: plan, design, code, test and review stages, each run by its own agent.
+- `docs/plans/2026-09-28-on-demand-workflows.md`: workflow files as deliverables, and workflows the agent needs to run.
+- `docs/plans/2026-09-28-task-budget.md`: one budget per task across runs, with the spend shown on the issue and pull request.
+- `docs/plans/2026-09-28-task-stages.md`: plan, design, code, test and review stages, each run by its own agent.
 
 Revisiting decisions 3 (documentation) and 4 (memory), and re-evaluating OpenCode v2, remain open for future plans.
 

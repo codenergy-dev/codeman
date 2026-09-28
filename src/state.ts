@@ -5,6 +5,11 @@ export const STATES = [
   "planning",
   "awaiting-decision",
   "ready",
+  "designing",
+  "coding",
+  "testing",
+  "reviewing",
+  /** Before stages, one agent did all the work. Tasks left in it go on in the code stage. */
   "in-progress",
   "awaiting-workflow",
   "blocked",

@@ -20584,6 +20584,149 @@ var harnesses = { [openCode.name]: openCode };
 // src/prompt.ts
 import { randomBytes as randomBytes2 } from "node:crypto";
 
+// src/output.ts
+var LIMITS = {
+  summary: 4e3,
+  decisions: 10,
+  title: 200,
+  question: 1e3,
+  label: 300,
+  options: 6,
+  commitMessage: 2e3
+};
+function parsePlanOutput(text) {
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    return { ok: false, error: "output.json is not valid JSON." };
+  }
+  if (!isObject(data)) return { ok: false, error: "output.json must be an object." };
+  const summary2 = string(data.summary, "summary", LIMITS.summary);
+  if (!summary2.ok) return summary2;
+  const decisions = parseDecisions(data.decisions);
+  if (!decisions.ok) return decisions;
+  return { ok: true, value: { summary: summary2.value, decisions: decisions.value } };
+}
+var STAGE_STATUSES = {
+  design: ["done", "skipped", "partial", "blocked", "decisions"],
+  code: ["done", "skipped", "partial", "blocked", "awaiting-workflow"],
+  test: ["done", "skipped", "partial", "blocked", "awaiting-workflow"],
+  review: ["done", "changes", "blocked", "decisions"]
+};
+var NEEDS_REASON = /* @__PURE__ */ new Set([
+  "skipped",
+  "blocked",
+  "awaiting-workflow",
+  "changes"
+]);
+var WORKFLOW_FILE = /^\.github\/workflows\/[A-Za-z0-9._-]+\.ya?ml$/;
+function parseStageOutput(text, stage) {
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    return { ok: false, error: "output.json is not valid JSON." };
+  }
+  if (!isObject(data)) return { ok: false, error: "output.json must be an object." };
+  const allowed = STAGE_STATUSES[stage];
+  if (typeof data.status !== "string" || !allowed.includes(data.status)) {
+    return {
+      ok: false,
+      error: `status must be one of ${allowed.join(", ")} in the ${stage} stage.`
+    };
+  }
+  const status2 = data.status;
+  const summary2 = string(data.summary, "summary", LIMITS.summary);
+  if (!summary2.ok) return summary2;
+  const output = { status: status2, summary: summary2.value };
+  if (data.commitMessage !== void 0) {
+    const message = string(data.commitMessage, "commitMessage", LIMITS.commitMessage);
+    if (!message.ok) return message;
+    const [subject = "", ...body] = message.value.split(/\r?\n/);
+    output.commitMessage = [truncate(subject.trim(), 72), ...body].join("\n").trim();
+  }
+  if (NEEDS_REASON.has(status2)) {
+    const reason = string(data.reason, "reason", LIMITS.summary);
+    if (!reason.ok) return reason;
+    output.reason = reason.value;
+  }
+  if (status2 === "awaiting-workflow") {
+    const workflows = data.workflows;
+    if (!Array.isArray(workflows) || workflows.length === 0 || workflows.length > 5 || !workflows.every((path) => typeof path === "string" && WORKFLOW_FILE.test(path))) {
+      return {
+        ok: false,
+        error: "workflows must list 1 to 5 files directly under .github/workflows/."
+      };
+    }
+    output.workflows = [...new Set(workflows)];
+  }
+  if (status2 === "decisions") {
+    const decisions = parseDecisions(data.decisions);
+    if (!decisions.ok) return decisions;
+    if (decisions.value.length === 0) return { ok: false, error: "decisions must not be empty." };
+    output.decisions = decisions.value;
+  }
+  return { ok: true, value: output };
+}
+function parseDecisions(value) {
+  if (!Array.isArray(value) || value.length > LIMITS.decisions) {
+    return { ok: false, error: `decisions must be a list of at most ${LIMITS.decisions}.` };
+  }
+  const decisions = [];
+  for (const [index, item] of value.entries()) {
+    const decision = parseDecision(item, index + 1);
+    if (!decision.ok) return decision;
+    decisions.push(decision.value);
+  }
+  return { ok: true, value: decisions };
+}
+function parseDecision(item, id) {
+  const where = `decisions[${id - 1}]`;
+  if (!isObject(item)) return { ok: false, error: `${where} must be an object.` };
+  if (item.id !== id) return { ok: false, error: `${where}.id must be ${id}.` };
+  const title = string(item.title, `${where}.title`, LIMITS.title);
+  if (!title.ok) return title;
+  const question = string(item.question, `${where}.question`, LIMITS.question);
+  if (!question.ok) return question;
+  if (!Array.isArray(item.options) || item.options.length < 2 || item.options.length > LIMITS.options) {
+    return { ok: false, error: `${where}.options must have 2 to ${LIMITS.options} items.` };
+  }
+  const options = [];
+  for (const [index, option] of item.options.entries()) {
+    const key = String.fromCharCode(97 + index);
+    if (!isObject(option) || option.key !== key) {
+      return { ok: false, error: `${where}.options[${index}].key must be "${key}".` };
+    }
+    const label = string(option.label, `${where}.options[${index}].label`, LIMITS.label);
+    if (!label.ok) return label;
+    options.push({ key, label: label.value });
+  }
+  if (!options.some((option) => option.key === item.recommendation)) {
+    return { ok: false, error: `${where}.recommendation must be one of the option keys.` };
+  }
+  return {
+    ok: true,
+    value: {
+      id,
+      title: title.value,
+      question: question.value,
+      options,
+      recommendation: item.recommendation
+    }
+  };
+}
+function string(value, name, max) {
+  if (typeof value !== "string" || value.trim() === "") {
+    return { ok: false, error: `${name} must be a non-empty string.` };
+  }
+  if (value.length > max) return { ok: false, error: `${name} must be at most ${max} characters.` };
+  return { ok: true, value: value.trim() };
+}
+function isObject(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 // src/policy.ts
 import { spawnSync as spawnSync3 } from "node:child_process";
 import { mkdtempSync, rmSync as rmSync2, writeFileSync as writeFileSync2 } from "node:fs";
@@ -20916,17 +21059,80 @@ ${UNTRUSTED_RULE}
 ${issueSection(task, quote)}
 ${revision}`;
 }
-function implementPrompt(task, minutes) {
+var STAGE_WORK = {
+  design: () => `Your stage is **design**. You do not write the implementation.
+
+1. Decide whether the task needs design work: a flow worth a diagram (a process, a state machine, a user journey), or a screen to sketch. If it needs none, report \`skipped\` and say why.
+2. Flowcharts: Mermaid, in \`docs/flows/<name>.md\`, each with a short explanation and a \`\`\`mermaid block.
+3. Screens: plain HTML drafts, with inline CSS and no build step, in \`docs/design/<name>.html\`. Then an image of each, in \`docs/screenshots/<name>.png\`, rendered with the runner's headless Chrome:
+   \`google-chrome --headless=new --no-sandbox --hide-scrollbars --window-size=1280,800 --screenshot=docs/screenshots/<name>.png "file://$PWD/docs/design/<name>.html"\`
+4. Link them from the plan, next to the steps they describe.
+5. If a design choice needs the maintainers (for example, between two layouts), report \`decisions\` with them, and show each option in the drafts.`,
+  code: () => `Your stage is **code**: implement the plan, following the design in \`docs/flows/\`, \`docs/design/\` and \`docs/screenshots/\` if there is one.
+
+1. Decide whether the task needs code. If an earlier stage already delivered everything (a task that only changes documentation, for example), report \`skipped\` and say why.
+2. Implement the next steps of the plan, with unit tests for the code you write. Integration and end-to-end tests belong to the test stage.
+3. Update \`docs/\` (or wherever the repository keeps its documentation) when behavior changes.
+4. Run the repository's existing tests, linters and build, as its documentation and CI define them, and fix what fails.
+5. \`commitMessage\` describes this run's changes; when done, it describes the whole task, as the suggested squash commit message.`,
+  test: (task) => `Your stage is **test**. The code stage has written the implementation and its unit tests.
+
+1. Read what the task changed: \`git diff origin/${task.defaultBranch}...HEAD\`. Decide whether tests are missing: integration or end-to-end tests where the change crosses components or reaches users, and unit tests where coverage of the change is thin. If none are missing, report \`skipped\` and say why.
+2. Write the missing tests, following the repository's conventions and tools. Do not add a new test framework unless the plan says so.
+3. Run every check the repository has. Fix failing tests. If a test fails because the code is wrong, fix the code only when the fix is small and clear, and say so in the summary; otherwise report \`blocked\`.`,
+  review: (task) => `Your stage is **review**: judge the work critically, as an independent reviewer. You change nothing: every file change you make is discarded.
+
+1. Read the plan, its answered decisions and what the task changed: \`git diff origin/${task.defaultBranch}...HEAD\`.
+2. Check that the change does what the plan and the decisions say, and nothing else; that it is correct, secure and tested; and that the documentation matches it.
+3. Merge the default branch into your copy to find conflicts and integration problems early: \`git -c user.name=codeman -c user.email=codeman@invalid merge --no-commit --no-ff origin/${task.defaultBranch}\`. Run the checks on the result. For each conflict, propose a resolution. This is not an approval to merge; a human decides that.
+4. Write the review report as \`summary\`, in Markdown: what you checked, what you found, and the proposed fixes.
+5. Report \`done\` if the work is ready for a human review, \`changes\` if the code stage must fix what you found (list it in \`reason\`), \`decisions\` if the maintainers must choose something, or \`blocked\`.`
+};
+function outputShape(stage) {
+  const statuses = STAGE_STATUSES[stage].map((status2) => `\`${status2}\``).join(", ");
+  return `Write \`${OUTPUT_FILE}\` in this shape, with only the fields that apply:
+
+\`\`\`json
+{
+  "status": "done",
+  "summary": "What this stage did, for the pull request's reviewers, or why it had nothing to do.",
+  "commitMessage": "Imperative subject of up to 72 characters\\n\\nBody that explains why.",
+  "reason": "Why it was skipped; what a maintainer must do (blocked); what the workflows must produce (awaiting-workflow); or what to change (changes).",
+  "workflows": [".github/workflows/example.yml"],
+  "decisions": [
+    {
+      "id": 1,
+      "title": "Short name",
+      "question": "The question, with the context needed to answer it.",
+      "options": [
+        { "key": "a", "label": "First option and its trade-off" },
+        { "key": "b", "label": "Second option and its trade-off" }
+      ],
+      "recommendation": "a"
+    }
+  ]
+}
+\`\`\`
+
+\`status\` is one of ${statuses}. \`done\`: the stage's work is finished. \`skipped\`: the stage had nothing to do. \`partial\`: work remains for another run of this stage. \`blocked\`: you cannot go on without a maintainer. \`awaiting-workflow\`: you need the results of the workflows in \`workflows\`. \`decisions\`: the maintainers must answer \`decisions\` first. \`changes\`: the code stage must fix what \`reason\` lists. Include \`commitMessage\` whenever you changed files.`;
+}
+function stagePrompt(task, minutes) {
+  const stage = task.stage ?? "code";
   const quote = quoter();
   const rules = task.ignore ?? DEFAULT_IGNORE;
   const requests = requestsSection(task, quote);
-  return `# Codeman task: implement issue #${task.number}
+  const handoff = task.record?.handoff ? `
+## Notes from the ${task.record.handoff.stage} stage
 
-You are Codeman, an agent that implements approved plans on the repository in the current directory. The plan at \`${task.planPath}\` is approved: its decisions are answered in its \`## Answers\` section. The current directory is the task branch \`${task.branch}\`, which may already hold work from earlier runs.
+${quote(`${task.record.handoff.stage.toUpperCase()} NOTES`, task.record.handoff.text)}
+` : "";
+  return `# Codeman task: ${stage} stage of issue #${task.number}
+
+You are Codeman, an agent that carries out approved plans on the repository in the current directory, one stage at a time: plan, design, code, test and review. Each stage is a different agent. The plan at \`${task.planPath}\` is approved: its decisions are answered in its \`## Answers\` section. The current directory is the task branch \`${task.branch}\`, which may already hold work from earlier stages and runs. The default branch is \`${task.defaultBranch}\`, available as \`origin/${task.defaultBranch}\`.
 
 ## Rules
 
-- Implement the plan. Do not change its scope or decisions. If the plan cannot be carried out as approved, stop and report \`blocked\`.
+- Do only your stage's work. Do not change the plan's scope or decisions. If the plan cannot be carried out as approved, stop and report \`blocked\`.
 - Follow \`AGENTS.md\` (and any file it points to) if the repository has one.
 ${UNTRUSTED_RULE}
 - Leave your changes in the working tree. Do not commit, push, or change git's configuration. Codeman commits what you leave.
@@ -20934,7 +21140,7 @@ ${UNTRUSTED_RULE}
 - Never write secrets or environment variable values into any file.
 - Workflow files you write under \`.github/workflows/\` are not committed there: Codeman stages them under \`.codeman/workflows/\` until a maintainer reads and accepts them, because a workflow runs with the repository's secrets. Deleting a workflow is left to a maintainer.
 - If the task needs work this runner cannot do (another operating system, a device, a secret), write a workflow for it that runs on pushes to \`${task.branch}\`, with \`paths\` filters so it does not run on unrelated pushes, and report \`awaiting-workflow\`. Codeman gives you its results in a later run. A workflow that needs secrets must use a GitHub Environment.
-- You have about ${minutes} minutes. Well before that, leave the work in a consistent state, update the plan and write \`${OUTPUT_FILE}\`. Unfinished work is committed and the next run continues it.
+- You have about ${minutes} minutes. Well before that, leave the work in a consistent state, update the plan and write \`${OUTPUT_FILE}\`. Unfinished work is committed and the next run of this stage continues it.
 
 Protected paths (\`.gitignore\` syntax):
 
@@ -20942,29 +21148,18 @@ Protected paths (\`.gitignore\` syntax):
 ${rules.trim()}
 \`\`\`
 
-## Steps
+## Your stage
 
-1. Read the plan, then the issue, the maintainer comments${requests ? " and the requests" : ""} below.
-2. Check what earlier runs did: the plan's progress notes and \`git log\`.
-3. ${requests ? "Address every request and review comment under Requests; then implement the plan's remaining steps, if any." : "Implement the next steps of the plan."} Update \`docs/\` (or wherever the repository keeps its documentation) when behavior changes.
-4. Keep the plan current: mark the steps you finished and add a short progress note for the next run.
-5. Run the repository's tests, linters and build, as its documentation and CI define them, and fix what fails.
-6. Write \`${OUTPUT_FILE}\` in this exact shape:
+Read the plan, then the issue, the maintainer comments${requests ? ", the requests" : ""} and the notes from the previous stage below, if any. Check what earlier runs did: the plan's progress notes and \`git log\`.${requests ? " Address every request and review comment under Requests first: they refine the approved plan." : ""}
 
-\`\`\`json
-{
-  "status": "done",
-  "summary": "What changed, for the pull request's reviewers. Mention anything left undone.",
-  "commitMessage": "Imperative subject of up to 72 characters\\n\\nBody that explains why.",
-  "reason": "Only when blocked or awaiting-workflow: what a maintainer must decide or do, or what the workflow must produce.",
-  "workflows": [".github/workflows/example.yml"]
-}
-\`\`\`
+${STAGE_WORK[stage](task)}
 
-   \`status\` is \`done\` when every step of the plan is finished and the checks pass, \`partial\` when work remains for another run, \`blocked\` when you cannot go on without a maintainer, and \`awaiting-workflow\` when you need the results of the workflows listed in \`workflows\` (only with that status). \`commitMessage\` describes this run's changes; when done, it describes the whole task, as the suggested squash commit message.
+Keep the plan current: mark what you finished and add a short progress note for the next stage.
+
+${outputShape(stage)}
 
 ${issueSection(task, quote)}
-${requests}${workflowResultsSection(task)}`;
+${handoff}${requests}${workflowResultsSection(task)}`;
 }
 function workflowResultsSection(task) {
   if (!task.workflowRuns?.length) return "";
@@ -25193,12 +25388,7 @@ function pullRequestBody(view) {
     "",
     inertLines(view.summary),
     "",
-    "### Suggested squash commit message",
-    "",
-    `${fence}text`,
-    view.commitMessage,
-    fence,
-    "",
+    ...view.commitMessage ? ["### Suggested squash commit message", "", `${fence}text`, view.commitMessage, fence, ""] : [],
     pullRequestFooter(view.runUrl, view.spent)
   ].join("\n");
 }
@@ -25217,6 +25407,11 @@ var STATES = [
   "planning",
   "awaiting-decision",
   "ready",
+  "designing",
+  "coding",
+  "testing",
+  "reviewing",
+  /** Before stages, one agent did all the work. Tasks left in it go on in the code stage. */
   "in-progress",
   "awaiting-workflow",
   "blocked",
@@ -25443,9 +25638,36 @@ var Repository = class {
     });
     return data[0]?.number;
   }
+  /**
+   * Opens a pull request. A draft falls back to a regular pull request where drafts are not
+   * available (private repositories on some plans).
+   */
   async openPullRequest(options) {
-    const { data } = await this.#octokit.rest.pulls.create({ ...this.#scope, ...options });
-    return data.number;
+    try {
+      const { data } = await this.#octokit.rest.pulls.create({ ...this.#scope, ...options });
+      return data.number;
+    } catch (error2) {
+      if (!options.draft || status(error2) !== 422) throw error2;
+      const { data } = await this.#octokit.rest.pulls.create({
+        ...this.#scope,
+        ...options,
+        draft: false
+      });
+      return data.number;
+    }
+  }
+  /** Marks a draft pull request ready for review. REST cannot; GraphQL can. */
+  async markReady(number) {
+    const { data } = await this.#octokit.rest.pulls.get({ ...this.#scope, pull_number: number });
+    if (!data.draft) return;
+    await this.#octokit.graphql(
+      "mutation($id: ID!) { markPullRequestReadyForReview(input: { pullRequestId: $id }) { clientMutationId } }",
+      { id: data.node_id }
+    );
+  }
+  /** Comments on an issue or pull request. */
+  async comment(issue2, body) {
+    await this.#octokit.rest.issues.createComment({ ...this.#scope, issue_number: issue2, body });
   }
   async updatePullRequest(number, options) {
     await this.#octokit.rest.pulls.update({ ...this.#scope, pull_number: number, ...options });
@@ -25573,7 +25795,7 @@ async function agent() {
     copyToAgent(results, `${worktree}/${RESULTS_DIR}`);
     endGroup();
   }
-  const prompt = task.action === "implement" ? implementPrompt(task, minutes) : planPrompt(task);
+  const prompt = task.action === "implement" ? stagePrompt(task, minutes) : planPrompt(task);
   writeAsAgent(`${worktree}/${TASK_FILE}`, prompt);
   info(`Running ${harness.name} with ${task.model} for up to ${minutes} minutes.`);
   const run2 = await runAsAgent(
@@ -25691,132 +25913,6 @@ var OpenRouter = class {
   }
 };
 
-// src/output.ts
-var LIMITS = {
-  summary: 2e3,
-  decisions: 10,
-  title: 200,
-  question: 1e3,
-  label: 300,
-  options: 6,
-  commitMessage: 2e3
-};
-function parsePlanOutput(text) {
-  let data;
-  try {
-    data = JSON.parse(text);
-  } catch {
-    return { ok: false, error: "output.json is not valid JSON." };
-  }
-  if (!isObject(data)) return { ok: false, error: "output.json must be an object." };
-  const summary2 = string(data.summary, "summary", LIMITS.summary);
-  if (!summary2.ok) return summary2;
-  if (!Array.isArray(data.decisions) || data.decisions.length > LIMITS.decisions) {
-    return { ok: false, error: `decisions must be a list of at most ${LIMITS.decisions}.` };
-  }
-  const decisions = [];
-  for (const [index, item] of data.decisions.entries()) {
-    const decision = parseDecision(item, index + 1);
-    if (!decision.ok) return decision;
-    decisions.push(decision.value);
-  }
-  return { ok: true, value: { summary: summary2.value, decisions } };
-}
-var STATUSES = /* @__PURE__ */ new Set(["done", "partial", "blocked", "awaiting-workflow"]);
-var WORKFLOW_FILE = /^\.github\/workflows\/[A-Za-z0-9._-]+\.ya?ml$/;
-function parseImplementOutput(text) {
-  let data;
-  try {
-    data = JSON.parse(text);
-  } catch {
-    return { ok: false, error: "output.json is not valid JSON." };
-  }
-  if (!isObject(data)) return { ok: false, error: "output.json must be an object." };
-  if (typeof data.status !== "string" || !STATUSES.has(data.status)) {
-    return { ok: false, error: "status must be done, partial, blocked or awaiting-workflow." };
-  }
-  const summary2 = string(data.summary, "summary", LIMITS.summary);
-  if (!summary2.ok) return summary2;
-  const message = string(data.commitMessage, "commitMessage", LIMITS.commitMessage);
-  if (!message.ok) return message;
-  const [subject = "", ...body] = message.value.split(/\r?\n/);
-  const commitMessage = [truncate(subject.trim(), 72), ...body].join("\n").trim();
-  const status2 = data.status;
-  if (status2 === "done" || status2 === "partial") {
-    return { ok: true, value: { status: status2, summary: summary2.value, commitMessage } };
-  }
-  const reason = string(data.reason, "reason", LIMITS.summary);
-  if (!reason.ok) return reason;
-  if (status2 === "blocked") {
-    return {
-      ok: true,
-      value: { status: status2, summary: summary2.value, commitMessage, reason: reason.value }
-    };
-  }
-  const workflows = data.workflows;
-  if (!Array.isArray(workflows) || workflows.length === 0 || workflows.length > 5 || !workflows.every((path) => typeof path === "string" && WORKFLOW_FILE.test(path))) {
-    return {
-      ok: false,
-      error: "workflows must list 1 to 5 files directly under .github/workflows/."
-    };
-  }
-  return {
-    ok: true,
-    value: {
-      status: status2,
-      summary: summary2.value,
-      commitMessage,
-      reason: reason.value,
-      workflows: [...new Set(workflows)]
-    }
-  };
-}
-function parseDecision(item, id) {
-  const where = `decisions[${id - 1}]`;
-  if (!isObject(item)) return { ok: false, error: `${where} must be an object.` };
-  if (item.id !== id) return { ok: false, error: `${where}.id must be ${id}.` };
-  const title = string(item.title, `${where}.title`, LIMITS.title);
-  if (!title.ok) return title;
-  const question = string(item.question, `${where}.question`, LIMITS.question);
-  if (!question.ok) return question;
-  if (!Array.isArray(item.options) || item.options.length < 2 || item.options.length > LIMITS.options) {
-    return { ok: false, error: `${where}.options must have 2 to ${LIMITS.options} items.` };
-  }
-  const options = [];
-  for (const [index, option] of item.options.entries()) {
-    const key = String.fromCharCode(97 + index);
-    if (!isObject(option) || option.key !== key) {
-      return { ok: false, error: `${where}.options[${index}].key must be "${key}".` };
-    }
-    const label = string(option.label, `${where}.options[${index}].label`, LIMITS.label);
-    if (!label.ok) return label;
-    options.push({ key, label: label.value });
-  }
-  if (!options.some((option) => option.key === item.recommendation)) {
-    return { ok: false, error: `${where}.recommendation must be one of the option keys.` };
-  }
-  return {
-    ok: true,
-    value: {
-      id,
-      title: title.value,
-      question: question.value,
-      options,
-      recommendation: item.recommendation
-    }
-  };
-}
-function string(value, name, max) {
-  if (typeof value !== "string" || value.trim() === "") {
-    return { ok: false, error: `${name} must be a non-empty string.` };
-  }
-  if (value.length > max) return { ok: false, error: `${name} must be at most ${max} characters.` };
-  return { ok: true, value: value.trim() };
-}
-function isObject(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 // src/record.ts
 function pendingDecisions(record) {
   return record.decisions.filter((decision) => decision.answer === void 0);
@@ -25910,12 +26006,32 @@ function decodeStatus(body) {
   }
 }
 
+// src/stages.ts
+var STAGES = ["design", "code", "test", "review"];
+var STAGE_STATE = {
+  design: "designing",
+  code: "coding",
+  test: "testing",
+  review: "reviewing"
+};
+function stageOfState(state) {
+  if (state === "in-progress") return "code";
+  return STAGES.find((stage) => STAGE_STATE[stage] === state);
+}
+function nextStage(stage) {
+  return STAGES[STAGES.indexOf(stage) + 1];
+}
+
 // src/status.ts
 var HEADINGS = {
   new: "Waiting to start",
   planning: "Writing the plan",
   "awaiting-decision": "Waiting for your decisions",
   ready: "Ready to implement",
+  designing: "Designing",
+  coding: "Writing the code",
+  testing: "Testing",
+  reviewing: "Reviewing",
   "in-progress": "Implementing",
   "awaiting-workflow": "Waiting for a workflow",
   blocked: "Blocked",
@@ -26265,6 +26381,10 @@ function taskSettings(comments) {
 var DECIDING = /* @__PURE__ */ new Set(["awaiting-decision", "ready"]);
 var RESUMABLE = /* @__PURE__ */ new Set([
   "ready",
+  "designing",
+  "coding",
+  "testing",
+  "reviewing",
   "in-progress",
   "awaiting-workflow",
   "blocked",
@@ -26301,7 +26421,7 @@ function chooseTask(candidates) {
   );
   if (plan) return { number: plan.number, action: "plan" };
   const implement = sorted.find(
-    (task) => task.pending === "resume" && task.planned || task.state === "in-progress" && !task.pending || task.state === "awaiting-workflow" && task.workflowsDone && !task.pending
+    (task) => task.pending === "resume" && task.planned || stageOfState(task.state) !== void 0 && !task.pending || task.state === "awaiting-workflow" && task.workflowsDone && !task.pending
   ) ?? sorted.find((task) => task.state === "ready" && !task.pending);
   if (implement) return { number: implement.number, action: "implement" };
   return void 0;
@@ -26321,7 +26441,7 @@ async function apply() {
   if (task.action === "record") await recordAnswers(task, repo);
   else if (task.action === "accept") await acceptWorkflows(task, repo);
   else if (await keyFailed(task, repo)) return;
-  else if (task.action === "implement") await applyImplementation(task, repo);
+  else if (task.action === "implement") await applyStage(task, repo);
   else await applyPlan(task, repo);
   setOutput("chain", String(chain));
 }
@@ -26390,8 +26510,9 @@ async function applyPlan(task, repo) {
   const ignored = checked.value.ignored.map((path) => `Ignored a change to ${path}.`);
   await finish(repo, task, state, { record, errors: ignored });
 }
-async function applyImplementation(task, repo) {
+async function applyStage(task, repo) {
   if (!task.record) return blocked(repo, task, "The task has no record of its plan.");
+  const stage = task.stage ?? "code";
   const dir = resultDir();
   const manifest = readJson(join7(dir, "manifest.json"));
   if (!isManifest(manifest)) {
@@ -26399,7 +26520,7 @@ async function applyImplementation(task, repo) {
       message: `The agent produced no result. See the run log. ${retryHint(task)}`
     });
   }
-  const checked = checkChanges(manifest, {
+  const checked = stage === "review" ? { ok: true, value: { accepted: [], staged: [], dropped: [] } } : checkChanges(manifest, {
     ignore: task.ignore,
     maxFiles: task.settings["max-files"],
     maxFileBytes: task.settings["max-file-bytes"],
@@ -26410,16 +26531,24 @@ async function applyImplementation(task, repo) {
     ({ path, reason: reason2 }) => `Dropped the change to ${path}: ${reason2}.`
   );
   const outputFile = join7(dir, "output.json");
-  const output = existsSync3(outputFile) ? parseImplementOutput(readFileSync3(outputFile, "utf8").slice(0, MAX_OUTPUT_BYTES)) : { ok: false, error: "The agent did not write output.json." };
-  const runs = (task.resume ? 0 : task.record.runs ?? 0) + 1;
+  const output = existsSync3(outputFile) ? parseStageOutput(readFileSync3(outputFile, "utf8").slice(0, MAX_OUTPUT_BYTES), stage) : { ok: false, error: "The agent did not write output.json." };
+  const fresh = task.resume || task.record.stage !== stage;
+  const runs = (fresh ? 0 : task.record.runs ?? 0) + 1;
   const maxRuns = task.settings["max-runs"];
-  const record = { ...task.record, runs, awaiting: void 0 };
+  const fixed = task.requests.some((request2) => request2.kind === "fix");
+  const record = {
+    ...task.record,
+    stage,
+    runs,
+    awaiting: void 0,
+    reviewRounds: fixed ? 0 : task.record.reviewRounds
+  };
   const unfinished = (message, report) => runs >= maxRuns ? finish(repo, task, "blocked", {
     record,
-    message: `${message} The agent has run ${runs} times in a row without finishing the task (\`max-runs\` is ${maxRuns}). Comment \`/codeman continue <guidance>\` to allow ${maxRuns} more runs.`,
+    message: `${message} The ${stage} stage has run ${runs} times in a row without finishing (\`max-runs\` is ${maxRuns}). Comment \`/codeman continue <guidance>\` to allow ${maxRuns} more runs.`,
     report,
     errors: dropped
-  }) : finish(repo, task, "in-progress", { record, message, report, errors: dropped });
+  }) : finish(repo, task, STAGE_STATE[stage], { record, message, report, errors: dropped });
   const tree = join7(dir, "tree");
   const changes = [
     ...readChanges(tree, checked.value.accepted, task.settings),
@@ -26435,7 +26564,7 @@ async function applyImplementation(task, repo) {
       baseSha: head,
       createBranch: !task.branchExists,
       changes,
-      message: output.ok ? output.value.commitMessage : `Work in progress on #${task.number}`
+      message: (output.ok ? output.value.commitMessage : void 0) ?? `${STAGE_NAMES[stage]} for #${task.number}`
     });
   }
   if (!output.ok) {
@@ -26446,38 +26575,103 @@ async function applyImplementation(task, repo) {
     return blocked(repo, task, `${output.error}${exit}`, dropped, record);
   }
   const { status: status2, summary: summary2, reason } = output.value;
-  if (status2 === "awaiting-workflow") {
-    const workflows = output.value.workflows ?? [];
-    const present = /* @__PURE__ */ new Set([
-      ...(await repo.filesUnder(head, WORKFLOWS_DIR)).keys(),
-      ...[...(await repo.filesUnder(head, STAGED_WORKFLOWS_DIR)).keys()].map(workflowPath)
-    ]);
-    const missing = workflows.filter((path) => !present.has(path));
-    if (missing.length > 0) {
-      return blocked(
-        repo,
-        task,
-        `The agent waits for workflows that are not on the branch: ${missing.join(", ")}.`,
-        dropped,
-        record
-      );
+  switch (status2) {
+    case "partial":
+      return unfinished("Work so far is committed to the task branch.", summary2);
+    case "blocked":
+      return finish(repo, task, "blocked", {
+        record,
+        message: `The ${stage} stage needs a maintainer. ${retryHint(task)}`,
+        report: summary2,
+        errors: [`The agent reports: ${reason ?? ""}`, ...dropped]
+      });
+    case "awaiting-workflow": {
+      const workflows = output.value.workflows ?? [];
+      const present = /* @__PURE__ */ new Set([
+        ...(await repo.filesUnder(head, WORKFLOWS_DIR)).keys(),
+        ...[...(await repo.filesUnder(head, STAGED_WORKFLOWS_DIR)).keys()].map(workflowPath)
+      ]);
+      const missing = workflows.filter((path) => !present.has(path));
+      if (missing.length > 0) {
+        return blocked(
+          repo,
+          task,
+          `The agent waits for workflows that are not on the branch: ${missing.join(", ")}.`,
+          dropped,
+          record
+        );
+      }
+      return finish(repo, task, "awaiting-workflow", {
+        record: { ...record, runs: runs - 1, awaiting: workflows },
+        message: `The ${stage} stage needs ${workflows.join(", ")} to run: ${reason ?? ""} Codeman goes on when their runs on the task branch finish. \`/codeman continue <guidance>\` goes on without them.`,
+        report: summary2,
+        errors: dropped
+      });
     }
-    return finish(repo, task, "awaiting-workflow", {
-      record: { ...record, runs: task.record.runs ?? 0, awaiting: workflows },
-      message: `The agent needs ${workflows.join(", ")} to run: ${reason ?? ""} Codeman goes on when their runs on the task branch finish. \`/codeman continue <guidance>\` goes on without them.`,
-      report: summary2,
+    case "decisions": {
+      const offset = record.decisions.length;
+      const added = (output.value.decisions ?? []).map((decision) => ({
+        ...decision,
+        id: decision.id + offset
+      }));
+      if (stage === "review") await postReview(repo, task, record, summary2, reason);
+      return finish(repo, task, "awaiting-decision", {
+        record: {
+          ...record,
+          decisions: [...record.decisions, ...added],
+          stage: stage === "review" ? "code" : stage,
+          runs: 0,
+          handoff: stage === "review" ? { stage, text: truncate(summary2, 4e3) } : record.handoff
+        },
+        message: `The ${stage} stage needs ${added.length} decision(s) from the maintainers.`,
+        report: summary2,
+        errors: dropped
+      });
+    }
+    case "changes": {
+      const rounds = (record.reviewRounds ?? 0) + 1;
+      await postReview(repo, task, record, summary2, reason);
+      if (rounds > maxRuns) {
+        return finish(repo, task, "blocked", {
+          record: { ...record, reviewRounds: rounds },
+          message: `Review sent the work back to the code stage ${rounds} times in a row (\`max-runs\` is ${maxRuns}). Comment \`/codeman continue <guidance>\` to go on.`,
+          report: summary2
+        });
+      }
+      return finish(repo, task, STAGE_STATE.code, {
+        record: {
+          ...record,
+          stage: "code",
+          runs: 0,
+          reviewRounds: rounds,
+          handoff: { stage, text: truncate(`${reason ?? ""}
+
+${summary2}`, 4e3) }
+        },
+        message: "Review asked for changes; the code stage works on them next.",
+        report: summary2
+      });
+    }
+  }
+  if (stage !== "review") {
+    const next = nextStage(stage) ?? "review";
+    const text = truncate(status2 === "skipped" ? `Skipped: ${reason ?? ""}` : summary2, 2e3);
+    const updated = {
+      ...record,
+      stage: next,
+      runs: 0,
+      handoff: { stage, text },
+      reports: { ...record.reports, [stage]: text },
+      commitMessage: stage === "code" && output.value.commitMessage ? output.value.commitMessage : record.commitMessage
+    };
+    if (stage === "code") {
+      updated.pullRequest = await openPullRequest(repo, task, updated, "draft");
+    }
+    return finish(repo, task, STAGE_STATE[next], {
+      record: updated,
+      message: `${STAGE_NAMES[stage]} ${status2 === "skipped" ? "skipped" : "done"}. Next: ${next}.`,
+      report: text,
       errors: dropped
-    });
-  }
-  if (status2 === "partial") {
-    return unfinished("Work so far is committed to the task branch.", summary2);
-  }
-  if (status2 === "blocked") {
-    return finish(repo, task, "blocked", {
-      record,
-      message: `The agent needs a maintainer. ${retryHint(task)}`,
-      report: summary2,
-      errors: [`The agent reports: ${reason ?? ""}`, ...dropped]
     });
   }
   if (task.ignore === null && await repo.readFile(task.branch, IGNORE_FILE) === void 0) {
@@ -26491,35 +26685,71 @@ async function applyImplementation(task, repo) {
 The paths Codeman's agent may not change. Review them before merging.`
     });
   }
-  const title = pullRequestTitle(output.value.commitMessage);
+  const pullRequest = await openPullRequest(repo, task, record, "ready");
+  const done = {
+    ...record,
+    pullRequest,
+    stage: void 0,
+    runs: 0,
+    reviewRounds: 0,
+    handoff: void 0
+  };
+  await postReview(repo, { ...task, record: done }, done, summary2, void 0);
+  await finish(repo, task, "done", {
+    pullRequestWritten: true,
+    record: done,
+    message: "The work is done and reviewed. Review the pull request. To ask for changes, submit a review that requests them, or comment `/codeman fix <what to change>` on the pull request.",
+    report: summary2
+  });
+}
+var STAGE_NAMES = {
+  design: "Design",
+  code: "Code",
+  test: "Tests",
+  review: "Review"
+};
+async function openPullRequest(repo, task, record, mode) {
+  const title = pullRequestTitle(record.commitMessage ?? task.title);
   const body = pullRequestBody({
     issue: task.number,
     planPath: task.planPath,
     planUrl: fileUrl(task, task.planPath),
-    planSummary: task.record.summary,
-    summary: summary2,
-    commitMessage: output.value.commitMessage,
+    planSummary: record.summary,
+    summary: mode === "ready" ? [
+      `Code: ${record.reports?.code ?? "(no report)"}`,
+      "",
+      `Tests: ${record.reports?.test ?? "(no report)"}`
+    ].join("\n") : "Codeman is still working on this pull request: test and review come next. It becomes ready for review when they pass.",
+    commitMessage: record.commitMessage ?? "",
     runUrl: task.runUrl,
     spent: spentLine(task, runCosts(task).task)
   });
-  let pullRequest = await repo.findPullRequest(task.branch);
-  if (pullRequest === void 0) {
-    pullRequest = await repo.openPullRequest({
+  const existing = await repo.findPullRequest(task.branch);
+  if (existing === void 0) {
+    return repo.openPullRequest({
       head: task.branch,
       base: task.defaultBranch,
       title,
-      body
+      body,
+      draft: mode === "draft"
     });
-  } else {
-    await repo.updatePullRequest(pullRequest, { title, body });
   }
-  await finish(repo, task, "done", {
-    pullRequestWritten: true,
-    record: { ...record, pullRequest, runs: 0 },
-    message: "The work is done. Review the pull request. To ask for changes, submit a review that requests them, or comment `/codeman fix <what to change>` on the pull request.",
-    report: summary2,
-    errors: dropped
-  });
+  await repo.updatePullRequest(existing, { title, body });
+  if (mode === "ready") await repo.markReady(existing);
+  return existing;
+}
+async function postReview(repo, task, record, report, changes) {
+  const pullRequest = record.pullRequest ?? await repo.findPullRequest(task.branch);
+  if (pullRequest === void 0) return;
+  const body = [
+    "### Codeman review",
+    "",
+    inertLines(report),
+    ...changes ? ["", "#### Changes asked of the code stage", "", inertLines(changes)] : [],
+    "",
+    `<sub>[Run](${task.runUrl})</sub>`
+  ].join("\n");
+  await repo.comment(pullRequest, body);
 }
 async function acceptWorkflows(task, repo) {
   const accept = task.accept;
@@ -26854,6 +27084,7 @@ async function select() {
   const settled = choice.action === "plan" && record ? applyCommands(record, sources).record.decisions.filter((decision) => decision.answer) : [];
   const resume = pending === "resume";
   const requests = choice.action === "implement" ? resumeRequests(sources) : [];
+  const stage = choice.action !== "implement" ? void 0 : requests.some((request2) => request2.kind === "fix") ? "code" : record?.stage ?? stageOfState(fromStateOf(task.labels)) ?? firstStage(task.labels);
   const problems = sources.flatMap(
     ({ command }) => command.kind === "invalid" ? [`${command.text}: ${command.reason}`] : []
   );
@@ -26882,6 +27113,7 @@ async function select() {
     resume,
     accept: choice.action === "accept" ? acceptRequest(maintainerComments, record?.acceptedCommentId ?? 0) : void 0,
     workflowRuns: choice.action === "implement" ? workflowRuns.get(task.number) : void 0,
+    stage,
     processed: {
       commentId: Math.max(
         record?.processedCommentId ?? 0,
@@ -26898,7 +27130,7 @@ async function select() {
     branch,
     branchExists: branchSha !== void 0,
     baseSha,
-    planPath: record?.planPath ?? `plans/${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}-${slug}.md`,
+    planPath: record?.planPath ?? `docs/plans/${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}-${slug}.md`,
     record: record ?? null,
     replan,
     settled,
@@ -26907,7 +27139,7 @@ async function select() {
   };
   const needsAgent = choice.action === "plan" || choice.action === "implement";
   if (needsAgent) {
-    const state = choice.action === "plan" ? "planning" : "in-progress";
+    const state = stage ? STAGE_STATE[stage] : "planning";
     await repo.setState(task.number, task.labels, state);
     context3.statusCommentId = await repo.upsertComment(
       task.number,
@@ -26928,9 +27160,23 @@ async function select() {
   setOutput("model", model);
   setOutput("base-sha", baseSha);
   setOutput("needs-agent", String(needsAgent));
+  setOutput("stage", stage ?? (choice.action === "plan" ? "plan" : ""));
   setOutput("task-budget", String(settings.value["task-budget"]));
   setOutput("monthly-budget", String(settings.value["monthly-budget"]));
   info(`Selected #${task.number} to ${choice.action}, with model ${model}.`);
+}
+var STAGE_MESSAGES = {
+  design: "Codeman is designing: flows and screens, if the task needs them.",
+  code: "Codeman is writing the code.",
+  test: "Codeman is testing the work.",
+  review: "Codeman is reviewing the work."
+};
+function firstStage(labels) {
+  return fromStateOf(labels) === "done" ? "code" : "design";
+}
+function fromStateOf(labels) {
+  const result = stateOf(labels);
+  return result.ok ? result.state : "new";
 }
 function startMessage(task) {
   if (task.action === "implement") {
@@ -26940,7 +27186,7 @@ function startMessage(task) {
     if (task.requests.some((request2) => request2.kind === "fix") || task.reviews.length > 0) {
       return "Codeman is working on the requested changes.";
     }
-    return task.resume ? "Codeman is continuing the work, as requested." : "Codeman is implementing the plan.";
+    return task.resume ? "Codeman is continuing the work, as requested." : STAGE_MESSAGES[task.stage ?? "code"];
   }
   return task.replan.length > 0 ? "Codeman is revising the plan, as requested." : "Codeman is reading the issue and writing a plan.";
 }

@@ -1,7 +1,7 @@
 ---
-status: pending
+status: completed
 created_at: 2026-09-28T11:00:00-03:00
-updated_at: 2026-09-28T11:00:00-03:00
+updated_at: 2026-09-28T18:00:00-03:00
 commit: 54cc1bb
 ---
 
@@ -27,11 +27,13 @@ Stages, as asked by the responsible person:
 
 Plans move to `docs/plans/`, in target repositories and in Codeman's own repository: `AGENTS.md` changes to the new path, and the existing plans in `plans/` move there.
 
-The loop already has what stages need: one task per run, runs chained by `next-run`, `max-runs`, and `fix` and `continue`. The task budget (`plans/2026-09-28-task-budget.md`) matters more once a task takes a run per stage.
+The loop already has what stages need: one task per run, runs chained by `next-run`, `max-runs`, and `fix` and `continue`. The task budget (`docs/plans/2026-09-28-task-budget.md`) matters more once a task takes a run per stage.
 
 ## Decisions
 
 Answer these before work starts.
+
+Answered on 2026-09-28: the recommendation of each, (a). Decision 3 replaces the requested yUML with Mermaid.
 
 1. **How stages run.** Options:
    - (a) One stage per workflow run. Runs are chained as today, and the agent job is named after its stage ("Agent: design"), so the graph shows it.
@@ -76,14 +78,27 @@ Answer these before work starts.
 
 ## Steps
 
-1. [ ] Move plans to `docs/plans/`: in Codeman's repository (existing plans, `AGENTS.md` and references in `docs/`), and as the default plan path in target repositories. Tasks in flight keep the plan path they already have.
-2. [ ] Stages in the task record, the state labels (decision 2) and the selection of the next stage.
-3. [ ] One prompt and one output format per stage. The first thing each agent writes is whether its stage has work, with the reason when it does not.
-4. [ ] Design: flowcharts (decision 3), HTML drafts and screenshots (decision 4).
-5. [ ] Test and review (decisions 5 and 7): the default branch in the agent's checkout, the review report on the pull request, and the outcomes: done, back to code or test, decision or blocked.
-6. [ ] Draft pull request after the first code commit, ready at the end of review (decision 6).
-7. [ ] Template, docs and README.
+1. [x] Move plans to `docs/plans/`: in Codeman's repository (existing plans, `AGENTS.md` and references in `docs/`), and as the default plan path in target repositories. Tasks in flight keep the plan path they already have.
+2. [x] Stages in the task record, the state labels (decision 2) and the selection of the next stage.
+3. [x] One prompt and one output format per stage. The first thing each agent writes is whether its stage has work, with the reason when it does not.
+4. [x] Design: flowcharts (decision 3), HTML drafts and screenshots (decision 4).
+5. [x] Test and review (decisions 5 and 7): the default branch in the agent's checkout, the review report on the pull request, and the outcomes: done, back to code or test, decision or blocked.
+6. [x] Draft pull request after the first code commit, ready at the end of review (decision 6).
+7. [x] Template, docs and README.
 8. [ ] Done when: on the test repository, a task that needs a screen goes through all five stages, with design skipped with a reason on a task that needs no screen.
+
+## Outcome
+
+Implemented on 2026-09-28. Notes:
+
+- Flowcharts use Mermaid (decision 3), not the yUML first asked for.
+- `codeman:in-progress` stays as a legacy state: tasks left in it go on in the code stage.
+- Draft pull requests fall back to regular ones where the repository's plan has no drafts.
+- Review posts its report as a comment on the pull request; the pull request's description gets the code and test reports.
+- Stage reports and notes are cut to a few thousand characters, because the task record lives in the status comment, which GitHub limits in size.
+- A task now takes at least five runs (plan, design, code, test, review), so it spends more of its budget (`docs/plans/2026-09-28-task-budget.md`) than before.
+
+The end-to-end check is left to the responsible person's test round; if it fails, this plan reopens.
 
 ## Out of scope
 

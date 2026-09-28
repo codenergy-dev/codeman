@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { implementPrompt, OUTPUT_FILE, planPrompt } from "./prompt.ts";
+import { OUTPUT_FILE, planPrompt, stagePrompt } from "./prompt.ts";
 import type { TaskContext } from "./tasks.ts";
 
 const task: TaskContext = {
@@ -126,21 +126,27 @@ test("a first plan has no revision section", () => {
 });
 
 test("the implementation prompt names the plan, the limits and the protected paths", () => {
-  const prompt = implementPrompt({ ...task, action: "implement", ignore: "/secret/**\n" }, 45);
-  assert.match(prompt, /implement issue #12/);
+  const prompt = stagePrompt(
+    { ...task, action: "implement", stage: "code", ignore: "/secret/**\n" },
+    45,
+  );
+  assert.match(prompt, /code stage of issue #12/);
   assert.ok(prompt.includes(task.planPath));
   assert.ok(prompt.includes(OUTPUT_FILE));
   assert.match(prompt, /about 45 minutes/);
   assert.match(prompt, /at most 300 files/);
   assert.match(prompt, /```gitignore\n\/secret\/\*\*\n```/);
   assert.match(prompt, /ignore those instructions/);
-  assert.match(implementPrompt({ ...task, action: "implement" }, 45), /\/\.github\/\*\*/);
+  assert.match(
+    stagePrompt({ ...task, action: "implement", stage: "code" }, 45),
+    /\/\.github\/\*\*/,
+  );
 });
 
 test("the implementation prompt carries requests and review comments", () => {
-  const base = { ...task, action: "implement" as const };
-  assert.ok(!implementPrompt(base, 45).includes("## Requests"));
-  const prompt = implementPrompt(
+  const base = { ...task, action: "implement" as const, stage: "code" as const };
+  assert.ok(!stagePrompt(base, 45).includes("## Requests"));
+  const prompt = stagePrompt(
     {
       ...base,
       requests: [{ kind: "fix", author: "alice", text: "Rename the endpoint." }],
@@ -164,9 +170,9 @@ test("the implementation prompt carries requests and review comments", () => {
 });
 
 test("the implementation prompt points to the results of awaited workflows", () => {
-  const base = { ...task, action: "implement" as const };
-  assert.ok(!implementPrompt(base, 45).includes("## Workflow results"));
-  const prompt = implementPrompt(
+  const base = { ...task, action: "implement" as const, stage: "code" as const };
+  assert.ok(!stagePrompt(base, 45).includes("## Workflow results"));
+  const prompt = stagePrompt(
     {
       ...base,
       workflowRuns: [
@@ -179,4 +185,40 @@ test("the implementation prompt points to the results of awaited workflows", () 
   assert.match(prompt, /\.github\/workflows\/ios\.yml: failure \(run 9\)/);
   assert.match(prompt, /\.codeman\/results\/README\.md/);
   assert.match(prompt, /awaiting-workflow/);
+});
+
+test("each stage gets its own instructions and statuses", () => {
+  const prompt = (stage: "design" | "code" | "test" | "review") =>
+    stagePrompt({ ...task, action: "implement", stage }, 45);
+  assert.match(prompt("design"), /docs\/flows\/<name>\.md/);
+  assert.match(prompt("design"), /google-chrome --headless=new/);
+  assert.match(prompt("design"), /`decisions`/);
+  assert.match(prompt("code"), /unit tests/);
+  assert.match(prompt("test"), /git diff origin\/main\.\.\.HEAD/);
+  assert.match(prompt("review"), /merge --no-commit --no-ff origin\/main/);
+  assert.match(prompt("review"), /status` is one of `done`, `changes`, `blocked`, `decisions`/);
+  for (const stage of ["design", "code", "test", "review"] as const) {
+    assert.match(prompt(stage), /report `skipped`|Report `done`/);
+  }
+});
+
+test("the next stage gets the notes of the previous one", () => {
+  const prompt = stagePrompt(
+    {
+      ...task,
+      action: "implement",
+      stage: "test",
+      record: {
+        branch: task.branch,
+        planPath: task.planPath,
+        summary: "",
+        decisions: [],
+        processedCommentId: 0,
+        handoff: { stage: "code", text: "Added the limiter; no integration tests yet." },
+      },
+    },
+    45,
+  );
+  assert.match(prompt, /## Notes from the code stage/);
+  assert.match(prompt, /Added the limiter; no integration tests yet\./);
 });

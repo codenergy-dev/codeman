@@ -11,7 +11,8 @@ import {
   resolveSettings,
   SETTINGS_FILE,
 } from "../settings.ts";
-import { stateOf } from "../state.ts";
+import { STAGE_STATE, type Stage, stageOfState } from "../stages.ts";
+import { type State, stateOf } from "../state.ts";
 import { renderStatus } from "../status.ts";
 import {
   acceptRequest,
@@ -175,6 +176,13 @@ export async function select(): Promise<void> {
       : [];
   const resume = pending === "resume";
   const requests = choice.action === "implement" ? resumeRequests(sources) : [];
+  // A fix changes code; anything else goes on where the task was.
+  const stage: Stage | undefined =
+    choice.action !== "implement"
+      ? undefined
+      : requests.some((request) => request.kind === "fix")
+        ? "code"
+        : (record?.stage ?? stageOfState(fromStateOf(task.labels)) ?? firstStage(task.labels));
   const problems = sources.flatMap(({ command }) =>
     command.kind === "invalid" ? [`${command.text}: ${command.reason}`] : [],
   );
@@ -208,6 +216,7 @@ export async function select(): Promise<void> {
         ? acceptRequest(maintainerComments, record?.acceptedCommentId ?? 0)
         : undefined,
     workflowRuns: choice.action === "implement" ? workflowRuns.get(task.number) : undefined,
+    stage,
     processed: {
       commentId: Math.max(
         record?.processedCommentId ?? 0,
@@ -224,7 +233,7 @@ export async function select(): Promise<void> {
     branch,
     branchExists: branchSha !== undefined,
     baseSha,
-    planPath: record?.planPath ?? `plans/${new Date().toISOString().slice(0, 10)}-${slug}.md`,
+    planPath: record?.planPath ?? `docs/plans/${new Date().toISOString().slice(0, 10)}-${slug}.md`,
     record: record ?? null,
     replan,
     settled,
@@ -234,7 +243,7 @@ export async function select(): Promise<void> {
 
   const needsAgent = choice.action === "plan" || choice.action === "implement";
   if (needsAgent) {
-    const state = choice.action === "plan" ? "planning" : "in-progress";
+    const state = stage ? STAGE_STATE[stage] : "planning";
     await repo.setState(task.number, task.labels, state);
     context.statusCommentId = await repo.upsertComment(
       task.number,
@@ -256,9 +265,27 @@ export async function select(): Promise<void> {
   core.setOutput("model", model);
   core.setOutput("base-sha", baseSha);
   core.setOutput("needs-agent", String(needsAgent));
+  core.setOutput("stage", stage ?? (choice.action === "plan" ? "plan" : ""));
   core.setOutput("task-budget", String(settings.value["task-budget"]));
   core.setOutput("monthly-budget", String(settings.value["monthly-budget"]));
   core.info(`Selected #${task.number} to ${choice.action}, with model ${model}.`);
+}
+
+const STAGE_MESSAGES: Record<Stage, string> = {
+  design: "Codeman is designing: flows and screens, if the task needs them.",
+  code: "Codeman is writing the code.",
+  test: "Codeman is testing the work.",
+  review: "Codeman is reviewing the work.",
+};
+
+/** Where work starts without a recorded stage: design, or code once a task was done. */
+function firstStage(labels: readonly string[]): Stage {
+  return fromStateOf(labels) === "done" ? "code" : "design";
+}
+
+function fromStateOf(labels: readonly string[]): State | "new" {
+  const result = stateOf(labels);
+  return result.ok ? result.state : "new";
 }
 
 interface Conversation {
@@ -278,7 +305,7 @@ function startMessage(task: TaskContext): string {
     }
     return task.resume
       ? "Codeman is continuing the work, as requested."
-      : "Codeman is implementing the plan.";
+      : STAGE_MESSAGES[task.stage ?? "code"];
   }
   return task.replan.length > 0
     ? "Codeman is revising the plan, as requested."

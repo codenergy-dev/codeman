@@ -1,4 +1,5 @@
 import type { Command } from "./commands.ts";
+import type { Stage } from "./stages.ts";
 
 export interface Option {
   key: string;
@@ -41,6 +42,16 @@ export interface TaskRecord {
   acceptedCommentId?: number | undefined;
   /** Workflows (paths under `.github/workflows/`) whose runs the agent waits for. */
   awaiting?: string[] | undefined;
+  /** The stage that works on the task next, or is working on it. */
+  stage?: Stage | undefined;
+  /** What the last stage left for the next one: its report, or why it had nothing to do. */
+  handoff?: { stage: Stage; text: string } | undefined;
+  /** Times review sent the work back to code in a row. */
+  reviewRounds?: number | undefined;
+  /** Each stage's last summary, for the pull request's description. */
+  reports?: Partial<Record<Stage, string>> | undefined;
+  /** The suggested squash commit message, from the code stage. */
+  commitMessage?: string | undefined;
 }
 
 export interface CommandSource {

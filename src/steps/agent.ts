@@ -6,10 +6,10 @@ import { decrypt } from "../crypto.ts";
 import { harnesses } from "../harness/index.ts";
 import {
   HARNESS_PROMPT,
-  implementPrompt,
   OUTPUT_DIR,
   OUTPUT_FILE,
   planPrompt,
+  stagePrompt,
   TASK_FILE,
 } from "../prompt.ts";
 import { downloadResults, RESULTS_DIR } from "../results.ts";
@@ -62,7 +62,7 @@ export async function agent(): Promise<void> {
     copyToAgent(results, `${worktree}/${RESULTS_DIR}`);
     core.endGroup();
   }
-  const prompt = task.action === "implement" ? implementPrompt(task, minutes) : planPrompt(task);
+  const prompt = task.action === "implement" ? stagePrompt(task, minutes) : planPrompt(task);
   writeAsAgent(`${worktree}/${TASK_FILE}`, prompt);
 
   core.info(`Running ${harness.name} with ${task.model} for up to ${minutes} minutes.`);

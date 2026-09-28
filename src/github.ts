@@ -261,14 +261,44 @@ export class Repository {
     return data[0]?.number;
   }
 
+  /**
+   * Opens a pull request. A draft falls back to a regular pull request where drafts are not
+   * available (private repositories on some plans).
+   */
   async openPullRequest(options: {
     head: string;
     base: string;
     title: string;
     body: string;
+    draft?: boolean;
   }): Promise<number> {
-    const { data } = await this.#octokit.rest.pulls.create({ ...this.#scope, ...options });
-    return data.number;
+    try {
+      const { data } = await this.#octokit.rest.pulls.create({ ...this.#scope, ...options });
+      return data.number;
+    } catch (error) {
+      if (!options.draft || status(error) !== 422) throw error;
+      const { data } = await this.#octokit.rest.pulls.create({
+        ...this.#scope,
+        ...options,
+        draft: false,
+      });
+      return data.number;
+    }
+  }
+
+  /** Marks a draft pull request ready for review. REST cannot; GraphQL can. */
+  async markReady(number: number): Promise<void> {
+    const { data } = await this.#octokit.rest.pulls.get({ ...this.#scope, pull_number: number });
+    if (!data.draft) return;
+    await this.#octokit.graphql(
+      "mutation($id: ID!) { markPullRequestReadyForReview(input: { pullRequestId: $id }) { clientMutationId } }",
+      { id: data.node_id },
+    );
+  }
+
+  /** Comments on an issue or pull request. */
+  async comment(issue: number, body: string): Promise<void> {
+    await this.#octokit.rest.issues.createComment({ ...this.#scope, issue_number: issue, body });
   }
 
   async updatePullRequest(number: number, options: { title: string; body: string }): Promise<void> {

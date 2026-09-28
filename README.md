@@ -20,7 +20,7 @@ Codeman turns ambiguity into questions instead. The flow it is being built for:
    ```
 
    You can also accept every recommendation with `/codeman approve`, ask for a revised plan with `/codeman replan <what to change>`, or pick another model for the task with `/codeman set model <openrouter-model-id>`.
-4. Codeman implements the plan and opens a pull request. You review it: a review that requests changes, or `/codeman fix <what to change>`, sends it back to work. You merge it; Codeman never merges.
+4. Codeman carries out the plan in stages, one agent each: design (flows and screen drafts, when the task needs them), code, test and review. Then it opens a pull request. You review it: a review that requests changes, or `/codeman fix <what to change>`, sends it back to work. You merge it; Codeman never merges.
 
 Only maintainers (people with write access to the repository) can steer Codeman. Comments from anyone else are ignored.
 

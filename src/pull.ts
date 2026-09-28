@@ -35,12 +35,9 @@ export function pullRequestBody(view: PullRequestView): string {
     "",
     inertLines(view.summary),
     "",
-    "### Suggested squash commit message",
-    "",
-    `${fence}text`,
-    view.commitMessage,
-    fence,
-    "",
+    ...(view.commitMessage
+      ? ["### Suggested squash commit message", "", `${fence}text`, view.commitMessage, fence, ""]
+      : []),
     pullRequestFooter(view.runUrl, view.spent),
   ].join("\n");
 }

@@ -1,6 +1,8 @@
 import { randomBytes } from "node:crypto";
+import { STAGE_STATUSES } from "./output.ts";
 import { DEFAULT_IGNORE } from "./policy.ts";
 import { RESULTS_DIR } from "./results.ts";
+import type { Stage } from "./stages.ts";
 import type { TaskContext } from "./tasks.ts";
 
 export const OUTPUT_DIR = ".codeman";
@@ -116,18 +118,87 @@ ${issueSection(task, quote)}
 ${revision}`;
 }
 
-/** The implementation task: carry out the approved plan on the task branch. */
-export function implementPrompt(task: TaskContext, minutes: number): string {
+/** What each stage's agent does, after deciding whether its stage has work. */
+const STAGE_WORK: Record<Stage, (task: TaskContext) => string> = {
+  design: () => `Your stage is **design**. You do not write the implementation.
+
+1. Decide whether the task needs design work: a flow worth a diagram (a process, a state machine, a user journey), or a screen to sketch. If it needs none, report \`skipped\` and say why.
+2. Flowcharts: Mermaid, in \`docs/flows/<name>.md\`, each with a short explanation and a \`\`\`mermaid block.
+3. Screens: plain HTML drafts, with inline CSS and no build step, in \`docs/design/<name>.html\`. Then an image of each, in \`docs/screenshots/<name>.png\`, rendered with the runner's headless Chrome:
+   \`google-chrome --headless=new --no-sandbox --hide-scrollbars --window-size=1280,800 --screenshot=docs/screenshots/<name>.png "file://$PWD/docs/design/<name>.html"\`
+4. Link them from the plan, next to the steps they describe.
+5. If a design choice needs the maintainers (for example, between two layouts), report \`decisions\` with them, and show each option in the drafts.`,
+  code: () => `Your stage is **code**: implement the plan, following the design in \`docs/flows/\`, \`docs/design/\` and \`docs/screenshots/\` if there is one.
+
+1. Decide whether the task needs code. If an earlier stage already delivered everything (a task that only changes documentation, for example), report \`skipped\` and say why.
+2. Implement the next steps of the plan, with unit tests for the code you write. Integration and end-to-end tests belong to the test stage.
+3. Update \`docs/\` (or wherever the repository keeps its documentation) when behavior changes.
+4. Run the repository's existing tests, linters and build, as its documentation and CI define them, and fix what fails.
+5. \`commitMessage\` describes this run's changes; when done, it describes the whole task, as the suggested squash commit message.`,
+  test: (
+    task,
+  ) => `Your stage is **test**. The code stage has written the implementation and its unit tests.
+
+1. Read what the task changed: \`git diff origin/${task.defaultBranch}...HEAD\`. Decide whether tests are missing: integration or end-to-end tests where the change crosses components or reaches users, and unit tests where coverage of the change is thin. If none are missing, report \`skipped\` and say why.
+2. Write the missing tests, following the repository's conventions and tools. Do not add a new test framework unless the plan says so.
+3. Run every check the repository has. Fix failing tests. If a test fails because the code is wrong, fix the code only when the fix is small and clear, and say so in the summary; otherwise report \`blocked\`.`,
+  review: (
+    task,
+  ) => `Your stage is **review**: judge the work critically, as an independent reviewer. You change nothing: every file change you make is discarded.
+
+1. Read the plan, its answered decisions and what the task changed: \`git diff origin/${task.defaultBranch}...HEAD\`.
+2. Check that the change does what the plan and the decisions say, and nothing else; that it is correct, secure and tested; and that the documentation matches it.
+3. Merge the default branch into your copy to find conflicts and integration problems early: \`git -c user.name=codeman -c user.email=codeman@invalid merge --no-commit --no-ff origin/${task.defaultBranch}\`. Run the checks on the result. For each conflict, propose a resolution. This is not an approval to merge; a human decides that.
+4. Write the review report as \`summary\`, in Markdown: what you checked, what you found, and the proposed fixes.
+5. Report \`done\` if the work is ready for a human review, \`changes\` if the code stage must fix what you found (list it in \`reason\`), \`decisions\` if the maintainers must choose something, or \`blocked\`.`,
+};
+
+/** The output file's shape, with the statuses this stage may report. */
+function outputShape(stage: Stage): string {
+  const statuses = STAGE_STATUSES[stage].map((status) => `\`${status}\``).join(", ");
+  return `Write \`${OUTPUT_FILE}\` in this shape, with only the fields that apply:
+
+\`\`\`json
+{
+  "status": "done",
+  "summary": "What this stage did, for the pull request's reviewers, or why it had nothing to do.",
+  "commitMessage": "Imperative subject of up to 72 characters\\n\\nBody that explains why.",
+  "reason": "Why it was skipped; what a maintainer must do (blocked); what the workflows must produce (awaiting-workflow); or what to change (changes).",
+  "workflows": [".github/workflows/example.yml"],
+  "decisions": [
+    {
+      "id": 1,
+      "title": "Short name",
+      "question": "The question, with the context needed to answer it.",
+      "options": [
+        { "key": "a", "label": "First option and its trade-off" },
+        { "key": "b", "label": "Second option and its trade-off" }
+      ],
+      "recommendation": "a"
+    }
+  ]
+}
+\`\`\`
+
+\`status\` is one of ${statuses}. \`done\`: the stage's work is finished. \`skipped\`: the stage had nothing to do. \`partial\`: work remains for another run of this stage. \`blocked\`: you cannot go on without a maintainer. \`awaiting-workflow\`: you need the results of the workflows in \`workflows\`. \`decisions\`: the maintainers must answer \`decisions\` first. \`changes\`: the code stage must fix what \`reason\` lists. Include \`commitMessage\` whenever you changed files.`;
+}
+
+/** A stage's task: plan, design, code, test or review, on the task branch. */
+export function stagePrompt(task: TaskContext, minutes: number): string {
+  const stage = task.stage ?? "code";
   const quote = quoter();
   const rules = task.ignore ?? DEFAULT_IGNORE;
   const requests = requestsSection(task, quote);
-  return `# Codeman task: implement issue #${task.number}
+  const handoff = task.record?.handoff
+    ? `\n## Notes from the ${task.record.handoff.stage} stage\n\n${quote(`${task.record.handoff.stage.toUpperCase()} NOTES`, task.record.handoff.text)}\n`
+    : "";
+  return `# Codeman task: ${stage} stage of issue #${task.number}
 
-You are Codeman, an agent that implements approved plans on the repository in the current directory. The plan at \`${task.planPath}\` is approved: its decisions are answered in its \`## Answers\` section. The current directory is the task branch \`${task.branch}\`, which may already hold work from earlier runs.
+You are Codeman, an agent that carries out approved plans on the repository in the current directory, one stage at a time: plan, design, code, test and review. Each stage is a different agent. The plan at \`${task.planPath}\` is approved: its decisions are answered in its \`## Answers\` section. The current directory is the task branch \`${task.branch}\`, which may already hold work from earlier stages and runs. The default branch is \`${task.defaultBranch}\`, available as \`origin/${task.defaultBranch}\`.
 
 ## Rules
 
-- Implement the plan. Do not change its scope or decisions. If the plan cannot be carried out as approved, stop and report \`blocked\`.
+- Do only your stage's work. Do not change the plan's scope or decisions. If the plan cannot be carried out as approved, stop and report \`blocked\`.
 - Follow \`AGENTS.md\` (and any file it points to) if the repository has one.
 ${UNTRUSTED_RULE}
 - Leave your changes in the working tree. Do not commit, push, or change git's configuration. Codeman commits what you leave.
@@ -135,7 +206,7 @@ ${UNTRUSTED_RULE}
 - Never write secrets or environment variable values into any file.
 - Workflow files you write under \`.github/workflows/\` are not committed there: Codeman stages them under \`.codeman/workflows/\` until a maintainer reads and accepts them, because a workflow runs with the repository's secrets. Deleting a workflow is left to a maintainer.
 - If the task needs work this runner cannot do (another operating system, a device, a secret), write a workflow for it that runs on pushes to \`${task.branch}\`, with \`paths\` filters so it does not run on unrelated pushes, and report \`awaiting-workflow\`. Codeman gives you its results in a later run. A workflow that needs secrets must use a GitHub Environment.
-- You have about ${minutes} minutes. Well before that, leave the work in a consistent state, update the plan and write \`${OUTPUT_FILE}\`. Unfinished work is committed and the next run continues it.
+- You have about ${minutes} minutes. Well before that, leave the work in a consistent state, update the plan and write \`${OUTPUT_FILE}\`. Unfinished work is committed and the next run of this stage continues it.
 
 Protected paths (\`.gitignore\` syntax):
 
@@ -143,29 +214,18 @@ Protected paths (\`.gitignore\` syntax):
 ${rules.trim()}
 \`\`\`
 
-## Steps
+## Your stage
 
-1. Read the plan, then the issue, the maintainer comments${requests ? " and the requests" : ""} below.
-2. Check what earlier runs did: the plan's progress notes and \`git log\`.
-3. ${requests ? "Address every request and review comment under Requests; then implement the plan's remaining steps, if any." : "Implement the next steps of the plan."} Update \`docs/\` (or wherever the repository keeps its documentation) when behavior changes.
-4. Keep the plan current: mark the steps you finished and add a short progress note for the next run.
-5. Run the repository's tests, linters and build, as its documentation and CI define them, and fix what fails.
-6. Write \`${OUTPUT_FILE}\` in this exact shape:
+Read the plan, then the issue, the maintainer comments${requests ? ", the requests" : ""} and the notes from the previous stage below, if any. Check what earlier runs did: the plan's progress notes and \`git log\`.${requests ? " Address every request and review comment under Requests first: they refine the approved plan." : ""}
 
-\`\`\`json
-{
-  "status": "done",
-  "summary": "What changed, for the pull request's reviewers. Mention anything left undone.",
-  "commitMessage": "Imperative subject of up to 72 characters\\n\\nBody that explains why.",
-  "reason": "Only when blocked or awaiting-workflow: what a maintainer must decide or do, or what the workflow must produce.",
-  "workflows": [".github/workflows/example.yml"]
-}
-\`\`\`
+${STAGE_WORK[stage](task)}
 
-   \`status\` is \`done\` when every step of the plan is finished and the checks pass, \`partial\` when work remains for another run, \`blocked\` when you cannot go on without a maintainer, and \`awaiting-workflow\` when you need the results of the workflows listed in \`workflows\` (only with that status). \`commitMessage\` describes this run's changes; when done, it describes the whole task, as the suggested squash commit message.
+Keep the plan current: mark what you finished and add a short progress note for the next stage.
+
+${outputShape(stage)}
 
 ${issueSection(task, quote)}
-${requests}${workflowResultsSection(task)}`;
+${handoff}${requests}${workflowResultsSection(task)}`;
 }
 
 /** The runs of the workflows the agent asked for, whose results are in RESULTS_DIR. */

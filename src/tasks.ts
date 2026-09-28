@@ -7,6 +7,7 @@ import {
   type TaskRecord,
 } from "./record.ts";
 import type { PartialSettings, Settings } from "./settings.ts";
+import { type Stage, stageOfState } from "./stages.ts";
 import type { State } from "./state.ts";
 
 /** The subset of a GitHub issue (or pull request) that Codeman reads. */
@@ -270,6 +271,10 @@ export const DECIDING: ReadonlySet<State | "new"> = new Set(["awaiting-decision"
 /** States in which `fix` and `continue` resume the work. */
 export const RESUMABLE: ReadonlySet<State | "new"> = new Set([
   "ready",
+  "designing",
+  "coding",
+  "testing",
+  "reviewing",
   "in-progress",
   "awaiting-workflow",
   "blocked",
@@ -353,7 +358,7 @@ export function chooseTask(
     sorted.find(
       (task) =>
         (task.pending === "resume" && task.planned) ||
-        (task.state === "in-progress" && !task.pending) ||
+        (stageOfState(task.state) !== undefined && !task.pending) ||
         (task.state === "awaiting-workflow" && task.workflowsDone && !task.pending),
     ) ?? sorted.find((task) => task.state === "ready" && !task.pending);
   if (implement) return { number: implement.number, action: "implement" };
@@ -382,6 +387,8 @@ export interface TaskContext {
   processed: { commentId: number; reviewId: number };
   /** Problems with the new commands, for the status comment. */
   problems: string[];
+  /** For `implement`: the stage this run works on. */
+  stage?: Stage | undefined;
   /** For `accept`: the comment that accepted the staged workflows. */
   accept?: TaskComment | undefined;
   /** Finished runs of the workflows the agent waited for, whose results it gets. */

@@ -4,7 +4,7 @@ import * as core from "@actions/core";
 import { usd } from "../budget.ts";
 import type { Change } from "../collect.ts";
 import type { FileChange, Repository } from "../github.ts";
-import { parseImplementOutput, parsePlanOutput } from "../output.ts";
+import { parsePlanOutput, parseStageOutput } from "../output.ts";
 import {
   checkChanges,
   DEFAULT_IGNORE,
@@ -16,10 +16,11 @@ import {
 } from "../policy.ts";
 import { pullRequestBody, pullRequestFooter, pullRequestTitle } from "../pull.ts";
 import { applyCommands, pendingDecisions, type TaskRecord, writeAnswers } from "../record.ts";
+import { nextStage, STAGE_STATE, type Stage } from "../stages.ts";
 import type { State } from "../state.ts";
 import { renderStatus } from "../status.ts";
 import { commandsAfter, type TaskContext } from "../tasks.ts";
-import { oneLine, truncate } from "../text.ts";
+import { inertLines, oneLine, truncate } from "../text.ts";
 import { checkPlanResult, decodeText, isManifest } from "../validate.ts";
 import { MAX_OUTPUT_BYTES } from "./agent.ts";
 import { fileUrl, pullUrl, readTask, repository, resultDir } from "./common.ts";
@@ -35,7 +36,7 @@ export async function apply(): Promise<void> {
   if (task.action === "record") await recordAnswers(task, repo);
   else if (task.action === "accept") await acceptWorkflows(task, repo);
   else if (await keyFailed(task, repo)) return;
-  else if (task.action === "implement") await applyImplementation(task, repo);
+  else if (task.action === "implement") await applyStage(task, repo);
   else await applyPlan(task, repo);
   core.setOutput("chain", String(chain));
 }
@@ -123,11 +124,12 @@ async function applyPlan(task: TaskContext, repo: Repository): Promise<void> {
 }
 
 /**
- * Commits the agent's work to the task branch, whatever its outcome, so no work is lost; then
- * opens the pull request if the agent reports the task as done.
+ * Commits a stage's work to the task branch, whatever its outcome, so no work is lost; then
+ * moves the task to the next stage, or back, or to a human. Review commits nothing.
  */
-async function applyImplementation(task: TaskContext, repo: Repository): Promise<void> {
+async function applyStage(task: TaskContext, repo: Repository): Promise<void> {
   if (!task.record) return blocked(repo, task, "The task has no record of its plan.");
+  const stage = task.stage ?? "code";
   const dir = resultDir();
   const manifest = readJson(join(dir, "manifest.json"));
   if (!isManifest(manifest)) {
@@ -135,12 +137,16 @@ async function applyImplementation(task: TaskContext, repo: Repository): Promise
       message: `The agent produced no result. See the run log. ${retryHint(task)}`,
     });
   }
-  const checked = checkChanges(manifest, {
-    ignore: task.ignore,
-    maxFiles: task.settings["max-files"],
-    maxFileBytes: task.settings["max-file-bytes"],
-    planPath: task.planPath,
-  });
+  // Review's merge and checks stay in its sandbox.
+  const checked =
+    stage === "review"
+      ? { ok: true as const, value: { accepted: [], staged: [], dropped: [] } }
+      : checkChanges(manifest, {
+          ignore: task.ignore,
+          maxFiles: task.settings["max-files"],
+          maxFileBytes: task.settings["max-file-bytes"],
+          planPath: task.planPath,
+        });
   if (!checked.ok) return blocked(repo, task, checked.error);
   const dropped = checked.value.dropped.map(
     ({ path, reason }) => `Dropped the change to ${path}: ${reason}.`,
@@ -148,23 +154,31 @@ async function applyImplementation(task: TaskContext, repo: Repository): Promise
 
   const outputFile = join(dir, "output.json");
   const output = existsSync(outputFile)
-    ? parseImplementOutput(readFileSync(outputFile, "utf8").slice(0, MAX_OUTPUT_BYTES))
+    ? parseStageOutput(readFileSync(outputFile, "utf8").slice(0, MAX_OUTPUT_BYTES), stage)
     : { ok: false as const, error: "The agent did not write output.json." };
 
-  // Runs in a row that did not finish; a `fix` or `continue` request starts a new count.
-  const runs = (task.resume ? 0 : (task.record.runs ?? 0)) + 1;
+  // Runs of this stage in a row that did not finish it; a request starts a new count.
+  const fresh = task.resume || task.record.stage !== stage;
+  const runs = (fresh ? 0 : (task.record.runs ?? 0)) + 1;
   const maxRuns = task.settings["max-runs"];
-  // A run that awaits a workflow sets this again; any other outcome ends the wait.
-  const record: TaskRecord = { ...task.record, runs, awaiting: undefined };
+  const fixed = task.requests.some((request) => request.kind === "fix");
+  // A run that awaits a workflow sets `awaiting` again; any other outcome ends the wait.
+  const record: TaskRecord = {
+    ...task.record,
+    stage,
+    runs,
+    awaiting: undefined,
+    reviewRounds: fixed ? 0 : task.record.reviewRounds,
+  };
   const unfinished = (message: string, report?: string): Promise<void> =>
     runs >= maxRuns
       ? finish(repo, task, "blocked", {
           record,
-          message: `${message} The agent has run ${runs} times in a row without finishing the task (\`max-runs\` is ${maxRuns}). Comment \`/codeman continue <guidance>\` to allow ${maxRuns} more runs.`,
+          message: `${message} The ${stage} stage has run ${runs} times in a row without finishing (\`max-runs\` is ${maxRuns}). Comment \`/codeman continue <guidance>\` to allow ${maxRuns} more runs.`,
           report,
           errors: dropped,
         })
-      : finish(repo, task, "in-progress", { record, message, report, errors: dropped });
+      : finish(repo, task, STAGE_STATE[stage], { record, message, report, errors: dropped });
 
   const tree = join(dir, "tree");
   const changes = [
@@ -181,7 +195,9 @@ async function applyImplementation(task: TaskContext, repo: Repository): Promise
       baseSha: head,
       createBranch: !task.branchExists,
       changes,
-      message: output.ok ? output.value.commitMessage : `Work in progress on #${task.number}`,
+      message:
+        (output.ok ? output.value.commitMessage : undefined) ??
+        `${STAGE_NAMES[stage]} for #${task.number}`,
     });
   }
 
@@ -194,41 +210,112 @@ async function applyImplementation(task: TaskContext, repo: Repository): Promise
   }
 
   const { status, summary, reason } = output.value;
-  if (status === "awaiting-workflow") {
-    const workflows = output.value.workflows ?? [];
-    const present = new Set([
-      ...(await repo.filesUnder(head, WORKFLOWS_DIR)).keys(),
-      ...[...(await repo.filesUnder(head, STAGED_WORKFLOWS_DIR)).keys()].map(workflowPath),
-    ]);
-    const missing = workflows.filter((path) => !present.has(path));
-    if (missing.length > 0) {
-      return blocked(
-        repo,
-        task,
-        `The agent waits for workflows that are not on the branch: ${missing.join(", ")}.`,
-        dropped,
+  switch (status) {
+    case "partial":
+      return unfinished("Work so far is committed to the task branch.", summary);
+    case "blocked":
+      return finish(repo, task, "blocked", {
         record,
-      );
+        message: `The ${stage} stage needs a maintainer. ${retryHint(task)}`,
+        report: summary,
+        errors: [`The agent reports: ${reason ?? ""}`, ...dropped],
+      });
+    case "awaiting-workflow": {
+      const workflows = output.value.workflows ?? [];
+      const present = new Set([
+        ...(await repo.filesUnder(head, WORKFLOWS_DIR)).keys(),
+        ...[...(await repo.filesUnder(head, STAGED_WORKFLOWS_DIR)).keys()].map(workflowPath),
+      ]);
+      const missing = workflows.filter((path) => !present.has(path));
+      if (missing.length > 0) {
+        return blocked(
+          repo,
+          task,
+          `The agent waits for workflows that are not on the branch: ${missing.join(", ")}.`,
+          dropped,
+          record,
+        );
+      }
+      return finish(repo, task, "awaiting-workflow", {
+        record: { ...record, runs: runs - 1, awaiting: workflows },
+        message: `The ${stage} stage needs ${workflows.join(", ")} to run: ${reason ?? ""} Codeman goes on when their runs on the task branch finish. \`/codeman continue <guidance>\` goes on without them.`,
+        report: summary,
+        errors: dropped,
+      });
     }
-    return finish(repo, task, "awaiting-workflow", {
-      record: { ...record, runs: task.record.runs ?? 0, awaiting: workflows },
-      message: `The agent needs ${workflows.join(", ")} to run: ${reason ?? ""} Codeman goes on when their runs on the task branch finish. \`/codeman continue <guidance>\` goes on without them.`,
-      report: summary,
+    case "decisions": {
+      // Review's questions are answered before the code stage acts on its report.
+      const offset = record.decisions.length;
+      const added = (output.value.decisions ?? []).map((decision) => ({
+        ...decision,
+        id: decision.id + offset,
+      }));
+      if (stage === "review") await postReview(repo, task, record, summary, reason);
+      return finish(repo, task, "awaiting-decision", {
+        record: {
+          ...record,
+          decisions: [...record.decisions, ...added],
+          stage: stage === "review" ? "code" : stage,
+          runs: 0,
+          handoff: stage === "review" ? { stage, text: truncate(summary, 4000) } : record.handoff,
+        },
+        message: `The ${stage} stage needs ${added.length} decision(s) from the maintainers.`,
+        report: summary,
+        errors: dropped,
+      });
+    }
+    case "changes": {
+      const rounds = (record.reviewRounds ?? 0) + 1;
+      await postReview(repo, task, record, summary, reason);
+      if (rounds > maxRuns) {
+        return finish(repo, task, "blocked", {
+          record: { ...record, reviewRounds: rounds },
+          message: `Review sent the work back to the code stage ${rounds} times in a row (\`max-runs\` is ${maxRuns}). Comment \`/codeman continue <guidance>\` to go on.`,
+          report: summary,
+        });
+      }
+      return finish(repo, task, STAGE_STATE.code, {
+        record: {
+          ...record,
+          stage: "code",
+          runs: 0,
+          reviewRounds: rounds,
+          handoff: { stage, text: truncate(`${reason ?? ""}\n\n${summary}`, 4000) },
+        },
+        message: "Review asked for changes; the code stage works on them next.",
+        report: summary,
+      });
+    }
+  }
+
+  if (stage !== "review") {
+    // done or skipped: hand over to the next stage.
+    const next = nextStage(stage) ?? "review";
+    // Kept short: the record lives in the status comment, which GitHub limits in size.
+    const text = truncate(status === "skipped" ? `Skipped: ${reason ?? ""}` : summary, 2000);
+    const updated: TaskRecord = {
+      ...record,
+      stage: next,
+      runs: 0,
+      handoff: { stage, text },
+      reports: { ...record.reports, [stage]: text },
+      commitMessage:
+        stage === "code" && output.value.commitMessage
+          ? output.value.commitMessage
+          : record.commitMessage,
+    };
+    if (stage === "code") {
+      updated.pullRequest = await openPullRequest(repo, task, updated, "draft");
+    }
+    return finish(repo, task, STAGE_STATE[next], {
+      record: updated,
+      message: `${STAGE_NAMES[stage]} ${status === "skipped" ? "skipped" : "done"}. Next: ${next}.`,
+      report: text,
       errors: dropped,
     });
   }
-  if (status === "partial") {
-    return unfinished("Work so far is committed to the task branch.", summary);
-  }
-  if (status === "blocked") {
-    return finish(repo, task, "blocked", {
-      record,
-      message: `The agent needs a maintainer. ${retryHint(task)}`,
-      report: summary,
-      errors: [`The agent reports: ${reason ?? ""}`, ...dropped],
-    });
-  }
 
+  // Review passed.
   if (task.ignore === null && (await repo.readFile(task.branch, IGNORE_FILE)) === undefined) {
     head = await repo.commit({
       branch: task.branch,
@@ -238,36 +325,94 @@ async function applyImplementation(task: TaskContext, repo: Repository): Promise
       message: `Add ${IGNORE_FILE}\n\nThe paths Codeman's agent may not change. Review them before merging.`,
     });
   }
-  const title = pullRequestTitle(output.value.commitMessage);
+  const pullRequest = await openPullRequest(repo, task, record, "ready");
+  const done: TaskRecord = {
+    ...record,
+    pullRequest,
+    stage: undefined,
+    runs: 0,
+    reviewRounds: 0,
+    handoff: undefined,
+  };
+  await postReview(repo, { ...task, record: done }, done, summary, undefined);
+  await finish(repo, task, "done", {
+    pullRequestWritten: true,
+    record: done,
+    message:
+      "The work is done and reviewed. Review the pull request. To ask for changes, submit a review that requests them, or comment `/codeman fix <what to change>` on the pull request.",
+    report: summary,
+  });
+}
+
+const STAGE_NAMES: Record<Stage, string> = {
+  design: "Design",
+  code: "Code",
+  test: "Tests",
+  review: "Review",
+};
+
+/**
+ * Opens the task's pull request, or updates it: a draft while stages still work on it, ready
+ * for review once review passes. Repositories without draft pull requests get a regular one.
+ */
+async function openPullRequest(
+  repo: Repository,
+  task: TaskContext,
+  record: TaskRecord,
+  mode: "draft" | "ready",
+): Promise<number> {
+  const title = pullRequestTitle(record.commitMessage ?? task.title);
   const body = pullRequestBody({
     issue: task.number,
     planPath: task.planPath,
     planUrl: fileUrl(task, task.planPath),
-    planSummary: task.record.summary,
-    summary,
-    commitMessage: output.value.commitMessage,
+    planSummary: record.summary,
+    summary:
+      mode === "ready"
+        ? [
+            `Code: ${record.reports?.code ?? "(no report)"}`,
+            "",
+            `Tests: ${record.reports?.test ?? "(no report)"}`,
+          ].join("\n")
+        : "Codeman is still working on this pull request: test and review come next. It becomes ready for review when they pass.",
+    commitMessage: record.commitMessage ?? "",
     runUrl: task.runUrl,
     spent: spentLine(task, runCosts(task).task),
   });
-  let pullRequest = await repo.findPullRequest(task.branch);
-  if (pullRequest === undefined) {
-    pullRequest = await repo.openPullRequest({
+  const existing = await repo.findPullRequest(task.branch);
+  if (existing === undefined) {
+    return repo.openPullRequest({
       head: task.branch,
       base: task.defaultBranch,
       title,
       body,
+      draft: mode === "draft",
     });
-  } else {
-    await repo.updatePullRequest(pullRequest, { title, body });
   }
-  await finish(repo, task, "done", {
-    pullRequestWritten: true,
-    record: { ...record, pullRequest, runs: 0 },
-    message:
-      "The work is done. Review the pull request. To ask for changes, submit a review that requests them, or comment `/codeman fix <what to change>` on the pull request.",
-    report: summary,
-    errors: dropped,
-  });
+  await repo.updatePullRequest(existing, { title, body });
+  if (mode === "ready") await repo.markReady(existing);
+  return existing;
+}
+
+/** Posts the review report on the pull request, as inert text. */
+async function postReview(
+  repo: Repository,
+  task: TaskContext,
+  record: TaskRecord,
+  report: string,
+  changes: string | undefined,
+): Promise<void> {
+  const pullRequest = record.pullRequest ?? (await repo.findPullRequest(task.branch));
+  if (pullRequest === undefined) return;
+  const body = [
+    "### Codeman review",
+    "",
+    inertLines(report),
+    ...(changes ? ["", "#### Changes asked of the code stage", "", inertLines(changes)] : []),
+    "",
+    `<sub>[Run](${task.runUrl})</sub>`,
+  ].join("\n");
+  await repo.comment(pullRequest, body);
 }
 
 /**

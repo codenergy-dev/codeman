@@ -29,9 +29,9 @@ Write a plan before any non-trivial work, and keep it current while working.
 
 ### Location and name
 
-`plans/YYYY-MM-DD-plan-title.md`, where the date is the day the plan was created and the title is short, lowercase and hyphenated.
+`docs/plans/YYYY-MM-DD-plan-title.md`, where the date is the day the plan was created and the title is short, lowercase and hyphenated.
 
-Example: `plans/2026-09-23-add-rate-limiting.md`
+Example: `docs/plans/2026-09-23-add-rate-limiting.md`
 
 ### Front matter
 

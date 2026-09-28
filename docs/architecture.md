@@ -12,11 +12,15 @@ Each task has at most one state label. A task without one has not started yet (`
 | --- | --- |
 | `codeman:planning` | Agent is writing the plan. |
 | `codeman:awaiting-decision` | Plan posted; decisions pending. |
-| `codeman:ready` | All decisions answered; next run implements. |
-| `codeman:in-progress` | Agent is implementing. |
+| `codeman:ready` | All decisions answered; the next run starts the next stage. |
+| `codeman:designing` | The design stage is working. |
+| `codeman:coding` | The code stage is working. |
+| `codeman:testing` | The test stage is working. |
+| `codeman:reviewing` | The review stage is working. |
+| `codeman:in-progress` | Left from before stages: the task goes on in the code stage. |
 | `codeman:awaiting-workflow` | Waiting for workflows the agent asked for; see [on-demand workflows](#on-demand-workflows). |
 | `codeman:blocked` | Needs human attention; the status comment says why and how to go on (usually `/codeman continue`). |
-| `codeman:done` | Pull request opened. |
+| `codeman:done` | Reviewed; the pull request is ready for a human review. |
 
 A task with more than one state label is invalid: Codeman reports a warning and leaves it alone.
 
@@ -27,7 +31,7 @@ A task with more than one state label is invalid: Codeman reports a warning and 
 - Only one run per repository is active (`concurrency`). GitHub keeps at most one queued run and replaces older queued runs.
 - Each run reads the state of every task from GitHub instead of reacting only to the event that started it. A replaced or failed run therefore loses no work; the next run picks it up.
 - When a run moved a task (it recorded answers, or the agent ran), the `next-run` job starts another run with `workflow_dispatch`, carrying over a manual run's inputs. That run's `select` picks the next task, or stops without an LLM when none can move. Runs without a key (monthly budget reached, or the key job failed) start no other run, because the same task would be picked again without moving. The loop is bounded by the budgets, `max-runs` and the states: tasks that are blocked, done or awaiting an answer never start a run.
-- Each run works on one task. Accepting workflows and recording answers come first, because they need no LLM; then the oldest task that needs a plan; then the oldest task to implement: resumed with `fix` or `continue`, or `codeman:in-progress`, before `codeman:ready`.
+- Each run works on one task. Accepting workflows and recording answers come first, because they need no LLM; then the oldest task that needs a plan; then the oldest task in a stage: resumed with `fix` or `continue`, or already in a stage, before `codeman:ready`.
 
 ## Jobs
 
@@ -41,7 +45,7 @@ Jobs that do not apply to a run are skipped: a run that only records answers goe
 
 | Job | Does | Credentials |
 | --- | --- | --- |
-| `select` | Reads the settings and `.codemanignore` from the default branch, picks the task and the action (`plan`, `implement`, `record`, `accept` or `none`), sets `codeman:planning` or `codeman:in-progress`, and writes the task context (`task.json`) as an artifact. | App token: issues write; contents, pull requests and actions read |
+| `select` | Reads the settings and `.codemanignore` from the default branch, picks the task and the action (`plan`, `implement` with its stage, `record`, `accept` or `none`), sets `codeman:planning` or the stage's label, and writes the task context (`task.json`) as an artifact. | App token: issues write; contents, pull requests and actions read |
 | `open-key` | Checks the task and monthly budgets and creates the run's OpenRouter key. | OpenRouter management key, encryption secret |
 | `agent` | Runs the harness on a copy of the checkout and uploads what it changed as an artifact, even when the agent fails or runs out of time. | `GITHUB_TOKEN` with contents and actions read (for workflow results; the agent never sees it), the run's key |
 | `close-key` | Disables the run's key and reads what it spent. Runs whatever happened before. | OpenRouter management key |
@@ -73,21 +77,33 @@ The agent reads text from the issue, which anyone may have written, and runs she
 
 ## Planning
 
-1. `select` picks a `new` task, one left in `planning` by an interrupted run, or one with a `/codeman replan` request, and chooses the branch `codeman/<issue>-<slug>` and the plan path `plans/<date>-<slug>.md`.
+1. `select` picks a `new` task, one left in `planning` by an interrupted run, or one with a `/codeman replan` request, and chooses the branch `codeman/<issue>-<slug>` and the plan path `docs/plans/<date>-<slug>.md`.
 2. `agent` gives the harness a task file with the rules, the issue and the maintainer comments. The agent writes the plan and `.codeman/output.json`, which lists the decisions: a title, a question, 2 to 6 options and a recommendation each.
 3. `apply` accepts only the plan file; other changes are ignored and listed in the status comment. It validates `output.json` strictly, commits the plan to the task branch through the Git Data API, and sets `codeman:awaiting-decision`, or `codeman:ready` when there are no decisions.
 
 If the agent fails, runs out of time or produces an invalid result, the task becomes `codeman:blocked`.
 
-## Implementation
+## Stages
 
-1. `select` picks a `codeman:in-progress` or `codeman:ready` task and sets `codeman:in-progress`. The agent starts from the head of the task branch.
-2. `agent` gives the harness the plan's path, the rules (including the protected paths and file limits), the issue and the maintainer comments. The agent implements the next steps, updates the documentation and the plan's progress, runs the repository's checks, and writes `.codeman/output.json`: a status (`done`, `partial` or `blocked`), a summary, a commit message and, when blocked, the reason.
-3. `apply` filters the changes through the [change policy](#change-policy) and commits the rest to the task branch through the Git Data API. It commits even when the agent failed or ran out of time, so no work is lost.
+After planning, a task goes through four stages, one run and one agent each, in order: design, code, test and review. Each stage's agent first decides whether its stage has work; when it does not, it reports `skipped` with the reason, and the next run starts the next stage.
+
+| Stage | Does |
+| --- | --- |
+| Design | Flowcharts in Mermaid (`docs/flows/*.md`), screen drafts in plain HTML (`docs/design/*.html`) and their images (`docs/screenshots/*.png`, rendered with the runner's headless Chrome), linked from the plan. It may ask the maintainers decisions, such as a choice between two layouts. |
+| Code | The implementation, with unit tests for the code it writes, and the documentation it changes. |
+| Test | Integration and end-to-end tests where they apply, more unit tests where coverage is thin, and every check the repository has. |
+| Review | A critical review against the plan and the decisions, and a merge of the default branch in its sandbox to find conflicts and integration problems early. It changes nothing; its report goes on the pull request. It is not an approval to merge. |
+
+1. `select` picks the task and its stage (the task record keeps it; a `fix` request always goes to code), and sets the stage's label. The agent starts from the head of the task branch, with the default branch's history, and gets the notes the previous stage left.
+2. The agent writes `.codeman/output.json`: a status, a summary and, when it changed files, a commit message. Each stage may report only some statuses: `done`, `skipped`, `partial` (more work for another run of the same stage), `blocked`, `awaiting-workflow` (code and test), `decisions` (design and review) and `changes` (review).
+3. `apply` filters the changes through the [change policy](#change-policy) and commits the rest to the task branch through the Git Data API, even when the agent failed or ran out of time, so no work is lost. Review's changes are discarded.
 4. Then, by status:
-   - `done`: Codeman adds its proposed `.codemanignore` if the repository has none, opens a pull request from the task branch (`Closes #<issue>`, the plan's summary, the agent's summary and a suggested squash commit message), and sets `codeman:done`.
-   - `partial`, or out of time: the task stays `codeman:in-progress`, and the next run continues it, up to `max-runs` runs in a row. Then it becomes `codeman:blocked`, and a maintainer can grant another round with `/codeman continue <guidance>`.
-   - `blocked`, or an invalid result: `codeman:blocked`, with the reason. `/codeman continue <guidance>` tries again.
+   - `done` or `skipped`: the next stage runs next, with this stage's summary (or reason) as its notes. When code ends, Codeman opens the pull request as a draft (`Closes #<issue>`, the plan's summary, and the code stage's commit message as the suggested squash message), so the repository's CI runs during test and review. Repositories without draft pull requests get a regular one.
+   - `done` from review: Codeman adds its proposed `.codemanignore` if the repository has none, updates the pull request's description, marks it ready for review, posts the review report on it, and sets `codeman:done`.
+   - `changes` from review: the report goes on the pull request, and the code stage works on it next. After `max-runs` rounds in a row, the task becomes `codeman:blocked`.
+   - `decisions`: the task becomes `codeman:awaiting-decision`, with the new decisions after the plan's. When they are answered, design goes on; after review, code does, with the review's report.
+   - `partial`, or out of time: the stage runs again, up to `max-runs` runs in a row. Then the task becomes `codeman:blocked`, and a maintainer can grant another round with `/codeman continue <guidance>`.
+   - `blocked`, or an invalid result: `codeman:blocked`, with the reason. `/codeman continue <guidance>` tries the stage again.
 
 ### Feedback
 
@@ -96,7 +112,7 @@ After the pull request is open, maintainers ask for changes in either of these w
 - a review that requests changes; its text is the request;
 - `/codeman fix <what to change>` in a comment on the pull request or the issue, or in a review's text.
 
-The task goes back to `codeman:in-progress` with a new run count. The agent gets the requests and every maintainer review since the last run that handled reviews, with the line comments and their file and line. It pushes to the same branch, and when it reports done again, Codeman updates the pull request's description. `/codeman replan` also works on the pull request.
+The task goes back to the code stage (`codeman:coding`) with a new run count, then through test and review again. The agent gets the requests and every maintainer review since the last run that handled reviews, with the line comments and their file and line. It pushes to the same branch, and when review passes again, Codeman updates the pull request's description. `/codeman replan` also works on the pull request.
 
 Codeman records the last comment and review it handled. A request is handled once a run for it ends, whatever the outcome, so a failing request does not start run after run; when the monthly budget stopped the run from starting, the request waits for a later run.
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { parseImplementOutput, parsePlanOutput } from "./output.ts";
+import { parsePlanOutput, parseStageOutput } from "./output.ts";
 
 const decision = (id: number) => ({
   id,
@@ -39,44 +39,95 @@ test("rejects malformed output", () => {
     },
     { summary: "s", decisions: [{ ...decision(1), recommendation: "c" }] },
     { summary: "s", decisions: [{ ...decision(1), title: "" }] },
-    { summary: "x".repeat(2001), decisions: [] },
+    { summary: "x".repeat(4001), decisions: [] },
     { summary: "s", decisions: Array.from({ length: 11 }, (_, i) => decision(i + 1)) },
   ];
   for (const value of cases) assert.equal(parse(value).ok, false, JSON.stringify(value));
   assert.equal(parsePlanOutput("{").ok, false);
 });
 
-test("reads an implementation result", () => {
-  const parsed = parseImplementOutput(
+test("reads a stage result", () => {
+  const parsed = parseStageOutput(
     JSON.stringify({
       status: "done",
       summary: "Added a limiter.",
       commitMessage: `${"Add rate limiting to every public endpoint of the API ".repeat(2)}\n\nWhy.`,
     }),
+    "code",
   );
   assert.ok(parsed.ok);
   assert.equal(parsed.value.status, "done");
-  const [subject, blank, body] = parsed.value.commitMessage.split("\n");
+  const [subject, blank, body] = parsed.value.commitMessage?.split("\n") ?? [];
   assert.equal(subject?.length, 72);
   assert.deepEqual([blank, body], ["", "Why."]);
+  const plain = parseStageOutput(
+    JSON.stringify({ status: "done", summary: "Nothing new." }),
+    "test",
+  );
+  assert.ok(plain.ok && plain.value.commitMessage === undefined);
 });
 
-test("a blocked result needs a reason", () => {
-  const base = { status: "blocked", summary: "Stopped.", commitMessage: "Stop" };
-  assert.equal(parseImplementOutput(JSON.stringify(base)).ok, false);
-  const parsed = parseImplementOutput(JSON.stringify({ ...base, reason: "Which API?" }));
-  assert.ok(parsed.ok && parsed.value.reason === "Which API?");
+test("each stage reports only its own statuses, with reasons where needed", () => {
+  const out = (status: string, extra: object = {}) =>
+    JSON.stringify({ status, summary: "s", ...extra });
+  assert.equal(parseStageOutput(out("skipped"), "design").ok, false, "skipping needs a reason");
+  assert.ok(parseStageOutput(out("skipped", { reason: "No screens." }), "design").ok);
+  assert.equal(parseStageOutput(out("changes", { reason: "x" }), "code").ok, false);
+  assert.ok(parseStageOutput(out("changes", { reason: "Fix the null check." }), "review").ok);
+  assert.equal(
+    parseStageOutput(out("partial"), "review").ok,
+    false,
+    "review never leaves work half done",
+  );
+  assert.equal(
+    parseStageOutput(
+      out("awaiting-workflow", { reason: "x", workflows: [".github/workflows/a.yml"] }),
+      "design",
+    ).ok,
+    false,
+  );
+  assert.equal(parseStageOutput(out("blocked"), "code").ok, false, "blocked needs a reason");
+  assert.ok(parseStageOutput(out("blocked", { reason: "Which API?" }), "code").ok);
 });
 
-test("rejects malformed implementation results", () => {
+test("design and review may ask decisions", () => {
+  const decision = {
+    id: 1,
+    title: "Layout",
+    question: "Which layout?",
+    options: [
+      { key: "a", label: "Cards" },
+      { key: "b", label: "Table" },
+    ],
+    recommendation: "a",
+  };
+  const parsed = parseStageOutput(
+    JSON.stringify({ status: "decisions", summary: "Two drafts.", decisions: [decision] }),
+    "design",
+  );
+  assert.ok(parsed.ok && parsed.value.decisions?.length === 1);
+  assert.equal(
+    parseStageOutput(JSON.stringify({ status: "decisions", summary: "s", decisions: [] }), "design")
+      .ok,
+    false,
+  );
+  assert.equal(
+    parseStageOutput(
+      JSON.stringify({ status: "decisions", summary: "s", decisions: [decision] }),
+      "code",
+    ).ok,
+    false,
+  );
+});
+
+test("rejects malformed stage results", () => {
   const results = [
     "not json",
     "[]",
-    JSON.stringify({ status: "finished", summary: "x", commitMessage: "x" }),
-    JSON.stringify({ status: "done", summary: "", commitMessage: "x" }),
-    JSON.stringify({ status: "done", summary: "x" }),
+    JSON.stringify({ status: "finished", summary: "x" }),
+    JSON.stringify({ status: "done", summary: "" }),
     JSON.stringify({ status: "done", summary: "x", commitMessage: "x".repeat(2001) }),
-  ].map(parseImplementOutput);
+  ].map((text) => parseStageOutput(text, "code"));
   for (const result of results) assert.equal(result.ok, false);
 });
 
@@ -87,11 +138,12 @@ test("an awaiting-workflow result names workflow files", () => {
     commitMessage: "Add an iOS build workflow",
     reason: "Build the app and upload the simulator logs.",
   };
-  const parsed = parseImplementOutput(
+  const parsed = parseStageOutput(
     JSON.stringify({
       ...base,
       workflows: [".github/workflows/ios.yml", ".github/workflows/ios.yml"],
     }),
+    "code",
   );
   assert.ok(parsed.ok);
   assert.deepEqual(parsed.value.workflows, [".github/workflows/ios.yml"]);
@@ -102,12 +154,6 @@ test("an awaiting-workflow result names workflow files", () => {
     [".github/workflows/a/b.yml"],
     [".github/workflows/../x.yml"],
   ]) {
-    assert.equal(parseImplementOutput(JSON.stringify({ ...base, workflows })).ok, false);
+    assert.equal(parseStageOutput(JSON.stringify({ ...base, workflows }), "code").ok, false);
   }
-  assert.equal(
-    parseImplementOutput(
-      JSON.stringify({ ...base, reason: undefined, workflows: [".github/workflows/ios.yml"] }),
-    ).ok,
-    false,
-  );
 });

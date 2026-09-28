@@ -13,7 +13,7 @@ Let the agent deliver GitHub Actions workflows safely: as part of a task (for ex
 
 ## Context
 
-This is step 4 of the MVP plan (`plans/2026-09-23-codeman-mvp.md`), moved here when the MVP closed.
+This is step 4 of the MVP plan (`docs/plans/2026-09-23-codeman-mvp.md`), moved here when the MVP closed.
 
 Today apply drops every change under `.github/workflows/`, whatever `.codemanignore` says. Its token has no `workflows` permission, and GitHub rejects a commit that touches workflow files without it. On a private test repository, a task that asked for a GitHub Pages deploy workflow lost that file this way, even with the rule removed from `.codemanignore`.
 
