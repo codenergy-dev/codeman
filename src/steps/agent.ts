@@ -12,6 +12,7 @@ import {
   planPrompt,
   TASK_FILE,
 } from "../prompt.ts";
+import { downloadResults, RESULTS_DIR } from "../results.ts";
 import {
   AGENT_HOME,
   copyToAgent,
@@ -22,7 +23,7 @@ import {
   writeAsAgent,
 } from "../sandbox.ts";
 import { oneLine } from "../text.ts";
-import { positiveNumber, readTask, resultDir, workdir } from "./common.ts";
+import { positiveNumber, readTask, repository, resultDir, workdir } from "./common.ts";
 
 export const MAX_OUTPUT_BYTES = 1024 * 1024;
 
@@ -54,6 +55,13 @@ export async function agent(): Promise<void> {
 
   const worktree = `${AGENT_HOME}/work`;
   copyToAgent(workspace, worktree);
+  if (task.workflowRuns?.length) {
+    core.startGroup("Download the results of the workflows the agent asked for");
+    const results = join(workdir(), "workflow-results");
+    await downloadResults(repository(), task.workflowRuns, results);
+    copyToAgent(results, `${worktree}/${RESULTS_DIR}`);
+    core.endGroup();
+  }
   const prompt = task.action === "implement" ? implementPrompt(task, minutes) : planPrompt(task);
   writeAsAgent(`${worktree}/${TASK_FILE}`, prompt);
 

@@ -162,3 +162,21 @@ test("the implementation prompt carries requests and review comments", () => {
   assert.match(prompt, /<<<REVIEW by bob \(CHANGES_REQUESTED\) [0-9a-f]{12}\nSee inline\./);
   assert.match(prompt, /<<<LINE COMMENT on src\/a\.ts:3 [0-9a-f]{12}\nUse a constant\./);
 });
+
+test("the implementation prompt points to the results of awaited workflows", () => {
+  const base = { ...task, action: "implement" as const };
+  assert.ok(!implementPrompt(base, 45).includes("## Workflow results"));
+  const prompt = implementPrompt(
+    {
+      ...base,
+      workflowRuns: [
+        { id: 9, name: "iOS", path: ".github/workflows/ios.yml", conclusion: "failure", url: "u" },
+      ],
+    },
+    45,
+  );
+  assert.match(prompt, /## Workflow results/);
+  assert.match(prompt, /\.github\/workflows\/ios\.yml: failure \(run 9\)/);
+  assert.match(prompt, /\.codeman\/results\/README\.md/);
+  assert.match(prompt, /awaiting-workflow/);
+});

@@ -110,3 +110,11 @@ test("the footer shows what the run and the task spent", () => {
   assert.match(known, /Spent: US\$ 0\.50 of US\$ 2\.00 for the task/);
   assert.ok(!renderStatus({ ...view, cost: { budget: 2 } }).includes("Spent"));
 });
+
+test("lists staged workflows with how to accept them", () => {
+  const body = renderStatus({ ...view, staged: [".github/workflows/deploy.yml", "@evil"] });
+  assert.match(body, /#### Workflows to review/);
+  assert.match(body, /\/codeman accept-workflows/);
+  assert.ok(!body.includes("- @evil"));
+  assert.ok(!renderStatus(view).includes("Workflows to review"));
+});

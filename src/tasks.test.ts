@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { encodeStatus, type TaskRecord } from "./record.ts";
 import {
+  acceptRequest,
   authorizedComments,
   authorizedReviews,
   type CommentLike,
@@ -9,6 +10,7 @@ import {
   commandsAfter,
   commenters,
   findStatus,
+  finishedRuns,
   pendingWork,
   type ReviewLike,
   replanRequests,
@@ -299,4 +301,67 @@ test("a review that requests changes is a fix request", () => {
 
 test("commenters include review authors", () => {
   assert.deepEqual(commenters([review(1, "COMMENTED", "", "carol")]), ["carol"]);
+});
+
+test("the last accept-workflows after the handled one counts", () => {
+  const comments = authorized([
+    comment(1, "/codeman accept-workflows"),
+    comment(2, "LGTM"),
+    comment(3, "/codeman accept-workflows", "mallory"),
+    comment(4, "/codeman accept-workflows"),
+  ]);
+  assert.equal(acceptRequest(comments, 0)?.id, 4);
+  assert.equal(acceptRequest(comments, 4), undefined);
+});
+
+test("accepting workflows goes first, and a finished workflow resumes its task", () => {
+  assert.deepEqual(
+    chooseTask([
+      { number: 1, state: "new" },
+      { number: 2, state: "done", accept: true },
+    ]),
+    { number: 2, action: "accept" },
+  );
+  assert.deepEqual(
+    chooseTask([
+      { number: 1, state: "awaiting-workflow" },
+      { number: 2, state: "awaiting-workflow", workflowsDone: true, planned: true },
+    ]),
+    { number: 2, action: "implement" },
+  );
+  assert.equal(chooseTask([{ number: 1, state: "awaiting-workflow" }]), undefined);
+});
+
+test("waits until every awaited workflow has a finished run", () => {
+  const run = (id: number, path: string, status: string, conclusion: string | null = null) => ({
+    id,
+    name: path,
+    path,
+    status,
+    conclusion,
+    html_url: `https://x/${id}`,
+  });
+  const ios = ".github/workflows/ios.yml";
+  const web = ".github/workflows/web.yml";
+  assert.equal(finishedRuns([run(1, ios, "completed", "success")], [ios, web]), undefined);
+  assert.equal(
+    finishedRuns([run(1, ios, "completed", "failure"), run(2, ios, "in_progress")], [ios]),
+    undefined,
+    "the latest run is still going",
+  );
+  assert.deepEqual(
+    finishedRuns(
+      [
+        run(1, ios, "completed", "failure"),
+        run(3, ios, "completed", "success"),
+        run(2, web, "completed", "success"),
+      ],
+      [ios, web],
+    )?.map((r) => [r.id, r.conclusion]),
+    [
+      [3, "success"],
+      [2, "success"],
+    ],
+  );
+  assert.equal(finishedRuns([], []), undefined);
 });

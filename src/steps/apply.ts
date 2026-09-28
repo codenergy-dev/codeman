@@ -5,7 +5,15 @@ import { usd } from "../budget.ts";
 import type { Change } from "../collect.ts";
 import type { FileChange, Repository } from "../github.ts";
 import { parseImplementOutput, parsePlanOutput } from "../output.ts";
-import { checkChanges, DEFAULT_IGNORE, IGNORE_FILE } from "../policy.ts";
+import {
+  checkChanges,
+  DEFAULT_IGNORE,
+  IGNORE_FILE,
+  STAGED_WORKFLOWS_DIR,
+  stagedPath,
+  WORKFLOWS_DIR,
+  workflowPath,
+} from "../policy.ts";
 import { pullRequestBody, pullRequestFooter, pullRequestTitle } from "../pull.ts";
 import { applyCommands, pendingDecisions, type TaskRecord, writeAnswers } from "../record.ts";
 import type { State } from "../state.ts";
@@ -25,6 +33,7 @@ export async function apply(): Promise<void> {
   const repo = repository();
   const chain = chains(task.action, core.getInput("key-job-result"), core.getInput("key-status"));
   if (task.action === "record") await recordAnswers(task, repo);
+  else if (task.action === "accept") await acceptWorkflows(task, repo);
   else if (await keyFailed(task, repo)) return;
   else if (task.action === "implement") await applyImplementation(task, repo);
   else await applyPlan(task, repo);
@@ -37,7 +46,9 @@ export async function apply(): Promise<void> {
  * nothing: another one would pick the same task again, and again.
  */
 export function chains(action: TaskContext["action"], keyJob: string, keyStatus: string): boolean {
-  return action === "record" || (keyJob === "success" && keyStatus === "opened");
+  return (
+    action === "record" || action === "accept" || (keyJob === "success" && keyStatus === "opened")
+  );
 }
 
 /** Handles a run in which no key was created. Returns true if it did. */
@@ -143,7 +154,8 @@ async function applyImplementation(task: TaskContext, repo: Repository): Promise
   // Runs in a row that did not finish; a `fix` or `continue` request starts a new count.
   const runs = (task.resume ? 0 : (task.record.runs ?? 0)) + 1;
   const maxRuns = task.settings["max-runs"];
-  const record: TaskRecord = { ...task.record, runs };
+  // A run that awaits a workflow sets this again; any other outcome ends the wait.
+  const record: TaskRecord = { ...task.record, runs, awaiting: undefined };
   const unfinished = (message: string, report?: string): Promise<void> =>
     runs >= maxRuns
       ? finish(repo, task, "blocked", {
@@ -154,7 +166,14 @@ async function applyImplementation(task: TaskContext, repo: Repository): Promise
         })
       : finish(repo, task, "in-progress", { record, message, report, errors: dropped });
 
-  const changes = readChanges(join(dir, "tree"), checked.value.accepted, task.settings);
+  const tree = join(dir, "tree");
+  const changes = [
+    ...readChanges(tree, checked.value.accepted, task.settings),
+    ...readChanges(tree, checked.value.staged, task.settings).map((change) => ({
+      ...change,
+      path: stagedPath(change.path),
+    })),
+  ];
   let head = task.baseSha;
   if (changes.length > 0) {
     head = await repo.commit({
@@ -175,6 +194,29 @@ async function applyImplementation(task: TaskContext, repo: Repository): Promise
   }
 
   const { status, summary, reason } = output.value;
+  if (status === "awaiting-workflow") {
+    const workflows = output.value.workflows ?? [];
+    const present = new Set([
+      ...(await repo.filesUnder(head, WORKFLOWS_DIR)).keys(),
+      ...[...(await repo.filesUnder(head, STAGED_WORKFLOWS_DIR)).keys()].map(workflowPath),
+    ]);
+    const missing = workflows.filter((path) => !present.has(path));
+    if (missing.length > 0) {
+      return blocked(
+        repo,
+        task,
+        `The agent waits for workflows that are not on the branch: ${missing.join(", ")}.`,
+        dropped,
+        record,
+      );
+    }
+    return finish(repo, task, "awaiting-workflow", {
+      record: { ...record, runs: task.record.runs ?? 0, awaiting: workflows },
+      message: `The agent needs ${workflows.join(", ")} to run: ${reason ?? ""} Codeman goes on when their runs on the task branch finish. \`/codeman continue <guidance>\` goes on without them.`,
+      report: summary,
+      errors: dropped,
+    });
+  }
   if (status === "partial") {
     return unfinished("Work so far is committed to the task branch.", summary);
   }
@@ -226,6 +268,53 @@ async function applyImplementation(task: TaskContext, repo: Repository): Promise
     report: summary,
     errors: dropped,
   });
+}
+
+/**
+ * Moves the staged workflows into `.github/workflows/` on the task branch, with a token that
+ * may write workflows, if they are what the maintainer saw: the staged files must not have
+ * changed since the comment that accepted them.
+ */
+async function acceptWorkflows(task: TaskContext, repo: Repository): Promise<void> {
+  const accept = task.accept;
+  if (!task.record || !accept) return blocked(repo, task, "Nothing to accept.");
+  const done = (message: string, errors: string[] = []): Promise<void> =>
+    finish(repo, task, task.fromState, {
+      record: { ...task.record, acceptedCommentId: accept.id } as TaskRecord,
+      message,
+      errors,
+      retry: true,
+    });
+
+  const head = await repo.branchSha(task.branch);
+  const staged = head ? await repo.filesUnder(head, STAGED_WORKFLOWS_DIR) : new Map();
+  if (staged.size === 0) return done("There are no staged workflows to accept.");
+  const before = await repo.commitAt(task.branch, accept.createdAt);
+  const seen = before ? await repo.filesUnder(before, STAGED_WORKFLOWS_DIR) : new Map();
+  const changed = [...staged]
+    .filter(([path, file]) => seen.get(path)?.sha !== file.sha)
+    .map(([path]) => workflowPath(path));
+  if (changed.length > 0 || !head) {
+    return done("The staged workflows changed after they were accepted.", [
+      `Changed after ${accept.author}'s comment: ${changed.join(", ")}. Read them again, then comment \`/codeman accept-workflows\` again.`,
+    ]);
+  }
+
+  const moved = [...staged.keys()].map(workflowPath);
+  await repository("workflow-token").commit({
+    branch: task.branch,
+    baseSha: head,
+    createBranch: false,
+    changes: [...staged].flatMap(([path, file]) => [
+      { path: workflowPath(path), content: null, sha: file.sha, mode: file.mode },
+      { path, content: null },
+    ]),
+    message: `Accept workflows for #${task.number}\n\nAccepted by ${accept.author} in comment ${accept.id}.`,
+  });
+  const waiting = task.fromState === "awaiting-workflow";
+  await done(
+    `${accept.author} accepted ${moved.join(", ")}, now in \`.github/workflows/\` on the task branch.${waiting ? " Codeman goes on when their runs finish." : ""}`,
+  );
 }
 
 /** Reads the accepted changes from the agent's result. Each file is checked again. */
@@ -331,6 +420,15 @@ async function finish(
     };
   }
   const errors = [...(task.action === "record" ? [] : task.problems), ...(view.errors ?? [])];
+  // Workflows the agent wrote that wait for a maintainer, as they are on the branch now.
+  const staged =
+    task.action === "implement" || task.action === "accept"
+      ? [
+          ...(
+            await repo.filesUnder(task.branch, STAGED_WORKFLOWS_DIR).catch(() => new Map())
+          ).keys(),
+        ].map(workflowPath)
+      : [];
   await repo.setState(task.number, await repo.currentLabels(task.number), state);
   await repo.upsertComment(
     task.number,
@@ -345,6 +443,7 @@ async function finish(
       message: view.message,
       report: view.report,
       errors,
+      staged,
       cost: {
         run: cost.run,
         task: cost.task ?? record?.spent,

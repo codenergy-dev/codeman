@@ -56,6 +56,54 @@ export interface TaskComment {
   createdAt: string;
 }
 
+/** A finished run of a workflow the agent asked for. */
+export interface WorkflowRun {
+  id: number;
+  name: string;
+  path: string;
+  conclusion: string | null;
+  url: string;
+}
+
+/** The subset of a GitHub Actions run that Codeman reads. */
+export interface WorkflowRunLike {
+  id: number;
+  name?: string | null;
+  path: string;
+  status: string | null;
+  conclusion: string | null;
+  html_url: string;
+}
+
+/**
+ * The runs of the awaited workflows, if every one of them has run and finished. A workflow may
+ * start more than one run for a commit (a rerun, for example); the latest counts.
+ */
+export function finishedRuns(
+  runs: readonly WorkflowRunLike[],
+  awaited: readonly string[],
+): WorkflowRun[] | undefined {
+  const latest = awaited.map(
+    (path) => runs.filter((run) => run.path === path).sort((a, b) => b.id - a.id)[0],
+  );
+  if (latest.length === 0 || latest.some((run) => !run || run.status !== "completed")) {
+    return undefined;
+  }
+  return latest.flatMap((run) =>
+    run
+      ? [
+          {
+            id: run.id,
+            name: run.name ?? run.path,
+            path: run.path,
+            conclusion: run.conclusion,
+            url: run.html_url,
+          },
+        ]
+      : [],
+  );
+}
+
 /** The subset of a pull request review that Codeman reads. */
 export interface ReviewLike {
   id: number;
@@ -195,7 +243,7 @@ export function taskSettings(comments: readonly TaskComment[]): PartialSettings 
   return settings;
 }
 
-export type Action = "plan" | "record" | "implement";
+export type Action = "plan" | "record" | "implement" | "accept";
 
 export interface Candidate {
   number: number;
@@ -204,6 +252,10 @@ export interface Candidate {
   pending?: Pending | undefined;
   /** Whether the task has a plan with every decision answered. */
   planned?: boolean | undefined;
+  /** A maintainer accepted the staged workflows, and that is not handled yet. */
+  accept?: boolean | undefined;
+  /** Every run of the workflows the agent waits for has finished. */
+  workflowsDone?: boolean | undefined;
 }
 
 /**
@@ -219,9 +271,25 @@ export const DECIDING: ReadonlySet<State | "new"> = new Set(["awaiting-decision"
 export const RESUMABLE: ReadonlySet<State | "new"> = new Set([
   "ready",
   "in-progress",
+  "awaiting-workflow",
   "blocked",
   "done",
 ]);
+
+/** The last `/codeman accept-workflows` in a maintainer comment after `afterId`, if any. */
+export function acceptRequest(
+  comments: readonly TaskComment[],
+  afterId: number,
+): TaskComment | undefined {
+  return comments
+    .filter(
+      (comment) =>
+        comment.id > afterId &&
+        parseCommands(comment.body).some((command) => command.kind === "accept-workflows"),
+    )
+    .sort((a, b) => a.id - b.id)
+    .at(-1);
+}
 
 /**
  * What the commands since the last handled comment and review ask for, in the task's state.
@@ -259,7 +327,8 @@ export function replanRequests(sources: readonly CommandSource[]): string[] {
 }
 
 /**
- * Picks the one task this run works on. Recording answers needs no LLM, so it goes first;
+ * Picks the one task this run works on. Accepting workflows and recording answers need no LLM,
+ * so they go first;
  * then the oldest task that needs a plan: a new one, one left in `planning` by an interrupted
  * run, or one whose maintainers asked for a new plan; then the oldest task to implement:
  * resumed or in progress before ready. A resumed task without a finished plan plans again.
@@ -268,6 +337,8 @@ export function chooseTask(
   candidates: readonly Candidate[],
 ): { number: number; action: Action } | undefined {
   const sorted = [...candidates].sort((a, b) => a.number - b.number);
+  const accept = sorted.find((task) => task.accept);
+  if (accept) return { number: accept.number, action: "accept" };
   const record = sorted.find((task) => task.pending === "record");
   if (record) return { number: record.number, action: "record" };
   const plan = sorted.find(
@@ -282,7 +353,8 @@ export function chooseTask(
     sorted.find(
       (task) =>
         (task.pending === "resume" && task.planned) ||
-        (task.state === "in-progress" && !task.pending),
+        (task.state === "in-progress" && !task.pending) ||
+        (task.state === "awaiting-workflow" && task.workflowsDone && !task.pending),
     ) ?? sorted.find((task) => task.state === "ready" && !task.pending);
   if (implement) return { number: implement.number, action: "implement" };
   return undefined;
@@ -310,6 +382,10 @@ export interface TaskContext {
   processed: { commentId: number; reviewId: number };
   /** Problems with the new commands, for the status comment. */
   problems: string[];
+  /** For `accept`: the comment that accepted the staged workflows. */
+  accept?: TaskComment | undefined;
+  /** Finished runs of the workflows the agent waited for, whose results it gets. */
+  workflowRuns?: WorkflowRun[] | undefined;
   fromState: State | "new";
   model: string;
   settings: Settings;

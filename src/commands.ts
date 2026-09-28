@@ -2,6 +2,7 @@ import { isSettingName, parseSetting, type SettingName, TASK_SETTINGS } from "./
 
 export type Command =
   | { kind: "approve" }
+  | { kind: "accept-workflows" }
   | { kind: "decide"; answers: ReadonlyMap<number, string> }
   | { kind: "answer"; id: number; text: string }
   | { kind: "replan"; text: string }
@@ -64,6 +65,10 @@ function parseLine(line: string): Command | OpenText {
       return args.length === 0 ? { kind: "approve" } : invalid("`approve` takes no arguments.");
     case "decide":
       return parseDecide(args, invalid);
+    case "accept-workflows":
+      return args.length === 0
+        ? { kind: "accept-workflows" }
+        : invalid("`accept-workflows` takes no arguments.");
     case "answer": {
       const [, id = "", first = ""] = ANSWER.exec(line) ?? [];
       if (!DECISION_ID.test(id))
@@ -84,7 +89,7 @@ function parseLine(line: string): Command | OpenText {
       return parseSet(args, invalid);
     default:
       return invalid(
-        "Unknown command. Use `decide`, `approve`, `answer`, `replan`, `fix`, `continue`, `set` or `model`.",
+        "Unknown command. Use `decide`, `approve`, `answer`, `replan`, `fix`, `continue`, `accept-workflows`, `set` or `model`.",
       );
   }
 }

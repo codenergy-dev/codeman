@@ -46,15 +46,18 @@ export function parsePlanOutput(text: string): Parsed<PlanOutput> {
 
 /** What the agent reports after an implementation run, in `.codeman/output.json`. */
 export interface ImplementOutput {
-  status: "done" | "partial" | "blocked";
+  status: "done" | "partial" | "blocked" | "awaiting-workflow";
   summary: string;
   /** Message for this run's commit; when done, the suggested squash message too. */
   commitMessage: string;
-  /** When blocked: what a human must do. */
+  /** When blocked: what a human must do. When awaiting a workflow: what it should produce. */
   reason?: string;
+  /** When awaiting a workflow: the workflow files, such as `.github/workflows/ios.yml`. */
+  workflows?: string[];
 }
 
-const STATUSES: ReadonlySet<string> = new Set(["done", "partial", "blocked"]);
+const STATUSES: ReadonlySet<string> = new Set(["done", "partial", "blocked", "awaiting-workflow"]);
+const WORKFLOW_FILE = /^\.github\/workflows\/[A-Za-z0-9._-]+\.ya?ml$/;
 
 export function parseImplementOutput(text: string): Parsed<ImplementOutput> {
   let data: unknown;
@@ -65,7 +68,7 @@ export function parseImplementOutput(text: string): Parsed<ImplementOutput> {
   }
   if (!isObject(data)) return { ok: false, error: "output.json must be an object." };
   if (typeof data.status !== "string" || !STATUSES.has(data.status)) {
-    return { ok: false, error: "status must be done, partial or blocked." };
+    return { ok: false, error: "status must be done, partial, blocked or awaiting-workflow." };
   }
   const summary = string(data.summary, "summary", LIMITS.summary);
   if (!summary.ok) return summary;
@@ -75,13 +78,38 @@ export function parseImplementOutput(text: string): Parsed<ImplementOutput> {
   const commitMessage = [truncate(subject.trim(), 72), ...body].join("\n").trim();
 
   const status = data.status as ImplementOutput["status"];
-  if (status !== "blocked")
+  if (status === "done" || status === "partial") {
     return { ok: true, value: { status, summary: summary.value, commitMessage } };
+  }
   const reason = string(data.reason, "reason", LIMITS.summary);
   if (!reason.ok) return reason;
+  if (status === "blocked") {
+    return {
+      ok: true,
+      value: { status, summary: summary.value, commitMessage, reason: reason.value },
+    };
+  }
+  const workflows = data.workflows;
+  if (
+    !Array.isArray(workflows) ||
+    workflows.length === 0 ||
+    workflows.length > 5 ||
+    !workflows.every((path) => typeof path === "string" && WORKFLOW_FILE.test(path))
+  ) {
+    return {
+      ok: false,
+      error: "workflows must list 1 to 5 files directly under .github/workflows/.",
+    };
+  }
   return {
     ok: true,
-    value: { status, summary: summary.value, commitMessage, reason: reason.value },
+    value: {
+      status,
+      summary: summary.value,
+      commitMessage,
+      reason: reason.value,
+      workflows: [...new Set(workflows as string[])],
+    },
   };
 }
 

@@ -14,6 +14,8 @@ export interface StatusView {
   message?: string | undefined;
   /** The agent's summary of its last run. Rendered as untrusted text. */
   report?: string | undefined;
+  /** Workflows the agent wrote that wait for `/codeman accept-workflows`. Untrusted names. */
+  staged?: readonly string[] | undefined;
   /** What this run and the task spent, in USD, when known. */
   cost?: { run?: number | undefined; task?: number | undefined; budget: number } | undefined;
   /** Problems with commands or the agent's output. Rendered as untrusted text. */
@@ -70,6 +72,16 @@ export function renderStatus(view: StatusView): string {
   }
 
   if (view.report) lines.push("#### Last run", "", inertLines(view.report), "");
+
+  if (view.staged && view.staged.length > 0) {
+    lines.push("#### Workflows to review", "");
+    for (const path of view.staged) lines.push(`- ${inlineText(path)}`);
+    lines.push(
+      "",
+      "The agent wrote these workflows. They are staged under `.codeman/workflows/` on the task branch and do not run. A workflow runs with the repository's secrets, so read them in the pull request or on the branch first. To move them into `.github/workflows/`, comment `/codeman accept-workflows`.",
+      "",
+    );
+  }
 
   if (view.errors && view.errors.length > 0) {
     lines.push("#### Problems", "");

@@ -1,7 +1,13 @@
 import type { getOctokit } from "@actions/github";
 import { replaceFooter } from "./pull.ts";
 import { OPT_IN_LABEL, STATES, type State, stateLabel } from "./state.ts";
-import type { CommentLike, IssueLike, ReviewCommentLike, ReviewLike } from "./tasks.ts";
+import type {
+  CommentLike,
+  IssueLike,
+  ReviewCommentLike,
+  ReviewLike,
+  WorkflowRunLike,
+} from "./tasks.ts";
 
 type Octokit = ReturnType<typeof getOctokit>;
 
@@ -9,7 +15,14 @@ export interface FileChange {
   path: string;
   /** `null` deletes the file. */
   content: Buffer | null;
+  /** An existing blob to use instead of `content`. */
+  sha?: string;
   mode?: "100644" | "100755";
+}
+
+export interface TreeFile {
+  sha: string;
+  mode: "100644" | "100755";
 }
 
 /** The GitHub API calls Codeman makes, scoped to one repository. */
@@ -59,6 +72,82 @@ export class Repository {
       pull_number: pullRequest,
       per_page: 100,
     });
+  }
+
+  /** The commit a branch pointed to at `time`: its newest commit up to then. */
+  async commitAt(branch: string, time: string): Promise<string | undefined> {
+    const { data } = await this.#octokit.rest.repos.listCommits({
+      ...this.#scope,
+      sha: branch,
+      until: time,
+      per_page: 1,
+    });
+    return data[0]?.sha;
+  }
+
+  /** Regular files under `prefix` in a commit, with their blob SHAs. */
+  async filesUnder(commit: string, prefix: string): Promise<Map<string, TreeFile>> {
+    const { data } = await this.#octokit.rest.git.getTree({
+      ...this.#scope,
+      tree_sha: commit,
+      recursive: "true",
+    });
+    if (data.truncated) throw new Error("The repository's tree is too large to list.");
+    const files = new Map<string, TreeFile>();
+    for (const entry of data.tree) {
+      if (entry.type === "blob" && entry.path?.startsWith(prefix) && entry.sha) {
+        files.set(entry.path, {
+          sha: entry.sha,
+          mode: entry.mode === "100755" ? "100755" : "100644",
+        });
+      }
+    }
+    return files;
+  }
+
+  /** Workflow runs for one commit. */
+  async runsForCommit(sha: string): Promise<WorkflowRunLike[]> {
+    const { data } = await this.#octokit.rest.actions.listWorkflowRunsForRepo({
+      ...this.#scope,
+      head_sha: sha,
+      per_page: 100,
+    });
+    return data.workflow_runs;
+  }
+
+  async runJobs(runId: number): Promise<{ id: number; name: string; conclusion: string | null }[]> {
+    return this.#octokit.paginate(this.#octokit.rest.actions.listJobsForWorkflowRun, {
+      ...this.#scope,
+      run_id: runId,
+      per_page: 100,
+    });
+  }
+
+  async jobLog(jobId: number): Promise<string> {
+    const response = await this.#octokit.rest.actions.downloadJobLogsForWorkflowRun({
+      ...this.#scope,
+      job_id: jobId,
+    });
+    return typeof response.data === "string" ? response.data : String(response.data);
+  }
+
+  async runArtifacts(
+    runId: number,
+  ): Promise<{ id: number; name: string; size_in_bytes: number; expired: boolean }[]> {
+    return this.#octokit.paginate(this.#octokit.rest.actions.listWorkflowRunArtifacts, {
+      ...this.#scope,
+      run_id: runId,
+      per_page: 100,
+    });
+  }
+
+  async downloadArtifact(artifactId: number): Promise<Buffer> {
+    const response = await this.#octokit.rest.actions.downloadArtifact({
+      ...this.#scope,
+      artifact_id: artifactId,
+      archive_format: "zip",
+    });
+    return Buffer.from(response.data as ArrayBuffer);
   }
 
   /** The user's legacy permission on the repository: admin, write, read or none. */
@@ -121,6 +210,7 @@ export class Repository {
     const tree = await Promise.all(
       options.changes.map(async (change) => {
         const mode = change.mode ?? "100644";
+        if (change.sha) return { path: change.path, mode, type: "blob" as const, sha: change.sha };
         if (change.content === null) {
           return { path: change.path, mode, type: "blob" as const, sha: null };
         }

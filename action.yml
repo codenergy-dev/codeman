@@ -6,7 +6,9 @@ inputs:
     description: "Which job of the Codeman workflow this is: select, open-key, agent, apply or close-key."
     required: true
   github-token:
-    description: "(select, apply) GitHub App installation token."
+    description: "(select, apply) GitHub App installation token. (agent) The job's GITHUB_TOKEN, to download workflow results."
+  workflow-token:
+    description: "(apply) GitHub App token that may write workflows, only when accepting staged workflows."
   app-slug:
     description: "(select) Slug of the GitHub App, used to recognize Codeman's own comments."
   model:
@@ -52,7 +54,7 @@ inputs:
     description: "Directory for Codeman's files. Defaults to RUNNER_TEMP/codeman."
 outputs:
   action:
-    description: "(select) What this run does: plan, implement, record or none."
+    description: "(select) What this run does: plan, implement, record, accept or none."
   needs-agent:
     description: "(select) Whether this run needs a key and the agent: true or false."
   task:

@@ -92,6 +92,8 @@ jobs:
           permission-issues: write
           # Reads reviews on Codeman's pull requests.
           permission-pull-requests: read
+          # Reads the runs of workflows the agent asked for.
+          permission-actions: read
           # Reads commenters' permission on the repository.
           permission-metadata: read
       - uses: codenergy-dev/codeman@COMMIT_SHA
@@ -146,6 +148,8 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: read
+      # Downloads the results of workflows the agent asked for. The agent never sees the token.
+      actions: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -160,6 +164,7 @@ jobs:
       - uses: codenergy-dev/codeman@COMMIT_SHA
         with:
           step: agent
+          github-token: ${{ github.token }}
           encrypted-key: ${{ needs.open-key.outputs.encrypted-key }}
           encryption-secret: ${{ secrets.CODEMAN_OPENROUTER_KEY_ENCRYPTION_SECRET }}
           agent-minutes: 50
@@ -209,6 +214,15 @@ jobs:
           permission-contents: write
           permission-issues: write
           permission-pull-requests: write
+      # Only when a maintainer accepted staged workflows: a token that may write them.
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: workflow-token
+        if: needs.select.outputs.action == 'accept'
+        with:
+          client-id: ${{ vars.CODEMAN_GITHUB_APP_CLIENT_ID }}
+          private-key: ${{ secrets.CODEMAN_GITHUB_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-workflows: write
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: codeman-task
@@ -225,6 +239,7 @@ jobs:
         with:
           step: apply
           github-token: ${{ steps.app-token.outputs.token }}
+          workflow-token: ${{ steps.workflow-token.outputs.token }}
           key-job-result: ${{ needs.open-key.result }}
           key-status: ${{ needs.open-key.outputs.status }}
           key-reason: ${{ needs.open-key.outputs.reason }}

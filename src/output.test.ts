@@ -79,3 +79,35 @@ test("rejects malformed implementation results", () => {
   ].map(parseImplementOutput);
   for (const result of results) assert.equal(result.ok, false);
 });
+
+test("an awaiting-workflow result names workflow files", () => {
+  const base = {
+    status: "awaiting-workflow",
+    summary: "Needs a macOS build.",
+    commitMessage: "Add an iOS build workflow",
+    reason: "Build the app and upload the simulator logs.",
+  };
+  const parsed = parseImplementOutput(
+    JSON.stringify({
+      ...base,
+      workflows: [".github/workflows/ios.yml", ".github/workflows/ios.yml"],
+    }),
+  );
+  assert.ok(parsed.ok);
+  assert.deepEqual(parsed.value.workflows, [".github/workflows/ios.yml"]);
+  for (const workflows of [
+    undefined,
+    [],
+    ["ci.yml"],
+    [".github/workflows/a/b.yml"],
+    [".github/workflows/../x.yml"],
+  ]) {
+    assert.equal(parseImplementOutput(JSON.stringify({ ...base, workflows })).ok, false);
+  }
+  assert.equal(
+    parseImplementOutput(
+      JSON.stringify({ ...base, reason: undefined, workflows: [".github/workflows/ios.yml"] }),
+    ).ok,
+    false,
+  );
+});

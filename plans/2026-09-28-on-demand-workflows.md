@@ -1,7 +1,7 @@
 ---
-status: pending
+status: completed
 created_at: 2026-09-28T11:00:00-03:00
-updated_at: 2026-09-28T11:00:00-03:00
+updated_at: 2026-09-28T15:00:00-03:00
 commit: 54cc1bb
 ---
 
@@ -36,6 +36,8 @@ Two needs share this mechanism:
 
 Answer these before work starts.
 
+Answered on 2026-09-28: the recommendation of each, (a).
+
 1. **How the agent's workflow changes reach the branch.** Options:
    - (a) Commit them directly when `.codemanignore` allows it, with `workflows: write` on apply's token. They run with secrets before anyone reviews them.
    - (b) Stage them. Apply commits the agent's changes under `.github/workflows/` to `.codeman/workflows/` on the task branch instead, where they do not run, and lists them on the status comment and the pull request. After reading them in the diff, a maintainer comments `/codeman accept-workflows`. Apply then moves them into `.github/workflows/` with a token that has `workflows: write`. The move uses the staged files as they were when the comment was posted; if a later commit changed them, Codeman asks again.
@@ -57,15 +59,25 @@ Answer these before work starts.
 ## Steps
 
 1. Workflows as deliverables (A)
-   - [ ] Apply stages the agent's changes under `.github/workflows/` in `.codeman/workflows/` (decision 1), and lists them on the status comment and the pull request with instructions.
-   - [ ] `/codeman accept-workflows` from a maintainer: apply moves the staged files into place with `workflows: write`, only if they did not change after the comment, and records who accepted.
-   - [ ] Template and docs: the accept path's token permission, the risk explained, and `.codemanignore` still able to forbid workflow changes altogether.
+   - [x] Apply stages the agent's changes under `.github/workflows/` in `.codeman/workflows/` (decision 1), and lists them on the status comment and the pull request with instructions.
+   - [x] `/codeman accept-workflows` from a maintainer: apply moves the staged files into place with `workflows: write`, only if they did not change after the comment, and records who accepted.
+   - [x] Template and docs: the accept path's token permission, the risk explained, and `.codemanignore` still able to forbid workflow changes altogether.
    - [ ] Done when: on the test repository, a task that asks for a deploy workflow ends with that workflow in the pull request, after `/codeman accept-workflows`.
 2. Workflows the agent needs (B)
-   - [ ] Implementation output: status `awaiting-workflow`, with the workflow and what it should produce. Apply stages it as in step 1 and sets `codeman:awaiting-workflow`.
-   - [ ] `select` resumes the task when the runs of the accepted workflow on the branch's head finish, and hands their results to the agent (decision 4).
-   - [ ] Document GitHub Environments with required reviewers for workflows that need secrets.
+   - [x] Implementation output: status `awaiting-workflow`, with the workflow and what it should produce. Apply stages it as in step 1 and sets `codeman:awaiting-workflow`.
+   - [x] `select` resumes the task when the runs of the accepted workflow on the branch's head finish, and hands their results to the agent (decision 4).
+   - [x] Document GitHub Environments with required reviewers for workflows that need secrets.
    - [ ] Done when: on the test repository, a task that needs a macOS runner completes, with a maintainer accepting the workflow.
+
+## Outcome
+
+Implemented on 2026-09-28. Differences from the decisions and new requirements:
+
+- Logs come per job, not per step: GitHub's API serves a job's log as one file. The agent gets the last 64 KiB of each job that did not succeed.
+- `select` reads workflow runs, so the GitHub App needs the **Actions: read** permission, and the agent job's `GITHUB_TOKEN` gets `actions: read` to download results for the agent.
+- The proposed `.codemanignore` protects all of `.github/`, so a repository opts in to agent-written workflows by re-allowing `.github/workflows/`.
+
+The end-to-end checks are left to the responsible person's test round; if they fail, this plan reopens.
 
 ## Out of scope
 

@@ -14,7 +14,7 @@ Each task has at most one state label. A task without one has not started yet (`
 | `codeman:awaiting-decision` | Plan posted; decisions pending. |
 | `codeman:ready` | All decisions answered; next run implements. |
 | `codeman:in-progress` | Agent is implementing. |
-| `codeman:awaiting-workflow` | Waiting for an on-demand workflow to finish. |
+| `codeman:awaiting-workflow` | Waiting for workflows the agent asked for; see [on-demand workflows](#on-demand-workflows). |
 | `codeman:blocked` | Needs human attention; the status comment says why and how to go on (usually `/codeman continue`). |
 | `codeman:done` | Pull request opened. |
 
@@ -27,7 +27,7 @@ A task with more than one state label is invalid: Codeman reports a warning and 
 - Only one run per repository is active (`concurrency`). GitHub keeps at most one queued run and replaces older queued runs.
 - Each run reads the state of every task from GitHub instead of reacting only to the event that started it. A replaced or failed run therefore loses no work; the next run picks it up.
 - When a run moved a task (it recorded answers, or the agent ran), the `next-run` job starts another run with `workflow_dispatch`, carrying over a manual run's inputs. That run's `select` picks the next task, or stops without an LLM when none can move. Runs without a key (monthly budget reached, or the key job failed) start no other run, because the same task would be picked again without moving. The loop is bounded by the budgets, `max-runs` and the states: tasks that are blocked, done or awaiting an answer never start a run.
-- Each run works on one task. Recording answers comes first, because it needs no LLM; then the oldest task that needs a plan; then the oldest task to implement: resumed with `fix` or `continue`, or `codeman:in-progress`, before `codeman:ready`.
+- Each run works on one task. Accepting workflows and recording answers come first, because they need no LLM; then the oldest task that needs a plan; then the oldest task to implement: resumed with `fix` or `continue`, or `codeman:in-progress`, before `codeman:ready`.
 
 ## Jobs
 
@@ -41,11 +41,11 @@ Jobs that do not apply to a run are skipped: a run that only records answers goe
 
 | Job | Does | Credentials |
 | --- | --- | --- |
-| `select` | Reads the settings and `.codemanignore` from the default branch, picks the task and the action (`plan`, `implement`, `record` or `none`), sets `codeman:planning` or `codeman:in-progress`, and writes the task context (`task.json`) as an artifact. | App token: issues write, contents and pull requests read |
+| `select` | Reads the settings and `.codemanignore` from the default branch, picks the task and the action (`plan`, `implement`, `record`, `accept` or `none`), sets `codeman:planning` or `codeman:in-progress`, and writes the task context (`task.json`) as an artifact. | App token: issues write; contents, pull requests and actions read |
 | `open-key` | Checks the task and monthly budgets and creates the run's OpenRouter key. | OpenRouter management key, encryption secret |
-| `agent` | Runs the harness on a copy of the checkout and uploads what it changed as an artifact, even when the agent fails or runs out of time. | Read-only `GITHUB_TOKEN`, the task key |
+| `agent` | Runs the harness on a copy of the checkout and uploads what it changed as an artifact, even when the agent fails or runs out of time. | `GITHUB_TOKEN` with contents and actions read (for workflow results; the agent never sees it), the run's key |
 | `close-key` | Disables the run's key and reads what it spent. Runs whatever happened before. | OpenRouter management key |
-| `apply` | Validates the agent's result and writes it: commits, pull request, labels, status comment, spend. When the action is `record`, it applies the maintainers' answers instead. | App token: contents, issues and pull requests write |
+| `apply` | Validates the agent's result and writes it: commits, pull request, labels, status comment, spend. When the action is `record`, it applies the maintainers' answers instead; when it is `accept`, it moves the accepted workflows. | App token: contents, issues and pull requests write; for `accept` only, a second token with contents and workflows write |
 | `next-run` | Starts another run when this one moved a task. | `GITHUB_TOKEN` with `actions: write` |
 
 Only `agent` runs an LLM. The jobs that write to GitHub never run one, and they treat everything the agent produced as untrusted.
@@ -107,11 +107,22 @@ Apply commits only regular files that pass these rules; it drops the others and 
 - `.codemanignore` at the repository's root lists the paths the agent may not change, in `.gitignore` syntax. `!` re-allows a path. A file inside an excluded directory cannot be re-allowed: to re-allow a whole subdirectory, add both `!/dir/sub/` and `!/dir/sub/**`.
 - Without that file, Codeman uses its own rules: `/.github/**`, the harness's configuration (`opencode.json`, `opencode.jsonc`, `/.opencode/**`) and agent instructions (`AGENTS.md`, `CLAUDE.md`, `/.claude/**`, `/.agents/**`). Its first pull request proposes them as the repository's `.codemanignore`. Agent instructions are protected because later runs would follow a changed version before anyone reviewed it.
 - When the repository's file stops protecting one of those paths, `select` warns in the run's summary.
-- Whatever the file says, the agent never changes `.codemanignore` or `.codeman/`, since it must not change its own rules, nor `.github/workflows/`, which apply's token cannot write.
+- Whatever the file says, the agent never changes `.codemanignore` or `.codeman/`, since it must not change its own rules.
+- Workflow files are never committed where they would run; see [on-demand workflows](#on-demand-workflows). The proposed rules protect all of `.github/`. To let the agent write workflows while keeping the rest of `.github/` protected, use `/.github/**`, `!/.github/workflows/` and `!/.github/workflows/**`.
 - The plan file is always accepted.
 - Each file may have at most `max-file-bytes`. A run that changes more than `max-files` files commits nothing and blocks the task.
 
 Codeman reads the rules from the default branch, never from the task branch, so one run cannot loosen them for the next. Matching uses `git check-ignore` in an empty repository, so git's own rules apply.
+
+## On-demand workflows
+
+A workflow file runs as soon as it reaches a branch, if it listens to `push`, and on pull requests from the same repository, and it gets the repository's secrets. So Codeman never lets a workflow the agent wrote run before a maintainer reads it.
+
+- When the agent writes or changes a file directly under `.github/workflows/`, and `.codemanignore` allows it, apply commits it to `.codeman/workflows/` on the task branch instead, where it does not run. The status comment lists these files. Deleting a workflow is left to a maintainer.
+- After reading them in the pull request or on the branch, a maintainer comments `/codeman accept-workflows`. The next run moves them into `.github/workflows/` with a token that may write workflows, which apply requests only for this. If a staged file changed after the comment, nothing moves, and the maintainer must read them again and comment again. Codeman records the accepted comment, and the commit names who accepted.
+- A workflow can be what the task delivers (a deploy workflow, for example), or something the agent needs: another operating system, a device, a secret. In that case the agent writes a workflow that runs on pushes to the task branch and reports `awaiting-workflow`, with the workflows it waits for. The task becomes `codeman:awaiting-workflow`.
+- Once accepted, the workflow runs on the push that moved it. When every awaited workflow has a finished run on the branch's head, the next run resumes the task. The agent job downloads each run's job conclusions, the last 64 KiB of the log of each job that did not succeed, and the artifacts, up to 50 MiB in total; the agent finds them in `.codeman/results/`. They came from code on the branch, so the agent treats them as data. `/codeman continue <guidance>` resumes the task without waiting.
+- A workflow that needs secrets should take them from a GitHub Environment with required reviewers, so a human also approves each run.
 
 ## Settings
 
@@ -144,6 +155,7 @@ Maintainers steer a task with comments on its issue or on its pull request, and 
 | `/codeman answer 2 <text>` | Answers decision 2 in the maintainer's own words instead of an option. The text continues on the following lines, up to the next command. |
 | `/codeman replan <text>` | Sends the task back to planning. The agent revises the plan with the text (which may continue on the following lines), the maintainer comments and the answers given so far; answered decisions are written into the plan as settled, and only open or new decisions are listed. |
 | `/codeman fix <text>` | Asks for changes to the implementation. Also a review that requests changes. See [feedback](#feedback). |
+| `/codeman accept-workflows` | Moves the workflows the agent staged under `.codeman/workflows/` into `.github/workflows/`, after a maintainer has read them. See [on-demand workflows](#on-demand-workflows). |
 | `/codeman continue <text>` | Resumes a blocked or unfinished task with a new run count. The text is optional guidance for the agent. |
 | `/codeman set <name> <value>` | Changes `model`, `task-budget` or `max-runs` for this task from now on. The last valid one wins. |
 | `/codeman model <id>` | Short for `/codeman set model <id>`. |

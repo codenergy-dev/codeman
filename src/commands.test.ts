@@ -162,3 +162,8 @@ test("fix and continue take optional text", () => {
     { kind: "fix", text: "" },
   ]);
 });
+
+test("accept-workflows takes no arguments", () => {
+  assert.deepEqual(parseCommands("/codeman accept-workflows"), [{ kind: "accept-workflows" }]);
+  assert.equal(parseCommands("/codeman accept-workflows all")[0]?.kind, "invalid");
+});

@@ -7,6 +7,18 @@ import type { Parsed } from "./output.ts";
 import { isManifest } from "./validate.ts";
 
 export const IGNORE_FILE = ".codemanignore";
+export const WORKFLOWS_DIR = ".github/workflows/";
+/** Where apply puts the agent's workflow files until a maintainer accepts them. */
+export const STAGED_WORKFLOWS_DIR = ".codeman/workflows/";
+
+/** `.github/workflows/deploy.yml` → `.codeman/workflows/deploy.yml`, and back. */
+export function stagedPath(path: string): string {
+  return STAGED_WORKFLOWS_DIR + path.slice(WORKFLOWS_DIR.length);
+}
+
+export function workflowPath(staged: string): string {
+  return WORKFLOWS_DIR + staged.slice(STAGED_WORKFLOWS_DIR.length);
+}
 
 /** Proposed to repositories that have no `.codemanignore`, and used until they add one. */
 export const DEFAULT_IGNORE = `# Paths that Codeman's agent may not change, in .gitignore syntax. \`!\` re-allows a path.
@@ -47,8 +59,6 @@ function hardRule(path: string): string | undefined {
     return "not a valid path in the repository";
   }
   if (path === IGNORE_FILE || segments[0] === ".codeman") return "Codeman's own settings";
-  // Apply's token has no `workflows` permission; GitHub would reject the whole commit.
-  if (path.startsWith(".github/workflows/")) return "a workflow file";
   return undefined;
 }
 
@@ -125,6 +135,11 @@ export interface Policy {
 
 export interface CheckedChanges {
   accepted: Change[];
+  /**
+   * Workflow files, committed to STAGED_WORKFLOWS_DIR instead: a workflow on the branch would
+   * run, with the repository's secrets, before anyone read it.
+   */
+  staged: Change[];
   dropped: { path: string; reason: string }[];
 }
 
@@ -148,23 +163,29 @@ export function checkChanges(manifest: unknown, policy: Policy): Parsed<CheckedC
     candidates.filter((change) => change.path !== policy.planPath).map((change) => change.path),
   );
   const accepted: Change[] = [];
+  const staged: Change[] = [];
   for (const change of candidates) {
+    const workflow = change.path.startsWith(WORKFLOWS_DIR);
     const reason = ignored.has(change.path)
       ? `protected by ${IGNORE_FILE}`
       : change.status !== "deleted" && change.type !== "file"
         ? "not a regular file"
         : (change.size ?? 0) > policy.maxFileBytes
           ? `larger than ${policy.maxFileBytes} bytes`
-          : undefined;
+          : workflow && change.status === "deleted"
+            ? "deleting a workflow is left to a maintainer"
+            : undefined;
     if (reason) dropped.push({ path: change.path, reason });
+    else if (workflow) staged.push(change);
     else accepted.push(change);
   }
 
-  if (accepted.length > policy.maxFiles) {
+  const count = accepted.length + staged.length;
+  if (count > policy.maxFiles) {
     return {
       ok: false,
-      error: `The agent changed ${accepted.length} files; the limit is ${policy.maxFiles} per run (\`max-files\`).`,
+      error: `The agent changed ${count} files; the limit is ${policy.maxFiles} per run (\`max-files\`).`,
     };
   }
-  return { ok: true, value: { accepted, dropped } };
+  return { ok: true, value: { accepted, staged, dropped } };
 }

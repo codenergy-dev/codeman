@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Change, Manifest } from "./collect.ts";
-import { checkChanges, DEFAULT_IGNORE, ignoredPaths, unprotected } from "./policy.ts";
+import {
+  checkChanges,
+  DEFAULT_IGNORE,
+  ignoredPaths,
+  stagedPath,
+  unprotected,
+  workflowPath,
+} from "./policy.ts";
 
 const file = (path: string, size = 10): Change => ({
   path,
@@ -97,6 +104,10 @@ test("drops protected, special and large files, and keeps the plan", () => {
   );
   assert.ok(result.ok);
   assert.deepEqual(
+    result.value.staged.map((change) => change.path),
+    [".github/workflows/ci.yml"],
+  );
+  assert.deepEqual(
     result.value.accepted.map((change) => change.path),
     ["src/a.ts", "src/old.ts", "AGENTS.md", policy.planPath],
   );
@@ -105,7 +116,6 @@ test("drops protected, special and large files, and keeps the plan", () => {
     {
       ".codemanignore": "Codeman's own settings",
       ".codeman/settings.yml": "Codeman's own settings",
-      ".github/workflows/ci.yml": "a workflow file",
       link: "not a regular file",
       "big.bin": "larger than 1000 bytes",
       "../escape": "not a valid path in the repository",
@@ -129,4 +139,32 @@ test("commits nothing when the run changes too many files", () => {
   });
   assert.ok(!result.ok && result.error.includes("max-files"));
   assert.equal(checkChanges({ version: 2 }, policy).ok, false);
+});
+
+test("workflow files are staged when the rules allow them, and never deleted", () => {
+  const result = checkChanges(
+    manifest([
+      file(".github/workflows/deploy.yml"),
+      { path: ".github/workflows/ci.yml", status: "deleted" },
+      file(".github/CODEOWNERS"),
+    ]),
+    { ...policy, ignore: "/.github/**\n!/.github/workflows/\n!/.github/workflows/**\n" },
+  );
+  assert.ok(result.ok);
+  assert.deepEqual(
+    result.value.staged.map((change) => change.path),
+    [".github/workflows/deploy.yml"],
+  );
+  assert.deepEqual(result.value.dropped, [
+    { path: ".github/workflows/ci.yml", reason: "deleting a workflow is left to a maintainer" },
+    { path: ".github/CODEOWNERS", reason: "protected by .codemanignore" },
+  ]);
+  assert.equal(stagedPath(".github/workflows/deploy.yml"), ".codeman/workflows/deploy.yml");
+  assert.equal(workflowPath(".codeman/workflows/deploy.yml"), ".github/workflows/deploy.yml");
+});
+
+test("the proposed rules keep workflows out entirely", () => {
+  const result = checkChanges(manifest([file(".github/workflows/deploy.yml")]), policy);
+  assert.ok(result.ok);
+  assert.deepEqual(result.value.staged, []);
 });

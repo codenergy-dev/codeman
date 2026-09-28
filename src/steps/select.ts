@@ -14,6 +14,7 @@ import {
 import { stateOf } from "../state.ts";
 import { renderStatus } from "../status.ts";
 import {
+  acceptRequest,
   authorizedComments,
   authorizedReviews,
   type Candidate,
@@ -22,6 +23,7 @@ import {
   commandsAfter,
   commenters,
   findStatus,
+  finishedRuns,
   MAINTAINER_PERMISSIONS,
   pendingWork,
   type ReviewLike,
@@ -32,6 +34,7 @@ import {
   type TaskReview,
   taskSettings,
   toTask,
+  type WorkflowRun,
 } from "../tasks.ts";
 import { oneLine, slugify } from "../text.ts";
 import { repository, runUrl, taskFile } from "./common.ts";
@@ -96,6 +99,9 @@ export async function select(): Promise<void> {
     ];
   };
 
+  // Finished runs of the workflows each waiting task asked for.
+  const workflowRuns = new Map<number, WorkflowRun[]>();
+
   const candidates: Candidate[] = [];
   for (const task of tasks) {
     const line = `#${task.number} ${oneLine(task.title)}`;
@@ -117,6 +123,19 @@ export async function select(): Promise<void> {
         );
         candidate.pending = pendingWork(newCommands(talk, reviews), result.state);
         candidate.planned = pendingDecisions(record).length === 0;
+        candidate.accept =
+          acceptRequest(
+            authorizedComments(talk.comments, talk.maintainers),
+            record.acceptedCommentId ?? 0,
+          ) !== undefined;
+        if (result.state === "awaiting-workflow" && record.awaiting?.length) {
+          const head = await repo.branchSha(record.branch);
+          const runs = head
+            ? finishedRuns(await repo.runsForCommit(head), record.awaiting)
+            : undefined;
+          if (runs) workflowRuns.set(task.number, runs);
+          candidate.workflowsDone = runs !== undefined;
+        }
       }
     }
     candidates.push(candidate);
@@ -184,6 +203,11 @@ export async function select(): Promise<void> {
     reviews,
     requests,
     resume,
+    accept:
+      choice.action === "accept"
+        ? acceptRequest(maintainerComments, record?.acceptedCommentId ?? 0)
+        : undefined,
+    workflowRuns: choice.action === "implement" ? workflowRuns.get(task.number) : undefined,
     processed: {
       commentId: Math.max(
         record?.processedCommentId ?? 0,
@@ -208,7 +232,8 @@ export async function select(): Promise<void> {
     runUrl: runUrl(),
   };
 
-  if (choice.action !== "record") {
+  const needsAgent = choice.action === "plan" || choice.action === "implement";
+  if (needsAgent) {
     const state = choice.action === "plan" ? "planning" : "in-progress";
     await repo.setState(task.number, task.labels, state);
     context.statusCommentId = await repo.upsertComment(
@@ -230,7 +255,7 @@ export async function select(): Promise<void> {
   core.setOutput("task", String(task.number));
   core.setOutput("model", model);
   core.setOutput("base-sha", baseSha);
-  core.setOutput("needs-agent", String(choice.action !== "record"));
+  core.setOutput("needs-agent", String(needsAgent));
   core.setOutput("task-budget", String(settings.value["task-budget"]));
   core.setOutput("monthly-budget", String(settings.value["monthly-budget"]));
   core.info(`Selected #${task.number} to ${choice.action}, with model ${model}.`);
@@ -245,6 +270,9 @@ interface Conversation {
 
 function startMessage(task: TaskContext): string {
   if (task.action === "implement") {
+    if (task.workflowRuns?.length) {
+      return "Codeman is going on with the results of the workflows it asked for.";
+    }
     if (task.requests.some((request) => request.kind === "fix") || task.reviews.length > 0) {
       return "Codeman is working on the requested changes.";
     }

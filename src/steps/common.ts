@@ -26,8 +26,8 @@ export function readTask(): TaskContext {
   return task;
 }
 
-export function repository(): Repository {
-  const octokit = github.getOctokit(core.getInput("github-token", { required: true }));
+export function repository(input = "github-token"): Repository {
+  const octokit = github.getOctokit(core.getInput(input, { required: true }));
   const { owner, repo } = github.context.repo;
   return new Repository(octokit, owner, repo);
 }

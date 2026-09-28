@@ -37,6 +37,10 @@ export interface TaskRecord {
   runs?: number | undefined;
   /** What the task has spent so far, in USD, as of its last run. */
   spent?: number | undefined;
+  /** `/codeman accept-workflows` commands up to this comment ID have been handled. */
+  acceptedCommentId?: number | undefined;
+  /** Workflows (paths under `.github/workflows/`) whose runs the agent waits for. */
+  awaiting?: string[] | undefined;
 }
 
 export interface CommandSource {
