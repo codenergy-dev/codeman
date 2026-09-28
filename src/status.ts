@@ -1,3 +1,4 @@
+import { usd } from "./budget.ts";
 import { encodeStatus, pendingDecisions, type TaskRecord } from "./record.ts";
 import type { State } from "./state.ts";
 import { inertLines, inlineText } from "./text.ts";
@@ -13,6 +14,8 @@ export interface StatusView {
   message?: string | undefined;
   /** The agent's summary of its last run. Rendered as untrusted text. */
   report?: string | undefined;
+  /** What this run and the task spent, in USD, when known. */
+  cost?: { run?: number | undefined; task?: number | undefined; budget: number } | undefined;
   /** Problems with commands or the agent's output. Rendered as untrusted text. */
   errors?: readonly string[] | undefined;
 }
@@ -74,8 +77,13 @@ export function renderStatus(view: StatusView): string {
     lines.push("");
   }
 
+  const cost = view.cost;
+  const spent =
+    cost?.task === undefined
+      ? ""
+      : ` · Spent: ${cost.run === undefined ? "" : `${usd(cost.run)} this run, `}${usd(cost.task)} of ${usd(cost.budget)} for the task`;
   lines.push(
-    `<sub>Model: \`${view.model.replace(/`/g, "")}\` (change it with \`/codeman set model <id>\`) · [Last run](${view.runUrl})</sub>`,
+    `<sub>Model: \`${view.model.replace(/`/g, "")}\` (change it with \`/codeman set model <id>\`)${spent} · [Last run](${view.runUrl})</sub>`,
   );
   return lines.join("\n");
 }

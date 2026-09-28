@@ -25068,6 +25068,44 @@ function getOctokit(token, options, ...additionalPlugins) {
   return new GitHubWithPlugins(getOctokitOptions(token, options));
 }
 
+// src/pull.ts
+function pullRequestTitle(commitMessage) {
+  return commitMessage.split("\n")[0]?.trim() || "Codeman task";
+}
+function pullRequestBody(view) {
+  const longest = Math.max(0, ...(view.commitMessage.match(/`+/g) ?? []).map((run2) => run2.length));
+  const fence = "`".repeat(Math.max(3, longest + 1));
+  return [
+    `Closes #${view.issue}`,
+    "",
+    "### Plan",
+    "",
+    inlineText(view.planSummary),
+    "",
+    `Full plan: [${view.planPath}](${view.planUrl})`,
+    "",
+    "### Changes",
+    "",
+    inertLines(view.summary),
+    "",
+    "### Suggested squash commit message",
+    "",
+    `${fence}text`,
+    view.commitMessage,
+    fence,
+    "",
+    pullRequestFooter(view.runUrl, view.spent)
+  ].join("\n");
+}
+var FOOTER = /^<sub>Opened by Codeman\b.*$/m;
+function pullRequestFooter(runUrl2, spent) {
+  const cost = spent ? ` \xB7 Spent: ${spent}` : "";
+  return `<sub>Opened by Codeman${cost} \xB7 [Last run](${runUrl2})</sub>`;
+}
+function replaceFooter(body, footer) {
+  return FOOTER.test(body) ? body.replace(FOOTER, () => footer) : body;
+}
+
 // src/state.ts
 var OPT_IN_LABEL = "codeman";
 var STATES = [
@@ -25239,6 +25277,14 @@ var Repository = class {
   async updatePullRequest(number, options) {
     await this.#octokit.rest.pulls.update({ ...this.#scope, pull_number: number, ...options });
   }
+  /** Updates the last line of Codeman's description, if a human has not removed it. */
+  async updatePullRequestFooter(number, footer) {
+    const { data } = await this.#octokit.rest.pulls.get({ ...this.#scope, pull_number: number });
+    const body = data.body ?? "";
+    const updated = replaceFooter(body, footer);
+    if (updated !== body)
+      await this.updatePullRequest(number, { title: data.title, body: updated });
+  }
   /** Leaves exactly one state label on the issue (none for `new`). */
   async setState(issue2, labels, state) {
     for (const other of STATES) {
@@ -25387,6 +25433,84 @@ async function agent() {
 import { existsSync as existsSync3, lstatSync as lstatSync2, readFileSync as readFileSync3 } from "node:fs";
 import { join as join6 } from "node:path";
 
+// src/budget.ts
+var API = "https://openrouter.ai/api/v1";
+function keyPrefix(owner, repo) {
+  return `codeman/${owner}/${repo}/`;
+}
+function taskKeyPrefix(owner, repo, issue2) {
+  return `${keyPrefix(owner, repo)}${issue2}/`;
+}
+function sumUsage(keys, prefix, field) {
+  return keys.filter((key) => key.name.startsWith(prefix)).reduce((total, key) => total + (key[field] ?? 0), 0);
+}
+var MIN_RUN_BUDGET = 0.1;
+function runLimit(taskBudget, spent) {
+  const remaining = Math.floor((taskBudget - spent) * 100 + 1e-9) / 100;
+  return remaining >= MIN_RUN_BUDGET ? remaining : void 0;
+}
+function usd(amount) {
+  return `US$ ${amount.toFixed(2)}`;
+}
+function expiresAt(now, hours) {
+  return `${new Date(now.getTime() + hours * 36e5).toISOString().slice(0, 19)}Z`;
+}
+var OpenRouter = class {
+  #managementKey;
+  #fetch;
+  constructor(managementKey, fetchFn = fetch) {
+    this.#managementKey = managementKey;
+    this.#fetch = fetchFn;
+  }
+  /** Every key of the account, disabled ones included. */
+  async listKeys() {
+    const keys = [];
+    for (let page = 0; page < 100; page++) {
+      const { data } = await this.#request(
+        `/keys?include_disabled=true&offset=${keys.length}`
+      );
+      if (data.length === 0) return keys;
+      keys.push(...data);
+    }
+    throw new Error("Too many OpenRouter keys to add up.");
+  }
+  /** This month's usage, in USD, of every key whose name starts with `prefix`, disabled ones included. */
+  async monthlyUsage(prefix) {
+    return sumUsage(await this.listKeys(), prefix, "usage_monthly");
+  }
+  /** The total usage of one key, in USD. */
+  async keyUsage(hash) {
+    const { data } = await this.#request(`/keys/${encodeURIComponent(hash)}`);
+    return data.usage ?? 0;
+  }
+  async createKey(options) {
+    const response = await this.#request("/keys", "POST", {
+      name: options.name,
+      limit: options.limit,
+      expires_at: options.expiresAt
+    });
+    return { key: response.key, hash: response.data.hash };
+  }
+  /** Disables instead of deleting, so the key's usage still counts towards the monthly cap. */
+  async disableKey(hash) {
+    await this.#request(`/keys/${encodeURIComponent(hash)}`, "PATCH", { disabled: true });
+  }
+  async #request(path, method = "GET", body) {
+    const response = await this.#fetch(`${API}${path}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${this.#managementKey}`,
+        "Content-Type": "application/json"
+      },
+      body: body === void 0 ? null : JSON.stringify(body)
+    });
+    if (!response.ok) {
+      throw new Error(`OpenRouter ${method} ${path.split("?")[0]} failed with ${response.status}.`);
+    }
+    return response.json();
+  }
+};
+
 // src/output.ts
 var LIMITS = {
   summary: 2e3,
@@ -25490,36 +25614,6 @@ function string(value, name, max) {
 }
 function isObject(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-// src/pull.ts
-function pullRequestTitle(commitMessage) {
-  return commitMessage.split("\n")[0]?.trim() || "Codeman task";
-}
-function pullRequestBody(view) {
-  const longest = Math.max(0, ...(view.commitMessage.match(/`+/g) ?? []).map((run2) => run2.length));
-  const fence = "`".repeat(Math.max(3, longest + 1));
-  return [
-    `Closes #${view.issue}`,
-    "",
-    "### Plan",
-    "",
-    inlineText(view.planSummary),
-    "",
-    `Full plan: [${view.planPath}](${view.planUrl})`,
-    "",
-    "### Changes",
-    "",
-    inertLines(view.summary),
-    "",
-    "### Suggested squash commit message",
-    "",
-    `${fence}text`,
-    view.commitMessage,
-    fence,
-    "",
-    `<sub>Opened by Codeman \xB7 [Last run](${view.runUrl})</sub>`
-  ].join("\n");
 }
 
 // src/record.ts
@@ -25666,8 +25760,10 @@ function renderStatus(view) {
     for (const error2 of view.errors) lines.push(`- ${inlineText(error2)}`);
     lines.push("");
   }
+  const cost = view.cost;
+  const spent = cost?.task === void 0 ? "" : ` \xB7 Spent: ${cost.run === void 0 ? "" : `${usd(cost.run)} this run, `}${usd(cost.task)} of ${usd(cost.budget)} for the task`;
   lines.push(
-    `<sub>Model: \`${view.model.replace(/`/g, "")}\` (change it with \`/codeman set model <id>\`) \xB7 [Last run](${view.runUrl})</sub>`
+    `<sub>Model: \`${view.model.replace(/`/g, "")}\` (change it with \`/codeman set model <id>\`)${spent} \xB7 [Last run](${view.runUrl})</sub>`
   );
   return lines.join("\n");
 }
@@ -25999,6 +26095,12 @@ async function keyFailed(task, repo) {
     });
     return true;
   }
+  if (getInput("key-status") === "task-budget-spent") {
+    await finish(repo, task, "blocked", {
+      message: `${getInput("key-reason")} Then comment \`/codeman continue\`.`
+    });
+    return true;
+  }
   if (getInput("key-status") !== "opened") {
     await finish(repo, task, task.fromState === "planning" ? "new" : task.fromState, {
       message: `${getInput("key-reason") || "No key was created."} Codeman will try again in a later run.`,
@@ -26127,7 +26229,8 @@ The paths Codeman's agent may not change. Review them before merging.`
     planSummary: task.record.summary,
     summary: summary2,
     commitMessage: output.value.commitMessage,
-    runUrl: task.runUrl
+    runUrl: task.runUrl,
+    spent: spentLine(task, runCosts(task).task)
   });
   let pullRequest = await repo.findPullRequest(task.branch);
   if (pullRequest === void 0) {
@@ -26141,6 +26244,7 @@ The paths Codeman's agent may not change. Review them before merging.`
     await repo.updatePullRequest(pullRequest, { title, body });
   }
   await finish(repo, task, "done", {
+    pullRequestWritten: true,
     record: { ...record, pullRequest, runs: 0 },
     message: "The work is done. Review the pull request. To ask for changes, submit a review that requests them, or comment `/codeman fix <what to change>` on the pull request.",
     report: summary2,
@@ -26203,7 +26307,9 @@ function blocked(repo, task, error2, more = [], record) {
   });
 }
 async function finish(repo, task, state, view) {
+  const cost = runCosts(task);
   let record = view.record ?? task.record ?? void 0;
+  if (record && cost.task !== void 0) record = { ...record, spent: cost.task };
   if (record && task.action !== "record" && !view.retry) {
     record = {
       ...record,
@@ -26225,10 +26331,34 @@ async function finish(repo, task, state, view) {
       pullRequestUrl: record?.pullRequest ? pullUrl(task, record.pullRequest) : void 0,
       message: view.message,
       report: view.report,
-      errors
+      errors,
+      cost: {
+        run: cost.run,
+        task: cost.task ?? record?.spent,
+        budget: task.settings["task-budget"]
+      }
     })
   );
+  if (record?.pullRequest && !view.pullRequestWritten) {
+    await repo.updatePullRequestFooter(
+      record.pullRequest,
+      pullRequestFooter(task.runUrl, spentLine(task, record.spent))
+    );
+  }
   info(`#${task.number} is now ${state}.`);
+}
+function runCosts(task) {
+  const amount = (name) => {
+    const value = Number.parseFloat(getInput(name));
+    return Number.isFinite(value) ? value : void 0;
+  };
+  const before = amount("task-spent");
+  const run2 = amount("run-cost");
+  if (before === void 0) return { task: task.record?.spent };
+  return { run: run2, task: before + (run2 ?? 0) };
+}
+function spentLine(task, spent) {
+  return spent === void 0 ? void 0 : `${usd(spent)} of ${usd(task.settings["task-budget"])}`;
 }
 function readJson(file) {
   try {
@@ -26237,62 +26367,6 @@ function readJson(file) {
     return void 0;
   }
 }
-
-// src/budget.ts
-var API = "https://openrouter.ai/api/v1";
-function keyPrefix(owner, repo) {
-  return `codeman/${owner}/${repo}/`;
-}
-function expiresAt(now, hours) {
-  return `${new Date(now.getTime() + hours * 36e5).toISOString().slice(0, 19)}Z`;
-}
-var OpenRouter = class {
-  #managementKey;
-  #fetch;
-  constructor(managementKey, fetchFn = fetch) {
-    this.#managementKey = managementKey;
-    this.#fetch = fetchFn;
-  }
-  /** This month's usage, in USD, of every key whose name starts with `prefix`, disabled ones included. */
-  async monthlyUsage(prefix) {
-    let total = 0;
-    for (let offset = 0, page = 0; page < 100; page++) {
-      const { data } = await this.#request(`/keys?include_disabled=true&offset=${offset}`);
-      if (data.length === 0) return total;
-      for (const key of data) {
-        if (key.name.startsWith(prefix)) total += key.usage_monthly ?? 0;
-      }
-      offset += data.length;
-    }
-    throw new Error("Too many OpenRouter keys to add up.");
-  }
-  async createKey(options) {
-    const response = await this.#request("/keys", "POST", {
-      name: options.name,
-      limit: options.limit,
-      expires_at: options.expiresAt
-    });
-    return { key: response.key, hash: response.data.hash };
-  }
-  /** Disables instead of deleting, so the key's usage still counts towards the monthly cap. */
-  async disableKey(hash) {
-    await this.#request(`/keys/${encodeURIComponent(hash)}`, "PATCH", { disabled: true });
-  }
-  async #request(path, method = "GET", body) {
-    const response = await this.#fetch(`${API}${path}`, {
-      method,
-      headers: {
-        Authorization: `Bearer ${this.#managementKey}`,
-        "Content-Type": "application/json"
-      },
-      body: body === void 0 ? null : JSON.stringify(body)
-    });
-    if (!response.ok) {
-      throw new Error(`OpenRouter ${method} ${path.split("?")[0]} failed with ${response.status}.`);
-    }
-    return response.json();
-  }
-};
 
 // src/steps/keys.ts
 async function openKey() {
@@ -26304,31 +26378,54 @@ async function openKey() {
   const hours = positiveNumber("key-expiry-hours");
   const { owner, repo } = context2.repo;
   const prefix = keyPrefix(owner, repo);
-  const used = await router.monthlyUsage(prefix);
-  info(`OpenRouter usage this month: US$ ${used.toFixed(2)} of US$ ${monthlyBudget}.`);
-  if (used + taskBudget > monthlyBudget) {
+  const keys = await router.listKeys();
+  const spent = sumUsage(keys, taskKeyPrefix(owner, repo, task), "usage");
+  const used = sumUsage(keys, prefix, "usage_monthly");
+  setOutput("task-spent", spent.toFixed(4));
+  info(`This task has spent ${usd(spent)} of ${usd(taskBudget)}.`);
+  info(`OpenRouter usage this month: ${usd(used)} of ${usd(monthlyBudget)}.`);
+  const limit = runLimit(taskBudget, spent);
+  if (limit === void 0) {
+    setOutput("status", "task-budget-spent");
+    setOutput(
+      "reason",
+      `The task has spent ${usd(spent)} of its ${usd(taskBudget)} budget, and a run needs at least ${usd(MIN_RUN_BUDGET)}. A maintainer can raise it with \`/codeman set task-budget <usd>\`.`
+    );
+    return;
+  }
+  if (used + limit > monthlyBudget) {
     setOutput("status", "over-budget");
     setOutput(
       "reason",
-      `The monthly budget is reached: US$ ${used.toFixed(2)} used of US$ ${monthlyBudget}, and a task may use up to US$ ${taskBudget}.`
+      `The monthly budget is reached: ${usd(used)} used of ${usd(monthlyBudget)}, and this run may use up to ${usd(limit)}.`
     );
     return;
   }
   const { key, hash } = await router.createKey({
     name: `${prefix}${task}/${context2.runId}`,
-    limit: taskBudget,
+    limit,
     expiresAt: expiresAt(/* @__PURE__ */ new Date(), hours)
   });
   setSecret(key);
   setOutput("status", "opened");
   setOutput("key-hash", hash);
   setOutput("encrypted-key", encrypt(key, secret));
-  info(`Created a key limited to US$ ${taskBudget}, expiring in ${hours} hours.`);
+  info(`Created a key limited to ${usd(limit)}, expiring in ${hours} hours.`);
 }
 async function closeKey() {
   const router = new OpenRouter(getInput("management-key", { required: true }));
-  await router.disableKey(getInput("key-hash", { required: true }));
-  info("Disabled the task key.");
+  const hash = getInput("key-hash", { required: true });
+  await router.disableKey(hash);
+  info("Disabled the key.");
+  let cost = await router.keyUsage(hash);
+  for (let attempt = 0; attempt < 6; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, 5e3));
+    const latest = await router.keyUsage(hash);
+    if (latest === cost) break;
+    cost = latest;
+  }
+  setOutput("run-cost", cost.toFixed(4));
+  info(`This run spent ${usd(cost)}.`);
 }
 
 // src/steps/select.ts
@@ -26494,7 +26591,8 @@ async function select() {
         record,
         model,
         runUrl: context3.runUrl,
-        message: startMessage(context3)
+        message: startMessage(context3),
+        cost: { task: record?.spent, budget: settings.value["task-budget"] }
       })
     );
   }

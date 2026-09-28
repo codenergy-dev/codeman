@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { pullRequestBody, pullRequestTitle } from "./pull.ts";
+import { pullRequestBody, pullRequestFooter, pullRequestTitle, replaceFooter } from "./pull.ts";
 
 const view = {
   issue: 12,
@@ -28,4 +28,13 @@ test("fences the squash message with more backticks than it contains", () => {
 test("titles the pull request with the commit subject", () => {
   assert.equal(pullRequestTitle(view.commitMessage), "Add rate limiting");
   assert.equal(pullRequestTitle(""), "Codeman task");
+});
+
+test("the footer carries the spend and can be replaced", () => {
+  const body = pullRequestBody({ ...view, spent: "US$ 0.10 of US$ 2.00" });
+  assert.match(body, /<sub>Opened by Codeman · Spent: US\$ 0\.10 of US\$ 2\.00 · \[Last run\]/);
+  const updated = replaceFooter(body, pullRequestFooter("https://x/2", "US$ 0.30 of US$ 2.00"));
+  assert.match(updated, /Spent: US\$ 0\.30 of US\$ 2\.00 · \[Last run\]\(https:\/\/x\/2\)<\/sub>$/);
+  assert.equal(updated.split("Opened by Codeman").length, 2);
+  assert.equal(replaceFooter("Edited by a human.", "x"), "Edited by a human.");
 });

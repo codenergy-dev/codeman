@@ -102,3 +102,11 @@ test("the agent's report keeps its lines and stays inert", () => {
   assert.ok(!body.includes("![x]"));
   assert.ok(!body.includes("<b>"));
 });
+
+test("the footer shows what the run and the task spent", () => {
+  const body = renderStatus({ ...view, cost: { run: 0.1234, task: 0.5, budget: 2 } });
+  assert.match(body, /Spent: US\$ 0\.12 this run, US\$ 0\.50 of US\$ 2\.00 for the task/);
+  const known = renderStatus({ ...view, cost: { task: 0.5, budget: 2 } });
+  assert.match(known, /Spent: US\$ 0\.50 of US\$ 2\.00 for the task/);
+  assert.ok(!renderStatus({ ...view, cost: { budget: 2 } }).includes("Spent"));
+});

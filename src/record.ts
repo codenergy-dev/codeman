@@ -35,6 +35,8 @@ export interface TaskRecord {
   pullRequest?: number | undefined;
   /** Implementation runs in a row that did not finish the task. */
   runs?: number | undefined;
+  /** What the task has spent so far, in USD, as of its last run. */
+  spent?: number | undefined;
 }
 
 export interface CommandSource {

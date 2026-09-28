@@ -1,11 +1,12 @@
 import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import * as core from "@actions/core";
+import { usd } from "../budget.ts";
 import type { Change } from "../collect.ts";
 import type { FileChange, Repository } from "../github.ts";
 import { parseImplementOutput, parsePlanOutput } from "../output.ts";
 import { checkChanges, DEFAULT_IGNORE, IGNORE_FILE } from "../policy.ts";
-import { pullRequestBody, pullRequestTitle } from "../pull.ts";
+import { pullRequestBody, pullRequestFooter, pullRequestTitle } from "../pull.ts";
 import { applyCommands, pendingDecisions, type TaskRecord, writeAnswers } from "../record.ts";
 import type { State } from "../state.ts";
 import { renderStatus } from "../status.ts";
@@ -44,6 +45,12 @@ async function keyFailed(task: TaskContext, repo: Repository): Promise<boolean> 
   if (core.getInput("key-job-result") !== "success") {
     await finish(repo, task, "blocked", {
       message: `Codeman could not create the OpenRouter key for this task. See the run log. ${retryHint(task)}`,
+    });
+    return true;
+  }
+  if (core.getInput("key-status") === "task-budget-spent") {
+    await finish(repo, task, "blocked", {
+      message: `${core.getInput("key-reason")} Then comment \`/codeman continue\`.`,
     });
     return true;
   }
@@ -198,6 +205,7 @@ async function applyImplementation(task: TaskContext, repo: Repository): Promise
     summary,
     commitMessage: output.value.commitMessage,
     runUrl: task.runUrl,
+    spent: spentLine(task, runCosts(task).task),
   });
   let pullRequest = await repo.findPullRequest(task.branch);
   if (pullRequest === undefined) {
@@ -211,6 +219,7 @@ async function applyImplementation(task: TaskContext, repo: Repository): Promise
     await repo.updatePullRequest(pullRequest, { title, body });
   }
   await finish(repo, task, "done", {
+    pullRequestWritten: true,
     record: { ...record, pullRequest, runs: 0 },
     message:
       "The work is done. Review the pull request. To ask for changes, submit a review that requests them, or comment `/codeman fix <what to change>` on the pull request.",
@@ -306,9 +315,13 @@ async function finish(
     errors?: string[];
     /** The run could not start: leave the new requests for the next one. */
     retry?: boolean;
+    /** This run already wrote the pull request's description. */
+    pullRequestWritten?: boolean;
   },
 ): Promise<void> {
+  const cost = runCosts(task);
   let record = view.record ?? task.record ?? undefined;
+  if (record && cost.task !== undefined) record = { ...record, spent: cost.task };
   if (record && task.action !== "record" && !view.retry) {
     // Handled, whatever the outcome: a failing request must not start run after run.
     record = {
@@ -332,9 +345,39 @@ async function finish(
       message: view.message,
       report: view.report,
       errors,
+      cost: {
+        run: cost.run,
+        task: cost.task ?? record?.spent,
+        budget: task.settings["task-budget"],
+      },
     }),
   );
+  if (record?.pullRequest && !view.pullRequestWritten) {
+    await repo.updatePullRequestFooter(
+      record.pullRequest,
+      pullRequestFooter(task.runUrl, spentLine(task, record.spent)),
+    );
+  }
   core.info(`#${task.number} is now ${state}.`);
+}
+
+/**
+ * What this run and the whole task have spent, in USD, as far as known: `open-key` reports the
+ * task's spend before the run, and `close-key` the run's.
+ */
+function runCosts(task: TaskContext): { run?: number | undefined; task?: number | undefined } {
+  const amount = (name: string): number | undefined => {
+    const value = Number.parseFloat(core.getInput(name));
+    return Number.isFinite(value) ? value : undefined;
+  };
+  const before = amount("task-spent");
+  const run = amount("run-cost");
+  if (before === undefined) return { task: task.record?.spent };
+  return { run, task: before + (run ?? 0) };
+}
+
+function spentLine(task: TaskContext, spent: number | undefined): string | undefined {
+  return spent === undefined ? undefined : `${usd(spent)} of ${usd(task.settings["task-budget"])}`;
 }
 
 function readJson(file: string): unknown {

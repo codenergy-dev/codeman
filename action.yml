@@ -12,7 +12,7 @@ inputs:
   model:
     description: "(select) OpenRouter model ID. Empty uses .codeman/settings.yml. Maintainers can override it per task with /codeman set."
   task-budget:
-    description: "(select, open-key) Spending limit of each task key, in USD. In select, empty uses .codeman/settings.yml or 2."
+    description: "(select, open-key) Spending limit of each task, across all its runs, in USD. In select, empty uses .codeman/settings.yml or 2."
   monthly-budget:
     description: "(select, open-key) Spending limit per repository per calendar month, in USD. In select, empty uses .codeman/settings.yml or 20."
   max-runs:
@@ -44,6 +44,10 @@ inputs:
     description: "(apply) Reason output of the open-key job."
   agent-job-result:
     description: "(apply) Result of the agent job."
+  task-spent:
+    description: "(apply) task-spent output of the open-key job."
+  run-cost:
+    description: "(apply) run-cost output of the close-key job."
   workdir:
     description: "Directory for Codeman's files. Defaults to RUNNER_TEMP/codeman."
 outputs:
@@ -62,7 +66,11 @@ outputs:
   monthly-budget:
     description: "(select) Resolved monthly spending limit, in USD."
   status:
-    description: "(open-key) opened or over-budget."
+    description: "(open-key) opened, over-budget (monthly) or task-budget-spent."
+  task-spent:
+    description: "(open-key) What the task spent before this run, in USD."
+  run-cost:
+    description: "(close-key) What this run's key spent, in USD."
   reason:
     description: "(open-key) Why no key was created."
   key-hash:

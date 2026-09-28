@@ -10,6 +10,8 @@ export interface PullRequestView {
   summary: string;
   commitMessage: string;
   runUrl: string;
+  /** What the task has spent, such as `US$ 0.42 of US$ 2.00`. */
+  spent?: string | undefined;
 }
 
 export function pullRequestTitle(commitMessage: string): string {
@@ -39,6 +41,19 @@ export function pullRequestBody(view: PullRequestView): string {
     view.commitMessage,
     fence,
     "",
-    `<sub>Opened by Codeman · [Last run](${view.runUrl})</sub>`,
+    pullRequestFooter(view.runUrl, view.spent),
   ].join("\n");
+}
+
+const FOOTER = /^<sub>Opened by Codeman\b.*$/m;
+
+/** The description's last line, which Codeman updates on every run. */
+export function pullRequestFooter(runUrl: string, spent?: string): string {
+  const cost = spent ? ` · Spent: ${spent}` : "";
+  return `<sub>Opened by Codeman${cost} · [Last run](${runUrl})</sub>`;
+}
+
+/** Replaces the footer in a description; leaves the description alone if it has none. */
+export function replaceFooter(body: string, footer: string): string {
+  return FOOTER.test(body) ? body.replace(FOOTER, () => footer) : body;
 }

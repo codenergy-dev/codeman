@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { expiresAt, type Fetch, keyPrefix, OpenRouter } from "./budget.ts";
+import {
+  expiresAt,
+  type Fetch,
+  keyPrefix,
+  OpenRouter,
+  runLimit,
+  sumUsage,
+  taskKeyPrefix,
+  usd,
+} from "./budget.ts";
 
 function fakeFetch(responses: unknown[]): { fetch: Fetch; calls: [string, RequestInit][] } {
   const calls: [string, RequestInit][] = [];
@@ -73,4 +82,32 @@ test("reports failures without echoing the response", async () => {
     assert.ok(!error.message.includes("secret echo"));
     return true;
   });
+});
+
+test("adds up a task's spend without mixing tasks that share a prefix", () => {
+  const keys = [
+    { hash: "1", name: "codeman/o/r/1/100", usage: 0.2, usage_monthly: 0.2 },
+    { hash: "2", name: "codeman/o/r/1/101", usage: 0.35 },
+    { hash: "3", name: "codeman/o/r/12/102", usage: 5 },
+    { hash: "4", name: "codeman/o/r2/1/103", usage: 5 },
+  ];
+  assert.equal(sumUsage(keys, taskKeyPrefix("o", "r", 1), "usage"), 0.55);
+  assert.equal(sumUsage(keys, taskKeyPrefix("o", "r", 12), "usage"), 5);
+  assert.equal(sumUsage(keys, keyPrefix("o", "r"), "usage_monthly"), 0.2);
+});
+
+test("a run gets what remains of the task budget, in cents rounded down", () => {
+  assert.equal(runLimit(2, 0), 2);
+  assert.equal(runLimit(2, 0.2), 1.8);
+  assert.equal(runLimit(2, 0.2345), 1.76);
+  assert.equal(runLimit(2, 1.9), 0.1);
+  assert.equal(runLimit(2, 1.95), undefined, "below the floor");
+  assert.equal(runLimit(2, 2.3), undefined, "overspent");
+  assert.equal(usd(1.8), "US$ 1.80");
+});
+
+test("reads one key's total usage", async () => {
+  const { fetch, calls } = fakeFetch([{ data: { hash: "h/x", name: "n", usage: 0.42 } }]);
+  assert.equal(await new OpenRouter("mk", fetch).keyUsage("h/x"), 0.42);
+  assert.equal(calls[0]?.[0], "https://openrouter.ai/api/v1/keys/h%2Fx");
 });

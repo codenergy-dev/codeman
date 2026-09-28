@@ -1,4 +1,5 @@
 import type { getOctokit } from "@actions/github";
+import { replaceFooter } from "./pull.ts";
 import { OPT_IN_LABEL, STATES, type State, stateLabel } from "./state.ts";
 import type { CommentLike, IssueLike, ReviewCommentLike, ReviewLike } from "./tasks.ts";
 
@@ -182,6 +183,15 @@ export class Repository {
 
   async updatePullRequest(number: number, options: { title: string; body: string }): Promise<void> {
     await this.#octokit.rest.pulls.update({ ...this.#scope, pull_number: number, ...options });
+  }
+
+  /** Updates the last line of Codeman's description, if a human has not removed it. */
+  async updatePullRequestFooter(number: number, footer: string): Promise<void> {
+    const { data } = await this.#octokit.rest.pulls.get({ ...this.#scope, pull_number: number });
+    const body = data.body ?? "";
+    const updated = replaceFooter(body, footer);
+    if (updated !== body)
+      await this.updatePullRequest(number, { title: data.title, body: updated });
   }
 
   /** Leaves exactly one state label on the issue (none for `new`). */

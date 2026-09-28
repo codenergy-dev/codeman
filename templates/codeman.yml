@@ -111,8 +111,8 @@ jobs:
           path: ${{ runner.temp }}/codeman/task
           retention-days: 1
 
-  # Creates a budget-capped OpenRouter key for this task. The only jobs with the management key
-  # are this one and close-key.
+  # Creates this run's OpenRouter key, limited to what remains of the task's budget. The only
+  # jobs with the management key are this one and close-key.
   open-key:
     name: Open key
     needs: select
@@ -122,6 +122,7 @@ jobs:
     outputs:
       status: ${{ steps.codeman.outputs.status }}
       reason: ${{ steps.codeman.outputs.reason }}
+      task-spent: ${{ steps.codeman.outputs.task-spent }}
       key-hash: ${{ steps.codeman.outputs.key-hash }}
       encrypted-key: ${{ steps.codeman.outputs.encrypted-key }}
     steps:
@@ -171,11 +172,29 @@ jobs:
           if-no-files-found: ignore
           retention-days: 1
 
+  # Disables the run's key, whatever happened, and reads what the run spent. Disabled keys still
+  # count towards the task and monthly budgets. Apply waits for it to report the spend.
+  close-key:
+    name: Close key
+    needs: [open-key, agent]
+    if: always() && needs.open-key.outputs.key-hash != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run-cost: ${{ steps.codeman.outputs.run-cost }}
+    steps:
+      - uses: codenergy-dev/codeman@COMMIT_SHA
+        id: codeman
+        with:
+          step: close-key
+          key-hash: ${{ needs.open-key.outputs.key-hash }}
+          management-key: ${{ secrets.CODEMAN_OPENROUTER_MANAGEMENT_KEY }}
+
   # Validates the result and writes it to GitHub: commits, pull request, labels, status comment.
   # No LLM.
   apply:
     name: Apply
-    needs: [select, open-key, agent]
+    needs: [select, open-key, agent, close-key]
     if: always() && needs.select.result == 'success' && needs.select.outputs.action != 'none'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -210,6 +229,8 @@ jobs:
           key-status: ${{ needs.open-key.outputs.status }}
           key-reason: ${{ needs.open-key.outputs.reason }}
           agent-job-result: ${{ needs.agent.result }}
+          task-spent: ${{ needs.open-key.outputs.task-spent }}
+          run-cost: ${{ needs.close-key.outputs.run-cost }}
 
   # Starts another run when this one moved a task, so the next task (or the next step of this
   # one) does not wait for the schedule. That run stops early when nothing can move. No secrets.
@@ -238,17 +259,3 @@ jobs:
           TASK_BUDGET: ${{ inputs.task-budget }}
           MONTHLY_BUDGET: ${{ inputs.monthly-budget }}
           MAX_RUNS: ${{ inputs.max-runs }}
-
-  # Disables the task key, whatever happened. Disabled keys still count towards the monthly budget.
-  close-key:
-    name: Close key
-    needs: [open-key, agent]
-    if: always() && needs.open-key.outputs.key-hash != ''
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: codenergy-dev/codeman@COMMIT_SHA
-        with:
-          step: close-key
-          key-hash: ${{ needs.open-key.outputs.key-hash }}
-          management-key: ${{ secrets.CODEMAN_OPENROUTER_MANAGEMENT_KEY }}

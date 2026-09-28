@@ -34,18 +34,19 @@ A task with more than one state label is invalid: Codeman reports a warning and 
 Each stage of a run is its own job, so the workflow graph shows where a run is and where it stopped.
 
 ```
-select ──▶ open-key ──▶ agent ──▶ apply ──▶ next-run
-               └───────────┴────────▶ close-key
+select ──▶ open-key ──▶ agent ──▶ close-key ──▶ apply ──▶ next-run
 ```
+
+Jobs that do not apply to a run are skipped: a run that only records answers goes from `select` to `apply`.
 
 | Job | Does | Credentials |
 | --- | --- | --- |
 | `select` | Reads the settings and `.codemanignore` from the default branch, picks the task and the action (`plan`, `implement`, `record` or `none`), sets `codeman:planning` or `codeman:in-progress`, and writes the task context (`task.json`) as an artifact. | App token: issues write, contents and pull requests read |
-| `open-key` | Checks the monthly budget and creates the task's OpenRouter key. | OpenRouter management key, encryption secret |
+| `open-key` | Checks the task and monthly budgets and creates the run's OpenRouter key. | OpenRouter management key, encryption secret |
 | `agent` | Runs the harness on a copy of the checkout and uploads what it changed as an artifact, even when the agent fails or runs out of time. | Read-only `GITHUB_TOKEN`, the task key |
-| `apply` | Validates the agent's result and writes it: commits, pull request, labels, status comment. When the action is `record`, it applies the maintainers' answers instead. | App token: contents, issues and pull requests write |
+| `close-key` | Disables the run's key and reads what it spent. Runs whatever happened before. | OpenRouter management key |
+| `apply` | Validates the agent's result and writes it: commits, pull request, labels, status comment, spend. When the action is `record`, it applies the maintainers' answers instead. | App token: contents, issues and pull requests write |
 | `next-run` | Starts another run when this one moved a task. | `GITHUB_TOKEN` with `actions: write` |
-| `close-key` | Disables the task key. Runs whatever happened before. | OpenRouter management key |
 
 Only `agent` runs an LLM. The jobs that write to GitHub never run one, and they treat everything the agent produced as untrusted.
 
@@ -63,9 +64,11 @@ The agent reads text from the issue, which anyone may have written, and runs she
 
 ## Budget
 
-- Each task gets its own OpenRouter key, limited to the task budget (default US$ 2) and expiring after 24 hours.
-- Keys are named `codeman/<owner>/<repo>/<issue>/<run>`. Before creating one, `open-key` adds up this month's usage (`usage_monthly`) of every key with the repository's prefix, disabled keys included. If the monthly budget (default US$ 20) would be exceeded, no key is created and the task goes back to its previous state until the next month.
-- Keys are disabled, not deleted, so their usage still counts.
+- The task budget (default US$ 2) covers the whole task, from the first plan to the last fix, across all its runs.
+- Each run gets its own OpenRouter key, expiring after 24 hours. Keys are named `codeman/<owner>/<repo>/<issue>/<run>` and are disabled, not deleted, so their usage still counts.
+- Before creating a key, `open-key` adds up the total usage (`usage`) of the task's keys (prefix `codeman/<owner>/<repo>/<issue>/`). The new key's limit is what remains, in whole cents rounded down. Below US$ 0.10 no key is created, and the task becomes `codeman:blocked`; a maintainer can raise the budget with `/codeman set task-budget <usd>` and then comment `/codeman continue`.
+- `open-key` also adds up this month's usage (`usage_monthly`) of every key with the repository's prefix. If the run's limit would take it past the monthly budget (default US$ 20), no key is created and the task goes back to its previous state until the next month.
+- After the agent, `close-key` disables the key and reads its final usage, waiting briefly while OpenRouter still counts the last requests. `apply` shows what the run and the task spent in the status comment and at the end of the pull request's description, and keeps the task's total in the task record.
 - Values passed between jobs appear in plain text in the logs of the job that reads them. `open-key` therefore passes the key encrypted with AES-256-GCM, using a key derived from `CODEMAN_OPENROUTER_KEY_ENCRYPTION_SECRET`.
 
 ## Planning
@@ -122,7 +125,7 @@ Each value comes from the first of these that sets it:
 | Name | Default | Meaning |
 | --- | --- | --- |
 | `model` | none; required | OpenRouter model ID |
-| `task-budget` | `2` | Spending limit of each task key, in USD |
+| `task-budget` | `2` | Spending limit of each task, across all its runs, in USD |
 | `monthly-budget` | `20` | Spending limit per calendar month for the repository, in USD |
 | `max-runs` | `3` | Implementation runs in a row without finishing before a task is blocked |
 | `max-files` | `300` | Files one run may change |

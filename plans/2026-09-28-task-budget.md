@@ -1,7 +1,7 @@
 ---
-status: pending
+status: completed
 created_at: 2026-09-28T11:00:00-03:00
-updated_at: 2026-09-28T11:00:00-03:00
+updated_at: 2026-09-28T13:00:00-03:00
 commit: 54cc1bb
 ---
 
@@ -22,6 +22,8 @@ Nobody sees what a task costs today, except in the OpenRouter dashboard.
 ## Decisions
 
 Answer these before work starts.
+
+Answered on 2026-09-28: the recommendation of each, (a).
 
 1. **What the budget covers.** Options:
    - (a) The whole task, from the first plan to the last fix. When it runs out, the task becomes `codeman:blocked`, and a maintainer can raise it with `/codeman set task-budget <usd>`.
@@ -47,12 +49,16 @@ Answer these before work starts.
 
 ## Steps
 
-- [ ] OpenRouter client: the total usage (`usage`) of the keys of one task, disabled ones included. Check the field and how soon it is updated after a request.
-- [ ] `open-key`: create the key with the remaining task budget, or block the task below the floor (decision 2); check the monthly cap against that limit instead of the full task budget.
-- [ ] Job order and the run's spend (decision 4); template and docs.
-- [ ] Spend on the status comment and the pull request (decision 3).
-- [ ] Tests for the budget arithmetic, including issue numbers that share a prefix (`/1/` and `/12/`).
+- [x] OpenRouter client: the total usage (`usage`) of the keys of one task, disabled ones included. Check the field and how soon it is updated after a request.
+- [x] `open-key`: create the key with the remaining task budget, or block the task below the floor (decision 2); check the monthly cap against that limit instead of the full task budget.
+- [x] Job order and the run's spend (decision 4); template and docs.
+- [x] Spend on the status comment and the pull request (decision 3).
+- [x] Tests for the budget arithmetic, including issue numbers that share a prefix (`/1/` and `/12/`).
 - [ ] Done when: on the test repository, a task's runs never spend more than its budget in total, and its status comment shows the spend of each run and of the task.
+
+## Outcome
+
+Implemented on 2026-09-28. OpenRouter documents `usage` (total) and `usage_monthly` on each key, and `GET /keys/{hash}` for one key. The end-to-end check is left to the responsible person's test round; if it fails, this plan reopens.
 
 ## Out of scope
 

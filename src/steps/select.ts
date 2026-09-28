@@ -220,6 +220,7 @@ export async function select(): Promise<void> {
         model,
         runUrl: context.runUrl,
         message: startMessage(context),
+        cost: { task: record?.spent, budget: settings.value["task-budget"] },
       }),
     );
   }
