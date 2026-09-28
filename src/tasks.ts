@@ -87,7 +87,7 @@ export function finishedRuns(
   const latest = awaited.map(
     (path) => runs.filter((run) => run.path === path).sort((a, b) => b.id - a.id)[0],
   );
-  if (latest.length === 0 || latest.some((run) => !run || run.status !== "completed")) {
+  if (latest.length === 0 || latest.some((run) => run?.status !== "completed")) {
     return undefined;
   }
   return latest.flatMap((run) =>

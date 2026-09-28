@@ -26299,7 +26299,7 @@ function finishedRuns(runs, awaited) {
   const latest = awaited.map(
     (path) => runs.filter((run2) => run2.path === path).sort((a, b) => b.id - a.id)[0]
   );
-  if (latest.length === 0 || latest.some((run2) => !run2 || run2.status !== "completed")) {
+  if (latest.length === 0 || latest.some((run2) => run2?.status !== "completed")) {
     return void 0;
   }
   return latest.flatMap(
