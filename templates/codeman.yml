@@ -126,6 +126,8 @@ jobs:
       status: ${{ steps.codeman.outputs.status }}
       reason: ${{ steps.codeman.outputs.reason }}
       task-spent: ${{ steps.codeman.outputs.task-spent }}
+      month-spent: ${{ steps.codeman.outputs.month-spent }}
+      key-limit: ${{ steps.codeman.outputs.key-limit }}
       key-hash: ${{ steps.codeman.outputs.key-hash }}
       encrypted-key: ${{ steps.codeman.outputs.encrypted-key }}
     steps:
@@ -250,6 +252,8 @@ jobs:
           agent-job-result: ${{ needs.agent.result }}
           task-spent: ${{ needs.open-key.outputs.task-spent }}
           run-cost: ${{ needs.close-key.outputs.run-cost }}
+          key-limit: ${{ needs.open-key.outputs.key-limit }}
+          month-spent: ${{ needs.open-key.outputs.month-spent }}
 
   # Starts another run when this one moved a task, so the next task (or the next step of this
   # one) does not wait for the schedule. That run stops early when nothing can move. No secrets.

@@ -32,6 +32,7 @@ export async function openKey(): Promise<void> {
   const spent = sumUsage(keys, taskKeyPrefix(owner, repo, task), "usage");
   const used = sumUsage(keys, prefix, "usage_monthly");
   core.setOutput("task-spent", spent.toFixed(4));
+  core.setOutput("month-spent", used.toFixed(4));
   core.info(`This task has spent ${usd(spent)} of ${usd(taskBudget)}.`);
   core.info(`OpenRouter usage this month: ${usd(used)} of ${usd(monthlyBudget)}.`);
 
@@ -60,6 +61,7 @@ export async function openKey(): Promise<void> {
   });
   core.setSecret(key);
   core.setOutput("status", "opened");
+  core.setOutput("key-limit", limit.toFixed(2));
   core.setOutput("key-hash", hash);
   core.setOutput("encrypted-key", encrypt(key, secret));
   core.info(`Created a key limited to ${usd(limit)}, expiring in ${hours} hours.`);

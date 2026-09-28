@@ -1,4 +1,5 @@
 import type { Command } from "./commands.ts";
+import type { Spending } from "./spend.ts";
 import type { Stage } from "./stages.ts";
 
 export interface Option {
@@ -52,6 +53,8 @@ export interface TaskRecord {
   reports?: Partial<Record<Stage, string>> | undefined;
   /** The suggested squash commit message, from the code stage. */
   commitMessage?: string | undefined;
+  /** What each agent run spent, for the status comment's table. */
+  spending?: Spending | undefined;
   /** The newest run comment on the issue. */
   reportCommentId?: number | undefined;
   /** Workflows a maintainer accepted since the last stage run, for the next one to know. */

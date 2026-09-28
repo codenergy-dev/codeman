@@ -135,6 +135,39 @@ test("a run comment says what the run did, with its report kept inert", () => {
   assert.ok(!renderRun(run).includes("####"));
 });
 
+const spendRow = {
+  runUrl: "https://github.com/o/r/actions/runs/2",
+  at: "2026-09-28T19:40:00.000Z",
+  stage: "test" as const,
+  model: "a/b",
+  cost: 0.1234,
+  keyLimit: 1.5,
+  taskBudget: 2,
+  monthlyBudget: 20,
+  monthSpent: 3,
+};
+
+test("the panel shows the spend table, and a run comment its own row", () => {
+  const panel = renderStatus({
+    ...view,
+    record: { ...record, spending: { rows: [spendRow] } },
+    cost: { task: 0.5, budget: 2 },
+  });
+  assert.match(panel, /#### Spending\n\n\| Run \| Stage/);
+  assert.match(panel, /\| test \| `a\/b` \| US\$ 0\.123 \|/);
+  assert.match(panel, /\| Runs without a row \| \| \| US\$ 0\.377 \|/);
+  assert.match(panel, /Spent: US\$ 0\.50 of US\$ 2\.00 for the task\./);
+
+  const body = renderRun({ ...run, spend: spendRow, cost: { run: 0.1234, task: 0.5, budget: 2 } });
+  assert.match(body, /#### Cost\n\n\| Run \| Stage/);
+  assert.match(
+    body,
+    /\| test \| `a\/b` \| US\$ 0\.123 \| US\$ 1\.50 \| US\$ 2\.00 \| US\$ 3\.00 of US\$ 20\.00 \|/,
+  );
+  assert.ok(!body.includes("this run"), "the row shows the run's cost");
+  assert.match(body, /Spent: US\$ 0\.50 of US\$ 2\.00 for the task/);
+});
+
 test("lists staged workflows with how to accept them", () => {
   const body = renderStatus({ ...view, staged: [".github/workflows/deploy.yml", "@evil"] });
   assert.match(body, /#### Workflows to review/);

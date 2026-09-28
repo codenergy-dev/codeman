@@ -1,5 +1,6 @@
 import { usd } from "./budget.ts";
 import { encodeStatus, pendingDecisions, type TaskRecord } from "./record.ts";
+import { type SpendRow, spendTable } from "./spend.ts";
 import type { State } from "./state.ts";
 import { inertLines, inlineText } from "./text.ts";
 
@@ -93,11 +94,15 @@ export function renderStatus(view: StatusView): string {
     );
   }
 
-  const spent =
-    view.cost?.task === undefined ? "" : ` · ${spentText({ ...view.cost, run: undefined })}`;
+  if (record?.spending?.rows.length || view.cost?.task !== undefined) {
+    lines.push("#### Spending", "", ...spendTable(record?.spending, view.cost?.task), "");
+    if (view.cost?.task !== undefined)
+      lines.push(`${spentText({ ...view.cost, run: undefined })}.`, "");
+  }
+
   const report = view.reportUrl ? ` · [Last report](${view.reportUrl})` : "";
   lines.push(
-    `<sub>Model: \`${modelName(view.model)}\` (change it with \`/codeman set model <id>\`)${spent} · [Last run](${view.runUrl})${report}</sub>`,
+    `<sub>Model: \`${modelName(view.model)}\` (change it with \`/codeman set model <id>\`) · [Last run](${view.runUrl})${report}</sub>`,
   );
   return lines.join("\n");
 }
@@ -132,6 +137,8 @@ export interface RunView {
   /** Problems with commands or the agent's output. Rendered as untrusted text. */
   errors?: readonly string[] | undefined;
   cost?: Cost | undefined;
+  /** The run's row of the spend table, for a run that used the agent. */
+  spend?: SpendRow | undefined;
 }
 
 /** What one run did, posted as a new comment so the issue keeps the task's history. */
@@ -144,7 +151,11 @@ export function renderRun(view: RunView): string {
     for (const error of view.errors) lines.push(`- ${inlineText(error)}`);
     lines.push("");
   }
-  const spent = view.cost?.task === undefined ? "" : ` · ${spentText(view.cost)}`;
+  if (view.spend) lines.push("#### Cost", "", ...spendTable({ rows: [view.spend] }), "");
+  const spent =
+    view.cost?.task === undefined
+      ? ""
+      : ` · ${spentText(view.spend ? { ...view.cost, run: undefined } : view.cost)}`;
   lines.push(`<sub>Model: \`${modelName(view.model)}\`${spent} · [Run](${view.runUrl})</sub>`);
   return lines.join("\n");
 }

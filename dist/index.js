@@ -25411,8 +25411,8 @@ function pullRequestBody(view) {
 }
 var FOOTER = /^<sub>Opened by Codeman\b.*$/m;
 function pullRequestFooter(runUrl2, spent) {
-  const cost = spent ? ` \xB7 Spent: ${spent}` : "";
-  return `<sub>Opened by Codeman${cost} \xB7 [Last run](${runUrl2})</sub>`;
+  const cost2 = spent ? ` \xB7 Spent: ${spent}` : "";
+  return `<sub>Opened by Codeman${cost2} \xB7 [Last run](${runUrl2})</sub>`;
 }
 function replaceFooter(body, footer) {
   return FOOTER.test(body) ? body.replace(FOOTER, () => footer) : body;
@@ -25873,8 +25873,8 @@ function runLimit(taskBudget, spent) {
   const remaining = Math.floor((taskBudget - spent) * 100 + 1e-9) / 100;
   return remaining >= MIN_RUN_BUDGET ? remaining : void 0;
 }
-function usd(amount) {
-  return `US$ ${amount.toFixed(2)}`;
+function usd(amount2) {
+  return `US$ ${amount2.toFixed(2)}`;
 }
 function expiresAt(now, hours) {
   return `${new Date(now.getTime() + hours * 36e5).toISOString().slice(0, 19)}Z`;
@@ -26028,6 +26028,49 @@ function decodeStatus(body) {
   }
 }
 
+// src/spend.ts
+var MAX_ROWS = 30;
+function addRow(spending, row, max = MAX_ROWS) {
+  const rows = [...spending?.rows ?? [], row];
+  let earlier = spending?.earlier;
+  while (rows.length > max) {
+    const oldest = rows.shift();
+    earlier = {
+      runs: (earlier?.runs ?? 0) + 1,
+      cost: (earlier?.cost ?? 0) + (oldest?.cost ?? 0)
+    };
+  }
+  return { rows, earlier };
+}
+function spendTable(spending, total) {
+  const rows = spending?.rows ?? [];
+  const earlier = spending?.earlier;
+  const lines = [
+    "| Run | Stage | Model | Cost | Key limit | Task budget | Monthly budget |",
+    "| --- | --- | --- | ---: | ---: | ---: | --- |"
+  ];
+  if (earlier) {
+    lines.push(`| Earlier runs (${earlier.runs}) | | | ${cost(earlier.cost)} | | | |`);
+  }
+  for (const row of rows) {
+    const month = row.monthSpent === void 0 ? usd(row.monthlyBudget) : `${usd(row.monthSpent)} of ${usd(row.monthlyBudget)}`;
+    lines.push(
+      `| [${when(row.at)}](${row.runUrl}) | ${row.stage} | \`${row.model.replace(/[`|\s]/g, "")}\` | ${row.cost === void 0 ? "\u2014" : cost(row.cost)} | ${row.keyLimit === void 0 ? "\u2014" : usd(row.keyLimit)} | ${usd(row.taskBudget)} | ${month} |`
+    );
+  }
+  const recorded = rows.reduce((sum, row) => sum + (row.cost ?? 0), earlier?.cost ?? 0);
+  if (total !== void 0 && total - recorded >= 1e-3) {
+    lines.push(`| Runs without a row | | | ${cost(total - recorded)} | | | |`);
+  }
+  return lines;
+}
+function cost(amount2) {
+  return `US$ ${amount2.toFixed(3)}`;
+}
+function when(at) {
+  return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(at) ? `${at.slice(0, 10)} ${at.slice(11, 16)} UTC` : "\u2014";
+}
+
 // src/stages.ts
 var STAGES = ["design", "code", "test", "review"];
 var STAGE_STATE = {
@@ -26102,10 +26145,14 @@ function renderStatus(view) {
       ""
     );
   }
-  const spent = view.cost?.task === void 0 ? "" : ` \xB7 ${spentText({ ...view.cost, run: void 0 })}`;
+  if (record?.spending?.rows.length || view.cost?.task !== void 0) {
+    lines.push("#### Spending", "", ...spendTable(record?.spending, view.cost?.task), "");
+    if (view.cost?.task !== void 0)
+      lines.push(`${spentText({ ...view.cost, run: void 0 })}.`, "");
+  }
   const report = view.reportUrl ? ` \xB7 [Last report](${view.reportUrl})` : "";
   lines.push(
-    `<sub>Model: \`${modelName(view.model)}\` (change it with \`/codeman set model <id>\`)${spent} \xB7 [Last run](${view.runUrl})${report}</sub>`
+    `<sub>Model: \`${modelName(view.model)}\` (change it with \`/codeman set model <id>\`) \xB7 [Last run](${view.runUrl})${report}</sub>`
   );
   return lines.join("\n");
 }
@@ -26128,13 +26175,14 @@ function renderRun(view) {
     for (const error2 of view.errors) lines.push(`- ${inlineText(error2)}`);
     lines.push("");
   }
-  const spent = view.cost?.task === void 0 ? "" : ` \xB7 ${spentText(view.cost)}`;
+  if (view.spend) lines.push("#### Cost", "", ...spendTable({ rows: [view.spend] }), "");
+  const spent = view.cost?.task === void 0 ? "" : ` \xB7 ${spentText(view.spend ? { ...view.cost, run: void 0 } : view.cost)}`;
   lines.push(`<sub>Model: \`${modelName(view.model)}\`${spent} \xB7 [Run](${view.runUrl})</sub>`);
   return lines.join("\n");
 }
-function spentText(cost) {
-  const run2 = cost.run === void 0 ? "" : `${usd(cost.run)} this run, `;
-  return `Spent: ${run2}${usd(cost.task ?? 0)} of ${usd(cost.budget)} for the task`;
+function spentText(cost2) {
+  const run2 = cost2.run === void 0 ? "" : `${usd(cost2.run)} this run, `;
+  return `Spent: ${run2}${usd(cost2.task ?? 0)} of ${usd(cost2.budget)} for the task`;
 }
 function modelName(model) {
   return model.replace(/`/g, "");
@@ -26920,9 +26968,11 @@ function blocked(repo, task, error2, more = [], record) {
   });
 }
 async function finish(repo, task, state, view) {
-  const cost = runCosts(task);
+  const cost2 = runCosts(task);
+  const spend = spendRow(task, cost2.run);
   let record = view.record ?? task.record ?? void 0;
-  if (record && cost.task !== void 0) record = { ...record, spent: cost.task };
+  if (record && cost2.task !== void 0) record = { ...record, spent: cost2.task };
+  if (record && spend) record = { ...record, spending: addRow(record.spending, spend) };
   if (record && task.action === "implement" && !view.retry)
     record = { ...record, accepted: void 0 };
   if (record && task.action !== "record" && !view.retry) {
@@ -26937,8 +26987,8 @@ async function finish(repo, task, state, view) {
     ...(await repo.filesUnder(task.branch, STAGED_WORKFLOWS_DIR).catch(() => /* @__PURE__ */ new Map())).keys()
   ].map(workflowPath) : [];
   const spent = {
-    run: cost.run,
-    task: cost.task ?? record?.spent,
+    run: cost2.run,
+    task: cost2.task ?? record?.spent,
     budget: task.settings["task-budget"]
   };
   await repo.setState(task.number, await repo.currentLabels(task.number), state);
@@ -26954,7 +27004,8 @@ async function finish(repo, task, state, view) {
         message: view.message,
         report: view.report,
         errors,
-        cost: spent
+        cost: spent,
+        spend
       })
     );
     if (record) record = { ...record, reportCommentId: id };
@@ -26996,14 +27047,29 @@ function runTitle(task) {
   }
 }
 function runCosts(task) {
-  const amount = (name) => {
-    const value = Number.parseFloat(getInput(name));
-    return Number.isFinite(value) ? value : void 0;
-  };
   const before = amount("task-spent");
   const run2 = amount("run-cost");
   if (before === void 0) return { task: task.record?.spent };
   return { run: run2, task: before + (run2 ?? 0) };
+}
+function spendRow(task, cost2) {
+  if (getInput("key-status") !== "opened") return void 0;
+  if (task.action !== "plan" && task.action !== "implement") return void 0;
+  return {
+    runUrl: task.runUrl,
+    at: (/* @__PURE__ */ new Date()).toISOString(),
+    stage: task.action === "plan" ? "plan" : task.stage ?? "code",
+    model: task.model,
+    cost: cost2,
+    keyLimit: amount("key-limit"),
+    taskBudget: task.settings["task-budget"],
+    monthlyBudget: task.settings["monthly-budget"],
+    monthSpent: amount("month-spent")
+  };
+}
+function amount(name) {
+  const value = Number.parseFloat(getInput(name));
+  return Number.isFinite(value) ? value : void 0;
 }
 function spentLine(task, spent) {
   return spent === void 0 ? void 0 : `${usd(spent)} of ${usd(task.settings["task-budget"])}`;
@@ -27030,6 +27096,7 @@ async function openKey() {
   const spent = sumUsage(keys, taskKeyPrefix(owner, repo, task), "usage");
   const used = sumUsage(keys, prefix, "usage_monthly");
   setOutput("task-spent", spent.toFixed(4));
+  setOutput("month-spent", used.toFixed(4));
   info(`This task has spent ${usd(spent)} of ${usd(taskBudget)}.`);
   info(`OpenRouter usage this month: ${usd(used)} of ${usd(monthlyBudget)}.`);
   const limit = runLimit(taskBudget, spent);
@@ -27056,6 +27123,7 @@ async function openKey() {
   });
   setSecret(key);
   setOutput("status", "opened");
+  setOutput("key-limit", limit.toFixed(2));
   setOutput("key-hash", hash);
   setOutput("encrypted-key", encrypt(key, secret));
   info(`Created a key limited to ${usd(limit)}, expiring in ${hours} hours.`);
@@ -27065,15 +27133,15 @@ async function closeKey() {
   const hash = getInput("key-hash", { required: true });
   await router.disableKey(hash);
   info("Disabled the key.");
-  let cost = await router.keyUsage(hash);
+  let cost2 = await router.keyUsage(hash);
   for (let attempt = 0; attempt < 6; attempt++) {
     await new Promise((resolve) => setTimeout(resolve, 5e3));
     const latest = await router.keyUsage(hash);
-    if (latest === cost) break;
-    cost = latest;
+    if (latest === cost2) break;
+    cost2 = latest;
   }
-  setOutput("run-cost", cost.toFixed(4));
-  info(`This run spent ${usd(cost)}.`);
+  setOutput("run-cost", cost2.toFixed(4));
+  info(`This run spent ${usd(cost2)}.`);
 }
 
 // src/steps/select.ts

@@ -16,6 +16,7 @@ import {
 } from "../policy.ts";
 import { pullRequestBody, pullRequestFooter, pullRequestTitle } from "../pull.ts";
 import { applyCommands, pendingDecisions, type TaskRecord, writeAnswers } from "../record.ts";
+import { addRow, type SpendRow } from "../spend.ts";
 import { nextStage, STAGE_STATE, type Stage } from "../stages.ts";
 import type { State } from "../state.ts";
 import { renderRun, renderStatus, reportUrl } from "../status.ts";
@@ -582,8 +583,10 @@ async function finish(
   },
 ): Promise<void> {
   const cost = runCosts(task);
+  const spend = spendRow(task, cost.run);
   let record = view.record ?? task.record ?? undefined;
   if (record && cost.task !== undefined) record = { ...record, spent: cost.task };
+  if (record && spend) record = { ...record, spending: addRow(record.spending, spend) };
   // A stage ran and saw the accepted workflows.
   if (record && task.action === "implement" && !view.retry)
     record = { ...record, accepted: undefined };
@@ -625,6 +628,7 @@ async function finish(
         report: view.report,
         errors,
         cost: spent,
+        spend,
       }),
     );
     if (record) record = { ...record, reportCommentId: id };
@@ -673,14 +677,33 @@ function runTitle(task: TaskContext): string {
  * task's spend before the run, and `close-key` the run's.
  */
 function runCosts(task: TaskContext): { run?: number | undefined; task?: number | undefined } {
-  const amount = (name: string): number | undefined => {
-    const value = Number.parseFloat(core.getInput(name));
-    return Number.isFinite(value) ? value : undefined;
-  };
   const before = amount("task-spent");
   const run = amount("run-cost");
   if (before === undefined) return { task: task.record?.spent };
   return { run, task: before + (run ?? 0) };
+}
+
+/** The spend table's row for a run that opened a key; older workflow files lack some inputs. */
+function spendRow(task: TaskContext, cost: number | undefined): SpendRow | undefined {
+  if (core.getInput("key-status") !== "opened") return undefined;
+  if (task.action !== "plan" && task.action !== "implement") return undefined;
+  return {
+    runUrl: task.runUrl,
+    at: new Date().toISOString(),
+    stage: task.action === "plan" ? "plan" : (task.stage ?? "code"),
+    model: task.model,
+    cost,
+    keyLimit: amount("key-limit"),
+    taskBudget: task.settings["task-budget"],
+    monthlyBudget: task.settings["monthly-budget"],
+    monthSpent: amount("month-spent"),
+  };
+}
+
+/** An amount in USD from an input, if it has one. */
+function amount(name: string): number | undefined {
+  const value = Number.parseFloat(core.getInput(name));
+  return Number.isFinite(value) ? value : undefined;
 }
 
 function spentLine(task: TaskContext, spent: number | undefined): string | undefined {

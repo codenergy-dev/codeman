@@ -50,6 +50,10 @@ inputs:
     description: "(apply) task-spent output of the open-key job."
   run-cost:
     description: "(apply) run-cost output of the close-key job."
+  key-limit:
+    description: "(apply) key-limit output of the open-key job."
+  month-spent:
+    description: "(apply) month-spent output of the open-key job."
   workdir:
     description: "Directory for Codeman's files. Defaults to RUNNER_TEMP/codeman."
 outputs:
@@ -75,6 +79,10 @@ outputs:
     description: "(open-key) What the task spent before this run, in USD."
   run-cost:
     description: "(close-key) What this run's key spent, in USD."
+  key-limit:
+    description: "(open-key) The limit of this run's key, in USD."
+  month-spent:
+    description: "(open-key) What the repository spent this month before this run, in USD."
   reason:
     description: "(open-key) Why no key was created."
   key-hash:
