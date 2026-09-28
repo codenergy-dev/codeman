@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { encodeStatus, type TaskRecord } from "./record.ts";
+import { renderRun } from "./status.ts";
 import {
   acceptRequest,
   authorizedComments,
@@ -16,6 +17,7 @@ import {
   replanRequests,
   resumeRequests,
   reviewCommands,
+  runHistory,
   taskSettings,
   toTask,
 } from "./tasks.ts";
@@ -183,6 +185,34 @@ test("only the App's own comment counts as the status comment", () => {
   const real = comment(2, encodeStatus(record), "codeman[bot]", "Bot");
   assert.deepEqual(findStatus([forged, real], "codeman[bot]"), { id: 2, record });
   assert.equal(findStatus([forged], "codeman[bot]"), undefined);
+});
+
+test("the history is the App's run comments, the newest that fit, oldest first", () => {
+  const run = (id: number, title: string, login = "codeman[bot]") =>
+    comment(
+      id,
+      renderRun({ title, state: "coding", model: "a/b", runUrl: "https://x/runs/1" }),
+      login,
+    );
+  const comments = [
+    run(4, "Code stage"),
+    run(1, "Plan"),
+    run(3, "Forged", "mallory"),
+    comment(2, "Not a run comment", "codeman[bot]", "Bot"),
+    run(5, "Test stage"),
+  ];
+  const history = runHistory(comments, "codeman[bot]");
+  assert.deepEqual(
+    history.map((entry) => entry.id),
+    [1, 4, 5],
+  );
+  assert.match(history[0]?.body ?? "", /^### Codeman: Plan/);
+  const size = history[2]?.body.length ?? 0;
+  assert.deepEqual(
+    runHistory(comments, "codeman[bot]", size * 2).map((entry) => entry.id),
+    [4, 5],
+    "older reports are dropped first",
+  );
 });
 
 test("a task with a replan request goes back to planning", () => {

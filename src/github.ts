@@ -296,9 +296,14 @@ export class Repository {
     );
   }
 
-  /** Comments on an issue or pull request. */
-  async comment(issue: number, body: string): Promise<void> {
-    await this.#octokit.rest.issues.createComment({ ...this.#scope, issue_number: issue, body });
+  /** Comments on an issue or pull request, and returns the comment's ID. */
+  async comment(issue: number, body: string): Promise<number> {
+    const { data } = await this.#octokit.rest.issues.createComment({
+      ...this.#scope,
+      issue_number: issue,
+      body,
+    });
+    return data.id;
   }
 
   async updatePullRequest(number: number, options: { title: string; body: string }): Promise<void> {

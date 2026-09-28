@@ -12,14 +12,19 @@ export interface StatusView {
   pullRequestUrl?: string | undefined;
   /** A note from Codeman itself (trusted text). */
   message?: string | undefined;
-  /** The agent's summary of its last run. Rendered as untrusted text. */
-  report?: string | undefined;
   /** Workflows the agent wrote that wait for `/codeman accept-workflows`. Untrusted names. */
   staged?: readonly string[] | undefined;
-  /** What this run and the task spent, in USD, when known. */
-  cost?: { run?: number | undefined; task?: number | undefined; budget: number } | undefined;
-  /** Problems with commands or the agent's output. Rendered as untrusted text. */
-  errors?: readonly string[] | undefined;
+  /** What the task spent, in USD, when known. */
+  cost?: Cost | undefined;
+  /** The newest run comment. */
+  reportUrl?: string | undefined;
+}
+
+/** What a run and its task spent, in USD, as far as known. */
+export interface Cost {
+  run?: number | undefined;
+  task?: number | undefined;
+  budget: number;
 }
 
 const HEADINGS: Record<State | "new", string> = {
@@ -37,7 +42,10 @@ const HEADINGS: Record<State | "new", string> = {
   done: "Done",
 };
 
-/** The single comment Codeman keeps up to date on each task. */
+/**
+ * The task's panel: the single comment Codeman keeps up to date on each task, with where the
+ * task is now. What each run did goes in a run comment of its own.
+ */
 export function renderStatus(view: StatusView): string {
   const { record } = view;
   const lines = [encodeStatus(record), `### Codeman: ${HEADINGS[view.state]}`, ""];
@@ -75,8 +83,6 @@ export function renderStatus(view: StatusView): string {
     }
   }
 
-  if (view.report) lines.push("#### Last run", "", inertLines(view.report), "");
-
   if (view.staged && view.staged.length > 0) {
     lines.push("#### Workflows to review", "");
     for (const path of view.staged) lines.push(`- ${inlineText(path)}`);
@@ -87,19 +93,67 @@ export function renderStatus(view: StatusView): string {
     );
   }
 
+  const spent =
+    view.cost?.task === undefined ? "" : ` · ${spentText({ ...view.cost, run: undefined })}`;
+  const report = view.reportUrl ? ` · [Last report](${view.reportUrl})` : "";
+  lines.push(
+    `<sub>Model: \`${modelName(view.model)}\` (change it with \`/codeman set model <id>\`)${spent} · [Last run](${view.runUrl})${report}</sub>`,
+  );
+  return lines.join("\n");
+}
+
+/** The link to the task's newest run comment, if it has one. */
+export function reportUrl(issueUrl: string, record: TaskRecord | undefined): string | undefined {
+  return record?.reportCommentId ? `${issueUrl}#issuecomment-${record.reportCommentId}` : undefined;
+}
+
+const RUN_MARKER = "<!-- codeman:run -->";
+
+export function isRunComment(body: string): boolean {
+  return body.startsWith(RUN_MARKER);
+}
+
+/** A run comment without its marker, as the agent reads it. */
+export function runCommentText(body: string): string {
+  return body.slice(RUN_MARKER.length).trim();
+}
+
+export interface RunView {
+  /** What the run worked on, such as "Test stage" (trusted text). */
+  title: string;
+  /** The task's state once the run ended. */
+  state: State | "new";
+  model: string;
+  runUrl: string;
+  /** A note from Codeman itself (trusted text). */
+  message?: string | undefined;
+  /** The agent's summary. Rendered as untrusted text. */
+  report?: string | undefined;
+  /** Problems with commands or the agent's output. Rendered as untrusted text. */
+  errors?: readonly string[] | undefined;
+  cost?: Cost | undefined;
+}
+
+/** What one run did, posted as a new comment so the issue keeps the task's history. */
+export function renderRun(view: RunView): string {
+  const lines = [RUN_MARKER, `### Codeman: ${view.title}`, "", `Now: ${HEADINGS[view.state]}.`, ""];
+  if (view.message) lines.push(view.message, "");
+  if (view.report) lines.push("#### Report", "", inertLines(view.report), "");
   if (view.errors && view.errors.length > 0) {
     lines.push("#### Problems", "");
     for (const error of view.errors) lines.push(`- ${inlineText(error)}`);
     lines.push("");
   }
-
-  const cost = view.cost;
-  const spent =
-    cost?.task === undefined
-      ? ""
-      : ` · Spent: ${cost.run === undefined ? "" : `${usd(cost.run)} this run, `}${usd(cost.task)} of ${usd(cost.budget)} for the task`;
-  lines.push(
-    `<sub>Model: \`${view.model.replace(/`/g, "")}\` (change it with \`/codeman set model <id>\`)${spent} · [Last run](${view.runUrl})</sub>`,
-  );
+  const spent = view.cost?.task === undefined ? "" : ` · ${spentText(view.cost)}`;
+  lines.push(`<sub>Model: \`${modelName(view.model)}\`${spent} · [Run](${view.runUrl})</sub>`);
   return lines.join("\n");
+}
+
+function spentText(cost: Cost): string {
+  const run = cost.run === undefined ? "" : `${usd(cost.run)} this run, `;
+  return `Spent: ${run}${usd(cost.task ?? 0)} of ${usd(cost.budget)} for the task`;
+}
+
+function modelName(model: string): string {
+  return model.replace(/`/g, "");
 }

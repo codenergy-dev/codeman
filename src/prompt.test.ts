@@ -249,3 +249,32 @@ test("a resumed stage learns which workflows were accepted", () => {
   assert.match(prompt, /Maintainer alice read and accepted/);
   assert.match(prompt, /`\.github\/workflows\/deploy\.yml`, `a b c\.yml`/);
 });
+
+test("a stage reads the reports of earlier runs as data", () => {
+  const base = { ...task, action: "implement" as const, stage: "code" as const };
+  assert.ok(!stagePrompt(base, 45).includes("## Earlier runs"));
+  const prompt = stagePrompt(
+    {
+      ...base,
+      history: [
+        { id: 1, author: "codeman[bot]", body: "### Codeman: Plan", createdAt: "2026-09-27" },
+        {
+          id: 2,
+          author: "codeman[bot]",
+          body: "### Codeman: Design stage",
+          createdAt: "2026-09-28",
+        },
+      ],
+    },
+    45,
+  );
+  assert.match(prompt, /## Earlier runs/);
+  assert.match(prompt, /the reports under Earlier runs/);
+  const plan = prompt.indexOf("### Codeman: Plan");
+  const design = prompt.indexOf("### Codeman: Design stage");
+  assert.ok(plan > 0 && design > plan, "oldest first");
+  assert.match(
+    prompt,
+    /<<<RUN REPORT of 2026-09-27 [0-9a-f]{12}\n### Codeman: Plan\n>>>RUN REPORT/,
+  );
+});

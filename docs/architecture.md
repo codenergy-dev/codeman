@@ -19,7 +19,7 @@ Each task has at most one state label. A task without one has not started yet (`
 | `codeman:reviewing` | The review stage is working. |
 | `codeman:in-progress` | Left from before stages: the task goes on in the code stage. |
 | `codeman:awaiting-workflow` | Waiting for workflows the agent asked for; see [on-demand workflows](#on-demand-workflows). |
-| `codeman:blocked` | Needs human attention; the status comment says why and how to go on (usually `/codeman continue`). |
+| `codeman:blocked` | Needs human attention; the status comment says how to go on (usually `/codeman continue`), and the last run comment says why. |
 | `codeman:done` | Reviewed; the pull request is ready for a human review. |
 
 A task with more than one state label is invalid: Codeman reports a warning and leaves it alone.
@@ -49,7 +49,7 @@ Jobs that do not apply to a run are skipped: a run that only records answers goe
 | `open-key` | Checks the task and monthly budgets and creates the run's OpenRouter key. | OpenRouter management key, encryption secret |
 | `agent` | Runs the harness on a copy of the checkout and uploads what it changed as an artifact, even when the agent fails or runs out of time. | `GITHUB_TOKEN` with contents and actions read (for workflow results; the agent never sees it), the run's key |
 | `close-key` | Disables the run's key and reads what it spent. Runs whatever happened before. | OpenRouter management key |
-| `apply` | Validates the agent's result and writes it: commits, pull request, labels, status comment, spend. When the action is `record`, it applies the maintainers' answers instead; when it is `accept`, it moves the accepted workflows. | App token: contents, issues and pull requests write; for `accept` only, a second token with contents and workflows write |
+| `apply` | Validates the agent's result and writes it: commits, pull request, labels, run and status comments, spend. When the action is `record`, it applies the maintainers' answers instead; when it is `accept`, it moves the accepted workflows. | App token: contents, issues and pull requests write; for `accept` only, a second token with contents and workflows write |
 | `next-run` | Starts another run when this one moved a task. | `GITHUB_TOKEN` with `actions: write` |
 
 Only `agent` runs an LLM. The jobs that write to GitHub never run one, and they treat everything the agent produced as untrusted.
@@ -72,14 +72,14 @@ The agent reads text from the issue, which anyone may have written, and runs she
 - Each run gets its own OpenRouter key, expiring after 24 hours. Keys are named `codeman/<owner>/<repo>/<issue>/<run>` and are disabled, not deleted, so their usage still counts.
 - Before creating a key, `open-key` adds up the total usage (`usage`) of the task's keys (prefix `codeman/<owner>/<repo>/<issue>/`). The new key's limit is what remains, in whole cents rounded down. Below US$ 0.10 no key is created, and the task becomes `codeman:blocked`; a maintainer can raise the budget with `/codeman set task-budget <usd>` and then comment `/codeman continue`.
 - `open-key` also adds up this month's usage (`usage_monthly`) of every key with the repository's prefix. If the run's limit would take it past the monthly budget (default US$ 20), no key is created and the task goes back to its previous state until the next month.
-- After the agent, `close-key` disables the key and reads its final usage, waiting briefly while OpenRouter still counts the last requests. `apply` shows what the run and the task spent in the status comment and at the end of the pull request's description, and keeps the task's total in the task record.
+- After the agent, `close-key` disables the key and reads its final usage, waiting briefly while OpenRouter still counts the last requests. `apply` shows what the run and the task spent in the run comment, the task's total in the status comment and at the end of the pull request's description, and keeps the task's total in the task record.
 - Values passed between jobs appear in plain text in the logs of the job that reads them. `open-key` therefore passes the key encrypted with AES-256-GCM, using a key derived from `CODEMAN_OPENROUTER_KEY_ENCRYPTION_SECRET`.
 
 ## Planning
 
 1. `select` picks a `new` task, one left in `planning` by an interrupted run, or one with a `/codeman replan` request, and chooses the branch `codeman/<issue>-<slug>` and the plan path `docs/plans/<date>-<slug>.md`.
 2. `agent` gives the harness a task file with the rules, the issue and the maintainer comments. The agent writes the plan and `.codeman/output.json`, which lists the decisions: a title, a question, 2 to 6 options and a recommendation each.
-3. `apply` accepts only the plan file; other changes are ignored and listed in the status comment. It validates `output.json` strictly, commits the plan to the task branch through the Git Data API, and sets `codeman:awaiting-decision`, or `codeman:ready` when there are no decisions.
+3. `apply` accepts only the plan file; other changes are ignored and listed in the run comment. It validates `output.json` strictly, commits the plan to the task branch through the Git Data API, and sets `codeman:awaiting-decision`, or `codeman:ready` when there are no decisions.
 
 If the agent fails, runs out of time or produces an invalid result, the task becomes `codeman:blocked`.
 
@@ -118,7 +118,7 @@ Codeman records the last comment and review it handled. A request is handled onc
 
 ## Change policy
 
-Apply commits only regular files that pass these rules; it drops the others and lists them on the status comment.
+Apply commits only regular files that pass these rules; it drops the others and lists them in the run comment.
 
 - `.codemanignore` at the repository's root lists the paths the agent may not change, in `.gitignore` syntax. `!` re-allows a path. A file inside an excluded directory cannot be re-allowed: to re-allow a whole subdirectory, add both `!/dir/sub/` and `!/dir/sub/**`.
 - Without that file, Codeman uses its own rules: `/.github/**`, the harness's configuration (`opencode.json`, `opencode.jsonc`, `/.opencode/**`) and agent instructions (`AGENTS.md`, `CLAUDE.md`, `/.claude/**`, `/.agents/**`). Its first pull request proposes them as the repository's `.codemanignore`. Agent instructions are protected because later runs would follow a changed version before anyone reviewed it.
@@ -181,9 +181,13 @@ Text after `decide` or `approve` is not part of the command: the agent sees it l
 
 Only comments from maintainers count, both for commands and for the text the agent sees. A maintainer is a user with `admin`, `maintain` or `write` access to the repository, read from `GET /repos/{owner}/{repo}/collaborators/{user}/permission`. The `author_association` field is not used: GitHub computes it for the reader, and an App token sees private organization members as `CONTRIBUTOR`. Answers are recorded in the status comment and in an `## Answers` section of the plan. When no decision is pending, the task becomes `codeman:ready`. A `replan` in a batch of new commands wins: the run plans again instead of only recording answers.
 
-## Status comment
+## Status and run comments
 
-Codeman keeps one comment per task up to date: state, plan and pull request links, decisions, answers, the agent's last report, problems and the model. A hidden block in it stores the task record (branch, plan path, decisions, answers, last handled comment and review, pull request, runs in a row). Codeman reads that block only from comments written by its own GitHub App, because anyone can post a comment containing it.
+Codeman keeps one status comment per task up to date, as the task's panel: where the task is now and what comes next, plan and pull request links, decisions and answers, workflows to review, the task's spend, the model, and links to the last run and its report. A hidden block in it stores the task record (branch, plan path, decisions, answers, last handled comment and review, pull request, runs in a row, spend). Codeman reads that block only from comments written by its own GitHub App, because anyone can post a comment containing it.
+
+Each run that moves the task also posts a new comment on the issue, so the issue keeps the task's history in order: what the run worked on (the plan, a stage, recorded answers or accepted workflows), the state it left the task in, the agent's report, problems, and what the run spent. A run that only waits to try again later, because the monthly budget is reached, updates the panel only.
+
+Each stage's agent reads Codeman's earlier run comments on the task, oldest first, up to 20,000 characters (older ones are dropped first). Only comments by the App with the run marker count, and the agent treats them as data: the agents that wrote them read untrusted text.
 
 Text written by the agent or by users is rendered as inert Markdown: no HTML, links, images or formatting, and no @mentions. Short fields are collapsed to one line; the agent's report keeps its line breaks, so its lists survive.
 

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { decodeStatus, type TaskRecord } from "./record.ts";
-import { renderStatus } from "./status.ts";
+import { decodeStatus, isStatusComment, type TaskRecord } from "./record.ts";
+import { isRunComment, renderRun, renderStatus, reportUrl, runCommentText } from "./status.ts";
 
 const decision = {
   id: 1,
@@ -74,12 +74,6 @@ test("neutralizes mentions, HTML and images written by the agent", () => {
   assert.ok(!visible.includes("![img]"));
 });
 
-test("lists problems", () => {
-  const body = renderStatus({ ...view, errors: ["Decision 3 does not exist."] });
-  assert.match(body, /#### Problems/);
-  assert.match(body, /Decision 3 does not exist\./);
-});
-
 test("shows free-text answers as inert text", () => {
   const body = renderStatus({
     ...view,
@@ -91,24 +85,54 @@ test("shows free-text answers as inert text", () => {
   assert.match(body, /Answered by bob: Use @\u200bops \\<b\\>x\\<\/b\\>/);
 });
 
-test("the agent's report keeps its lines and stays inert", () => {
+test("the panel shows what the task spent and links the last report", () => {
   const body = renderStatus({
     ...view,
-    state: "in-progress",
-    report: "Changes:\n- Added @everyone ![x](http://t)\n- Fixed <b>tests</b>",
+    cost: { run: 0.1234, task: 0.5, budget: 2 },
+    reportUrl: "https://github.com/o/r/issues/1#issuecomment-9",
   });
-  assert.match(body, /#### Last run\n\nChanges:\n- Added /);
+  assert.match(body, /Spent: US\$ 0\.50 of US\$ 2\.00 for the task/);
+  assert.ok(!body.includes("this run"), "a run's cost belongs to its comment");
+  assert.match(body, /\[Last report\]\(https:\/\/github\.com\/o\/r\/issues\/1#issuecomment-9\)/);
+  assert.ok(!renderStatus({ ...view, cost: { budget: 2 } }).includes("Spent"));
+  assert.ok(!renderStatus(view).includes("Last report"));
+});
+
+test("links the newest run comment of a record", () => {
+  assert.equal(reportUrl("https://github.com/o/r/issues/1", record), undefined);
+  assert.equal(
+    reportUrl("https://github.com/o/r/issues/1", { ...record, reportCommentId: 9 }),
+    "https://github.com/o/r/issues/1#issuecomment-9",
+  );
+});
+
+const run = {
+  title: "Test stage",
+  state: "reviewing" as const,
+  model: "a/b",
+  runUrl: "https://github.com/o/r/actions/runs/2",
+};
+
+test("a run comment says what the run did, with its report kept inert", () => {
+  const body = renderRun({
+    ...run,
+    message: "Tests done. Next: review.",
+    report: "Changes:\n- Added @everyone ![x](http://t)\n- Fixed <b>tests</b>",
+    errors: ["Decision 3 does not exist."],
+    cost: { run: 0.1234, task: 0.5, budget: 2 },
+  });
+  assert.ok(isRunComment(body));
+  assert.ok(!isStatusComment(body));
+  assert.match(body, /### Codeman: Test stage\n\nNow: Reviewing\./);
+  assert.match(body, /#### Report\n\nChanges:\n- Added /);
+  assert.match(body, /#### Problems\n\n- Decision 3 does not exist\./);
+  assert.match(body, /Spent: US\$ 0\.12 this run, US\$ 0\.50 of US\$ 2\.00 for the task/);
+  assert.match(body, /\[Run\]\(https:\/\/github\.com\/o\/r\/actions\/runs\/2\)/);
   assert.ok(!body.includes("@everyone"));
   assert.ok(!body.includes("![x]"));
   assert.ok(!body.includes("<b>"));
-});
-
-test("the footer shows what the run and the task spent", () => {
-  const body = renderStatus({ ...view, cost: { run: 0.1234, task: 0.5, budget: 2 } });
-  assert.match(body, /Spent: US\$ 0\.12 this run, US\$ 0\.50 of US\$ 2\.00 for the task/);
-  const known = renderStatus({ ...view, cost: { task: 0.5, budget: 2 } });
-  assert.match(known, /Spent: US\$ 0\.50 of US\$ 2\.00 for the task/);
-  assert.ok(!renderStatus({ ...view, cost: { budget: 2 } }).includes("Spent"));
+  assert.equal(runCommentText(body).split("\n")[0], "### Codeman: Test stage");
+  assert.ok(!renderRun(run).includes("####"));
 });
 
 test("lists staged workflows with how to accept them", () => {

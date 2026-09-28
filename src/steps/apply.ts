@@ -18,7 +18,7 @@ import { pullRequestBody, pullRequestFooter, pullRequestTitle } from "../pull.ts
 import { applyCommands, pendingDecisions, type TaskRecord, writeAnswers } from "../record.ts";
 import { nextStage, STAGE_STATE, type Stage } from "../stages.ts";
 import type { State } from "../state.ts";
-import { renderStatus } from "../status.ts";
+import { renderRun, renderStatus, reportUrl } from "../status.ts";
 import { commandsAfter, type TaskContext } from "../tasks.ts";
 import { inertLines, oneLine, truncate } from "../text.ts";
 import { checkPlanResult, decodeText, isManifest } from "../validate.ts";
@@ -605,7 +605,30 @@ async function finish(
           ).keys(),
         ].map(workflowPath)
       : [];
+  const spent = {
+    run: cost.run,
+    task: cost.task ?? record?.spent,
+    budget: task.settings["task-budget"],
+  };
   await repo.setState(task.number, await repo.currentLabels(task.number), state);
+  // A run that waits to try again moved nothing: only the panel says so.
+  const quiet = view.retry && (task.action === "plan" || task.action === "implement");
+  if (!quiet) {
+    const id = await repo.comment(
+      task.number,
+      renderRun({
+        title: runTitle(task),
+        state,
+        model: task.model,
+        runUrl: task.runUrl,
+        message: view.message,
+        report: view.report,
+        errors,
+        cost: spent,
+      }),
+    );
+    if (record) record = { ...record, reportCommentId: id };
+  }
   await repo.upsertComment(
     task.number,
     task.statusCommentId,
@@ -617,14 +640,9 @@ async function finish(
       planUrl: record ? fileUrl(task, record.planPath) : undefined,
       pullRequestUrl: record?.pullRequest ? pullUrl(task, record.pullRequest) : undefined,
       message: view.message,
-      report: view.report,
-      errors,
       staged,
-      cost: {
-        run: cost.run,
-        task: cost.task ?? record?.spent,
-        budget: task.settings["task-budget"],
-      },
+      cost: spent,
+      reportUrl: reportUrl(task.url, record),
     }),
   );
   if (record?.pullRequest && !view.pullRequestWritten) {
@@ -634,6 +652,20 @@ async function finish(
     );
   }
   core.info(`#${task.number} is now ${state}.`);
+}
+
+/** What a run worked on, as its comment's title. */
+function runTitle(task: TaskContext): string {
+  switch (task.action) {
+    case "plan":
+      return task.record ? "Plan revised" : "Plan";
+    case "implement":
+      return `${(task.stage ?? "code").replace(/^./, (first) => first.toUpperCase())} stage`;
+    case "record":
+      return "Answers recorded";
+    case "accept":
+      return "Workflows accepted";
+  }
 }
 
 /**

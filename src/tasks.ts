@@ -9,6 +9,7 @@ import {
 import type { PartialSettings, Settings } from "./settings.ts";
 import { type Stage, stageOfState } from "./stages.ts";
 import type { State } from "./state.ts";
+import { isRunComment, runCommentText } from "./status.ts";
 
 /** The subset of a GitHub issue (or pull request) that Codeman reads. */
 export interface IssueLike {
@@ -393,6 +394,8 @@ export interface TaskContext {
   accept?: TaskComment | undefined;
   /** Finished runs of the workflows the agent waited for, whose results it gets. */
   workflowRuns?: WorkflowRun[] | undefined;
+  /** For `implement`: Codeman's earlier run comments on the task, oldest first. */
+  history?: TaskComment[] | undefined;
   fromState: State | "new";
   model: string;
   settings: Settings;
@@ -411,6 +414,32 @@ export interface TaskContext {
   settled: Decision[];
   statusCommentId: number | null;
   runUrl: string;
+}
+
+/** How much of the task's history the agent reads, in characters. */
+export const MAX_HISTORY = 20_000;
+
+/**
+ * Codeman's run comments on the task, oldest first: the newest ones that fit in `max`
+ * characters. Only comments by the App count, as with the status comment.
+ */
+export function runHistory(
+  comments: readonly CommentLike[],
+  bot: string,
+  max = MAX_HISTORY,
+): TaskComment[] {
+  const runs = comments
+    .filter((comment) => comment.user?.login === bot && isRunComment(comment.body ?? ""))
+    .sort((a, b) => b.id - a.id);
+  const kept: TaskComment[] = [];
+  let size = 0;
+  for (const comment of runs) {
+    const body = runCommentText(comment.body ?? "");
+    size += body.length;
+    if (size > max) break;
+    kept.unshift({ id: comment.id, author: bot, body, createdAt: comment.created_at });
+  }
+  return kept;
 }
 
 /**

@@ -13,7 +13,7 @@ import {
 } from "../settings.ts";
 import { STAGE_STATE, type Stage, stageOfState } from "../stages.ts";
 import { type State, stateOf } from "../state.ts";
-import { renderStatus } from "../status.ts";
+import { renderStatus, reportUrl } from "../status.ts";
 import {
   acceptRequest,
   authorizedComments,
@@ -31,6 +31,7 @@ import {
   replanRequests,
   resumeRequests,
   reviewCommands,
+  runHistory,
   type TaskContext,
   type TaskReview,
   taskSettings,
@@ -216,6 +217,7 @@ export async function select(): Promise<void> {
         ? acceptRequest(maintainerComments, record?.acceptedCommentId ?? 0)
         : undefined,
     workflowRuns: choice.action === "implement" ? workflowRuns.get(task.number) : undefined,
+    history: choice.action === "implement" ? runHistory(talk.comments, bot) : undefined,
     stage,
     processed: {
       commentId: Math.max(
@@ -255,6 +257,7 @@ export async function select(): Promise<void> {
         runUrl: context.runUrl,
         message: startMessage(context),
         cost: { task: record?.spent, budget: settings.value["task-budget"] },
+        reportUrl: reportUrl(task.url, record),
       }),
     );
   }
