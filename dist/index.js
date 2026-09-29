@@ -20775,6 +20775,8 @@ Tests: ${test ?? "(no report)"}`,
   agentReports: (reason) => `The agent reports: ${reason}`,
   missingWorkflows: (paths) => `The agent waits for workflows that are not on the branch: ${paths}.`,
   awaitingWorkflows: (stage, paths, reason) => `The ${STAGES[stage]} stage needs ${paths} to run: ${reason} Codeman goes on when their runs on the task branch finish. \`/codeman continue <guidance>\` goes on without them.`,
+  deferredWorkflows: (stage, paths, reason, next) => `The ${STAGES[stage]} stage needs ${paths} to run: ${reason} The workflows are staged and wait for a maintainer, so the task goes on to the ${STAGES[next]} stage meanwhile, up to review. Once they are accepted and their runs finish, the ${STAGES[stage]} stage goes on with their results.`,
+  acceptAfterReview: (paths) => `Review passed. The task waits for the staged workflows to be accepted: ${paths}. Read them, with review's report on the pull request, and comment \`/codeman accept-workflows\`. The pull request stays a draft until then, since merged now they would never run.`,
   stageDecisions: (stage, count2) => `The ${STAGES[stage]} stage needs ${count2} decision(s) from the maintainers.`,
   reviewRounds: (rounds, max) => `Review sent the work back to the code stage ${rounds} times in a row (\`max-runs\` is ${max}). Comment \`/codeman continue <guidance>\` to go on.`,
   skipped: (reason) => `Skipped: ${reason}`,
@@ -20977,6 +20979,8 @@ Testes: ${test ?? "(sem relat\xF3rio)"}`,
   agentReports: (reason) => `O agente relata: ${reason}`,
   missingWorkflows: (paths) => `O agente aguarda workflows que n\xE3o est\xE3o na branch: ${paths}.`,
   awaitingWorkflows: (stage, paths, reason) => `A ${OF_STAGE(stage)} precisa que ${paths} rode: ${reason} O Codeman continua quando essas execu\xE7\xF5es terminarem na branch da tarefa. \`/codeman continue <orienta\xE7\xE3o>\` continua sem elas.`,
+  deferredWorkflows: (stage, paths, reason, next) => `A ${OF_STAGE(stage)} precisa que ${paths} rode: ${reason} Os workflows est\xE3o guardados e aguardam um mantenedor, ent\xE3o a tarefa segue para a ${OF_STAGE(next)} enquanto isso, at\xE9 a revis\xE3o. Quando forem aceitos e as execu\xE7\xF5es terminarem, a ${OF_STAGE(stage)} continua com os resultados.`,
+  acceptAfterReview: (paths) => `A revis\xE3o passou. A tarefa aguarda que os workflows guardados sejam aceitos: ${paths}. Leia-os, junto com o relat\xF3rio da revis\xE3o no pull request, e comente \`/codeman accept-workflows\`. O pull request continua em rascunho at\xE9 l\xE1, porque, mergeados agora, eles nunca rodariam.`,
   stageDecisions: (stage, count2) => `A ${OF_STAGE(stage)} precisa de ${count2} decis\xE3o(\xF5es) dos mantenedores.`,
   reviewRounds: (rounds, max) => `A revis\xE3o devolveu o trabalho \xE0 etapa de c\xF3digo ${rounds} vezes seguidas (\`max-runs\` \xE9 ${max}). Comente \`/codeman continue <orienta\xE7\xE3o>\` para continuar.`,
   skipped: (reason) => `Pulada: ${reason}`,
@@ -21670,7 +21674,8 @@ var STAGE_WORK = {
 2. Check that the change does what the plan and the decisions say, and nothing else; that it is correct, secure and tested; and that the documentation matches it.
 3. Merge the default branch into your copy to find conflicts and integration problems early: \`git -c user.name=codeman -c user.email=codeman@invalid merge --no-commit --no-ff origin/${task.defaultBranch}\`. Run the checks on the result. For each conflict, propose a resolution. This is not an approval to merge; a human decides that.
 4. Write the review report as \`summary\`, in Markdown: what you checked, what you found, and the proposed fixes.
-5. Report \`done\` if the work is ready for a human review, \`changes\` if the code stage must fix what you found (list it in \`reason\`), \`decisions\` if the maintainers must choose something, or \`blocked\`.`
+5. If \`.codeman/workflows/\` has files, they are workflows the agent wrote, staged until a maintainer accepts them into \`.github/workflows/\`, where they would run with the repository's secrets. Review each as a workflow: its triggers (never \`pull_request_target\` with a checkout of the branch), the least \`permissions\` it needs, secrets only through a GitHub Environment, actions pinned to a full commit SHA, and, for a workflow that runs on pushes to the task branch, \`paths\` filters and no deploy. What must change goes in \`changes\`, like any other finding.
+6. Report \`done\` if the work is ready for a human review, \`changes\` if the code stage must fix what you found (list it in \`reason\`), \`decisions\` if the maintainers must choose something, or \`blocked\`.`
 };
 function outputShape(stage) {
   const statuses = STAGE_STATUSES[stage].map((status2) => `\`${status2}\``).join(", ");
@@ -21728,7 +21733,7 @@ ${UNTRUSTED_RULE}
 - Changes to the paths below are discarded, as are changes under \`.codeman/\` (except \`${OUTPUT_FILE}\`), symbolic links, files over ${task.settings["max-file-bytes"]} bytes, and \`.codemanignore\`. A run may change at most ${task.settings["max-files"]} files, or nothing is committed.
 - Never write secrets or environment variable values into any file.
 - Workflow files you write under \`.github/workflows/\` are not committed there: Codeman stages them under \`.codeman/workflows/\` until a maintainer reads and accepts them, because a workflow runs with the repository's secrets. Deleting a workflow is left to a maintainer.
-- If the task needs work this runner cannot do (another operating system, a device, a secret), write a workflow for it that runs on pushes to \`${task.branch}\`, with \`paths\` filters so it does not run on unrelated pushes, and report \`awaiting-workflow\`. Codeman gives you its results in a later run. A workflow that needs secrets must use a GitHub Environment. Never wait for a workflow that deploys, publishes or releases: run from the task branch, it would ship work nobody reviewed. Such a workflow is part of the change, and runs after the merge.
+- If the task needs work this runner cannot do (another operating system, a device, a secret), write a workflow for it that runs on pushes to \`${task.branch}\`, with \`paths\` filters so it does not run on unrelated pushes (include the workflow file itself, so it runs when a maintainer accepts it), and report \`awaiting-workflow\`. While the workflow waits for a maintainer, the task goes on to the next stages and review; you get its results once it has run. Codeman gives you its results in a later run. A workflow that needs secrets must use a GitHub Environment. Never wait for a workflow that deploys, publishes or releases: run from the task branch, it would ship work nobody reviewed. Such a workflow is part of the change, and runs after the merge.
 - You have about ${minutes} minutes. Well before that, leave the work in a consistent state, update the plan and write \`${OUTPUT_FILE}\`. Unfinished work is committed and the next run of this stage continues it.
 
 Protected paths (\`.gitignore\` syntax):
@@ -27349,13 +27354,23 @@ async function applyStage(task, repo) {
       });
     case "awaiting-workflow": {
       const workflows = output.value.workflows ?? [];
-      const present = /* @__PURE__ */ new Set([
-        ...(await repo.filesUnder(head, WORKFLOWS_DIR)).keys(),
-        ...[...(await repo.filesUnder(head, STAGED_WORKFLOWS_DIR)).keys()].map(workflowPath)
-      ]);
+      const staged2 = new Set(
+        [...(await repo.filesUnder(head, STAGED_WORKFLOWS_DIR)).keys()].map(workflowPath)
+      );
+      const present = /* @__PURE__ */ new Set([...(await repo.filesUnder(head, WORKFLOWS_DIR)).keys(), ...staged2]);
       const missing = workflows.filter((path) => !present.has(path));
       if (missing.length > 0) {
         return blocked(repo, task, t.missingWorkflows(missing.join(", ")), dropped, record);
+      }
+      const deferring = defer(record, stage, workflows, staged2);
+      if (deferring) {
+        const next2 = nextStage(stage) ?? "review";
+        return handOver(
+          "awaiting-workflow",
+          summary2,
+          deferring,
+          t.deferredWorkflows(stage, workflows.join(", "), reason ?? "", next2)
+        );
       }
       return finish(repo, task, "awaiting-workflow", {
         outcome: "awaiting-workflow",
@@ -27413,25 +27428,7 @@ ${summary2}`, 4e3) }
     }
   }
   if (stage !== "review") {
-    const next = nextStage(stage) ?? "review";
-    const text = truncate(status2 === "skipped" ? t.skipped(reason ?? "") : summary2, 2e3);
-    const updated = {
-      ...record,
-      stage: next,
-      runs: 0,
-      handoff: { stage, text },
-      reports: { ...record.reports, [stage]: text },
-      commitMessage: stage === "code" && output.value.commitMessage ? output.value.commitMessage : record.commitMessage
-    };
-    if (stage === "code") {
-      updated.pullRequest = await openPullRequest(repo, task, updated, "draft");
-    }
-    return finish(repo, task, STAGE_STATE[next], {
-      outcome: status2,
-      record: updated,
-      report: status2 === "skipped" ? reason : summary2,
-      errors: dropped
-    });
+    return status2 === "skipped" ? handOver("skipped", reason ?? "", record, void 0, t.skipped(reason ?? "")) : handOver("done", summary2, record);
   }
   if (task.ignore === null && await repo.readFile(task.branch, IGNORE_FILE) === void 0) {
     head = await repo.commit({
@@ -27444,23 +27441,45 @@ ${summary2}`, 4e3) }
 The paths Codeman's agent may not change. Review them before merging.`
     });
   }
-  const pullRequest = await openPullRequest(repo, task, record, "ready");
-  const done = {
-    ...record,
-    pullRequest,
-    stage: void 0,
-    runs: 0,
-    reviewRounds: 0,
-    handoff: void 0
-  };
-  await postReview(repo, t, { ...task, record: done }, done, summary2, void 0);
-  await finish(repo, task, "done", {
+  const staged = [...(await repo.filesUnder(head, STAGED_WORKFLOWS_DIR)).keys()].map(workflowPath);
+  const next = afterReview(t, record, staged);
+  const pullRequest = await openPullRequest(
+    repo,
+    task,
+    record,
+    next.state === "done" ? "ready" : "draft"
+  );
+  const reviewed = { ...next.record, pullRequest };
+  await postReview(repo, t, { ...task, record: reviewed }, reviewed, summary2, void 0);
+  await finish(repo, task, next.state, {
     outcome: "done",
     pullRequestWritten: true,
-    record: done,
-    message: t.workDone,
+    record: reviewed,
+    message: next.message,
     report: summary2
   });
+  async function handOver(outcome, report, base, message, notes = report) {
+    const next2 = nextStage(stage) ?? "review";
+    const text = truncate(notes, 2e3);
+    const updated = {
+      ...base,
+      stage: next2,
+      runs: 0,
+      handoff: { stage, text },
+      reports: { ...base.reports, [stage]: text },
+      commitMessage: stage === "code" && output.ok && output.value.commitMessage ? output.value.commitMessage : base.commitMessage
+    };
+    if (stage === "code") {
+      updated.pullRequest = await openPullRequest(repo, task, updated, "draft");
+    }
+    return finish(repo, task, STAGE_STATE[next2], {
+      outcome,
+      record: updated,
+      message,
+      report,
+      errors: dropped
+    });
+  }
 }
 var STAGE_NAMES = {
   design: "Design",
@@ -27543,15 +27562,70 @@ async function acceptWorkflows(task, repo) {
 Accepted by ${accept.author} in comment ${accept.id}.`
   });
   const next = afterAccept(t, task.fromState, task.record, accept.author, moved);
+  const record = { ...next.record, acceptedCommentId: accept.id };
+  if (next.state === "done")
+    record.pullRequest = await openPullRequest(repo, task, record, "ready");
   await finish(repo, task, next.state, {
     outcome: "done",
-    record: { ...next.record, acceptedCommentId: accept.id },
+    record,
     message: `${t.accepted(accept.author, moved.join(", "))} ${next.message}`.trim(),
-    retry: true
+    retry: true,
+    pullRequestWritten: next.state === "done"
   });
+}
+function defer(record, stage, workflows, staged) {
+  return workflows.some((path) => staged.has(path)) ? { ...record, deferred: { stage, workflows: [...workflows] } } : void 0;
+}
+function afterReview(t, record, staged) {
+  const reviewed = {
+    ...record,
+    stage: void 0,
+    runs: 0,
+    reviewRounds: 0,
+    handoff: void 0
+  };
+  if (staged.length > 0) {
+    return {
+      state: "awaiting-workflow",
+      record: { ...reviewed, reviewed: true },
+      message: t.acceptAfterReview(staged.join(", "))
+    };
+  }
+  const deferred = record.deferred;
+  if (deferred) {
+    return {
+      state: "awaiting-workflow",
+      record: {
+        ...reviewed,
+        stage: deferred.stage,
+        awaiting: deferred.workflows,
+        deferred: void 0
+      },
+      message: t.acceptWaits
+    };
+  }
+  return { state: "done", record: reviewed, message: t.workDone };
 }
 function afterAccept(t, state, record, by, workflows) {
   const accepted = { ...record, accepted: { by, workflows } };
+  if (state === "awaiting-workflow" && record.reviewed) {
+    const reviewed = { ...accepted, reviewed: void 0 };
+    const deferred = record.deferred;
+    if (!deferred) {
+      return { state: "done", record: { ...reviewed, accepted: void 0 }, message: t.workDone };
+    }
+    return {
+      state,
+      record: {
+        ...reviewed,
+        stage: deferred.stage,
+        awaiting: deferred.workflows,
+        deferred: void 0,
+        runs: 0
+      },
+      message: t.acceptWaits
+    };
+  }
   if (state === "awaiting-workflow") {
     return { state, record: accepted, message: t.acceptWaits };
   }

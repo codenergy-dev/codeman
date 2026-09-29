@@ -180,6 +180,10 @@ export const en: Messages = {
     `The agent waits for workflows that are not on the branch: ${paths}.`,
   awaitingWorkflows: (stage, paths, reason) =>
     `The ${STAGES[stage]} stage needs ${paths} to run: ${reason} Codeman goes on when their runs on the task branch finish. \`/codeman continue <guidance>\` goes on without them.`,
+  deferredWorkflows: (stage, paths, reason, next) =>
+    `The ${STAGES[stage]} stage needs ${paths} to run: ${reason} The workflows are staged and wait for a maintainer, so the task goes on to the ${STAGES[next]} stage meanwhile, up to review. Once they are accepted and their runs finish, the ${STAGES[stage]} stage goes on with their results.`,
+  acceptAfterReview: (paths) =>
+    `Review passed. The task waits for the staged workflows to be accepted: ${paths}. Read them, with review's report on the pull request, and comment \`/codeman accept-workflows\`. The pull request stays a draft until then, since merged now they would never run.`,
   stageDecisions: (stage, count) =>
     `The ${STAGES[stage]} stage needs ${count} decision(s) from the maintainers.`,
   reviewRounds: (rounds, max) =>

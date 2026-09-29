@@ -130,6 +130,10 @@ export interface Messages {
   agentReports(reason: string): string;
   missingWorkflows(paths: string): string;
   awaitingWorkflows(stage: Stage, paths: string, reason: string): string;
+  /** A stage needs the runs of workflows that are still staged, so the task goes on meanwhile. */
+  deferredWorkflows(stage: Stage, paths: string, reason: string, next: Stage): string;
+  /** Review passed, and the staged workflows wait to be accepted. */
+  acceptAfterReview(paths: string): string;
   stageDecisions(stage: Stage, count: number): string;
   reviewRounds(rounds: number, max: number): string;
   skipped(reason: string): string;

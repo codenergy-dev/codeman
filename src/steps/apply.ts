@@ -247,13 +247,23 @@ async function applyStage(task: TaskContext, repo: Repository): Promise<void> {
       });
     case "awaiting-workflow": {
       const workflows = output.value.workflows ?? [];
-      const present = new Set([
-        ...(await repo.filesUnder(head, WORKFLOWS_DIR)).keys(),
-        ...[...(await repo.filesUnder(head, STAGED_WORKFLOWS_DIR)).keys()].map(workflowPath),
-      ]);
+      const staged = new Set(
+        [...(await repo.filesUnder(head, STAGED_WORKFLOWS_DIR)).keys()].map(workflowPath),
+      );
+      const present = new Set([...(await repo.filesUnder(head, WORKFLOWS_DIR)).keys(), ...staged]);
       const missing = workflows.filter((path) => !present.has(path));
       if (missing.length > 0) {
         return blocked(repo, task, t.missingWorkflows(missing.join(", ")), dropped, record);
+      }
+      const deferring = defer(record, stage, workflows, staged);
+      if (deferring) {
+        const next = nextStage(stage) ?? "review";
+        return handOver(
+          "awaiting-workflow",
+          summary,
+          deferring,
+          t.deferredWorkflows(stage, workflows.join(", "), reason ?? "", next),
+        );
       }
       return finish(repo, task, "awaiting-workflow", {
         outcome: "awaiting-workflow",
@@ -311,30 +321,9 @@ async function applyStage(task: TaskContext, repo: Repository): Promise<void> {
   }
 
   if (stage !== "review") {
-    // done or skipped: hand over to the next stage.
-    const next = nextStage(stage) ?? "review";
-    // Kept short: the record lives in the status comment, which GitHub limits in size.
-    const text = truncate(status === "skipped" ? t.skipped(reason ?? "") : summary, 2000);
-    const updated: TaskRecord = {
-      ...record,
-      stage: next,
-      runs: 0,
-      handoff: { stage, text },
-      reports: { ...record.reports, [stage]: text },
-      commitMessage:
-        stage === "code" && output.value.commitMessage
-          ? output.value.commitMessage
-          : record.commitMessage,
-    };
-    if (stage === "code") {
-      updated.pullRequest = await openPullRequest(repo, task, updated, "draft");
-    }
-    return finish(repo, task, STAGE_STATE[next], {
-      outcome: status,
-      record: updated,
-      report: status === "skipped" ? reason : summary,
-      errors: dropped,
-    });
+    return status === "skipped"
+      ? handOver("skipped", reason ?? "", record, undefined, t.skipped(reason ?? ""))
+      : handOver("done", summary, record);
   }
 
   // Review passed.
@@ -347,23 +336,60 @@ async function applyStage(task: TaskContext, repo: Repository): Promise<void> {
       message: `Add ${IGNORE_FILE}\n\nThe paths Codeman's agent may not change. Review them before merging.`,
     });
   }
-  const pullRequest = await openPullRequest(repo, task, record, "ready");
-  const done: TaskRecord = {
-    ...record,
-    pullRequest,
-    stage: undefined,
-    runs: 0,
-    reviewRounds: 0,
-    handoff: undefined,
-  };
-  await postReview(repo, t, { ...task, record: done }, done, summary, undefined);
-  await finish(repo, task, "done", {
+  const staged = [...(await repo.filesUnder(head, STAGED_WORKFLOWS_DIR)).keys()].map(workflowPath);
+  const next = afterReview(t, record, staged);
+  const pullRequest = await openPullRequest(
+    repo,
+    task,
+    record,
+    next.state === "done" ? "ready" : "draft",
+  );
+  const reviewed = { ...next.record, pullRequest };
+  await postReview(repo, t, { ...task, record: reviewed }, reviewed, summary, undefined);
+  await finish(repo, task, next.state, {
     outcome: "done",
     pullRequestWritten: true,
-    record: done,
-    message: t.workDone,
+    record: reviewed,
+    message: next.message,
     report: summary,
   });
+
+  /**
+   * Hands the task over to the next stage, with this stage's report as its notes. When code
+   * ends, the pull request opens as a draft.
+   */
+  async function handOver(
+    outcome: "done" | "skipped" | "awaiting-workflow",
+    report: string,
+    base: TaskRecord,
+    message?: string,
+    notes = report,
+  ): Promise<void> {
+    const next = nextStage(stage) ?? "review";
+    // Kept short: the record lives in the status comment, which GitHub limits in size.
+    const text = truncate(notes, 2000);
+    const updated: TaskRecord = {
+      ...base,
+      stage: next,
+      runs: 0,
+      handoff: { stage, text },
+      reports: { ...base.reports, [stage]: text },
+      commitMessage:
+        stage === "code" && output.ok && output.value.commitMessage
+          ? output.value.commitMessage
+          : base.commitMessage,
+    };
+    if (stage === "code") {
+      updated.pullRequest = await openPullRequest(repo, task, updated, "draft");
+    }
+    return finish(repo, task, STAGE_STATE[next], {
+      outcome,
+      record: updated,
+      message,
+      report,
+      errors: dropped,
+    });
+  }
 }
 
 const STAGE_NAMES: Record<Stage, string> = {
@@ -478,18 +504,81 @@ async function acceptWorkflows(task: TaskContext, repo: Repository): Promise<voi
     message: `Accept workflows for #${task.number}\n\nAccepted by ${accept.author} in comment ${accept.id}.`,
   });
   const next = afterAccept(t, task.fromState, task.record, accept.author, moved);
+  const record: TaskRecord = { ...next.record, acceptedCommentId: accept.id };
+  // Review already passed, and nothing waits for the workflows' runs: the work is done.
+  if (next.state === "done")
+    record.pullRequest = await openPullRequest(repo, task, record, "ready");
   await finish(repo, task, next.state, {
     outcome: "done",
-    record: { ...next.record, acceptedCommentId: accept.id },
+    record,
     message: `${t.accepted(accept.author, moved.join(", "))} ${next.message}`.trim(),
     retry: true,
+    pullRequestWritten: next.state === "done",
   });
 }
 
 /**
- * Where a task goes once a maintainer accepted its staged workflows. A task that waits for
- * them goes on when their runs finish; a blocked stage resumes, with a fresh run count, since
- * accepting answers what it most likely waited for.
+ * The record of a stage that waits for workflows still staged, which cannot run before a
+ * maintainer accepts them: review goes first, and the stage goes on with their results after
+ * the accept. Undefined when every awaited workflow is already accepted.
+ */
+export function defer(
+  record: TaskRecord,
+  stage: Stage,
+  workflows: readonly string[],
+  staged: ReadonlySet<string>,
+): TaskRecord | undefined {
+  return workflows.some((path) => staged.has(path))
+    ? { ...record, deferred: { stage, workflows: [...workflows] } }
+    : undefined;
+}
+
+/**
+ * Where a task goes once review passed. Staged workflows would be merged where they never
+ * run, so they wait for the accept, and the pull request stays a draft. A stage that deferred
+ * their runs, when they were accepted meanwhile, waits for them now.
+ */
+export function afterReview(
+  t: Messages,
+  record: TaskRecord,
+  staged: readonly string[],
+): { state: State; record: TaskRecord; message: string } {
+  const reviewed: TaskRecord = {
+    ...record,
+    stage: undefined,
+    runs: 0,
+    reviewRounds: 0,
+    handoff: undefined,
+  };
+  if (staged.length > 0) {
+    return {
+      state: "awaiting-workflow",
+      record: { ...reviewed, reviewed: true },
+      message: t.acceptAfterReview(staged.join(", ")),
+    };
+  }
+  const deferred = record.deferred;
+  if (deferred) {
+    return {
+      state: "awaiting-workflow",
+      record: {
+        ...reviewed,
+        stage: deferred.stage,
+        awaiting: deferred.workflows,
+        deferred: undefined,
+      },
+      message: t.acceptWaits,
+    };
+  }
+  return { state: "done", record: reviewed, message: t.workDone };
+}
+
+/**
+ * Where a task goes once a maintainer accepted its staged workflows:
+ * - after review passed, to the runs a stage deferred, or else to done;
+ * - a task that waits for them goes on when their runs finish;
+ * - a blocked stage resumes, with a fresh run count, since accepting answers what it most
+ *   likely waited for.
  */
 export function afterAccept(
   t: Messages,
@@ -499,6 +588,24 @@ export function afterAccept(
   workflows: string[],
 ): { state: State | "new"; record: TaskRecord; message: string } {
   const accepted = { ...record, accepted: { by, workflows } };
+  if (state === "awaiting-workflow" && record.reviewed) {
+    const reviewed = { ...accepted, reviewed: undefined };
+    const deferred = record.deferred;
+    if (!deferred) {
+      return { state: "done", record: { ...reviewed, accepted: undefined }, message: t.workDone };
+    }
+    return {
+      state,
+      record: {
+        ...reviewed,
+        stage: deferred.stage,
+        awaiting: deferred.workflows,
+        deferred: undefined,
+        runs: 0,
+      },
+      message: t.acceptWaits,
+    };
+  }
   if (state === "awaiting-workflow") {
     return { state, record: accepted, message: t.acceptWaits };
   }

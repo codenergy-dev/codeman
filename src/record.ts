@@ -60,6 +60,13 @@ export interface TaskRecord {
   language?: string | undefined;
   /** The newest run comment on the issue. */
   reportCommentId?: number | undefined;
+  /**
+   * A stage that needs the runs of workflows still staged: the task goes on to review, and this
+   * stage goes on with their results once they are accepted.
+   */
+  deferred?: { stage: Stage; workflows: string[] } | undefined;
+  /** Review passed, and the task waits for its staged workflows to be accepted. */
+  reviewed?: boolean | undefined;
   /** Workflows a maintainer accepted since the last stage run, for the next one to know. */
   accepted?: { by: string; workflows: string[] } | undefined;
 }

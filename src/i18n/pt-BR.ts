@@ -192,6 +192,10 @@ export const ptBR: Messages = {
   missingWorkflows: (paths) => `O agente aguarda workflows que não estão na branch: ${paths}.`,
   awaitingWorkflows: (stage, paths, reason) =>
     `A ${OF_STAGE(stage)} precisa que ${paths} rode: ${reason} O Codeman continua quando essas execuções terminarem na branch da tarefa. \`/codeman continue <orientação>\` continua sem elas.`,
+  deferredWorkflows: (stage, paths, reason, next) =>
+    `A ${OF_STAGE(stage)} precisa que ${paths} rode: ${reason} Os workflows estão guardados e aguardam um mantenedor, então a tarefa segue para a ${OF_STAGE(next)} enquanto isso, até a revisão. Quando forem aceitos e as execuções terminarem, a ${OF_STAGE(stage)} continua com os resultados.`,
+  acceptAfterReview: (paths) =>
+    `A revisão passou. A tarefa aguarda que os workflows guardados sejam aceitos: ${paths}. Leia-os, junto com o relatório da revisão no pull request, e comente \`/codeman accept-workflows\`. O pull request continua em rascunho até lá, porque, mergeados agora, eles nunca rodariam.`,
   stageDecisions: (stage, count) =>
     `A ${OF_STAGE(stage)} precisa de ${count} decisão(ões) dos mantenedores.`,
   reviewRounds: (rounds, max) =>

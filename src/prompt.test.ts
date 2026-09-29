@@ -312,3 +312,13 @@ test("the agent writes to the maintainers in the conversation's language", () =>
     /in English \(`en`\)/,
   );
 });
+
+test("review checks staged workflows, and workflows to wait for run when accepted", () => {
+  const review = stagePrompt({ ...task, action: "implement", stage: "review" }, 45);
+  assert.match(review, /If `\.codeman\/workflows\/` has files/);
+  assert.match(review, /never `pull_request_target`/);
+  assert.match(review, /pinned to a full commit SHA/);
+  const code = stagePrompt({ ...task, action: "implement", stage: "code" }, 45);
+  assert.match(code, /include the workflow file itself, so it runs when a maintainer accepts it/);
+  assert.match(code, /the task goes on to the next stages and review/);
+});

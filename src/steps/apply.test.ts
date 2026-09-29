@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { en } from "../i18n/en.ts";
 import type { TaskRecord } from "../record.ts";
-import { afterAccept, chains } from "./apply.ts";
+import { afterAccept, afterReview, chains, defer } from "./apply.ts";
 
 test("starts another run only when this one moved a task", () => {
   assert.equal(chains("record", "skipped", ""), true);
@@ -40,4 +40,69 @@ test("accepting workflows resumes a blocked stage", () => {
   const planning = afterAccept(en, "blocked", { ...record, stage: undefined }, "alice", workflows);
   assert.equal(planning.state, "blocked", "no stage to resume");
   assert.equal(planning.message, "");
+});
+
+const base: TaskRecord = {
+  branch: "b",
+  planPath: "p.md",
+  summary: "",
+  decisions: [],
+  processedCommentId: 0,
+};
+const ios = ".github/workflows/ios.yml";
+
+test("a stage that needs staged workflows defers its wait, and the task goes on", () => {
+  const staged = new Set([ios]);
+  assert.deepEqual(defer(base, "code", [ios], staged)?.deferred, {
+    stage: "code",
+    workflows: [ios],
+  });
+  assert.deepEqual(defer(base, "test", [ios, ".github/workflows/ci.yml"], staged)?.deferred, {
+    stage: "test",
+    workflows: [ios, ".github/workflows/ci.yml"],
+  });
+  assert.equal(defer(base, "test", [ios], new Set()), undefined, "accepted ones are waited for");
+});
+
+test("after review, staged workflows wait for the accept; deferred runs, for their runs", () => {
+  const deferred = {
+    ...base,
+    stage: "review" as const,
+    deferred: { stage: "code" as const, workflows: [ios] },
+  };
+
+  const waiting = afterReview(en, deferred, [ios]);
+  assert.equal(waiting.state, "awaiting-workflow");
+  assert.equal(waiting.record.reviewed, true);
+  assert.deepEqual(waiting.record.deferred, deferred.deferred, "kept for the accept");
+  assert.match(
+    waiting.message,
+    /Review passed\. The task waits for the staged workflows to be accepted: \.github\/workflows\/ios\.yml/,
+  );
+
+  const accepted = afterReview(en, deferred, []);
+  assert.equal(accepted.state, "awaiting-workflow", "accepted meanwhile: wait for their runs");
+  assert.equal(accepted.record.stage, "code");
+  assert.deepEqual(accepted.record.awaiting, [ios]);
+  assert.equal(accepted.record.deferred, undefined);
+
+  const done = afterReview(en, { ...base, stage: "review" }, []);
+  assert.equal(done.state, "done");
+  assert.equal(done.record.stage, undefined);
+});
+
+test("accepting after review finishes the task, or waits for the deferred runs", () => {
+  const reviewed = { ...base, reviewed: true };
+  const done = afterAccept(en, "awaiting-workflow", reviewed, "alice", [ios]);
+  assert.equal(done.state, "done");
+  assert.equal(done.record.reviewed, undefined);
+
+  const deferred = { ...reviewed, deferred: { stage: "test" as const, workflows: [ios] } };
+  const runs = afterAccept(en, "awaiting-workflow", deferred, "alice", [ios]);
+  assert.equal(runs.state, "awaiting-workflow");
+  assert.equal(runs.record.stage, "test");
+  assert.deepEqual(runs.record.awaiting, [ios]);
+  assert.equal(runs.record.deferred, undefined);
+  assert.equal(runs.record.reviewed, undefined);
+  assert.deepEqual(runs.record.accepted, { by: "alice", workflows: [ios] });
 });
