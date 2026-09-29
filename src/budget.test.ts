@@ -111,3 +111,36 @@ test("reads one key's total usage", async () => {
   assert.equal(await new OpenRouter("mk", fetch).keyUsage("h/x"), 0.42);
   assert.equal(calls[0]?.[0], "https://openrouter.ai/api/v1/keys/h%2Fx");
 });
+
+test("reads a key's tokens from analytics, summing rows given as strings", async () => {
+  const { fetch, calls } = fakeFetch([
+    {
+      data: {
+        data: [
+          { tokens_prompt: "1200", tokens_completion: 30 },
+          { tokens_prompt: 800, tokens_completion: "20", other: "x" },
+        ],
+        metadata: { row_count: 2, truncated: false },
+      },
+    },
+  ]);
+  const tokens = await new OpenRouter("mk", fetch).keyTokens(
+    "a".repeat(64),
+    new Date("2026-09-27T10:00:00.123Z"),
+    new Date("2026-09-28T10:00:00.456Z"),
+  );
+  assert.deepEqual(tokens, { input: 2000, output: 50 });
+  const [url, init] = calls[0] ?? [];
+  assert.equal(url, "https://openrouter.ai/api/v1/analytics/query");
+  assert.equal(init?.method, "POST");
+  assert.deepEqual(JSON.parse(String(init?.body)), {
+    metrics: ["tokens_prompt", "tokens_completion"],
+    filters: [{ field: "api_key_id", operator: "eq", value: "a".repeat(64) }],
+    time_range: { start: "2026-09-27T10:00:00Z", end: "2026-09-28T10:00:00Z" },
+  });
+});
+
+test("a key with no analytics rows yet has no tokens", async () => {
+  const { fetch } = fakeFetch([{ data: { data: [], metadata: { row_count: 0 } } }]);
+  assert.equal(await new OpenRouter("mk", fetch).keyTokens("h", new Date(), new Date()), undefined);
+});

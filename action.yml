@@ -54,6 +54,10 @@ inputs:
     description: "(apply) key-limit output of the open-key job."
   month-spent:
     description: "(apply) month-spent output of the open-key job."
+  input-tokens:
+    description: "(apply) input-tokens output of the close-key job."
+  output-tokens:
+    description: "(apply) output-tokens output of the close-key job."
   workdir:
     description: "Directory for Codeman's files. Defaults to RUNNER_TEMP/codeman."
 outputs:
@@ -83,6 +87,10 @@ outputs:
     description: "(open-key) The limit of this run's key, in USD."
   month-spent:
     description: "(open-key) What the repository spent this month before this run, in USD."
+  input-tokens:
+    description: "(close-key) Input tokens of this run's key, from OpenRouter's analytics."
+  output-tokens:
+    description: "(close-key) Output tokens of this run's key, from OpenRouter's analytics."
   reason:
     description: "(open-key) Why no key was created."
   key-hash:

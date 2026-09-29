@@ -86,4 +86,45 @@ export async function closeKey(): Promise<void> {
   }
   core.setOutput("run-cost", cost.toFixed(4));
   core.info(`This run spent ${usd(cost)}.`);
+
+  const tokens = await runTokens(router, hash, cost > 0);
+  if (tokens) {
+    core.setOutput("input-tokens", String(tokens.input));
+    core.setOutput("output-tokens", String(tokens.output));
+    core.info(`This run used ${tokens.input} input and ${tokens.output} output tokens.`);
+  }
+}
+
+/** How far back the key's tokens are counted: longer than any key lives. */
+const KEY_LIFETIME_MS = 48 * 3_600_000;
+
+/**
+ * The key's tokens, from OpenRouter's analytics. A request may show up there some time after
+ * it is billed, so while a key that spent something has no tokens yet, this asks again, for up
+ * to about a minute. Failures are only logged: the tokens are informational.
+ */
+export async function runTokens(
+  router: Pick<OpenRouter, "keyTokens">,
+  hash: string,
+  spent: boolean,
+  wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms)),
+): Promise<{ input: number; output: number } | undefined> {
+  try {
+    for (let attempt = 0; ; attempt++) {
+      const now = new Date();
+      const tokens = await router.keyTokens(hash, new Date(now.getTime() - KEY_LIFETIME_MS), now);
+      const counted = tokens !== undefined && tokens.input + tokens.output > 0;
+      if (counted || !spent) return tokens ?? (spent ? undefined : { input: 0, output: 0 });
+      if (attempt === 6) {
+        core.warning("OpenRouter's analytics has no tokens for this run's key yet.");
+        return undefined;
+      }
+      await wait(10_000);
+    }
+  } catch (error) {
+    core.warning(
+      `Could not read this run's tokens: ${error instanceof Error ? error.message : error}`,
+    );
+    return undefined;
+  }
 }

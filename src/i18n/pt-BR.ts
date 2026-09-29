@@ -8,6 +8,19 @@ const STAGES = {
   review: "revisão",
 };
 
+/** How a stage ended, after "Etapa de código:". */
+const OUTCOMES = {
+  done: "concluída",
+  skipped: "pulada",
+  partial: "inacabada",
+  blocked: "bloqueada",
+  "awaiting-workflow": "aguardando workflows",
+  decisions: "precisa de decisões",
+  changes: "mudanças pedidas",
+  "out-of-time": "sem tempo",
+  failed: "falhou",
+};
+
 /** Stage names after "etapa de": "etapa de código", "etapa de revisão". */
 const OF_STAGE = (stage: keyof typeof STAGES) => `etapa de ${STAGES[stage]}`;
 
@@ -18,22 +31,29 @@ export const ptBR: Messages = {
   locale: "pt-BR",
 
   money: (amount) => `US$ ${number(2).format(amount)}`,
+  tokens: (count) =>
+    new Intl.NumberFormat("pt-BR", { notation: "compact", maximumFractionDigits: 1 }).format(count),
   cost: (amount) => `US$ ${number(3).format(amount)}`,
   dateTime: (iso) =>
     `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)} ${iso.slice(11, 16)} UTC`,
   of: (part, whole) => `${part} de ${whole}`,
 
   stage: (stage) => STAGES[stage],
-  runTitle: ({ action, stage, revised }) => {
+  runTitle: ({ action, stage, revised, outcome }) => {
+    const ended = outcome ? OUTCOMES[outcome] : "";
     switch (action) {
       case "plan":
-        return revised ? "Plano revisado" : "Plano";
+        return outcome === "done"
+          ? revised
+            ? "Plano: revisado"
+            : "Plano: escrito"
+          : `Plano: ${outcome === "failed" ? "falhou" : ended}`;
       case "implement":
-        return capitalize(OF_STAGE(stage ?? "code"));
+        return `${capitalize(OF_STAGE(stage ?? "code"))}${ended ? `: ${ended}` : ""}`;
       case "record":
         return "Respostas registradas";
       case "accept":
-        return "Workflows aceitos";
+        return outcome === "failed" ? "Workflows não aceitos" : "Workflows aceitos";
     }
   },
 
@@ -69,7 +89,22 @@ export const ptBR: Messages = {
   panelFooter: (model, runUrl, reportUrl) =>
     `<sub>Modelo: \`${model}\` (troque com \`/codeman set model <id>\`) · [Última rodada](${runUrl})${reportUrl ? ` · [Último relatório](${reportUrl})` : ""}</sub>`,
 
-  now: (heading) => `Agora: ${heading}.`,
+  nextStepLabel: "Próximo passo",
+  nextStep: (state) =>
+    ({
+      new: "o Codeman tenta de novo numa próxima rodada.",
+      planning: "o plano.",
+      "awaiting-decision": "as suas decisões, no comentário de status da tarefa.",
+      ready: "a implementação, na próxima rodada.",
+      designing: "etapa de design.",
+      coding: "etapa de código.",
+      testing: "etapa de testes.",
+      reviewing: "etapa de revisão.",
+      "in-progress": "a implementação.",
+      "awaiting-workflow": "os workflows: aceite-os ou aguarde as execuções.",
+      blocked: "um mantenedor: veja acima como continuar.",
+      done: "a sua revisão do pull request.",
+    })[state],
   report: "Relatório",
   problems: "Problemas",
   costHeading: "Custo",
@@ -80,11 +115,16 @@ export const ptBR: Messages = {
     "Rodada",
     "Etapa",
     "Modelo",
+    "Tempo",
+    "Tokens de entrada",
+    "Tokens de saída",
     "Custo",
     "Limite da chave",
     "Orçamento da tarefa",
     "Orçamento mensal",
   ],
+  usedTokens: (input, output, time) =>
+    `Tokens: ${input} de entrada e ${output} de saída, em ${time} de agente.`,
   earlierRuns: (runs) => `Rodadas anteriores (${runs})`,
   runsWithoutRow: "Rodadas sem linha",
 
@@ -156,9 +196,6 @@ export const ptBR: Messages = {
     `A ${OF_STAGE(stage)} precisa de ${count} decisão(ões) dos mantenedores.`,
   reviewRounds: (rounds, max) =>
     `A revisão devolveu o trabalho à etapa de código ${rounds} vezes seguidas (\`max-runs\` é ${max}). Comente \`/codeman continue <orientação>\` para continuar.`,
-  reviewAskedChanges: "A revisão pediu mudanças; a etapa de código trabalha nelas a seguir.",
-  stageFinished: (stage, skipped, next) =>
-    `${capitalize(OF_STAGE(stage))} ${skipped ? "pulada" : "concluída"}. A seguir: ${STAGES[next]}.`,
   skipped: (reason) => `Pulada: ${reason}`,
   workDone:
     "O trabalho está feito e revisado. Revise o pull request. Para pedir mudanças, envie uma revisão pedindo-as ou comente `/codeman fix <o que mudar>` no pull request.",

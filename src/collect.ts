@@ -16,6 +16,8 @@ export interface Manifest {
   harness: string;
   exitCode: number | null;
   timedOut: boolean;
+  /** How long the harness ran, measured outside the sandbox. */
+  durationMs?: number;
   changes: Change[];
 }
 

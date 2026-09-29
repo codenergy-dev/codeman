@@ -3,6 +3,18 @@ import type { CommandProblem } from "../problems.ts";
 import type { Stage } from "../stages.ts";
 import type { State } from "../state.ts";
 
+/** How a run ended. */
+export type RunOutcome =
+  | "done"
+  | "skipped"
+  | "partial"
+  | "blocked"
+  | "awaiting-workflow"
+  | "decisions"
+  | "changes"
+  | "out-of-time"
+  | "failed";
+
 /**
  * Every fixed text Codeman writes on issues and pull requests. Each catalog implements all of
  * them, so the type checker finds a missing one. Texts are trusted Markdown: they may hold
@@ -15,6 +27,8 @@ export interface Messages {
 
   // Formatting.
   money(amount: number): string;
+  /** A token count, compact: `45.7K`. */
+  tokens(count: number): string;
   /** With a third decimal: runs often cost less than a cent. */
   cost(amount: number): string;
   /** An ISO timestamp, in UTC. */
@@ -24,10 +38,12 @@ export interface Messages {
 
   // Stages and runs.
   stage(stage: Stage | "plan"): string;
+  /** What a run worked on and how it ended, such as "Design stage: skipped". */
   runTitle(run: {
     action: "plan" | "implement" | "record" | "accept";
-    stage?: Stage;
+    stage?: Stage | undefined;
     revised: boolean;
+    outcome?: RunOutcome | undefined;
   }): string;
 
   // Status comment (the task's panel).
@@ -46,14 +62,29 @@ export interface Messages {
   panelFooter(model: string, runUrl: string, reportUrl: string | undefined): string;
 
   // Run comments.
-  now(heading: string): string;
+  nextStepLabel: string;
+  /** What comes after a run that left the task in `state`. */
+  nextStep(state: State | "new"): string;
   report: string;
   problems: string;
   costHeading: string;
   runFooter(model: string, spent: string | undefined, runUrl: string): string;
 
   // Spend table.
-  tableHeader: readonly [string, string, string, string, string, string, string];
+  tableHeader: readonly [
+    string,
+    string,
+    string,
+    string,
+    string,
+    string,
+    string,
+    string,
+    string,
+    string,
+  ];
+  /** Tokens used by the task's recorded runs, and for how long agents ran. */
+  usedTokens(input: string, output: string, time: string): string;
   earlierRuns(runs: number): string;
   runsWithoutRow: string;
 
@@ -101,8 +132,6 @@ export interface Messages {
   awaitingWorkflows(stage: Stage, paths: string, reason: string): string;
   stageDecisions(stage: Stage, count: number): string;
   reviewRounds(rounds: number, max: number): string;
-  reviewAskedChanges: string;
-  stageFinished(stage: Stage, skipped: boolean, next: Stage): string;
   skipped(reason: string): string;
   workDone: string;
 

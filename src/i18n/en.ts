@@ -1,5 +1,17 @@
 import type { Messages } from "./messages.ts";
 
+const OUTCOMES = {
+  done: "done",
+  skipped: "skipped",
+  partial: "unfinished",
+  blocked: "blocked",
+  "awaiting-workflow": "waiting for workflows",
+  decisions: "decisions needed",
+  changes: "changes requested",
+  "out-of-time": "out of time",
+  failed: "failed",
+};
+
 const STAGES = { plan: "plan", design: "design", code: "code", test: "test", review: "review" };
 
 const number = (digits: number) =>
@@ -9,21 +21,28 @@ export const en: Messages = {
   locale: "en-US",
 
   money: (amount) => `US$ ${number(2).format(amount)}`,
+  tokens: (count) =>
+    new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(count),
   cost: (amount) => `US$ ${number(3).format(amount)}`,
   dateTime: (iso) => `${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC`,
   of: (part, whole) => `${part} of ${whole}`,
 
   stage: (stage) => STAGES[stage],
-  runTitle: ({ action, stage, revised }) => {
+  runTitle: ({ action, stage, revised, outcome }) => {
+    const ended = outcome ? OUTCOMES[outcome] : "";
     switch (action) {
       case "plan":
-        return revised ? "Plan revised" : "Plan";
+        return outcome === "done"
+          ? revised
+            ? "Plan: revised"
+            : "Plan: written"
+          : `Plan: ${ended}`;
       case "implement":
-        return `${capitalize(STAGES[stage ?? "code"])} stage`;
+        return `${capitalize(STAGES[stage ?? "code"])} stage${ended ? `: ${ended}` : ""}`;
       case "record":
         return "Answers recorded";
       case "accept":
-        return "Workflows accepted";
+        return outcome === "failed" ? "Workflows not accepted" : "Workflows accepted";
     }
   },
 
@@ -59,14 +78,42 @@ export const en: Messages = {
   panelFooter: (model, runUrl, reportUrl) =>
     `<sub>Model: \`${model}\` (change it with \`/codeman set model <id>\`) · [Last run](${runUrl})${reportUrl ? ` · [Last report](${reportUrl})` : ""}</sub>`,
 
-  now: (heading) => `Now: ${heading}.`,
+  nextStepLabel: "Next step",
+  nextStep: (state) =>
+    ({
+      new: "Codeman tries again in a later run.",
+      planning: "the plan.",
+      "awaiting-decision": "your decisions, in the task's status comment.",
+      ready: "the implementation, in the next run.",
+      designing: "the design stage.",
+      coding: "the code stage.",
+      testing: "the test stage.",
+      reviewing: "the review stage.",
+      "in-progress": "the implementation.",
+      "awaiting-workflow": "the workflows: accept them, or wait for their runs.",
+      blocked: "a maintainer: see above how to go on.",
+      done: "your review of the pull request.",
+    })[state],
   report: "Report",
   problems: "Problems",
   costHeading: "Cost",
   runFooter: (model, spent, runUrl) =>
     `<sub>Model: \`${model}\`${spent ? ` · ${spent}` : ""} · [Run](${runUrl})</sub>`,
 
-  tableHeader: ["Run", "Stage", "Model", "Cost", "Key limit", "Task budget", "Monthly budget"],
+  tableHeader: [
+    "Run",
+    "Stage",
+    "Model",
+    "Time",
+    "Input tokens",
+    "Output tokens",
+    "Cost",
+    "Key limit",
+    "Task budget",
+    "Monthly budget",
+  ],
+  usedTokens: (input, output, time) =>
+    `Tokens: ${input} input and ${output} output, in ${time} of agent time.`,
   earlierRuns: (runs) => `Earlier runs (${runs})`,
   runsWithoutRow: "Runs without a row",
 
@@ -137,9 +184,6 @@ export const en: Messages = {
     `The ${STAGES[stage]} stage needs ${count} decision(s) from the maintainers.`,
   reviewRounds: (rounds, max) =>
     `Review sent the work back to the code stage ${rounds} times in a row (\`max-runs\` is ${max}). Comment \`/codeman continue <guidance>\` to go on.`,
-  reviewAskedChanges: "Review asked for changes; the code stage works on them next.",
-  stageFinished: (stage, skipped, next) =>
-    `${capitalize(STAGES[stage])} ${skipped ? "skipped" : "done"}. Next: ${STAGES[next]}.`,
   skipped: (reason) => `Skipped: ${reason}`,
   workDone:
     "The work is done and reviewed. Review the pull request. To ask for changes, submit a review that requests them, or comment `/codeman fix <what to change>` on the pull request.",

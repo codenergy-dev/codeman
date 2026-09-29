@@ -1,5 +1,5 @@
 import type { Messages } from "./i18n/index.ts";
-import { inertLines, inlineText, oneLine } from "./text.ts";
+import { oneLine, safeInline, safeMarkdown } from "./text.ts";
 
 export interface PullRequestView {
   /** The task's language. */
@@ -22,7 +22,7 @@ export function pullRequestTitle(issueTitle: string): string {
   return oneLine(issueTitle).trim().slice(0, 256) || "Codeman task";
 }
 
-/** The pull request's description. Text from the agent is rendered inert. */
+/** The pull request's description. Text from the agent is rendered as safe Markdown. */
 export function pullRequestBody(view: PullRequestView): string {
   const { t } = view;
   const longest = Math.max(0, ...(view.commitMessage.match(/`+/g) ?? []).map((run) => run.length));
@@ -32,13 +32,13 @@ export function pullRequestBody(view: PullRequestView): string {
     "",
     `### ${t.plan}`,
     "",
-    inlineText(view.planSummary),
+    safeInline(view.planSummary),
     "",
     `${t.fullPlan}: [${view.planPath}](${view.planUrl})`,
     "",
     `### ${t.changes}`,
     "",
-    inertLines(view.summary),
+    safeMarkdown(view.summary),
     "",
     ...(view.commitMessage
       ? [`### ${t.squashMessage}`, "", `${fence}text`, view.commitMessage, fence, ""]

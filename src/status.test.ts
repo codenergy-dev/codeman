@@ -72,7 +72,7 @@ test("marks the chosen option", () => {
 test("neutralizes mentions, HTML and images written by the agent", () => {
   const visible = renderStatus(view).split("\n").slice(1).join("\n");
   assert.ok(!/@everyone|@ceo/.test(visible));
-  assert.ok(!visible.includes("<script>"));
+  assert.ok(!/(?<!\\)<script>/.test(visible), "HTML stays escaped");
   assert.ok(!visible.includes("![img]"));
 });
 
@@ -110,7 +110,7 @@ test("links the newest run comment of a record", () => {
 
 const run = {
   t: en,
-  title: "Test stage",
+  title: "Test stage: done",
   state: "reviewing" as const,
   model: "a/b",
   runUrl: "https://github.com/o/r/actions/runs/2",
@@ -126,15 +126,16 @@ test("a run comment says what the run did, with its report kept inert", () => {
   });
   assert.ok(isRunComment(body));
   assert.ok(!isStatusComment(body));
-  assert.match(body, /### Codeman: Test stage\n\nNow: Reviewing\./);
+  assert.match(body, /### Codeman · Test stage: done\n\nTests done\. Next: review\./);
+  assert.match(body, /\*\*Next step:\*\* the review stage\./);
   assert.match(body, /#### Report\n\nChanges:\n- Added /);
   assert.match(body, /#### Problems\n\n- Decision 3 does not exist\./);
   assert.match(body, /Spent: US\$ 0\.12 this run, US\$ 0\.50 of US\$ 2\.00 for the task/);
   assert.match(body, /\[Run\]\(https:\/\/github\.com\/o\/r\/actions\/runs\/2\)/);
   assert.ok(!body.includes("@everyone"));
   assert.ok(!body.includes("![x]"));
-  assert.ok(!body.includes("<b>"));
-  assert.equal(runCommentText(body).split("\n")[0], "### Codeman: Test stage");
+  assert.ok(!/(?<!\\)<b>/.test(body), "HTML stays escaped");
+  assert.equal(runCommentText(body).split("\n")[0], "### Codeman · Test stage: done");
   assert.ok(!renderRun(run).includes("####"));
 });
 
@@ -148,6 +149,9 @@ const spendRow = {
   taskBudget: 2,
   monthlyBudget: 20,
   monthSpent: 3,
+  durationMs: 120_000,
+  inputTokens: 12_345,
+  outputTokens: 800,
 };
 
 test("the panel shows the spend table, and a run comment its own row", () => {
@@ -157,15 +161,28 @@ test("the panel shows the spend table, and a run comment its own row", () => {
     cost: { task: 0.5, budget: 2 },
   });
   assert.match(panel, /#### Spending\n\n\| Run \| Stage/);
-  assert.match(panel, /\| test \| `a\/b` \| US\$ 0\.123 \|/);
-  assert.match(panel, /\| Runs without a row \| \| \| US\$ 0\.377 \|/);
+  assert.match(panel, /\| test \| `a\/b` \| 2 min \| 12\.3K \| 800 \| US\$ 0\.123 \|/);
+  assert.match(panel, /\| Runs without a row \| \| \| \| \| \| US\$ 0\.377 \|/);
   assert.match(panel, /Spent: US\$ 0\.50 of US\$ 2\.00 for the task\./);
+  assert.match(panel, /Tokens: 12\.3K input and 800 output, in 2 min of agent time\./);
+  const old = {
+    ...spendRow,
+    durationMs: undefined,
+    inputTokens: undefined,
+    outputTokens: undefined,
+  };
+  assert.ok(
+    !renderStatus({ ...view, record: { ...record, spending: { rows: [old] } } }).includes(
+      "Tokens:",
+    ),
+    "rows from before tokens were kept",
+  );
 
   const body = renderRun({ ...run, spend: spendRow, cost: { run: 0.1234, task: 0.5, budget: 2 } });
   assert.match(body, /#### Cost\n\n\| Run \| Stage/);
   assert.match(
     body,
-    /\| test \| `a\/b` \| US\$ 0\.123 \| US\$ 1\.50 \| US\$ 2\.00 \| US\$ 3\.00 of US\$ 20\.00 \|/,
+    /\| test \| `a\/b` \| 2 min \| 12\.3K \| 800 \| US\$ 0\.123 \| US\$ 1\.50 \| US\$ 2\.00 \| US\$ 3\.00 of US\$ 20\.00 \|/,
   );
   assert.ok(!body.includes("this run"), "the row shows the run's cost");
   assert.match(body, /Spent: US\$ 0\.50 of US\$ 2\.00 for the task/);

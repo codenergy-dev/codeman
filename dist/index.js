@@ -11130,11 +11130,11 @@ var require_pluralizer = __commonJS({
         this.singular = singular;
         this.plural = plural;
       }
-      pluralize(count) {
-        const one = count === 1;
+      pluralize(count2) {
+        const one = count2 === 1;
         const keys = one ? singulars : plurals;
         const noun = one ? this.singular : this.plural;
-        return { ...keys, count, noun };
+        return { ...keys, count: count2, noun };
       }
     };
   }
@@ -18480,15 +18480,15 @@ ${value}`;
           pos = 0;
         }
       }
-      discardLeadingBytes(count) {
-        while (count > 0 && this.lineChunkIndex < this.chunks.length) {
+      discardLeadingBytes(count2) {
+        while (count2 > 0 && this.lineChunkIndex < this.chunks.length) {
           const chunk = this.chunks[this.lineChunkIndex];
           const remaining = chunk.length - this.linePos;
-          if (count < remaining) {
-            this.linePos += count;
-            count = 0;
+          if (count2 < remaining) {
+            this.linePos += count2;
+            count2 = 0;
           } else {
-            count -= remaining;
+            count2 -= remaining;
             this.lineChunkIndex++;
             this.linePos = 0;
           }
@@ -20274,8 +20274,52 @@ function slugify(text, max = 40) {
 function inlineText(text) {
   return oneLine(text).replace(/[\\`*_{}[\]()<>#+!|~]/g, (char) => `\\${char}`).replace(/@/g, "@\u200B");
 }
-function inertLines(text) {
-  return text.split(/\r?\n/).map((line) => inlineText(line)).join("\n");
+function safeInline(text) {
+  return outsideCode(oneLine(text), neutralize);
+}
+function safeMarkdown(text) {
+  const lines = [];
+  let fence;
+  for (const line of text.split(/\r?\n/)) {
+    const marker = /^ {0,3}(`{3,}|~{3,})/.exec(line)?.[1];
+    if (fence !== void 0) {
+      if (marker?.startsWith(fence) && marker[0] === fence[0]) fence = void 0;
+      lines.push(line);
+    } else if (marker) {
+      fence = marker;
+      lines.push(line);
+    } else {
+      lines.push(safeLine(line));
+    }
+  }
+  if (fence !== void 0) lines.push(fence);
+  return lines.join("\n");
+}
+function safeLine(line) {
+  const heading = /^ {0,3}#{1,6}(?=\s|$)/.exec(line);
+  if (heading) return `#####${outsideCode(line.slice(heading[0].length), neutralize)}`;
+  if (/^ {0,3}(=+|-{2,})\s*$/.test(line)) return `\\${line.trimStart()}`;
+  return outsideCode(line, neutralize);
+}
+function outsideCode(line, transform) {
+  let result = "";
+  let index = 0;
+  while (index < line.length) {
+    const open2 = line.indexOf("`", index);
+    if (open2 === -1) break;
+    const ticks = /^`+/.exec(line.slice(open2))?.[0] ?? "`";
+    const close = line.indexOf(ticks, open2 + ticks.length);
+    if (close === -1) break;
+    result += transform(line.slice(index, open2)) + line.slice(open2, close + ticks.length);
+    index = close + ticks.length;
+  }
+  return result + transform(line.slice(index));
+}
+function neutralize(text) {
+  return text.replace(
+    /!?\[([^\]]*)\]\(\s*<?([^)\s>]*)>?(?:\s+[^)]*)?\)/g,
+    (_, label, url) => url ? `${label} (${url})` : label
+  ).replace(/[<[\]]/g, (char) => `\\${char}`).replace(/@/g, "@\u200B").replace(/#(?=\d)/g, "#\u200B");
 }
 
 // src/sandbox.ts
@@ -20587,25 +20631,38 @@ var harnesses = { [openCode.name]: openCode };
 import { randomBytes as randomBytes2 } from "node:crypto";
 
 // src/i18n/en.ts
+var OUTCOMES = {
+  done: "done",
+  skipped: "skipped",
+  partial: "unfinished",
+  blocked: "blocked",
+  "awaiting-workflow": "waiting for workflows",
+  decisions: "decisions needed",
+  changes: "changes requested",
+  "out-of-time": "out of time",
+  failed: "failed"
+};
 var STAGES = { plan: "plan", design: "design", code: "code", test: "test", review: "review" };
 var number = (digits) => new Intl.NumberFormat("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits });
 var en = {
   locale: "en-US",
   money: (amount2) => `US$ ${number(2).format(amount2)}`,
+  tokens: (count2) => new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(count2),
   cost: (amount2) => `US$ ${number(3).format(amount2)}`,
   dateTime: (iso) => `${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC`,
   of: (part, whole) => `${part} of ${whole}`,
   stage: (stage) => STAGES[stage],
-  runTitle: ({ action, stage, revised }) => {
+  runTitle: ({ action, stage, revised, outcome }) => {
+    const ended = outcome ? OUTCOMES[outcome] : "";
     switch (action) {
       case "plan":
-        return revised ? "Plan revised" : "Plan";
+        return outcome === "done" ? revised ? "Plan: revised" : "Plan: written" : `Plan: ${ended}`;
       case "implement":
-        return `${capitalize(STAGES[stage ?? "code"])} stage`;
+        return `${capitalize(STAGES[stage ?? "code"])} stage${ended ? `: ${ended}` : ""}`;
       case "record":
         return "Answers recorded";
       case "accept":
-        return "Workflows accepted";
+        return outcome === "failed" ? "Workflows not accepted" : "Workflows accepted";
     }
   },
   heading: (state) => ({
@@ -20634,12 +20691,38 @@ var en = {
   spending: "Spending",
   spent: ({ run: run2, task, budget }) => `Spent: ${run2 ? `${run2} this run, ` : ""}${task} of ${budget} for the task`,
   panelFooter: (model, runUrl2, reportUrl2) => `<sub>Model: \`${model}\` (change it with \`/codeman set model <id>\`) \xB7 [Last run](${runUrl2})${reportUrl2 ? ` \xB7 [Last report](${reportUrl2})` : ""}</sub>`,
-  now: (heading) => `Now: ${heading}.`,
+  nextStepLabel: "Next step",
+  nextStep: (state) => ({
+    new: "Codeman tries again in a later run.",
+    planning: "the plan.",
+    "awaiting-decision": "your decisions, in the task's status comment.",
+    ready: "the implementation, in the next run.",
+    designing: "the design stage.",
+    coding: "the code stage.",
+    testing: "the test stage.",
+    reviewing: "the review stage.",
+    "in-progress": "the implementation.",
+    "awaiting-workflow": "the workflows: accept them, or wait for their runs.",
+    blocked: "a maintainer: see above how to go on.",
+    done: "your review of the pull request."
+  })[state],
   report: "Report",
   problems: "Problems",
   costHeading: "Cost",
   runFooter: (model, spent, runUrl2) => `<sub>Model: \`${model}\`${spent ? ` \xB7 ${spent}` : ""} \xB7 [Run](${runUrl2})</sub>`,
-  tableHeader: ["Run", "Stage", "Model", "Cost", "Key limit", "Task budget", "Monthly budget"],
+  tableHeader: [
+    "Run",
+    "Stage",
+    "Model",
+    "Time",
+    "Input tokens",
+    "Output tokens",
+    "Cost",
+    "Key limit",
+    "Task budget",
+    "Monthly budget"
+  ],
+  usedTokens: (input, output, time) => `Tokens: ${input} input and ${output} output, in ${time} of agent time.`,
   earlierRuns: (runs) => `Earlier runs (${runs})`,
   runsWithoutRow: "Runs without a row",
   fullPlan: "Full plan",
@@ -20692,10 +20775,8 @@ Tests: ${test ?? "(no report)"}`,
   agentReports: (reason) => `The agent reports: ${reason}`,
   missingWorkflows: (paths) => `The agent waits for workflows that are not on the branch: ${paths}.`,
   awaitingWorkflows: (stage, paths, reason) => `The ${STAGES[stage]} stage needs ${paths} to run: ${reason} Codeman goes on when their runs on the task branch finish. \`/codeman continue <guidance>\` goes on without them.`,
-  stageDecisions: (stage, count) => `The ${STAGES[stage]} stage needs ${count} decision(s) from the maintainers.`,
+  stageDecisions: (stage, count2) => `The ${STAGES[stage]} stage needs ${count2} decision(s) from the maintainers.`,
   reviewRounds: (rounds, max) => `Review sent the work back to the code stage ${rounds} times in a row (\`max-runs\` is ${max}). Comment \`/codeman continue <guidance>\` to go on.`,
-  reviewAskedChanges: "Review asked for changes; the code stage works on them next.",
-  stageFinished: (stage, skipped, next) => `${capitalize(STAGES[stage])} ${skipped ? "skipped" : "done"}. Next: ${STAGES[next]}.`,
   skipped: (reason) => `Skipped: ${reason}`,
   workDone: "The work is done and reviewed. Review the pull request. To ask for changes, submit a review that requests them, or comment `/codeman fix <what to change>` on the pull request.",
   accepted: (by, paths) => `${by} accepted ${paths}, now in \`.github/workflows/\` on the task branch.`,
@@ -20705,7 +20786,7 @@ Tests: ${test ?? "(no report)"}`,
   stagedChanged: "The staged workflows changed after they were accepted.",
   stagedChangedDetail: (by, paths) => `Changed after ${by}'s comment: ${paths}. Read them again, then comment \`/codeman accept-workflows\` again.`,
   allAnswered: "All decisions are answered. Codeman implements the plan in its next run.",
-  stillPending: (count) => `${count} decision(s) still need an answer.`,
+  stillPending: (count2) => `${count2} decision(s) still need an answer.`,
   commandProblem: (problem) => {
     switch (problem.kind) {
       case "takes-no-arguments":
@@ -20752,25 +20833,38 @@ var STAGES2 = {
   test: "testes",
   review: "revis\xE3o"
 };
+var OUTCOMES2 = {
+  done: "conclu\xEDda",
+  skipped: "pulada",
+  partial: "inacabada",
+  blocked: "bloqueada",
+  "awaiting-workflow": "aguardando workflows",
+  decisions: "precisa de decis\xF5es",
+  changes: "mudan\xE7as pedidas",
+  "out-of-time": "sem tempo",
+  failed: "falhou"
+};
 var OF_STAGE = (stage) => `etapa de ${STAGES2[stage]}`;
 var number2 = (digits) => new Intl.NumberFormat("pt-BR", { minimumFractionDigits: digits, maximumFractionDigits: digits });
 var ptBR = {
   locale: "pt-BR",
   money: (amount2) => `US$ ${number2(2).format(amount2)}`,
+  tokens: (count2) => new Intl.NumberFormat("pt-BR", { notation: "compact", maximumFractionDigits: 1 }).format(count2),
   cost: (amount2) => `US$ ${number2(3).format(amount2)}`,
   dateTime: (iso) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)} ${iso.slice(11, 16)} UTC`,
   of: (part, whole) => `${part} de ${whole}`,
   stage: (stage) => STAGES2[stage],
-  runTitle: ({ action, stage, revised }) => {
+  runTitle: ({ action, stage, revised, outcome }) => {
+    const ended = outcome ? OUTCOMES2[outcome] : "";
     switch (action) {
       case "plan":
-        return revised ? "Plano revisado" : "Plano";
+        return outcome === "done" ? revised ? "Plano: revisado" : "Plano: escrito" : `Plano: ${outcome === "failed" ? "falhou" : ended}`;
       case "implement":
-        return capitalize2(OF_STAGE(stage ?? "code"));
+        return `${capitalize2(OF_STAGE(stage ?? "code"))}${ended ? `: ${ended}` : ""}`;
       case "record":
         return "Respostas registradas";
       case "accept":
-        return "Workflows aceitos";
+        return outcome === "failed" ? "Workflows n\xE3o aceitos" : "Workflows aceitos";
     }
   },
   heading: (state) => ({
@@ -20799,7 +20893,21 @@ var ptBR = {
   spending: "Gastos",
   spent: ({ run: run2, task, budget }) => `Gasto: ${run2 ? `${run2} nesta rodada, ` : ""}${task} de ${budget} da tarefa`,
   panelFooter: (model, runUrl2, reportUrl2) => `<sub>Modelo: \`${model}\` (troque com \`/codeman set model <id>\`) \xB7 [\xDAltima rodada](${runUrl2})${reportUrl2 ? ` \xB7 [\xDAltimo relat\xF3rio](${reportUrl2})` : ""}</sub>`,
-  now: (heading) => `Agora: ${heading}.`,
+  nextStepLabel: "Pr\xF3ximo passo",
+  nextStep: (state) => ({
+    new: "o Codeman tenta de novo numa pr\xF3xima rodada.",
+    planning: "o plano.",
+    "awaiting-decision": "as suas decis\xF5es, no coment\xE1rio de status da tarefa.",
+    ready: "a implementa\xE7\xE3o, na pr\xF3xima rodada.",
+    designing: "etapa de design.",
+    coding: "etapa de c\xF3digo.",
+    testing: "etapa de testes.",
+    reviewing: "etapa de revis\xE3o.",
+    "in-progress": "a implementa\xE7\xE3o.",
+    "awaiting-workflow": "os workflows: aceite-os ou aguarde as execu\xE7\xF5es.",
+    blocked: "um mantenedor: veja acima como continuar.",
+    done: "a sua revis\xE3o do pull request."
+  })[state],
   report: "Relat\xF3rio",
   problems: "Problemas",
   costHeading: "Custo",
@@ -20808,11 +20916,15 @@ var ptBR = {
     "Rodada",
     "Etapa",
     "Modelo",
+    "Tempo",
+    "Tokens de entrada",
+    "Tokens de sa\xEDda",
     "Custo",
     "Limite da chave",
     "Or\xE7amento da tarefa",
     "Or\xE7amento mensal"
   ],
+  usedTokens: (input, output, time) => `Tokens: ${input} de entrada e ${output} de sa\xEDda, em ${time} de agente.`,
   earlierRuns: (runs) => `Rodadas anteriores (${runs})`,
   runsWithoutRow: "Rodadas sem linha",
   fullPlan: "Plano completo",
@@ -20865,10 +20977,8 @@ Testes: ${test ?? "(sem relat\xF3rio)"}`,
   agentReports: (reason) => `O agente relata: ${reason}`,
   missingWorkflows: (paths) => `O agente aguarda workflows que n\xE3o est\xE3o na branch: ${paths}.`,
   awaitingWorkflows: (stage, paths, reason) => `A ${OF_STAGE(stage)} precisa que ${paths} rode: ${reason} O Codeman continua quando essas execu\xE7\xF5es terminarem na branch da tarefa. \`/codeman continue <orienta\xE7\xE3o>\` continua sem elas.`,
-  stageDecisions: (stage, count) => `A ${OF_STAGE(stage)} precisa de ${count} decis\xE3o(\xF5es) dos mantenedores.`,
+  stageDecisions: (stage, count2) => `A ${OF_STAGE(stage)} precisa de ${count2} decis\xE3o(\xF5es) dos mantenedores.`,
   reviewRounds: (rounds, max) => `A revis\xE3o devolveu o trabalho \xE0 etapa de c\xF3digo ${rounds} vezes seguidas (\`max-runs\` \xE9 ${max}). Comente \`/codeman continue <orienta\xE7\xE3o>\` para continuar.`,
-  reviewAskedChanges: "A revis\xE3o pediu mudan\xE7as; a etapa de c\xF3digo trabalha nelas a seguir.",
-  stageFinished: (stage, skipped, next) => `${capitalize2(OF_STAGE(stage))} ${skipped ? "pulada" : "conclu\xEDda"}. A seguir: ${STAGES2[next]}.`,
   skipped: (reason) => `Pulada: ${reason}`,
   workDone: "O trabalho est\xE1 feito e revisado. Revise o pull request. Para pedir mudan\xE7as, envie uma revis\xE3o pedindo-as ou comente `/codeman fix <o que mudar>` no pull request.",
   accepted: (by, paths) => `${by} aceitou ${paths}, agora em \`.github/workflows/\` na branch da tarefa.`,
@@ -20878,7 +20988,7 @@ Testes: ${test ?? "(sem relat\xF3rio)"}`,
   stagedChanged: "Os workflows guardados mudaram depois de terem sido aceitos.",
   stagedChangedDetail: (by, paths) => `Mudaram depois do coment\xE1rio de ${by}: ${paths}. Leia-os de novo e comente \`/codeman accept-workflows\` outra vez.`,
   allAnswered: "Todas as decis\xF5es foram respondidas. O Codeman implementa o plano na pr\xF3xima rodada.",
-  stillPending: (count) => `${count} decis\xE3o(\xF5es) ainda precisam de resposta.`,
+  stillPending: (count2) => `${count2} decis\xE3o(\xF5es) ainda precisam de resposta.`,
   commandProblem: (problem) => {
     switch (problem.kind) {
       case "takes-no-arguments":
@@ -21344,11 +21454,11 @@ function checkChanges(manifest, policy) {
     else if (workflow) staged.push(change);
     else accepted.push(change);
   }
-  const count = accepted.length + staged.length;
-  if (count > policy.maxFiles) {
+  const count2 = accepted.length + staged.length;
+  if (count2 > policy.maxFiles) {
     return {
       ok: false,
-      error: `The agent changed ${count} files; the limit is ${policy.maxFiles} per run (\`max-files\`).`
+      error: `The agent changed ${count2} files; the limit is ${policy.maxFiles} per run (\`max-files\`).`
     };
   }
   return { ok: true, value: { accepted, staged, dropped } };
@@ -25929,13 +26039,13 @@ function pullRequestBody(view) {
     "",
     `### ${t.plan}`,
     "",
-    inlineText(view.planSummary),
+    safeInline(view.planSummary),
     "",
     `${t.fullPlan}: [${view.planPath}](${view.planUrl})`,
     "",
     `### ${t.changes}`,
     "",
-    inertLines(view.summary),
+    safeMarkdown(view.summary),
     "",
     ...view.commitMessage ? [`### ${t.squashMessage}`, "", `${fence}text`, view.commitMessage, fence, ""] : [],
     pullRequestFooter(t, view.runUrl, view.spent)
@@ -26357,6 +26467,7 @@ async function agent() {
   }
   writeAsAgent(`${worktree}/${RULES_PATH}`, rules.text);
   info(`Running ${harness.name} with ${task.model} for up to ${minutes} minutes.`);
+  const started = Date.now();
   const run2 = await runAsAgent(
     harness.command({
       executable,
@@ -26368,6 +26479,7 @@ async function agent() {
     worktree,
     minutes * 6e4
   );
+  const durationMs = Date.now() - started;
   killAgentProcesses();
   const out = resultDir();
   rmSync4(out, { recursive: true, force: true });
@@ -26387,6 +26499,7 @@ async function agent() {
     harness: harness.name,
     exitCode: run2.exitCode,
     timedOut: run2.timedOut,
+    durationMs,
     changes
   };
   writeFileSync4(join6(out, "manifest.json"), JSON.stringify(manifest, null, 2));
@@ -26426,6 +26539,13 @@ function runLimit(taskBudget, spent) {
 function usd(amount2) {
   return `US$ ${amount2.toFixed(2)}`;
 }
+function count(value) {
+  const number3 = typeof value === "string" ? Number(value) : value;
+  return typeof number3 === "number" && Number.isFinite(number3) && number3 > 0 ? Math.round(number3) : 0;
+}
+function utcSeconds(date) {
+  return `${date.toISOString().slice(0, 19)}Z`;
+}
 function expiresAt(now, hours) {
   return `${new Date(now.getTime() + hours * 36e5).toISOString().slice(0, 19)}Z`;
 }
@@ -26456,6 +26576,27 @@ var OpenRouter = class {
   async keyUsage(hash) {
     const { data } = await this.#request(`/keys/${encodeURIComponent(hash)}`);
     return data.usage ?? 0;
+  }
+  /**
+   * The tokens one key used between `since` and `until`, from OpenRouter's analytics, as
+   * OpenRouter counts them: prompt tokens (cached ones included) and completion tokens.
+   * Undefined when analytics has no rows for the key yet.
+   */
+  async keyTokens(hash, since, until) {
+    const response = await this.#request("/analytics/query", "POST", {
+      metrics: ["tokens_prompt", "tokens_completion"],
+      filters: [{ field: "api_key_id", operator: "eq", value: hash }],
+      time_range: { start: utcSeconds(since), end: utcSeconds(until) }
+    });
+    const rows = response.data?.data;
+    if (!Array.isArray(rows) || rows.length === 0) return void 0;
+    let input = 0;
+    let output = 0;
+    for (const row of rows) {
+      input += count(row.tokens_prompt);
+      output += count(row.tokens_completion);
+    }
+    return { input, output };
   }
   async createKey(options) {
     const response = await this.#request("/keys", "POST", {
@@ -26585,35 +26726,80 @@ function addRow(spending, row, max = MAX_ROWS) {
   let earlier = spending?.earlier;
   while (rows.length > max) {
     const oldest = rows.shift();
-    earlier = {
-      runs: (earlier?.runs ?? 0) + 1,
-      cost: (earlier?.cost ?? 0) + (oldest?.cost ?? 0)
-    };
+    if (oldest) earlier = add(complete(earlier), oldest);
   }
   return { rows, earlier };
+}
+function spendTotals(spending) {
+  return (spending?.rows ?? []).reduce(add, complete(spending?.earlier));
+}
+function add(totals, row) {
+  return {
+    runs: totals.runs + 1,
+    cost: totals.cost + (row.cost ?? 0),
+    durationMs: totals.durationMs + (row.durationMs ?? 0),
+    inputTokens: totals.inputTokens + (row.inputTokens ?? 0),
+    outputTokens: totals.outputTokens + (row.outputTokens ?? 0)
+  };
+}
+function complete(totals) {
+  return {
+    runs: totals?.runs ?? 0,
+    cost: totals?.cost ?? 0,
+    durationMs: totals?.durationMs ?? 0,
+    inputTokens: totals?.inputTokens ?? 0,
+    outputTokens: totals?.outputTokens ?? 0
+  };
 }
 function spendTable(t, spending, total) {
   const rows = spending?.rows ?? [];
   const earlier = spending?.earlier;
+  const dash = (value, format) => value === void 0 ? "\u2014" : format(value);
   const lines = [
     `| ${t.tableHeader.join(" | ")} |`,
-    "| --- | --- | --- | ---: | ---: | ---: | --- |"
+    "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |"
   ];
-  if (earlier) {
-    lines.push(`| ${t.earlierRuns(earlier.runs)} | | | ${t.cost(earlier.cost)} | | | |`);
+  if (earlier?.runs) {
+    lines.push(
+      `| ${t.earlierRuns(earlier.runs)} | | | ${dash(earlier.durationMs, duration)} | ${dash(earlier.inputTokens, t.tokens)} | ${dash(earlier.outputTokens, t.tokens)} | ${t.cost(earlier.cost ?? 0)} | | | |`
+    );
   }
   for (const row of rows) {
     const month = row.monthSpent === void 0 ? t.money(row.monthlyBudget) : t.of(t.money(row.monthSpent), t.money(row.monthlyBudget));
     const when = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(row.at) ? t.dateTime(row.at) : "\u2014";
     lines.push(
-      `| [${when}](${row.runUrl}) | ${t.stage(row.stage)} | \`${row.model.replace(/[`|\s]/g, "")}\` | ${row.cost === void 0 ? "\u2014" : t.cost(row.cost)} | ${row.keyLimit === void 0 ? "\u2014" : t.money(row.keyLimit)} | ${t.money(row.taskBudget)} | ${month} |`
+      [
+        "",
+        `[${when}](${row.runUrl})`,
+        t.stage(row.stage),
+        `\`${row.model.replace(/[`|\s]/g, "")}\``,
+        dash(row.durationMs, duration),
+        dash(row.inputTokens, t.tokens),
+        dash(row.outputTokens, t.tokens),
+        dash(row.cost, t.cost),
+        dash(row.keyLimit, t.money),
+        t.money(row.taskBudget),
+        month,
+        ""
+      ].join(" | ").trim()
     );
   }
-  const recorded = rows.reduce((sum, row) => sum + (row.cost ?? 0), earlier?.cost ?? 0);
+  const recorded = spendTotals(spending).cost;
   if (total !== void 0 && total - recorded >= 1e-3) {
-    lines.push(`| ${t.runsWithoutRow} | | | ${t.cost(total - recorded)} | | | |`);
+    lines.push(`| ${t.runsWithoutRow} | | | | | | ${t.cost(total - recorded)} | | | |`);
   }
   return lines;
+}
+function duration(ms) {
+  const seconds = Math.max(0, Math.round(ms / 1e3));
+  if (seconds < 60) return `${seconds} s`;
+  if (seconds < 3600) {
+    const rest2 = seconds % 60;
+    return `${Math.floor(seconds / 60)} min${rest2 ? ` ${rest2} s` : ""}`;
+  }
+  const minutes = Math.round(seconds / 60);
+  const rest = minutes % 60;
+  return `${Math.floor(minutes / 60)} h${rest ? ` ${rest} min` : ""}`;
 }
 
 // src/stages.ts
@@ -26641,19 +26827,19 @@ function renderStatus(view) {
   if (record?.pullRequest && view.pullRequestUrl) {
     lines.push(`${t.pullRequest}: [#${record.pullRequest}](${view.pullRequestUrl})`, "");
   }
-  if (record) lines.push(inlineText(record.summary), "");
+  if (record) lines.push(safeInline(record.summary), "");
   if (record && record.decisions.length > 0) {
     lines.push(`#### ${t.decisions}`, "");
     for (const decision of record.decisions) {
-      lines.push(`**${decision.id}. ${inlineText(decision.title)}**`, "");
-      lines.push(inlineText(decision.question), "");
+      lines.push(`**${decision.id}. ${safeInline(decision.title)}**`, "");
+      lines.push(safeInline(decision.question), "");
       for (const option of decision.options) {
         const tags = [
           option.key === decision.recommendation ? t.recommended : "",
           option.key === decision.answer?.option ? t.chosenBy(decision.answer.by) : ""
         ].filter(Boolean);
         const suffix = tags.length > 0 ? ` _(${tags.join(", ")})_` : "";
-        lines.push(`- **${option.key})** ${inlineText(option.label)}${suffix}`);
+        lines.push(`- **${option.key})** ${safeInline(option.label)}${suffix}`);
       }
       if (decision.answer?.text !== void 0) {
         lines.push("", t.answeredBy(decision.answer.by, inlineText(decision.answer.text)));
@@ -26674,6 +26860,17 @@ function renderStatus(view) {
     if (view.cost?.task !== void 0) {
       lines.push(`${spentText(t, { ...view.cost, run: void 0 })}.`, "");
     }
+    const totals = spendTotals(record?.spending);
+    if (totals.inputTokens + totals.outputTokens + totals.durationMs > 0) {
+      lines.push(
+        t.usedTokens(
+          t.tokens(totals.inputTokens),
+          t.tokens(totals.outputTokens),
+          duration(totals.durationMs)
+        ),
+        ""
+      );
+    }
   }
   lines.push(t.panelFooter(modelName(view.model), view.runUrl, view.reportUrl));
   return lines.join("\n");
@@ -26690,14 +26887,15 @@ function runCommentText(body) {
 }
 function renderRun(view) {
   const { t } = view;
-  const lines = [RUN_MARKER, `### Codeman: ${view.title}`, "", t.now(t.heading(view.state)), ""];
+  const lines = [RUN_MARKER, `### Codeman \xB7 ${view.title}`, ""];
   if (view.message) lines.push(view.message, "");
-  if (view.report) lines.push(`#### ${t.report}`, "", inertLines(view.report), "");
+  if (view.report) lines.push(`#### ${t.report}`, "", safeMarkdown(view.report), "");
   if (view.errors && view.errors.length > 0) {
     lines.push(`#### ${t.problems}`, "");
-    for (const error2 of view.errors) lines.push(`- ${inlineText(error2)}`);
+    for (const error2 of view.errors) lines.push(`- ${safeInline(error2)}`);
     lines.push("");
   }
+  lines.push(`**${t.nextStepLabel}:** ${t.nextStep(view.state)}`, "");
   if (view.spend) {
     lines.push(`#### ${t.costHeading}`, "", ...spendTable(t, { rows: [view.spend] }), "");
   }
@@ -26998,7 +27196,10 @@ function chains(action, keyJob, keyStatus) {
 async function keyFailed(task, repo) {
   const t = say(task);
   if (getInput("key-job-result") !== "success") {
-    await finish(repo, task, "blocked", { message: `${t.noKey} ${retryHint(t, task)}` });
+    await finish(repo, task, "blocked", {
+      outcome: "failed",
+      message: `${t.noKey} ${retryHint(t, task)}`
+    });
     return true;
   }
   const status2 = getInput("key-status");
@@ -27006,6 +27207,7 @@ async function keyFailed(task, repo) {
   const budget = task.settings["task-budget"];
   if (status2 === "task-budget-spent") {
     await finish(repo, task, "blocked", {
+      outcome: "blocked",
       message: t.taskBudgetSpent(t.money(spent), t.money(budget), t.money(MIN_RUN_BUDGET))
     });
     return true;
@@ -27027,7 +27229,10 @@ async function keyFailed(task, repo) {
 async function applyPlan(task, repo) {
   if (getInput("agent-job-result") !== "success") {
     const t2 = say(task);
-    return finish(repo, task, "blocked", { message: `${t2.planUnfinished} ${retryHint(t2, task)}` });
+    return finish(repo, task, "blocked", {
+      outcome: "failed",
+      message: `${t2.planUnfinished} ${retryHint(t2, task)}`
+    });
   }
   const dir = resultDir();
   const manifest = readJson(join7(dir, "manifest.json"));
@@ -27063,7 +27268,7 @@ async function applyPlan(task, repo) {
   const state = record.decisions.length > 0 ? "awaiting-decision" : "ready";
   const t = say(task, record);
   const ignored = checked.value.ignored.map((path) => t.ignoredChange(path));
-  await finish(repo, task, state, { record, errors: ignored });
+  await finish(repo, task, state, { outcome: "done", record, errors: ignored });
 }
 async function applyStage(task, repo) {
   if (!task.record) return blocked(repo, task, "The task has no record of its plan.");
@@ -27072,7 +27277,10 @@ async function applyStage(task, repo) {
   const dir = resultDir();
   const manifest = readJson(join7(dir, "manifest.json"));
   if (!isManifest(manifest)) {
-    return finish(repo, task, "blocked", { message: `${t.noResult} ${retryHint(t, task)}` });
+    return finish(repo, task, "blocked", {
+      outcome: "failed",
+      message: `${t.noResult} ${retryHint(t, task)}`
+    });
   }
   const checked = stage === "review" ? { ok: true, value: { accepted: [], staged: [], dropped: [] } } : checkChanges(manifest, {
     ignore: task.ignore,
@@ -27095,12 +27303,13 @@ async function applyStage(task, repo) {
     awaiting: void 0,
     reviewRounds: fixed ? 0 : task.record.reviewRounds
   };
-  const unfinished = (message, report) => runs >= maxRuns ? finish(repo, task, "blocked", {
+  const unfinished = (outcome, message, report) => finish(repo, task, runs >= maxRuns ? "blocked" : STAGE_STATE[stage], {
+    outcome,
     record,
-    message: `${message} ${t.maxRuns(stage, runs, maxRuns)}`,
+    message: runs >= maxRuns ? `${message} ${t.maxRuns(stage, runs, maxRuns)}` : message,
     report,
     errors: dropped
-  }) : finish(repo, task, STAGE_STATE[stage], { record, message, report, errors: dropped });
+  });
   const tree = join7(dir, "tree");
   const changes = [
     ...readChanges(tree, checked.value.accepted, task.settings),
@@ -27121,7 +27330,7 @@ async function applyStage(task, repo) {
   }
   if (!output.ok) {
     if (manifest.timedOut) {
-      return unfinished(t.outOfTime);
+      return unfinished("out-of-time", t.outOfTime);
     }
     const exit = manifest.exitCode === 0 ? "" : ` The agent exited with code ${manifest.exitCode}.`;
     return blocked(repo, task, `${output.error}${exit}`, dropped, record);
@@ -27129,9 +27338,10 @@ async function applyStage(task, repo) {
   const { status: status2, summary: summary2, reason } = output.value;
   switch (status2) {
     case "partial":
-      return unfinished(t.partial, summary2);
+      return unfinished("partial", t.partial, summary2);
     case "blocked":
       return finish(repo, task, "blocked", {
+        outcome: "blocked",
         record,
         message: `${t.stageNeedsMaintainer(stage)} ${retryHint(t, task)}`,
         report: summary2,
@@ -27148,6 +27358,7 @@ async function applyStage(task, repo) {
         return blocked(repo, task, t.missingWorkflows(missing.join(", ")), dropped, record);
       }
       return finish(repo, task, "awaiting-workflow", {
+        outcome: "awaiting-workflow",
         record: { ...record, runs: runs - 1, awaiting: workflows },
         message: t.awaitingWorkflows(stage, workflows.join(", "), reason ?? ""),
         report: summary2,
@@ -27162,6 +27373,7 @@ async function applyStage(task, repo) {
       }));
       if (stage === "review") await postReview(repo, t, task, record, summary2, reason);
       return finish(repo, task, "awaiting-decision", {
+        outcome: "decisions",
         record: {
           ...record,
           decisions: [...record.decisions, ...added],
@@ -27179,12 +27391,14 @@ async function applyStage(task, repo) {
       await postReview(repo, t, task, record, summary2, reason);
       if (rounds > maxRuns) {
         return finish(repo, task, "blocked", {
+          outcome: "changes",
           record: { ...record, reviewRounds: rounds },
           message: t.reviewRounds(rounds, maxRuns),
           report: summary2
         });
       }
       return finish(repo, task, STAGE_STATE.code, {
+        outcome: "changes",
         record: {
           ...record,
           stage: "code",
@@ -27194,7 +27408,6 @@ async function applyStage(task, repo) {
 
 ${summary2}`, 4e3) }
         },
-        message: t.reviewAskedChanges,
         report: summary2
       });
     }
@@ -27214,9 +27427,9 @@ ${summary2}`, 4e3) }
       updated.pullRequest = await openPullRequest(repo, task, updated, "draft");
     }
     return finish(repo, task, STAGE_STATE[next], {
+      outcome: status2,
       record: updated,
-      message: t.stageFinished(stage, status2 === "skipped", next),
-      report: text,
+      report: status2 === "skipped" ? reason : summary2,
       errors: dropped
     });
   }
@@ -27242,6 +27455,7 @@ The paths Codeman's agent may not change. Review them before merging.`
   };
   await postReview(repo, t, { ...task, record: done }, done, summary2, void 0);
   await finish(repo, task, "done", {
+    outcome: "done",
     pullRequestWritten: true,
     record: done,
     message: t.workDone,
@@ -27288,8 +27502,8 @@ async function postReview(repo, t, task, record, report, changes) {
   const body = [
     `### ${t.reviewHeading}`,
     "",
-    inertLines(report),
-    ...changes ? ["", `#### ${t.reviewChanges}`, "", inertLines(changes)] : [],
+    safeMarkdown(report),
+    ...changes ? ["", `#### ${t.reviewChanges}`, "", safeMarkdown(changes)] : [],
     "",
     `<sub>[${t.run}](${task.runUrl})</sub>`
   ].join("\n");
@@ -27300,6 +27514,7 @@ async function acceptWorkflows(task, repo) {
   if (!task.record || !accept) return blocked(repo, task, "Nothing to accept.");
   const t = say(task);
   const done = (message, errors = []) => finish(repo, task, task.fromState, {
+    outcome: "failed",
     record: { ...task.record, acceptedCommentId: accept.id },
     message,
     errors,
@@ -27329,6 +27544,7 @@ Accepted by ${accept.author} in comment ${accept.id}.`
   });
   const next = afterAccept(t, task.fromState, task.record, accept.author, moved);
   await finish(repo, task, next.state, {
+    outcome: "done",
     record: { ...next.record, acceptedCommentId: accept.id },
     message: `${t.accepted(accept.author, moved.join(", "))} ${next.message}`.trim(),
     retry: true
@@ -27406,6 +27622,7 @@ function blocked(repo, task, error2, more = [], record) {
   error(oneLine(error2));
   const t = say(task, record);
   return finish(repo, task, "blocked", {
+    outcome: "failed",
     record,
     message: `${t.couldNotUse} ${retryHint(t, task)}`,
     errors: [error2, ...more]
@@ -27444,7 +27661,12 @@ async function finish(repo, task, state, view) {
       task.number,
       renderRun({
         t,
-        title: t.runTitle({ action: task.action, stage: task.stage, revised: !!task.record }),
+        title: t.runTitle({
+          action: task.action,
+          stage: task.stage,
+          revised: !!task.record,
+          outcome: view.outcome
+        }),
         state,
         model: task.model,
         runUrl: task.runUrl,
@@ -27500,8 +27722,16 @@ function spendRow(task, cost) {
     keyLimit: amount("key-limit"),
     taskBudget: task.settings["task-budget"],
     monthlyBudget: task.settings["monthly-budget"],
-    monthSpent: amount("month-spent")
+    monthSpent: amount("month-spent"),
+    durationMs: agentDuration(),
+    inputTokens: amount("input-tokens"),
+    outputTokens: amount("output-tokens")
   };
+}
+function agentDuration() {
+  const manifest = readJson(join7(resultDir(), "manifest.json"));
+  const ms = isManifest(manifest) ? manifest.durationMs : void 0;
+  return typeof ms === "number" && Number.isFinite(ms) && ms >= 0 ? ms : void 0;
 }
 function amount(name) {
   const value = Number.parseFloat(getInput(name));
@@ -27578,6 +27808,33 @@ async function closeKey() {
   }
   setOutput("run-cost", cost.toFixed(4));
   info(`This run spent ${usd(cost)}.`);
+  const tokens = await runTokens(router, hash, cost > 0);
+  if (tokens) {
+    setOutput("input-tokens", String(tokens.input));
+    setOutput("output-tokens", String(tokens.output));
+    info(`This run used ${tokens.input} input and ${tokens.output} output tokens.`);
+  }
+}
+var KEY_LIFETIME_MS = 48 * 36e5;
+async function runTokens(router, hash, spent, wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))) {
+  try {
+    for (let attempt = 0; ; attempt++) {
+      const now = /* @__PURE__ */ new Date();
+      const tokens = await router.keyTokens(hash, new Date(now.getTime() - KEY_LIFETIME_MS), now);
+      const counted = tokens !== void 0 && tokens.input + tokens.output > 0;
+      if (counted || !spent) return tokens ?? (spent ? void 0 : { input: 0, output: 0 });
+      if (attempt === 6) {
+        warning("OpenRouter's analytics has no tokens for this run's key yet.");
+        return void 0;
+      }
+      await wait(1e4);
+    }
+  } catch (error2) {
+    warning(
+      `Could not read this run's tokens: ${error2 instanceof Error ? error2.message : error2}`
+    );
+    return void 0;
+  }
 }
 
 // src/steps/select.ts

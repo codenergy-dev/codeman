@@ -4,7 +4,7 @@ import * as core from "@actions/core";
 import { MIN_RUN_BUDGET, runLimit } from "../budget.ts";
 import type { Change } from "../collect.ts";
 import type { FileChange, Repository } from "../github.ts";
-import { type Messages, messages, taskLanguage } from "../i18n/index.ts";
+import { type Messages, messages, type RunOutcome, taskLanguage } from "../i18n/index.ts";
 import { parsePlanOutput, parseStageOutput } from "../output.ts";
 import {
   checkChanges,
@@ -23,7 +23,7 @@ import { nextStage, STAGE_STATE, type Stage } from "../stages.ts";
 import type { State } from "../state.ts";
 import { renderRun, renderStatus, reportUrl } from "../status.ts";
 import { commandsAfter, type TaskContext } from "../tasks.ts";
-import { inertLines, oneLine, truncate } from "../text.ts";
+import { oneLine, safeMarkdown, truncate } from "../text.ts";
 import { checkPlanResult, decodeText, isManifest } from "../validate.ts";
 import { MAX_OUTPUT_BYTES } from "./agent.ts";
 import { fileUrl, pullUrl, readTask, repository, resultDir } from "./common.ts";
@@ -59,7 +59,10 @@ export function chains(action: TaskContext["action"], keyJob: string, keyStatus:
 async function keyFailed(task: TaskContext, repo: Repository): Promise<boolean> {
   const t = say(task);
   if (core.getInput("key-job-result") !== "success") {
-    await finish(repo, task, "blocked", { message: `${t.noKey} ${retryHint(t, task)}` });
+    await finish(repo, task, "blocked", {
+      outcome: "failed",
+      message: `${t.noKey} ${retryHint(t, task)}`,
+    });
     return true;
   }
   const status = core.getInput("key-status");
@@ -67,6 +70,7 @@ async function keyFailed(task: TaskContext, repo: Repository): Promise<boolean> 
   const budget = task.settings["task-budget"];
   if (status === "task-budget-spent") {
     await finish(repo, task, "blocked", {
+      outcome: "blocked",
       message: t.taskBudgetSpent(t.money(spent), t.money(budget), t.money(MIN_RUN_BUDGET)),
     });
     return true;
@@ -93,7 +97,10 @@ async function keyFailed(task: TaskContext, repo: Repository): Promise<boolean> 
 async function applyPlan(task: TaskContext, repo: Repository): Promise<void> {
   if (core.getInput("agent-job-result") !== "success") {
     const t = say(task);
-    return finish(repo, task, "blocked", { message: `${t.planUnfinished} ${retryHint(t, task)}` });
+    return finish(repo, task, "blocked", {
+      outcome: "failed",
+      message: `${t.planUnfinished} ${retryHint(t, task)}`,
+    });
   }
 
   const dir = resultDir();
@@ -134,7 +141,7 @@ async function applyPlan(task: TaskContext, repo: Repository): Promise<void> {
   const state = record.decisions.length > 0 ? "awaiting-decision" : "ready";
   const t = say(task, record);
   const ignored = checked.value.ignored.map((path) => t.ignoredChange(path));
-  await finish(repo, task, state, { record, errors: ignored });
+  await finish(repo, task, state, { outcome: "done", record, errors: ignored });
 }
 
 /**
@@ -148,7 +155,10 @@ async function applyStage(task: TaskContext, repo: Repository): Promise<void> {
   const dir = resultDir();
   const manifest = readJson(join(dir, "manifest.json"));
   if (!isManifest(manifest)) {
-    return finish(repo, task, "blocked", { message: `${t.noResult} ${retryHint(t, task)}` });
+    return finish(repo, task, "blocked", {
+      outcome: "failed",
+      message: `${t.noResult} ${retryHint(t, task)}`,
+    });
   }
   // Review's merge and checks stay in its sandbox.
   const checked =
@@ -181,15 +191,18 @@ async function applyStage(task: TaskContext, repo: Repository): Promise<void> {
     awaiting: undefined,
     reviewRounds: fixed ? 0 : task.record.reviewRounds,
   };
-  const unfinished = (message: string, report?: string): Promise<void> =>
-    runs >= maxRuns
-      ? finish(repo, task, "blocked", {
-          record,
-          message: `${message} ${t.maxRuns(stage, runs, maxRuns)}`,
-          report,
-          errors: dropped,
-        })
-      : finish(repo, task, STAGE_STATE[stage], { record, message, report, errors: dropped });
+  const unfinished = (
+    outcome: "partial" | "out-of-time",
+    message: string,
+    report?: string,
+  ): Promise<void> =>
+    finish(repo, task, runs >= maxRuns ? "blocked" : STAGE_STATE[stage], {
+      outcome,
+      record,
+      message: runs >= maxRuns ? `${message} ${t.maxRuns(stage, runs, maxRuns)}` : message,
+      report,
+      errors: dropped,
+    });
 
   const tree = join(dir, "tree");
   const changes = [
@@ -214,7 +227,7 @@ async function applyStage(task: TaskContext, repo: Repository): Promise<void> {
 
   if (!output.ok) {
     if (manifest.timedOut) {
-      return unfinished(t.outOfTime);
+      return unfinished("out-of-time", t.outOfTime);
     }
     const exit = manifest.exitCode === 0 ? "" : ` The agent exited with code ${manifest.exitCode}.`;
     return blocked(repo, task, `${output.error}${exit}`, dropped, record);
@@ -223,9 +236,10 @@ async function applyStage(task: TaskContext, repo: Repository): Promise<void> {
   const { status, summary, reason } = output.value;
   switch (status) {
     case "partial":
-      return unfinished(t.partial, summary);
+      return unfinished("partial", t.partial, summary);
     case "blocked":
       return finish(repo, task, "blocked", {
+        outcome: "blocked",
         record,
         message: `${t.stageNeedsMaintainer(stage)} ${retryHint(t, task)}`,
         report: summary,
@@ -242,6 +256,7 @@ async function applyStage(task: TaskContext, repo: Repository): Promise<void> {
         return blocked(repo, task, t.missingWorkflows(missing.join(", ")), dropped, record);
       }
       return finish(repo, task, "awaiting-workflow", {
+        outcome: "awaiting-workflow",
         record: { ...record, runs: runs - 1, awaiting: workflows },
         message: t.awaitingWorkflows(stage, workflows.join(", "), reason ?? ""),
         report: summary,
@@ -257,6 +272,7 @@ async function applyStage(task: TaskContext, repo: Repository): Promise<void> {
       }));
       if (stage === "review") await postReview(repo, t, task, record, summary, reason);
       return finish(repo, task, "awaiting-decision", {
+        outcome: "decisions",
         record: {
           ...record,
           decisions: [...record.decisions, ...added],
@@ -274,12 +290,14 @@ async function applyStage(task: TaskContext, repo: Repository): Promise<void> {
       await postReview(repo, t, task, record, summary, reason);
       if (rounds > maxRuns) {
         return finish(repo, task, "blocked", {
+          outcome: "changes",
           record: { ...record, reviewRounds: rounds },
           message: t.reviewRounds(rounds, maxRuns),
           report: summary,
         });
       }
       return finish(repo, task, STAGE_STATE.code, {
+        outcome: "changes",
         record: {
           ...record,
           stage: "code",
@@ -287,7 +305,6 @@ async function applyStage(task: TaskContext, repo: Repository): Promise<void> {
           reviewRounds: rounds,
           handoff: { stage, text: truncate(`${reason ?? ""}\n\n${summary}`, 4000) },
         },
-        message: t.reviewAskedChanges,
         report: summary,
       });
     }
@@ -313,9 +330,9 @@ async function applyStage(task: TaskContext, repo: Repository): Promise<void> {
       updated.pullRequest = await openPullRequest(repo, task, updated, "draft");
     }
     return finish(repo, task, STAGE_STATE[next], {
+      outcome: status,
       record: updated,
-      message: t.stageFinished(stage, status === "skipped", next),
-      report: text,
+      report: status === "skipped" ? reason : summary,
       errors: dropped,
     });
   }
@@ -341,6 +358,7 @@ async function applyStage(task: TaskContext, repo: Repository): Promise<void> {
   };
   await postReview(repo, t, { ...task, record: done }, done, summary, undefined);
   await finish(repo, task, "done", {
+    outcome: "done",
     pullRequestWritten: true,
     record: done,
     message: t.workDone,
@@ -396,7 +414,7 @@ async function openPullRequest(
   return existing;
 }
 
-/** Posts the review report on the pull request, as inert text. */
+/** Posts the review report on the pull request, as safe Markdown. */
 async function postReview(
   repo: Repository,
   t: Messages,
@@ -410,8 +428,8 @@ async function postReview(
   const body = [
     `### ${t.reviewHeading}`,
     "",
-    inertLines(report),
-    ...(changes ? ["", `#### ${t.reviewChanges}`, "", inertLines(changes)] : []),
+    safeMarkdown(report),
+    ...(changes ? ["", `#### ${t.reviewChanges}`, "", safeMarkdown(changes)] : []),
     "",
     `<sub>[${t.run}](${task.runUrl})</sub>`,
   ].join("\n");
@@ -429,6 +447,7 @@ async function acceptWorkflows(task: TaskContext, repo: Repository): Promise<voi
   const t = say(task);
   const done = (message: string, errors: string[] = []): Promise<void> =>
     finish(repo, task, task.fromState, {
+      outcome: "failed",
       record: { ...task.record, acceptedCommentId: accept.id } as TaskRecord,
       message,
       errors,
@@ -460,6 +479,7 @@ async function acceptWorkflows(task: TaskContext, repo: Repository): Promise<voi
   });
   const next = afterAccept(t, task.fromState, task.record, accept.author, moved);
   await finish(repo, task, next.state, {
+    outcome: "done",
     record: { ...next.record, acceptedCommentId: accept.id },
     message: `${t.accepted(accept.author, moved.join(", "))} ${next.message}`.trim(),
     retry: true,
@@ -571,6 +591,7 @@ function blocked(
   core.error(oneLine(error));
   const t = say(task, record);
   return finish(repo, task, "blocked", {
+    outcome: "failed",
     record,
     message: `${t.couldNotUse} ${retryHint(t, task)}`,
     errors: [error, ...more],
@@ -582,6 +603,8 @@ async function finish(
   task: TaskContext,
   state: State | "new",
   view: {
+    /** How the run ended, for its comment's title. */
+    outcome?: RunOutcome;
     record?: TaskRecord | undefined;
     message?: string;
     report?: string | undefined;
@@ -633,7 +656,12 @@ async function finish(
       task.number,
       renderRun({
         t,
-        title: t.runTitle({ action: task.action, stage: task.stage, revised: !!task.record }),
+        title: t.runTitle({
+          action: task.action,
+          stage: task.stage,
+          revised: !!task.record,
+          outcome: view.outcome,
+        }),
         state,
         model: task.model,
         runUrl: task.runUrl,
@@ -697,10 +725,20 @@ function spendRow(task: TaskContext, cost: number | undefined): SpendRow | undef
     taskBudget: task.settings["task-budget"],
     monthlyBudget: task.settings["monthly-budget"],
     monthSpent: amount("month-spent"),
+    durationMs: agentDuration(),
+    inputTokens: amount("input-tokens"),
+    outputTokens: amount("output-tokens"),
   };
 }
 
-/** An amount in USD from an input, if it has one. */
+/** How long the agent ran, as the agent job measured it outside the sandbox. */
+function agentDuration(): number | undefined {
+  const manifest = readJson(join(resultDir(), "manifest.json"));
+  const ms = isManifest(manifest) ? manifest.durationMs : undefined;
+  return typeof ms === "number" && Number.isFinite(ms) && ms >= 0 ? ms : undefined;
+}
+
+/** A number from an input, if it has one. */
 function amount(name: string): number | undefined {
   const value = Number.parseFloat(core.getInput(name));
   return Number.isFinite(value) ? value : undefined;

@@ -73,6 +73,7 @@ export async function agent(): Promise<void> {
   writeAsAgent(`${worktree}/${RULES_PATH}`, rules.text);
 
   core.info(`Running ${harness.name} with ${task.model} for up to ${minutes} minutes.`);
+  const started = Date.now();
   const run = await runAsAgent(
     harness.command({
       executable,
@@ -84,6 +85,7 @@ export async function agent(): Promise<void> {
     worktree,
     minutes * 60_000,
   );
+  const durationMs = Date.now() - started;
   killAgentProcesses();
 
   const out = resultDir();
@@ -104,6 +106,7 @@ export async function agent(): Promise<void> {
     harness: harness.name,
     exitCode: run.exitCode,
     timedOut: run.timedOut,
+    durationMs,
     changes,
   };
   writeFileSync(join(out, "manifest.json"), JSON.stringify(manifest, null, 2));

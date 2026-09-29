@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { en } from "./i18n/en.ts";
-import { addRow, type SpendRow, spendTable } from "./spend.ts";
+import { ptBR } from "./i18n/pt-BR.ts";
+import { addRow, duration, type SpendRow, spendTable, spendTotals } from "./spend.ts";
 
 const row = (cost: number | undefined, run = 1): SpendRow => ({
   runUrl: `https://github.com/o/r/actions/runs/${run}`,
@@ -13,17 +14,24 @@ const row = (cost: number | undefined, run = 1): SpendRow => ({
   taskBudget: 2,
   monthlyBudget: 20,
   monthSpent: 3.1,
+  durationMs: 70_000,
+  inputTokens: 45_712,
+  outputTokens: 950,
 });
 
-test("a row shows the run, its stage, model, cost and limits", () => {
+test("a row shows the run, its stage, model, time, tokens, cost and limits", () => {
   const lines = spendTable(en, { rows: [row(0.0123)] });
   assert.equal(
     lines[0],
-    "| Run | Stage | Model | Cost | Key limit | Task budget | Monthly budget |",
+    "| Run | Stage | Model | Time | Input tokens | Output tokens | Cost | Key limit | Task budget | Monthly budget |",
   );
   assert.equal(
     lines[2],
-    "| [2026-09-28 19:40 UTC](https://github.com/o/r/actions/runs/1) | code | `deepseek/deepseek-v4.1-flash` | US$ 0.012 | US$ 1.50 | US$ 2.00 | US$ 3.10 of US$ 20.00 |",
+    "| [2026-09-28 19:40 UTC](https://github.com/o/r/actions/runs/1) | code | `deepseek/deepseek-v4.1-flash` | 1 min 10 s | 45.7K | 950 | US$ 0.012 | US$ 1.50 | US$ 2.00 | US$ 3.10 of US$ 20.00 |",
+  );
+  assert.equal(
+    spendTable(ptBR, { rows: [row(0.0123)] })[2],
+    "| [28/09/2026 19:40 UTC](https://github.com/o/r/actions/runs/1) | código | `deepseek/deepseek-v4.1-flash` | 1 min 10 s | 45,7\u00a0mil | 950 | US$ 0,012 | US$ 1,50 | US$ 2,00 | US$ 3,10 de US$ 20,00 |",
   );
 });
 
@@ -34,17 +42,20 @@ test("unknown values show a dash, and the model cannot break the table", () => {
         ...row(undefined),
         keyLimit: undefined,
         monthSpent: undefined,
+        durationMs: undefined,
+        inputTokens: undefined,
+        outputTokens: undefined,
         model: "a|b`c\nd",
       },
     ],
   });
   assert.equal(
     line,
-    "| [2026-09-28 19:40 UTC](https://github.com/o/r/actions/runs/1) | code | `abcd` | — | — | US$ 2.00 | US$ 20.00 |",
+    "| [2026-09-28 19:40 UTC](https://github.com/o/r/actions/runs/1) | code | `abcd` | — | — | — | — | — | US$ 2.00 | US$ 20.00 |",
   );
 });
 
-test("the oldest rows fold into one past the limit", () => {
+test("the oldest rows fold into one past the limit, with their sums", () => {
   let spending = addRow(undefined, row(0.1, 1), 2);
   spending = addRow(spending, row(0.2, 2), 2);
   spending = addRow(spending, row(0.3, 3), 2);
@@ -55,7 +66,21 @@ test("the oldest rows fold into one past the limit", () => {
   );
   assert.equal(spending.earlier?.runs, 2);
   assert.ok(Math.abs((spending.earlier?.cost ?? 0) - 0.3) < 1e-9);
-  assert.match(spendTable(en, spending)[2] ?? "", /^\| Earlier runs \(2\) \| \| \| US\$ 0\.300 \|/);
+  assert.equal(
+    spendTable(en, spending)[2],
+    "| Earlier runs (2) | | | 2 min 20 s | 91.4K | 1.9K | US$ 0.300 | | | |",
+  );
+  const totals = spendTotals(spending);
+  assert.equal(totals.runs, 4);
+  assert.equal(totals.inputTokens, 4 * 45_712);
+  assert.equal(totals.durationMs, 4 * 70_000);
+});
+
+test("older folded rows show a dash where they have no time or tokens", () => {
+  assert.equal(
+    spendTable(en, { rows: [], earlier: { runs: 3, cost: 0.2 } })[2],
+    "| Earlier runs (3) | | | — | — | — | US$ 0.200 | | | |",
+  );
 });
 
 test("a last row shows what runs without a row spent", () => {
@@ -63,6 +88,18 @@ test("a last row shows what runs without a row spent", () => {
   assert.equal(spendTable(en, spending, 0.1).length, 3, "nothing missing");
   assert.equal(
     spendTable(en, spending, 0.35).at(-1),
-    "| Runs without a row | | | US$ 0.250 | | | |",
+    "| Runs without a row | | | | | | US$ 0.250 | | | |",
   );
+});
+
+test("durations read as a person would say them", () => {
+  assert.equal(duration(400), "0 s");
+  assert.equal(duration(1_000), "1 s");
+  assert.equal(duration(59_400), "59 s");
+  assert.equal(duration(60_000), "1 min");
+  assert.equal(duration(70_000), "1 min 10 s");
+  assert.equal(duration(3_599_000), "59 min 59 s");
+  assert.equal(duration(3_600_000), "1 h");
+  assert.equal(duration(3_900_000), "1 h 5 min");
+  assert.equal(duration(7_170_000), "2 h");
 });

@@ -49,6 +49,19 @@ export function usd(amount: number): string {
   return `US$ ${amount.toFixed(2)}`;
 }
 
+/** A non-negative whole count from a number or a numeric string; 0 otherwise. */
+function count(value: unknown): number {
+  const number = typeof value === "string" ? Number(value) : value;
+  return typeof number === "number" && Number.isFinite(number) && number > 0
+    ? Math.round(number)
+    : 0;
+}
+
+/** Analytics wants seconds precision: `YYYY-MM-DDTHH:MM:SSZ`. */
+function utcSeconds(date: Date): string {
+  return `${date.toISOString().slice(0, 19)}Z`;
+}
+
 /** OpenRouter wants `YYYY-MM-DDTHH:MM:SSZ`. */
 export function expiresAt(now: Date, hours: number): string {
   return `${new Date(now.getTime() + hours * 3_600_000).toISOString().slice(0, 19)}Z`;
@@ -87,6 +100,33 @@ export class OpenRouter {
       data: KeyInfo;
     };
     return data.usage ?? 0;
+  }
+
+  /**
+   * The tokens one key used between `since` and `until`, from OpenRouter's analytics, as
+   * OpenRouter counts them: prompt tokens (cached ones included) and completion tokens.
+   * Undefined when analytics has no rows for the key yet.
+   */
+  async keyTokens(
+    hash: string,
+    since: Date,
+    until: Date,
+  ): Promise<{ input: number; output: number } | undefined> {
+    const response = (await this.#request("/analytics/query", "POST", {
+      metrics: ["tokens_prompt", "tokens_completion"],
+      filters: [{ field: "api_key_id", operator: "eq", value: hash }],
+      time_range: { start: utcSeconds(since), end: utcSeconds(until) },
+    })) as { data?: { data?: unknown } };
+    const rows = response.data?.data;
+    if (!Array.isArray(rows) || rows.length === 0) return undefined;
+    let input = 0;
+    let output = 0;
+    for (const row of rows as Record<string, unknown>[]) {
+      // Counts may come back as strings.
+      input += count(row.tokens_prompt);
+      output += count(row.tokens_completion);
+    }
+    return { input, output };
   }
 
   async createKey(options: {

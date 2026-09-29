@@ -70,14 +70,20 @@ test("the panel and run comments come out in the task's language", () => {
 
   const run = renderRun({
     t: ptBR,
-    title: ptBR.runTitle({ action: "implement", stage: "review", revised: false }),
+    title: ptBR.runTitle({
+      action: "implement",
+      stage: "review",
+      revised: false,
+      outcome: "blocked",
+    }),
     state: "blocked",
     model: "a/b",
     runUrl: "https://x/runs/2",
     message: ptBR.stageNeedsMaintainer("review"),
     errors: [ptBR.commandProblem({ kind: "no-decision", id: 3 })],
   });
-  assert.match(run, /### Codeman: Etapa de revisão\n\nAgora: Bloqueado\./);
+  assert.match(run, /### Codeman · Etapa de revisão: bloqueada\n/);
+  assert.match(run, /\*\*Próximo passo:\*\* um mantenedor: veja acima como continuar\./);
   assert.match(run, /A etapa de revisão precisa de um mantenedor\./);
   assert.match(run, /#### Problemas\n\n- A decisão 3 não existe\./);
 });
@@ -100,4 +106,31 @@ test("every command problem has a text in each catalog", () => {
   for (const t of [en, ptBR]) {
     for (const problem of problems) assert.ok(t.commandProblem(problem).length > 10, problem.kind);
   }
+});
+
+test("a run's title says what ran and how it ended; its last line, what comes next", () => {
+  const title = (t: typeof en, run: Parameters<typeof en.runTitle>[0]) => t.runTitle(run);
+  assert.equal(
+    title(ptBR, { action: "implement", stage: "design", revised: false, outcome: "skipped" }),
+    "Etapa de design: pulada",
+  );
+  assert.equal(
+    title(ptBR, { action: "implement", stage: "review", revised: false, outcome: "changes" }),
+    "Etapa de revisão: mudanças pedidas",
+  );
+  assert.equal(
+    title(en, { action: "implement", stage: "test", revised: false, outcome: "done" }),
+    "Test stage: done",
+  );
+  assert.equal(title(en, { action: "plan", revised: true, outcome: "done" }), "Plan: revised");
+  assert.equal(title(ptBR, { action: "plan", revised: false, outcome: "failed" }), "Plano: falhou");
+  assert.equal(title(en, { action: "record", revised: false }), "Answers recorded");
+  assert.equal(
+    title(en, { action: "accept", revised: false, outcome: "failed" }),
+    "Workflows not accepted",
+  );
+
+  assert.equal(ptBR.nextStep("coding"), "etapa de código.");
+  assert.equal(ptBR.nextStep("done"), "a sua revisão do pull request.");
+  assert.equal(en.nextStep("awaiting-decision"), "your decisions, in the task's status comment.");
 });

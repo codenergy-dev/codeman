@@ -207,7 +207,7 @@ test("the history is the App's run comments, the newest that fit, oldest first",
     history.map((entry) => entry.id),
     [1, 4, 5],
   );
-  assert.match(history[0]?.body ?? "", /^### Codeman: Plan/);
+  assert.match(history[0]?.body ?? "", /^### Codeman · Plan/);
   const size = history[2]?.body.length ?? 0;
   assert.deepEqual(
     runHistory(comments, "codeman[bot]", size * 2).map((entry) => entry.id),

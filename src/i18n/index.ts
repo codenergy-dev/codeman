@@ -2,7 +2,7 @@ import { en } from "./en.ts";
 import type { Messages } from "./messages.ts";
 import { ptBR } from "./pt-BR.ts";
 
-export type { Messages } from "./messages.ts";
+export type { Messages, RunOutcome } from "./messages.ts";
 
 /** Catalogs by language tag, in lower case. A base language (`pt`) stands for its variants. */
 const CATALOGS: Readonly<Record<string, Messages>> = {

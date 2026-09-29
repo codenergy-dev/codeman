@@ -1,8 +1,8 @@
 import type { Messages } from "./i18n/index.ts";
 import { encodeStatus, pendingDecisions, type TaskRecord } from "./record.ts";
-import { type SpendRow, spendTable } from "./spend.ts";
+import { duration, type SpendRow, spendTable, spendTotals } from "./spend.ts";
 import type { State } from "./state.ts";
-import { inertLines, inlineText } from "./text.ts";
+import { inlineText, safeInline, safeMarkdown } from "./text.ts";
 
 export interface StatusView {
   /** The task's language. */
@@ -43,20 +43,20 @@ export function renderStatus(view: StatusView): string {
   if (record?.pullRequest && view.pullRequestUrl) {
     lines.push(`${t.pullRequest}: [#${record.pullRequest}](${view.pullRequestUrl})`, "");
   }
-  if (record) lines.push(inlineText(record.summary), "");
+  if (record) lines.push(safeInline(record.summary), "");
 
   if (record && record.decisions.length > 0) {
     lines.push(`#### ${t.decisions}`, "");
     for (const decision of record.decisions) {
-      lines.push(`**${decision.id}. ${inlineText(decision.title)}**`, "");
-      lines.push(inlineText(decision.question), "");
+      lines.push(`**${decision.id}. ${safeInline(decision.title)}**`, "");
+      lines.push(safeInline(decision.question), "");
       for (const option of decision.options) {
         const tags = [
           option.key === decision.recommendation ? t.recommended : "",
           option.key === decision.answer?.option ? t.chosenBy(decision.answer.by) : "",
         ].filter(Boolean);
         const suffix = tags.length > 0 ? ` _(${tags.join(", ")})_` : "";
-        lines.push(`- **${option.key})** ${inlineText(option.label)}${suffix}`);
+        lines.push(`- **${option.key})** ${safeInline(option.label)}${suffix}`);
       }
       if (decision.answer?.text !== undefined) {
         lines.push("", t.answeredBy(decision.answer.by, inlineText(decision.answer.text)));
@@ -78,6 +78,18 @@ export function renderStatus(view: StatusView): string {
     lines.push(`#### ${t.spending}`, "", ...spendTable(t, record?.spending, view.cost?.task), "");
     if (view.cost?.task !== undefined) {
       lines.push(`${spentText(t, { ...view.cost, run: undefined })}.`, "");
+    }
+    const totals = spendTotals(record?.spending);
+    // Rows from before tokens and time were recorded have neither.
+    if (totals.inputTokens + totals.outputTokens + totals.durationMs > 0) {
+      lines.push(
+        t.usedTokens(
+          t.tokens(totals.inputTokens),
+          t.tokens(totals.outputTokens),
+          duration(totals.durationMs),
+        ),
+        "",
+      );
     }
   }
 
@@ -104,7 +116,7 @@ export function runCommentText(body: string): string {
 export interface RunView {
   /** The task's language. */
   t: Messages;
-  /** What the run worked on, such as "Test stage" (trusted text). */
+  /** What the run worked on and how it ended, such as "Test stage: done" (trusted text). */
   title: string;
   /** The task's state once the run ended. */
   state: State | "new";
@@ -124,14 +136,15 @@ export interface RunView {
 /** What one run did, posted as a new comment so the issue keeps the task's history. */
 export function renderRun(view: RunView): string {
   const { t } = view;
-  const lines = [RUN_MARKER, `### Codeman: ${view.title}`, "", t.now(t.heading(view.state)), ""];
+  const lines = [RUN_MARKER, `### Codeman · ${view.title}`, ""];
   if (view.message) lines.push(view.message, "");
-  if (view.report) lines.push(`#### ${t.report}`, "", inertLines(view.report), "");
+  if (view.report) lines.push(`#### ${t.report}`, "", safeMarkdown(view.report), "");
   if (view.errors && view.errors.length > 0) {
     lines.push(`#### ${t.problems}`, "");
-    for (const error of view.errors) lines.push(`- ${inlineText(error)}`);
+    for (const error of view.errors) lines.push(`- ${safeInline(error)}`);
     lines.push("");
   }
+  lines.push(`**${t.nextStepLabel}:** ${t.nextStep(view.state)}`, "");
   if (view.spend) {
     lines.push(`#### ${t.costHeading}`, "", ...spendTable(t, { rows: [view.spend] }), "");
   }
