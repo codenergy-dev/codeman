@@ -1,6 +1,7 @@
 import * as core from "@actions/core";
 import * as github from "@actions/github";
 import {
+  costsByRun,
   expiresAt,
   keyPrefix,
   MIN_RUN_BUDGET,
@@ -68,8 +69,8 @@ export async function openKey(): Promise<void> {
 }
 
 /**
- * Disables the run's key, then reads what it spent. OpenRouter may count the last requests a
- * little later, so the usage is read until it stops changing, for up to about half a minute.
+ * Disables the run's key, then reads what it spent and used, and what each run of the task
+ * spent, so apply can refresh the costs that earlier runs read too soon.
  */
 export async function closeKey(): Promise<void> {
   const router = new OpenRouter(core.getInput("management-key", { required: true }));
@@ -77,21 +78,71 @@ export async function closeKey(): Promise<void> {
   await router.disableKey(hash);
   core.info("Disabled the key.");
 
-  let cost = await router.keyUsage(hash);
-  for (let attempt = 0; attempt < 6; attempt++) {
-    await new Promise((resolve) => setTimeout(resolve, 5_000));
-    const latest = await router.keyUsage(hash);
-    if (latest === cost) break;
-    cost = latest;
+  let cost = await runCost(router, hash, false);
+  const tokens = await runTokens(router, hash, cost > 0);
+  if (cost === 0 && tokens && tokens.input + tokens.output > 0) {
+    // The analytics counted requests that the key's usage does not show yet.
+    core.info("OpenRouter has tokens for this run's key but no cost yet; reading it again.");
+    cost = await runCost(router, hash, true);
+    if (cost === 0) core.warning("OpenRouter has no cost for this run's key yet.");
   }
   core.setOutput("run-cost", cost.toFixed(4));
   core.info(`This run spent ${usd(cost)}.`);
-
-  const tokens = await runTokens(router, hash, cost > 0);
   if (tokens) {
     core.setOutput("input-tokens", String(tokens.input));
     core.setOutput("output-tokens", String(tokens.output));
     core.info(`This run used ${tokens.input} input and ${tokens.output} output tokens.`);
+  }
+
+  const costs = await taskCosts(router, hash);
+  if (costs) core.setOutput("task-costs", JSON.stringify(costs));
+}
+
+/**
+ * What the key spent. OpenRouter may count the last requests a little later, so the usage is
+ * read until it stops changing, for up to about half a minute. For a key known to be `used`, a
+ * usage of zero is not final: it is read for up to about a minute.
+ */
+export async function runCost(
+  router: Pick<OpenRouter, "keyUsage">,
+  hash: string,
+  used: boolean,
+  wait = sleep,
+): Promise<number> {
+  let cost = await router.keyUsage(hash);
+  for (let attempt = 0; attempt < (used ? 12 : 6); attempt++) {
+    await wait(5_000);
+    const latest = await router.keyUsage(hash);
+    if (latest === cost && (latest > 0 || !used)) break;
+    cost = latest;
+  }
+  return cost;
+}
+
+/**
+ * What each run of the key's task spent, by run ID, rounded as `run-cost` is. The task comes
+ * from the key's name. Failures are only logged: apply then keeps the costs it has.
+ */
+export async function taskCosts(
+  router: Pick<OpenRouter, "key" | "listKeys">,
+  hash: string,
+): Promise<Record<string, number> | undefined> {
+  try {
+    const { name } = await router.key(hash);
+    const { owner, repo } = github.context.repo;
+    const prefix = name.slice(0, name.lastIndexOf("/") + 1);
+    if (!prefix.startsWith(keyPrefix(owner, repo)) || prefix === keyPrefix(owner, repo)) {
+      throw new Error("the key's name is not a task key's.");
+    }
+    const costs = costsByRun(await router.listKeys(), prefix);
+    return Object.fromEntries(
+      Object.entries(costs).map(([run, cost]) => [run, Number(cost.toFixed(4))]),
+    );
+  } catch (error) {
+    core.warning(
+      `Could not read what the task's runs spent: ${error instanceof Error ? error.message : error}`,
+    );
+    return undefined;
   }
 }
 
@@ -107,7 +158,7 @@ export async function runTokens(
   router: Pick<OpenRouter, "keyTokens">,
   hash: string,
   spent: boolean,
-  wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms)),
+  wait = sleep,
 ): Promise<{ input: number; output: number } | undefined> {
   try {
     for (let attempt = 0; ; attempt++) {
@@ -127,4 +178,8 @@ export async function runTokens(
     );
     return undefined;
   }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

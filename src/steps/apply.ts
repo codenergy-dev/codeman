@@ -18,7 +18,7 @@ import {
 import type { CommandError } from "../problems.ts";
 import { pullRequestBody, pullRequestFooter, pullRequestTitle } from "../pull.ts";
 import { applyCommands, pendingDecisions, type TaskRecord, writeAnswers } from "../record.ts";
-import { addRow, type SpendRow } from "../spend.ts";
+import { addRow, parseCosts, refreshCosts, runId, type SpendRow } from "../spend.ts";
 import { nextStage, STAGE_STATE, type Stage } from "../stages.ts";
 import type { State } from "../state.ts";
 import { renderRun, renderStatus, reportUrl } from "../status.ts";
@@ -722,11 +722,15 @@ async function finish(
     pullRequestWritten?: boolean;
   },
 ): Promise<void> {
-  const cost = runCosts(task);
+  const costs = taskCosts();
+  const cost = runCosts(task, costs);
   const spend = spendRow(task, cost.run);
   let record = view.record ?? task.record ?? undefined;
   if (record && cost.task !== undefined) record = { ...record, spent: cost.task };
   if (record && spend) record = { ...record, spending: addRow(record.spending, spend) };
+  // Earlier runs may have read their cost before OpenRouter counted it.
+  if (record?.spending && costs)
+    record = { ...record, spending: refreshCosts(record.spending, costs) };
   // A stage ran and saw the accepted workflows.
   if (record && task.action === "implement" && !view.retry)
     record = { ...record, accepted: undefined };
@@ -808,14 +812,28 @@ async function finish(
 }
 
 /**
- * What this run and the whole task have spent, in USD, as far as known: `open-key` reports the
- * task's spend before the run, and `close-key` the run's.
+ * What this run and the whole task have spent, in USD, as far as known: `close-key` reports what
+ * each run of the task spent, read last; older workflow files have only `open-key`'s task spend
+ * before the run and `close-key`'s run cost.
  */
-function runCosts(task: TaskContext): { run?: number | undefined; task?: number | undefined } {
+function runCosts(
+  task: TaskContext,
+  costs = taskCosts(),
+): { run?: number | undefined; task?: number | undefined } {
   const before = amount("task-spent");
   const run = amount("run-cost");
+  if (costs) {
+    const id = runId(task.runUrl);
+    const total = Object.values(costs).reduce((sum, value) => sum + value, 0);
+    return { run: (id === undefined ? undefined : costs[id]) ?? run, task: total };
+  }
   if (before === undefined) return { task: task.record?.spent };
   return { run, task: before + (run ?? 0) };
+}
+
+/** What each run of the task spent, by run ID, as `close-key` read it. */
+function taskCosts(): Record<string, number> | undefined {
+  return parseCosts(core.getInput("task-costs"));
 }
 
 /** The spend table's row for a run that opened a key; older workflow files lack some inputs. */

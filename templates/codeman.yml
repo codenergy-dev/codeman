@@ -185,8 +185,9 @@ jobs:
           if-no-files-found: ignore
           retention-days: 1
 
-  # Disables the run's key, whatever happened, and reads what the run spent. Disabled keys still
-  # count towards the task and monthly budgets. Apply waits for it to report the spend.
+  # Disables the run's key, whatever happened, and reads what the run and each earlier run of the
+  # task spent. Disabled keys still count towards the task and monthly budgets. Apply waits for
+  # it to report the spend.
   close-key:
     name: Close key
     needs: [open-key, agent]
@@ -197,6 +198,7 @@ jobs:
       run-cost: ${{ steps.codeman.outputs.run-cost }}
       input-tokens: ${{ steps.codeman.outputs.input-tokens }}
       output-tokens: ${{ steps.codeman.outputs.output-tokens }}
+      task-costs: ${{ steps.codeman.outputs.task-costs }}
     steps:
       - uses: codenergy-dev/codeman@COMMIT_SHA
         id: codeman
@@ -260,6 +262,7 @@ jobs:
           month-spent: ${{ needs.open-key.outputs.month-spent }}
           input-tokens: ${{ needs.close-key.outputs.input-tokens }}
           output-tokens: ${{ needs.close-key.outputs.output-tokens }}
+          task-costs: ${{ needs.close-key.outputs.task-costs }}
 
   # Starts another run when this one moved a task, so the next task (or the next step of this
   # one) does not wait for the schedule. That run stops early when nothing can move. No secrets.

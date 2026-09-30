@@ -51,6 +51,54 @@ export function addRow(spending: Spending | undefined, row: SpendRow, max = MAX_
   return { rows, earlier };
 }
 
+/**
+ * Takes each row's cost from `costs`, what each run of the task spent by run ID as OpenRouter
+ * counts it now, since a run may have read its cost before OpenRouter counted it. A run with
+ * several rows, such as a re-run, keeps them as they are: its cost cannot be split between them.
+ * Folded rows stay folded.
+ */
+export function refreshCosts(
+  spending: Spending,
+  costs: Readonly<Record<string, number>>,
+): Spending {
+  const rowsOf = new Map<string, number>();
+  for (const row of spending.rows) {
+    const run = runId(row.runUrl);
+    if (run) rowsOf.set(run, (rowsOf.get(run) ?? 0) + 1);
+  }
+  const rows = spending.rows.map((row) => {
+    const run = runId(row.runUrl);
+    const cost = run && rowsOf.get(run) === 1 && Object.hasOwn(costs, run) ? costs[run] : undefined;
+    return cost === undefined ? row : { ...row, cost };
+  });
+  return { ...spending, rows };
+}
+
+/**
+ * `close-key`'s `task-costs` output: a JSON object of costs in USD by run ID. Undefined when
+ * missing, as with older workflow files, empty (the run's own key is always there) or malformed.
+ */
+export function parseCosts(text: string): Record<string, number> | undefined {
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const entries = Object.entries(value);
+  const valid = entries.every(
+    ([run, cost]) =>
+      /^\d+$/.test(run) && typeof cost === "number" && Number.isFinite(cost) && cost >= 0,
+  );
+  return valid && entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
+
+/** The run ID at the end of a run's link. */
+export function runId(runUrl: string): string | undefined {
+  return /\/actions\/runs\/(\d+)$/.exec(runUrl)?.[1];
+}
+
 /** Everything the table knows: the folded rows and each row. */
 export function spendTotals(spending: Spending | undefined): SpendTotals {
   return (spending?.rows ?? []).reduce(add, complete(spending?.earlier));

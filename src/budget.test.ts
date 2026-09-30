@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  costsByRun,
   expiresAt,
   type Fetch,
   keyPrefix,
@@ -94,6 +95,22 @@ test("adds up a task's spend without mixing tasks that share a prefix", () => {
   assert.equal(sumUsage(keys, taskKeyPrefix("o", "r", 1), "usage"), 0.55);
   assert.equal(sumUsage(keys, taskKeyPrefix("o", "r", 12), "usage"), 5);
   assert.equal(sumUsage(keys, keyPrefix("o", "r"), "usage_monthly"), 0.2);
+});
+
+test("gives each run of a task what its keys spent, adding up a re-run's keys", () => {
+  const keys = [
+    { hash: "1", name: "codeman/o/r/1/100", usage: 0.2 },
+    { hash: "2", name: "codeman/o/r/1/101", usage: 0.3 },
+    { hash: "3", name: "codeman/o/r/1/101", usage: 0.1 },
+    { hash: "4", name: "codeman/o/r/1/102" },
+    { hash: "5", name: "codeman/o/r/12/103", usage: 5 },
+    { hash: "6", name: "codeman/o/r/1/other", usage: 5 },
+  ];
+  assert.deepEqual(costsByRun(keys, taskKeyPrefix("o", "r", 1)), {
+    "100": 0.2,
+    "101": 0.4,
+    "102": 0,
+  });
 });
 
 test("a run gets what remains of the task budget, in cents rounded down", () => {

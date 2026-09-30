@@ -58,6 +58,8 @@ inputs:
     description: "(apply) input-tokens output of the close-key job."
   output-tokens:
     description: "(apply) output-tokens output of the close-key job."
+  task-costs:
+    description: "(apply) task-costs output of the close-key job."
   workdir:
     description: "Directory for Codeman's files. Defaults to RUNNER_TEMP/codeman."
 outputs:
@@ -91,6 +93,8 @@ outputs:
     description: "(close-key) Input tokens of this run's key, from OpenRouter's analytics."
   output-tokens:
     description: "(close-key) Output tokens of this run's key, from OpenRouter's analytics."
+  task-costs:
+    description: "(close-key) What each run of the task spent, in USD, by run ID, as JSON."
   reason:
     description: "(open-key) Why no key was created."
   key-hash:

@@ -26178,10 +26178,10 @@ var Repository = class {
     });
     return data.workflow_runs;
   }
-  async runJobs(runId) {
+  async runJobs(runId2) {
     return this.#octokit.paginate(this.#octokit.rest.actions.listJobsForWorkflowRun, {
       ...this.#scope,
-      run_id: runId,
+      run_id: runId2,
       per_page: 100
     });
   }
@@ -26192,10 +26192,10 @@ var Repository = class {
     });
     return typeof response.data === "string" ? response.data : String(response.data);
   }
-  async runArtifacts(runId) {
+  async runArtifacts(runId2) {
     return this.#octokit.paginate(this.#octokit.rest.actions.listWorkflowRunArtifacts, {
       ...this.#scope,
-      run_id: runId,
+      run_id: runId2,
       per_page: 100
     });
   }
@@ -26426,9 +26426,9 @@ function repository(input = "github-token") {
   return new Repository(octokit, owner, repo);
 }
 function runUrl() {
-  const { serverUrl, runId } = context2;
+  const { serverUrl, runId: runId2 } = context2;
   const { owner, repo } = context2.repo;
-  return `${serverUrl}/${owner}/${repo}/actions/runs/${runId}`;
+  return `${serverUrl}/${owner}/${repo}/actions/runs/${runId2}`;
 }
 function fileUrl(task, path) {
   return `${context2.serverUrl}/${task.owner}/${task.repo}/blob/${task.branch}/${path}`;
@@ -26540,6 +26540,15 @@ function taskKeyPrefix(owner, repo, issue2) {
 function sumUsage(keys, prefix, field) {
   return keys.filter((key) => key.name.startsWith(prefix)).reduce((total, key) => total + (key[field] ?? 0), 0);
 }
+function costsByRun(keys, prefix) {
+  const costs = {};
+  for (const key of keys) {
+    const run2 = key.name.slice(prefix.length);
+    if (!key.name.startsWith(prefix) || !/^\d+$/.test(run2)) continue;
+    costs[run2] = (costs[run2] ?? 0) + (key.usage ?? 0);
+  }
+  return costs;
+}
 var MIN_RUN_BUDGET = 0.1;
 function runLimit(taskBudget, spent) {
   const remaining = Math.floor((taskBudget - spent) * 100 + 1e-9) / 100;
@@ -26581,10 +26590,13 @@ var OpenRouter = class {
   async monthlyUsage(prefix) {
     return sumUsage(await this.listKeys(), prefix, "usage_monthly");
   }
+  async key(hash) {
+    const { data } = await this.#request(`/keys/${encodeURIComponent(hash)}`);
+    return data;
+  }
   /** The total usage of one key, in USD. */
   async keyUsage(hash) {
-    const { data } = await this.#request(`/keys/${encodeURIComponent(hash)}`);
-    return data.usage ?? 0;
+    return (await this.key(hash)).usage ?? 0;
   }
   /**
    * The tokens one key used between `since` and `until`, from OpenRouter's analytics, as
@@ -26738,6 +26750,36 @@ function addRow(spending, row, max = MAX_ROWS) {
     if (oldest) earlier = add(complete(earlier), oldest);
   }
   return { rows, earlier };
+}
+function refreshCosts(spending, costs) {
+  const rowsOf = /* @__PURE__ */ new Map();
+  for (const row of spending.rows) {
+    const run2 = runId(row.runUrl);
+    if (run2) rowsOf.set(run2, (rowsOf.get(run2) ?? 0) + 1);
+  }
+  const rows = spending.rows.map((row) => {
+    const run2 = runId(row.runUrl);
+    const cost = run2 && rowsOf.get(run2) === 1 && Object.hasOwn(costs, run2) ? costs[run2] : void 0;
+    return cost === void 0 ? row : { ...row, cost };
+  });
+  return { ...spending, rows };
+}
+function parseCosts(text) {
+  let value;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return void 0;
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return void 0;
+  const entries = Object.entries(value);
+  const valid = entries.every(
+    ([run2, cost]) => /^\d+$/.test(run2) && typeof cost === "number" && Number.isFinite(cost) && cost >= 0
+  );
+  return valid && entries.length > 0 ? Object.fromEntries(entries) : void 0;
+}
+function runId(runUrl2) {
+  return /\/actions\/runs\/(\d+)$/.exec(runUrl2)?.[1];
 }
 function spendTotals(spending) {
   return (spending?.rows ?? []).reduce(add, complete(spending?.earlier));
@@ -27715,11 +27757,14 @@ function blocked(repo, task, error2, more = [], record) {
   });
 }
 async function finish(repo, task, state, view) {
-  const cost = runCosts(task);
+  const costs = taskCosts();
+  const cost = runCosts(task, costs);
   const spend = spendRow(task, cost.run);
   let record = view.record ?? task.record ?? void 0;
   if (record && cost.task !== void 0) record = { ...record, spent: cost.task };
   if (record && spend) record = { ...record, spending: addRow(record.spending, spend) };
+  if (record?.spending && costs)
+    record = { ...record, spending: refreshCosts(record.spending, costs) };
   if (record && task.action === "implement" && !view.retry)
     record = { ...record, accepted: void 0 };
   if (record && task.action !== "record" && !view.retry) {
@@ -27790,11 +27835,19 @@ async function finish(repo, task, state, view) {
   }
   info(`#${task.number} is now ${state}.`);
 }
-function runCosts(task) {
+function runCosts(task, costs = taskCosts()) {
   const before = amount("task-spent");
   const run2 = amount("run-cost");
+  if (costs) {
+    const id = runId(task.runUrl);
+    const total = Object.values(costs).reduce((sum, value) => sum + value, 0);
+    return { run: (id === void 0 ? void 0 : costs[id]) ?? run2, task: total };
+  }
   if (before === void 0) return { task: task.record?.spent };
   return { run: run2, task: before + (run2 ?? 0) };
+}
+function taskCosts() {
+  return parseCosts(getInput("task-costs"));
 }
 function spendRow(task, cost) {
   if (getInput("key-status") !== "opened") return void 0;
@@ -27885,24 +27938,54 @@ async function closeKey() {
   const hash = getInput("key-hash", { required: true });
   await router.disableKey(hash);
   info("Disabled the key.");
-  let cost = await router.keyUsage(hash);
-  for (let attempt = 0; attempt < 6; attempt++) {
-    await new Promise((resolve) => setTimeout(resolve, 5e3));
-    const latest = await router.keyUsage(hash);
-    if (latest === cost) break;
-    cost = latest;
+  let cost = await runCost(router, hash, false);
+  const tokens = await runTokens(router, hash, cost > 0);
+  if (cost === 0 && tokens && tokens.input + tokens.output > 0) {
+    info("OpenRouter has tokens for this run's key but no cost yet; reading it again.");
+    cost = await runCost(router, hash, true);
+    if (cost === 0) warning("OpenRouter has no cost for this run's key yet.");
   }
   setOutput("run-cost", cost.toFixed(4));
   info(`This run spent ${usd(cost)}.`);
-  const tokens = await runTokens(router, hash, cost > 0);
   if (tokens) {
     setOutput("input-tokens", String(tokens.input));
     setOutput("output-tokens", String(tokens.output));
     info(`This run used ${tokens.input} input and ${tokens.output} output tokens.`);
   }
+  const costs = await taskCosts2(router, hash);
+  if (costs) setOutput("task-costs", JSON.stringify(costs));
+}
+async function runCost(router, hash, used, wait = sleep) {
+  let cost = await router.keyUsage(hash);
+  for (let attempt = 0; attempt < (used ? 12 : 6); attempt++) {
+    await wait(5e3);
+    const latest = await router.keyUsage(hash);
+    if (latest === cost && (latest > 0 || !used)) break;
+    cost = latest;
+  }
+  return cost;
+}
+async function taskCosts2(router, hash) {
+  try {
+    const { name } = await router.key(hash);
+    const { owner, repo } = context2.repo;
+    const prefix = name.slice(0, name.lastIndexOf("/") + 1);
+    if (!prefix.startsWith(keyPrefix(owner, repo)) || prefix === keyPrefix(owner, repo)) {
+      throw new Error("the key's name is not a task key's.");
+    }
+    const costs = costsByRun(await router.listKeys(), prefix);
+    return Object.fromEntries(
+      Object.entries(costs).map(([run2, cost]) => [run2, Number(cost.toFixed(4))])
+    );
+  } catch (error2) {
+    warning(
+      `Could not read what the task's runs spent: ${error2 instanceof Error ? error2.message : error2}`
+    );
+    return void 0;
+  }
 }
 var KEY_LIFETIME_MS = 48 * 36e5;
-async function runTokens(router, hash, spent, wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))) {
+async function runTokens(router, hash, spent, wait = sleep) {
   try {
     for (let attempt = 0; ; attempt++) {
       const now = /* @__PURE__ */ new Date();
@@ -27921,6 +28004,9 @@ async function runTokens(router, hash, spent, wait = (ms) => new Promise((resolv
     );
     return void 0;
   }
+}
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 // src/steps/select.ts

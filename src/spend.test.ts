@@ -2,7 +2,16 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { en } from "./i18n/en.ts";
 import { ptBR } from "./i18n/pt-BR.ts";
-import { addRow, duration, type SpendRow, spendTable, spendTotals } from "./spend.ts";
+import {
+  addRow,
+  duration,
+  parseCosts,
+  refreshCosts,
+  runId,
+  type SpendRow,
+  spendTable,
+  spendTotals,
+} from "./spend.ts";
 
 const row = (cost: number | undefined, run = 1): SpendRow => ({
   runUrl: `https://github.com/o/r/actions/runs/${run}`,
@@ -102,4 +111,41 @@ test("durations read as a person would say them", () => {
   assert.equal(duration(3_600_000), "1 h");
   assert.equal(duration(3_900_000), "1 h 5 min");
   assert.equal(duration(7_170_000), "2 h");
+});
+
+test("rows take the costs OpenRouter counts now, by run", () => {
+  const spending = {
+    rows: [row(0, 1), row(undefined, 2), row(0.02, 3), row(0.01, 4)],
+    earlier: { runs: 1, cost: 0 },
+  };
+  const refreshed = refreshCosts(spending, { "1": 0.05, "2": 0.017, "3": 0.036 });
+  assert.deepEqual(
+    refreshed.rows.map((entry) => entry.cost),
+    [0.05, 0.017, 0.036, 0.01],
+  );
+  assert.deepEqual(refreshed.earlier, spending.earlier);
+  assert.equal(spending.rows[0]?.cost, 0, "the record passed in is not changed");
+});
+
+test("a run with several rows keeps them as they are", () => {
+  const spending = { rows: [row(0, 1), row(0.01, 1), row(0, 2)] };
+  assert.deepEqual(
+    refreshCosts(spending, { "1": 0.05, "2": 0.03 }).rows.map((entry) => entry.cost),
+    [0, 0.01, 0.03],
+  );
+});
+
+test("a run's ID comes from the end of its link", () => {
+  assert.equal(runId("https://github.com/o/r/actions/runs/123"), "123");
+  assert.equal(runId("https://github.com/o/r/actions/runs/123/attempts/2"), undefined);
+});
+
+test("reads close-key's costs by run, and nothing from a missing or malformed output", () => {
+  assert.deepEqual(parseCosts('{"100":0.05,"101":0}'), { "100": 0.05, "101": 0 });
+  assert.equal(parseCosts(""), undefined, "an older workflow file");
+  assert.equal(parseCosts("{}"), undefined, "the run's own key is always there");
+  assert.equal(parseCosts("[0.05]"), undefined);
+  assert.equal(parseCosts('{"100":"0.05"}'), undefined);
+  assert.equal(parseCosts('{"100":-1}'), undefined);
+  assert.equal(parseCosts('{"run":0.05}'), undefined);
 });

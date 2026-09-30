@@ -33,6 +33,21 @@ export function sumUsage(
     .reduce((total, key) => total + (key[field] ?? 0), 0);
 }
 
+/**
+ * What each run of a task spent, in USD, by run ID, from the keys whose name starts with the
+ * task's `prefix`. A re-run of a whole workflow opens another key with the same name, so keys of
+ * one run add up.
+ */
+export function costsByRun(keys: readonly KeyInfo[], prefix: string): Record<string, number> {
+  const costs: Record<string, number> = {};
+  for (const key of keys) {
+    const run = key.name.slice(prefix.length);
+    if (!key.name.startsWith(prefix) || !/^\d+$/.test(run)) continue;
+    costs[run] = (costs[run] ?? 0) + (key.usage ?? 0);
+  }
+  return costs;
+}
+
 /** Below this, a run is not worth starting: it would stop midway. */
 export const MIN_RUN_BUDGET = 0.1;
 
@@ -94,12 +109,16 @@ export class OpenRouter {
     return sumUsage(await this.listKeys(), prefix, "usage_monthly");
   }
 
-  /** The total usage of one key, in USD. */
-  async keyUsage(hash: string): Promise<number> {
+  async key(hash: string): Promise<KeyInfo> {
     const { data } = (await this.#request(`/keys/${encodeURIComponent(hash)}`)) as {
       data: KeyInfo;
     };
-    return data.usage ?? 0;
+    return data;
+  }
+
+  /** The total usage of one key, in USD. */
+  async keyUsage(hash: string): Promise<number> {
+    return (await this.key(hash)).usage ?? 0;
   }
 
   /**
