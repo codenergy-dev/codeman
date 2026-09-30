@@ -212,12 +212,10 @@ export async function select(): Promise<void> {
         : (record?.stage ?? stageOfState(fromStateOf(task.labels)) ?? firstStage(task.labels));
   // Settings may also come from the description, which the agent reads without command lines.
   const description = descriptionCommands(task.body);
-  // The description is written before the first run, which reports its problems.
-  const problems = [
-    ...(record ? [] : description.commands),
-    ...sources.map(({ command }) => command),
-  ].flatMap((command) =>
-    command.kind === "invalid" ? [{ text: command.text, problem: command.problem }] : [],
+  // Problems in the description are reported in every run, until a maintainer fixes them.
+  const problems = [...description.commands, ...sources.map(({ command }) => command)].flatMap(
+    (command) =>
+      command.kind === "invalid" ? [{ text: command.text, problem: command.problem }] : [],
   );
   const fromState = stateOf(task.labels);
   if (!fromState.ok) throw new Error(fromState.error);

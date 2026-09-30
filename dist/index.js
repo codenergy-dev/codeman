@@ -28170,10 +28170,7 @@ async function select() {
   const requests = choice.action === "implement" ? resumeRequests(sources) : [];
   const stage = choice.action !== "implement" ? void 0 : requests.some((request2) => request2.kind === "fix") ? "code" : record?.stage ?? stageOfState(fromStateOf(task.labels)) ?? firstStage(task.labels);
   const description = descriptionCommands(task.body);
-  const problems = [
-    ...record ? [] : description.commands,
-    ...sources.map(({ command }) => command)
-  ].flatMap(
+  const problems = [...description.commands, ...sources.map(({ command }) => command)].flatMap(
     (command) => command.kind === "invalid" ? [{ text: command.text, problem: command.problem }] : []
   );
   const fromState = stateOf(task.labels);

@@ -190,7 +190,7 @@ Maintainers steer a task with comments on its issue or on its pull request, and 
 | `/codeman set <name> <value>` | Changes `model`, `task-budget`, `max-runs` or `language` for this task from now on. The last valid one wins. |
 | `/codeman model <id>` | Short for `/codeman set model <id>`. |
 
-The issue's description may also hold `set` and `model` lines, to choose settings when opening the issue. Comments come after it, so a `set` in a comment wins. The agent reads the description without its command lines. Any other command in the description is a problem, reported with those of invalid settings in the task's first run. The description does not start a run.
+The issue's description may also hold `set` and `model` lines, to choose settings when opening the issue. Comments come after it, so a `set` in a comment wins. The agent reads the description without its command lines. Any other command in the description is a problem. Problems in the description, including invalid settings, are reported in every run while the description has them. The description does not start a run.
 
 Text after `decide` or `approve` is not part of the command: the agent sees it later as a maintainer comment, but it is not recorded as an answer. Use `answer` or `replan` when the text matters.
 
