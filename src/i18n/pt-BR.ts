@@ -86,6 +86,9 @@ export const ptBR: Messages = {
   spending: "Gastos",
   spent: ({ run, task, budget }) =>
     `Gasto: ${run ? `${run} nesta rodada, ` : ""}${task} de ${budget} da tarefa`,
+  refusedHeading: "Não é uma tarefa",
+  refused:
+    "O Codeman trabalha somente em issues abertas por quem tem acesso de escrita ao repositório. O agente lê o título e o corpo da issue como a sua tarefa, e quem abriu a issue pode editá-los a qualquer momento. Para seguir, um mantenedor abre uma nova issue com este conteúdo, com as suas próprias palavras, e aplica a label `codeman`. Depois, remova a label `codeman` desta.",
   panelFooter: (model, runUrl, reportUrl) =>
     `<sub>Modelo: \`${model}\` (troque com \`/codeman set model <id>\`) · [Última rodada](${runUrl})${reportUrl ? ` · [Último relatório](${reportUrl})` : ""}</sub>`,
 

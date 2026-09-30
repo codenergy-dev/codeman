@@ -1,6 +1,6 @@
 # Installation
 
-Setting up Codeman on a repository takes four parts: a GitHub App, an OpenRouter account, credentials in the repository or organization, and a workflow.
+Setting up Codeman on a repository takes four parts: a GitHub App, an OpenRouter account, credentials in the repository or organization, and a workflow. Before the first task, go through the [security checklist](security.md#checklist).
 
 ## 1. Register the GitHub App
 
@@ -55,7 +55,7 @@ It encrypts each task key while it travels from the job that creates it to the a
 
 1. Copy [`templates/codeman.yml`](../templates/codeman.yml) to `.github/workflows/codeman.yml` in the target repository.
 2. Replace every `COMMIT_SHA` with a full commit SHA of this repository. Pin a SHA, not a branch or tag, so the code that runs cannot change without a review.
-3. If the agent needs tools that the runner image lacks, set them up in the `agent` job, where the template marks the place (for example `actions/setup-node`). Tools installed inside the runner's home, such as Rust through `rustup`, are out of the agent's reach; install them system-wide instead.
+3. If the agent needs tools that the runner image lacks, set them up in the `agent` job, where the template marks the place (for example `actions/setup-node`). Tools installed inside the runner's home, such as Rust through `rustup`, are out of the agent's reach; install them system-wide instead. Add only steps that install tools: a step that runs repository code, such as `npm ci`, runs code the agent wrote outside its sandbox, where it can read the job's secrets. See [security](security.md#3-steps-added-to-the-agent-job-run-outside-the-sandbox).
 4. Copy [`templates/settings.yml`](../templates/settings.yml) to `.codeman/settings.yml` and choose the model. See [settings](architecture.md#settings) for every value.
 5. Optionally, add a `.codemanignore` with the paths the agent may not change; see [change policy](architecture.md#change-policy). Without one, Codeman uses its own rules and proposes them in its first pull request. Those rules keep the agent out of `.github/`, including workflows; see [on-demand workflows](architecture.md#on-demand-workflows) to allow them.
 6. Create a `codeman` label in the target repository.
@@ -66,7 +66,7 @@ The agent job needs a Linux runner (x64 or arm64).
 
 ## Try it
 
-1. Open an issue that leaves something to decide, and label it `codeman`.
+1. As a maintainer, open an issue that leaves something to decide, and label it `codeman`. Codeman works only on issues that maintainers open.
 2. Run the workflow manually. Codeman posts a status comment, writes a plan on the branch `codeman/<issue>-<slug>`, and lists its decisions.
 3. Answer in a comment, for example `/codeman decide 1 a` or `/codeman approve`. The comment starts a new run, which records the answers. When none is pending, the issue gets `codeman:ready`.
 4. Codeman starts the next run right away, and the stages follow one run each: design, code, test and review. After code, a draft pull request that closes the issue appears. When review passes, the pull request is ready for review and the issue gets `codeman:done`. Unfinished work is committed, and the following run continues it.

@@ -20690,6 +20690,8 @@ var en = {
   workflowsHelp: "The agent wrote these workflows. They are staged under `.codeman/workflows/` on the task branch and do not run. A workflow runs with the repository's secrets, so read them in the pull request or on the branch first. To move them into `.github/workflows/`, comment `/codeman accept-workflows`.",
   spending: "Spending",
   spent: ({ run: run2, task, budget }) => `Spent: ${run2 ? `${run2} this run, ` : ""}${task} of ${budget} for the task`,
+  refusedHeading: "Not a task",
+  refused: "Codeman works only on issues opened by someone with write access to the repository. The agent reads the issue's title and body as its task, and whoever opened the issue can edit them at any time. To go on, a maintainer opens a new issue with this content, in their own words, and labels it `codeman`. Then remove the `codeman` label from this one.",
   panelFooter: (model, runUrl2, reportUrl2) => `<sub>Model: \`${model}\` (change it with \`/codeman set model <id>\`) \xB7 [Last run](${runUrl2})${reportUrl2 ? ` \xB7 [Last report](${reportUrl2})` : ""}</sub>`,
   nextStepLabel: "Next step",
   nextStep: (state) => ({
@@ -20894,6 +20896,8 @@ var ptBR = {
   workflowsHelp: "O agente escreveu estes workflows. Eles est\xE3o guardados em `.codeman/workflows/` na branch da tarefa e n\xE3o rodam. Um workflow roda com os segredos do reposit\xF3rio, ent\xE3o leia-os antes no pull request ou na branch. Para mov\xEA-los para `.github/workflows/`, comente `/codeman accept-workflows`.",
   spending: "Gastos",
   spent: ({ run: run2, task, budget }) => `Gasto: ${run2 ? `${run2} nesta rodada, ` : ""}${task} de ${budget} da tarefa`,
+  refusedHeading: "N\xE3o \xE9 uma tarefa",
+  refused: "O Codeman trabalha somente em issues abertas por quem tem acesso de escrita ao reposit\xF3rio. O agente l\xEA o t\xEDtulo e o corpo da issue como a sua tarefa, e quem abriu a issue pode edit\xE1-los a qualquer momento. Para seguir, um mantenedor abre uma nova issue com este conte\xFAdo, com as suas pr\xF3prias palavras, e aplica a label `codeman`. Depois, remova a label `codeman` desta.",
   panelFooter: (model, runUrl2, reportUrl2) => `<sub>Modelo: \`${model}\` (troque com \`/codeman set model <id>\`) \xB7 [\xDAltima rodada](${runUrl2})${reportUrl2 ? ` \xB7 [\xDAltimo relat\xF3rio](${reportUrl2})` : ""}</sub>`,
   nextStepLabel: "Pr\xF3ximo passo",
   nextStep: (state) => ({
@@ -26880,6 +26884,9 @@ function renderStatus(view) {
   lines.push(t.panelFooter(modelName(view.model), view.runUrl, view.reportUrl));
   return lines.join("\n");
 }
+function renderRefused(t, record) {
+  return [encodeStatus(record), `### Codeman: ${t.refusedHeading}`, "", t.refused].join("\n");
+}
 function reportUrl(issueUrl, record) {
   return record?.reportCommentId ? `${issueUrl}#issuecomment-${record.reportCommentId}` : void 0;
 }
@@ -27029,8 +27036,12 @@ function toTask(issue2) {
     title: issue2.title,
     body: issue2.body ?? "",
     url: issue2.html_url,
-    labels: issue2.labels.map((label) => typeof label === "string" ? label : label.name ?? "").filter((name) => name !== "")
+    labels: issue2.labels.map((label) => typeof label === "string" ? label : label.name ?? "").filter((name) => name !== ""),
+    author: issue2.user && issue2.user.type !== "Bot" ? issue2.user.login : void 0
   };
+}
+function openedByMaintainer(task, maintainers) {
+  return task.author !== void 0 && maintainers.has(task.author);
 }
 function finishedRuns(runs, awaited) {
   const latest = awaited.map(
@@ -27180,7 +27191,8 @@ function findStatus(comments, bot) {
   const comment = comments.find(
     (candidate) => candidate.user?.login === bot && isStatusComment(candidate.body ?? "")
   );
-  return comment ? { id: comment.id, record: decodeStatus(comment.body ?? "") } : void 0;
+  const body = comment?.body ?? "";
+  return comment ? { id: comment.id, record: decodeStatus(body), body } : void 0;
 }
 
 // src/steps/apply.ts
@@ -27962,10 +27974,27 @@ async function select() {
       ...reviewCommands(reviews2)
     ];
   };
+  const authors = await maintainersAmong([
+    ...new Set(tasks.flatMap((task2) => task2.author ? [task2.author] : []))
+  ]);
+  const refuse = async (task2) => {
+    const talk2 = await conversation(task2.number);
+    const record2 = talk2.status?.record;
+    const language = taskSettings(authorizedComments(talk2.comments, talk2.maintainers)).language ?? fileSettings.value.language ?? "auto";
+    const body = renderRefused(messages(taskLanguage(language, record2?.language)), record2);
+    if (talk2.status?.body !== body) {
+      await repo.upsertComment(task2.number, talk2.status?.id ?? null, body);
+    }
+  };
   const workflowRuns = /* @__PURE__ */ new Map();
   const candidates = [];
   for (const task2 of tasks) {
     const line = `#${task2.number} ${oneLine(task2.title)}`;
+    if (!openedByMaintainer(task2, authors)) {
+      warning(`${line}: not opened by a maintainer, so it is not a task. Left alone.`);
+      await refuse(task2);
+      continue;
+    }
     const result = stateOf(task2.labels);
     if (!result.ok) {
       warning(`${line}: ${result.error}`);

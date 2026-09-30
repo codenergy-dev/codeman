@@ -1,8 +1,16 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { en } from "./i18n/en.ts";
+import { ptBR } from "./i18n/pt-BR.ts";
 import { decodeStatus, isStatusComment, type TaskRecord } from "./record.ts";
-import { isRunComment, renderRun, renderStatus, reportUrl, runCommentText } from "./status.ts";
+import {
+  isRunComment,
+  renderRefused,
+  renderRun,
+  renderStatus,
+  reportUrl,
+  runCommentText,
+} from "./status.ts";
 
 const decision = {
   id: 1,
@@ -194,4 +202,16 @@ test("lists staged workflows with how to accept them", () => {
   assert.match(body, /\/codeman accept-workflows/);
   assert.ok(!body.includes("- @evil"));
   assert.ok(!renderStatus(view).includes("Workflows to review"));
+});
+
+test("the panel of an issue a maintainer did not open says why, keeps the record, and is stable", () => {
+  const panel = renderRefused(en, record);
+  assert.equal(isStatusComment(panel), true);
+  assert.deepEqual(decodeStatus(panel), record);
+  assert.match(panel, /### Codeman: Not a task/);
+  assert.match(panel, /opened by someone with write access/);
+  // Nothing in it changes from run to run, so an unchanged panel is not written again.
+  assert.equal(renderRefused(en, record), panel);
+  assert.doesNotMatch(panel, /actions\/runs/);
+  assert.match(renderRefused(ptBR, undefined), /### Codeman: Não é uma tarefa/);
 });

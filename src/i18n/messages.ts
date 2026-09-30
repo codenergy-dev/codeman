@@ -61,6 +61,10 @@ export interface Messages {
   spent(cost: { run?: string | undefined; task: string; budget: string }): string;
   panelFooter(model: string, runUrl: string, reportUrl: string | undefined): string;
 
+  /** For a labeled issue that a maintainer did not open. */
+  refusedHeading: string;
+  refused: string;
+
   // Run comments.
   nextStepLabel: string;
   /** What comes after a run that left the task in `state`. */

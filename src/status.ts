@@ -97,6 +97,14 @@ export function renderStatus(view: StatusView): string {
   return lines.join("\n");
 }
 
+/**
+ * The panel of a labeled issue that a maintainer did not open. It keeps the task's record, and
+ * has no run link, so it stays the same from run to run and is written once.
+ */
+export function renderRefused(t: Messages, record: TaskRecord | undefined): string {
+  return [encodeStatus(record), `### Codeman: ${t.refusedHeading}`, "", t.refused].join("\n");
+}
+
 /** The link to the task's newest run comment, if it has one. */
 export function reportUrl(issueUrl: string, record: TaskRecord | undefined): string | undefined {
   return record?.reportCommentId ? `${issueUrl}#issuecomment-${record.reportCommentId}` : undefined;

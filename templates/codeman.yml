@@ -167,6 +167,8 @@ jobs:
           path: ${{ runner.temp }}/codeman/task
       # Set up the tools your project needs here, for example actions/setup-node. The agent gets
       # this job's PATH, except entries in the runner's home, and none of its other variables.
+      # Only install tools: a step that runs repository code (npm ci, make, tests) runs code the
+      # agent wrote outside its sandbox, where it can read this job's secrets.
       - uses: codenergy-dev/codeman@COMMIT_SHA
         with:
           step: agent

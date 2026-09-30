@@ -10,7 +10,7 @@ Most coding agents start writing code as soon as they read an issue. When the is
 
 Codeman turns ambiguity into questions instead. The flow it is being built for:
 
-1. You label an issue with `codeman`.
+1. You open an issue and label it `codeman`.
 2. Codeman writes a plan and posts its open decisions on the issue, each with options and a recommendation.
 3. You answer on the issue:
 
@@ -24,7 +24,7 @@ Codeman turns ambiguity into questions instead. The flow it is being built for:
    Codeman answers in the language of the issue. Code, commit messages and documentation stay in English, unless your `AGENTS.md` says otherwise.
 4. Codeman carries out the plan in stages, one agent each: design (flows and screen drafts, when the task needs them), code, test and review. Then it opens a pull request. You review it: a review that requests changes, or `/codeman fix <what to change>`, sends it back to work. You merge it; Codeman never merges.
 
-Only maintainers (people with write access to the repository) can steer Codeman. Comments from anyone else are ignored.
+Only maintainers (people with write access to the repository) can steer Codeman, and it works only on issues they opened. Comments from anyone else are ignored. [docs/security.md](docs/security.md) explains what Codeman protects, the risks that remain, and how to protect your repository.
 
 ## Getting started
 
@@ -48,6 +48,7 @@ on:
 ## Learn more
 
 - [Architecture](docs/architecture.md): tasks, states and how runs work.
+- [Security](docs/security.md): secrets, risks and how to protect your repository.
 - [Dependencies](docs/dependencies.md): what Codeman depends on and why.
 - [Development](docs/development.md): building and testing Codeman itself.
 

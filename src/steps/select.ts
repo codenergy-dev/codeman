@@ -14,7 +14,7 @@ import {
 } from "../settings.ts";
 import { STAGE_STATE, type Stage, stageOfState } from "../stages.ts";
 import { type State, stateOf } from "../state.ts";
-import { renderStatus, reportUrl } from "../status.ts";
+import { renderRefused, renderStatus, reportUrl } from "../status.ts";
 import {
   acceptRequest,
   authorizedComments,
@@ -27,12 +27,14 @@ import {
   findStatus,
   finishedRuns,
   MAINTAINER_PERMISSIONS,
+  openedByMaintainer,
   pendingWork,
   type ReviewLike,
   replanRequests,
   resumeRequests,
   reviewCommands,
   runHistory,
+  type Task,
   type TaskContext,
   type TaskReview,
   taskSettings,
@@ -102,12 +104,34 @@ export async function select(): Promise<void> {
     ];
   };
 
+  // Only issues opened by maintainers are tasks. Others get a panel that says why, written once.
+  const authors = await maintainersAmong([
+    ...new Set(tasks.flatMap((task) => (task.author ? [task.author] : []))),
+  ]);
+  const refuse = async (task: Task): Promise<void> => {
+    const talk = await conversation(task.number);
+    const record = talk.status?.record;
+    const language =
+      taskSettings(authorizedComments(talk.comments, talk.maintainers)).language ??
+      fileSettings.value.language ??
+      "auto";
+    const body = renderRefused(messages(taskLanguage(language, record?.language)), record);
+    if (talk.status?.body !== body) {
+      await repo.upsertComment(task.number, talk.status?.id ?? null, body);
+    }
+  };
+
   // Finished runs of the workflows each waiting task asked for.
   const workflowRuns = new Map<number, WorkflowRun[]>();
 
   const candidates: Candidate[] = [];
   for (const task of tasks) {
     const line = `#${task.number} ${oneLine(task.title)}`;
+    if (!openedByMaintainer(task, authors)) {
+      core.warning(`${line}: not opened by a maintainer, so it is not a task. Left alone.`);
+      await refuse(task);
+      continue;
+    }
     const result = stateOf(task.labels);
     if (!result.ok) {
       core.warning(`${line}: ${result.error}`);

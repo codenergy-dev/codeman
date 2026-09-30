@@ -13,6 +13,7 @@ import {
   commenters,
   findStatus,
   finishedRuns,
+  openedByMaintainer,
   pendingWork,
   type ReviewLike,
   replanRequests,
@@ -57,7 +58,22 @@ test("maps an issue", () => {
     body: "",
     url: "https://github.com/o/r/issues/7",
     labels: ["codeman", "bug"],
+    author: undefined,
   });
+});
+
+const issue = (user: { login: string; type?: string } | null) =>
+  toTask({ number: 9, title: "t", html_url: "https://github.com/o/r/issues/9", labels: [], user });
+
+test("only an issue a maintainer opened is a task", () => {
+  assert.equal(openedByMaintainer(issue({ login: "alice", type: "User" }), maintainers), true);
+  assert.equal(openedByMaintainer(issue({ login: "mallory", type: "User" }), maintainers), false);
+  // A deleted account, and a bot, even one that may write to the repository.
+  assert.equal(openedByMaintainer(issue(null), maintainers), false);
+  assert.equal(
+    openedByMaintainer(issue({ login: "codeman[bot]", type: "Bot" }), maintainers),
+    false,
+  );
 });
 
 test("detects pull requests", () => {
@@ -184,7 +200,11 @@ test("implements after planning, work in progress first", () => {
 test("only the App's own comment counts as the status comment", () => {
   const forged = comment(1, encodeStatus({ ...record, branch: "evil" }), "mallory");
   const real = comment(2, encodeStatus(record), "codeman[bot]", "Bot");
-  assert.deepEqual(findStatus([forged, real], "codeman[bot]"), { id: 2, record });
+  assert.deepEqual(findStatus([forged, real], "codeman[bot]"), {
+    id: 2,
+    record,
+    body: encodeStatus(record),
+  });
   assert.equal(findStatus([forged], "codeman[bot]"), undefined);
 });
 

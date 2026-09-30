@@ -20,6 +20,8 @@ export interface IssueLike {
   html_url: string;
   pull_request?: unknown;
   labels: ReadonlyArray<string | { name?: string }>;
+  /** Null for a deleted account. */
+  user?: { login: string; type?: string } | null;
 }
 
 export interface Task {
@@ -29,6 +31,8 @@ export interface Task {
   body: string;
   url: string;
   labels: string[];
+  /** Who opened the issue; undefined for a deleted account or a bot. */
+  author: string | undefined;
 }
 
 export function toTask(issue: IssueLike): Task {
@@ -41,7 +45,16 @@ export function toTask(issue: IssueLike): Task {
     labels: issue.labels
       .map((label) => (typeof label === "string" ? label : (label.name ?? "")))
       .filter((name) => name !== ""),
+    author: issue.user && issue.user.type !== "Bot" ? issue.user.login : undefined,
   };
+}
+
+/**
+ * Whether a maintainer opened the issue. The agent reads the issue's title and body as its task,
+ * and whoever opened it can edit them at any time, so only maintainers' issues are tasks.
+ */
+export function openedByMaintainer(task: Task, maintainers: ReadonlySet<string>): boolean {
+  return task.author !== undefined && maintainers.has(task.author);
 }
 
 /** The subset of a GitHub issue comment that Codeman reads. */
@@ -450,9 +463,10 @@ export function runHistory(
 export function findStatus(
   comments: readonly CommentLike[],
   bot: string,
-): { id: number; record: TaskRecord | undefined } | undefined {
+): { id: number; record: TaskRecord | undefined; body: string } | undefined {
   const comment = comments.find(
     (candidate) => candidate.user?.login === bot && isStatusComment(candidate.body ?? ""),
   );
-  return comment ? { id: comment.id, record: decodeStatus(comment.body ?? "") } : undefined;
+  const body = comment?.body ?? "";
+  return comment ? { id: comment.id, record: decodeStatus(body), body } : undefined;
 }

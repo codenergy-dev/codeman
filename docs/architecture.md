@@ -4,7 +4,7 @@ Codeman is a GitHub Action written in TypeScript. A workflow in the target repos
 
 ## Tasks and states
 
-A task is an open issue with the `codeman` label. A maintainer applies the label to opt in; Codeman ignores everything else. (Pull requests are not handled yet.)
+A task is an open issue with the `codeman` label, opened by a maintainer. A maintainer applies the label to opt in; Codeman ignores everything else. (Pull requests are not handled yet.) A labeled issue that a maintainer did not open is left alone, and its status comment says why; see [untrusted input](security.md#untrusted-input).
 
 Each task has at most one state label. A task without one has not started yet (`new`).
 
@@ -56,7 +56,7 @@ Only `agent` runs an LLM. The jobs that write to GitHub never run one, and they 
 
 ## Agent sandbox
 
-The agent reads text from the issue, which anyone may have written, and runs shell commands. It runs as `codeman-agent`, a user without `sudo`, on a copy of the checkout in that user's home.
+The agent reads text that may be hostile (see [security](security.md#risks)) and runs shell commands. It runs as `codeman-agent`, a user without `sudo`, on a copy of the checkout in that user's home.
 
 - It cannot read the runner's processes, so it cannot reach the job's tokens or the secrets of other steps.
 - The runner's home, which holds the job's temporary files, is closed to other users before the agent starts. The agent is not in the `docker` group.
@@ -192,7 +192,7 @@ Maintainers steer a task with comments on its issue or on its pull request, and 
 
 Text after `decide` or `approve` is not part of the command: the agent sees it later as a maintainer comment, but it is not recorded as an answer. Use `answer` or `replan` when the text matters.
 
-Only comments from maintainers count, both for commands and for the text the agent sees. A maintainer is a user with `admin`, `maintain` or `write` access to the repository, read from `GET /repos/{owner}/{repo}/collaborators/{user}/permission`. The `author_association` field is not used: GitHub computes it for the reader, and an App token sees private organization members as `CONTRIBUTOR`. Answers are recorded in the status comment and in an `## Answers` section of the plan. When no decision is pending, the task becomes `codeman:ready`. A `replan` in a batch of new commands wins: the run plans again instead of only recording answers.
+Only comments from maintainers count, both for commands and for the text the agent sees, and only issues they opened are tasks. A maintainer is a user with `admin`, `maintain` or `write` access to the repository, read from `GET /repos/{owner}/{repo}/collaborators/{user}/permission`. The `author_association` field is not used: GitHub computes it for the reader, and an App token sees private organization members as `CONTRIBUTOR`. Answers are recorded in the status comment and in an `## Answers` section of the plan. When no decision is pending, the task becomes `codeman:ready`. A `replan` in a batch of new commands wins: the run plans again instead of only recording answers.
 
 ## Status and run comments
 
@@ -212,11 +212,3 @@ Codeman talks to maintainers in the task's language: the fixed texts of the stat
 - Fixed texts come from catalogs in `src/i18n/`: English and Brazilian Portuguese. A language without a catalog uses its base language's (`pt-PT` uses Brazilian Portuguese), or else English. Numbers and dates follow the language.
 - Commands, labels, file paths, the workflow's logs and technical details of an invalid agent result stay in English.
 - The pull request's title is the issue's title.
-
-## Untrusted input
-
-Repositories may be public, so issue and comment text from non-maintainers is untrusted, and so is everything the agent produces.
-
-- Comments from non-maintainers are dropped before anything reads them.
-- The agent's task file marks issue text as data and wraps it in markers with a random nonce.
-- Untrusted text is collapsed to one line, or prefixed, before it is logged, so it cannot inject workflow commands such as `::add-mask::`.

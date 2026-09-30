@@ -75,6 +75,9 @@ export const en: Messages = {
   spending: "Spending",
   spent: ({ run, task, budget }) =>
     `Spent: ${run ? `${run} this run, ` : ""}${task} of ${budget} for the task`,
+  refusedHeading: "Not a task",
+  refused:
+    "Codeman works only on issues opened by someone with write access to the repository. The agent reads the issue's title and body as its task, and whoever opened the issue can edit them at any time. To go on, a maintainer opens a new issue with this content, in their own words, and labels it `codeman`. Then remove the `codeman` label from this one.",
   panelFooter: (model, runUrl, reportUrl) =>
     `<sub>Model: \`${model}\` (change it with \`/codeman set model <id>\`) · [Last run](${runUrl})${reportUrl ? ` · [Last report](${reportUrl})` : ""}</sub>`,
 
