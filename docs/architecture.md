@@ -157,7 +157,7 @@ A workflow file runs as soon as it reaches a branch, if it listens to `push`, an
 
 Each value comes from the first of these that sets it:
 
-1. A `/codeman set` command on the task (only `model`, `task-budget`, `max-runs` and `language`).
+1. A `/codeman set` command on the task, in a comment or in the issue's description (only `model`, `task-budget`, `max-runs` and `language`).
 2. The workflow's inputs, in a manual run.
 3. `.codeman/settings.yml` on the default branch.
 4. Codeman's default.
@@ -189,6 +189,8 @@ Maintainers steer a task with comments on its issue or on its pull request, and 
 | `/codeman continue <text>` | Resumes a blocked or unfinished task with a new run count. The text is optional guidance for the agent. |
 | `/codeman set <name> <value>` | Changes `model`, `task-budget`, `max-runs` or `language` for this task from now on. The last valid one wins. |
 | `/codeman model <id>` | Short for `/codeman set model <id>`. |
+
+The issue's description may also hold `set` and `model` lines, to choose settings when opening the issue. Comments come after it, so a `set` in a comment wins. The agent reads the description without its command lines. Any other command in the description is a problem, reported with those of invalid settings in the task's first run. The description does not start a run.
 
 Text after `decide` or `approve` is not part of the command: the agent sees it later as a maintainer comment, but it is not recorded as an answer. Use `answer` or `replan` when the text matters.
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { parseCommands } from "./commands.ts";
+import { descriptionCommands, parseCommands } from "./commands.ts";
 import { isModelId } from "./settings.ts";
 
 test("parses approve", () => {
@@ -176,5 +176,49 @@ test("a task can set its language, and a bad one is a problem to render", () => 
     kind: "invalid",
     text: "/codeman set language portuguese!",
     problem: { kind: "invalid-setting", name: "language", type: "language" },
+  });
+});
+
+test("reads settings in a description and removes command lines from its text", () => {
+  const body = [
+    "Add rate limiting.",
+    "/codeman model a/b",
+    "  /codeman set task-budget 5",
+    "",
+    "```",
+    "/codeman set max-runs 9",
+    "```",
+    "/codeman approve",
+    "Keep the defaults.",
+  ].join("\n");
+  const { commands, text } = descriptionCommands(body);
+  assert.deepEqual(commands, [
+    { kind: "set", name: "model", value: "a/b" },
+    { kind: "set", name: "task-budget", value: 5 },
+    {
+      kind: "invalid",
+      text: "/codeman approve",
+      problem: { kind: "not-in-description" },
+    },
+  ]);
+  assert.equal(text, "Add rate limiting.\n\n```\n/codeman set max-runs 9\n```\nKeep the defaults.");
+});
+
+test("reports an invalid setting in a description", () => {
+  const { commands, text } = descriptionCommands("/codeman set max-runs 0");
+  assert.deepEqual(commands, [
+    {
+      kind: "invalid",
+      text: "/codeman set max-runs 0",
+      problem: { kind: "invalid-setting", name: "max-runs", type: "integer" },
+    },
+  ]);
+  assert.equal(text, "");
+});
+
+test("keeps a description without commands as it is", () => {
+  assert.deepEqual(descriptionCommands("Fix the /codeman docs.\n"), {
+    commands: [],
+    text: "Fix the /codeman docs.",
   });
 });

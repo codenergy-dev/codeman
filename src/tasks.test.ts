@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { descriptionCommands } from "./commands.ts";
 import { en } from "./i18n/en.ts";
 import { encodeStatus, type TaskRecord } from "./record.ts";
 import { renderRun } from "./status.ts";
@@ -146,6 +147,12 @@ test("the last valid setting command wins", () => {
     comment(3, "/codeman model not-a-model\n/codeman set max-runs 0"),
   ]);
   assert.deepEqual(taskSettings(comments), { model: "b/two", "task-budget": 5 });
+});
+
+test("comments override settings in the description", () => {
+  const { commands } = descriptionCommands("/codeman model a/one\n/codeman set max-runs 4");
+  const comments = authorized([comment(1, "/codeman model b/two")]);
+  assert.deepEqual(taskSettings(comments, commands), { model: "b/two", "max-runs": 4 });
 });
 
 test("records answers before planning, oldest task first", () => {

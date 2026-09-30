@@ -92,6 +92,7 @@ test("every command problem has a text in each catalog", () => {
   const problems = [
     { kind: "takes-no-arguments", command: "approve" },
     { kind: "unknown-command" },
+    { kind: "not-in-description" },
     { kind: "answer-needs-number" },
     { kind: "answer-needs-text" },
     { kind: "decide-needs-answers" },

@@ -20797,6 +20797,8 @@ Tests: ${test ?? "(no report)"}`,
         return `\`${problem.command}\` takes no arguments.`;
       case "unknown-command":
         return "Unknown command. Use `decide`, `approve`, `answer`, `replan`, `fix`, `continue`, `accept-workflows`, `set` or `model`.";
+      case "not-in-description":
+        return "Only `set` and `model` work in the issue's description. Write other commands in a comment.";
       case "answer-needs-number":
         return "`answer` needs a decision number, such as `answer 2 <text>`.";
       case "answer-needs-text":
@@ -21003,6 +21005,8 @@ Testes: ${test ?? "(sem relat\xF3rio)"}`,
         return `\`${problem.command}\` n\xE3o recebe argumentos.`;
       case "unknown-command":
         return "Comando desconhecido. Use `decide`, `approve`, `answer`, `replan`, `fix`, `continue`, `accept-workflows`, `set` ou `model`.";
+      case "not-in-description":
+        return "Na descri\xE7\xE3o da issue, s\xF3 `set` e `model` funcionam. Escreva os outros comandos em um coment\xE1rio.";
       case "answer-needs-number":
         return "`answer` precisa do n\xFAmero de uma decis\xE3o, como em `answer 2 <texto>`.";
       case "answer-needs-text":
@@ -26977,31 +26981,58 @@ var OPEN_TEXT = /^\/codeman\s+\S+\s*(.*)$/i;
 var MAX_TEXT = 2e3;
 function parseCommands(body) {
   const commands = [];
-  let fenced = false;
   let open2;
   const close = () => {
     if (open2) commands.push(finishText(open2));
     open2 = void 0;
   };
-  for (const raw of body.split(/\r?\n/)) {
-    const line = raw.trim();
-    const fence = /^(```|~~~)/.test(line);
-    if (!fenced && !fence && line.split(/\s+/)[0]?.toLowerCase() === "/codeman") {
+  for (const { raw, command } of scan(body)) {
+    if (command) {
       close();
-      const parsed = parseLine(line);
+      const parsed = parseLine(raw.trim());
       if ("lines" in parsed) open2 = parsed;
       else commands.push(parsed);
       continue;
     }
-    if (fence) fenced = !fenced;
     open2?.lines.push(raw);
   }
   close();
   return commands;
 }
+function descriptionCommands(body) {
+  const lines = scan(body);
+  const commands = lines.flatMap(({ raw, command }) => {
+    if (!command) return [];
+    const line = raw.trim();
+    const [, name = "", ...args] = line.split(/\s+/);
+    switch (name.toLowerCase()) {
+      case "model":
+        return [parseSet(["model", ...args], invalidLine(line))];
+      case "set":
+        return [parseSet(args, invalidLine(line))];
+      default:
+        return [invalidLine(line)({ kind: "not-in-description" })];
+    }
+  });
+  const text = lines.filter(({ command }) => !command).map(({ raw }) => raw).join("\n").trim();
+  return { commands, text };
+}
+function scan(body) {
+  let fenced = false;
+  return body.split(/\r?\n/).map((raw) => {
+    const line = raw.trim();
+    const fence = /^(```|~~~)/.test(line);
+    if (fence) fenced = !fenced;
+    const command = !fenced && !fence && line.split(/\s+/)[0]?.toLowerCase() === "/codeman";
+    return { raw, command };
+  });
+}
+function invalidLine(line) {
+  return (problem) => ({ kind: "invalid", text: line, problem });
+}
 function parseLine(line) {
   const [, name, ...args] = line.split(/\s+/);
-  const invalid = (problem) => ({ kind: "invalid", text: line, problem });
+  const invalid = invalidLine(line);
   switch (name?.toLowerCase()) {
     case "approve":
       return args.length === 0 ? { kind: "approve" } : invalid({ kind: "takes-no-arguments", command: "approve" });
@@ -27059,11 +27090,7 @@ function parseSet(args, invalid) {
 }
 function finishText(open2) {
   const text = open2.lines.join("\n").trim();
-  const invalid = (problem) => ({
-    kind: "invalid",
-    text: open2.line,
-    problem
-  });
+  const invalid = invalidLine(open2.line);
   if (text.length > MAX_TEXT) return invalid({ kind: "text-too-long", max: MAX_TEXT });
   if (open2.kind !== "answer") return { kind: open2.kind, text };
   if (text === "") return invalid({ kind: "answer-needs-text" });
@@ -27161,9 +27188,10 @@ function commandsAfter(comments, afterId) {
     }))
   );
 }
-function taskSettings(comments) {
+function taskSettings(comments, description = []) {
   const settings = {};
-  for (const { command } of commandsAfter(comments, 0)) {
+  const commands = [...description, ...commandsAfter(comments, 0).map(({ command }) => command)];
+  for (const command of commands) {
     if (command.kind === "set") Object.assign(settings, { [command.name]: command.value });
   }
   return settings;
@@ -28141,8 +28169,12 @@ async function select() {
   const resume = pending === "resume";
   const requests = choice.action === "implement" ? resumeRequests(sources) : [];
   const stage = choice.action !== "implement" ? void 0 : requests.some((request2) => request2.kind === "fix") ? "code" : record?.stage ?? stageOfState(fromStateOf(task.labels)) ?? firstStage(task.labels);
-  const problems = sources.flatMap(
-    ({ command }) => command.kind === "invalid" ? [{ text: command.text, problem: command.problem }] : []
+  const description = descriptionCommands(task.body);
+  const problems = [
+    ...record ? [] : description.commands,
+    ...sources.map(({ command }) => command)
+  ].flatMap(
+    (command) => command.kind === "invalid" ? [{ text: command.text, problem: command.problem }] : []
   );
   const fromState = stateOf(task.labels);
   if (!fromState.ok) throw new Error(fromState.error);
@@ -28151,7 +28183,11 @@ async function select() {
   const branchSha = await repo.branchSha(branch);
   const baseSha = branchSha ?? await repo.branchSha(defaultBranch);
   if (!baseSha) throw new Error(`Branch ${defaultBranch} not found.`);
-  const settings = resolveSettings(taskSettings(maintainerComments), inputs, fileSettings.value);
+  const settings = resolveSettings(
+    taskSettings(maintainerComments, description.commands),
+    inputs,
+    fileSettings.value
+  );
   if (!settings.ok) throw new Error(settings.error);
   const model = settings.value.model;
   const context3 = {
@@ -28161,7 +28197,7 @@ async function select() {
     repo: repo.repo,
     number: task.number,
     title: task.title,
-    body: task.body,
+    body: description.text,
     url: task.url,
     comments: maintainerComments,
     reviews,

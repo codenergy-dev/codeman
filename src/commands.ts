@@ -40,33 +40,72 @@ interface OpenText {
  */
 export function parseCommands(body: string): Command[] {
   const commands: Command[] = [];
-  let fenced = false;
   let open: OpenText | undefined;
   const close = () => {
     if (open) commands.push(finishText(open));
     open = undefined;
   };
 
-  for (const raw of body.split(/\r?\n/)) {
-    const line = raw.trim();
-    const fence = /^(```|~~~)/.test(line);
-    if (!fenced && !fence && line.split(/\s+/)[0]?.toLowerCase() === "/codeman") {
+  for (const { raw, command } of scan(body)) {
+    if (command) {
       close();
-      const parsed = parseLine(line);
+      const parsed = parseLine(raw.trim());
       if ("lines" in parsed) open = parsed;
       else commands.push(parsed);
       continue;
     }
-    if (fence) fenced = !fenced;
     open?.lines.push(raw);
   }
   close();
   return commands;
 }
 
+/**
+ * Reads the commands in an issue's description, where only `set` and `model` count, and the
+ * description without its command lines, for the agent. Other commands are problems.
+ */
+export function descriptionCommands(body: string): { commands: Command[]; text: string } {
+  const lines = scan(body);
+  const commands = lines.flatMap(({ raw, command }): Command[] => {
+    if (!command) return [];
+    const line = raw.trim();
+    const [, name = "", ...args] = line.split(/\s+/);
+    switch (name.toLowerCase()) {
+      case "model":
+        return [parseSet(["model", ...args], invalidLine(line))];
+      case "set":
+        return [parseSet(args, invalidLine(line))];
+      default:
+        return [invalidLine(line)({ kind: "not-in-description" })];
+    }
+  });
+  const text = lines
+    .filter(({ command }) => !command)
+    .map(({ raw }) => raw)
+    .join("\n")
+    .trim();
+  return { commands, text };
+}
+
+/** Each line of a text, and whether it is a command: it starts with `/codeman`, outside a fence. */
+function scan(body: string): { raw: string; command: boolean }[] {
+  let fenced = false;
+  return body.split(/\r?\n/).map((raw) => {
+    const line = raw.trim();
+    const fence = /^(```|~~~)/.test(line);
+    if (fence) fenced = !fenced;
+    const command = !fenced && !fence && line.split(/\s+/)[0]?.toLowerCase() === "/codeman";
+    return { raw, command };
+  });
+}
+
+function invalidLine(line: string): (problem: CommandProblem) => Command {
+  return (problem) => ({ kind: "invalid", text: line, problem });
+}
+
 function parseLine(line: string): Command | OpenText {
   const [, name, ...args] = line.split(/\s+/);
-  const invalid = (problem: CommandProblem): Command => ({ kind: "invalid", text: line, problem });
+  const invalid = invalidLine(line);
   switch (name?.toLowerCase()) {
     case "approve":
       return args.length === 0
@@ -135,11 +174,7 @@ function parseSet(args: string[], invalid: (problem: CommandProblem) => Command)
 
 function finishText(open: OpenText): Command {
   const text = open.lines.join("\n").trim();
-  const invalid = (problem: CommandProblem): Command => ({
-    kind: "invalid",
-    text: open.line,
-    problem,
-  });
+  const invalid = invalidLine(open.line);
   if (text.length > MAX_TEXT) return invalid({ kind: "text-too-long", max: MAX_TEXT });
   if (open.kind !== "answer") return { kind: open.kind, text };
   if (text === "") return invalid({ kind: "answer-needs-text" });

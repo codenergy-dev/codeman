@@ -250,10 +250,17 @@ export function commandsAfter(comments: readonly TaskComment[], afterId: number)
     );
 }
 
-/** Settings chosen for one task with `/codeman set` or `/codeman model`: the last one wins. */
-export function taskSettings(comments: readonly TaskComment[]): PartialSettings {
+/**
+ * Settings chosen for one task with `/codeman set` or `/codeman model`, in the issue's
+ * description and then in comments: the last one wins.
+ */
+export function taskSettings(
+  comments: readonly TaskComment[],
+  description: readonly Command[] = [],
+): PartialSettings {
   const settings: PartialSettings = {};
-  for (const { command } of commandsAfter(comments, 0)) {
+  const commands = [...description, ...commandsAfter(comments, 0).map(({ command }) => command)];
+  for (const command of commands) {
     if (command.kind === "set") Object.assign(settings, { [command.name]: command.value });
   }
   return settings;

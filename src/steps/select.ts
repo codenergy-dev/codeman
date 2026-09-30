@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import * as core from "@actions/core";
+import { descriptionCommands } from "../commands.ts";
 import { type Messages, messages, taskLanguage } from "../i18n/index.ts";
 import { IGNORE_FILE, unprotected } from "../policy.ts";
 import { applyCommands, type CommandSource, pendingDecisions } from "../record.ts";
@@ -209,7 +210,13 @@ export async function select(): Promise<void> {
       : requests.some((request) => request.kind === "fix")
         ? "code"
         : (record?.stage ?? stageOfState(fromStateOf(task.labels)) ?? firstStage(task.labels));
-  const problems = sources.flatMap(({ command }) =>
+  // Settings may also come from the description, which the agent reads without command lines.
+  const description = descriptionCommands(task.body);
+  // The description is written before the first run, which reports its problems.
+  const problems = [
+    ...(record ? [] : description.commands),
+    ...sources.map(({ command }) => command),
+  ].flatMap((command) =>
     command.kind === "invalid" ? [{ text: command.text, problem: command.problem }] : [],
   );
   const fromState = stateOf(task.labels);
@@ -220,7 +227,11 @@ export async function select(): Promise<void> {
   const branchSha = await repo.branchSha(branch);
   const baseSha = branchSha ?? (await repo.branchSha(defaultBranch));
   if (!baseSha) throw new Error(`Branch ${defaultBranch} not found.`);
-  const settings = resolveSettings(taskSettings(maintainerComments), inputs, fileSettings.value);
+  const settings = resolveSettings(
+    taskSettings(maintainerComments, description.commands),
+    inputs,
+    fileSettings.value,
+  );
   if (!settings.ok) throw new Error(settings.error);
   const model = settings.value.model;
 
@@ -231,7 +242,7 @@ export async function select(): Promise<void> {
     repo: repo.repo,
     number: task.number,
     title: task.title,
-    body: task.body,
+    body: description.text,
     url: task.url,
     comments: maintainerComments,
     reviews,

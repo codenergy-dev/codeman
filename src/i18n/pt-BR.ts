@@ -225,6 +225,8 @@ export const ptBR: Messages = {
         return `\`${problem.command}\` não recebe argumentos.`;
       case "unknown-command":
         return "Comando desconhecido. Use `decide`, `approve`, `answer`, `replan`, `fix`, `continue`, `accept-workflows`, `set` ou `model`.";
+      case "not-in-description":
+        return "Na descrição da issue, só `set` e `model` funcionam. Escreva os outros comandos em um comentário.";
       case "answer-needs-number":
         return "`answer` precisa do número de uma decisão, como em `answer 2 <texto>`.";
       case "answer-needs-text":

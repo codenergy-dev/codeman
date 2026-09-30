@@ -66,7 +66,7 @@ The agent job needs a Linux runner (x64 or arm64).
 
 ## Try it
 
-1. As a maintainer, open an issue that leaves something to decide, and label it `codeman`. Codeman works only on issues that maintainers open.
+1. As a maintainer, open an issue that leaves something to decide, and label it `codeman`. Codeman works only on issues that maintainers open. To choose settings for this task, add lines such as `/codeman model <id>` or `/codeman set task-budget 5` to the description; see [commands](architecture.md#commands).
 2. Run the workflow manually. Codeman posts a status comment, writes a plan on the branch `codeman/<issue>-<slug>`, and lists its decisions.
 3. Answer in a comment, for example `/codeman decide 1 a` or `/codeman approve`. The comment starts a new run, which records the answers. When none is pending, the issue gets `codeman:ready`.
 4. Codeman starts the next run right away, and the stages follow one run each: design, code, test and review. After code, a draft pull request that closes the issue appears. When review passes, the pull request is ready for review and the issue gets `codeman:done`. Unfinished work is committed, and the following run continues it.

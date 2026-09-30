@@ -4,6 +4,7 @@ import type { SettingName } from "./settings.ts";
 export type CommandProblem =
   | { kind: "takes-no-arguments"; command: "approve" | "accept-workflows" }
   | { kind: "unknown-command" }
+  | { kind: "not-in-description" }
   | { kind: "answer-needs-number" }
   | { kind: "answer-needs-text" }
   | { kind: "decide-needs-answers" }

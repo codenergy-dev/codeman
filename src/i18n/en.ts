@@ -212,6 +212,8 @@ export const en: Messages = {
         return `\`${problem.command}\` takes no arguments.`;
       case "unknown-command":
         return "Unknown command. Use `decide`, `approve`, `answer`, `replan`, `fix`, `continue`, `accept-workflows`, `set` or `model`.";
+      case "not-in-description":
+        return "Only `set` and `model` work in the issue's description. Write other commands in a comment.";
       case "answer-needs-number":
         return "`answer` needs a decision number, such as `answer 2 <text>`.";
       case "answer-needs-text":
