@@ -21006,6 +21006,10 @@ var en = {
   chosenBy: (by) => `chosen by ${by}`,
   answeredBy: (by, text) => `Answered by ${by}: ${text}`,
   howToAnswer: "Answer with `/codeman decide 1 a` (several at once: `/codeman decide 1 a 2 b`), or accept every recommendation with `/codeman approve`. To answer in your own words, use `/codeman answer 1 <text>`; to have the plan revised, use `/codeman replan <what to change>`. Only people with write access to the repository can answer.",
+  decisionsLink: (pending) => pending === 0 ? "all answered" : `${pending} waiting for an answer`,
+  noDecisions: "The plan has no decisions now.",
+  decisionsOmitted: (count2) => `${count2} decision(s) are not shown here, to fit GitHub's size limit for comments. The plan has them all.`,
+  panelCut: "Part of this panel is not shown, to fit GitHub's size limit for comments. The last run comment has the details.",
   workflowsToReview: "Workflows to review",
   workflowsHelp: "The agent wrote these workflows. They are staged under `.codeman/workflows/` on the task branch and do not run. A workflow runs with the repository's secrets, so read them in the pull request or on the branch first. To move them into `.github/workflows/`, comment `/codeman accept-workflows`.",
   spending: "Spending",
@@ -21017,7 +21021,7 @@ var en = {
   nextStep: (state) => ({
     new: "Codeman tries again in a later run.",
     planning: "the plan.",
-    "awaiting-decision": "your decisions, in the task's status comment.",
+    "awaiting-decision": "your decisions, in the task's decisions comment.",
     ready: "the implementation, in the next run.",
     designing: "the design stage.",
     coding: "the code stage.",
@@ -21215,6 +21219,10 @@ var ptBR = {
   chosenBy: (by) => `escolhida por ${by}`,
   answeredBy: (by, text) => `Respondida por ${by}: ${text}`,
   howToAnswer: "Responda com `/codeman decide 1 a` (v\xE1rias de uma vez: `/codeman decide 1 a 2 b`) ou aceite todas as recomenda\xE7\xF5es com `/codeman approve`. Para responder com as suas palavras, use `/codeman answer 1 <texto>`; para revisar o plano, use `/codeman replan <o que mudar>`. S\xF3 quem tem acesso de escrita ao reposit\xF3rio pode responder.",
+  decisionsLink: (pending) => pending === 0 ? "todas respondidas" : `${pending} aguardando resposta`,
+  noDecisions: "O plano n\xE3o tem decis\xF5es agora.",
+  decisionsOmitted: (count2) => `${count2} decis\xE3o(\xF5es) n\xE3o aparecem aqui, para caber no limite de tamanho de coment\xE1rios do GitHub. O plano tem todas.`,
+  panelCut: "Parte deste painel n\xE3o aparece, para caber no limite de tamanho de coment\xE1rios do GitHub. O coment\xE1rio da \xFAltima rodada tem os detalhes.",
   workflowsToReview: "Workflows para revisar",
   workflowsHelp: "O agente escreveu estes workflows. Eles est\xE3o guardados em `.codeman/workflows/` na branch da tarefa e n\xE3o rodam. Um workflow roda com os segredos do reposit\xF3rio, ent\xE3o leia-os antes no pull request ou na branch. Para mov\xEA-los para `.github/workflows/`, comente `/codeman accept-workflows`.",
   spending: "Gastos",
@@ -21226,7 +21234,7 @@ var ptBR = {
   nextStep: (state) => ({
     new: "o Codeman tenta de novo numa pr\xF3xima rodada.",
     planning: "o plano.",
-    "awaiting-decision": "as suas decis\xF5es, no coment\xE1rio de status da tarefa.",
+    "awaiting-decision": "as suas decis\xF5es, no coment\xE1rio de decis\xF5es da tarefa.",
     ready: "a implementa\xE7\xE3o, na pr\xF3xima rodada.",
     designing: "etapa de design.",
     coding: "etapa de c\xF3digo.",
@@ -26474,15 +26482,19 @@ var Repository = class {
     const { data } = await this.#octokit.rest.issues.get({ ...this.#scope, issue_number: issue2 });
     return data.labels.map((label) => typeof label === "string" ? label : label.name ?? "");
   }
-  /** Creates or updates Codeman's status comment and returns its ID. */
+  /** Updates one of Codeman's comments, or creates it if it is new or gone, and returns its ID. */
   async upsertComment(issue2, commentId, body) {
     if (commentId !== null) {
-      await this.#octokit.rest.issues.updateComment({
-        ...this.#scope,
-        comment_id: commentId,
-        body
-      });
-      return commentId;
+      try {
+        await this.#octokit.rest.issues.updateComment({
+          ...this.#scope,
+          comment_id: commentId,
+          body
+        });
+        return commentId;
+      } catch (error2) {
+        if (status(error2) !== 404) throw error2;
+      }
     }
     const { data } = await this.#octokit.rest.issues.createComment({
       ...this.#scope,
@@ -26992,50 +27004,34 @@ function nextStage(stage) {
 }
 
 // src/status.ts
+var COMMENT_LIMIT = 65536;
 function renderStatus(view) {
   const { record, t } = view;
-  const lines = [encodeStatus(record), `### Codeman: ${t.heading(view.state)}`, ""];
-  if (view.message) lines.push(view.message, "");
-  if (record && view.planUrl) lines.push(`${t.plan}: [${record.planPath}](${view.planUrl})`, "");
+  const head = [encodeStatus(record), `### Codeman: ${t.heading(view.state)}`, ""];
+  if (view.message) head.push(view.message, "");
+  if (record && view.planUrl) head.push(`${t.plan}: [${record.planPath}](${view.planUrl})`, "");
   if (record?.pullRequest && view.pullRequestUrl) {
-    lines.push(`${t.pullRequest}: [#${record.pullRequest}](${view.pullRequestUrl})`, "");
+    head.push(`${t.pullRequest}: [#${record.pullRequest}](${view.pullRequestUrl})`, "");
   }
-  if (record) lines.push(safeInline(record.summary), "");
-  if (record && record.decisions.length > 0) {
-    lines.push(`#### ${t.decisions}`, "");
-    for (const decision of record.decisions) {
-      lines.push(`**${decision.id}. ${safeInline(decision.title)}**`, "");
-      lines.push(safeInline(decision.question), "");
-      for (const option of decision.options) {
-        const tags = [
-          option.key === decision.recommendation ? t.recommended : "",
-          option.key === decision.answer?.option ? t.chosenBy(decision.answer.by) : ""
-        ].filter(Boolean);
-        const suffix = tags.length > 0 ? ` _(${tags.join(", ")})_` : "";
-        lines.push(`- **${option.key})** ${safeInline(option.label)}${suffix}`);
-      }
-      if (decision.answer?.text !== void 0) {
-        lines.push("", t.answeredBy(decision.answer.by, inlineText(decision.answer.text)));
-      }
-      lines.push("");
-    }
-    if (view.state === "awaiting-decision" && pendingDecisions(record).length > 0) {
-      lines.push(t.howToAnswer, "");
-    }
+  if (record && record.decisions.length > 0 && view.decisionsUrl) {
+    const pending = pendingDecisions(record).length;
+    head.push(`${t.decisions}: [${t.decisionsLink(pending)}](${view.decisionsUrl})`, "");
   }
+  const rest = [];
+  if (record) rest.push(safeInline(record.summary), "");
   if (view.staged && view.staged.length > 0) {
-    lines.push(`#### ${t.workflowsToReview}`, "");
-    for (const path of view.staged) lines.push(`- ${inlineText(path)}`);
-    lines.push("", t.workflowsHelp, "");
+    rest.push(`#### ${t.workflowsToReview}`, "");
+    for (const path of view.staged) rest.push(`- ${inlineText(path)}`);
+    rest.push("", t.workflowsHelp, "");
   }
   if (record?.spending?.rows.length || view.cost?.task !== void 0) {
-    lines.push(`#### ${t.spending}`, "", ...spendTable(t, record?.spending, view.cost?.task), "");
+    rest.push(`#### ${t.spending}`, "", ...spendTable(t, record?.spending, view.cost?.task), "");
     if (view.cost?.task !== void 0) {
-      lines.push(`${spentText(t, { ...view.cost, run: void 0 })}.`, "");
+      rest.push(`${spentText(t, { ...view.cost, run: void 0 })}.`, "");
     }
     const totals = spendTotals(record?.spending);
     if (totals.inputTokens + totals.outputTokens + totals.durationMs > 0) {
-      lines.push(
+      rest.push(
         t.usedTokens(
           t.tokens(totals.inputTokens),
           t.tokens(totals.outputTokens),
@@ -27045,11 +27041,73 @@ function renderStatus(view) {
       );
     }
   }
-  lines.push(t.panelFooter(modelName(view.model), view.runUrl, view.reportUrl));
-  return lines.join("\n");
+  const footer = t.panelFooter(modelName(view.model), view.runUrl, view.reportUrl);
+  const body = [...head, ...rest, footer].join("\n");
+  if (body.length <= COMMENT_LIMIT) return body;
+  const short = [...head, t.panelCut, "", footer].join("\n");
+  if (short.length <= COMMENT_LIMIT) return short;
+  throw new Error("The task record no longer fits in a GitHub comment.");
+}
+var DECISIONS_MARKER = "<!-- codeman:decisions -->";
+function renderDecisions(view) {
+  const { record, t } = view;
+  const head = [DECISIONS_MARKER, `### Codeman: ${t.decisions}`, ""];
+  if (record.decisions.length === 0) return [...head, t.noDecisions].join("\n");
+  const tail = view.state === "awaiting-decision" && pendingDecisions(record).length > 0 ? [t.howToAnswer] : [];
+  const render = (blocks, omitted2 = 0) => [...head, ...blocks.flat(), ...omitted2 > 0 ? [t.decisionsOmitted(omitted2), ""] : [], ...tail].join("\n").trimEnd();
+  const full = render(record.decisions.map((decision) => decisionLines(t, decision)));
+  if (full.length <= COMMENT_LIMIT) return full;
+  const shown = record.decisions.map((decision) => ({
+    decision,
+    lines: decision.answer ? answeredLine(t, decision) : decisionLines(t, decision)
+  }));
+  const order = [
+    ...shown.filter(({ decision }) => decision.answer),
+    ...shown.filter(({ decision }) => !decision.answer).reverse()
+  ];
+  let omitted = 0;
+  let text = render(shown.map(({ lines }) => lines));
+  while (text.length > COMMENT_LIMIT && omitted < order.length) {
+    const dropped = new Set(order.slice(0, ++omitted));
+    text = render(
+      shown.filter((entry) => !dropped.has(entry)).map(({ lines }) => lines),
+      omitted
+    );
+  }
+  return text;
+}
+function decisionLines(t, decision) {
+  const lines = [
+    `**${decision.id}. ${safeInline(decision.title)}**`,
+    "",
+    safeInline(decision.question),
+    ""
+  ];
+  for (const option of decision.options) {
+    const tags = [
+      option.key === decision.recommendation ? t.recommended : "",
+      option.key === decision.answer?.option ? t.chosenBy(decision.answer.by) : ""
+    ].filter(Boolean);
+    const suffix = tags.length > 0 ? ` _(${tags.join(", ")})_` : "";
+    lines.push(`- **${option.key})** ${safeInline(option.label)}${suffix}`);
+  }
+  if (decision.answer?.text !== void 0) {
+    lines.push("", t.answeredBy(decision.answer.by, inlineText(decision.answer.text)));
+  }
+  lines.push("");
+  return lines;
+}
+function answeredLine(t, decision) {
+  const answer = decision.answer;
+  const option = decision.options.find((candidate) => candidate.key === answer?.option);
+  const text = answer?.text !== void 0 ? t.answeredBy(answer.by, inlineText(answer.text)) : `**${option?.key})** ${safeInline(option?.label ?? "")} _(${t.chosenBy(answer?.by ?? "")})_`;
+  return [`**${decision.id}. ${safeInline(decision.title)}**: ${text}`, ""];
 }
 function renderRefused(t, record) {
   return [encodeStatus(record), `### Codeman: ${t.refusedHeading}`, "", t.refused].join("\n");
+}
+function decisionsUrl(issueUrl, record) {
+  return record?.decisionsCommentId ? `${issueUrl}#issuecomment-${record.decisionsCommentId}` : void 0;
 }
 function reportUrl(issueUrl, record) {
   return record?.reportCommentId ? `${issueUrl}#issuecomment-${record.reportCommentId}` : void 0;
@@ -27974,6 +28032,14 @@ async function finish(repo, task, state, view) {
     );
     if (record) record = { ...record, reportCommentId: id };
   }
+  if (record && (record.decisions.length > 0 || record.decisionsCommentId)) {
+    const id = await repo.upsertComment(
+      task.number,
+      record.decisionsCommentId ?? null,
+      renderDecisions({ t, state, record })
+    );
+    record = { ...record, decisionsCommentId: id };
+  }
   await repo.upsertComment(
     task.number,
     task.statusCommentId,
@@ -27988,7 +28054,8 @@ async function finish(repo, task, state, view) {
       message: view.message,
       staged,
       cost: spent,
-      reportUrl: reportUrl(task.url, record)
+      reportUrl: reportUrl(task.url, record),
+      decisionsUrl: decisionsUrl(task.url, record)
     })
   );
   if (record?.pullRequest && !view.pullRequestWritten) {
@@ -28379,7 +28446,8 @@ async function select() {
         runUrl: context3.runUrl,
         message: startMessage(t, context3),
         cost: { task: record?.spent, budget: settings.value["task-budget"] },
-        reportUrl: reportUrl(task.url, record)
+        reportUrl: reportUrl(task.url, record),
+        decisionsUrl: decisionsUrl(task.url, record)
       })
     );
   }

@@ -349,15 +349,19 @@ export class Repository {
     return data.labels.map((label) => (typeof label === "string" ? label : (label.name ?? "")));
   }
 
-  /** Creates or updates Codeman's status comment and returns its ID. */
+  /** Updates one of Codeman's comments, or creates it if it is new or gone, and returns its ID. */
   async upsertComment(issue: number, commentId: number | null, body: string): Promise<number> {
     if (commentId !== null) {
-      await this.#octokit.rest.issues.updateComment({
-        ...this.#scope,
-        comment_id: commentId,
-        body,
-      });
-      return commentId;
+      try {
+        await this.#octokit.rest.issues.updateComment({
+          ...this.#scope,
+          comment_id: commentId,
+          body,
+        });
+        return commentId;
+      } catch (error) {
+        if (status(error) !== 404) throw error;
+      }
     }
     const { data } = await this.#octokit.rest.issues.createComment({
       ...this.#scope,

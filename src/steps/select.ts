@@ -15,7 +15,7 @@ import {
 } from "../settings.ts";
 import { STAGE_STATE, type Stage, stageOfState } from "../stages.ts";
 import { type State, stateOf } from "../state.ts";
-import { renderRefused, renderStatus, reportUrl } from "../status.ts";
+import { decisionsUrl, renderRefused, renderStatus, reportUrl } from "../status.ts";
 import {
   acceptRequest,
   authorizedComments,
@@ -294,6 +294,7 @@ export async function select(): Promise<void> {
         message: startMessage(t, context),
         cost: { task: record?.spent, budget: settings.value["task-budget"] },
         reportUrl: reportUrl(task.url, record),
+        decisionsUrl: decisionsUrl(task.url, record),
       }),
     );
   }

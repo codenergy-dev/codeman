@@ -61,6 +61,8 @@ export interface TaskRecord {
   language?: string | undefined;
   /** The newest run comment on the issue. */
   reportCommentId?: number | undefined;
+  /** The comment that shows the task's decisions. */
+  decisionsCommentId?: number | undefined;
   /**
    * A stage that needs the runs of workflows still staged: the task goes on to review, and this
    * stage goes on with their results once they are accepted.

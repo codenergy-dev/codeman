@@ -80,6 +80,13 @@ export const ptBR: Messages = {
   answeredBy: (by, text) => `Respondida por ${by}: ${text}`,
   howToAnswer:
     "Responda com `/codeman decide 1 a` (várias de uma vez: `/codeman decide 1 a 2 b`) ou aceite todas as recomendações com `/codeman approve`. Para responder com as suas palavras, use `/codeman answer 1 <texto>`; para revisar o plano, use `/codeman replan <o que mudar>`. Só quem tem acesso de escrita ao repositório pode responder.",
+  decisionsLink: (pending) =>
+    pending === 0 ? "todas respondidas" : `${pending} aguardando resposta`,
+  noDecisions: "O plano não tem decisões agora.",
+  decisionsOmitted: (count) =>
+    `${count} decisão(ões) não aparecem aqui, para caber no limite de tamanho de comentários do GitHub. O plano tem todas.`,
+  panelCut:
+    "Parte deste painel não aparece, para caber no limite de tamanho de comentários do GitHub. O comentário da última rodada tem os detalhes.",
   workflowsToReview: "Workflows para revisar",
   workflowsHelp:
     "O agente escreveu estes workflows. Eles estão guardados em `.codeman/workflows/` na branch da tarefa e não rodam. Um workflow roda com os segredos do repositório, então leia-os antes no pull request ou na branch. Para movê-los para `.github/workflows/`, comente `/codeman accept-workflows`.",
@@ -97,7 +104,7 @@ export const ptBR: Messages = {
     ({
       new: "o Codeman tenta de novo numa próxima rodada.",
       planning: "o plano.",
-      "awaiting-decision": "as suas decisões, no comentário de status da tarefa.",
+      "awaiting-decision": "as suas decisões, no comentário de decisões da tarefa.",
       ready: "a implementação, na próxima rodada.",
       designing: "etapa de design.",
       coding: "etapa de código.",

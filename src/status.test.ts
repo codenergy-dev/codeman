@@ -4,7 +4,10 @@ import { en } from "./i18n/en.ts";
 import { ptBR } from "./i18n/pt-BR.ts";
 import { decodeStatus, isStatusComment, type TaskRecord } from "./record.ts";
 import {
+  COMMENT_LIMIT,
+  decisionsUrl,
   isRunComment,
+  renderDecisions,
   renderRefused,
   renderRun,
   renderStatus,
@@ -57,24 +60,82 @@ test("carries the record in a hidden block", () => {
 });
 
 test("shows decisions, recommendation, answer and how to answer", () => {
-  const body = renderStatus({
-    ...view,
-    record: { ...record, decisions: [decision] },
-  });
-  assert.match(body, /### Codeman: Waiting for your decisions/);
+  const body = renderDecisions({ ...view, record: { ...record, decisions: [decision] } });
+  assert.match(body, /^<!-- codeman:decisions -->\n### Codeman: Decisions/);
+  assert.ok(!isStatusComment(body) && !isRunComment(body));
   assert.match(body, /\*\*1\. Storage\*\*/);
   assert.match(body, /- \*\*a\)\*\* Files _\(recommended\)_/);
   assert.match(body, /\/codeman decide 1 a 2 b/);
   assert.match(body, /\/codeman answer 1/);
   assert.match(body, /\/codeman replan/);
+  assert.ok(!renderDecisions(view).includes("/codeman decide"), "nothing left to answer");
+});
+
+test("the panel links the plan and the decisions, and shows no decision itself", () => {
+  const body = renderStatus({
+    ...view,
+    record: { ...record, decisions: [decision], decisionsCommentId: 7 },
+    decisionsUrl: decisionsUrl("https://github.com/o/r/issues/1", {
+      ...record,
+      decisionsCommentId: 7,
+    }),
+  });
+  assert.match(body, /### Codeman: Waiting for your decisions/);
   assert.match(
     body,
     /\[plans\/x\.md\]\(https:\/\/github\.com\/o\/r\/blob\/codeman\/1-x\/plans\/x\.md\)/,
   );
+  assert.match(
+    body,
+    /Decisions: \[1 waiting for an answer\]\(https:\/\/github\.com\/o\/r\/issues\/1#issuecomment-7\)/,
+  );
+  assert.ok(!body.includes("Storage"));
+  assert.ok(!body.includes("/codeman decide"));
+  assert.equal(decisionsUrl("https://github.com/o/r/issues/1", record), undefined);
+  assert.match(renderStatus({ ...view, decisionsUrl: "https://x" }), /Decisions: \[all answered\]/);
 });
 
 test("marks the chosen option", () => {
-  assert.match(renderStatus(view), /_\(chosen by alice\)_/);
+  assert.match(renderDecisions(view), /_\(chosen by alice\)_/);
+});
+
+test("a plan that no longer has decisions says so", () => {
+  const body = renderDecisions({ ...view, record: { ...record, decisions: [] } });
+  assert.match(body, /The plan has no decisions now\./);
+});
+
+/** A decision as long as the largest settings allow, with twice the margin. */
+const huge = (id: number, answered: boolean) => ({
+  id,
+  title: "T".repeat(400),
+  question: "Q".repeat(3000),
+  options: ["a", "b", "c", "d", "e", "f"].map((key) => ({ key, label: "L".repeat(600) })),
+  recommendation: "a",
+  ...(answered ? { answer: { option: "b", by: "alice" } } : {}),
+});
+
+test("the decisions comment fits GitHub's limit, keeping pending decisions first", () => {
+  const decisions = Array.from({ length: 30 }, (_, index) => huge(index + 1, index < 20));
+  const body = renderDecisions({ ...view, record: { ...record, decisions } });
+  assert.ok(body.length <= COMMENT_LIMIT, `${body.length} characters`);
+  assert.match(body, /decision\(s\) are not shown here/);
+  assert.match(body, /\*\*21\. T+\*\*\n\nQ+/, "the first pending decision is shown in full");
+  assert.match(body, /\/codeman decide/);
+
+  const fewer = Array.from({ length: 12 }, (_, index) => huge(index + 1, index < 8));
+  const short = renderDecisions({ ...view, record: { ...record, decisions: fewer } });
+  assert.ok(short.length <= COMMENT_LIMIT);
+  assert.ok(!short.includes("not shown"));
+  assert.match(short, /\*\*1\. T+\*\*: \*\*b\)\*\* L+ _\(chosen by alice\)_/, "answered in short");
+});
+
+test("the panel keeps its record whole and leaves out what does not fit", () => {
+  const big = { ...record, summary: "S".repeat(70_000) };
+  const body = renderStatus({ ...view, record: big });
+  assert.ok(body.length <= COMMENT_LIMIT);
+  assert.deepEqual(decodeStatus(body), big);
+  assert.match(body, /Part of this panel is not shown/);
+  assert.match(body, /\[Last run\]/);
 });
 
 test("neutralizes mentions, HTML and images written by the agent", () => {
@@ -85,7 +146,7 @@ test("neutralizes mentions, HTML and images written by the agent", () => {
 });
 
 test("shows free-text answers as inert text", () => {
-  const body = renderStatus({
+  const body = renderDecisions({
     ...view,
     record: {
       ...record,

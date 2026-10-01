@@ -1,5 +1,5 @@
 import type { Messages } from "./i18n/index.ts";
-import { encodeStatus, pendingDecisions, type TaskRecord } from "./record.ts";
+import { type Decision, encodeStatus, pendingDecisions, type TaskRecord } from "./record.ts";
 import { duration, type SpendRow, spendTable, spendTotals } from "./spend.ts";
 import type { State } from "./state.ts";
 import { inlineText, safeInline, safeMarkdown } from "./text.ts";
@@ -21,7 +21,12 @@ export interface StatusView {
   cost?: Cost | undefined;
   /** The newest run comment. */
   reportUrl?: string | undefined;
+  /** The task's decisions comment. */
+  decisionsUrl?: string | undefined;
 }
+
+/** GitHub's limit on the size of a comment, in characters. */
+export const COMMENT_LIMIT = 65_536;
 
 /** What a run and its task spent, in USD, as far as known. */
 export interface Cost {
@@ -32,57 +37,38 @@ export interface Cost {
 
 /**
  * The task's panel: the single comment Codeman keeps up to date on each task, with where the
- * task is now. What each run did goes in a run comment of its own.
+ * task is now. What each run did goes in a run comment of its own, and the decisions in the
+ * decisions comment.
  */
 export function renderStatus(view: StatusView): string {
   const { record, t } = view;
-  const lines = [encodeStatus(record), `### Codeman: ${t.heading(view.state)}`, ""];
-
-  if (view.message) lines.push(view.message, "");
-  if (record && view.planUrl) lines.push(`${t.plan}: [${record.planPath}](${view.planUrl})`, "");
+  const head = [encodeStatus(record), `### Codeman: ${t.heading(view.state)}`, ""];
+  if (view.message) head.push(view.message, "");
+  if (record && view.planUrl) head.push(`${t.plan}: [${record.planPath}](${view.planUrl})`, "");
   if (record?.pullRequest && view.pullRequestUrl) {
-    lines.push(`${t.pullRequest}: [#${record.pullRequest}](${view.pullRequestUrl})`, "");
+    head.push(`${t.pullRequest}: [#${record.pullRequest}](${view.pullRequestUrl})`, "");
   }
-  if (record) lines.push(safeInline(record.summary), "");
-
-  if (record && record.decisions.length > 0) {
-    lines.push(`#### ${t.decisions}`, "");
-    for (const decision of record.decisions) {
-      lines.push(`**${decision.id}. ${safeInline(decision.title)}**`, "");
-      lines.push(safeInline(decision.question), "");
-      for (const option of decision.options) {
-        const tags = [
-          option.key === decision.recommendation ? t.recommended : "",
-          option.key === decision.answer?.option ? t.chosenBy(decision.answer.by) : "",
-        ].filter(Boolean);
-        const suffix = tags.length > 0 ? ` _(${tags.join(", ")})_` : "";
-        lines.push(`- **${option.key})** ${safeInline(option.label)}${suffix}`);
-      }
-      if (decision.answer?.text !== undefined) {
-        lines.push("", t.answeredBy(decision.answer.by, inlineText(decision.answer.text)));
-      }
-      lines.push("");
-    }
-    if (view.state === "awaiting-decision" && pendingDecisions(record).length > 0) {
-      lines.push(t.howToAnswer, "");
-    }
+  if (record && record.decisions.length > 0 && view.decisionsUrl) {
+    const pending = pendingDecisions(record).length;
+    head.push(`${t.decisions}: [${t.decisionsLink(pending)}](${view.decisionsUrl})`, "");
   }
 
+  const rest: string[] = [];
+  if (record) rest.push(safeInline(record.summary), "");
   if (view.staged && view.staged.length > 0) {
-    lines.push(`#### ${t.workflowsToReview}`, "");
-    for (const path of view.staged) lines.push(`- ${inlineText(path)}`);
-    lines.push("", t.workflowsHelp, "");
+    rest.push(`#### ${t.workflowsToReview}`, "");
+    for (const path of view.staged) rest.push(`- ${inlineText(path)}`);
+    rest.push("", t.workflowsHelp, "");
   }
-
   if (record?.spending?.rows.length || view.cost?.task !== undefined) {
-    lines.push(`#### ${t.spending}`, "", ...spendTable(t, record?.spending, view.cost?.task), "");
+    rest.push(`#### ${t.spending}`, "", ...spendTable(t, record?.spending, view.cost?.task), "");
     if (view.cost?.task !== undefined) {
-      lines.push(`${spentText(t, { ...view.cost, run: undefined })}.`, "");
+      rest.push(`${spentText(t, { ...view.cost, run: undefined })}.`, "");
     }
     const totals = spendTotals(record?.spending);
     // Rows from before tokens and time were recorded have neither.
     if (totals.inputTokens + totals.outputTokens + totals.durationMs > 0) {
-      lines.push(
+      rest.push(
         t.usedTokens(
           t.tokens(totals.inputTokens),
           t.tokens(totals.outputTokens),
@@ -93,8 +79,95 @@ export function renderStatus(view: StatusView): string {
     }
   }
 
-  lines.push(t.panelFooter(modelName(view.model), view.runUrl, view.reportUrl));
-  return lines.join("\n");
+  const footer = t.panelFooter(modelName(view.model), view.runUrl, view.reportUrl);
+  const body = [...head, ...rest, footer].join("\n");
+  if (body.length <= COMMENT_LIMIT) return body;
+  // The record must be kept whole; what the panel shows can be left out.
+  const short = [...head, t.panelCut, "", footer].join("\n");
+  if (short.length <= COMMENT_LIMIT) return short;
+  throw new Error("The task record no longer fits in a GitHub comment.");
+}
+
+export interface DecisionsView {
+  /** The task's language. */
+  t: Messages;
+  state: State | "new";
+  record: TaskRecord;
+}
+
+const DECISIONS_MARKER = "<!-- codeman:decisions -->";
+
+/**
+ * The task's decisions, with their answers and how to answer. Codeman keeps this comment up to
+ * date from the record and never reads it back.
+ */
+export function renderDecisions(view: DecisionsView): string {
+  const { record, t } = view;
+  const head = [DECISIONS_MARKER, `### Codeman: ${t.decisions}`, ""];
+  if (record.decisions.length === 0) return [...head, t.noDecisions].join("\n");
+  const tail =
+    view.state === "awaiting-decision" && pendingDecisions(record).length > 0
+      ? [t.howToAnswer]
+      : [];
+  const render = (blocks: string[][], omitted = 0): string =>
+    [...head, ...blocks.flat(), ...(omitted > 0 ? [t.decisionsOmitted(omitted), ""] : []), ...tail]
+      .join("\n")
+      .trimEnd();
+
+  const full = render(record.decisions.map((decision) => decisionLines(t, decision)));
+  if (full.length <= COMMENT_LIMIT) return full;
+  // Too long: answered decisions in short form, then fewer of them, then fewer pending ones.
+  const shown = record.decisions.map((decision) => ({
+    decision,
+    lines: decision.answer ? answeredLine(t, decision) : decisionLines(t, decision),
+  }));
+  const order = [
+    ...shown.filter(({ decision }) => decision.answer),
+    ...shown.filter(({ decision }) => !decision.answer).reverse(),
+  ];
+  let omitted = 0;
+  let text = render(shown.map(({ lines }) => lines));
+  while (text.length > COMMENT_LIMIT && omitted < order.length) {
+    const dropped = new Set(order.slice(0, ++omitted));
+    text = render(
+      shown.filter((entry) => !dropped.has(entry)).map(({ lines }) => lines),
+      omitted,
+    );
+  }
+  return text;
+}
+
+function decisionLines(t: Messages, decision: Decision): string[] {
+  const lines = [
+    `**${decision.id}. ${safeInline(decision.title)}**`,
+    "",
+    safeInline(decision.question),
+    "",
+  ];
+  for (const option of decision.options) {
+    const tags = [
+      option.key === decision.recommendation ? t.recommended : "",
+      option.key === decision.answer?.option ? t.chosenBy(decision.answer.by) : "",
+    ].filter(Boolean);
+    const suffix = tags.length > 0 ? ` _(${tags.join(", ")})_` : "";
+    lines.push(`- **${option.key})** ${safeInline(option.label)}${suffix}`);
+  }
+  if (decision.answer?.text !== undefined) {
+    lines.push("", t.answeredBy(decision.answer.by, inlineText(decision.answer.text)));
+  }
+  lines.push("");
+  return lines;
+}
+
+/** An answered decision on one line: its title and the answer. */
+function answeredLine(t: Messages, decision: Decision): string[] {
+  const answer = decision.answer;
+  const option = decision.options.find((candidate) => candidate.key === answer?.option);
+  const text =
+    answer?.text !== undefined
+      ? t.answeredBy(answer.by, inlineText(answer.text))
+      : `**${option?.key})** ${safeInline(option?.label ?? "")} _(${t.chosenBy(answer?.by ?? "")})_`;
+  return [`**${decision.id}. ${safeInline(decision.title)}**: ${text}`, ""];
 }
 
 /**
@@ -103,6 +176,13 @@ export function renderStatus(view: StatusView): string {
  */
 export function renderRefused(t: Messages, record: TaskRecord | undefined): string {
   return [encodeStatus(record), `### Codeman: ${t.refusedHeading}`, "", t.refused].join("\n");
+}
+
+/** The link to the task's decisions comment, if it has one. */
+export function decisionsUrl(issueUrl: string, record: TaskRecord | undefined): string | undefined {
+  return record?.decisionsCommentId
+    ? `${issueUrl}#issuecomment-${record.decisionsCommentId}`
+    : undefined;
 }
 
 /** The link to the task's newest run comment, if it has one. */

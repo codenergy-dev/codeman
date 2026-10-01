@@ -69,6 +69,12 @@ export const en: Messages = {
   answeredBy: (by, text) => `Answered by ${by}: ${text}`,
   howToAnswer:
     "Answer with `/codeman decide 1 a` (several at once: `/codeman decide 1 a 2 b`), or accept every recommendation with `/codeman approve`. To answer in your own words, use `/codeman answer 1 <text>`; to have the plan revised, use `/codeman replan <what to change>`. Only people with write access to the repository can answer.",
+  decisionsLink: (pending) => (pending === 0 ? "all answered" : `${pending} waiting for an answer`),
+  noDecisions: "The plan has no decisions now.",
+  decisionsOmitted: (count) =>
+    `${count} decision(s) are not shown here, to fit GitHub's size limit for comments. The plan has them all.`,
+  panelCut:
+    "Part of this panel is not shown, to fit GitHub's size limit for comments. The last run comment has the details.",
   workflowsToReview: "Workflows to review",
   workflowsHelp:
     "The agent wrote these workflows. They are staged under `.codeman/workflows/` on the task branch and do not run. A workflow runs with the repository's secrets, so read them in the pull request or on the branch first. To move them into `.github/workflows/`, comment `/codeman accept-workflows`.",
@@ -86,7 +92,7 @@ export const en: Messages = {
     ({
       new: "Codeman tries again in a later run.",
       planning: "the plan.",
-      "awaiting-decision": "your decisions, in the task's status comment.",
+      "awaiting-decision": "your decisions, in the task's decisions comment.",
       ready: "the implementation, in the next run.",
       designing: "the design stage.",
       coding: "the code stage.",

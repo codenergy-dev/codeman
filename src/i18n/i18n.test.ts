@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { renderRun, renderStatus } from "../status.ts";
+import { renderDecisions, renderRun, renderStatus } from "../status.ts";
 import { en } from "./en.ts";
 import { languageName, messages, taskLanguage } from "./index.ts";
 import { ptBR } from "./pt-BR.ts";
@@ -60,11 +60,17 @@ test("the panel and run comments come out in the task's language", () => {
     model: "a/b",
     runUrl: "https://x/runs/1",
     cost: { task: 0.5, budget: 2 },
+    decisionsUrl: "https://x/issues/1#issuecomment-7",
   });
   assert.match(panel, /### Codeman: Aguardando as suas decisões/);
-  assert.match(panel, /#### Decisões/);
-  assert.match(panel, /_\(recomendada\)_/);
-  assert.match(panel, /Responda com `\/codeman decide 1 a`/);
+  assert.match(
+    panel,
+    /Decisões: \[1 aguardando resposta\]\(https:\/\/x\/issues\/1#issuecomment-7\)/,
+  );
+  const decisions = renderDecisions({ t: ptBR, state: "awaiting-decision", record });
+  assert.match(decisions, /### Codeman: Decisões/);
+  assert.match(decisions, /_\(recomendada\)_/);
+  assert.match(decisions, /Responda com `\/codeman decide 1 a`/);
   assert.match(panel, /Gasto: US\$ 0,50 de US\$ 2,00 da tarefa\./);
   assert.match(panel, /<sub>Modelo: `a\/b` \(troque com `\/codeman set model <id>`\)/);
 
@@ -133,7 +139,10 @@ test("a run's title says what ran and how it ended; its last line, what comes ne
 
   assert.equal(ptBR.nextStep("coding"), "etapa de código.");
   assert.equal(ptBR.nextStep("done"), "a sua revisão do pull request.");
-  assert.equal(en.nextStep("awaiting-decision"), "your decisions, in the task's status comment.");
+  assert.equal(
+    en.nextStep("awaiting-decision"),
+    "your decisions, in the task's decisions comment.",
+  );
 });
 
 test("says which text of the agent's output was cut", () => {

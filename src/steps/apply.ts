@@ -21,7 +21,7 @@ import { applyCommands, pendingDecisions, type TaskRecord, writeAnswers } from "
 import { addRow, parseCosts, refreshCosts, runId, type SpendRow } from "../spend.ts";
 import { nextStage, STAGE_STATE, type Stage } from "../stages.ts";
 import type { State } from "../state.ts";
-import { renderRun, renderStatus, reportUrl } from "../status.ts";
+import { decisionsUrl, renderDecisions, renderRun, renderStatus, reportUrl } from "../status.ts";
 import { commandsAfter, type TaskContext } from "../tasks.ts";
 import { oneLine, safeMarkdown, truncate } from "../text.ts";
 import { checkPlanResult, decodeText, isManifest } from "../validate.ts";
@@ -806,6 +806,15 @@ async function finish(
     );
     if (record) record = { ...record, reportCommentId: id };
   }
+  // Before the panel, which records the comment's ID. Once a task has one, it stays current.
+  if (record && (record.decisions.length > 0 || record.decisionsCommentId)) {
+    const id = await repo.upsertComment(
+      task.number,
+      record.decisionsCommentId ?? null,
+      renderDecisions({ t, state, record }),
+    );
+    record = { ...record, decisionsCommentId: id };
+  }
   await repo.upsertComment(
     task.number,
     task.statusCommentId,
@@ -821,6 +830,7 @@ async function finish(
       staged,
       cost: spent,
       reportUrl: reportUrl(task.url, record),
+      decisionsUrl: decisionsUrl(task.url, record),
     }),
   );
   if (record?.pullRequest && !view.pullRequestWritten) {
