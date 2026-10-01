@@ -459,7 +459,7 @@ export class GitHubPlatform implements Platform {
   }
 }
 
-export function status(error: unknown): number | undefined {
+function status(error: unknown): number | undefined {
   return typeof error === "object" && error !== null && "status" in error
     ? Number(error.status)
     : undefined;
