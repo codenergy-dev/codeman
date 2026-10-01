@@ -1,3 +1,5 @@
+import type { RepositoryRef } from "./platform/types.ts";
+
 const API = "https://openrouter.ai/api/v1";
 
 export type Fetch = typeof fetch;
@@ -12,14 +14,15 @@ export interface KeyInfo {
 
 /**
  * Task keys are named `codeman/<owner>/<repo>/<issue>/<run>`, so usage can be summed per
- * repository and per task.
+ * repository and per task. An owner of several segments, such as a group path, must not make
+ * one repository's prefix another's: the platform's adapter keeps them apart.
  */
-export function keyPrefix(owner: string, repo: string): string {
-  return `codeman/${owner}/${repo}/`;
+export function keyPrefix(repository: RepositoryRef): string {
+  return `codeman/${repository.owner}/${repository.name}/`;
 }
 
-export function taskKeyPrefix(owner: string, repo: string, issue: number | string): string {
-  return `${keyPrefix(owner, repo)}${issue}/`;
+export function taskKeyPrefix(repository: RepositoryRef, issue: number | string): string {
+  return `${keyPrefix(repository)}${issue}/`;
 }
 
 /** Adds up one usage field over the keys whose name starts with `prefix`. */

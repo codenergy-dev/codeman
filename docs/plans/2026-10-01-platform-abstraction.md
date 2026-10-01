@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-10-01T16:10:00-03:00
-updated_at: 2026-10-01T17:50:00-03:00
+updated_at: 2026-10-01T18:30:00-03:00
 commit: 6658cb9
 ---
 
@@ -80,9 +80,9 @@ Reading the code before starting refined steps 4 and 5, so the plan was updated 
 3. [x] GitHub adapter in `src/platform/github/`: the current `Repository` and the mappings from step 1, implementing `Platform`. Done when `src/github.ts` is gone and only `src/platform/github/` imports `@actions/github` for API calls.
 4. [x] `CiResults` interface (runs for a commit, jobs, log, artifacts) with a GitHub Actions adapter, and `WorkflowConventions` (where workflow files live, which files the agent may wait for, the rules that protect CI configuration, and the agent's instructions for writing and reviewing workflows). `src/results.ts`, `src/policy.ts` (proposed rules and staging), `src/output.ts`, `src/prompt.ts` and `apply` take them as arguments. Done when `.github/workflows` appears only in the GitHub adapter, the message catalogs and tests, and the proposed `.codemanignore` and prompts are unchanged for GitHub.
 5. [x] `MarkdownDialect`: how mentions and references are neutralized. `src/text.ts` and the renderers take it, with the comment size limit; the GitHub dialect is today's behavior. Done when the existing `text` and `status` tests pass with the GitHub dialect, and a test shows a dialect with other reference characters neutralizes them.
-6. [ ] `Runtime` interface in `src/runtime/`: inputs, outputs, logging (info, warning, error, groups, summary), secret masking, failing the step, workspace and work directory, run ID and URL (and the run ID in an earlier run's URL, for the spend table), and the repository's identity. GitHub Actions adapter over `@actions/core`. Steps and `src/sandbox.ts` receive it instead of importing `@actions/core`. Done when only `src/runtime/github-actions.ts` imports `@actions/core`.
-7. [ ] Key names come from `RepositoryRef`, with the GitHub format exactly as today (`codeman/<owner>/<repo>/`). Done when `keys` tests show identical names for GitHub.
-8. [ ] Composition root: `src/main.ts` builds the runtime, platform, CI results and conventions for GitHub (`Services`) and passes them to the steps. Done when steps take their dependencies as arguments.
+6. [x] `Runtime` interface in `src/runtime/`: inputs, outputs, logging (info, warning, error, groups, summary), secret masking, failing the step, workspace and work directory, run ID and URL (and the run ID in an earlier run's URL, for the spend table), and the repository's identity. GitHub Actions adapter over `@actions/core`. Steps and `src/sandbox.ts` receive it instead of importing `@actions/core`. Done when only `src/runtime/github-actions.ts` imports `@actions/core`.
+7. [x] Key names come from `RepositoryRef`, with the GitHub format exactly as today (`codeman/<owner>/<repo>/`). Done when `keys` tests show identical names for GitHub.
+8. [x] Composition root: `src/main.ts` builds the runtime, platform, CI results and conventions for GitHub (`Services`) and passes them to the steps. Done when steps take their dependencies as arguments.
 9. [ ] In-memory fake platform and runtime in `src/testing/`, with tests for `select` and `apply` that cover planning, recording answers, a stage, and opening a pull request. Done when they pass without network access.
 10. [ ] `docs/architecture.md` gets a "Platforms" section: the interfaces, what each adapter must guarantee (monotonic IDs, atomic guarded commits, an identity that others cannot forge, a maintainer check, a record that survives in a comment, safe Markdown, secret masking or an equivalent, per-job credentials), and that the security model must be reviewed for each new runtime. `docs/development.md` says where adapters live. Done when both describe the new layout.
 11. [ ] `npm run check` passes, and the built `dist/index.js` behaves the same on a test repository: plan, answers, stages and pull request. Done when a full task runs as before.

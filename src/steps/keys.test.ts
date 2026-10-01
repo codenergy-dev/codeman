@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { FakeRuntime } from "../testing/fake-runtime.ts";
 import { runCost, runTokens, taskCosts } from "./keys.ts";
 
 /** A fake analytics API that answers each query with the next result. */
@@ -18,28 +19,35 @@ function analytics(results: ({ input: number; output: number } | undefined | Err
 }
 
 const noWait = async () => undefined;
+const repository = { owner: "o", name: "r" };
 
 test("asks again until analytics counts a key that spent something", async () => {
   const api = analytics([undefined, { input: 0, output: 0 }, { input: 1500, output: 40 }]);
-  assert.deepEqual(await runTokens(api, "h", true, noWait), { input: 1500, output: 40 });
+  assert.deepEqual(await runTokens(api, "h", true, new FakeRuntime(), noWait), {
+    input: 1500,
+    output: 40,
+  });
   assert.equal(api.calls, 3);
 });
 
 test("gives up after about a minute without tokens", async () => {
   const api = analytics([undefined]);
-  assert.equal(await runTokens(api, "h", true, noWait), undefined);
+  assert.equal(await runTokens(api, "h", true, new FakeRuntime(), noWait), undefined);
   assert.equal(api.calls, 7);
 });
 
 test("a key that spent nothing used no tokens, without waiting", async () => {
   const api = analytics([undefined]);
-  assert.deepEqual(await runTokens(api, "h", false, noWait), { input: 0, output: 0 });
+  assert.deepEqual(await runTokens(api, "h", false, new FakeRuntime(), noWait), {
+    input: 0,
+    output: 0,
+  });
   assert.equal(api.calls, 1);
 });
 
 test("a failed query leaves the tokens unknown, and does not fail the job", async () => {
   const api = analytics([new Error("OpenRouter POST /analytics/query failed with 403.")]);
-  assert.equal(await runTokens(api, "h", true, noWait), undefined);
+  assert.equal(await runTokens(api, "h", true, new FakeRuntime(), noWait), undefined);
 });
 
 /** A fake key whose usage reads the next value each time. */
@@ -93,7 +101,6 @@ function keys(name: string, listed: { name: string; usage?: number }[] | Error) 
 }
 
 test("reads what each run of the key's task spent", async () => {
-  process.env.GITHUB_REPOSITORY = "o/r";
   const api = keys("codeman/o/r/7/300", [
     { name: "codeman/o/r/7/100", usage: 0.05123 },
     { name: "codeman/o/r/7/200" },
@@ -101,13 +108,22 @@ test("reads what each run of the key's task spent", async () => {
     { name: "codeman/o/r/70/400", usage: 1 },
     { name: "codeman/o/other/7/500", usage: 1 },
   ]);
-  assert.deepEqual(await taskCosts(api, "h"), { "100": 0.0512, "200": 0, "300": 0.036 });
+  assert.deepEqual(await taskCosts(api, "h", repository, new FakeRuntime()), {
+    "100": 0.0512,
+    "200": 0,
+    "300": 0.036,
+  });
 });
 
 test("a key that is not a task key of this repository, or a failed listing, gives no costs", async () => {
-  process.env.GITHUB_REPOSITORY = "o/r";
-  assert.equal(await taskCosts(keys("codeman/o/other/7/300", []), "h"), undefined);
-  assert.equal(await taskCosts(keys("codeman/o/r/300", []), "h"), undefined);
+  assert.equal(
+    await taskCosts(keys("codeman/o/other/7/300", []), "h", repository, new FakeRuntime()),
+    undefined,
+  );
+  assert.equal(
+    await taskCosts(keys("codeman/o/r/300", []), "h", repository, new FakeRuntime()),
+    undefined,
+  );
   const failed = keys("codeman/o/r/7/300", new Error("OpenRouter GET /keys failed with 500."));
-  assert.equal(await taskCosts(failed, "h"), undefined);
+  assert.equal(await taskCosts(failed, "h", repository, new FakeRuntime()), undefined);
 });

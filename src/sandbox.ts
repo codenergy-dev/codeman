@@ -1,8 +1,8 @@
 import { spawn, spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import { createInterface } from "node:readline";
-import * as core from "@actions/core";
 import type { HarnessCommand } from "./harness/harness.ts";
+import type { Log } from "./runtime/runtime.ts";
 import { truncate } from "./text.ts";
 
 /**
@@ -114,6 +114,7 @@ export async function runAsAgent(
   command: HarnessCommand,
   cwd: string,
   timeoutMs: number,
+  log: Log,
 ): Promise<{ exitCode: number | null; timedOut: boolean }> {
   const keep = Object.keys(command.env);
   const args = [
@@ -139,13 +140,13 @@ export async function runAsAgent(
 
   // Agent output is untrusted: prefix every line so it cannot issue workflow commands.
   for (const stream of [child.stdout, child.stderr]) {
-    createInterface({ input: stream }).on("line", (line) => core.info(`│ ${truncate(line, 4000)}`));
+    createInterface({ input: stream }).on("line", (line) => log.info(`│ ${truncate(line, 4000)}`));
   }
 
   let timedOut = false;
   const timer = setTimeout(() => {
     timedOut = true;
-    core.warning(`The agent reached its time limit of ${Math.round(timeoutMs / 60_000)} minutes.`);
+    log.warning(`The agent reached its time limit of ${Math.round(timeoutMs / 60_000)} minutes.`);
     child.kill("SIGTERM");
     setTimeout(killAgentProcesses, 10_000).unref();
   }, timeoutMs);

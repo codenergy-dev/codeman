@@ -20,6 +20,7 @@ import {
   killAgentProcesses,
   runAsAgent,
 } from "./sandbox.ts";
+import { FakeRuntime } from "./testing/fake-runtime.ts";
 
 // Creates a system user and needs passwordless sudo, like GitHub's Linux runners. CI sets this.
 const enabled = process.platform === "linux" && process.env.CODEMAN_SANDBOX_TEST === "1";
@@ -68,6 +69,7 @@ test("the agent is contained and its changes are collected safely", {
     { file: "/bin/bash", args: ["-c", script], env: { OPENROUTER_API_KEY: "sk-test" } },
     worktree,
     60_000,
+    new FakeRuntime(),
   );
   assert.deepEqual(run, { exitCode: 0, timedOut: false });
   killAgentProcesses();

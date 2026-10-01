@@ -1,6 +1,7 @@
-import * as core from "@actions/core";
-import { run } from "./main.ts";
+import { gitHubServices, run } from "./main.ts";
+import { GitHubActionsRuntime } from "./runtime/github-actions.ts";
 
-run().catch((error: unknown) => {
-  core.setFailed(error instanceof Error ? error.message : String(error));
+const runtime = new GitHubActionsRuntime();
+run(gitHubServices(runtime)).catch((error: unknown) => {
+  runtime.fail(error instanceof Error ? error.message : String(error));
 });

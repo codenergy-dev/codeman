@@ -2,16 +2,19 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { en } from "./i18n/en.ts";
 import { ptBR } from "./i18n/pt-BR.ts";
+import { GitHubActionsRuntime } from "./runtime/github-actions.ts";
 import {
   addRow,
   duration,
   parseCosts,
   refreshCosts,
-  runId,
   type SpendRow,
   spendTable,
   spendTotals,
 } from "./spend.ts";
+
+/** Rows link GitHub Actions runs. */
+const runIdOf = (url: string) => new GitHubActionsRuntime().runIdOf(url);
 
 const row = (cost: number | undefined, run = 1): SpendRow => ({
   runUrl: `https://github.com/o/r/actions/runs/${run}`,
@@ -118,7 +121,7 @@ test("rows take the costs OpenRouter counts now, by run", () => {
     rows: [row(0, 1), row(undefined, 2), row(0.02, 3), row(0.01, 4)],
     earlier: { runs: 1, cost: 0 },
   };
-  const refreshed = refreshCosts(spending, { "1": 0.05, "2": 0.017, "3": 0.036 });
+  const refreshed = refreshCosts(spending, { "1": 0.05, "2": 0.017, "3": 0.036 }, runIdOf);
   assert.deepEqual(
     refreshed.rows.map((entry) => entry.cost),
     [0.05, 0.017, 0.036, 0.01],
@@ -130,14 +133,9 @@ test("rows take the costs OpenRouter counts now, by run", () => {
 test("a run with several rows keeps them as they are", () => {
   const spending = { rows: [row(0, 1), row(0.01, 1), row(0, 2)] };
   assert.deepEqual(
-    refreshCosts(spending, { "1": 0.05, "2": 0.03 }).rows.map((entry) => entry.cost),
+    refreshCosts(spending, { "1": 0.05, "2": 0.03 }, runIdOf).rows.map((entry) => entry.cost),
     [0, 0.01, 0.03],
   );
-});
-
-test("a run's ID comes from the end of its link", () => {
-  assert.equal(runId("https://github.com/o/r/actions/runs/123"), "123");
-  assert.equal(runId("https://github.com/o/r/actions/runs/123/attempts/2"), undefined);
 });
 
 test("reads close-key's costs by run, and nothing from a missing or malformed output", () => {

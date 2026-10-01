@@ -12,6 +12,8 @@ import {
   usd,
 } from "./budget.ts";
 
+const o = { owner: "o", name: "r" };
+
 function fakeFetch(responses: unknown[]): { fetch: Fetch; calls: [string, RequestInit][] } {
   const calls: [string, RequestInit][] = [];
   const fetchFn = (async (url: string, init: RequestInit) => {
@@ -28,7 +30,7 @@ test("formats expiry as OpenRouter expects", () => {
 });
 
 test("adds up this month's usage of the repository's keys, across pages", async () => {
-  const prefix = keyPrefix("org", "repo");
+  const prefix = keyPrefix({ owner: "org", name: "repo" });
   const { fetch, calls } = fakeFetch([
     {
       data: [
@@ -92,9 +94,9 @@ test("adds up a task's spend without mixing tasks that share a prefix", () => {
     { hash: "3", name: "codeman/o/r/12/102", usage: 5 },
     { hash: "4", name: "codeman/o/r2/1/103", usage: 5 },
   ];
-  assert.equal(sumUsage(keys, taskKeyPrefix("o", "r", 1), "usage"), 0.55);
-  assert.equal(sumUsage(keys, taskKeyPrefix("o", "r", 12), "usage"), 5);
-  assert.equal(sumUsage(keys, keyPrefix("o", "r"), "usage_monthly"), 0.2);
+  assert.equal(sumUsage(keys, taskKeyPrefix(o, 1), "usage"), 0.55);
+  assert.equal(sumUsage(keys, taskKeyPrefix(o, 12), "usage"), 5);
+  assert.equal(sumUsage(keys, keyPrefix(o), "usage_monthly"), 0.2);
 });
 
 test("gives each run of a task what its keys spent, adding up a re-run's keys", () => {
@@ -106,7 +108,7 @@ test("gives each run of a task what its keys spent, adding up a re-run's keys", 
     { hash: "5", name: "codeman/o/r/12/103", usage: 5 },
     { hash: "6", name: "codeman/o/r/1/other", usage: 5 },
   ];
-  assert.deepEqual(costsByRun(keys, taskKeyPrefix("o", "r", 1)), {
+  assert.deepEqual(costsByRun(keys, taskKeyPrefix(o, 1)), {
     "100": 0.2,
     "101": 0.4,
     "102": 0,
@@ -160,4 +162,9 @@ test("reads a key's tokens from analytics, summing rows given as strings", async
 test("a key with no analytics rows yet has no tokens", async () => {
   const { fetch } = fakeFetch([{ data: { data: [], metadata: { row_count: 0 } } }]);
   assert.equal(await new OpenRouter("mk", fetch).keyTokens("h", new Date(), new Date()), undefined);
+});
+
+test("names keys by repository and task, as earlier runs did", () => {
+  assert.equal(keyPrefix(o), "codeman/o/r/");
+  assert.equal(taskKeyPrefix(o, 7), "codeman/o/r/7/");
 });

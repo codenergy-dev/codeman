@@ -1,5 +1,3 @@
-import * as core from "@actions/core";
-import * as github from "@actions/github";
 import {
   costsByRun,
   expiresAt,
@@ -12,6 +10,9 @@ import {
   usd,
 } from "../budget.ts";
 import { encrypt } from "../crypto.ts";
+import type { RepositoryRef } from "../platform/types.ts";
+import type { Log } from "../runtime/runtime.ts";
+import type { Services } from "../services.ts";
 import { positiveNumber } from "./common.ts";
 
 /**
@@ -19,36 +20,35 @@ import { positiveNumber } from "./common.ts";
  * too little or the repository's monthly budget would be exceeded. The only job that reads the
  * management key, together with `closeKey`.
  */
-export async function openKey(): Promise<void> {
-  const router = new OpenRouter(core.getInput("management-key", { required: true }));
-  const secret = core.getInput("encryption-secret", { required: true });
-  const task = core.getInput("task", { required: true });
-  const taskBudget = positiveNumber("task-budget");
-  const monthlyBudget = positiveNumber("monthly-budget");
-  const hours = positiveNumber("key-expiry-hours");
-  const { owner, repo } = github.context.repo;
-  const prefix = keyPrefix(owner, repo);
+export async function openKey({ runtime }: Services): Promise<void> {
+  const router = new OpenRouter(runtime.input("management-key", { required: true }));
+  const secret = runtime.input("encryption-secret", { required: true });
+  const task = runtime.input("task", { required: true });
+  const taskBudget = positiveNumber(runtime, "task-budget");
+  const monthlyBudget = positiveNumber(runtime, "monthly-budget");
+  const hours = positiveNumber(runtime, "key-expiry-hours");
+  const prefix = keyPrefix(runtime.repository);
 
   const keys = await router.listKeys();
-  const spent = sumUsage(keys, taskKeyPrefix(owner, repo, task), "usage");
+  const spent = sumUsage(keys, taskKeyPrefix(runtime.repository, task), "usage");
   const used = sumUsage(keys, prefix, "usage_monthly");
-  core.setOutput("task-spent", spent.toFixed(4));
-  core.setOutput("month-spent", used.toFixed(4));
-  core.info(`This task has spent ${usd(spent)} of ${usd(taskBudget)}.`);
-  core.info(`OpenRouter usage this month: ${usd(used)} of ${usd(monthlyBudget)}.`);
+  runtime.output("task-spent", spent.toFixed(4));
+  runtime.output("month-spent", used.toFixed(4));
+  runtime.info(`This task has spent ${usd(spent)} of ${usd(taskBudget)}.`);
+  runtime.info(`OpenRouter usage this month: ${usd(used)} of ${usd(monthlyBudget)}.`);
 
   const limit = runLimit(taskBudget, spent);
   if (limit === undefined) {
-    core.setOutput("status", "task-budget-spent");
-    core.setOutput(
+    runtime.output("status", "task-budget-spent");
+    runtime.output(
       "reason",
       `The task has spent ${usd(spent)} of its ${usd(taskBudget)} budget, and a run needs at least ${usd(MIN_RUN_BUDGET)}. A maintainer can raise it with \`/codeman set task-budget <usd>\`.`,
     );
     return;
   }
   if (used + limit > monthlyBudget) {
-    core.setOutput("status", "over-budget");
-    core.setOutput(
+    runtime.output("status", "over-budget");
+    runtime.output(
       "reason",
       `The monthly budget is reached: ${usd(used)} used of ${usd(monthlyBudget)}, and this run may use up to ${usd(limit)}.`,
     );
@@ -56,46 +56,46 @@ export async function openKey(): Promise<void> {
   }
 
   const { key, hash } = await router.createKey({
-    name: `${prefix}${task}/${github.context.runId}`,
+    name: `${prefix}${task}/${runtime.run.id}`,
     limit,
     expiresAt: expiresAt(new Date(), hours),
   });
-  core.setSecret(key);
-  core.setOutput("status", "opened");
-  core.setOutput("key-limit", limit.toFixed(2));
-  core.setOutput("key-hash", hash);
-  core.setOutput("encrypted-key", encrypt(key, secret));
-  core.info(`Created a key limited to ${usd(limit)}, expiring in ${hours} hours.`);
+  runtime.mask(key);
+  runtime.output("status", "opened");
+  runtime.output("key-limit", limit.toFixed(2));
+  runtime.output("key-hash", hash);
+  runtime.output("encrypted-key", encrypt(key, secret));
+  runtime.info(`Created a key limited to ${usd(limit)}, expiring in ${hours} hours.`);
 }
 
 /**
  * Disables the run's key, then reads what it spent and used, and what each run of the task
  * spent, so apply can refresh the costs that earlier runs read too soon.
  */
-export async function closeKey(): Promise<void> {
-  const router = new OpenRouter(core.getInput("management-key", { required: true }));
-  const hash = core.getInput("key-hash", { required: true });
+export async function closeKey({ runtime }: Services): Promise<void> {
+  const router = new OpenRouter(runtime.input("management-key", { required: true }));
+  const hash = runtime.input("key-hash", { required: true });
   await router.disableKey(hash);
-  core.info("Disabled the key.");
+  runtime.info("Disabled the key.");
 
   let cost = await runCost(router, hash, false);
-  const tokens = await runTokens(router, hash, cost > 0);
+  const tokens = await runTokens(router, hash, cost > 0, runtime);
   if (cost === 0 && tokens && tokens.input + tokens.output > 0) {
     // The analytics counted requests that the key's usage does not show yet.
-    core.info("OpenRouter has tokens for this run's key but no cost yet; reading it again.");
+    runtime.info("OpenRouter has tokens for this run's key but no cost yet; reading it again.");
     cost = await runCost(router, hash, true);
-    if (cost === 0) core.warning("OpenRouter has no cost for this run's key yet.");
+    if (cost === 0) runtime.warning("OpenRouter has no cost for this run's key yet.");
   }
-  core.setOutput("run-cost", cost.toFixed(4));
-  core.info(`This run spent ${usd(cost)}.`);
+  runtime.output("run-cost", cost.toFixed(4));
+  runtime.info(`This run spent ${usd(cost)}.`);
   if (tokens) {
-    core.setOutput("input-tokens", String(tokens.input));
-    core.setOutput("output-tokens", String(tokens.output));
-    core.info(`This run used ${tokens.input} input and ${tokens.output} output tokens.`);
+    runtime.output("input-tokens", String(tokens.input));
+    runtime.output("output-tokens", String(tokens.output));
+    runtime.info(`This run used ${tokens.input} input and ${tokens.output} output tokens.`);
   }
 
-  const costs = await taskCosts(router, hash);
-  if (costs) core.setOutput("task-costs", JSON.stringify(costs));
+  const costs = await taskCosts(router, hash, runtime.repository, runtime);
+  if (costs) runtime.output("task-costs", JSON.stringify(costs));
 }
 
 /**
@@ -126,12 +126,13 @@ export async function runCost(
 export async function taskCosts(
   router: Pick<OpenRouter, "key" | "listKeys">,
   hash: string,
+  repository: RepositoryRef,
+  log: Log,
 ): Promise<Record<string, number> | undefined> {
   try {
     const { name } = await router.key(hash);
-    const { owner, repo } = github.context.repo;
     const prefix = name.slice(0, name.lastIndexOf("/") + 1);
-    if (!prefix.startsWith(keyPrefix(owner, repo)) || prefix === keyPrefix(owner, repo)) {
+    if (!prefix.startsWith(keyPrefix(repository)) || prefix === keyPrefix(repository)) {
       throw new Error("the key's name is not a task key's.");
     }
     const costs = costsByRun(await router.listKeys(), prefix);
@@ -139,7 +140,7 @@ export async function taskCosts(
       Object.entries(costs).map(([run, cost]) => [run, Number(cost.toFixed(4))]),
     );
   } catch (error) {
-    core.warning(
+    log.warning(
       `Could not read what the task's runs spent: ${error instanceof Error ? error.message : error}`,
     );
     return undefined;
@@ -158,6 +159,7 @@ export async function runTokens(
   router: Pick<OpenRouter, "keyTokens">,
   hash: string,
   spent: boolean,
+  log: Log,
   wait = sleep,
 ): Promise<{ input: number; output: number } | undefined> {
   try {
@@ -167,13 +169,13 @@ export async function runTokens(
       const counted = tokens !== undefined && tokens.input + tokens.output > 0;
       if (counted || !spent) return tokens ?? (spent ? undefined : { input: 0, output: 0 });
       if (attempt === 6) {
-        core.warning("OpenRouter's analytics has no tokens for this run's key yet.");
+        log.warning("OpenRouter's analytics has no tokens for this run's key yet.");
         return undefined;
       }
       await wait(10_000);
     }
   } catch (error) {
-    core.warning(
+    log.warning(
       `Could not read this run's tokens: ${error instanceof Error ? error.message : error}`,
     );
     return undefined;

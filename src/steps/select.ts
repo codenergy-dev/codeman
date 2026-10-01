@@ -1,11 +1,13 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import * as core from "@actions/core";
 import { descriptionCommands } from "../commands.ts";
 import { type Messages, messages, taskLanguage } from "../i18n/index.ts";
+import type { WorkflowConventions } from "../platform/conventions.ts";
 import type { CiRun, Comment, Review } from "../platform/types.ts";
 import { IGNORE_FILE, unprotected } from "../policy.ts";
 import { applyCommands, type CommandSource, pendingDecisions } from "../record.ts";
+import type { Runtime } from "../runtime/runtime.ts";
+import type { Services } from "../services.ts";
 import {
   isSettingName,
   type PartialSettings,
@@ -40,17 +42,18 @@ import {
   toTask,
 } from "../tasks.ts";
 import { oneLine, slugify } from "../text.ts";
-import { ciResults, conventions, platform, runUrl, taskFile } from "./common.ts";
+import { taskFile } from "./common.ts";
 
 /**
  * Picks the one task this run works on and writes its context for the next jobs. Runs no LLM,
  * so it may hold a token that writes to issues.
  */
-export async function select(): Promise<void> {
-  const repo = platform("github-token", core.getInput("app-slug", { required: true }));
-  const ci = ciResults();
+export async function select(services: Services): Promise<void> {
+  const { runtime, conventions } = services;
+  const repo = services.platform();
+  const ci = services.ci();
   const bot = repo.self();
-  const inputs = inputSettings();
+  const inputs = inputSettings(runtime);
   // Rules and settings come from the default branch, where the agent cannot change them.
   const defaultBranch = await repo.defaultBranch();
   const settingsText = await repo.readFile(defaultBranch, SETTINGS_FILE);
@@ -58,10 +61,10 @@ export async function select(): Promise<void> {
     settingsText === undefined ? { ok: true as const, value: {} } : parseSettings(settingsText);
   if (!fileSettings.ok) throw new Error(fileSettings.error);
   const ignore = (await repo.readFile(defaultBranch, IGNORE_FILE)) ?? null;
-  await warnUnprotected(ignore);
+  await warnUnprotected(runtime, conventions.workflows, ignore);
 
   const tasks = (await repo.listOptedIn()).map(toTask).filter((task) => task.kind === "issue");
-  core.info(`Found ${tasks.length} open issue(s) labeled "codeman".`);
+  runtime.info(`Found ${tasks.length} open issue(s) labeled "codeman".`);
 
   // Permission per user, asked once per run.
   const permissions = new Map<string, Promise<boolean>>();
@@ -127,13 +130,13 @@ export async function select(): Promise<void> {
   for (const task of tasks) {
     const line = `#${task.number} ${oneLine(task.title)}`;
     if (!openedByMaintainer(task, authors)) {
-      core.warning(`${line}: not opened by a maintainer, so it is not a task. Left alone.`);
+      runtime.warning(`${line}: not opened by a maintainer, so it is not a task. Left alone.`);
       await refuse(task);
       continue;
     }
     const result = stateOf(task.labels);
     if (!result.ok) {
-      core.warning(`${line}: ${result.error}`);
+      runtime.warning(`${line}: ${result.error}`);
       continue;
     }
     const candidate: Candidate = { number: task.number, state: result.state };
@@ -165,13 +168,13 @@ export async function select(): Promise<void> {
       }
     }
     candidates.push(candidate);
-    core.info(`${line} [${result.state}]${candidate.pending ? ` (${candidate.pending})` : ""}`);
+    runtime.info(`${line} [${result.state}]${candidate.pending ? ` (${candidate.pending})` : ""}`);
   }
 
   const choice = chooseTask(candidates);
-  core.setOutput("action", choice?.action ?? "none");
+  runtime.output("action", choice?.action ?? "none");
   if (!choice) {
-    core.info("Nothing to do.");
+    runtime.info("Nothing to do.");
     return;
   }
 
@@ -272,7 +275,7 @@ export async function select(): Promise<void> {
     replan,
     settled,
     statusCommentId: talk.status?.id ?? null,
-    runUrl: runUrl(),
+    runUrl: runtime.run.url,
   };
 
   const needsAgent = choice.action === "plan" || choice.action === "implement";
@@ -298,16 +301,16 @@ export async function select(): Promise<void> {
     );
   }
 
-  mkdirSync(dirname(taskFile()), { recursive: true });
-  writeFileSync(taskFile(), JSON.stringify(context, null, 2));
-  core.setOutput("task", String(task.number));
-  core.setOutput("model", model);
-  core.setOutput("base-sha", baseSha);
-  core.setOutput("needs-agent", String(needsAgent));
-  core.setOutput("stage", stage ?? (choice.action === "plan" ? "plan" : ""));
-  core.setOutput("task-budget", String(settings.value["task-budget"]));
-  core.setOutput("monthly-budget", String(settings.value["monthly-budget"]));
-  core.info(`Selected #${task.number} to ${choice.action}, with model ${model}.`);
+  mkdirSync(dirname(taskFile(runtime)), { recursive: true });
+  writeFileSync(taskFile(runtime), JSON.stringify(context, null, 2));
+  runtime.output("task", String(task.number));
+  runtime.output("model", model);
+  runtime.output("base-sha", baseSha);
+  runtime.output("needs-agent", String(needsAgent));
+  runtime.output("stage", stage ?? (choice.action === "plan" ? "plan" : ""));
+  runtime.output("task-budget", String(settings.value["task-budget"]));
+  runtime.output("monthly-budget", String(settings.value["monthly-budget"]));
+  runtime.info(`Selected #${task.number} to ${choice.action}, with model ${model}.`);
 }
 
 /** Where work starts without a recorded stage: design, or code once a task was done. */
@@ -339,10 +342,10 @@ function startMessage(t: Messages, task: TaskContext): string {
 }
 
 /** Settings given as workflow inputs. Empty inputs fall back to the settings file. */
-function inputSettings(): PartialSettings {
+function inputSettings(runtime: Runtime): PartialSettings {
   const settings: PartialSettings = {};
   for (const name of ["model", "task-budget", "monthly-budget", "max-runs"]) {
-    const text = core.getInput(name);
+    const text = runtime.input(name);
     if (text === "" || !isSettingName(name)) continue;
     const parsed = parseSetting(name, text);
     if (!parsed.ok) throw new Error(`Input ${parsed.error}`);
@@ -352,27 +355,28 @@ function inputSettings(): PartialSettings {
 }
 
 /** Warns about each path Codeman proposes to protect that the repository's rules allow. */
-async function warnUnprotected(ignore: string | null): Promise<void> {
+async function warnUnprotected(
+  runtime: Runtime,
+  workflows: WorkflowConventions,
+  ignore: string | null,
+): Promise<void> {
   if (ignore === null) {
-    core.info(
+    runtime.info(
       `The repository has no ${IGNORE_FILE}; Codeman uses its own and proposes it in the next pull request.`,
     );
     return;
   }
-  const paths = unprotected(ignore, conventions.workflows);
+  const paths = unprotected(ignore, workflows);
   for (const path of paths) {
-    core.warning(
+    runtime.warning(
       `${IGNORE_FILE} lets the agent change ${oneLine(path)}, which Codeman proposes to protect.`,
     );
   }
   if (paths.length > 0) {
-    await core.summary
-      .addHeading("Paths the agent may change", 3)
-      .addRaw(
-        `${IGNORE_FILE} does not protect these paths, which Codeman proposes to protect:`,
-        true,
-      )
-      .addList(paths)
-      .write();
+    await runtime.summary(
+      "Paths the agent may change",
+      `${IGNORE_FILE} does not protect these paths, which Codeman proposes to protect:`,
+      paths,
+    );
   }
 }

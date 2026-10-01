@@ -21,12 +21,6 @@ export function octokit(token: string): Octokit {
   return github.getOctokit(token);
 }
 
-/** The repository the workflow runs in. */
-export function contextRepository(): RepositoryRef {
-  const { owner, repo } = github.context.repo;
-  return { owner, name: repo };
-}
-
 /** GitHub's REST shapes, as far as Codeman reads them. */
 export interface GitHubUser {
   login: string;

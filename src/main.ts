@@ -1,11 +1,15 @@
-import * as core from "@actions/core";
+import { GitHubActionsResults } from "./platform/github/ci.ts";
+import { GITHUB } from "./platform/github/conventions.ts";
+import { GitHubPlatform, octokit } from "./platform/github/platform.ts";
+import type { Runtime } from "./runtime/runtime.ts";
+import type { Services } from "./services.ts";
 import { agent } from "./steps/agent.ts";
 import { apply } from "./steps/apply.ts";
 import { closeKey, openKey } from "./steps/keys.ts";
 import { select } from "./steps/select.ts";
 
 /** Each job of the Codeman workflow runs one step. See docs/architecture.md. */
-const STEPS: Record<string, () => Promise<void>> = {
+const STEPS: Record<string, (services: Services) => Promise<void>> = {
   select,
   "open-key": openKey,
   agent,
@@ -13,10 +17,26 @@ const STEPS: Record<string, () => Promise<void>> = {
   "close-key": closeKey,
 };
 
-export async function run(): Promise<void> {
-  const name = core.getInput("step", { required: true });
+/** Codeman on GitHub: the App's tokens for the platform, the job's token for CI results. */
+export function gitHubServices(runtime: Runtime): Services {
+  const client = (input: string) => octokit(runtime.input(input, { required: true }));
+  return {
+    runtime,
+    conventions: GITHUB,
+    platform: (access = "default") =>
+      new GitHubPlatform(
+        client(access === "workflows" ? "workflow-token" : "github-token"),
+        runtime.repository,
+        { appSlug: runtime.input("app-slug") || undefined },
+      ),
+    ci: () => new GitHubActionsResults(client("github-token"), runtime.repository),
+  };
+}
+
+export async function run(services: Services): Promise<void> {
+  const name = services.runtime.input("step", { required: true });
   const step = STEPS[name];
   if (!step)
     throw new Error(`Unknown step "${name}". Use one of: ${Object.keys(STEPS).join(", ")}.`);
-  await step();
+  await step(services);
 }

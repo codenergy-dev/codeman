@@ -60,14 +60,15 @@ export function addRow(spending: Spending | undefined, row: SpendRow, max = MAX_
 export function refreshCosts(
   spending: Spending,
   costs: Readonly<Record<string, number>>,
+  runIdOf: (runUrl: string) => string | undefined,
 ): Spending {
   const rowsOf = new Map<string, number>();
   for (const row of spending.rows) {
-    const run = runId(row.runUrl);
+    const run = runIdOf(row.runUrl);
     if (run) rowsOf.set(run, (rowsOf.get(run) ?? 0) + 1);
   }
   const rows = spending.rows.map((row) => {
-    const run = runId(row.runUrl);
+    const run = runIdOf(row.runUrl);
     const cost = run && rowsOf.get(run) === 1 && Object.hasOwn(costs, run) ? costs[run] : undefined;
     return cost === undefined ? row : { ...row, cost };
   });
@@ -92,11 +93,6 @@ export function parseCosts(text: string): Record<string, number> | undefined {
       /^\d+$/.test(run) && typeof cost === "number" && Number.isFinite(cost) && cost >= 0,
   );
   return valid && entries.length > 0 ? Object.fromEntries(entries) : undefined;
-}
-
-/** The run ID at the end of a run's link. */
-export function runId(runUrl: string): string | undefined {
-  return /\/actions\/runs\/(\d+)$/.exec(runUrl)?.[1];
 }
 
 /** Everything the table knows: the folded rows and each row. */
