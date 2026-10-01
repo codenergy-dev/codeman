@@ -162,6 +162,8 @@ export const en: Messages = {
   noResult: "The agent produced no result. See the run log.",
   couldNotUse: "Codeman could not use the agent's result.",
   ignoredChange: (path) => `Ignored a change to ${path}.`,
+  cutText: (field, length, max) =>
+    `${field} had ${length} characters, too many; Codeman cut it to ${max}.`,
   droppedChange: (path, reason) => {
     const why = {
       "invalid-path": "not a valid path in the repository",

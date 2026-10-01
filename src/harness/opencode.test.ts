@@ -56,3 +56,22 @@ test("loads Codeman's rules as instructions, next to the repository's AGENTS.md"
   assert.deepEqual(config.instructions, ["/home/codeman-agent/work/.codeman/rules.md"]);
   assert.equal("instructions" in openCodeConfig("a/b"), false);
 });
+
+test("continues the last session when resuming", () => {
+  const command = openCode.command({
+    executable: "/opt/codeman/opencode",
+    model: "a/b",
+    apiKey: "k",
+    prompt: "Fix it.",
+    resume: true,
+  });
+  assert.deepEqual(command.args, [
+    "run",
+    "--format",
+    "json",
+    "--model",
+    "openrouter/a/b",
+    "--continue",
+    "Fix it.",
+  ]);
+});

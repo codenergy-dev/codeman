@@ -81,3 +81,13 @@ test("the language is auto or a language tag, and a task may set it", () => {
   assert.equal(parseSetting("language", "pt_BR").ok, false);
   assert.ok(TASK_SETTINGS.has("language"));
 });
+
+test("output limits stay within bounds", () => {
+  assert.deepEqual(parseSetting("max-label-chars", "200"), { ok: true, value: 200 });
+  assert.equal(parseSetting("max-label-chars", "301").ok, false);
+  assert.equal(parseSetting("max-options", "1").ok, false);
+  assert.equal(parseSetting("max-decisions", "11").ok, false);
+  assert.ok(!TASK_SETTINGS.has("max-label-chars"));
+  const parsed = parseSettings("max-summary-chars: 5000");
+  assert.ok(!parsed.ok && parsed.error.includes("from 1 to 4000"));
+});

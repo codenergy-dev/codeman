@@ -87,7 +87,7 @@ Every agent run gets Codeman's working rules: the `##` sections of Codeman's own
 ## Planning
 
 1. `select` picks a `new` task, one left in `planning` by an interrupted run, or one with a `/codeman replan` request, and chooses the branch `codeman/<issue>-<slug>` and the plan path `docs/plans/<date>-<slug>.md`.
-2. `agent` gives the harness a task file with the rules, the issue and the maintainer comments. The agent writes the plan and `.codeman/output.json`, which lists the decisions: a title, a question, 2 to 6 options and a recommendation each.
+2. `agent` gives the harness a task file with the rules, the issue and the maintainer comments. The agent writes the plan and `.codeman/output.json`, which lists the decisions: a title, a question, options and a recommendation each. See [agent output](#agent-output) for its limits.
 3. `apply` accepts only the plan file; other changes are ignored and listed in the run comment. It validates `output.json` strictly, commits the plan to the task branch through the Git Data API, and sets `codeman:awaiting-decision`, or `codeman:ready` when there are no decisions.
 
 If the agent fails, runs out of time or produces an invalid result, the task becomes `codeman:blocked`.
@@ -124,6 +124,16 @@ After the pull request is open, maintainers ask for changes in either of these w
 The task goes back to the code stage (`codeman:coding`) with a new run count, then through test and review again. The agent gets the requests and every maintainer review since the last run that handled reviews, with the line comments and their file and line. It pushes to the same branch, and when review passes again, Codeman updates the pull request's description. `/codeman replan` also works on the pull request.
 
 Codeman records the last comment and review it handled. A request is handled once a run for it ends, whatever the outcome, so a failing request does not start run after run; when the monthly budget stopped the run from starting, the request waits for a later run.
+
+## Agent output
+
+The agent reports in `.codeman/output.json`: a summary and decisions when planning, and a status, a summary, a reason, a commit message and decisions in a stage. What it writes there ends up in comments on GitHub, which hold at most 65,536 characters, so each text has a limit; see [settings](#settings).
+
+- The prompt states the limits. Codeman accepts each text up to twice its limit, without telling the agent: LLMs count characters poorly, and a text a little too long is not worth losing a run. The commit message's limit is 1,000 characters.
+- Counts have no margin: at most `max-decisions` decisions, with 2 to `max-options` options each.
+- All decisions of one output together (titles, questions and labels) may have at most 50,000 characters; the agent is told 25,000.
+- When the harness exits, the agent job checks the output as `apply` will. If it is missing or invalid, or a text would be cut, and at least two minutes are left, it continues the agent's session once with the problems, stated with the limits the agent was told. A fix that fails or runs out of time leaves the first outcome.
+- `apply` validates the output again. A text still longer than twice its limit is cut, and the run comment lists it under Problems. Any other problem blocks the task.
 
 ## Change policy
 
@@ -170,7 +180,15 @@ Each value comes from the first of these that sets it:
 | `max-runs` | `3` | Implementation runs in a row without finishing before a task is blocked |
 | `max-files` | `300` | Files one run may change |
 | `max-file-bytes` | `1048576` | Size limit of each changed file |
+| `max-decisions` | `10` | Decisions in one output of the agent, at most 10 |
+| `max-options` | `4` | Options of each decision, from 2 to 6 |
+| `max-title-chars` | `80` | Characters of a decision's title, at most 200 |
+| `max-question-chars` | `600` | Characters of a decision's question, at most 1,500 |
+| `max-label-chars` | `150` | Characters of an option's label, at most 300 |
+| `max-summary-chars` | `2000` | Characters of the agent's summary and reason, at most 4,000 |
 | `language` | `auto` | The language Codeman talks to maintainers in, as a BCP 47 tag such as `pt-BR`; `auto` uses the conversation's. See [conversation language](#conversation-language) |
+
+The `max-*-chars` and count limits are what the agent is told; see [agent output](#agent-output) for the margin.
 
 The settings file accepts only `name: value` lines, comments and blank lines; see [`templates/settings.yml`](../templates/settings.yml). Anything else stops the run with an error, so the file never means something other than what it looks like.
 
@@ -198,7 +216,7 @@ Only comments from maintainers count, both for commands and for the text the age
 
 ## Status and run comments
 
-Codeman keeps one status comment per task up to date, as the task's panel: where the task is now and what comes next, plan and pull request links, decisions and answers, workflows to review, the task's spend, the model, and links to the last run and its report. A hidden block in it stores the task record (branch, plan path, decisions, answers, last handled comment and review, pull request, runs in a row, spend). Codeman reads that block only from comments written by its own GitHub App, because anyone can post a comment containing it.
+Codeman keeps one status comment per task up to date, as the task's panel: where the task is now and what comes next, plan and pull request links, decisions and answers, workflows to review, the task's spend, the model, and links to the last run and its report. A hidden block in it stores the task record (branch, plan path, decisions, answers, last handled comment and review, pull request, runs in a row, spend), gzip-compressed and in base64url, because the comment holds at most 65,536 characters. Records written before compression are still read. Codeman reads that block only from comments written by its own GitHub App, because anyone can post a comment containing it.
 
 Each run that moves the task also posts a new comment on the issue, so the issue keeps the task's history in order: its title says what the run worked on (the plan, a stage, recorded answers or accepted workflows) and how it ended (such as "Design stage: skipped"); then come the agent's report, problems, what comes next (the next stage, the maintainers' decisions, accepting workflows, a maintainer, or reviewing the pull request), and what the run spent. A run that only waits to try again later, because the monthly budget is reached, updates the panel only.
 

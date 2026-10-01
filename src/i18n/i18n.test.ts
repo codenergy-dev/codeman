@@ -135,3 +135,11 @@ test("a run's title says what ran and how it ended; its last line, what comes ne
   assert.equal(ptBR.nextStep("done"), "a sua revisão do pull request.");
   assert.equal(en.nextStep("awaiting-decision"), "your decisions, in the task's status comment.");
 });
+
+test("says which text of the agent's output was cut", () => {
+  assert.equal(
+    en.cutText("decisions[1].options[1].label", 412, 300),
+    "decisions[1].options[1].label had 412 characters, too many; Codeman cut it to 300.",
+  );
+  assert.match(ptBR.cutText("summary", 5000, 4000), /^summary tinha 5000 caracteres/);
+});

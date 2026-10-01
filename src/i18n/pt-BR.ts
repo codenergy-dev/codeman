@@ -175,6 +175,8 @@ export const ptBR: Messages = {
   noResult: "O agente não produziu resultado. Veja o log da rodada.",
   couldNotUse: "O Codeman não conseguiu usar o resultado do agente.",
   ignoredChange: (path) => `Mudança em ${path} ignorada.`,
+  cutText: (field, length, max) =>
+    `${field} tinha ${length} caracteres, além do limite; o Codeman o cortou para ${max}.`,
   droppedChange: (path, reason) => {
     const why = {
       "invalid-path": "não é um caminho válido no repositório",

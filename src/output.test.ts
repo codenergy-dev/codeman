@@ -1,6 +1,17 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { parsePlanOutput, parseStageOutput } from "./output.ts";
+import {
+  outputLimits,
+  outputProblems,
+  parsePlanOutput as parsePlan,
+  parseStageOutput as parseStage,
+} from "./output.ts";
+import { DEFAULTS } from "./settings.ts";
+import type { Stage } from "./stages.ts";
+
+const limits = outputLimits(DEFAULTS);
+const parsePlanOutput = (text: string) => parsePlan(text, limits);
+const parseStageOutput = (text: string, stage: Stage) => parseStage(text, stage, limits);
 
 const decision = (id: number) => ({
   id,
@@ -50,7 +61,6 @@ test("rejects malformed output", () => {
     },
     { summary: "s", decisions: [{ ...decision(1), recommendation: "c" }] },
     { summary: "s", decisions: [{ ...decision(1), title: "" }] },
-    { summary: "x".repeat(4001), decisions: [] },
     { summary: "s", decisions: Array.from({ length: 11 }, (_, i) => decision(i + 1)) },
   ];
   for (const value of cases) assert.equal(parse(value).ok, false, JSON.stringify(value));
@@ -137,7 +147,6 @@ test("rejects malformed stage results", () => {
     "[]",
     JSON.stringify({ status: "finished", summary: "x" }),
     JSON.stringify({ status: "done", summary: "" }),
-    JSON.stringify({ status: "done", summary: "x", commitMessage: "x".repeat(2001) }),
   ].map((text) => parseStageOutput(text, "code"));
   for (const result of results) assert.equal(result.ok, false);
 });
@@ -167,4 +176,109 @@ test("an awaiting-workflow result names workflow files", () => {
   ]) {
     assert.equal(parseStageOutput(JSON.stringify({ ...base, workflows }), "code").ok, false);
   }
+});
+
+test("cuts a text only beyond twice its limit, and reports the cut", () => {
+  const label = (length: number) =>
+    parse({
+      summary: "s",
+      decisions: [
+        {
+          ...decision(1),
+          options: [
+            { key: "a", label: "x".repeat(length) },
+            { key: "b", label: "y" },
+          ],
+        },
+      ],
+    });
+  const within = label(limits.label * 2);
+  assert.ok(within.ok);
+  assert.equal(within.value.decisions[0]?.options[0]?.label.length, limits.label * 2);
+  assert.deepEqual(within.value.cuts, []);
+
+  const over = label(412);
+  assert.ok(over.ok);
+  const cut = over.value.decisions[0]?.options[0]?.label ?? "";
+  assert.equal(cut.length, limits.label * 2);
+  assert.ok(cut.endsWith("…"));
+  assert.deepEqual(over.value.cuts, [
+    { field: "decisions[0].options[0].label", length: 412, limit: limits.label },
+  ]);
+});
+
+test("cuts the summary, the reason and the commit message too", () => {
+  const plan = parse({ summary: "x".repeat(limits.summary * 2 + 1), decisions: [] });
+  assert.ok(plan.ok && plan.value.summary.length === limits.summary * 2);
+  const stage = parseStageOutput(
+    JSON.stringify({
+      status: "blocked",
+      summary: "s",
+      reason: "r".repeat(limits.summary * 2 + 1),
+      commitMessage: "c".repeat(3000),
+    }),
+    "code",
+  );
+  assert.ok(stage.ok);
+  assert.deepEqual(
+    stage.value.cuts.map((cut) => cut.field),
+    ["commitMessage", "reason"],
+  );
+});
+
+test("counts follow the settings, without a margin", () => {
+  const tight = outputLimits({ ...DEFAULTS, "max-decisions": 2, "max-options": 2 });
+  const plan = (decisions: unknown[]) =>
+    parsePlan(JSON.stringify({ summary: "s", decisions }), tight);
+  assert.ok(plan([decision(1), decision(2)]).ok);
+  const many = plan([decision(1), decision(2), decision(3)]);
+  assert.ok(!many.ok && many.error === "decisions must be a list of at most 2.");
+  const three = {
+    ...decision(1),
+    options: [...decision(1).options, { key: "c", label: "Third" }],
+  };
+  const options = plan([three]);
+  assert.ok(!options.ok && options.error === "decisions[0].options must have 2 to 2 items.");
+});
+
+test("all decisions together must fit in a comment", () => {
+  const long = (id: number) => ({
+    ...decision(id),
+    question: "q".repeat(limits.question * 2),
+    options: ["a", "b", "c", "d"].map((key) => ({ key, label: "l".repeat(limits.label * 2) })),
+  });
+  const fits = parse({ summary: "s", decisions: [1, 2, 3, 4, 5].map(long) });
+  assert.ok(fits.ok);
+  const wide = outputLimits({ ...DEFAULTS, "max-question-chars": 1500, "max-label-chars": 300 });
+  const tooMuch = parsePlan(
+    JSON.stringify({
+      summary: "s",
+      decisions: Array.from({ length: 10 }, (_, index) => ({
+        ...long(index + 1),
+        question: "q".repeat(3000),
+        options: ["a", "b", "c", "d"].map((key) => ({ key, label: "l".repeat(600) })),
+      })),
+    }),
+    wide,
+  );
+  assert.ok(!tooMuch.ok);
+  assert.match(tooMuch.error, /in total; the limit is 25000\.$/);
+});
+
+test("lists what the agent must fix, with the limits it was told", () => {
+  assert.deepEqual(outputProblems(undefined, undefined, limits), ["output.json is missing."]);
+  assert.deepEqual(outputProblems("{", "code", limits), ["output.json is not valid JSON."]);
+  assert.deepEqual(
+    outputProblems(JSON.stringify({ summary: "x".repeat(5000), decisions: [] }), undefined, limits),
+    [`summary has 5000 characters; the limit is ${limits.summary}.`],
+  );
+  assert.deepEqual(
+    outputProblems(JSON.stringify({ summary: "x".repeat(3000), decisions: [] }), undefined, limits),
+    [],
+    "within the margin",
+  );
+  assert.deepEqual(
+    outputProblems(JSON.stringify({ status: "done", summary: "s" }), "review", limits),
+    [],
+  );
 });

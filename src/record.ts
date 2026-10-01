@@ -1,3 +1,4 @@
+import { gunzipSync, gzipSync } from "node:zlib";
 import type { Command } from "./commands.ts";
 import type { CommandError } from "./problems.ts";
 import type { Spending } from "./spend.ts";
@@ -161,11 +162,17 @@ function oneLineTitle(text: string): string {
 
 const STATUS_MARKER = /<!-- codeman:status ([A-Za-z0-9_-]*) -->/;
 
-/** Hidden block that identifies the status comment and carries the task record. */
+/** The largest record Codeman decompresses. */
+const MAX_RECORD_BYTES = 4 * 1024 * 1024;
+
+/**
+ * Hidden block that identifies the status comment and carries the task record. The record is
+ * compressed: a comment holds at most 65,536 characters, and the record repeats what the
+ * comment shows.
+ */
 export function encodeStatus(record: TaskRecord | undefined): string {
-  const data = Buffer.from(JSON.stringify({ version: 1, record: record ?? null })).toString(
-    "base64url",
-  );
+  const json = JSON.stringify({ version: 2, record: record ?? null });
+  const data = gzipSync(json, { level: 9 }).toString("base64url");
   return `<!-- codeman:status ${data} -->`;
 }
 
@@ -181,7 +188,13 @@ export function decodeStatus(body: string): TaskRecord | undefined {
   const data = STATUS_MARKER.exec(body)?.[1];
   if (!data) return undefined;
   try {
-    const parsed: unknown = JSON.parse(Buffer.from(data, "base64url").toString("utf8"));
+    const bytes = Buffer.from(data, "base64url");
+    // Version 1 stored the JSON as it is; version 2 compresses it.
+    const json =
+      bytes[0] === 0x1f && bytes[1] === 0x8b
+        ? gunzipSync(bytes, { maxOutputLength: MAX_RECORD_BYTES })
+        : bytes;
+    const parsed: unknown = JSON.parse(json.toString("utf8"));
     if (typeof parsed !== "object" || parsed === null || !("record" in parsed)) return undefined;
     const record = parsed.record as TaskRecord | null;
     return record ?? undefined;

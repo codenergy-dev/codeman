@@ -5,7 +5,7 @@ import { MIN_RUN_BUDGET, runLimit } from "../budget.ts";
 import type { Change } from "../collect.ts";
 import type { FileChange, Repository } from "../github.ts";
 import { type Messages, messages, type RunOutcome, taskLanguage } from "../i18n/index.ts";
-import { parsePlanOutput, parseStageOutput } from "../output.ts";
+import { type Cut, MARGIN, outputLimits, parsePlanOutput, parseStageOutput } from "../output.ts";
 import {
   checkChanges,
   DEFAULT_IGNORE,
@@ -115,7 +115,10 @@ async function applyPlan(task: TaskContext, repo: Repository): Promise<void> {
 
   const outputFile = join(dir, "output.json");
   if (!existsSync(outputFile)) return blocked(repo, task, "The agent did not write output.json.");
-  const output = parsePlanOutput(readFileSync(outputFile, "utf8").slice(0, MAX_OUTPUT_BYTES));
+  const output = parsePlanOutput(
+    readFileSync(outputFile, "utf8").slice(0, MAX_OUTPUT_BYTES),
+    outputLimits(task.settings),
+  );
   if (!output.ok) return blocked(repo, task, output.error);
 
   await repo.commit({
@@ -141,7 +144,11 @@ async function applyPlan(task: TaskContext, repo: Repository): Promise<void> {
   const state = record.decisions.length > 0 ? "awaiting-decision" : "ready";
   const t = say(task, record);
   const ignored = checked.value.ignored.map((path) => t.ignoredChange(path));
-  await finish(repo, task, state, { outcome: "done", record, errors: ignored });
+  await finish(repo, task, state, {
+    outcome: "done",
+    record,
+    errors: [...ignored, ...cutTexts(t, output.value.cuts)],
+  });
 }
 
 /**
@@ -171,11 +178,16 @@ async function applyStage(task: TaskContext, repo: Repository): Promise<void> {
           planPath: task.planPath,
         });
   if (!checked.ok) return blocked(repo, task, checked.error);
-  const dropped = checked.value.dropped.map(({ path, reason }) => t.droppedChange(path, reason));
+  // What the maintainers should know of: dropped changes, and texts of the output that were cut.
+  const warnings = checked.value.dropped.map(({ path, reason }) => t.droppedChange(path, reason));
 
   const outputFile = join(dir, "output.json");
   const output = existsSync(outputFile)
-    ? parseStageOutput(readFileSync(outputFile, "utf8").slice(0, MAX_OUTPUT_BYTES), stage)
+    ? parseStageOutput(
+        readFileSync(outputFile, "utf8").slice(0, MAX_OUTPUT_BYTES),
+        stage,
+        outputLimits(task.settings),
+      )
     : { ok: false as const, error: "The agent did not write output.json." };
 
   // Runs of this stage in a row that did not finish it; a request starts a new count.
@@ -201,7 +213,7 @@ async function applyStage(task: TaskContext, repo: Repository): Promise<void> {
       record,
       message: runs >= maxRuns ? `${message} ${t.maxRuns(stage, runs, maxRuns)}` : message,
       report,
-      errors: dropped,
+      errors: warnings,
     });
 
   const tree = join(dir, "tree");
@@ -230,9 +242,10 @@ async function applyStage(task: TaskContext, repo: Repository): Promise<void> {
       return unfinished("out-of-time", t.outOfTime);
     }
     const exit = manifest.exitCode === 0 ? "" : ` The agent exited with code ${manifest.exitCode}.`;
-    return blocked(repo, task, `${output.error}${exit}`, dropped, record);
+    return blocked(repo, task, `${output.error}${exit}`, warnings, record);
   }
 
+  warnings.push(...cutTexts(t, output.value.cuts));
   const { status, summary, reason } = output.value;
   switch (status) {
     case "partial":
@@ -243,7 +256,7 @@ async function applyStage(task: TaskContext, repo: Repository): Promise<void> {
         record,
         message: `${t.stageNeedsMaintainer(stage)} ${retryHint(t, task)}`,
         report: summary,
-        errors: [t.agentReports(reason ?? ""), ...dropped],
+        errors: [t.agentReports(reason ?? ""), ...warnings],
       });
     case "awaiting-workflow": {
       const workflows = output.value.workflows ?? [];
@@ -253,7 +266,7 @@ async function applyStage(task: TaskContext, repo: Repository): Promise<void> {
       const present = new Set([...(await repo.filesUnder(head, WORKFLOWS_DIR)).keys(), ...staged]);
       const missing = workflows.filter((path) => !present.has(path));
       if (missing.length > 0) {
-        return blocked(repo, task, t.missingWorkflows(missing.join(", ")), dropped, record);
+        return blocked(repo, task, t.missingWorkflows(missing.join(", ")), warnings, record);
       }
       const deferring = defer(record, stage, workflows, staged);
       if (deferring) {
@@ -270,7 +283,7 @@ async function applyStage(task: TaskContext, repo: Repository): Promise<void> {
         record: { ...record, runs: runs - 1, awaiting: workflows },
         message: t.awaitingWorkflows(stage, workflows.join(", "), reason ?? ""),
         report: summary,
-        errors: dropped,
+        errors: warnings,
       });
     }
     case "decisions": {
@@ -292,7 +305,7 @@ async function applyStage(task: TaskContext, repo: Repository): Promise<void> {
         },
         message: t.stageDecisions(stage, added.length),
         report: summary,
-        errors: dropped,
+        errors: warnings,
       });
     }
     case "changes": {
@@ -304,6 +317,7 @@ async function applyStage(task: TaskContext, repo: Repository): Promise<void> {
           record: { ...record, reviewRounds: rounds },
           message: t.reviewRounds(rounds, maxRuns),
           report: summary,
+          errors: warnings,
         });
       }
       return finish(repo, task, STAGE_STATE.code, {
@@ -316,6 +330,7 @@ async function applyStage(task: TaskContext, repo: Repository): Promise<void> {
           handoff: { stage, text: truncate(`${reason ?? ""}\n\n${summary}`, 4000) },
         },
         report: summary,
+        errors: warnings,
       });
     }
   }
@@ -352,6 +367,7 @@ async function applyStage(task: TaskContext, repo: Repository): Promise<void> {
     record: reviewed,
     message: next.message,
     report: summary,
+    errors: warnings,
   });
 
   /**
@@ -387,7 +403,7 @@ async function applyStage(task: TaskContext, repo: Repository): Promise<void> {
       record: updated,
       message,
       report,
-      errors: dropped,
+      errors: warnings,
     });
   }
 }
@@ -669,6 +685,11 @@ async function recordAnswers(task: TaskContext, repo: Repository): Promise<void>
     errors: errors.map((error) => commandError(t, error)),
     message: pending === 0 ? t.allAnswered : t.stillPending(pending),
   });
+}
+
+/** Each cut text of the agent's output, in the task's language. */
+function cutTexts(t: Messages, cuts: readonly Cut[]): string[] {
+  return cuts.map((cut) => t.cutText(cut.field, cut.length, cut.limit * MARGIN));
 }
 
 /** How a maintainer sends a blocked task back to work. */

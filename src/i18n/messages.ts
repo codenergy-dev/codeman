@@ -126,6 +126,8 @@ export interface Messages {
   noResult: string;
   couldNotUse: string;
   ignoredChange(path: string): string;
+  /** A text of the agent's output was too long: `length` characters, cut to `max`. */
+  cutText(field: string, length: number, max: number): string;
   droppedChange(path: string, reason: DropReason): string;
   outOfTime: string;
   partial: string;

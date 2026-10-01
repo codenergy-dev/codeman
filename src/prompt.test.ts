@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { OUTPUT_FILE, planPrompt, stagePrompt } from "./prompt.ts";
+import { fixPrompt, OUTPUT_FILE, planPrompt, stagePrompt } from "./prompt.ts";
+import { DEFAULTS } from "./settings.ts";
 import type { TaskContext } from "./tasks.ts";
 
 const task: TaskContext = {
@@ -20,15 +21,7 @@ const task: TaskContext = {
   problems: [],
   fromState: "new",
   model: "a/b",
-  settings: {
-    model: "a/b",
-    "task-budget": 2,
-    "monthly-budget": 20,
-    "max-runs": 3,
-    "max-files": 300,
-    "max-file-bytes": 1048576,
-    language: "auto",
-  },
+  settings: { ...DEFAULTS, model: "a/b" },
   ignore: null,
   defaultBranch: "main",
   branch: "codeman/12-add-rate-limiting",
@@ -321,4 +314,22 @@ test("review checks staged workflows, and workflows to wait for run when accepte
   const code = stagePrompt({ ...task, action: "implement", stage: "code" }, 45);
   assert.match(code, /include the workflow file itself, so it runs when a maintainer accepts it/);
   assert.match(code, /the task goes on to the next stages and review/);
+});
+
+test("states the output limits from the settings", () => {
+  const settings = { ...task.settings, "max-label-chars": 120, "max-options": 3 };
+  const plan = planPrompt({ ...task, settings });
+  assert.match(plan, /each option's `label` up to 120/);
+  assert.match(plan, /with 2 to 3 options each/);
+  assert.match(plan, /Give each decision 2 to 3 options/);
+  const review = stagePrompt({ ...task, settings, action: "implement", stage: "review" }, 45);
+  assert.match(review, /`summary` and `reason` up to 2000 each/);
+  assert.match(review, /each option's `label` up to 120/);
+});
+
+test("asks the agent to fix its output", () => {
+  const prompt = fixPrompt(["summary has 5000 characters; the limit is 2000."]);
+  assert.match(prompt, /^Codeman cannot use \.codeman\/output\.json as it is:/);
+  assert.match(prompt, /^- summary has 5000 characters; the limit is 2000\.$/m);
+  assert.match(prompt, /Change no other file\./);
 });

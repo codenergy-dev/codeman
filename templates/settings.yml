@@ -16,6 +16,15 @@ max-runs: 3
 max-files: 300
 max-file-bytes: 1048576
 
+# Limits on what the agent writes for the maintainers, as it is told them.
+# Texts may be up to twice as long before Codeman cuts them.
+max-decisions: 10
+max-options: 4
+max-title-chars: 80
+max-question-chars: 600
+max-label-chars: 150
+max-summary-chars: 2000
+
 # The language Codeman talks to maintainers in, as a BCP 47 tag such as pt-BR.
 # `auto` uses the language of the issue and its comments.
 language: auto

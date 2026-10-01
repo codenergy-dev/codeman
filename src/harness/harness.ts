@@ -15,6 +15,8 @@ export interface HarnessOptions {
   prompt: string;
   /** Absolute path of Codeman's working rules, to load next to the repository's `AGENTS.md`. */
   instructions?: string | undefined;
+  /** Sends `prompt` to the session that ran last, instead of starting a new one. */
+  resume?: boolean | undefined;
 }
 
 /** A third-party coding agent that Codeman drives. Codeman owns the sandbox, the task and the output. */

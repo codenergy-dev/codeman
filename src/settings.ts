@@ -10,6 +10,13 @@ export interface Settings {
   "max-runs": number;
   "max-files": number;
   "max-file-bytes": number;
+  /** Limits on what the agent writes for the maintainers; see `src/output.ts`. */
+  "max-decisions": number;
+  "max-options": number;
+  "max-title-chars": number;
+  "max-question-chars": number;
+  "max-label-chars": number;
+  "max-summary-chars": number;
   /** The language Codeman talks to maintainers in: a BCP 47 tag, or `auto` for the issue's. */
   language: string;
 }
@@ -24,7 +31,26 @@ export const DEFAULTS: Omit<Settings, "model"> = {
   "max-runs": 3,
   "max-files": 300,
   "max-file-bytes": 1024 * 1024,
+  "max-decisions": 10,
+  "max-options": 4,
+  "max-title-chars": 80,
+  "max-question-chars": 600,
+  "max-label-chars": 150,
+  "max-summary-chars": 2000,
   language: "auto",
+};
+
+/**
+ * Bounds of the output limits. They keep what the agent writes within a GitHub comment, which
+ * holds at most 65,536 characters.
+ */
+export const LIMIT_BOUNDS: Readonly<Partial<Record<SettingName, { min: number; max: number }>>> = {
+  "max-decisions": { min: 1, max: 10 },
+  "max-options": { min: 2, max: 6 },
+  "max-title-chars": { min: 1, max: 200 },
+  "max-question-chars": { min: 1, max: 1500 },
+  "max-label-chars": { min: 1, max: 300 },
+  "max-summary-chars": { min: 1, max: 4000 },
 };
 
 /** Settings a maintainer can change for one task with `/codeman set`. */
@@ -42,6 +68,12 @@ const NAMES: readonly SettingName[] = [
   "max-runs",
   "max-files",
   "max-file-bytes",
+  "max-decisions",
+  "max-options",
+  "max-title-chars",
+  "max-question-chars",
+  "max-label-chars",
+  "max-summary-chars",
   "language",
 ];
 
@@ -99,6 +131,10 @@ export function parseSetting(name: SettingName, text: string): Parsed<string | n
       ok: false,
       error: `\`${name}\` must be a positive ${integer ? "whole number" : "number"}.`,
     };
+  }
+  const bounds = LIMIT_BOUNDS[name];
+  if (bounds && (value < bounds.min || value > bounds.max)) {
+    return { ok: false, error: `\`${name}\` must be from ${bounds.min} to ${bounds.max}.` };
   }
   return { ok: true, value };
 }

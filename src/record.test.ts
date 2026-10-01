@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { gzipSync } from "node:zlib";
 import { parseCommands } from "./commands.ts";
 import {
   applyCommands,
@@ -102,6 +103,17 @@ test("encodes and decodes the status block", () => {
   assert.equal(decodeStatus(encodeStatus(undefined)), undefined);
   assert.equal(decodeStatus("<!-- codeman:status bm90IGpzb24 -->"), undefined);
   assert.equal(decodeStatus("no marker"), undefined);
+});
+
+test("compresses the record, and still reads uncompressed ones", () => {
+  const large = { ...record, summary: "The same sentence again. ".repeat(400) };
+  const block = encodeStatus(large);
+  assert.ok(block.length < large.summary.length / 10, `${block.length} characters`);
+  assert.deepEqual(decodeStatus(block), large);
+  const v1 = Buffer.from(JSON.stringify({ version: 1, record })).toString("base64url");
+  assert.deepEqual(decodeStatus(`<!-- codeman:status ${v1} -->`), record);
+  const bomb = gzipSync(Buffer.alloc(5 * 1024 * 1024, 32)).toString("base64url");
+  assert.equal(decodeStatus(`<!-- codeman:status ${bomb} -->`), undefined);
 });
 
 test("text in a record cannot break out of the status block", () => {

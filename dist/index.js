@@ -20612,10 +20612,26 @@ var openCode = {
     chmodSync(executable, 493);
     return executable;
   },
-  command({ executable, model, apiKey, prompt, instructions }) {
+  command({
+    executable,
+    model,
+    apiKey,
+    prompt,
+    instructions,
+    resume
+  }) {
     return {
       file: executable,
-      args: ["run", "--format", "json", "--model", `openrouter/${model}`, prompt],
+      // `--continue` takes the last session that is not a subagent's.
+      args: [
+        "run",
+        "--format",
+        "json",
+        "--model",
+        `openrouter/${model}`,
+        ...resume ? ["--continue"] : [],
+        prompt
+      ],
       env: {
         OPENROUTER_API_KEY: apiKey,
         OPENCODE_CONFIG_CONTENT: JSON.stringify(openCodeConfig(model, instructions))
@@ -20626,6 +20642,310 @@ var openCode = {
 
 // src/harness/index.ts
 var harnesses = { [openCode.name]: openCode };
+
+// src/settings.ts
+var SETTINGS_FILE = ".codeman/settings.yml";
+var DEFAULTS = {
+  "task-budget": 2,
+  "monthly-budget": 20,
+  "max-runs": 3,
+  "max-files": 300,
+  "max-file-bytes": 1024 * 1024,
+  "max-decisions": 10,
+  "max-options": 4,
+  "max-title-chars": 80,
+  "max-question-chars": 600,
+  "max-label-chars": 150,
+  "max-summary-chars": 2e3,
+  language: "auto"
+};
+var LIMIT_BOUNDS = {
+  "max-decisions": { min: 1, max: 10 },
+  "max-options": { min: 2, max: 6 },
+  "max-title-chars": { min: 1, max: 200 },
+  "max-question-chars": { min: 1, max: 1500 },
+  "max-label-chars": { min: 1, max: 300 },
+  "max-summary-chars": { min: 1, max: 4e3 }
+};
+var TASK_SETTINGS = /* @__PURE__ */ new Set([
+  "model",
+  "task-budget",
+  "max-runs",
+  "language"
+]);
+var NAMES = [
+  "model",
+  "task-budget",
+  "monthly-budget",
+  "max-runs",
+  "max-files",
+  "max-file-bytes",
+  "max-decisions",
+  "max-options",
+  "max-title-chars",
+  "max-question-chars",
+  "max-label-chars",
+  "max-summary-chars",
+  "language"
+];
+var MODEL_ID = /^~?[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._:-]*$/i;
+function isModelId(text) {
+  return text.length <= 100 && MODEL_ID.test(text);
+}
+var LANGUAGE_TAG = /^[a-z]{2,3}(-[a-z0-9]{2,8}){0,3}$/i;
+function isLanguageTag(text) {
+  return LANGUAGE_TAG.test(text);
+}
+function settingKind(name) {
+  if (name === "model" || name === "language") return name;
+  return name === "task-budget" || name === "monthly-budget" ? "number" : "integer";
+}
+function isSettingName(name) {
+  return NAMES.includes(name);
+}
+function parseSetting(name, text) {
+  if (name === "model") {
+    return isModelId(text) ? { ok: true, value: text } : {
+      ok: false,
+      error: `\`${name}\` must be an OpenRouter model ID, such as \`provider/model\`.`
+    };
+  }
+  if (name === "language") {
+    return text === "auto" || isLanguageTag(text) ? { ok: true, value: text } : {
+      ok: false,
+      error: `\`${name}\` must be \`auto\` or a language tag, such as \`pt-BR\`.`
+    };
+  }
+  const value = Number(text);
+  const integer = settingKind(name) === "integer";
+  if (text === "" || !Number.isFinite(value) || value <= 0 || integer && !Number.isInteger(value)) {
+    return {
+      ok: false,
+      error: `\`${name}\` must be a positive ${integer ? "whole number" : "number"}.`
+    };
+  }
+  const bounds = LIMIT_BOUNDS[name];
+  if (bounds && (value < bounds.min || value > bounds.max)) {
+    return { ok: false, error: `\`${name}\` must be from ${bounds.min} to ${bounds.max}.` };
+  }
+  return { ok: true, value };
+}
+function parseSettings(text) {
+  const settings = {};
+  for (const [index, raw] of text.split(/\r?\n/).entries()) {
+    const where = `${SETTINGS_FILE}, line ${index + 1}`;
+    const line = raw.trimEnd();
+    if (line.trim() === "" || line.trim().startsWith("#")) continue;
+    const match = /^([a-z-]+):(?:\s+(.*))?$/.exec(line);
+    if (!match?.[1]) return { ok: false, error: `${where}: expected \`name: value\`.` };
+    const name = match[1];
+    if (!isSettingName(name)) return { ok: false, error: `${where}: unknown setting \`${name}\`.` };
+    if (name in settings) return { ok: false, error: `${where}: \`${name}\` appears twice.` };
+    const value = scalar(match[2] ?? "");
+    if (value === void 0)
+      return { ok: false, error: `${where}: the value of \`${name}\` is not a plain value.` };
+    const parsed = parseSetting(name, value);
+    if (!parsed.ok) return { ok: false, error: `${where}: ${parsed.error}` };
+    settings[name] = parsed.value;
+  }
+  return { ok: true, value: settings };
+}
+function scalar(text) {
+  const quoted = /^(["'])([^"'\\]*)\1\s*(?:#.*)?$/.exec(text);
+  if (quoted) return quoted[2];
+  const plain = text.replace(/\s+#.*$/, "").trim();
+  return /^[A-Za-z0-9._~/:-]*$/.test(plain) ? plain : void 0;
+}
+function resolveSettings(...layers) {
+  const merged = { ...DEFAULTS };
+  for (const layer of [...layers].reverse()) {
+    for (const [name, value] of Object.entries(layer)) {
+      if (value !== void 0) Object.assign(merged, { [name]: value });
+    }
+  }
+  if (merged.model === void 0) {
+    return {
+      ok: false,
+      error: `No model is configured. Set \`model\` in ${SETTINGS_FILE} or in the workflow's inputs.`
+    };
+  }
+  return { ok: true, value: merged };
+}
+
+// src/output.ts
+var MARGIN = 2;
+var DECISIONS_TOTAL = 25e3;
+var COMMIT_MESSAGE = 1e3;
+function outputLimits(settings) {
+  return {
+    decisions: settings["max-decisions"],
+    options: settings["max-options"],
+    title: settings["max-title-chars"],
+    question: settings["max-question-chars"],
+    label: settings["max-label-chars"],
+    summary: settings["max-summary-chars"]
+  };
+}
+function cutText(cut) {
+  return `${cut.field} has ${cut.length} characters; the limit is ${cut.limit}.`;
+}
+function parsePlanOutput(text, limits) {
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    return { ok: false, error: "output.json is not valid JSON." };
+  }
+  if (!isObject(data)) return { ok: false, error: "output.json must be an object." };
+  const cuts = [];
+  const summary2 = string(data.summary, "summary", limits.summary, cuts);
+  if (!summary2.ok) return summary2;
+  const decisions = parseDecisions(data.decisions, limits, cuts);
+  if (!decisions.ok) return decisions;
+  const language = typeof data.language === "string" && isLanguageTag(data.language) ? data.language : void 0;
+  return {
+    ok: true,
+    value: { summary: summary2.value, decisions: decisions.value, language, cuts }
+  };
+}
+function outputProblems(text, stage, limits) {
+  if (text === void 0) return ["output.json is missing."];
+  const parsed = stage === void 0 ? parsePlanOutput(text, limits) : parseStageOutput(text, stage, limits);
+  if (!parsed.ok) return [parsed.error];
+  return parsed.value.cuts.map(cutText);
+}
+var STAGE_STATUSES = {
+  design: ["done", "skipped", "partial", "blocked", "decisions"],
+  code: ["done", "skipped", "partial", "blocked", "awaiting-workflow"],
+  test: ["done", "skipped", "partial", "blocked", "awaiting-workflow"],
+  review: ["done", "changes", "blocked", "decisions"]
+};
+var NEEDS_REASON = /* @__PURE__ */ new Set([
+  "skipped",
+  "blocked",
+  "awaiting-workflow",
+  "changes"
+]);
+var WORKFLOW_FILE = /^\.github\/workflows\/[A-Za-z0-9._-]+\.ya?ml$/;
+function parseStageOutput(text, stage, limits) {
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    return { ok: false, error: "output.json is not valid JSON." };
+  }
+  if (!isObject(data)) return { ok: false, error: "output.json must be an object." };
+  const allowed = STAGE_STATUSES[stage];
+  if (typeof data.status !== "string" || !allowed.includes(data.status)) {
+    return {
+      ok: false,
+      error: `status must be one of ${allowed.join(", ")} in the ${stage} stage.`
+    };
+  }
+  const status2 = data.status;
+  const cuts = [];
+  const summary2 = string(data.summary, "summary", limits.summary, cuts);
+  if (!summary2.ok) return summary2;
+  const output = { status: status2, summary: summary2.value, cuts };
+  if (data.commitMessage !== void 0) {
+    const message = string(data.commitMessage, "commitMessage", COMMIT_MESSAGE, cuts);
+    if (!message.ok) return message;
+    const [subject = "", ...body] = message.value.split(/\r?\n/);
+    output.commitMessage = [truncate(subject.trim(), 72), ...body].join("\n").trim();
+  }
+  if (NEEDS_REASON.has(status2)) {
+    const reason = string(data.reason, "reason", limits.summary, cuts);
+    if (!reason.ok) return reason;
+    output.reason = reason.value;
+  }
+  if (status2 === "awaiting-workflow") {
+    const workflows = data.workflows;
+    if (!Array.isArray(workflows) || workflows.length === 0 || workflows.length > 5 || !workflows.every((path) => typeof path === "string" && WORKFLOW_FILE.test(path))) {
+      return {
+        ok: false,
+        error: "workflows must list 1 to 5 files directly under .github/workflows/."
+      };
+    }
+    output.workflows = [...new Set(workflows)];
+  }
+  if (status2 === "decisions") {
+    const decisions = parseDecisions(data.decisions, limits, cuts);
+    if (!decisions.ok) return decisions;
+    if (decisions.value.length === 0) return { ok: false, error: "decisions must not be empty." };
+    output.decisions = decisions.value;
+  }
+  return { ok: true, value: output };
+}
+function parseDecisions(value, limits, cuts) {
+  if (!Array.isArray(value) || value.length > limits.decisions) {
+    return { ok: false, error: `decisions must be a list of at most ${limits.decisions}.` };
+  }
+  const decisions = [];
+  for (const [index, item] of value.entries()) {
+    const decision = parseDecision(item, index + 1, limits, cuts);
+    if (!decision.ok) return decision;
+    decisions.push(decision.value);
+  }
+  const total = decisions.reduce(
+    (sum, decision) => sum + decision.title.length + decision.question.length + decision.options.reduce((labels, option) => labels + option.label.length, 0),
+    0
+  );
+  if (total > DECISIONS_TOTAL * MARGIN) {
+    return {
+      ok: false,
+      error: `decisions have ${total} characters in total; the limit is ${DECISIONS_TOTAL}.`
+    };
+  }
+  return { ok: true, value: decisions };
+}
+function parseDecision(item, id, limits, cuts) {
+  const where = `decisions[${id - 1}]`;
+  if (!isObject(item)) return { ok: false, error: `${where} must be an object.` };
+  if (item.id !== id) return { ok: false, error: `${where}.id must be ${id}.` };
+  const title = string(item.title, `${where}.title`, limits.title, cuts);
+  if (!title.ok) return title;
+  const question = string(item.question, `${where}.question`, limits.question, cuts);
+  if (!question.ok) return question;
+  if (!Array.isArray(item.options) || item.options.length < 2 || item.options.length > limits.options) {
+    return { ok: false, error: `${where}.options must have 2 to ${limits.options} items.` };
+  }
+  const options = [];
+  for (const [index, option] of item.options.entries()) {
+    const key = String.fromCharCode(97 + index);
+    if (!isObject(option) || option.key !== key) {
+      return { ok: false, error: `${where}.options[${index}].key must be "${key}".` };
+    }
+    const label = string(option.label, `${where}.options[${index}].label`, limits.label, cuts);
+    if (!label.ok) return label;
+    options.push({ key, label: label.value });
+  }
+  if (!options.some((option) => option.key === item.recommendation)) {
+    return { ok: false, error: `${where}.recommendation must be one of the option keys.` };
+  }
+  return {
+    ok: true,
+    value: {
+      id,
+      title: title.value,
+      question: question.value,
+      options,
+      recommendation: item.recommendation
+    }
+  };
+}
+function string(value, name, limit, cuts) {
+  if (typeof value !== "string" || value.trim() === "") {
+    return { ok: false, error: `${name} must be a non-empty string.` };
+  }
+  const text = value.trim();
+  const max = limit * MARGIN;
+  if (text.length <= max) return { ok: true, value: text };
+  cuts.push({ field: name, length: text.length, limit });
+  return { ok: true, value: truncate(text, max) };
+}
+function isObject(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 // src/prompt.ts
 import { randomBytes as randomBytes2 } from "node:crypto";
@@ -20759,6 +21079,7 @@ Tests: ${test ?? "(no report)"}`,
   noResult: "The agent produced no result. See the run log.",
   couldNotUse: "Codeman could not use the agent's result.",
   ignoredChange: (path) => `Ignored a change to ${path}.`,
+  cutText: (field, length, max) => `${field} had ${length} characters, too many; Codeman cut it to ${max}.`,
   droppedChange: (path, reason) => {
     const why = {
       "invalid-path": "not a valid path in the repository",
@@ -20967,6 +21288,7 @@ Testes: ${test ?? "(sem relat\xF3rio)"}`,
   noResult: "O agente n\xE3o produziu resultado. Veja o log da rodada.",
   couldNotUse: "O Codeman n\xE3o conseguiu usar o resultado do agente.",
   ignoredChange: (path) => `Mudan\xE7a em ${path} ignorada.`,
+  cutText: (field, length, max) => `${field} tinha ${length} caracteres, al\xE9m do limite; o Codeman o cortou para ${max}.`,
   droppedChange: (path, reason) => {
     const why = {
       "invalid-path": "n\xE3o \xE9 um caminho v\xE1lido no reposit\xF3rio",
@@ -21058,255 +21380,6 @@ function languageName(tag) {
   } catch {
     return tag;
   }
-}
-
-// src/settings.ts
-var SETTINGS_FILE = ".codeman/settings.yml";
-var DEFAULTS = {
-  "task-budget": 2,
-  "monthly-budget": 20,
-  "max-runs": 3,
-  "max-files": 300,
-  "max-file-bytes": 1024 * 1024,
-  language: "auto"
-};
-var TASK_SETTINGS = /* @__PURE__ */ new Set([
-  "model",
-  "task-budget",
-  "max-runs",
-  "language"
-]);
-var NAMES = [
-  "model",
-  "task-budget",
-  "monthly-budget",
-  "max-runs",
-  "max-files",
-  "max-file-bytes",
-  "language"
-];
-var MODEL_ID = /^~?[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._:-]*$/i;
-function isModelId(text) {
-  return text.length <= 100 && MODEL_ID.test(text);
-}
-var LANGUAGE_TAG = /^[a-z]{2,3}(-[a-z0-9]{2,8}){0,3}$/i;
-function isLanguageTag(text) {
-  return LANGUAGE_TAG.test(text);
-}
-function settingKind(name) {
-  if (name === "model" || name === "language") return name;
-  return name === "task-budget" || name === "monthly-budget" ? "number" : "integer";
-}
-function isSettingName(name) {
-  return NAMES.includes(name);
-}
-function parseSetting(name, text) {
-  if (name === "model") {
-    return isModelId(text) ? { ok: true, value: text } : {
-      ok: false,
-      error: `\`${name}\` must be an OpenRouter model ID, such as \`provider/model\`.`
-    };
-  }
-  if (name === "language") {
-    return text === "auto" || isLanguageTag(text) ? { ok: true, value: text } : {
-      ok: false,
-      error: `\`${name}\` must be \`auto\` or a language tag, such as \`pt-BR\`.`
-    };
-  }
-  const value = Number(text);
-  const integer = settingKind(name) === "integer";
-  if (text === "" || !Number.isFinite(value) || value <= 0 || integer && !Number.isInteger(value)) {
-    return {
-      ok: false,
-      error: `\`${name}\` must be a positive ${integer ? "whole number" : "number"}.`
-    };
-  }
-  return { ok: true, value };
-}
-function parseSettings(text) {
-  const settings = {};
-  for (const [index, raw] of text.split(/\r?\n/).entries()) {
-    const where = `${SETTINGS_FILE}, line ${index + 1}`;
-    const line = raw.trimEnd();
-    if (line.trim() === "" || line.trim().startsWith("#")) continue;
-    const match = /^([a-z-]+):(?:\s+(.*))?$/.exec(line);
-    if (!match?.[1]) return { ok: false, error: `${where}: expected \`name: value\`.` };
-    const name = match[1];
-    if (!isSettingName(name)) return { ok: false, error: `${where}: unknown setting \`${name}\`.` };
-    if (name in settings) return { ok: false, error: `${where}: \`${name}\` appears twice.` };
-    const value = scalar(match[2] ?? "");
-    if (value === void 0)
-      return { ok: false, error: `${where}: the value of \`${name}\` is not a plain value.` };
-    const parsed = parseSetting(name, value);
-    if (!parsed.ok) return { ok: false, error: `${where}: ${parsed.error}` };
-    settings[name] = parsed.value;
-  }
-  return { ok: true, value: settings };
-}
-function scalar(text) {
-  const quoted = /^(["'])([^"'\\]*)\1\s*(?:#.*)?$/.exec(text);
-  if (quoted) return quoted[2];
-  const plain = text.replace(/\s+#.*$/, "").trim();
-  return /^[A-Za-z0-9._~/:-]*$/.test(plain) ? plain : void 0;
-}
-function resolveSettings(...layers) {
-  const merged = { ...DEFAULTS };
-  for (const layer of [...layers].reverse()) {
-    for (const [name, value] of Object.entries(layer)) {
-      if (value !== void 0) Object.assign(merged, { [name]: value });
-    }
-  }
-  if (merged.model === void 0) {
-    return {
-      ok: false,
-      error: `No model is configured. Set \`model\` in ${SETTINGS_FILE} or in the workflow's inputs.`
-    };
-  }
-  return { ok: true, value: merged };
-}
-
-// src/output.ts
-var LIMITS = {
-  summary: 4e3,
-  decisions: 10,
-  title: 200,
-  question: 1e3,
-  label: 300,
-  options: 6,
-  commitMessage: 2e3
-};
-function parsePlanOutput(text) {
-  let data;
-  try {
-    data = JSON.parse(text);
-  } catch {
-    return { ok: false, error: "output.json is not valid JSON." };
-  }
-  if (!isObject(data)) return { ok: false, error: "output.json must be an object." };
-  const summary2 = string(data.summary, "summary", LIMITS.summary);
-  if (!summary2.ok) return summary2;
-  const decisions = parseDecisions(data.decisions);
-  if (!decisions.ok) return decisions;
-  const language = typeof data.language === "string" && isLanguageTag(data.language) ? data.language : void 0;
-  return { ok: true, value: { summary: summary2.value, decisions: decisions.value, language } };
-}
-var STAGE_STATUSES = {
-  design: ["done", "skipped", "partial", "blocked", "decisions"],
-  code: ["done", "skipped", "partial", "blocked", "awaiting-workflow"],
-  test: ["done", "skipped", "partial", "blocked", "awaiting-workflow"],
-  review: ["done", "changes", "blocked", "decisions"]
-};
-var NEEDS_REASON = /* @__PURE__ */ new Set([
-  "skipped",
-  "blocked",
-  "awaiting-workflow",
-  "changes"
-]);
-var WORKFLOW_FILE = /^\.github\/workflows\/[A-Za-z0-9._-]+\.ya?ml$/;
-function parseStageOutput(text, stage) {
-  let data;
-  try {
-    data = JSON.parse(text);
-  } catch {
-    return { ok: false, error: "output.json is not valid JSON." };
-  }
-  if (!isObject(data)) return { ok: false, error: "output.json must be an object." };
-  const allowed = STAGE_STATUSES[stage];
-  if (typeof data.status !== "string" || !allowed.includes(data.status)) {
-    return {
-      ok: false,
-      error: `status must be one of ${allowed.join(", ")} in the ${stage} stage.`
-    };
-  }
-  const status2 = data.status;
-  const summary2 = string(data.summary, "summary", LIMITS.summary);
-  if (!summary2.ok) return summary2;
-  const output = { status: status2, summary: summary2.value };
-  if (data.commitMessage !== void 0) {
-    const message = string(data.commitMessage, "commitMessage", LIMITS.commitMessage);
-    if (!message.ok) return message;
-    const [subject = "", ...body] = message.value.split(/\r?\n/);
-    output.commitMessage = [truncate(subject.trim(), 72), ...body].join("\n").trim();
-  }
-  if (NEEDS_REASON.has(status2)) {
-    const reason = string(data.reason, "reason", LIMITS.summary);
-    if (!reason.ok) return reason;
-    output.reason = reason.value;
-  }
-  if (status2 === "awaiting-workflow") {
-    const workflows = data.workflows;
-    if (!Array.isArray(workflows) || workflows.length === 0 || workflows.length > 5 || !workflows.every((path) => typeof path === "string" && WORKFLOW_FILE.test(path))) {
-      return {
-        ok: false,
-        error: "workflows must list 1 to 5 files directly under .github/workflows/."
-      };
-    }
-    output.workflows = [...new Set(workflows)];
-  }
-  if (status2 === "decisions") {
-    const decisions = parseDecisions(data.decisions);
-    if (!decisions.ok) return decisions;
-    if (decisions.value.length === 0) return { ok: false, error: "decisions must not be empty." };
-    output.decisions = decisions.value;
-  }
-  return { ok: true, value: output };
-}
-function parseDecisions(value) {
-  if (!Array.isArray(value) || value.length > LIMITS.decisions) {
-    return { ok: false, error: `decisions must be a list of at most ${LIMITS.decisions}.` };
-  }
-  const decisions = [];
-  for (const [index, item] of value.entries()) {
-    const decision = parseDecision(item, index + 1);
-    if (!decision.ok) return decision;
-    decisions.push(decision.value);
-  }
-  return { ok: true, value: decisions };
-}
-function parseDecision(item, id) {
-  const where = `decisions[${id - 1}]`;
-  if (!isObject(item)) return { ok: false, error: `${where} must be an object.` };
-  if (item.id !== id) return { ok: false, error: `${where}.id must be ${id}.` };
-  const title = string(item.title, `${where}.title`, LIMITS.title);
-  if (!title.ok) return title;
-  const question = string(item.question, `${where}.question`, LIMITS.question);
-  if (!question.ok) return question;
-  if (!Array.isArray(item.options) || item.options.length < 2 || item.options.length > LIMITS.options) {
-    return { ok: false, error: `${where}.options must have 2 to ${LIMITS.options} items.` };
-  }
-  const options = [];
-  for (const [index, option] of item.options.entries()) {
-    const key = String.fromCharCode(97 + index);
-    if (!isObject(option) || option.key !== key) {
-      return { ok: false, error: `${where}.options[${index}].key must be "${key}".` };
-    }
-    const label = string(option.label, `${where}.options[${index}].label`, LIMITS.label);
-    if (!label.ok) return label;
-    options.push({ key, label: label.value });
-  }
-  if (!options.some((option) => option.key === item.recommendation)) {
-    return { ok: false, error: `${where}.recommendation must be one of the option keys.` };
-  }
-  return {
-    ok: true,
-    value: {
-      id,
-      title: title.value,
-      question: question.value,
-      options,
-      recommendation: item.recommendation
-    }
-  };
-}
-function string(value, name, max) {
-  if (typeof value !== "string" || value.trim() === "") {
-    return { ok: false, error: `${name} must be a non-empty string.` };
-  }
-  if (value.length > max) return { ok: false, error: `${name} must be at most ${max} characters.` };
-  return { ok: true, value: value.trim() };
-}
-function isObject(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 // src/policy.ts
@@ -21560,6 +21633,13 @@ var TASK_FILE = `${OUTPUT_DIR}/task.md`;
 var OUTPUT_FILE = `${OUTPUT_DIR}/output.json`;
 var RULES_PATH = `${OUTPUT_DIR}/rules.md`;
 var HARNESS_PROMPT = `Read ${TASK_FILE} and do exactly what it asks.`;
+function fixPrompt(problems) {
+  return `Codeman cannot use ${OUTPUT_FILE} as it is:
+
+${problems.map((problem) => `- ${problem}`).join("\n")}
+
+Rewrite ${OUTPUT_FILE} so that it follows the shape and the limits in ${TASK_FILE}. Keep its content, shortened where it is too long. Change no other file.`;
+}
 function quoter() {
   const nonce = randomBytes2(6).toString("hex");
   return (label, text) => [`<<<${label} ${nonce}`, text.trim() || "(empty)", `>>>${label} ${nonce}`].join("\n");
@@ -21583,11 +21663,16 @@ function planLanguage(task) {
   const name = fixed ? languageName(task.settings.language) : "";
   return fixed ? `Write \`summary\` and the decisions in \`${OUTPUT_FILE}\` in ${name}: Codeman shows them to the maintainers. Set \`language\` to \`${task.settings.language}\`.` : `Codeman talks to the maintainers in the language of the conversation: the issue's title and body and the maintainer comments. Set \`language\` to its BCP 47 tag, such as \`pt-BR\` or \`en\`, and write \`summary\` and the decisions in \`${OUTPUT_FILE}\` in it. The plan file follows the rules for documentation instead.`;
 }
+function limitsText(limits, stage) {
+  const texts = stage === void 0 ? `\`summary\` up to ${limits.summary}` : `\`summary\` and \`reason\` up to ${limits.summary} each, \`commitMessage\` up to ${COMMIT_MESSAGE}`;
+  return `Limits, in characters: ${texts}; each decision's \`title\` up to ${limits.title} and \`question\` up to ${limits.question}; each option's \`label\` up to ${limits.label}, and all decisions together up to ${DECISIONS_TOTAL}. At most ${limits.decisions} decisions, with 2 to ${limits.options} options each. Keep each label to a short phrase: the context and each option's trade-offs belong in the question.`;
+}
 function outputLanguage(task) {
   const tag = taskLanguage(task.settings.language, task.record?.language);
   return `Write \`summary\`, \`reason\` and any decisions in \`${OUTPUT_FILE}\` in ${languageName(tag)} (\`${tag}\`), the language of the conversation with the maintainers. Files, including the plan, code, comments and \`commitMessage\`, follow the rules for their own language.`;
 }
 function planPrompt(task) {
+  const limits = outputLimits(task.settings);
   const quote = quoter();
   const previous = task.record ? `A previous plan exists at \`${task.planPath}\`. Update it instead of starting over: apply the revision requests and settled decisions below, if any, and remove its \`## Answers\` section.` : `Create the plan at \`${task.planPath}\`.`;
   const settled = task.settled.flatMap((decision) => {
@@ -21626,7 +21711,7 @@ ${UNTRUSTED_RULE}
 1. Read the issue and the maintainer comments below.
 2. Explore the repository to understand the code, documentation and conventions the issue touches.
 3. ${previous} Unless the repository's rules define another format, use YAML front matter with \`status: pending\` and the sections Goal, Context, Decisions, Steps (each verifiable, with a done criterion) and Out of scope.
-4. List as decisions only the questions a human must answer before work starts: where the issue is ambiguous, where options have real trade-offs, or where the choice is hard to undo. Give each decision 2 to 4 options and a recommendation. Do not invent decisions: if the issue is clear, list none.
+4. List as decisions only the questions a human must answer before work starts: where the issue is ambiguous, where options have real trade-offs, or where the choice is hard to undo. Give each decision 2 to ${limits.options} options and a recommendation. Do not invent decisions: if the issue is clear, list none.
 5. Write \`${OUTPUT_FILE}\` with the decisions from the plan, in this exact shape:
 
 \`\`\`json
@@ -21637,10 +21722,10 @@ ${UNTRUSTED_RULE}
     {
       "id": 1,
       "title": "Short name of the decision",
-      "question": "The question, with the context needed to answer it.",
+      "question": "The question, with the context needed to answer it and each option's trade-offs.",
       "options": [
-        { "key": "a", "label": "First option and its trade-off" },
-        { "key": "b", "label": "Second option and its trade-off" }
+        { "key": "a", "label": "First option, in a short phrase" },
+        { "key": "b", "label": "Second option, in a short phrase" }
       ],
       "recommendation": "a"
     }
@@ -21648,7 +21733,9 @@ ${UNTRUSTED_RULE}
 }
 \`\`\`
 
-   Number decisions from 1 and give options the keys a, b, c, d in order. Use an empty list when there are no decisions.
+   Number decisions from 1 and give options the keys a, b, c and so on, in order. Use an empty list when there are no decisions.
+
+   ${limitsText(limits)}
 6. ${planLanguage(task)}
 
 ${issueSection(task, quote)}
@@ -21685,7 +21772,7 @@ var STAGE_WORK = {
 5. If \`.codeman/workflows/\` has files, they are workflows the agent wrote, staged until a maintainer accepts them into \`.github/workflows/\`, where they would run with the repository's secrets. Review each as a workflow: its triggers (never \`pull_request_target\` with a checkout of the branch), the least \`permissions\` it needs, secrets only through a GitHub Environment, actions pinned to a full commit SHA, and, for a workflow that runs on pushes to the task branch, \`paths\` filters and no deploy. What must change goes in \`changes\`, like any other finding.
 6. Report \`done\` if the work is ready for a human review, \`changes\` if the code stage must fix what you found (list it in \`reason\`), \`decisions\` if the maintainers must choose something, or \`blocked\`.`
 };
-function outputShape(stage) {
+function outputShape(stage, limits) {
   const statuses = STAGE_STATUSES[stage].map((status2) => `\`${status2}\``).join(", ");
   return `Write \`${OUTPUT_FILE}\` in this shape, with only the fields that apply:
 
@@ -21700,10 +21787,10 @@ function outputShape(stage) {
     {
       "id": 1,
       "title": "Short name",
-      "question": "The question, with the context needed to answer it.",
+      "question": "The question, with the context needed to answer it and each option's trade-offs.",
       "options": [
-        { "key": "a", "label": "First option and its trade-off" },
-        { "key": "b", "label": "Second option and its trade-off" }
+        { "key": "a", "label": "First option, in a short phrase" },
+        { "key": "b", "label": "Second option, in a short phrase" }
       ],
       "recommendation": "a"
     }
@@ -21711,7 +21798,9 @@ function outputShape(stage) {
 }
 \`\`\`
 
-\`status\` is one of ${statuses}. \`done\`: the stage's work is finished. \`skipped\`: the stage had nothing to do. \`partial\`: work remains for another run of this stage. \`blocked\`: you cannot go on without a maintainer. \`awaiting-workflow\`: you need the results of the workflows in \`workflows\`. \`decisions\`: the maintainers must answer \`decisions\` first. \`changes\`: the code stage must fix what \`reason\` lists. Include \`commitMessage\` whenever you changed files.`;
+\`status\` is one of ${statuses}. \`done\`: the stage's work is finished. \`skipped\`: the stage had nothing to do. \`partial\`: work remains for another run of this stage. \`blocked\`: you cannot go on without a maintainer. \`awaiting-workflow\`: you need the results of the workflows in \`workflows\`. \`decisions\`: the maintainers must answer \`decisions\` first. \`changes\`: the code stage must fix what \`reason\` lists. Include \`commitMessage\` whenever you changed files.
+
+${limitsText(limits, stage)}`;
 }
 function stagePrompt(task, minutes) {
   const stage = task.stage ?? "code";
@@ -21760,7 +21849,7 @@ Keep the plan current: mark what you finished and add a short progress note for 
 
 ${outputLanguage(task)}
 
-${outputShape(stage)}
+${outputShape(stage, outputLimits(task.settings))}
 
 ${issueSection(task, quote)}
 ${historySection(task, quote)}${handoff}${accepted}${requests}${workflowResultsSection(task)}`;
@@ -26443,6 +26532,7 @@ function pullUrl(task, number3) {
 
 // src/steps/agent.ts
 var MAX_OUTPUT_BYTES = 1024 * 1024;
+var FIX_MS = 2 * 6e4;
 async function agent() {
   const task = readTask();
   const apiKey = decrypt(
@@ -26481,17 +26571,34 @@ async function agent() {
   writeAsAgent(`${worktree}/${RULES_PATH}`, rules.text);
   info(`Running ${harness.name} with ${task.model} for up to ${minutes} minutes.`);
   const started = Date.now();
-  const run2 = await runAsAgent(
-    harness.command({
-      executable,
-      model: task.model,
-      apiKey,
-      prompt: HARNESS_PROMPT,
-      instructions: `${worktree}/${RULES_PATH}`
-    }),
-    worktree,
-    minutes * 6e4
-  );
+  const options = {
+    executable,
+    model: task.model,
+    apiKey,
+    prompt: HARNESS_PROMPT,
+    instructions: `${worktree}/${RULES_PATH}`
+  };
+  let run2 = await runAsAgent(harness.command(options), worktree, minutes * 6e4);
+  const left = started + minutes * 6e4 - Date.now();
+  if (!run2.timedOut && left >= FIX_MS) {
+    const stage = task.action === "implement" ? task.stage ?? "code" : void 0;
+    const problems = outputProblems(
+      readAgentOutput(`${worktree}/${OUTPUT_FILE}`),
+      stage,
+      outputLimits(task.settings)
+    );
+    if (problems.length > 0) {
+      info(`Asking the agent to fix ${OUTPUT_FILE}:`);
+      for (const problem of problems) info(`  ${oneLine(problem)}`);
+      const fix = await runAsAgent(
+        harness.command({ ...options, prompt: fixPrompt(problems), resume: true }),
+        worktree,
+        left
+      );
+      if (fix.exitCode === 0 && !fix.timedOut) run2 = fix;
+      else warning(`The agent did not finish fixing ${OUTPUT_FILE}.`);
+    }
+  }
   const durationMs = Date.now() - started;
   killAgentProcesses();
   const out = resultDir();
@@ -26520,6 +26627,14 @@ async function agent() {
   for (const change of changes) info(`  ${change.status} ${oneLine(change.path)}`);
   if (run2.timedOut) setFailed(`The agent did not finish within ${minutes} minutes.`);
   else if (run2.exitCode !== 0) setFailed(`The agent exited with code ${run2.exitCode}.`);
+}
+function readAgentOutput(source) {
+  const copy = join6(workdir(), "output-check.json");
+  try {
+    return copyAgentFile(source, copy, MAX_OUTPUT_BYTES) ? readFileSync4(copy, "utf8") : void 0;
+  } finally {
+    rmSync4(copy, { force: true });
+  }
 }
 function repositoryRules(workspace) {
   for (const name of ["AGENTS.md", "CLAUDE.md"]) {
@@ -26652,6 +26767,7 @@ var OpenRouter = class {
 };
 
 // src/record.ts
+import { gunzipSync, gzipSync } from "node:zlib";
 function pendingDecisions(record) {
   return record.decisions.filter((decision) => decision.answer === void 0);
 }
@@ -26722,10 +26838,10 @@ function oneLineTitle(text) {
   return text.replace(/\s+/g, " ").trim();
 }
 var STATUS_MARKER = /<!-- codeman:status ([A-Za-z0-9_-]*) -->/;
+var MAX_RECORD_BYTES = 4 * 1024 * 1024;
 function encodeStatus(record) {
-  const data = Buffer.from(JSON.stringify({ version: 1, record: record ?? null })).toString(
-    "base64url"
-  );
+  const json = JSON.stringify({ version: 2, record: record ?? null });
+  const data = gzipSync(json, { level: 9 }).toString("base64url");
   return `<!-- codeman:status ${data} -->`;
 }
 function isStatusComment(body) {
@@ -26735,7 +26851,9 @@ function decodeStatus(body) {
   const data = STATUS_MARKER.exec(body)?.[1];
   if (!data) return void 0;
   try {
-    const parsed = JSON.parse(Buffer.from(data, "base64url").toString("utf8"));
+    const bytes = Buffer.from(data, "base64url");
+    const json = bytes[0] === 31 && bytes[1] === 139 ? gunzipSync(bytes, { maxOutputLength: MAX_RECORD_BYTES }) : bytes;
+    const parsed = JSON.parse(json.toString("utf8"));
     if (typeof parsed !== "object" || parsed === null || !("record" in parsed)) return void 0;
     const record = parsed.record;
     return record ?? void 0;
@@ -27331,7 +27449,10 @@ async function applyPlan(task, repo) {
   if (plan === void 0) return blocked(repo, task, `${task.planPath} is not UTF-8 text.`);
   const outputFile = join7(dir, "output.json");
   if (!existsSync4(outputFile)) return blocked(repo, task, "The agent did not write output.json.");
-  const output = parsePlanOutput(readFileSync5(outputFile, "utf8").slice(0, MAX_OUTPUT_BYTES));
+  const output = parsePlanOutput(
+    readFileSync5(outputFile, "utf8").slice(0, MAX_OUTPUT_BYTES),
+    outputLimits(task.settings)
+  );
   if (!output.ok) return blocked(repo, task, output.error);
   await repo.commit({
     branch: task.branch,
@@ -27355,7 +27476,11 @@ async function applyPlan(task, repo) {
   const state = record.decisions.length > 0 ? "awaiting-decision" : "ready";
   const t = say(task, record);
   const ignored = checked.value.ignored.map((path) => t.ignoredChange(path));
-  await finish(repo, task, state, { outcome: "done", record, errors: ignored });
+  await finish(repo, task, state, {
+    outcome: "done",
+    record,
+    errors: [...ignored, ...cutTexts(t, output.value.cuts)]
+  });
 }
 async function applyStage(task, repo) {
   if (!task.record) return blocked(repo, task, "The task has no record of its plan.");
@@ -27376,9 +27501,13 @@ async function applyStage(task, repo) {
     planPath: task.planPath
   });
   if (!checked.ok) return blocked(repo, task, checked.error);
-  const dropped = checked.value.dropped.map(({ path, reason: reason2 }) => t.droppedChange(path, reason2));
+  const warnings = checked.value.dropped.map(({ path, reason: reason2 }) => t.droppedChange(path, reason2));
   const outputFile = join7(dir, "output.json");
-  const output = existsSync4(outputFile) ? parseStageOutput(readFileSync5(outputFile, "utf8").slice(0, MAX_OUTPUT_BYTES), stage) : { ok: false, error: "The agent did not write output.json." };
+  const output = existsSync4(outputFile) ? parseStageOutput(
+    readFileSync5(outputFile, "utf8").slice(0, MAX_OUTPUT_BYTES),
+    stage,
+    outputLimits(task.settings)
+  ) : { ok: false, error: "The agent did not write output.json." };
   const fresh = task.resume || task.record.stage !== stage;
   const runs = (fresh ? 0 : task.record.runs ?? 0) + 1;
   const maxRuns = task.settings["max-runs"];
@@ -27395,7 +27524,7 @@ async function applyStage(task, repo) {
     record,
     message: runs >= maxRuns ? `${message} ${t.maxRuns(stage, runs, maxRuns)}` : message,
     report,
-    errors: dropped
+    errors: warnings
   });
   const tree = join7(dir, "tree");
   const changes = [
@@ -27420,8 +27549,9 @@ async function applyStage(task, repo) {
       return unfinished("out-of-time", t.outOfTime);
     }
     const exit = manifest.exitCode === 0 ? "" : ` The agent exited with code ${manifest.exitCode}.`;
-    return blocked(repo, task, `${output.error}${exit}`, dropped, record);
+    return blocked(repo, task, `${output.error}${exit}`, warnings, record);
   }
+  warnings.push(...cutTexts(t, output.value.cuts));
   const { status: status2, summary: summary2, reason } = output.value;
   switch (status2) {
     case "partial":
@@ -27432,7 +27562,7 @@ async function applyStage(task, repo) {
         record,
         message: `${t.stageNeedsMaintainer(stage)} ${retryHint(t, task)}`,
         report: summary2,
-        errors: [t.agentReports(reason ?? ""), ...dropped]
+        errors: [t.agentReports(reason ?? ""), ...warnings]
       });
     case "awaiting-workflow": {
       const workflows = output.value.workflows ?? [];
@@ -27442,7 +27572,7 @@ async function applyStage(task, repo) {
       const present = /* @__PURE__ */ new Set([...(await repo.filesUnder(head, WORKFLOWS_DIR)).keys(), ...staged2]);
       const missing = workflows.filter((path) => !present.has(path));
       if (missing.length > 0) {
-        return blocked(repo, task, t.missingWorkflows(missing.join(", ")), dropped, record);
+        return blocked(repo, task, t.missingWorkflows(missing.join(", ")), warnings, record);
       }
       const deferring = defer(record, stage, workflows, staged2);
       if (deferring) {
@@ -27459,7 +27589,7 @@ async function applyStage(task, repo) {
         record: { ...record, runs: runs - 1, awaiting: workflows },
         message: t.awaitingWorkflows(stage, workflows.join(", "), reason ?? ""),
         report: summary2,
-        errors: dropped
+        errors: warnings
       });
     }
     case "decisions": {
@@ -27480,7 +27610,7 @@ async function applyStage(task, repo) {
         },
         message: t.stageDecisions(stage, added.length),
         report: summary2,
-        errors: dropped
+        errors: warnings
       });
     }
     case "changes": {
@@ -27491,7 +27621,8 @@ async function applyStage(task, repo) {
           outcome: "changes",
           record: { ...record, reviewRounds: rounds },
           message: t.reviewRounds(rounds, maxRuns),
-          report: summary2
+          report: summary2,
+          errors: warnings
         });
       }
       return finish(repo, task, STAGE_STATE.code, {
@@ -27505,7 +27636,8 @@ async function applyStage(task, repo) {
 
 ${summary2}`, 4e3) }
         },
-        report: summary2
+        report: summary2,
+        errors: warnings
       });
     }
   }
@@ -27538,7 +27670,8 @@ The paths Codeman's agent may not change. Review them before merging.`
     pullRequestWritten: true,
     record: reviewed,
     message: next.message,
-    report: summary2
+    report: summary2,
+    errors: warnings
   });
   async function handOver(outcome, report, base, message, notes = report) {
     const next2 = nextStage(stage) ?? "review";
@@ -27559,7 +27692,7 @@ The paths Codeman's agent may not change. Review them before merging.`
       record: updated,
       message,
       report,
-      errors: dropped
+      errors: warnings
     });
   }
 }
@@ -27762,6 +27895,9 @@ async function recordAnswers(task, repo) {
     errors: errors.map((error2) => commandError(t, error2)),
     message: pending === 0 ? t.allAnswered : t.stillPending(pending)
   });
+}
+function cutTexts(t, cuts) {
+  return cuts.map((cut) => t.cutText(cut.field, cut.length, cut.limit * MARGIN));
 }
 function retryHint(t, task) {
   if (task.action === "implement") return t.continueHint;

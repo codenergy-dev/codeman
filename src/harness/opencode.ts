@@ -81,10 +81,26 @@ export const openCode: Harness = {
     return executable;
   },
 
-  command({ executable, model, apiKey, prompt, instructions }: HarnessOptions): HarnessCommand {
+  command({
+    executable,
+    model,
+    apiKey,
+    prompt,
+    instructions,
+    resume,
+  }: HarnessOptions): HarnessCommand {
     return {
       file: executable,
-      args: ["run", "--format", "json", "--model", `openrouter/${model}`, prompt],
+      // `--continue` takes the last session that is not a subagent's.
+      args: [
+        "run",
+        "--format",
+        "json",
+        "--model",
+        `openrouter/${model}`,
+        ...(resume ? ["--continue"] : []),
+        prompt,
+      ],
       env: {
         OPENROUTER_API_KEY: apiKey,
         OPENCODE_CONFIG_CONTENT: JSON.stringify(openCodeConfig(model, instructions)),

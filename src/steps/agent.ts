@@ -4,7 +4,9 @@ import * as core from "@actions/core";
 import { collectChanges, copyAgentFile, type Manifest } from "../collect.ts";
 import { decrypt } from "../crypto.ts";
 import { harnesses } from "../harness/index.ts";
+import { outputLimits, outputProblems } from "../output.ts";
 import {
+  fixPrompt,
   HARNESS_PROMPT,
   OUTPUT_DIR,
   OUTPUT_FILE,
@@ -28,6 +30,8 @@ import { oneLine } from "../text.ts";
 import { positiveNumber, readTask, repository, resultDir, workdir } from "./common.ts";
 
 export const MAX_OUTPUT_BYTES = 1024 * 1024;
+/** Time the agent needs at least to fix its output in the same run. */
+const FIX_MS = 2 * 60_000;
 
 /**
  * Runs the harness on a copy of the checkout, as an unprivileged user, and collects what it
@@ -74,17 +78,37 @@ export async function agent(): Promise<void> {
 
   core.info(`Running ${harness.name} with ${task.model} for up to ${minutes} minutes.`);
   const started = Date.now();
-  const run = await runAsAgent(
-    harness.command({
-      executable,
-      model: task.model,
-      apiKey,
-      prompt: HARNESS_PROMPT,
-      instructions: `${worktree}/${RULES_PATH}`,
-    }),
-    worktree,
-    minutes * 60_000,
-  );
+  const options = {
+    executable,
+    model: task.model,
+    apiKey,
+    prompt: HARNESS_PROMPT,
+    instructions: `${worktree}/${RULES_PATH}`,
+  };
+  let run = await runAsAgent(harness.command(options), worktree, minutes * 60_000);
+
+  // Once, while time is left: an output Codeman would reject or cut goes back to the agent.
+  const left = started + minutes * 60_000 - Date.now();
+  if (!run.timedOut && left >= FIX_MS) {
+    const stage = task.action === "implement" ? (task.stage ?? "code") : undefined;
+    const problems = outputProblems(
+      readAgentOutput(`${worktree}/${OUTPUT_FILE}`),
+      stage,
+      outputLimits(task.settings),
+    );
+    if (problems.length > 0) {
+      core.info(`Asking the agent to fix ${OUTPUT_FILE}:`);
+      for (const problem of problems) core.info(`  ${oneLine(problem)}`);
+      const fix = await runAsAgent(
+        harness.command({ ...options, prompt: fixPrompt(problems), resume: true }),
+        worktree,
+        left,
+      );
+      // A fix can only help: one that fails leaves the first outcome, and apply validates both.
+      if (fix.exitCode === 0 && !fix.timedOut) run = fix;
+      else core.warning(`The agent did not finish fixing ${OUTPUT_FILE}.`);
+    }
+  }
   const durationMs = Date.now() - started;
   killAgentProcesses();
 
@@ -116,6 +140,16 @@ export async function agent(): Promise<void> {
   // The result is kept either way: apply commits unfinished work so the next run continues.
   if (run.timedOut) core.setFailed(`The agent did not finish within ${minutes} minutes.`);
   else if (run.exitCode !== 0) core.setFailed(`The agent exited with code ${run.exitCode}.`);
+}
+
+/** The agent's output as it is now, if it wrote one Codeman would read. */
+function readAgentOutput(source: string): string | undefined {
+  const copy = join(workdir(), "output-check.json");
+  try {
+    return copyAgentFile(source, copy, MAX_OUTPUT_BYTES) ? readFileSync(copy, "utf8") : undefined;
+  } finally {
+    rmSync(copy, { force: true });
+  }
 }
 
 /** The repository's own instructions, as the harness finds them: `AGENTS.md`, else `CLAUDE.md`. */

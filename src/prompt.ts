@@ -1,6 +1,12 @@
 import { randomBytes } from "node:crypto";
 import { languageName, taskLanguage } from "./i18n/index.ts";
-import { STAGE_STATUSES } from "./output.ts";
+import {
+  COMMIT_MESSAGE,
+  DECISIONS_TOTAL,
+  type OutputLimits,
+  outputLimits,
+  STAGE_STATUSES,
+} from "./output.ts";
 import { DEFAULT_IGNORE } from "./policy.ts";
 import { RESULTS_DIR } from "./results.ts";
 import type { Stage } from "./stages.ts";
@@ -14,6 +20,18 @@ export const RULES_PATH = `${OUTPUT_DIR}/rules.md`;
 
 /** The short message passed to the harness; the task itself is in TASK_FILE. */
 export const HARNESS_PROMPT = `Read ${TASK_FILE} and do exactly what it asks.`;
+
+/**
+ * Sent to the agent's session when Codeman cannot use its output as it is. The problems are
+ * Codeman's own text: field names and numbers, never what the agent wrote.
+ */
+export function fixPrompt(problems: readonly string[]): string {
+  return `Codeman cannot use ${OUTPUT_FILE} as it is:
+
+${problems.map((problem) => `- ${problem}`).join("\n")}
+
+Rewrite ${OUTPUT_FILE} so that it follows the shape and the limits in ${TASK_FILE}. Keep its content, shortened where it is too long. Change no other file.`;
+}
 
 type Quote = (label: string, text: string) => string;
 
@@ -60,6 +78,15 @@ function planLanguage(task: TaskContext): string {
     : `Codeman talks to the maintainers in the language of the conversation: the issue's title and body and the maintainer comments. Set \`language\` to its BCP 47 tag, such as \`pt-BR\` or \`en\`, and write \`summary\` and the decisions in \`${OUTPUT_FILE}\` in it. The plan file follows the rules for documentation instead.`;
 }
 
+/** The limits of `output.json`, as the agent is told them. */
+function limitsText(limits: OutputLimits, stage?: Stage): string {
+  const texts =
+    stage === undefined
+      ? `\`summary\` up to ${limits.summary}`
+      : `\`summary\` and \`reason\` up to ${limits.summary} each, \`commitMessage\` up to ${COMMIT_MESSAGE}`;
+  return `Limits, in characters: ${texts}; each decision's \`title\` up to ${limits.title} and \`question\` up to ${limits.question}; each option's \`label\` up to ${limits.label}, and all decisions together up to ${DECISIONS_TOTAL}. At most ${limits.decisions} decisions, with 2 to ${limits.options} options each. Keep each label to a short phrase: the context and each option's trade-offs belong in the question.`;
+}
+
 /** Which language the agent writes to the maintainers in, in a stage. */
 function outputLanguage(task: TaskContext): string {
   const tag = taskLanguage(task.settings.language, task.record?.language);
@@ -68,6 +95,7 @@ function outputLanguage(task: TaskContext): string {
 
 /** The planning task. */
 export function planPrompt(task: TaskContext): string {
+  const limits = outputLimits(task.settings);
   const quote = quoter();
   const previous = task.record
     ? `A previous plan exists at \`${task.planPath}\`. Update it instead of starting over: apply the revision requests and settled decisions below, if any, and remove its \`## Answers\` section.`
@@ -112,7 +140,7 @@ ${UNTRUSTED_RULE}
 1. Read the issue and the maintainer comments below.
 2. Explore the repository to understand the code, documentation and conventions the issue touches.
 3. ${previous} Unless the repository's rules define another format, use YAML front matter with \`status: pending\` and the sections Goal, Context, Decisions, Steps (each verifiable, with a done criterion) and Out of scope.
-4. List as decisions only the questions a human must answer before work starts: where the issue is ambiguous, where options have real trade-offs, or where the choice is hard to undo. Give each decision 2 to 4 options and a recommendation. Do not invent decisions: if the issue is clear, list none.
+4. List as decisions only the questions a human must answer before work starts: where the issue is ambiguous, where options have real trade-offs, or where the choice is hard to undo. Give each decision 2 to ${limits.options} options and a recommendation. Do not invent decisions: if the issue is clear, list none.
 5. Write \`${OUTPUT_FILE}\` with the decisions from the plan, in this exact shape:
 
 \`\`\`json
@@ -123,10 +151,10 @@ ${UNTRUSTED_RULE}
     {
       "id": 1,
       "title": "Short name of the decision",
-      "question": "The question, with the context needed to answer it.",
+      "question": "The question, with the context needed to answer it and each option's trade-offs.",
       "options": [
-        { "key": "a", "label": "First option and its trade-off" },
-        { "key": "b", "label": "Second option and its trade-off" }
+        { "key": "a", "label": "First option, in a short phrase" },
+        { "key": "b", "label": "Second option, in a short phrase" }
       ],
       "recommendation": "a"
     }
@@ -134,7 +162,9 @@ ${UNTRUSTED_RULE}
 }
 \`\`\`
 
-   Number decisions from 1 and give options the keys a, b, c, d in order. Use an empty list when there are no decisions.
+   Number decisions from 1 and give options the keys a, b, c and so on, in order. Use an empty list when there are no decisions.
+
+   ${limitsText(limits)}
 6. ${planLanguage(task)}
 
 ${issueSection(task, quote)}
@@ -179,7 +209,7 @@ const STAGE_WORK: Record<Stage, (task: TaskContext) => string> = {
 };
 
 /** The output file's shape, with the statuses this stage may report. */
-function outputShape(stage: Stage): string {
+function outputShape(stage: Stage, limits: OutputLimits): string {
   const statuses = STAGE_STATUSES[stage].map((status) => `\`${status}\``).join(", ");
   return `Write \`${OUTPUT_FILE}\` in this shape, with only the fields that apply:
 
@@ -194,10 +224,10 @@ function outputShape(stage: Stage): string {
     {
       "id": 1,
       "title": "Short name",
-      "question": "The question, with the context needed to answer it.",
+      "question": "The question, with the context needed to answer it and each option's trade-offs.",
       "options": [
-        { "key": "a", "label": "First option and its trade-off" },
-        { "key": "b", "label": "Second option and its trade-off" }
+        { "key": "a", "label": "First option, in a short phrase" },
+        { "key": "b", "label": "Second option, in a short phrase" }
       ],
       "recommendation": "a"
     }
@@ -205,7 +235,9 @@ function outputShape(stage: Stage): string {
 }
 \`\`\`
 
-\`status\` is one of ${statuses}. \`done\`: the stage's work is finished. \`skipped\`: the stage had nothing to do. \`partial\`: work remains for another run of this stage. \`blocked\`: you cannot go on without a maintainer. \`awaiting-workflow\`: you need the results of the workflows in \`workflows\`. \`decisions\`: the maintainers must answer \`decisions\` first. \`changes\`: the code stage must fix what \`reason\` lists. Include \`commitMessage\` whenever you changed files.`;
+\`status\` is one of ${statuses}. \`done\`: the stage's work is finished. \`skipped\`: the stage had nothing to do. \`partial\`: work remains for another run of this stage. \`blocked\`: you cannot go on without a maintainer. \`awaiting-workflow\`: you need the results of the workflows in \`workflows\`. \`decisions\`: the maintainers must answer \`decisions\` first. \`changes\`: the code stage must fix what \`reason\` lists. Include \`commitMessage\` whenever you changed files.
+
+${limitsText(limits, stage)}`;
 }
 
 /** A stage's task: plan, design, code, test or review, on the task branch. */
@@ -252,7 +284,7 @@ Keep the plan current: mark what you finished and add a short progress note for 
 
 ${outputLanguage(task)}
 
-${outputShape(stage)}
+${outputShape(stage, outputLimits(task.settings))}
 
 ${issueSection(task, quote)}
 ${historySection(task, quote)}${handoff}${accepted}${requests}${workflowResultsSection(task)}`;

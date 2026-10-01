@@ -1,5 +1,5 @@
 import type { Decision } from "./record.ts";
-import { isLanguageTag } from "./settings.ts";
+import { isLanguageTag, type Settings } from "./settings.ts";
 import type { Stage } from "./stages.ts";
 import { truncate } from "./text.ts";
 
@@ -9,22 +9,72 @@ export interface PlanOutput {
   decisions: Decision[];
   /** The conversation's language, as a BCP 47 tag, when the agent reported a valid one. */
   language?: string | undefined;
+  /** Texts that were too long, and were cut. */
+  cuts: Cut[];
 }
 
 export type Parsed<T> = { ok: true; value: T } | { ok: false; error: string };
 
-const LIMITS = {
-  summary: 4000,
-  decisions: 10,
-  title: 200,
-  question: 1000,
-  label: 300,
-  options: 6,
-  commitMessage: 2000,
-};
+/** The limits the agent is told. Texts may be `MARGIN` times as long before they are cut. */
+export interface OutputLimits {
+  decisions: number;
+  options: number;
+  title: number;
+  question: number;
+  label: number;
+  summary: number;
+}
 
-/** Validates the agent's output strictly: it is produced by an LLM that read untrusted text. */
-export function parsePlanOutput(text: string): Parsed<PlanOutput> {
+/**
+ * How many times its limit a text may be before Codeman cuts it. The agent is not told: LLMs
+ * count characters poorly, and a little over the limit is not worth losing a run.
+ */
+export const MARGIN = 2;
+/** Characters of all decisions of one output together (titles, questions and labels). */
+export const DECISIONS_TOTAL = 25_000;
+/** Characters of a commit message. */
+export const COMMIT_MESSAGE = 1000;
+
+type LimitSettings = Pick<
+  Settings,
+  | "max-decisions"
+  | "max-options"
+  | "max-title-chars"
+  | "max-question-chars"
+  | "max-label-chars"
+  | "max-summary-chars"
+>;
+
+export function outputLimits(settings: LimitSettings): OutputLimits {
+  return {
+    decisions: settings["max-decisions"],
+    options: settings["max-options"],
+    title: settings["max-title-chars"],
+    question: settings["max-question-chars"],
+    label: settings["max-label-chars"],
+    summary: settings["max-summary-chars"],
+  };
+}
+
+/** A text longer than `MARGIN` times its limit, cut to that length. */
+export interface Cut {
+  field: string;
+  /** Its length as the agent wrote it. */
+  length: number;
+  /** The limit the agent was told. */
+  limit: number;
+}
+
+/** A cut, as the agent reads it when asked to fix its output. */
+export function cutText(cut: Cut): string {
+  return `${cut.field} has ${cut.length} characters; the limit is ${cut.limit}.`;
+}
+
+/**
+ * Validates the agent's output strictly: it is produced by an LLM that read untrusted text.
+ * Only texts that are too long are accepted, cut.
+ */
+export function parsePlanOutput(text: string, limits: OutputLimits): Parsed<PlanOutput> {
   let data: unknown;
   try {
     data = JSON.parse(text);
@@ -33,14 +83,18 @@ export function parsePlanOutput(text: string): Parsed<PlanOutput> {
   }
   if (!isObject(data)) return { ok: false, error: "output.json must be an object." };
 
-  const summary = string(data.summary, "summary", LIMITS.summary);
+  const cuts: Cut[] = [];
+  const summary = string(data.summary, "summary", limits.summary, cuts);
   if (!summary.ok) return summary;
-  const decisions = parseDecisions(data.decisions);
+  const decisions = parseDecisions(data.decisions, limits, cuts);
   if (!decisions.ok) return decisions;
   // Optional: without it, Codeman keeps talking in the language it used so far.
   const language =
     typeof data.language === "string" && isLanguageTag(data.language) ? data.language : undefined;
-  return { ok: true, value: { summary: summary.value, decisions: decisions.value, language } };
+  return {
+    ok: true,
+    value: { summary: summary.value, decisions: decisions.value, language, cuts },
+  };
 }
 
 /** What a stage's agent reports, in `.codeman/output.json`. */
@@ -56,6 +110,8 @@ export interface StageOutput {
   workflows?: string[];
   /** When asking the maintainers: the decisions, numbered from 1. */
   decisions?: Decision[];
+  /** Texts that were too long, and were cut. */
+  cuts: Cut[];
 }
 
 export type StageStatus =
@@ -66,6 +122,22 @@ export type StageStatus =
   | "awaiting-workflow"
   | "decisions"
   | "changes";
+
+/**
+ * What Codeman would reject or cut in the agent's output, for the agent to fix while it still
+ * runs. `stage` is undefined when planning. Empty when Codeman can use the output as it is.
+ */
+export function outputProblems(
+  text: string | undefined,
+  stage: Stage | undefined,
+  limits: OutputLimits,
+): string[] {
+  if (text === undefined) return ["output.json is missing."];
+  const parsed =
+    stage === undefined ? parsePlanOutput(text, limits) : parseStageOutput(text, stage, limits);
+  if (!parsed.ok) return [parsed.error];
+  return parsed.value.cuts.map(cutText);
+}
 
 /** What each stage may report. Review never leaves work half done; it judges. */
 export const STAGE_STATUSES: Readonly<Record<Stage, readonly StageStatus[]>> = {
@@ -84,7 +156,11 @@ const NEEDS_REASON: ReadonlySet<StageStatus> = new Set([
 ]);
 const WORKFLOW_FILE = /^\.github\/workflows\/[A-Za-z0-9._-]+\.ya?ml$/;
 
-export function parseStageOutput(text: string, stage: Stage): Parsed<StageOutput> {
+export function parseStageOutput(
+  text: string,
+  stage: Stage,
+  limits: OutputLimits,
+): Parsed<StageOutput> {
   let data: unknown;
   try {
     data = JSON.parse(text);
@@ -100,18 +176,19 @@ export function parseStageOutput(text: string, stage: Stage): Parsed<StageOutput
     };
   }
   const status = data.status as StageStatus;
-  const summary = string(data.summary, "summary", LIMITS.summary);
+  const cuts: Cut[] = [];
+  const summary = string(data.summary, "summary", limits.summary, cuts);
   if (!summary.ok) return summary;
-  const output: StageOutput = { status, summary: summary.value };
+  const output: StageOutput = { status, summary: summary.value, cuts };
 
   if (data.commitMessage !== undefined) {
-    const message = string(data.commitMessage, "commitMessage", LIMITS.commitMessage);
+    const message = string(data.commitMessage, "commitMessage", COMMIT_MESSAGE, cuts);
     if (!message.ok) return message;
     const [subject = "", ...body] = message.value.split(/\r?\n/);
     output.commitMessage = [truncate(subject.trim(), 72), ...body].join("\n").trim();
   }
   if (NEEDS_REASON.has(status)) {
-    const reason = string(data.reason, "reason", LIMITS.summary);
+    const reason = string(data.reason, "reason", limits.summary, cuts);
     if (!reason.ok) return reason;
     output.reason = reason.value;
   }
@@ -131,7 +208,7 @@ export function parseStageOutput(text: string, stage: Stage): Parsed<StageOutput
     output.workflows = [...new Set(workflows as string[])];
   }
   if (status === "decisions") {
-    const decisions = parseDecisions(data.decisions);
+    const decisions = parseDecisions(data.decisions, limits, cuts);
     if (!decisions.ok) return decisions;
     if (decisions.value.length === 0) return { ok: false, error: "decisions must not be empty." };
     output.decisions = decisions.value;
@@ -139,34 +216,54 @@ export function parseStageOutput(text: string, stage: Stage): Parsed<StageOutput
   return { ok: true, value: output };
 }
 
-function parseDecisions(value: unknown): Parsed<Decision[]> {
-  if (!Array.isArray(value) || value.length > LIMITS.decisions) {
-    return { ok: false, error: `decisions must be a list of at most ${LIMITS.decisions}.` };
+function parseDecisions(value: unknown, limits: OutputLimits, cuts: Cut[]): Parsed<Decision[]> {
+  if (!Array.isArray(value) || value.length > limits.decisions) {
+    return { ok: false, error: `decisions must be a list of at most ${limits.decisions}.` };
   }
   const decisions: Decision[] = [];
   for (const [index, item] of value.entries()) {
-    const decision = parseDecision(item, index + 1);
+    const decision = parseDecision(item, index + 1, limits, cuts);
     if (!decision.ok) return decision;
     decisions.push(decision.value);
+  }
+  // Each text is bounded; together they must still fit in a comment.
+  const total = decisions.reduce(
+    (sum, decision) =>
+      sum +
+      decision.title.length +
+      decision.question.length +
+      decision.options.reduce((labels, option) => labels + option.label.length, 0),
+    0,
+  );
+  if (total > DECISIONS_TOTAL * MARGIN) {
+    return {
+      ok: false,
+      error: `decisions have ${total} characters in total; the limit is ${DECISIONS_TOTAL}.`,
+    };
   }
   return { ok: true, value: decisions };
 }
 
-function parseDecision(item: unknown, id: number): Parsed<Decision> {
+function parseDecision(
+  item: unknown,
+  id: number,
+  limits: OutputLimits,
+  cuts: Cut[],
+): Parsed<Decision> {
   const where = `decisions[${id - 1}]`;
   if (!isObject(item)) return { ok: false, error: `${where} must be an object.` };
   if (item.id !== id) return { ok: false, error: `${where}.id must be ${id}.` };
-  const title = string(item.title, `${where}.title`, LIMITS.title);
+  const title = string(item.title, `${where}.title`, limits.title, cuts);
   if (!title.ok) return title;
-  const question = string(item.question, `${where}.question`, LIMITS.question);
+  const question = string(item.question, `${where}.question`, limits.question, cuts);
   if (!question.ok) return question;
 
   if (
     !Array.isArray(item.options) ||
     item.options.length < 2 ||
-    item.options.length > LIMITS.options
+    item.options.length > limits.options
   ) {
-    return { ok: false, error: `${where}.options must have 2 to ${LIMITS.options} items.` };
+    return { ok: false, error: `${where}.options must have 2 to ${limits.options} items.` };
   }
   const options = [];
   for (const [index, option] of item.options.entries()) {
@@ -174,7 +271,7 @@ function parseDecision(item: unknown, id: number): Parsed<Decision> {
     if (!isObject(option) || option.key !== key) {
       return { ok: false, error: `${where}.options[${index}].key must be "${key}".` };
     }
-    const label = string(option.label, `${where}.options[${index}].label`, LIMITS.label);
+    const label = string(option.label, `${where}.options[${index}].label`, limits.label, cuts);
     if (!label.ok) return label;
     options.push({ key, label: label.value });
   }
@@ -194,12 +291,16 @@ function parseDecision(item: unknown, id: number): Parsed<Decision> {
   };
 }
 
-function string(value: unknown, name: string, max: number): Parsed<string> {
+/** A non-empty string, cut to `MARGIN` times its limit. */
+function string(value: unknown, name: string, limit: number, cuts: Cut[]): Parsed<string> {
   if (typeof value !== "string" || value.trim() === "") {
     return { ok: false, error: `${name} must be a non-empty string.` };
   }
-  if (value.length > max) return { ok: false, error: `${name} must be at most ${max} characters.` };
-  return { ok: true, value: value.trim() };
+  const text = value.trim();
+  const max = limit * MARGIN;
+  if (text.length <= max) return { ok: true, value: text };
+  cuts.push({ field: name, length: text.length, limit });
+  return { ok: true, value: truncate(text, max) };
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
