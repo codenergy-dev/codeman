@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { en } from "./i18n/en.ts";
 import { ptBR } from "./i18n/pt-BR.ts";
+import { GITHUB } from "./platform/github/conventions.ts";
 import { decodeStatus, isStatusComment, type TaskRecord } from "./record.ts";
 import {
-  COMMENT_LIMIT,
   decisionsUrl,
   isRunComment,
   renderDecisions,
@@ -48,6 +48,7 @@ const record: TaskRecord = {
 
 const view = {
   t: en,
+  conventions: GITHUB,
   state: "awaiting-decision" as const,
   record,
   model: "deepseek/deepseek-v4.1-flash",
@@ -116,14 +117,14 @@ const huge = (id: number, answered: boolean) => ({
 test("the decisions comment fits GitHub's limit, keeping pending decisions first", () => {
   const decisions = Array.from({ length: 30 }, (_, index) => huge(index + 1, index < 20));
   const body = renderDecisions({ ...view, record: { ...record, decisions } });
-  assert.ok(body.length <= COMMENT_LIMIT, `${body.length} characters`);
+  assert.ok(body.length <= GITHUB.commentLimit, `${body.length} characters`);
   assert.match(body, /decision\(s\) are not shown here/);
   assert.match(body, /\*\*21\. T+\*\*\n\nQ+/, "the first pending decision is shown in full");
   assert.match(body, /\/codeman decide/);
 
   const fewer = Array.from({ length: 12 }, (_, index) => huge(index + 1, index < 8));
   const short = renderDecisions({ ...view, record: { ...record, decisions: fewer } });
-  assert.ok(short.length <= COMMENT_LIMIT);
+  assert.ok(short.length <= GITHUB.commentLimit);
   assert.ok(!short.includes("not shown"));
   assert.match(short, /\*\*1\. T+\*\*: \*\*b\)\*\* L+ _\(chosen by alice\)_/, "answered in short");
 });
@@ -131,7 +132,7 @@ test("the decisions comment fits GitHub's limit, keeping pending decisions first
 test("the panel keeps its record whole and leaves out what does not fit", () => {
   const big = { ...record, summary: "S".repeat(70_000) };
   const body = renderStatus({ ...view, record: big });
-  assert.ok(body.length <= COMMENT_LIMIT);
+  assert.ok(body.length <= GITHUB.commentLimit);
   assert.deepEqual(decodeStatus(body), big);
   assert.match(body, /Part of this panel is not shown/);
   assert.match(body, /\[Last run\]/);
@@ -178,6 +179,7 @@ test("links the newest run comment of a record", () => {
 
 const run = {
   t: en,
+  conventions: GITHUB,
   title: "Test stage: done",
   state: "reviewing" as const,
   model: "a/b",

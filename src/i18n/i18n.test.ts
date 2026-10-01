@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { GITHUB } from "../platform/github/conventions.ts";
 import { renderDecisions, renderRun, renderStatus } from "../status.ts";
 import { en } from "./en.ts";
 import { languageName, messages, taskLanguage } from "./index.ts";
@@ -55,6 +56,7 @@ test("the panel and run comments come out in the task's language", () => {
   };
   const panel = renderStatus({
     t: ptBR,
+    conventions: GITHUB,
     state: "awaiting-decision",
     record,
     model: "a/b",
@@ -67,7 +69,12 @@ test("the panel and run comments come out in the task's language", () => {
     panel,
     /Decisões: \[1 aguardando resposta\]\(https:\/\/x\/issues\/1#issuecomment-7\)/,
   );
-  const decisions = renderDecisions({ t: ptBR, state: "awaiting-decision", record });
+  const decisions = renderDecisions({
+    t: ptBR,
+    conventions: GITHUB,
+    state: "awaiting-decision",
+    record,
+  });
   assert.match(decisions, /### Codeman: Decisões/);
   assert.match(decisions, /_\(recomendada\)_/);
   assert.match(decisions, /Responda com `\/codeman decide 1 a`/);
@@ -76,6 +83,7 @@ test("the panel and run comments come out in the task's language", () => {
 
   const run = renderRun({
     t: ptBR,
+    conventions: GITHUB,
     title: ptBR.runTitle({
       action: "implement",
       stage: "review",

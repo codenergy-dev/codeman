@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { en } from "./i18n/en.ts";
 import { ptBR } from "./i18n/pt-BR.ts";
+import { GITHUB } from "./platform/github/conventions.ts";
 import { pullRequestBody, pullRequestFooter, pullRequestTitle, replaceFooter } from "./pull.ts";
 
 const view = {
   t: en,
+  conventions: GITHUB,
   closes: "Closes #12",
   planPath: "plans/x.md",
   planUrl: "https://github.com/o/r/blob/codeman/12-x/plans/x.md",

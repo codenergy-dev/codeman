@@ -27,7 +27,7 @@ import {
   writeAsAgent,
 } from "../sandbox.ts";
 import { oneLine } from "../text.ts";
-import { ciResults, positiveNumber, readTask, resultDir, workdir } from "./common.ts";
+import { ciResults, conventions, positiveNumber, readTask, resultDir, workdir } from "./common.ts";
 
 export const MAX_OUTPUT_BYTES = 1024 * 1024;
 /** Time the agent needs at least to fix its output in the same run. */
@@ -68,7 +68,10 @@ export async function agent(): Promise<void> {
     copyToAgent(results, `${worktree}/${RESULTS_DIR}`);
     core.endGroup();
   }
-  const prompt = task.action === "implement" ? stagePrompt(task, minutes) : planPrompt(task);
+  const prompt =
+    task.action === "implement"
+      ? stagePrompt(task, minutes, conventions)
+      : planPrompt(task, conventions);
   writeAsAgent(`${worktree}/${TASK_FILE}`, prompt);
   const rules = agentRules(readRules(), repositoryRules(workspace));
   if (rules.omitted.length > 0) {
@@ -95,6 +98,7 @@ export async function agent(): Promise<void> {
       readAgentOutput(`${worktree}/${OUTPUT_FILE}`),
       stage,
       outputLimits(task.settings),
+      conventions.workflows,
     );
     if (problems.length > 0) {
       core.info(`Asking the agent to fix ${OUTPUT_FILE}:`);

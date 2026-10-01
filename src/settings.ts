@@ -41,8 +41,8 @@ export const DEFAULTS: Omit<Settings, "model"> = {
 };
 
 /**
- * Bounds of the output limits. They keep what the agent writes within a GitHub comment, which
- * holds at most 65,536 characters.
+ * Bounds of the output limits. They keep what the agent writes within a comment of 65,536
+ * characters, GitHub's limit.
  */
 export const LIMIT_BOUNDS: Readonly<Partial<Record<SettingName, { min: number; max: number }>>> = {
   "max-decisions": { min: 1, max: 10 },

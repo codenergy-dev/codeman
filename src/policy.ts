@@ -4,31 +4,29 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Change } from "./collect.ts";
 import type { Parsed } from "./output.ts";
+import type { WorkflowConventions } from "./platform/conventions.ts";
 import { isManifest } from "./validate.ts";
 
 export const IGNORE_FILE = ".codemanignore";
-export const WORKFLOWS_DIR = ".github/workflows/";
 /** Where apply puts the agent's workflow files until a maintainer accepts them. */
 export const STAGED_WORKFLOWS_DIR = ".codeman/workflows/";
 
-/** `.github/workflows/deploy.yml` → `.codeman/workflows/deploy.yml`, and back. */
-export function stagedPath(path: string): string {
-  return STAGED_WORKFLOWS_DIR + path.slice(WORKFLOWS_DIR.length);
+/** `.github/workflows/deploy.yml` → `.codeman/workflows/deploy.yml`, on GitHub. */
+export function stagedPath(path: string, workflows: WorkflowConventions): string {
+  return STAGED_WORKFLOWS_DIR + path.slice(workflows.dir.length);
 }
 
-export function workflowPath(staged: string): string {
-  return WORKFLOWS_DIR + staged.slice(STAGED_WORKFLOWS_DIR.length);
+/** `.codeman/workflows/deploy.yml` → `.github/workflows/deploy.yml`, on GitHub. */
+export function workflowPath(staged: string, workflows: WorkflowConventions): string {
+  return workflows.dir + staged.slice(STAGED_WORKFLOWS_DIR.length);
 }
 
-/** Proposed to repositories that have no `.codemanignore`, and used until they add one. */
-export const DEFAULT_IGNORE = `# Paths that Codeman's agent may not change, in .gitignore syntax. \`!\` re-allows a path.
+const IGNORE_HEADER = `# Paths that Codeman's agent may not change, in .gitignore syntax. \`!\` re-allows a path.
 # Codeman always protects .codemanignore and .codeman/, whatever this file says.
 # Codeman warns in each run's summary about the paths below that this file no longer protects.
+`;
 
-# Workflows and repository automation.
-/.github/**
-
-# Configuration of the agent harness.
+const IGNORE_RULES = `# Configuration of the agent harness.
 opencode.json
 opencode.jsonc
 /.opencode/**
@@ -40,9 +38,16 @@ CLAUDE.md
 /.agents/**
 `;
 
-/** One path under each rule of DEFAULT_IGNORE, to tell whether a repository still protects it. */
+/**
+ * Proposed to repositories that have no `.codemanignore`, and used until they add one: the
+ * platform's CI configuration, then the harness's and the agents' rules.
+ */
+export function defaultIgnore(workflows: WorkflowConventions): string {
+  return `${IGNORE_HEADER}\n${workflows.protect}\n${IGNORE_RULES}`;
+}
+
+/** One path under each rule of IGNORE_RULES, to tell whether a repository still protects it. */
 const PROBES = [
-  ".github/workflows/codeman.yml",
   "opencode.json",
   "opencode.jsonc",
   ".opencode/agent/build.md",
@@ -127,15 +132,17 @@ export function ignoredPaths(rules: string, paths: readonly string[]): Set<strin
   }
 }
 
-/** Paths that DEFAULT_IGNORE protects and the repository's own rules no longer do. */
-export function unprotected(rules: string): string[] {
-  const ignored = ignoredPaths(rules, PROBES);
-  return PROBES.filter((probe) => !ignored.has(probe));
+/** Paths that `defaultIgnore` protects and the repository's own rules no longer do. */
+export function unprotected(rules: string, workflows: WorkflowConventions): string[] {
+  const probes = [...workflows.probes, ...PROBES];
+  const ignored = ignoredPaths(rules, probes);
+  return probes.filter((probe) => !ignored.has(probe));
 }
 
 export interface Policy {
-  /** The repository's `.codemanignore`; null uses DEFAULT_IGNORE. */
+  /** The repository's `.codemanignore`; null uses `defaultIgnore`. */
   ignore: string | null;
+  workflows: WorkflowConventions;
   maxFiles: number;
   maxFileBytes: number;
   /** The task's plan, which the agent keeps current whatever the rules say. */
@@ -168,13 +175,13 @@ export function checkChanges(manifest: unknown, policy: Policy): Parsed<CheckedC
   }
 
   const ignored = ignoredPaths(
-    policy.ignore ?? DEFAULT_IGNORE,
+    policy.ignore ?? defaultIgnore(policy.workflows),
     candidates.filter((change) => change.path !== policy.planPath).map((change) => change.path),
   );
   const accepted: Change[] = [];
   const staged: Change[] = [];
   for (const change of candidates) {
-    const workflow = change.path.startsWith(WORKFLOWS_DIR);
+    const workflow = change.path.startsWith(policy.workflows.dir);
     const reason: DropReason | undefined = ignored.has(change.path)
       ? { kind: "protected" }
       : change.status !== "deleted" && change.type !== "file"

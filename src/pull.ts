@@ -1,9 +1,11 @@
 import type { Messages } from "./i18n/index.ts";
+import type { Conventions } from "./platform/conventions.ts";
 import { oneLine, safeInline, safeMarkdown } from "./text.ts";
 
 export interface PullRequestView {
   /** The task's language. */
   t: Messages;
+  conventions: Conventions;
   /** The line that closes the task's issue when the pull request merges. */
   closes: string;
   planPath: string;
@@ -26,6 +28,7 @@ export function pullRequestTitle(issueTitle: string): string {
 /** The pull request's description. Text from the agent is rendered as safe Markdown. */
 export function pullRequestBody(view: PullRequestView): string {
   const { t } = view;
+  const md = view.conventions.markdown;
   const longest = Math.max(0, ...(view.commitMessage.match(/`+/g) ?? []).map((run) => run.length));
   const fence = "`".repeat(Math.max(3, longest + 1));
   return [
@@ -33,13 +36,13 @@ export function pullRequestBody(view: PullRequestView): string {
     "",
     `### ${t.plan}`,
     "",
-    safeInline(view.planSummary),
+    safeInline(view.planSummary, md),
     "",
     `${t.fullPlan}: [${view.planPath}](${view.planUrl})`,
     "",
     `### ${t.changes}`,
     "",
-    safeMarkdown(view.summary),
+    safeMarkdown(view.summary, md),
     "",
     ...(view.commitMessage
       ? [`### ${t.squashMessage}`, "", `${fence}text`, view.commitMessage, fence, ""]

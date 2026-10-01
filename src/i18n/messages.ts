@@ -59,9 +59,9 @@ export interface Messages {
   decisionsLink(pending: number): string;
   /** The decisions comment of a task whose plan has no decisions now. */
   noDecisions: string;
-  /** Decisions left out of the decisions comment, to fit GitHub's comment size. */
+  /** Decisions left out of the decisions comment, to fit the platform's comment size. */
   decisionsOmitted(count: number): string;
-  /** Parts of the panel left out, to fit GitHub's comment size. */
+  /** Parts of the panel left out, to fit the platform's comment size. */
   panelCut: string;
   workflowsToReview: string;
   workflowsHelp: string;

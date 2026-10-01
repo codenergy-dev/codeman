@@ -1,3 +1,4 @@
+import type { WorkflowConventions } from "./platform/conventions.ts";
 import type { Decision } from "./record.ts";
 import { isLanguageTag, type Settings } from "./settings.ts";
 import type { Stage } from "./stages.ts";
@@ -106,7 +107,7 @@ export interface StageOutput {
   commitMessage?: string;
   /** What a human must do (blocked), what the workflows must produce, or what to change. */
   reason?: string;
-  /** When awaiting a workflow: the workflow files, such as `.github/workflows/ios.yml`. */
+  /** When awaiting a workflow: the workflow files, such as `.github/workflows/ios.yml` on GitHub. */
   workflows?: string[];
   /** When asking the maintainers: the decisions, numbered from 1. */
   decisions?: Decision[];
@@ -131,10 +132,13 @@ export function outputProblems(
   text: string | undefined,
   stage: Stage | undefined,
   limits: OutputLimits,
+  workflows: WorkflowConventions,
 ): string[] {
   if (text === undefined) return ["output.json is missing."];
   const parsed =
-    stage === undefined ? parsePlanOutput(text, limits) : parseStageOutput(text, stage, limits);
+    stage === undefined
+      ? parsePlanOutput(text, limits)
+      : parseStageOutput(text, stage, limits, workflows);
   if (!parsed.ok) return [parsed.error];
   return parsed.value.cuts.map(cutText);
 }
@@ -154,12 +158,11 @@ const NEEDS_REASON: ReadonlySet<StageStatus> = new Set([
   "awaiting-workflow",
   "changes",
 ]);
-const WORKFLOW_FILE = /^\.github\/workflows\/[A-Za-z0-9._-]+\.ya?ml$/;
-
 export function parseStageOutput(
   text: string,
   stage: Stage,
   limits: OutputLimits,
+  workflows: WorkflowConventions,
 ): Parsed<StageOutput> {
   let data: unknown;
   try {
@@ -193,19 +196,19 @@ export function parseStageOutput(
     output.reason = reason.value;
   }
   if (status === "awaiting-workflow") {
-    const workflows = data.workflows;
+    const files = data.workflows;
     if (
-      !Array.isArray(workflows) ||
-      workflows.length === 0 ||
-      workflows.length > 5 ||
-      !workflows.every((path) => typeof path === "string" && WORKFLOW_FILE.test(path))
+      !Array.isArray(files) ||
+      files.length === 0 ||
+      files.length > 5 ||
+      !files.every((path) => typeof path === "string" && workflows.file.test(path))
     ) {
       return {
         ok: false,
-        error: "workflows must list 1 to 5 files directly under .github/workflows/.",
+        error: `workflows must list 1 to 5 ${workflows.fileDescription}.`,
       };
     }
-    output.workflows = [...new Set(workflows as string[])];
+    output.workflows = [...new Set(files as string[])];
   }
   if (status === "decisions") {
     const decisions = parseDecisions(data.decisions, limits, cuts);

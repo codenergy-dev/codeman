@@ -9,11 +9,10 @@ import type { Platform } from "../platform/platform.ts";
 import type { FileChange } from "../platform/types.ts";
 import {
   checkChanges,
-  DEFAULT_IGNORE,
+  defaultIgnore,
   IGNORE_FILE,
   STAGED_WORKFLOWS_DIR,
   stagedPath,
-  WORKFLOWS_DIR,
   workflowPath,
 } from "../policy.ts";
 import type { CommandError } from "../problems.ts";
@@ -27,7 +26,7 @@ import { commandsAfter, type TaskContext } from "../tasks.ts";
 import { oneLine, safeMarkdown, truncate } from "../text.ts";
 import { checkPlanResult, decodeText, isManifest } from "../validate.ts";
 import { MAX_OUTPUT_BYTES } from "./agent.ts";
-import { platform, readTask, resultDir } from "./common.ts";
+import { conventions, platform, readTask, resultDir } from "./common.ts";
 
 /**
  * Validates what the earlier jobs produced and writes it to the platform. Runs no LLM. Everything it
@@ -174,6 +173,7 @@ async function applyStage(task: TaskContext, repo: Platform): Promise<void> {
       ? { ok: true as const, value: { accepted: [], staged: [], dropped: [] } }
       : checkChanges(manifest, {
           ignore: task.ignore,
+          workflows: conventions.workflows,
           maxFiles: task.settings["max-files"],
           maxFileBytes: task.settings["max-file-bytes"],
           planPath: task.planPath,
@@ -188,6 +188,7 @@ async function applyStage(task: TaskContext, repo: Platform): Promise<void> {
         readFileSync(outputFile, "utf8").slice(0, MAX_OUTPUT_BYTES),
         stage,
         outputLimits(task.settings),
+        conventions.workflows,
       )
     : { ok: false as const, error: "The agent did not write output.json." };
 
@@ -222,7 +223,7 @@ async function applyStage(task: TaskContext, repo: Platform): Promise<void> {
     ...readChanges(tree, checked.value.accepted, task.settings),
     ...readChanges(tree, checked.value.staged, task.settings).map((change) => ({
       ...change,
-      path: stagedPath(change.path),
+      path: stagedPath(change.path, conventions.workflows),
     })),
   ];
   let head = task.baseSha;
@@ -262,9 +263,12 @@ async function applyStage(task: TaskContext, repo: Platform): Promise<void> {
     case "awaiting-workflow": {
       const workflows = output.value.workflows ?? [];
       const staged = new Set(
-        [...(await repo.filesUnder(head, STAGED_WORKFLOWS_DIR)).keys()].map(workflowPath),
+        [...(await repo.filesUnder(head, STAGED_WORKFLOWS_DIR)).keys()].map(workflowOf),
       );
-      const present = new Set([...(await repo.filesUnder(head, WORKFLOWS_DIR)).keys(), ...staged]);
+      const present = new Set([
+        ...(await repo.filesUnder(head, conventions.workflows.dir)).keys(),
+        ...staged,
+      ]);
       const missing = workflows.filter((path) => !present.has(path));
       if (missing.length > 0) {
         return blocked(repo, task, t.missingWorkflows(missing.join(", ")), warnings, record);
@@ -348,11 +352,13 @@ async function applyStage(task: TaskContext, repo: Platform): Promise<void> {
       branch: task.branch,
       baseSha: head,
       createBranch: false,
-      changes: [{ path: IGNORE_FILE, content: Buffer.from(DEFAULT_IGNORE, "utf8") }],
+      changes: [
+        { path: IGNORE_FILE, content: Buffer.from(defaultIgnore(conventions.workflows), "utf8") },
+      ],
       message: `Add ${IGNORE_FILE}\n\nThe paths Codeman's agent may not change. Review them before merging.`,
     });
   }
-  const staged = [...(await repo.filesUnder(head, STAGED_WORKFLOWS_DIR)).keys()].map(workflowPath);
+  const staged = [...(await repo.filesUnder(head, STAGED_WORKFLOWS_DIR)).keys()].map(workflowOf);
   const next = afterReview(t, record, staged);
   const pullRequest = await openPullRequest(
     repo,
@@ -383,7 +389,7 @@ async function applyStage(task: TaskContext, repo: Platform): Promise<void> {
     notes = report,
   ): Promise<void> {
     const next = nextStage(stage) ?? "review";
-    // Kept short: the record lives in the status comment, which GitHub limits in size.
+    // Kept short: the record lives in the status comment, which the platform limits in size.
     const text = truncate(notes, 2000);
     const updated: TaskRecord = {
       ...base,
@@ -409,6 +415,11 @@ async function applyStage(task: TaskContext, repo: Platform): Promise<void> {
   }
 }
 
+/** Where a staged workflow goes once accepted. */
+function workflowOf(staged: string): string {
+  return workflowPath(staged, conventions.workflows);
+}
+
 const STAGE_NAMES: Record<Stage, string> = {
   design: "Design",
   code: "Code",
@@ -430,6 +441,7 @@ async function openPullRequest(
   const title = pullRequestTitle(task.title);
   const body = pullRequestBody({
     t,
+    conventions,
     closes: repo.closingReference(task.number),
     planPath: task.planPath,
     planUrl: repo.fileUrl(task.branch, task.planPath),
@@ -471,8 +483,10 @@ async function postReview(
   const body = [
     `### ${t.reviewHeading}`,
     "",
-    safeMarkdown(report),
-    ...(changes ? ["", `#### ${t.reviewChanges}`, "", safeMarkdown(changes)] : []),
+    safeMarkdown(report, conventions.markdown),
+    ...(changes
+      ? ["", `#### ${t.reviewChanges}`, "", safeMarkdown(changes, conventions.markdown)]
+      : []),
     "",
     `<sub>[${t.run}](${task.runUrl})</sub>`,
   ].join("\n");
@@ -487,7 +501,7 @@ async function updateFooter(repo: Platform, number: number, footer: string): Pro
 }
 
 /**
- * Moves the staged workflows into `.github/workflows/` on the task branch, with a token that
+ * Moves the staged workflows into the workflow directory on the task branch, with a token that
  * may write workflows, if they are what the maintainer saw: the staged files must not have
  * changed since the comment that accepted them.
  */
@@ -511,18 +525,18 @@ async function acceptWorkflows(task: TaskContext, repo: Platform): Promise<void>
   const seen = before ? await repo.filesUnder(before, STAGED_WORKFLOWS_DIR) : new Map();
   const changed = [...staged]
     .filter(([path, file]) => seen.get(path)?.sha !== file.sha)
-    .map(([path]) => workflowPath(path));
+    .map(([path]) => workflowOf(path));
   if (changed.length > 0 || !head) {
     return done(t.stagedChanged, [t.stagedChangedDetail(accept.author, changed.join(", "))]);
   }
 
-  const moved = [...staged.keys()].map(workflowPath);
+  const moved = [...staged.keys()].map(workflowOf);
   await platform("workflow-token").commit({
     branch: task.branch,
     baseSha: head,
     createBranch: false,
     changes: [...staged].flatMap(([path, file]) => [
-      { path: workflowPath(path), content: null, sha: file.sha, mode: file.mode },
+      { path: workflowOf(path), content: null, sha: file.sha, mode: file.mode },
       { path, content: null },
     ]),
     message: `Accept workflows for #${task.number}\n\nAccepted by ${accept.author} in comment ${accept.id}.`,
@@ -781,7 +795,7 @@ async function finish(
           ...(
             await repo.filesUnder(task.branch, STAGED_WORKFLOWS_DIR).catch(() => new Map())
           ).keys(),
-        ].map(workflowPath)
+        ].map(workflowOf)
       : [];
   const spent = {
     run: cost.run,
@@ -796,6 +810,7 @@ async function finish(
       task.number,
       renderRun({
         t,
+        conventions,
         title: t.runTitle({
           action: task.action,
           stage: task.stage,
@@ -819,7 +834,7 @@ async function finish(
     const id = await repo.upsertComment(
       task.number,
       record.decisionsCommentId ?? null,
-      renderDecisions({ t, state, record }),
+      renderDecisions({ t, conventions, state, record }),
     );
     record = { ...record, decisionsCommentId: id };
   }
@@ -828,6 +843,7 @@ async function finish(
     task.statusCommentId,
     renderStatus({
       t,
+      conventions,
       state,
       record,
       model: task.model,

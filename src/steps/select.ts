@@ -40,7 +40,7 @@ import {
   toTask,
 } from "../tasks.ts";
 import { oneLine, slugify } from "../text.ts";
-import { ciResults, platform, runUrl, taskFile } from "./common.ts";
+import { ciResults, conventions, platform, runUrl, taskFile } from "./common.ts";
 
 /**
  * Picks the one task this run works on and writes its context for the next jobs. Runs no LLM,
@@ -285,6 +285,7 @@ export async function select(): Promise<void> {
       context.statusCommentId,
       renderStatus({
         t,
+        conventions,
         state,
         record,
         model,
@@ -358,7 +359,7 @@ async function warnUnprotected(ignore: string | null): Promise<void> {
     );
     return;
   }
-  const paths = unprotected(ignore);
+  const paths = unprotected(ignore, conventions.workflows);
   for (const path of paths) {
     core.warning(
       `${IGNORE_FILE} lets the agent change ${oneLine(path)}, which Codeman proposes to protect.`,

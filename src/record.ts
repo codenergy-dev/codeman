@@ -43,7 +43,7 @@ export interface TaskRecord {
   spent?: number | undefined;
   /** `/codeman accept-workflows` commands up to this comment ID have been handled. */
   acceptedCommentId?: number | undefined;
-  /** Workflows (paths under `.github/workflows/`) whose runs the agent waits for. */
+  /** Workflows (paths in the platform's workflow directory) whose runs the agent waits for. */
   awaiting?: string[] | undefined;
   /** The stage that works on the task next, or is working on it. */
   stage?: Stage | undefined;
@@ -184,7 +184,7 @@ export function isStatusComment(body: string): boolean {
 
 /**
  * Reads the task record from a status comment. Callers must first check that the comment was
- * written by Codeman's GitHub App, because anyone can post a comment with this marker.
+ * written by Codeman's own account, because anyone can post a comment with this marker.
  */
 export function decodeStatus(body: string): TaskRecord | undefined {
   const data = STATUS_MARKER.exec(body)?.[1];

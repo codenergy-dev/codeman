@@ -1,14 +1,17 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Change, Manifest } from "./collect.ts";
+import { GITHUB } from "./platform/github/conventions.ts";
 import {
   checkChanges,
-  DEFAULT_IGNORE,
+  defaultIgnore,
   ignoredPaths,
   stagedPath,
   unprotected,
   workflowPath,
 } from "./policy.ts";
+
+const DEFAULT_IGNORE = defaultIgnore(GITHUB.workflows);
 
 const file = (path: string, size = 10): Change => ({
   path,
@@ -28,6 +31,7 @@ const manifest = (changes: Change[]): Manifest => ({
 
 const policy = {
   ignore: null,
+  workflows: GITHUB.workflows,
   maxFiles: 300,
   maxFileBytes: 1000,
   planPath: "plans/2026-09-25-x.md",
@@ -80,9 +84,12 @@ test("`!` re-allows a path, and odd paths are matched literally", () => {
 });
 
 test("warns about each proposed rule that the repository dropped", () => {
-  assert.deepEqual(unprotected(DEFAULT_IGNORE), []);
+  assert.deepEqual(unprotected(DEFAULT_IGNORE, GITHUB.workflows), []);
   const rules = DEFAULT_IGNORE.replace("AGENTS.md\n", "").replace("/.github/**", "/.github/*.md");
-  assert.deepEqual(unprotected(rules), [".github/workflows/codeman.yml", "AGENTS.md"]);
+  assert.deepEqual(unprotected(rules, GITHUB.workflows), [
+    ".github/workflows/codeman.yml",
+    "AGENTS.md",
+  ]);
 });
 
 test("drops protected, special and large files, and keeps the plan", () => {
@@ -157,8 +164,14 @@ test("workflow files are staged when the rules allow them, and never deleted", (
     { path: ".github/workflows/ci.yml", reason: { kind: "workflow-deletion" } },
     { path: ".github/CODEOWNERS", reason: { kind: "protected" } },
   ]);
-  assert.equal(stagedPath(".github/workflows/deploy.yml"), ".codeman/workflows/deploy.yml");
-  assert.equal(workflowPath(".codeman/workflows/deploy.yml"), ".github/workflows/deploy.yml");
+  assert.equal(
+    stagedPath(".github/workflows/deploy.yml", GITHUB.workflows),
+    ".codeman/workflows/deploy.yml",
+  );
+  assert.equal(
+    workflowPath(".codeman/workflows/deploy.yml", GITHUB.workflows),
+    ".github/workflows/deploy.yml",
+  );
 });
 
 test("the proposed rules keep workflows out entirely", () => {

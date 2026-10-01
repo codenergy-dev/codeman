@@ -1,3 +1,5 @@
+import type { MarkdownDialect } from "./platform/conventions.ts";
+
 /**
  * Collapses untrusted text to a single line before logging it, so it cannot start a line
  * with a workflow command such as `::add-mask::`.
@@ -21,21 +23,27 @@ export function slugify(text: string, max = 40): string {
   return slug.slice(0, max).replace(/-+$/, "") || "task";
 }
 
+/** Breaks each match of `pattern` with an invisible space after it. */
+function breakMatches(text: string, pattern: RegExp): string {
+  return text.replaceAll(pattern, "$&\u200b");
+}
+
 /**
  * Renders untrusted text (written by the agent or by users) as inert inline Markdown:
- * one line, no HTML, links, images or formatting, and no @mentions.
+ * one line, no HTML, links, images or formatting, and no mentions.
  */
-export function inlineText(text: string): string {
-  return oneLine(text)
-    .replace(/[\\`*_{}[\]()<>#+!|~]/g, (char) => `\\${char}`)
-    .replace(/@/g, "@\u200b");
+export function inlineText(text: string, dialect: MarkdownDialect): string {
+  return breakMatches(
+    oneLine(text).replace(/[\\`*_{}[\]()<>#+!|~]/g, (char) => `\\${char}`),
+    dialect.mentions,
+  );
 }
 
 /** Like `inlineText`, but keeps the text's line breaks, so lists and paragraphs survive. */
-export function inertLines(text: string): string {
+export function inertLines(text: string, dialect: MarkdownDialect): string {
   return text
     .split(/\r?\n/)
-    .map((line) => inlineText(line))
+    .map((line) => inlineText(line, dialect))
     .join("\n");
 }
 
@@ -44,8 +52,8 @@ export function inertLines(text: string): string {
  * HTML, links that hide their target, images, @mentions or issue references. Links and images
  * become their text followed by the URL, which shows where it goes.
  */
-export function safeInline(text: string): string {
-  return outsideCode(oneLine(text), neutralize);
+export function safeInline(text: string, dialect: MarkdownDialect): string {
+  return outsideCode(oneLine(text), (part) => neutralize(part, dialect));
 }
 
 /**
@@ -53,7 +61,7 @@ export function safeInline(text: string): string {
  * too. Headings are lowered to level 5, so the text cannot imitate Codeman's own headings, and
  * a code block left open is closed, so it cannot swallow what Codeman writes after it.
  */
-export function safeMarkdown(text: string): string {
+export function safeMarkdown(text: string, dialect: MarkdownDialect): string {
   const lines: string[] = [];
   let fence: string | undefined;
   for (const line of text.split(/\r?\n/)) {
@@ -65,7 +73,7 @@ export function safeMarkdown(text: string): string {
       fence = marker;
       lines.push(line);
     } else {
-      lines.push(safeLine(line));
+      lines.push(safeLine(line, dialect));
     }
   }
   if (fence !== undefined) lines.push(fence);
@@ -73,12 +81,13 @@ export function safeMarkdown(text: string): string {
 }
 
 /** One line outside a code block. */
-function safeLine(line: string): string {
+function safeLine(line: string, dialect: MarkdownDialect): string {
+  const transform = (part: string) => neutralize(part, dialect);
   const heading = /^ {0,3}#{1,6}(?=\s|$)/.exec(line);
-  if (heading) return `#####${outsideCode(line.slice(heading[0].length), neutralize)}`;
+  if (heading) return `#####${outsideCode(line.slice(heading[0].length), transform)}`;
   // A line of `=` or `-` under text would make it a large heading.
   if (/^ {0,3}(=+|-{2,})\s*$/.test(line)) return `\\${line.trimStart()}`;
-  return outsideCode(line, neutralize);
+  return outsideCode(line, transform);
 }
 
 /** Applies `transform` to the parts of a line outside code spans, which render literally. */
@@ -97,14 +106,15 @@ function outsideCode(line: string, transform: (part: string) => string): string 
   return result + transform(line.slice(index));
 }
 
-/** Text outside code: no HTML, links, images, mentions or issue references. */
-function neutralize(text: string): string {
-  return text
-    .replace(
-      /!?\[([^\]]*)\]\(\s*<?([^)\s>]*)>?(?:\s+[^)]*)?\)/g,
-      (_, label: string, url: string) => (url ? `${label} (${url})` : label),
-    )
-    .replace(/[<[\]]/g, (char) => `\\${char}`)
-    .replace(/@/g, "@​")
-    .replace(/#(?=\d)/g, "#​");
+/** Text outside code: no HTML, links, images, mentions or references. */
+function neutralize(text: string, dialect: MarkdownDialect): string {
+  return breakMatches(
+    text
+      .replace(
+        /!?\[([^\]]*)\]\(\s*<?([^)\s>]*)>?(?:\s+[^)]*)?\)/g,
+        (_, label: string, url: string) => (url ? `${label} (${url})` : label),
+      )
+      .replace(/[<[\]]/g, (char) => `\\${char}`),
+    dialect.references,
+  );
 }

@@ -1,4 +1,5 @@
 import type { Messages } from "./i18n/index.ts";
+import type { Conventions, MarkdownDialect } from "./platform/conventions.ts";
 import { type Decision, encodeStatus, pendingDecisions, type TaskRecord } from "./record.ts";
 import { duration, type SpendRow, spendTable, spendTotals } from "./spend.ts";
 import type { State } from "./state.ts";
@@ -7,6 +8,8 @@ import { inlineText, safeInline, safeMarkdown } from "./text.ts";
 export interface StatusView {
   /** The task's language. */
   t: Messages;
+  /** The platform's Markdown and comment size. */
+  conventions: Conventions;
   state: State | "new";
   record?: TaskRecord | undefined;
   model: string;
@@ -26,9 +29,6 @@ export interface StatusView {
   decisionsUrl?: string | undefined;
 }
 
-/** GitHub's limit on the size of a comment, in characters. */
-export const COMMENT_LIMIT = 65_536;
-
 /** What a run and its task spent, in USD, as far as known. */
 export interface Cost {
   run?: number | undefined;
@@ -43,6 +43,8 @@ export interface Cost {
  */
 export function renderStatus(view: StatusView): string {
   const { record, t } = view;
+  const md = view.conventions.markdown;
+  const limit = view.conventions.commentLimit;
   const head = [encodeStatus(record), `### Codeman: ${t.heading(view.state)}`, ""];
   if (view.message) head.push(view.message, "");
   if (record && view.planUrl) head.push(`${t.plan}: [${record.planPath}](${view.planUrl})`, "");
@@ -55,10 +57,10 @@ export function renderStatus(view: StatusView): string {
   }
 
   const rest: string[] = [];
-  if (record) rest.push(safeInline(record.summary), "");
+  if (record) rest.push(safeInline(record.summary, md), "");
   if (view.staged && view.staged.length > 0) {
     rest.push(`#### ${t.workflowsToReview}`, "");
-    for (const path of view.staged) rest.push(`- ${inlineText(path)}`);
+    for (const path of view.staged) rest.push(`- ${inlineText(path, md)}`);
     rest.push("", t.workflowsHelp, "");
   }
   if (record?.spending?.rows.length || view.cost?.task !== undefined) {
@@ -82,16 +84,17 @@ export function renderStatus(view: StatusView): string {
 
   const footer = t.panelFooter(modelName(view.model), view.runUrl, view.reportUrl);
   const body = [...head, ...rest, footer].join("\n");
-  if (body.length <= COMMENT_LIMIT) return body;
+  if (body.length <= limit) return body;
   // The record must be kept whole; what the panel shows can be left out.
   const short = [...head, t.panelCut, "", footer].join("\n");
-  if (short.length <= COMMENT_LIMIT) return short;
-  throw new Error("The task record no longer fits in a GitHub comment.");
+  if (short.length <= limit) return short;
+  throw new Error("The task record no longer fits in a comment.");
 }
 
 export interface DecisionsView {
   /** The task's language. */
   t: Messages;
+  conventions: Conventions;
   state: State | "new";
   record: TaskRecord;
 }
@@ -104,6 +107,8 @@ const DECISIONS_MARKER = "<!-- codeman:decisions -->";
  */
 export function renderDecisions(view: DecisionsView): string {
   const { record, t } = view;
+  const md = view.conventions.markdown;
+  const limit = view.conventions.commentLimit;
   const head = [DECISIONS_MARKER, `### Codeman: ${t.decisions}`, ""];
   if (record.decisions.length === 0) return [...head, t.noDecisions].join("\n");
   const tail =
@@ -115,12 +120,12 @@ export function renderDecisions(view: DecisionsView): string {
       .join("\n")
       .trimEnd();
 
-  const full = render(record.decisions.map((decision) => decisionLines(t, decision)));
-  if (full.length <= COMMENT_LIMIT) return full;
+  const full = render(record.decisions.map((decision) => decisionLines(t, decision, md)));
+  if (full.length <= limit) return full;
   // Too long: answered decisions in short form, then fewer of them, then fewer pending ones.
   const shown = record.decisions.map((decision) => ({
     decision,
-    lines: decision.answer ? answeredLine(t, decision) : decisionLines(t, decision),
+    lines: decision.answer ? answeredLine(t, decision, md) : decisionLines(t, decision, md),
   }));
   const order = [
     ...shown.filter(({ decision }) => decision.answer),
@@ -128,7 +133,7 @@ export function renderDecisions(view: DecisionsView): string {
   ];
   let omitted = 0;
   let text = render(shown.map(({ lines }) => lines));
-  while (text.length > COMMENT_LIMIT && omitted < order.length) {
+  while (text.length > limit && omitted < order.length) {
     const dropped = new Set(order.slice(0, ++omitted));
     text = render(
       shown.filter((entry) => !dropped.has(entry)).map(({ lines }) => lines),
@@ -138,11 +143,11 @@ export function renderDecisions(view: DecisionsView): string {
   return text;
 }
 
-function decisionLines(t: Messages, decision: Decision): string[] {
+function decisionLines(t: Messages, decision: Decision, md: MarkdownDialect): string[] {
   const lines = [
-    `**${decision.id}. ${safeInline(decision.title)}**`,
+    `**${decision.id}. ${safeInline(decision.title, md)}**`,
     "",
-    safeInline(decision.question),
+    safeInline(decision.question, md),
     "",
   ];
   for (const option of decision.options) {
@@ -151,24 +156,24 @@ function decisionLines(t: Messages, decision: Decision): string[] {
       option.key === decision.answer?.option ? t.chosenBy(decision.answer.by) : "",
     ].filter(Boolean);
     const suffix = tags.length > 0 ? ` _(${tags.join(", ")})_` : "";
-    lines.push(`- **${option.key})** ${safeInline(option.label)}${suffix}`);
+    lines.push(`- **${option.key})** ${safeInline(option.label, md)}${suffix}`);
   }
   if (decision.answer?.text !== undefined) {
-    lines.push("", t.answeredBy(decision.answer.by, inlineText(decision.answer.text)));
+    lines.push("", t.answeredBy(decision.answer.by, inlineText(decision.answer.text, md)));
   }
   lines.push("");
   return lines;
 }
 
 /** An answered decision on one line: its title and the answer. */
-function answeredLine(t: Messages, decision: Decision): string[] {
+function answeredLine(t: Messages, decision: Decision, md: MarkdownDialect): string[] {
   const answer = decision.answer;
   const option = decision.options.find((candidate) => candidate.key === answer?.option);
   const text =
     answer?.text !== undefined
-      ? t.answeredBy(answer.by, inlineText(answer.text))
-      : `**${option?.key})** ${safeInline(option?.label ?? "")} _(${t.chosenBy(answer?.by ?? "")})_`;
-  return [`**${decision.id}. ${safeInline(decision.title)}**: ${text}`, ""];
+      ? t.answeredBy(answer.by, inlineText(answer.text, md))
+      : `**${option?.key})** ${safeInline(option?.label ?? "", md)} _(${t.chosenBy(answer?.by ?? "")})_`;
+  return [`**${decision.id}. ${safeInline(decision.title, md)}**: ${text}`, ""];
 }
 
 /**
@@ -209,6 +214,7 @@ export function runCommentText(body: string): string {
 export interface RunView {
   /** The task's language. */
   t: Messages;
+  conventions: Conventions;
   /** What the run worked on and how it ended, such as "Test stage: done" (trusted text). */
   title: string;
   /** The task's state once the run ended. */
@@ -231,10 +237,11 @@ export function renderRun(view: RunView): string {
   const { t } = view;
   const lines = [RUN_MARKER, `### Codeman · ${view.title}`, ""];
   if (view.message) lines.push(view.message, "");
-  if (view.report) lines.push(`#### ${t.report}`, "", safeMarkdown(view.report), "");
+  const md = view.conventions.markdown;
+  if (view.report) lines.push(`#### ${t.report}`, "", safeMarkdown(view.report, md), "");
   if (view.errors && view.errors.length > 0) {
     lines.push(`#### ${t.problems}`, "");
-    for (const error of view.errors) lines.push(`- ${safeInline(error)}`);
+    for (const error of view.errors) lines.push(`- ${safeInline(error, md)}`);
     lines.push("");
   }
   lines.push(`**${t.nextStepLabel}:** ${t.nextStep(view.state)}`, "");

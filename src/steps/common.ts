@@ -2,7 +2,9 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import * as core from "@actions/core";
 import * as github from "@actions/github";
+import type { Conventions } from "../platform/conventions.ts";
 import { GitHubActionsResults } from "../platform/github/ci.ts";
+import { GITHUB } from "../platform/github/conventions.ts";
 import { contextRepository, GitHubPlatform, octokit } from "../platform/github/platform.ts";
 import type { CiResults, Platform } from "../platform/platform.ts";
 import type { TaskContext } from "../tasks.ts";
@@ -27,6 +29,8 @@ export function readTask(): TaskContext {
   if (task.version !== 1) throw new Error("The task file has an unknown version.");
   return task;
 }
+
+export const conventions: Conventions = GITHUB;
 
 export function platform(input = "github-token", appSlug?: string): Platform {
   return new GitHubPlatform(

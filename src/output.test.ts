@@ -6,12 +6,14 @@ import {
   parsePlanOutput as parsePlan,
   parseStageOutput as parseStage,
 } from "./output.ts";
+import { GITHUB } from "./platform/github/conventions.ts";
 import { DEFAULTS } from "./settings.ts";
 import type { Stage } from "./stages.ts";
 
 const limits = outputLimits(DEFAULTS);
 const parsePlanOutput = (text: string) => parsePlan(text, limits);
-const parseStageOutput = (text: string, stage: Stage) => parseStage(text, stage, limits);
+const parseStageOutput = (text: string, stage: Stage) =>
+  parseStage(text, stage, limits, GITHUB.workflows);
 
 const decision = (id: number) => ({
   id,
@@ -266,19 +268,38 @@ test("all decisions together must fit in a comment", () => {
 });
 
 test("lists what the agent must fix, with the limits it was told", () => {
-  assert.deepEqual(outputProblems(undefined, undefined, limits), ["output.json is missing."]);
-  assert.deepEqual(outputProblems("{", "code", limits), ["output.json is not valid JSON."]);
+  assert.deepEqual(outputProblems(undefined, undefined, limits, GITHUB.workflows), [
+    "output.json is missing.",
+  ]);
+  assert.deepEqual(outputProblems("{", "code", limits, GITHUB.workflows), [
+    "output.json is not valid JSON.",
+  ]);
   assert.deepEqual(
-    outputProblems(JSON.stringify({ summary: "x".repeat(5000), decisions: [] }), undefined, limits),
+    outputProblems(
+      JSON.stringify({ summary: "x".repeat(5000), decisions: [] }),
+      undefined,
+      limits,
+      GITHUB.workflows,
+    ),
     [`summary has 5000 characters; the limit is ${limits.summary}.`],
   );
   assert.deepEqual(
-    outputProblems(JSON.stringify({ summary: "x".repeat(3000), decisions: [] }), undefined, limits),
+    outputProblems(
+      JSON.stringify({ summary: "x".repeat(3000), decisions: [] }),
+      undefined,
+      limits,
+      GITHUB.workflows,
+    ),
     [],
     "within the margin",
   );
   assert.deepEqual(
-    outputProblems(JSON.stringify({ status: "done", summary: "s" }), "review", limits),
+    outputProblems(
+      JSON.stringify({ status: "done", summary: "s" }),
+      "review",
+      limits,
+      GITHUB.workflows,
+    ),
     [],
   );
 });

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { descriptionCommands } from "./commands.ts";
 import { en } from "./i18n/en.ts";
+import { GITHUB } from "./platform/github/conventions.ts";
 import type { Comment, Issue, Review, ReviewVerdict } from "./platform/types.ts";
 import { encodeStatus, type TaskRecord } from "./record.ts";
 import { renderRun } from "./status.ts";
@@ -205,7 +206,14 @@ test("the history is the App's run comments, the newest that fit, oldest first",
   const run = (id: number, title: string, login = "codeman[bot]") =>
     comment(
       id,
-      renderRun({ t: en, title, state: "coding", model: "a/b", runUrl: "https://x/runs/1" }),
+      renderRun({
+        t: en,
+        conventions: GITHUB,
+        title,
+        state: "coding",
+        model: "a/b",
+        runUrl: "https://x/runs/1",
+      }),
       login,
     );
   const comments = [
