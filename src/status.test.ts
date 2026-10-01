@@ -71,14 +71,13 @@ test("shows decisions, recommendation, answer and how to answer", () => {
   assert.ok(!renderDecisions(view).includes("/codeman decide"), "nothing left to answer");
 });
 
+const link = (id: number) => `https://github.com/o/r/issues/1#issuecomment-${id}`;
+
 test("the panel links the plan and the decisions, and shows no decision itself", () => {
   const body = renderStatus({
     ...view,
     record: { ...record, decisions: [decision], decisionsCommentId: 7 },
-    decisionsUrl: decisionsUrl("https://github.com/o/r/issues/1", {
-      ...record,
-      decisionsCommentId: 7,
-    }),
+    decisionsUrl: decisionsUrl({ ...record, decisionsCommentId: 7 }, link),
   });
   assert.match(body, /### Codeman: Waiting for your decisions/);
   assert.match(
@@ -91,7 +90,7 @@ test("the panel links the plan and the decisions, and shows no decision itself",
   );
   assert.ok(!body.includes("Storage"));
   assert.ok(!body.includes("/codeman decide"));
-  assert.equal(decisionsUrl("https://github.com/o/r/issues/1", record), undefined);
+  assert.equal(decisionsUrl(record, link), undefined);
   assert.match(renderStatus({ ...view, decisionsUrl: "https://x" }), /Decisions: \[all answered\]/);
 });
 
@@ -170,9 +169,9 @@ test("the panel shows what the task spent and links the last report", () => {
 });
 
 test("links the newest run comment of a record", () => {
-  assert.equal(reportUrl("https://github.com/o/r/issues/1", record), undefined);
+  assert.equal(reportUrl(record, link), undefined);
   assert.equal(
-    reportUrl("https://github.com/o/r/issues/1", { ...record, reportCommentId: 9 }),
+    reportUrl({ ...record, reportCommentId: 9 }, link),
     "https://github.com/o/r/issues/1#issuecomment-9",
   );
 });

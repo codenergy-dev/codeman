@@ -12,7 +12,8 @@ export interface StatusView {
   model: string;
   runUrl: string;
   planUrl?: string | undefined;
-  pullRequestUrl?: string | undefined;
+  /** The task's pull request, as the platform refers to it and links it. */
+  pullRequest?: { reference: string; url: string } | undefined;
   /** A note from Codeman itself (trusted text). */
   message?: string | undefined;
   /** Workflows the agent wrote that wait for `/codeman accept-workflows`. Untrusted names. */
@@ -45,8 +46,8 @@ export function renderStatus(view: StatusView): string {
   const head = [encodeStatus(record), `### Codeman: ${t.heading(view.state)}`, ""];
   if (view.message) head.push(view.message, "");
   if (record && view.planUrl) head.push(`${t.plan}: [${record.planPath}](${view.planUrl})`, "");
-  if (record?.pullRequest && view.pullRequestUrl) {
-    head.push(`${t.pullRequest}: [#${record.pullRequest}](${view.pullRequestUrl})`, "");
+  if (view.pullRequest) {
+    head.push(`${t.pullRequest}: [${view.pullRequest.reference}](${view.pullRequest.url})`, "");
   }
   if (record && record.decisions.length > 0 && view.decisionsUrl) {
     const pending = pendingDecisions(record).length;
@@ -178,16 +179,20 @@ export function renderRefused(t: Messages, record: TaskRecord | undefined): stri
   return [encodeStatus(record), `### Codeman: ${t.refusedHeading}`, "", t.refused].join("\n");
 }
 
+/** Links one comment on the task's issue. */
+export type CommentLink = (commentId: number) => string;
+
 /** The link to the task's decisions comment, if it has one. */
-export function decisionsUrl(issueUrl: string, record: TaskRecord | undefined): string | undefined {
-  return record?.decisionsCommentId
-    ? `${issueUrl}#issuecomment-${record.decisionsCommentId}`
-    : undefined;
+export function decisionsUrl(
+  record: TaskRecord | undefined,
+  link: CommentLink,
+): string | undefined {
+  return record?.decisionsCommentId ? link(record.decisionsCommentId) : undefined;
 }
 
 /** The link to the task's newest run comment, if it has one. */
-export function reportUrl(issueUrl: string, record: TaskRecord | undefined): string | undefined {
-  return record?.reportCommentId ? `${issueUrl}#issuecomment-${record.reportCommentId}` : undefined;
+export function reportUrl(record: TaskRecord | undefined, link: CommentLink): string | undefined {
+  return record?.reportCommentId ? link(record.reportCommentId) : undefined;
 }
 
 const RUN_MARKER = "<!-- codeman:run -->";

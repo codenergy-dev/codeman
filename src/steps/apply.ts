@@ -3,9 +3,10 @@ import { join } from "node:path";
 import * as core from "@actions/core";
 import { MIN_RUN_BUDGET, runLimit } from "../budget.ts";
 import type { Change } from "../collect.ts";
-import type { FileChange, Repository } from "../github.ts";
 import { type Messages, messages, type RunOutcome, taskLanguage } from "../i18n/index.ts";
 import { type Cut, MARGIN, outputLimits, parsePlanOutput, parseStageOutput } from "../output.ts";
+import type { Platform } from "../platform/platform.ts";
+import type { FileChange } from "../platform/types.ts";
 import {
   checkChanges,
   DEFAULT_IGNORE,
@@ -16,7 +17,7 @@ import {
   workflowPath,
 } from "../policy.ts";
 import type { CommandError } from "../problems.ts";
-import { pullRequestBody, pullRequestFooter, pullRequestTitle } from "../pull.ts";
+import { pullRequestBody, pullRequestFooter, pullRequestTitle, replaceFooter } from "../pull.ts";
 import { applyCommands, pendingDecisions, type TaskRecord, writeAnswers } from "../record.ts";
 import { addRow, parseCosts, refreshCosts, runId, type SpendRow } from "../spend.ts";
 import { nextStage, STAGE_STATE, type Stage } from "../stages.ts";
@@ -26,15 +27,15 @@ import { commandsAfter, type TaskContext } from "../tasks.ts";
 import { oneLine, safeMarkdown, truncate } from "../text.ts";
 import { checkPlanResult, decodeText, isManifest } from "../validate.ts";
 import { MAX_OUTPUT_BYTES } from "./agent.ts";
-import { fileUrl, pullUrl, readTask, repository, resultDir } from "./common.ts";
+import { platform, readTask, resultDir } from "./common.ts";
 
 /**
- * Validates what the earlier jobs produced and writes it to GitHub. Runs no LLM. Everything it
+ * Validates what the earlier jobs produced and writes it to the platform. Runs no LLM. Everything it
  * reads from the agent's result is treated as untrusted.
  */
 export async function apply(): Promise<void> {
   const task = readTask();
-  const repo = repository();
+  const repo = platform();
   const chain = chains(task.action, core.getInput("key-job-result"), core.getInput("key-status"));
   if (task.action === "record") await recordAnswers(task, repo);
   else if (task.action === "accept") await acceptWorkflows(task, repo);
@@ -56,7 +57,7 @@ export function chains(action: TaskContext["action"], keyJob: string, keyStatus:
 }
 
 /** Handles a run in which no key was created. Returns true if it did. */
-async function keyFailed(task: TaskContext, repo: Repository): Promise<boolean> {
+async function keyFailed(task: TaskContext, repo: Platform): Promise<boolean> {
   const t = say(task);
   if (core.getInput("key-job-result") !== "success") {
     await finish(repo, task, "blocked", {
@@ -94,7 +95,7 @@ async function keyFailed(task: TaskContext, repo: Repository): Promise<boolean> 
   return false;
 }
 
-async function applyPlan(task: TaskContext, repo: Repository): Promise<void> {
+async function applyPlan(task: TaskContext, repo: Platform): Promise<void> {
   if (core.getInput("agent-job-result") !== "success") {
     const t = say(task);
     return finish(repo, task, "blocked", {
@@ -155,7 +156,7 @@ async function applyPlan(task: TaskContext, repo: Repository): Promise<void> {
  * Commits a stage's work to the task branch, whatever its outcome, so no work is lost; then
  * moves the task to the next stage, or back, or to a human. Review commits nothing.
  */
-async function applyStage(task: TaskContext, repo: Repository): Promise<void> {
+async function applyStage(task: TaskContext, repo: Platform): Promise<void> {
   if (!task.record) return blocked(repo, task, "The task has no record of its plan.");
   const stage = task.stage ?? "code";
   const t = say(task);
@@ -420,7 +421,7 @@ const STAGE_NAMES: Record<Stage, string> = {
  * for review once review passes. Repositories without draft pull requests get a regular one.
  */
 async function openPullRequest(
-  repo: Repository,
+  repo: Platform,
   task: TaskContext,
   record: TaskRecord,
   mode: "draft" | "ready",
@@ -429,9 +430,9 @@ async function openPullRequest(
   const title = pullRequestTitle(task.title);
   const body = pullRequestBody({
     t,
-    issue: task.number,
+    closes: repo.closingReference(task.number),
     planPath: task.planPath,
-    planUrl: fileUrl(task, task.planPath),
+    planUrl: repo.fileUrl(task.branch, task.planPath),
     planSummary: record.summary,
     summary:
       mode === "ready"
@@ -441,9 +442,9 @@ async function openPullRequest(
     runUrl: task.runUrl,
     spent: spentLine(t, task, runCosts(task).task),
   });
-  const existing = await repo.findPullRequest(task.branch);
+  const existing = await repo.findChangeRequest(task.branch);
   if (existing === undefined) {
-    return repo.openPullRequest({
+    return repo.openChangeRequest({
       head: task.branch,
       base: task.defaultBranch,
       title,
@@ -451,21 +452,21 @@ async function openPullRequest(
       draft: mode === "draft",
     });
   }
-  await repo.updatePullRequest(existing, { title, body });
+  await repo.updateChangeRequest(existing, { title, body });
   if (mode === "ready") await repo.markReady(existing);
   return existing;
 }
 
 /** Posts the review report on the pull request, as safe Markdown. */
 async function postReview(
-  repo: Repository,
+  repo: Platform,
   t: Messages,
   task: TaskContext,
   record: TaskRecord,
   report: string,
   changes: string | undefined,
 ): Promise<void> {
-  const pullRequest = record.pullRequest ?? (await repo.findPullRequest(task.branch));
+  const pullRequest = record.pullRequest ?? (await repo.findChangeRequest(task.branch));
   if (pullRequest === undefined) return;
   const body = [
     `### ${t.reviewHeading}`,
@@ -475,7 +476,14 @@ async function postReview(
     "",
     `<sub>[${t.run}](${task.runUrl})</sub>`,
   ].join("\n");
-  await repo.comment(pullRequest, body);
+  await repo.commentOnChangeRequest(pullRequest, body);
+}
+
+/** Updates the last line of Codeman's description, if a human has not removed it. */
+async function updateFooter(repo: Platform, number: number, footer: string): Promise<void> {
+  const { title, body } = await repo.getChangeRequest(number);
+  const updated = replaceFooter(body, footer);
+  if (updated !== body) await repo.updateChangeRequest(number, { title, body: updated });
 }
 
 /**
@@ -483,7 +491,7 @@ async function postReview(
  * may write workflows, if they are what the maintainer saw: the staged files must not have
  * changed since the comment that accepted them.
  */
-async function acceptWorkflows(task: TaskContext, repo: Repository): Promise<void> {
+async function acceptWorkflows(task: TaskContext, repo: Platform): Promise<void> {
   const accept = task.accept;
   if (!task.record || !accept) return blocked(repo, task, "Nothing to accept.");
   const t = say(task);
@@ -509,7 +517,7 @@ async function acceptWorkflows(task: TaskContext, repo: Repository): Promise<voi
   }
 
   const moved = [...staged.keys()].map(workflowPath);
-  await repository("workflow-token").commit({
+  await platform("workflow-token").commit({
     branch: task.branch,
     baseSha: head,
     createBranch: false,
@@ -656,7 +664,7 @@ function readChanges(
   });
 }
 
-async function recordAnswers(task: TaskContext, repo: Repository): Promise<void> {
+async function recordAnswers(task: TaskContext, repo: Platform): Promise<void> {
   if (!task.record) return blocked(repo, task, "The task has no record of its decisions.");
   const sources = commandsAfter(task.comments, task.record.processedCommentId);
   const { record, errors } = applyCommands(task.record, sources);
@@ -710,7 +718,7 @@ export function commandError(t: Messages, error: CommandError): string {
 }
 
 function blocked(
-  repo: Repository,
+  repo: Platform,
   task: TaskContext,
   error: string,
   more: readonly string[] = [],
@@ -727,7 +735,7 @@ function blocked(
 }
 
 async function finish(
-  repo: Repository,
+  repo: Platform,
   task: TaskContext,
   state: State | "new",
   view: {
@@ -824,17 +832,23 @@ async function finish(
       record,
       model: task.model,
       runUrl: task.runUrl,
-      planUrl: record ? fileUrl(task, record.planPath) : undefined,
-      pullRequestUrl: record?.pullRequest ? pullUrl(task, record.pullRequest) : undefined,
+      planUrl: record ? repo.fileUrl(task.branch, record.planPath) : undefined,
+      pullRequest: record?.pullRequest
+        ? {
+            reference: repo.changeRequestReference(record.pullRequest),
+            url: repo.changeRequestUrl(record.pullRequest),
+          }
+        : undefined,
       message: view.message,
       staged,
       cost: spent,
-      reportUrl: reportUrl(task.url, record),
-      decisionsUrl: decisionsUrl(task.url, record),
+      reportUrl: reportUrl(record, (id) => repo.commentUrl(task.url, id)),
+      decisionsUrl: decisionsUrl(record, (id) => repo.commentUrl(task.url, id)),
     }),
   );
   if (record?.pullRequest && !view.pullRequestWritten) {
-    await repo.updatePullRequestFooter(
+    await updateFooter(
+      repo,
       record.pullRequest,
       pullRequestFooter(t, task.runUrl, spentLine(t, task, record.spent)),
     );

@@ -6,7 +6,7 @@ import { pullRequestBody, pullRequestFooter, pullRequestTitle, replaceFooter } f
 
 const view = {
   t: en,
-  issue: 12,
+  closes: "Closes #12",
   planPath: "plans/x.md",
   planUrl: "https://github.com/o/r/blob/codeman/12-x/plans/x.md",
   planSummary: "Adds rate limiting.",

@@ -1,8 +1,8 @@
 import { spawnSync } from "node:child_process";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Repository } from "./github.ts";
-import type { WorkflowRun } from "./tasks.ts";
+import type { CiResults } from "./platform/platform.ts";
+import type { CiRun } from "./platform/types.ts";
 
 export const RESULTS_DIR = ".codeman/results";
 export const MAX_LOG_BYTES = 64 * 1024;
@@ -34,8 +34,8 @@ export function logTail(log: string, max = MAX_LOG_BYTES): string {
  * is untrusted.
  */
 export async function downloadResults(
-  repo: Repository,
-  runs: readonly WorkflowRun[],
+  ci: CiResults,
+  runs: readonly CiRun[],
   dir: string,
 ): Promise<void> {
   rmSync(dir, { recursive: true, force: true });
@@ -53,11 +53,11 @@ export async function downloadResults(
       "",
     ];
 
-    for (const job of await repo.runJobs(run.id)) {
+    for (const job of await ci.runJobs(run.id)) {
       lines.push(`- Job "${job.name}": ${job.conclusion ?? "unknown"}`);
       if (job.conclusion === "success" || job.conclusion === "skipped") continue;
       try {
-        const log = logTail(await repo.jobLog(job.id));
+        const log = logTail(await ci.jobLog(job.id));
         writeFileSync(join(runDir, "logs", `${job.id}-${safeName(job.name)}.txt`), log);
       } catch {
         lines.push("  (its log could not be downloaded)");
@@ -65,16 +65,16 @@ export async function downloadResults(
     }
 
     lines.push("");
-    for (const artifact of await repo.runArtifacts(run.id)) {
+    for (const artifact of await ci.runArtifacts(run.id)) {
       const name = safeName(artifact.name);
       if (artifact.expired) {
         lines.push(`- Artifact "${name}": expired`);
-      } else if (artifact.size_in_bytes > budget) {
+      } else if (artifact.bytes > budget) {
         lines.push(`- Artifact "${name}": skipped, over the ${MAX_ARTIFACT_BYTES} byte limit`);
       } else {
-        budget -= artifact.size_in_bytes;
+        budget -= artifact.bytes;
         const target = join(runDir, "artifacts", name);
-        const extracted = extract(await repo.downloadArtifact(artifact.id), target);
+        const extracted = extract(await ci.downloadArtifact(artifact.id), target);
         lines.push(
           `- Artifact "${name}": ${extracted ? `artifacts/${name}/` : "could not be extracted"}`,
         );

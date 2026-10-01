@@ -2,7 +2,9 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import * as core from "@actions/core";
 import * as github from "@actions/github";
-import { Repository } from "../github.ts";
+import { GitHubActionsResults } from "../platform/github/ci.ts";
+import { contextRepository, GitHubPlatform, octokit } from "../platform/github/platform.ts";
+import type { CiResults, Platform } from "../platform/platform.ts";
 import type { TaskContext } from "../tasks.ts";
 
 export function positiveNumber(name: string): number {
@@ -26,22 +28,25 @@ export function readTask(): TaskContext {
   return task;
 }
 
-export function repository(input = "github-token"): Repository {
-  const octokit = github.getOctokit(core.getInput(input, { required: true }));
-  const { owner, repo } = github.context.repo;
-  return new Repository(octokit, owner, repo);
+export function platform(input = "github-token", appSlug?: string): Platform {
+  return new GitHubPlatform(
+    octokit(core.getInput(input, { required: true })),
+    contextRepository(),
+    {
+      appSlug,
+    },
+  );
+}
+
+export function ciResults(input = "github-token"): CiResults {
+  return new GitHubActionsResults(
+    octokit(core.getInput(input, { required: true })),
+    contextRepository(),
+  );
 }
 
 export function runUrl(): string {
   const { serverUrl, runId } = github.context;
   const { owner, repo } = github.context.repo;
   return `${serverUrl}/${owner}/${repo}/actions/runs/${runId}`;
-}
-
-export function fileUrl(task: TaskContext, path: string): string {
-  return `${github.context.serverUrl}/${task.owner}/${task.repo}/blob/${task.branch}/${path}`;
-}
-
-export function pullUrl(task: TaskContext, number: number): string {
-  return `${github.context.serverUrl}/${task.owner}/${task.repo}/pull/${number}`;
 }

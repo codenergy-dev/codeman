@@ -4,7 +4,8 @@ import { oneLine, safeInline, safeMarkdown } from "./text.ts";
 export interface PullRequestView {
   /** The task's language. */
   t: Messages;
-  issue: number;
+  /** The line that closes the task's issue when the pull request merges. */
+  closes: string;
   planPath: string;
   planUrl: string;
   /** The plan's summary, from the task record. */
@@ -28,7 +29,7 @@ export function pullRequestBody(view: PullRequestView): string {
   const longest = Math.max(0, ...(view.commitMessage.match(/`+/g) ?? []).map((run) => run.length));
   const fence = "`".repeat(Math.max(3, longest + 1));
   return [
-    `Closes #${view.issue}`,
+    view.closes,
     "",
     `### ${t.plan}`,
     "",

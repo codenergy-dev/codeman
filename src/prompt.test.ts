@@ -154,7 +154,7 @@ test("the implementation prompt carries requests and review comments", () => {
         {
           id: 7,
           author: "bob",
-          state: "CHANGES_REQUESTED",
+          verdict: "changes-requested",
           body: "See inline.",
           comments: [{ path: "src/a.ts", line: 3, body: "Use a constant." }],
         },
@@ -165,7 +165,7 @@ test("the implementation prompt carries requests and review comments", () => {
   assert.match(prompt, /## Requests/);
   assert.match(prompt, /Address every request/);
   assert.match(prompt, /<<<FIX by alice [0-9a-f]{12}\nRename the endpoint\./);
-  assert.match(prompt, /<<<REVIEW by bob \(CHANGES_REQUESTED\) [0-9a-f]{12}\nSee inline\./);
+  assert.match(prompt, /<<<REVIEW by bob \(changes-requested\) [0-9a-f]{12}\nSee inline\./);
   assert.match(prompt, /<<<LINE COMMENT on src\/a\.ts:3 [0-9a-f]{12}\nUse a constant\./);
 });
 
@@ -176,7 +176,14 @@ test("the implementation prompt points to the results of awaited workflows", () 
     {
       ...base,
       workflowRuns: [
-        { id: 9, name: "iOS", path: ".github/workflows/ios.yml", conclusion: "failure", url: "u" },
+        {
+          id: 9,
+          name: "iOS",
+          path: ".github/workflows/ios.yml",
+          finished: true,
+          conclusion: "failure",
+          url: "u",
+        },
       ],
     },
     45,

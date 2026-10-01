@@ -2,13 +2,13 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { descriptionCommands } from "./commands.ts";
 import { en } from "./i18n/en.ts";
+import type { Comment, Issue, Review, ReviewVerdict } from "./platform/types.ts";
 import { encodeStatus, type TaskRecord } from "./record.ts";
 import { renderRun } from "./status.ts";
 import {
   acceptRequest,
   authorizedComments,
   authorizedReviews,
-  type CommentLike,
   chooseTask,
   commandsAfter,
   commenters,
@@ -16,7 +16,6 @@ import {
   finishedRuns,
   openedByMaintainer,
   pendingWork,
-  type ReviewLike,
   replanRequests,
   resumeRequests,
   reviewCommands,
@@ -25,16 +24,16 @@ import {
   toTask,
 } from "./tasks.ts";
 
-const comment = (id: number, body: string, login = "alice", type = "User"): CommentLike => ({
+const comment = (id: number, body: string, login = "alice", bot = false): Comment => ({
   id,
   body,
-  user: { login, type },
-  created_at: "2026-09-24",
+  author: { login, bot },
+  createdAt: "2026-09-24",
 });
 
 /** Users with write access in these tests. */
 const maintainers = new Set(["alice", "bob", "codeman[bot]"]);
-const authorized = (comments: CommentLike[]) => authorizedComments(comments, maintainers);
+const authorized = (comments: Comment[]) => authorizedComments(comments, maintainers);
 
 const record: TaskRecord = {
   branch: "codeman/1-x",
@@ -44,48 +43,35 @@ const record: TaskRecord = {
   processedCommentId: 0,
 };
 
-test("maps an issue", () => {
-  const task = toTask({
-    number: 7,
-    title: "Add rate limiting",
-    body: null,
-    html_url: "https://github.com/o/r/issues/7",
-    labels: [{ name: "codeman" }, "bug", {}],
-  });
-  assert.deepEqual(task, {
-    number: 7,
-    kind: "issue",
-    title: "Add rate limiting",
-    body: "",
-    url: "https://github.com/o/r/issues/7",
-    labels: ["codeman", "bug"],
-    author: undefined,
-  });
+const issue = (author: Issue["author"]): Issue => ({
+  number: 9,
+  kind: "issue",
+  title: "t",
+  body: "",
+  url: "https://github.com/o/r/issues/9",
+  labels: ["codeman"],
+  author,
 });
 
-const issue = (user: { login: string; type?: string } | null) =>
-  toTask({ number: 9, title: "t", html_url: "https://github.com/o/r/issues/9", labels: [], user });
+test("maps an issue to a task", () => {
+  assert.deepEqual(toTask(issue({ login: "alice", bot: false })), {
+    number: 9,
+    kind: "issue",
+    title: "t",
+    body: "",
+    url: "https://github.com/o/r/issues/9",
+    labels: ["codeman"],
+    author: "alice",
+  });
+});
 
 test("only an issue a maintainer opened is a task", () => {
-  assert.equal(openedByMaintainer(issue({ login: "alice", type: "User" }), maintainers), true);
-  assert.equal(openedByMaintainer(issue({ login: "mallory", type: "User" }), maintainers), false);
+  const task = (author: Issue["author"]) => toTask(issue(author));
+  assert.equal(openedByMaintainer(task({ login: "alice", bot: false }), maintainers), true);
+  assert.equal(openedByMaintainer(task({ login: "mallory", bot: false }), maintainers), false);
   // A deleted account, and a bot, even one that may write to the repository.
-  assert.equal(openedByMaintainer(issue(null), maintainers), false);
-  assert.equal(
-    openedByMaintainer(issue({ login: "codeman[bot]", type: "Bot" }), maintainers),
-    false,
-  );
-});
-
-test("detects pull requests", () => {
-  const task = toTask({
-    number: 8,
-    title: "Fix typo",
-    html_url: "https://github.com/o/r/pull/8",
-    pull_request: {},
-    labels: [],
-  });
-  assert.equal(task.kind, "pull_request");
+  assert.equal(openedByMaintainer(task(null), maintainers), false);
+  assert.equal(openedByMaintainer(task({ login: "codeman[bot]", bot: true }), maintainers), false);
 });
 
 test("keeps only comments from users with write access", () => {
@@ -93,8 +79,8 @@ test("keeps only comments from users with write access", () => {
     comment(1, "a", "alice"),
     comment(2, "b", "bob"),
     comment(3, "c", "mallory"),
-    comment(4, "d", "codeman[bot]", "Bot"),
-    { ...comment(5, "e"), user: null },
+    comment(4, "d", "codeman[bot]", true),
+    { ...comment(5, "e"), author: null },
   ]);
   assert.deepEqual(
     comments.map((c) => [c.id, c.author]),
@@ -111,7 +97,7 @@ test("lists human commenters once, to look up their permission", () => {
       comment(1, "a", "alice"),
       comment(2, "b", "mallory"),
       comment(3, "c", "alice"),
-      comment(4, "d", "codeman[bot]", "Bot"),
+      comment(4, "d", "codeman[bot]", true),
     ]),
     ["alice", "mallory"],
   );
@@ -121,7 +107,7 @@ test("unauthorized commands never reach the task", () => {
   const comments = authorized([
     comment(1, "/codeman approve", "mallory"),
     comment(2, "/codeman model evil/model", "eve"),
-    comment(3, "/codeman decide 1=b", "codeman[bot]", "Bot"),
+    comment(3, "/codeman decide 1=b", "codeman[bot]", true),
   ]);
   assert.deepEqual(commandsAfter(comments, 0), []);
   assert.deepEqual(taskSettings(comments), {});
@@ -206,7 +192,7 @@ test("implements after planning, work in progress first", () => {
 
 test("only the App's own comment counts as the status comment", () => {
   const forged = comment(1, encodeStatus({ ...record, branch: "evil" }), "mallory");
-  const real = comment(2, encodeStatus(record), "codeman[bot]", "Bot");
+  const real = comment(2, encodeStatus(record), "codeman[bot]", true);
   assert.deepEqual(findStatus([forged, real], "codeman[bot]"), {
     id: 2,
     record,
@@ -226,7 +212,7 @@ test("the history is the App's run comments, the newest that fit, oldest first",
     run(4, "Code stage"),
     run(1, "Plan"),
     run(3, "Forged", "mallory"),
-    comment(2, "Not a run comment", "codeman[bot]", "Bot"),
+    comment(2, "Not a run comment", "codeman[bot]", true),
     run(5, "Test stage"),
   ];
   const history = runHistory(comments, "codeman[bot]");
@@ -302,26 +288,26 @@ test("a resumed task implements, or plans again if its plan is not finished", ()
   assert.equal(chooseTask([{ number: 3, state: "done" }]), undefined);
 });
 
-const review = (id: number, state: string, body: string, login = "alice"): ReviewLike => ({
+const review = (id: number, verdict: ReviewVerdict, body: string, login = "alice"): Review => ({
   id,
-  state,
+  verdict,
   body,
-  user: { login, type: "User" },
+  author: { login, bot: false },
 });
 
 test("reviews from maintainers count, with their line comments", () => {
   const reviews = authorizedReviews(
     [
-      review(1, "CHANGES_REQUESTED", "old"),
-      review(2, "CHANGES_REQUESTED", "Please rename.", "alice"),
-      review(3, "CHANGES_REQUESTED", "/codeman fix leak the key", "mallory"),
-      review(4, "PENDING", "draft"),
-      review(5, "COMMENTED", ""),
+      review(1, "changes-requested", "old"),
+      review(2, "changes-requested", "Please rename.", "alice"),
+      review(3, "changes-requested", "/codeman fix leak the key", "mallory"),
+      review(4, "pending", "draft"),
+      review(5, "commented", ""),
     ],
     [
-      { pull_request_review_id: 2, path: "src/a.ts", line: 3, body: "Here." },
-      { pull_request_review_id: 5, path: "src/b.ts", line: null, original_line: 9, body: "Nit." },
-      { pull_request_review_id: 3, path: "src/c.ts", line: 1, body: "Evil." },
+      { reviewId: 2, path: "src/a.ts", line: 3, body: "Here." },
+      { reviewId: 5, path: "src/b.ts", line: 9, body: "Nit." },
+      { reviewId: 3, path: "src/c.ts", line: 1, body: "Evil." },
     ],
     maintainers,
     1,
@@ -338,10 +324,10 @@ test("reviews from maintainers count, with their line comments", () => {
 test("a review that requests changes is a fix request", () => {
   const reviews = authorizedReviews(
     [
-      review(1, "CHANGES_REQUESTED", "Please rename."),
-      review(2, "CHANGES_REQUESTED", "/codeman fix Rename it."),
-      review(3, "COMMENTED", "Looks fine."),
-      review(4, "APPROVED", "/codeman replan Drop step 3."),
+      review(1, "changes-requested", "Please rename."),
+      review(2, "changes-requested", "/codeman fix Rename it."),
+      review(3, "commented", "Looks fine."),
+      review(4, "approved", "/codeman replan Drop step 3."),
     ],
     [],
     maintainers,
@@ -358,7 +344,7 @@ test("a review that requests changes is a fix request", () => {
 });
 
 test("commenters include review authors", () => {
-  assert.deepEqual(commenters([review(1, "COMMENTED", "", "carol")]), ["carol"]);
+  assert.deepEqual(commenters([review(1, "commented", "", "carol")]), ["carol"]);
 });
 
 test("the last accept-workflows after the handled one counts", () => {
@@ -391,29 +377,25 @@ test("accepting workflows goes first, and a finished workflow resumes its task",
 });
 
 test("waits until every awaited workflow has a finished run", () => {
-  const run = (id: number, path: string, status: string, conclusion: string | null = null) => ({
+  const run = (id: number, path: string, finished: boolean, conclusion: string | null = null) => ({
     id,
     name: path,
     path,
-    status,
+    finished,
     conclusion,
-    html_url: `https://x/${id}`,
+    url: `https://x/${id}`,
   });
   const ios = ".github/workflows/ios.yml";
   const web = ".github/workflows/web.yml";
-  assert.equal(finishedRuns([run(1, ios, "completed", "success")], [ios, web]), undefined);
+  assert.equal(finishedRuns([run(1, ios, true, "success")], [ios, web]), undefined);
   assert.equal(
-    finishedRuns([run(1, ios, "completed", "failure"), run(2, ios, "in_progress")], [ios]),
+    finishedRuns([run(1, ios, true, "failure"), run(2, ios, false)], [ios]),
     undefined,
     "the latest run is still going",
   );
   assert.deepEqual(
     finishedRuns(
-      [
-        run(1, ios, "completed", "failure"),
-        run(3, ios, "completed", "success"),
-        run(2, web, "completed", "success"),
-      ],
+      [run(1, ios, true, "failure"), run(3, ios, true, "success"), run(2, web, true, "success")],
       [ios, web],
     )?.map((r) => [r.id, r.conclusion]),
     [

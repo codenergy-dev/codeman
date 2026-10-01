@@ -331,7 +331,7 @@ function requestsSection(task: TaskContext, quote: Quote): string {
         comment.body,
       ),
     );
-    return [quote(`REVIEW by ${review.author} (${review.state})`, review.body), ...comments].join(
+    return [quote(`REVIEW by ${review.author} (${review.verdict})`, review.body), ...comments].join(
       "\n\n",
     );
   });

@@ -1,4 +1,12 @@
 import { type Command, parseCommands } from "./commands.ts";
+import type {
+  CiRun,
+  Comment,
+  Issue,
+  Review,
+  ReviewComment,
+  ReviewVerdict,
+} from "./platform/types.ts";
 import type { CommandError } from "./problems.ts";
 import {
   type CommandSource,
@@ -12,21 +20,9 @@ import { type Stage, stageOfState } from "./stages.ts";
 import type { State } from "./state.ts";
 import { isRunComment, runCommentText } from "./status.ts";
 
-/** The subset of a GitHub issue (or pull request) that Codeman reads. */
-export interface IssueLike {
-  number: number;
-  title: string;
-  body?: string | null;
-  html_url: string;
-  pull_request?: unknown;
-  labels: ReadonlyArray<string | { name?: string }>;
-  /** Null for a deleted account. */
-  user?: { login: string; type?: string } | null;
-}
-
 export interface Task {
   number: number;
-  kind: "issue" | "pull_request";
+  kind: Issue["kind"];
   title: string;
   body: string;
   url: string;
@@ -35,17 +31,15 @@ export interface Task {
   author: string | undefined;
 }
 
-export function toTask(issue: IssueLike): Task {
+export function toTask(issue: Issue): Task {
   return {
     number: issue.number,
-    kind: issue.pull_request ? "pull_request" : "issue",
+    kind: issue.kind,
     title: issue.title,
-    body: issue.body ?? "",
-    url: issue.html_url,
-    labels: issue.labels
-      .map((label) => (typeof label === "string" ? label : (label.name ?? "")))
-      .filter((name) => name !== ""),
-    author: issue.user && issue.user.type !== "Bot" ? issue.user.login : undefined,
+    body: issue.body,
+    url: issue.url,
+    labels: issue.labels,
+    author: issue.author && !issue.author.bot ? issue.author.login : undefined,
   };
 }
 
@@ -57,14 +51,6 @@ export function openedByMaintainer(task: Task, maintainers: ReadonlySet<string>)
   return task.author !== undefined && maintainers.has(task.author);
 }
 
-/** The subset of a GitHub issue comment that Codeman reads. */
-export interface CommentLike {
-  id: number;
-  body?: string | undefined;
-  user: { login: string; type?: string } | null;
-  created_at: string;
-}
-
 export interface TaskComment {
   id: number;
   author: string;
@@ -72,91 +58,35 @@ export interface TaskComment {
   createdAt: string;
 }
 
-/** A finished run of a workflow the agent asked for. */
-export interface WorkflowRun {
-  id: number;
-  name: string;
-  path: string;
-  conclusion: string | null;
-  url: string;
-}
-
-/** The subset of a GitHub Actions run that Codeman reads. */
-export interface WorkflowRunLike {
-  id: number;
-  name?: string | null;
-  path: string;
-  status: string | null;
-  conclusion: string | null;
-  html_url: string;
-}
-
 /**
  * The runs of the awaited workflows, if every one of them has run and finished. A workflow may
  * start more than one run for a commit (a rerun, for example); the latest counts.
  */
 export function finishedRuns(
-  runs: readonly WorkflowRunLike[],
+  runs: readonly CiRun[],
   awaited: readonly string[],
-): WorkflowRun[] | undefined {
+): CiRun[] | undefined {
   const latest = awaited.map(
     (path) => runs.filter((run) => run.path === path).sort((a, b) => b.id - a.id)[0],
   );
-  if (latest.length === 0 || latest.some((run) => run?.status !== "completed")) {
-    return undefined;
-  }
-  return latest.flatMap((run) =>
-    run
-      ? [
-          {
-            id: run.id,
-            name: run.name ?? run.path,
-            path: run.path,
-            conclusion: run.conclusion,
-            url: run.html_url,
-          },
-        ]
-      : [],
-  );
-}
-
-/** The subset of a pull request review that Codeman reads. */
-export interface ReviewLike {
-  id: number;
-  body?: string | null;
-  state: string;
-  user: { login: string; type?: string } | null;
-}
-
-/** The subset of a pull request review comment (on a line of the diff) that Codeman reads. */
-export interface ReviewCommentLike {
-  pull_request_review_id: number | null;
-  path: string;
-  line?: number | null;
-  original_line?: number | null;
-  body: string;
+  if (latest.length === 0 || latest.some((run) => !run?.finished)) return undefined;
+  return latest.flatMap((run) => (run ? [run] : []));
 }
 
 export interface TaskReview {
   id: number;
   author: string;
-  /** GitHub's review state, such as `CHANGES_REQUESTED` or `COMMENTED`. */
-  state: string;
+  verdict: ReviewVerdict;
   body: string;
   comments: { path: string; line: number | null; body: string }[];
 }
 
-/** Repository permissions that make a user a maintainer. `maintain` is reported as `write`. */
-export const MAINTAINER_PERMISSIONS: ReadonlySet<string> = new Set(["admin", "write"]);
-
 /** Human commenters, whose permission on the repository decides whether their comments count. */
-export function commenters(
-  comments: readonly { user: { login: string; type?: string } | null }[],
-): string[] {
+export function commenters(comments: readonly Pick<Comment, "author">[]): string[] {
   return [
     ...new Set(
       comments.flatMap((comment) =>
-        comment.user && comment.user.type !== "Bot" ? [comment.user.login] : [],
+        comment.author && !comment.author.bot ? [comment.author.login] : [],
       ),
     ),
   ];
@@ -164,21 +94,20 @@ export function commenters(
 
 /**
  * Comments from maintainers: users with write access to the repository. Everything else is
- * ignored, including by the agent. (`author_association` is not used: GitHub computes it for
- * the reader, and an App token sees private organization members as contributors.)
+ * ignored, including by the agent.
  */
 export function authorizedComments(
-  comments: readonly CommentLike[],
+  comments: readonly Comment[],
   maintainers: ReadonlySet<string>,
 ): TaskComment[] {
   return comments.flatMap((comment) =>
-    comment.user && comment.user.type !== "Bot" && maintainers.has(comment.user.login)
+    comment.author && !comment.author.bot && maintainers.has(comment.author.login)
       ? [
           {
             id: comment.id,
-            author: comment.user.login,
-            body: comment.body ?? "",
-            createdAt: comment.created_at,
+            author: comment.author.login,
+            body: comment.body,
+            createdAt: comment.createdAt,
           },
         ]
       : [],
@@ -187,8 +116,8 @@ export function authorizedComments(
 
 /** Submitted reviews from maintainers, newer than `afterId`, with their line comments. */
 export function authorizedReviews(
-  reviews: readonly ReviewLike[],
-  comments: readonly ReviewCommentLike[],
+  reviews: readonly Review[],
+  comments: readonly ReviewComment[],
   maintainers: ReadonlySet<string>,
   afterId: number,
 ): TaskReview[] {
@@ -196,24 +125,20 @@ export function authorizedReviews(
     .filter(
       (review) =>
         review.id > afterId &&
-        review.state !== "PENDING" &&
-        review.user &&
-        review.user.type !== "Bot" &&
-        maintainers.has(review.user.login),
+        review.verdict !== "pending" &&
+        review.author &&
+        !review.author.bot &&
+        maintainers.has(review.author.login),
     )
     .sort((a, b) => a.id - b.id)
     .map((review) => ({
       id: review.id,
-      author: review.user?.login ?? "",
-      state: review.state,
-      body: review.body ?? "",
+      author: review.author?.login ?? "",
+      verdict: review.verdict,
+      body: review.body,
       comments: comments
-        .filter((comment) => comment.pull_request_review_id === review.id)
-        .map((comment) => ({
-          path: comment.path,
-          line: comment.line ?? comment.original_line ?? null,
-          body: comment.body,
-        })),
+        .filter((comment) => comment.reviewId === review.id)
+        .map(({ path, line, body }) => ({ path, line, body })),
     }));
 }
 
@@ -225,7 +150,7 @@ export function reviewCommands(reviews: readonly TaskReview[]): CommandSource[] 
   return reviews.flatMap((review) => {
     const commands = parseCommands(review.body);
     const implicit: Command[] =
-      review.state === "CHANGES_REQUESTED" && !commands.some((command) => command.kind === "fix")
+      review.verdict === "changes-requested" && !commands.some((command) => command.kind === "fix")
         ? [{ kind: "fix", text: review.body.trim() }]
         : [];
     return [...commands, ...implicit].map((command) => ({
@@ -414,7 +339,7 @@ export interface TaskContext {
   /** For `accept`: the comment that accepted the staged workflows. */
   accept?: TaskComment | undefined;
   /** Finished runs of the workflows the agent waited for, whose results it gets. */
-  workflowRuns?: WorkflowRun[] | undefined;
+  workflowRuns?: CiRun[] | undefined;
   /** For `implement`: Codeman's earlier run comments on the task, oldest first. */
   history?: TaskComment[] | undefined;
   fromState: State | "new";
@@ -445,20 +370,20 @@ export const MAX_HISTORY = 20_000;
  * characters. Only comments by the App count, as with the status comment.
  */
 export function runHistory(
-  comments: readonly CommentLike[],
+  comments: readonly Comment[],
   bot: string,
   max = MAX_HISTORY,
 ): TaskComment[] {
   const runs = comments
-    .filter((comment) => comment.user?.login === bot && isRunComment(comment.body ?? ""))
+    .filter((comment) => comment.author?.login === bot && isRunComment(comment.body))
     .sort((a, b) => b.id - a.id);
   const kept: TaskComment[] = [];
   let size = 0;
   for (const comment of runs) {
-    const body = runCommentText(comment.body ?? "");
+    const body = runCommentText(comment.body);
     size += body.length;
     if (size > max) break;
-    kept.unshift({ id: comment.id, author: bot, body, createdAt: comment.created_at });
+    kept.unshift({ id: comment.id, author: bot, body, createdAt: comment.createdAt });
   }
   return kept;
 }
@@ -468,11 +393,11 @@ export function runHistory(
  * contains the marker.
  */
 export function findStatus(
-  comments: readonly CommentLike[],
+  comments: readonly Comment[],
   bot: string,
 ): { id: number; record: TaskRecord | undefined; body: string } | undefined {
   const comment = comments.find(
-    (candidate) => candidate.user?.login === bot && isStatusComment(candidate.body ?? ""),
+    (candidate) => candidate.author?.login === bot && isStatusComment(candidate.body),
   );
   const body = comment?.body ?? "";
   return comment ? { id: comment.id, record: decodeStatus(body), body } : undefined;

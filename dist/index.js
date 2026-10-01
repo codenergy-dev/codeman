@@ -20590,9 +20590,9 @@ function openCodeConfig(model, instructions) {
 var openCode = {
   name: "opencode",
   async install(dir) {
-    const platform2 = `${process.platform}-${process.arch}`;
-    const pkg = PACKAGES[platform2];
-    if (!pkg) throw new Error(`The OpenCode harness does not support ${platform2} runners.`);
+    const platform3 = `${process.platform}-${process.arch}`;
+    const pkg = PACKAGES[platform3];
+    if (!pkg) throw new Error(`The OpenCode harness does not support ${platform3} runners.`);
     const url = `https://registry.npmjs.org/${pkg.name}/-/${pkg.name}-${OPENCODE_VERSION}.tgz`;
     const response = await fetch(url);
     if (!response.ok) throw new Error(`Downloading ${url} failed with ${response.status}.`);
@@ -21574,7 +21574,7 @@ function logTail(log, max = MAX_LOG_BYTES) {
   return `[... ${bytes.length - max} earlier bytes omitted ...]
 ${bytes.subarray(bytes.length - max).toString("utf8")}`;
 }
-async function downloadResults(repo, runs, dir) {
+async function downloadResults(ci, runs, dir) {
   rmSync3(dir, { recursive: true, force: true });
   mkdirSync3(dir, { recursive: true });
   let budget = MAX_ARTIFACT_BYTES;
@@ -21588,27 +21588,27 @@ async function downloadResults(repo, runs, dir) {
       `Conclusion: ${run2.conclusion ?? "unknown"}. Run: ${run2.url}`,
       ""
     ];
-    for (const job of await repo.runJobs(run2.id)) {
+    for (const job of await ci.runJobs(run2.id)) {
       lines.push(`- Job "${job.name}": ${job.conclusion ?? "unknown"}`);
       if (job.conclusion === "success" || job.conclusion === "skipped") continue;
       try {
-        const log = logTail(await repo.jobLog(job.id));
+        const log = logTail(await ci.jobLog(job.id));
         writeFileSync3(join4(runDir, "logs", `${job.id}-${safeName(job.name)}.txt`), log);
       } catch {
         lines.push("  (its log could not be downloaded)");
       }
     }
     lines.push("");
-    for (const artifact of await repo.runArtifacts(run2.id)) {
+    for (const artifact of await ci.runArtifacts(run2.id)) {
       const name = safeName(artifact.name);
       if (artifact.expired) {
         lines.push(`- Artifact "${name}": expired`);
-      } else if (artifact.size_in_bytes > budget) {
+      } else if (artifact.bytes > budget) {
         lines.push(`- Artifact "${name}": skipped, over the ${MAX_ARTIFACT_BYTES} byte limit`);
       } else {
-        budget -= artifact.size_in_bytes;
+        budget -= artifact.bytes;
         const target = join4(runDir, "artifacts", name);
-        const extracted = extract(await repo.downloadArtifact(artifact.id), target);
+        const extracted = extract(await ci.downloadArtifact(artifact.id), target);
         lines.push(
           `- Artifact "${name}": ${extracted ? `artifacts/${name}/` : "could not be extracted"}`
         );
@@ -21898,7 +21898,7 @@ function requestsSection(task, quote) {
         comment.body
       )
     );
-    return [quote(`REVIEW by ${review.author} (${review.state})`, review.body), ...comments].join(
+    return [quote(`REVIEW by ${review.author} (${review.verdict})`, review.body), ...comments].join(
       "\n\n"
     );
   });
@@ -25900,7 +25900,7 @@ var handler = {
   set(target, methodName, value) {
     return target.cache[methodName] = value;
   },
-  get({ octokit, scope, cache }, methodName) {
+  get({ octokit: octokit2, scope, cache }, methodName) {
     if (cache[methodName]) {
       return cache[methodName];
     }
@@ -25911,27 +25911,27 @@ var handler = {
     const { endpointDefaults, decorations } = method;
     if (decorations) {
       cache[methodName] = decorate(
-        octokit,
+        octokit2,
         scope,
         methodName,
         endpointDefaults,
         decorations
       );
     } else {
-      cache[methodName] = octokit.request.defaults(endpointDefaults);
+      cache[methodName] = octokit2.request.defaults(endpointDefaults);
     }
     return cache[methodName];
   }
 };
-function endpointsToMethods(octokit) {
+function endpointsToMethods(octokit2) {
   const newMethods = {};
   for (const scope of endpointMethodsMap.keys()) {
-    newMethods[scope] = new Proxy({ octokit, scope, cache: {} }, handler);
+    newMethods[scope] = new Proxy({ octokit: octokit2, scope, cache: {} }, handler);
   }
   return newMethods;
 }
-function decorate(octokit, scope, methodName, defaults2, decorations) {
-  const requestWithDefaults = octokit.request.defaults(defaults2);
+function decorate(octokit2, scope, methodName, defaults2, decorations) {
+  const requestWithDefaults = octokit2.request.defaults(defaults2);
   function withDecorations(...args) {
     let options = requestWithDefaults.endpoint.merge(...args);
     if (decorations.mapToData) {
@@ -25943,12 +25943,12 @@ function decorate(octokit, scope, methodName, defaults2, decorations) {
     }
     if (decorations.renamed) {
       const [newScope, newMethodName] = decorations.renamed;
-      octokit.log.warn(
+      octokit2.log.warn(
         `octokit.${scope}.${methodName}() has been renamed to octokit.${newScope}.${newMethodName}()`
       );
     }
     if (decorations.deprecated) {
-      octokit.log.warn(decorations.deprecated);
+      octokit2.log.warn(decorations.deprecated);
     }
     if (decorations.renamedParameters) {
       const options2 = requestWithDefaults.endpoint.merge(...args);
@@ -25956,7 +25956,7 @@ function decorate(octokit, scope, methodName, defaults2, decorations) {
         decorations.renamedParameters
       )) {
         if (name in options2) {
-          octokit.log.warn(
+          octokit2.log.warn(
             `"${name}" parameter is deprecated for "octokit.${scope}.${methodName}()". Use "${alias}" instead`
           );
           if (!(alias in options2)) {
@@ -25973,15 +25973,15 @@ function decorate(octokit, scope, methodName, defaults2, decorations) {
 }
 
 // node_modules/@octokit/plugin-rest-endpoint-methods/dist-src/index.js
-function restEndpointMethods(octokit) {
-  const api = endpointsToMethods(octokit);
+function restEndpointMethods(octokit2) {
+  const api = endpointsToMethods(octokit2);
   return {
     rest: api
   };
 }
 restEndpointMethods.VERSION = VERSION6;
-function legacyRestEndpointMethods(octokit) {
-  const api = endpointsToMethods(octokit);
+function legacyRestEndpointMethods(octokit2) {
+  const api = endpointsToMethods(octokit2);
   return {
     ...api,
     rest: api
@@ -26021,9 +26021,9 @@ function normalizePaginatedListResponse(response) {
   response.data.total_commits = totalCommits;
   return response;
 }
-function iterator(octokit, route, parameters) {
-  const options = typeof route === "function" ? route.endpoint(parameters) : octokit.request.endpoint(route, parameters);
-  const requestMethod = typeof route === "function" ? route : octokit.request;
+function iterator(octokit2, route, parameters) {
+  const options = typeof route === "function" ? route.endpoint(parameters) : octokit2.request.endpoint(route, parameters);
+  const requestMethod = typeof route === "function" ? route : octokit2.request;
   const method = options.method;
   const headers = options.headers;
   let url = options.url;
@@ -26063,19 +26063,19 @@ function iterator(octokit, route, parameters) {
     })
   };
 }
-function paginate(octokit, route, parameters, mapFn) {
+function paginate(octokit2, route, parameters, mapFn) {
   if (typeof parameters === "function") {
     mapFn = parameters;
     parameters = void 0;
   }
   return gather(
-    octokit,
+    octokit2,
     [],
-    iterator(octokit, route, parameters)[Symbol.asyncIterator](),
+    iterator(octokit2, route, parameters)[Symbol.asyncIterator](),
     mapFn
   );
 }
-function gather(octokit, results, iterator2, mapFn) {
+function gather(octokit2, results, iterator2, mapFn) {
   return iterator2.next().then((result) => {
     if (result.done) {
       return results;
@@ -26090,16 +26090,16 @@ function gather(octokit, results, iterator2, mapFn) {
     if (earlyExit) {
       return results;
     }
-    return gather(octokit, results, iterator2, mapFn);
+    return gather(octokit2, results, iterator2, mapFn);
   });
 }
 var composePaginateRest = Object.assign(paginate, {
   iterator
 });
-function paginateRest(octokit) {
+function paginateRest(octokit2) {
   return {
-    paginate: Object.assign(paginate.bind(null, octokit), {
-      iterator: iterator.bind(null, octokit)
+    paginate: Object.assign(paginate.bind(null, octokit2), {
+      iterator: iterator.bind(null, octokit2)
     })
   };
 }
@@ -26136,39 +26136,68 @@ function getOctokit(token, options, ...additionalPlugins) {
   return new GitHubWithPlugins(getOctokitOptions(token, options));
 }
 
-// src/pull.ts
-function pullRequestTitle(issueTitle) {
-  return oneLine(issueTitle).trim().slice(0, 256) || "Codeman task";
+// src/platform/github/ci.ts
+function toCiRun(run2) {
+  return {
+    id: run2.id,
+    name: run2.name ?? run2.path,
+    path: run2.path,
+    finished: run2.status === "completed",
+    conclusion: run2.conclusion,
+    url: run2.html_url
+  };
 }
-function pullRequestBody(view) {
-  const { t } = view;
-  const longest = Math.max(0, ...(view.commitMessage.match(/`+/g) ?? []).map((run2) => run2.length));
-  const fence = "`".repeat(Math.max(3, longest + 1));
-  return [
-    `Closes #${view.issue}`,
-    "",
-    `### ${t.plan}`,
-    "",
-    safeInline(view.planSummary),
-    "",
-    `${t.fullPlan}: [${view.planPath}](${view.planUrl})`,
-    "",
-    `### ${t.changes}`,
-    "",
-    safeMarkdown(view.summary),
-    "",
-    ...view.commitMessage ? [`### ${t.squashMessage}`, "", `${fence}text`, view.commitMessage, fence, ""] : [],
-    pullRequestFooter(t, view.runUrl, view.spent)
-  ].join("\n");
-}
-var FOOTER_MARKER = "<!-- codeman:footer -->";
-var FOOTER = /^(?:<!-- codeman:footer -->|<sub>Opened by Codeman\b).*$/m;
-function pullRequestFooter(t, runUrl2, spent) {
-  return `${FOOTER_MARKER}${t.pullRequestFooter(spent, runUrl2)}`;
-}
-function replaceFooter(body, footer) {
-  return FOOTER.test(body) ? body.replace(FOOTER, () => footer) : body;
-}
+var GitHubActionsResults = class {
+  #octokit;
+  #scope;
+  constructor(client, repository) {
+    this.#octokit = client;
+    this.#scope = { owner: repository.owner, repo: repository.name };
+  }
+  async runsForCommit(sha) {
+    const { data } = await this.#octokit.rest.actions.listWorkflowRunsForRepo({
+      ...this.#scope,
+      head_sha: sha,
+      per_page: 100
+    });
+    return data.workflow_runs.map(toCiRun);
+  }
+  async runJobs(runId2) {
+    const jobs = await this.#octokit.paginate(this.#octokit.rest.actions.listJobsForWorkflowRun, {
+      ...this.#scope,
+      run_id: runId2,
+      per_page: 100
+    });
+    return jobs.map((job) => ({ id: job.id, name: job.name, conclusion: job.conclusion }));
+  }
+  async jobLog(jobId) {
+    const response = await this.#octokit.rest.actions.downloadJobLogsForWorkflowRun({
+      ...this.#scope,
+      job_id: jobId
+    });
+    return typeof response.data === "string" ? response.data : String(response.data);
+  }
+  async runArtifacts(runId2) {
+    const artifacts = await this.#octokit.paginate(
+      this.#octokit.rest.actions.listWorkflowRunArtifacts,
+      { ...this.#scope, run_id: runId2, per_page: 100 }
+    );
+    return artifacts.map((artifact) => ({
+      id: artifact.id,
+      name: artifact.name,
+      bytes: artifact.size_in_bytes,
+      expired: artifact.expired
+    }));
+  }
+  async downloadArtifact(artifactId) {
+    const response = await this.#octokit.rest.actions.downloadArtifact({
+      ...this.#scope,
+      artifact_id: artifactId,
+      archive_format: "zip"
+    });
+    return Buffer.from(response.data);
+  }
+};
 
 // src/state.ts
 var OPT_IN_LABEL = "codeman";
@@ -26199,49 +26228,248 @@ function stateOf(labels) {
   };
 }
 
-// src/github.ts
-var Repository = class {
+// src/platform/github/platform.ts
+function octokit(token) {
+  return getOctokit(token);
+}
+function contextRepository() {
+  const { owner, repo } = context2.repo;
+  return { owner, name: repo };
+}
+function toUser(user) {
+  return user ? { login: user.login, bot: user.type === "Bot" } : null;
+}
+function toIssue(issue2) {
+  return {
+    number: issue2.number,
+    kind: issue2.pull_request ? "change-request" : "issue",
+    title: issue2.title,
+    body: issue2.body ?? "",
+    url: issue2.html_url,
+    labels: labelNames(issue2.labels),
+    author: toUser(issue2.user)
+  };
+}
+function toComment(comment) {
+  return {
+    id: comment.id,
+    author: toUser(comment.user),
+    body: comment.body ?? "",
+    createdAt: comment.created_at
+  };
+}
+var VERDICTS = {
+  APPROVED: "approved",
+  CHANGES_REQUESTED: "changes-requested",
+  COMMENTED: "commented",
+  DISMISSED: "dismissed",
+  PENDING: "pending"
+};
+function toReview(review) {
+  return {
+    id: review.id,
+    author: toUser(review.user),
+    verdict: VERDICTS[review.state] ?? "commented",
+    body: review.body ?? ""
+  };
+}
+function toReviewComment(comment) {
+  return {
+    reviewId: comment.pull_request_review_id,
+    path: comment.path,
+    line: comment.line ?? comment.original_line ?? null,
+    body: comment.body
+  };
+}
+function labelNames(labels) {
+  return labels.map((label) => typeof label === "string" ? label : label.name ?? "").filter((name) => name !== "");
+}
+var MAINTAINER_PERMISSIONS = /* @__PURE__ */ new Set(["admin", "write"]);
+var GitHubPlatform = class {
   #octokit;
-  owner;
-  repo;
-  constructor(octokit, owner, repo) {
-    this.#octokit = octokit;
-    this.owner = owner;
-    this.repo = repo;
+  repository;
+  #serverUrl;
+  #appSlug;
+  constructor(client, repository, options = {}) {
+    this.#octokit = client;
+    this.repository = repository;
+    this.#serverUrl = options.serverUrl ?? context2.serverUrl;
+    this.#appSlug = options.appSlug;
   }
   get #scope() {
-    return { owner: this.owner, repo: this.repo };
+    return { owner: this.repository.owner, repo: this.repository.name };
   }
-  listOptedIn() {
-    return this.#octokit.paginate(this.#octokit.rest.issues.listForRepo, {
+  get #web() {
+    return `${this.#serverUrl}/${this.repository.owner}/${this.repository.name}`;
+  }
+  async listOptedIn() {
+    const issues = await this.#octokit.paginate(this.#octokit.rest.issues.listForRepo, {
       ...this.#scope,
       state: "open",
       labels: OPT_IN_LABEL,
       per_page: 100
     });
+    return issues.map(toIssue);
   }
-  listComments(issue2) {
-    return this.#octokit.paginate(this.#octokit.rest.issues.listComments, {
+  async currentLabels(issue2) {
+    const { data } = await this.#octokit.rest.issues.get({ ...this.#scope, issue_number: issue2 });
+    return data.labels.map((label) => typeof label === "string" ? label : label.name ?? "");
+  }
+  async setState(issue2, labels, state) {
+    for (const other of STATES) {
+      const label = stateLabel(other);
+      if (other !== state && labels.includes(label)) {
+        try {
+          await this.#octokit.rest.issues.removeLabel({
+            ...this.#scope,
+            issue_number: issue2,
+            name: label
+          });
+        } catch (error2) {
+          if (status(error2) !== 404) throw error2;
+        }
+      }
+    }
+    if (state !== "new") {
+      await this.#octokit.rest.issues.addLabels({
+        ...this.#scope,
+        issue_number: issue2,
+        labels: [stateLabel(state)]
+      });
+    }
+  }
+  async listComments(issue2) {
+    const comments = await this.#octokit.paginate(this.#octokit.rest.issues.listComments, {
       ...this.#scope,
       issue_number: issue2,
       per_page: 100
     });
+    return comments.map(toComment);
   }
-  listReviews(pullRequest) {
-    return this.#octokit.paginate(this.#octokit.rest.pulls.listReviews, {
+  /** A pull request is an issue: its conversation is the issue's. */
+  listChangeRequestComments(number3) {
+    return this.listComments(number3);
+  }
+  async comment(issue2, body) {
+    const { data } = await this.#octokit.rest.issues.createComment({
       ...this.#scope,
-      pull_number: pullRequest,
+      issue_number: issue2,
+      body
+    });
+    return data.id;
+  }
+  commentOnChangeRequest(number3, body) {
+    return this.comment(number3, body);
+  }
+  async upsertComment(issue2, commentId, body) {
+    if (commentId !== null) {
+      try {
+        await this.#octokit.rest.issues.updateComment({
+          ...this.#scope,
+          comment_id: commentId,
+          body
+        });
+        return commentId;
+      } catch (error2) {
+        if (status(error2) !== 404) throw error2;
+      }
+    }
+    return this.comment(issue2, body);
+  }
+  async findChangeRequest(branch) {
+    const { data } = await this.#octokit.rest.pulls.list({
+      ...this.#scope,
+      head: `${this.repository.owner}:${branch}`,
+      state: "open",
+      per_page: 1
+    });
+    return data[0]?.number;
+  }
+  async getChangeRequest(number3) {
+    const { data } = await this.#octokit.rest.pulls.get({ ...this.#scope, pull_number: number3 });
+    return { title: data.title, body: data.body ?? "", draft: data.draft ?? false };
+  }
+  /** Drafts are not available in private repositories on some plans. */
+  async openChangeRequest(options) {
+    try {
+      const { data } = await this.#octokit.rest.pulls.create({ ...this.#scope, ...options });
+      return data.number;
+    } catch (error2) {
+      if (!options.draft || status(error2) !== 422) throw error2;
+      const { data } = await this.#octokit.rest.pulls.create({
+        ...this.#scope,
+        ...options,
+        draft: false
+      });
+      return data.number;
+    }
+  }
+  async updateChangeRequest(number3, options) {
+    await this.#octokit.rest.pulls.update({ ...this.#scope, pull_number: number3, ...options });
+  }
+  /** REST cannot; GraphQL can. */
+  async markReady(number3) {
+    const { data } = await this.#octokit.rest.pulls.get({ ...this.#scope, pull_number: number3 });
+    if (!data.draft) return;
+    await this.#octokit.graphql(
+      "mutation($id: ID!) { markPullRequestReadyForReview(input: { pullRequestId: $id }) { clientMutationId } }",
+      { id: data.node_id }
+    );
+  }
+  async listReviews(number3) {
+    const reviews = await this.#octokit.paginate(this.#octokit.rest.pulls.listReviews, {
+      ...this.#scope,
+      pull_number: number3,
       per_page: 100
     });
+    return reviews.map(toReview);
   }
-  listReviewComments(pullRequest) {
-    return this.#octokit.paginate(this.#octokit.rest.pulls.listReviewComments, {
+  async listReviewComments(number3) {
+    const comments = await this.#octokit.paginate(this.#octokit.rest.pulls.listReviewComments, {
       ...this.#scope,
-      pull_number: pullRequest,
+      pull_number: number3,
       per_page: 100
     });
+    return comments.map(toReviewComment);
   }
-  /** The commit a branch pointed to at `time`: its newest commit up to then. */
+  /**
+   * From the user's legacy permission on the repository. `author_association` is not used:
+   * GitHub computes it for the reader, and an App token sees private organization members as
+   * contributors.
+   */
+  async isMaintainer(login) {
+    try {
+      const { data } = await this.#octokit.rest.repos.getCollaboratorPermissionLevel({
+        ...this.#scope,
+        username: login
+      });
+      return MAINTAINER_PERMISSIONS.has(data.permission);
+    } catch (error2) {
+      if (status(error2) === 404) return false;
+      throw error2;
+    }
+  }
+  /** The GitHub App's bot account. Only the App can post as it. */
+  self() {
+    if (!this.#appSlug) throw new Error("The GitHub App's slug is not set.");
+    return `${this.#appSlug}[bot]`;
+  }
+  async defaultBranch() {
+    const { data } = await this.#octokit.rest.repos.get(this.#scope);
+    return data.default_branch;
+  }
+  async branchSha(branch) {
+    try {
+      const { data } = await this.#octokit.rest.git.getRef({
+        ...this.#scope,
+        ref: `heads/${branch}`
+      });
+      return data.object.sha;
+    } catch (error2) {
+      if (status(error2) === 404) return void 0;
+      throw error2;
+    }
+  }
   async commitAt(branch, time) {
     const { data } = await this.#octokit.rest.repos.listCommits({
       ...this.#scope,
@@ -26251,11 +26479,20 @@ var Repository = class {
     });
     return data[0]?.sha;
   }
-  /** Regular files under `prefix` in a commit, with their blob SHAs. */
-  async filesUnder(commit, prefix) {
+  async readFile(ref, path) {
+    try {
+      const { data } = await this.#octokit.rest.repos.getContent({ ...this.#scope, path, ref });
+      if (Array.isArray(data) || data.type !== "file") return void 0;
+      return Buffer.from(data.content, "base64").toString("utf8");
+    } catch (error2) {
+      if (status(error2) === 404) return void 0;
+      throw error2;
+    }
+  }
+  async filesUnder(ref, prefix) {
     const { data } = await this.#octokit.rest.git.getTree({
       ...this.#scope,
-      tree_sha: commit,
+      tree_sha: ref,
       recursive: "true"
     });
     if (data.truncated) throw new Error("The repository's tree is too large to list.");
@@ -26270,87 +26507,9 @@ var Repository = class {
     }
     return files;
   }
-  /** Workflow runs for one commit. */
-  async runsForCommit(sha) {
-    const { data } = await this.#octokit.rest.actions.listWorkflowRunsForRepo({
-      ...this.#scope,
-      head_sha: sha,
-      per_page: 100
-    });
-    return data.workflow_runs;
-  }
-  async runJobs(runId2) {
-    return this.#octokit.paginate(this.#octokit.rest.actions.listJobsForWorkflowRun, {
-      ...this.#scope,
-      run_id: runId2,
-      per_page: 100
-    });
-  }
-  async jobLog(jobId) {
-    const response = await this.#octokit.rest.actions.downloadJobLogsForWorkflowRun({
-      ...this.#scope,
-      job_id: jobId
-    });
-    return typeof response.data === "string" ? response.data : String(response.data);
-  }
-  async runArtifacts(runId2) {
-    return this.#octokit.paginate(this.#octokit.rest.actions.listWorkflowRunArtifacts, {
-      ...this.#scope,
-      run_id: runId2,
-      per_page: 100
-    });
-  }
-  async downloadArtifact(artifactId) {
-    const response = await this.#octokit.rest.actions.downloadArtifact({
-      ...this.#scope,
-      artifact_id: artifactId,
-      archive_format: "zip"
-    });
-    return Buffer.from(response.data);
-  }
-  /** The user's legacy permission on the repository: admin, write, read or none. */
-  async permission(username) {
-    try {
-      const { data } = await this.#octokit.rest.repos.getCollaboratorPermissionLevel({
-        ...this.#scope,
-        username
-      });
-      return data.permission;
-    } catch (error2) {
-      if (status(error2) === 404) return "none";
-      throw error2;
-    }
-  }
-  async defaultBranch() {
-    const { data } = await this.#octokit.rest.repos.get(this.#scope);
-    return data.default_branch;
-  }
-  /** The commit a branch points to, or undefined if the branch does not exist. */
-  async branchSha(branch) {
-    try {
-      const { data } = await this.#octokit.rest.git.getRef({
-        ...this.#scope,
-        ref: `heads/${branch}`
-      });
-      return data.object.sha;
-    } catch (error2) {
-      if (status(error2) === 404) return void 0;
-      throw error2;
-    }
-  }
-  async readFile(ref, path) {
-    try {
-      const { data } = await this.#octokit.rest.repos.getContent({ ...this.#scope, path, ref });
-      if (Array.isArray(data) || data.type !== "file") return void 0;
-      return Buffer.from(data.content, "base64").toString("utf8");
-    } catch (error2) {
-      if (status(error2) === 404) return void 0;
-      throw error2;
-    }
-  }
   /**
-   * Commits through the Git Data API, so no git process runs on files the agent produced, and
-   * GitHub signs the commit as the App. Fails if the branch moved since `baseSha`.
+   * Through the Git Data API, so GitHub signs the commit as the App. `updateRef` without `force`
+   * fails if the branch moved since `baseSha`.
    */
   async commit(options) {
     const git = this.#octokit.rest.git;
@@ -26397,111 +26556,20 @@ var Repository = class {
     }
     return commit.data.sha;
   }
-  /** The open pull request from `branch`, if any. */
-  async findPullRequest(branch) {
-    const { data } = await this.#octokit.rest.pulls.list({
-      ...this.#scope,
-      head: `${this.owner}:${branch}`,
-      state: "open",
-      per_page: 1
-    });
-    return data[0]?.number;
+  fileUrl(branch, path) {
+    return `${this.#web}/blob/${branch}/${path}`;
   }
-  /**
-   * Opens a pull request. A draft falls back to a regular pull request where drafts are not
-   * available (private repositories on some plans).
-   */
-  async openPullRequest(options) {
-    try {
-      const { data } = await this.#octokit.rest.pulls.create({ ...this.#scope, ...options });
-      return data.number;
-    } catch (error2) {
-      if (!options.draft || status(error2) !== 422) throw error2;
-      const { data } = await this.#octokit.rest.pulls.create({
-        ...this.#scope,
-        ...options,
-        draft: false
-      });
-      return data.number;
-    }
+  changeRequestUrl(number3) {
+    return `${this.#web}/pull/${number3}`;
   }
-  /** Marks a draft pull request ready for review. REST cannot; GraphQL can. */
-  async markReady(number3) {
-    const { data } = await this.#octokit.rest.pulls.get({ ...this.#scope, pull_number: number3 });
-    if (!data.draft) return;
-    await this.#octokit.graphql(
-      "mutation($id: ID!) { markPullRequestReadyForReview(input: { pullRequestId: $id }) { clientMutationId } }",
-      { id: data.node_id }
-    );
+  commentUrl(issueUrl, commentId) {
+    return `${issueUrl}#issuecomment-${commentId}`;
   }
-  /** Comments on an issue or pull request, and returns the comment's ID. */
-  async comment(issue2, body) {
-    const { data } = await this.#octokit.rest.issues.createComment({
-      ...this.#scope,
-      issue_number: issue2,
-      body
-    });
-    return data.id;
+  changeRequestReference(number3) {
+    return `#${number3}`;
   }
-  async updatePullRequest(number3, options) {
-    await this.#octokit.rest.pulls.update({ ...this.#scope, pull_number: number3, ...options });
-  }
-  /** Updates the last line of Codeman's description, if a human has not removed it. */
-  async updatePullRequestFooter(number3, footer) {
-    const { data } = await this.#octokit.rest.pulls.get({ ...this.#scope, pull_number: number3 });
-    const body = data.body ?? "";
-    const updated = replaceFooter(body, footer);
-    if (updated !== body)
-      await this.updatePullRequest(number3, { title: data.title, body: updated });
-  }
-  /** Leaves exactly one state label on the issue (none for `new`). */
-  async setState(issue2, labels, state) {
-    for (const other of STATES) {
-      const label = stateLabel(other);
-      if (other !== state && labels.includes(label)) {
-        try {
-          await this.#octokit.rest.issues.removeLabel({
-            ...this.#scope,
-            issue_number: issue2,
-            name: label
-          });
-        } catch (error2) {
-          if (status(error2) !== 404) throw error2;
-        }
-      }
-    }
-    if (state !== "new") {
-      await this.#octokit.rest.issues.addLabels({
-        ...this.#scope,
-        issue_number: issue2,
-        labels: [stateLabel(state)]
-      });
-    }
-  }
-  async currentLabels(issue2) {
-    const { data } = await this.#octokit.rest.issues.get({ ...this.#scope, issue_number: issue2 });
-    return data.labels.map((label) => typeof label === "string" ? label : label.name ?? "");
-  }
-  /** Updates one of Codeman's comments, or creates it if it is new or gone, and returns its ID. */
-  async upsertComment(issue2, commentId, body) {
-    if (commentId !== null) {
-      try {
-        await this.#octokit.rest.issues.updateComment({
-          ...this.#scope,
-          comment_id: commentId,
-          body
-        });
-        return commentId;
-      } catch (error2) {
-        if (status(error2) !== 404) throw error2;
-      }
-    }
-    const { data } = await this.#octokit.rest.issues.createComment({
-      ...this.#scope,
-      issue_number: issue2,
-      body
-    });
-    return data.id;
+  closingReference(issue2) {
+    return `Closes #${issue2}`;
   }
 };
 function status(error2) {
@@ -26525,21 +26593,25 @@ function readTask() {
   if (task.version !== 1) throw new Error("The task file has an unknown version.");
   return task;
 }
-function repository(input = "github-token") {
-  const octokit = getOctokit(getInput(input, { required: true }));
-  const { owner, repo } = context2.repo;
-  return new Repository(octokit, owner, repo);
+function platform2(input = "github-token", appSlug) {
+  return new GitHubPlatform(
+    octokit(getInput(input, { required: true })),
+    contextRepository(),
+    {
+      appSlug
+    }
+  );
+}
+function ciResults(input = "github-token") {
+  return new GitHubActionsResults(
+    octokit(getInput(input, { required: true })),
+    contextRepository()
+  );
 }
 function runUrl() {
   const { serverUrl, runId: runId2 } = context2;
   const { owner, repo } = context2.repo;
   return `${serverUrl}/${owner}/${repo}/actions/runs/${runId2}`;
-}
-function fileUrl(task, path) {
-  return `${context2.serverUrl}/${task.owner}/${task.repo}/blob/${task.branch}/${path}`;
-}
-function pullUrl(task, number3) {
-  return `${context2.serverUrl}/${task.owner}/${task.repo}/pull/${number3}`;
 }
 
 // src/steps/agent.ts
@@ -26570,7 +26642,7 @@ async function agent() {
   if (task.workflowRuns?.length) {
     startGroup("Download the results of the workflows the agent asked for");
     const results = join6(workdir(), "workflow-results");
-    await downloadResults(repository(), task.workflowRuns, results);
+    await downloadResults(ciResults(), task.workflowRuns, results);
     copyToAgent(results, `${worktree}/${RESULTS_DIR}`);
     endGroup();
   }
@@ -26777,6 +26849,40 @@ var OpenRouter = class {
     return response.json();
   }
 };
+
+// src/pull.ts
+function pullRequestTitle(issueTitle) {
+  return oneLine(issueTitle).trim().slice(0, 256) || "Codeman task";
+}
+function pullRequestBody(view) {
+  const { t } = view;
+  const longest = Math.max(0, ...(view.commitMessage.match(/`+/g) ?? []).map((run2) => run2.length));
+  const fence = "`".repeat(Math.max(3, longest + 1));
+  return [
+    view.closes,
+    "",
+    `### ${t.plan}`,
+    "",
+    safeInline(view.planSummary),
+    "",
+    `${t.fullPlan}: [${view.planPath}](${view.planUrl})`,
+    "",
+    `### ${t.changes}`,
+    "",
+    safeMarkdown(view.summary),
+    "",
+    ...view.commitMessage ? [`### ${t.squashMessage}`, "", `${fence}text`, view.commitMessage, fence, ""] : [],
+    pullRequestFooter(t, view.runUrl, view.spent)
+  ].join("\n");
+}
+var FOOTER_MARKER = "<!-- codeman:footer -->";
+var FOOTER = /^(?:<!-- codeman:footer -->|<sub>Opened by Codeman\b).*$/m;
+function pullRequestFooter(t, runUrl2, spent) {
+  return `${FOOTER_MARKER}${t.pullRequestFooter(spent, runUrl2)}`;
+}
+function replaceFooter(body, footer) {
+  return FOOTER.test(body) ? body.replace(FOOTER, () => footer) : body;
+}
 
 // src/record.ts
 import { gunzipSync, gzipSync } from "node:zlib";
@@ -27010,8 +27116,8 @@ function renderStatus(view) {
   const head = [encodeStatus(record), `### Codeman: ${t.heading(view.state)}`, ""];
   if (view.message) head.push(view.message, "");
   if (record && view.planUrl) head.push(`${t.plan}: [${record.planPath}](${view.planUrl})`, "");
-  if (record?.pullRequest && view.pullRequestUrl) {
-    head.push(`${t.pullRequest}: [#${record.pullRequest}](${view.pullRequestUrl})`, "");
+  if (view.pullRequest) {
+    head.push(`${t.pullRequest}: [${view.pullRequest.reference}](${view.pullRequest.url})`, "");
   }
   if (record && record.decisions.length > 0 && view.decisionsUrl) {
     const pending = pendingDecisions(record).length;
@@ -27106,11 +27212,11 @@ function answeredLine(t, decision) {
 function renderRefused(t, record) {
   return [encodeStatus(record), `### Codeman: ${t.refusedHeading}`, "", t.refused].join("\n");
 }
-function decisionsUrl(issueUrl, record) {
-  return record?.decisionsCommentId ? `${issueUrl}#issuecomment-${record.decisionsCommentId}` : void 0;
+function decisionsUrl(record, link) {
+  return record?.decisionsCommentId ? link(record.decisionsCommentId) : void 0;
 }
-function reportUrl(issueUrl, record) {
-  return record?.reportCommentId ? `${issueUrl}#issuecomment-${record.reportCommentId}` : void 0;
+function reportUrl(record, link) {
+  return record?.reportCommentId ? link(record.reportCommentId) : void 0;
 }
 var RUN_MARKER = "<!-- codeman:run -->";
 function isRunComment(body) {
@@ -27277,12 +27383,12 @@ function finishText(open2) {
 function toTask(issue2) {
   return {
     number: issue2.number,
-    kind: issue2.pull_request ? "pull_request" : "issue",
+    kind: issue2.kind,
     title: issue2.title,
-    body: issue2.body ?? "",
-    url: issue2.html_url,
-    labels: issue2.labels.map((label) => typeof label === "string" ? label : label.name ?? "").filter((name) => name !== ""),
-    author: issue2.user && issue2.user.type !== "Bot" ? issue2.user.login : void 0
+    body: issue2.body,
+    url: issue2.url,
+    labels: issue2.labels,
+    author: issue2.author && !issue2.author.bot ? issue2.author.login : void 0
   };
 }
 function openedByMaintainer(task, maintainers) {
@@ -27292,62 +27398,45 @@ function finishedRuns(runs, awaited) {
   const latest = awaited.map(
     (path) => runs.filter((run2) => run2.path === path).sort((a, b) => b.id - a.id)[0]
   );
-  if (latest.length === 0 || latest.some((run2) => run2?.status !== "completed")) {
-    return void 0;
-  }
-  return latest.flatMap(
-    (run2) => run2 ? [
-      {
-        id: run2.id,
-        name: run2.name ?? run2.path,
-        path: run2.path,
-        conclusion: run2.conclusion,
-        url: run2.html_url
-      }
-    ] : []
-  );
+  if (latest.length === 0 || latest.some((run2) => !run2?.finished)) return void 0;
+  return latest.flatMap((run2) => run2 ? [run2] : []);
 }
-var MAINTAINER_PERMISSIONS = /* @__PURE__ */ new Set(["admin", "write"]);
 function commenters(comments) {
   return [
     ...new Set(
       comments.flatMap(
-        (comment) => comment.user && comment.user.type !== "Bot" ? [comment.user.login] : []
+        (comment) => comment.author && !comment.author.bot ? [comment.author.login] : []
       )
     )
   ];
 }
 function authorizedComments(comments, maintainers) {
   return comments.flatMap(
-    (comment) => comment.user && comment.user.type !== "Bot" && maintainers.has(comment.user.login) ? [
+    (comment) => comment.author && !comment.author.bot && maintainers.has(comment.author.login) ? [
       {
         id: comment.id,
-        author: comment.user.login,
-        body: comment.body ?? "",
-        createdAt: comment.created_at
+        author: comment.author.login,
+        body: comment.body,
+        createdAt: comment.createdAt
       }
     ] : []
   );
 }
 function authorizedReviews(reviews, comments, maintainers, afterId) {
   return reviews.filter(
-    (review) => review.id > afterId && review.state !== "PENDING" && review.user && review.user.type !== "Bot" && maintainers.has(review.user.login)
+    (review) => review.id > afterId && review.verdict !== "pending" && review.author && !review.author.bot && maintainers.has(review.author.login)
   ).sort((a, b) => a.id - b.id).map((review) => ({
     id: review.id,
-    author: review.user?.login ?? "",
-    state: review.state,
-    body: review.body ?? "",
-    comments: comments.filter((comment) => comment.pull_request_review_id === review.id).map((comment) => ({
-      path: comment.path,
-      line: comment.line ?? comment.original_line ?? null,
-      body: comment.body
-    }))
+    author: review.author?.login ?? "",
+    verdict: review.verdict,
+    body: review.body,
+    comments: comments.filter((comment) => comment.reviewId === review.id).map(({ path, line, body }) => ({ path, line, body }))
   }));
 }
 function reviewCommands(reviews) {
   return reviews.flatMap((review) => {
     const commands = parseCommands(review.body);
-    const implicit = review.state === "CHANGES_REQUESTED" && !commands.some((command) => command.kind === "fix") ? [{ kind: "fix", text: review.body.trim() }] : [];
+    const implicit = review.verdict === "changes-requested" && !commands.some((command) => command.kind === "fix") ? [{ kind: "fix", text: review.body.trim() }] : [];
     return [...commands, ...implicit].map((command) => ({
       commentId: 0,
       author: review.author,
@@ -27422,20 +27511,20 @@ function chooseTask(candidates) {
 }
 var MAX_HISTORY = 2e4;
 function runHistory(comments, bot, max = MAX_HISTORY) {
-  const runs = comments.filter((comment) => comment.user?.login === bot && isRunComment(comment.body ?? "")).sort((a, b) => b.id - a.id);
+  const runs = comments.filter((comment) => comment.author?.login === bot && isRunComment(comment.body)).sort((a, b) => b.id - a.id);
   const kept = [];
   let size = 0;
   for (const comment of runs) {
-    const body = runCommentText(comment.body ?? "");
+    const body = runCommentText(comment.body);
     size += body.length;
     if (size > max) break;
-    kept.unshift({ id: comment.id, author: bot, body, createdAt: comment.created_at });
+    kept.unshift({ id: comment.id, author: bot, body, createdAt: comment.createdAt });
   }
   return kept;
 }
 function findStatus(comments, bot) {
   const comment = comments.find(
-    (candidate) => candidate.user?.login === bot && isStatusComment(candidate.body ?? "")
+    (candidate) => candidate.author?.login === bot && isStatusComment(candidate.body)
   );
   const body = comment?.body ?? "";
   return comment ? { id: comment.id, record: decodeStatus(body), body } : void 0;
@@ -27444,7 +27533,7 @@ function findStatus(comments, bot) {
 // src/steps/apply.ts
 async function apply() {
   const task = readTask();
-  const repo = repository();
+  const repo = platform2();
   const chain = chains(task.action, getInput("key-job-result"), getInput("key-status"));
   if (task.action === "record") await recordAnswers(task, repo);
   else if (task.action === "accept") await acceptWorkflows(task, repo);
@@ -27765,18 +27854,18 @@ async function openPullRequest(repo, task, record, mode) {
   const title = pullRequestTitle(task.title);
   const body = pullRequestBody({
     t,
-    issue: task.number,
+    closes: repo.closingReference(task.number),
     planPath: task.planPath,
-    planUrl: fileUrl(task, task.planPath),
+    planUrl: repo.fileUrl(task.branch, task.planPath),
     planSummary: record.summary,
     summary: mode === "ready" ? t.readySummary(record.reports?.code, record.reports?.test) : t.draftSummary,
     commitMessage: record.commitMessage ?? "",
     runUrl: task.runUrl,
     spent: spentLine(t, task, runCosts(task).task)
   });
-  const existing = await repo.findPullRequest(task.branch);
+  const existing = await repo.findChangeRequest(task.branch);
   if (existing === void 0) {
-    return repo.openPullRequest({
+    return repo.openChangeRequest({
       head: task.branch,
       base: task.defaultBranch,
       title,
@@ -27784,12 +27873,12 @@ async function openPullRequest(repo, task, record, mode) {
       draft: mode === "draft"
     });
   }
-  await repo.updatePullRequest(existing, { title, body });
+  await repo.updateChangeRequest(existing, { title, body });
   if (mode === "ready") await repo.markReady(existing);
   return existing;
 }
 async function postReview(repo, t, task, record, report, changes) {
-  const pullRequest = record.pullRequest ?? await repo.findPullRequest(task.branch);
+  const pullRequest = record.pullRequest ?? await repo.findChangeRequest(task.branch);
   if (pullRequest === void 0) return;
   const body = [
     `### ${t.reviewHeading}`,
@@ -27799,7 +27888,12 @@ async function postReview(repo, t, task, record, report, changes) {
     "",
     `<sub>[${t.run}](${task.runUrl})</sub>`
   ].join("\n");
-  await repo.comment(pullRequest, body);
+  await repo.commentOnChangeRequest(pullRequest, body);
+}
+async function updateFooter(repo, number3, footer) {
+  const { title, body } = await repo.getChangeRequest(number3);
+  const updated = replaceFooter(body, footer);
+  if (updated !== body) await repo.updateChangeRequest(number3, { title, body: updated });
 }
 async function acceptWorkflows(task, repo) {
   const accept = task.accept;
@@ -27822,7 +27916,7 @@ async function acceptWorkflows(task, repo) {
     return done(t.stagedChanged, [t.stagedChangedDetail(accept.author, changed.join(", "))]);
   }
   const moved = [...staged.keys()].map(workflowPath);
-  await repository("workflow-token").commit({
+  await platform2("workflow-token").commit({
     branch: task.branch,
     baseSha: head,
     createBranch: false,
@@ -28049,17 +28143,21 @@ async function finish(repo, task, state, view) {
       record,
       model: task.model,
       runUrl: task.runUrl,
-      planUrl: record ? fileUrl(task, record.planPath) : void 0,
-      pullRequestUrl: record?.pullRequest ? pullUrl(task, record.pullRequest) : void 0,
+      planUrl: record ? repo.fileUrl(task.branch, record.planPath) : void 0,
+      pullRequest: record?.pullRequest ? {
+        reference: repo.changeRequestReference(record.pullRequest),
+        url: repo.changeRequestUrl(record.pullRequest)
+      } : void 0,
       message: view.message,
       staged,
       cost: spent,
-      reportUrl: reportUrl(task.url, record),
-      decisionsUrl: decisionsUrl(task.url, record)
+      reportUrl: reportUrl(record, (id) => repo.commentUrl(task.url, id)),
+      decisionsUrl: decisionsUrl(record, (id) => repo.commentUrl(task.url, id))
     })
   );
   if (record?.pullRequest && !view.pullRequestWritten) {
-    await repo.updatePullRequestFooter(
+    await updateFooter(
+      repo,
       record.pullRequest,
       pullRequestFooter(t, task.runUrl, spentLine(t, task, record.spent))
     );
@@ -28244,8 +28342,9 @@ function sleep(ms) {
 import { mkdirSync as mkdirSync5, writeFileSync as writeFileSync5 } from "node:fs";
 import { dirname } from "node:path";
 async function select() {
-  const repo = repository();
-  const bot = `${getInput("app-slug", { required: true })}[bot]`;
+  const repo = platform2("github-token", getInput("app-slug", { required: true }));
+  const ci = ciResults();
+  const bot = repo.self();
   const inputs = inputSettings();
   const defaultBranch = await repo.defaultBranch();
   const settingsText = await repo.readFile(defaultBranch, SETTINGS_FILE);
@@ -28258,10 +28357,10 @@ async function select() {
   const permissions = /* @__PURE__ */ new Map();
   const maintainersAmong = async (logins) => {
     for (const login of logins) {
-      if (!permissions.has(login)) permissions.set(login, repo.permission(login));
+      if (!permissions.has(login)) permissions.set(login, repo.isMaintainer(login));
     }
-    const levels = await Promise.all(logins.map((login) => permissions.get(login)));
-    return new Set(logins.filter((_, index) => MAINTAINER_PERMISSIONS.has(levels[index] ?? "")));
+    const maintainer = await Promise.all(logins.map((login) => permissions.get(login)));
+    return new Set(logins.filter((_, index) => maintainer[index]));
   };
   const conversations = /* @__PURE__ */ new Map();
   const conversation = (number3) => {
@@ -28272,7 +28371,7 @@ async function select() {
         const status2 = findStatus(comments, bot);
         const pullRequest = status2?.record?.pullRequest;
         const reviews2 = pullRequest ? await repo.listReviews(pullRequest) : [];
-        if (pullRequest) comments.push(...await repo.listComments(pullRequest));
+        if (pullRequest) comments.push(...await repo.listChangeRequestComments(pullRequest));
         const maintainers = await maintainersAmong(commenters([...comments, ...reviews2]));
         return { comments, reviews: reviews2, status: status2, maintainers };
       })();
@@ -28336,7 +28435,7 @@ async function select() {
         ) !== void 0;
         if (result.state === "awaiting-workflow" && record2.awaiting?.length) {
           const head = await repo.branchSha(record2.branch);
-          const runs = head ? finishedRuns(await repo.runsForCommit(head), record2.awaiting) : void 0;
+          const runs = head ? finishedRuns(await ci.runsForCommit(head), record2.awaiting) : void 0;
           if (runs) workflowRuns.set(task2.number, runs);
           candidate.workflowsDone = runs !== void 0;
         }
@@ -28393,8 +28492,8 @@ async function select() {
   const context3 = {
     version: 1,
     action: choice.action,
-    owner: repo.owner,
-    repo: repo.repo,
+    owner: repo.repository.owner,
+    repo: repo.repository.name,
     number: task.number,
     title: task.title,
     body: description.text,
@@ -28446,8 +28545,8 @@ async function select() {
         runUrl: context3.runUrl,
         message: startMessage(t, context3),
         cost: { task: record?.spent, budget: settings.value["task-budget"] },
-        reportUrl: reportUrl(task.url, record),
-        decisionsUrl: decisionsUrl(task.url, record)
+        reportUrl: reportUrl(record, (id) => repo.commentUrl(task.url, id)),
+        decisionsUrl: decisionsUrl(record, (id) => repo.commentUrl(task.url, id))
       })
     );
   }

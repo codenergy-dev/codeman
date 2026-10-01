@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import * as core from "@actions/core";
 import { descriptionCommands } from "../commands.ts";
 import { type Messages, messages, taskLanguage } from "../i18n/index.ts";
+import type { CiRun, Comment, Review } from "../platform/types.ts";
 import { IGNORE_FILE, unprotected } from "../policy.ts";
 import { applyCommands, type CommandSource, pendingDecisions } from "../record.ts";
 import {
@@ -21,16 +22,13 @@ import {
   authorizedComments,
   authorizedReviews,
   type Candidate,
-  type CommentLike,
   chooseTask,
   commandsAfter,
   commenters,
   findStatus,
   finishedRuns,
-  MAINTAINER_PERMISSIONS,
   openedByMaintainer,
   pendingWork,
-  type ReviewLike,
   replanRequests,
   resumeRequests,
   reviewCommands,
@@ -40,18 +38,18 @@ import {
   type TaskReview,
   taskSettings,
   toTask,
-  type WorkflowRun,
 } from "../tasks.ts";
 import { oneLine, slugify } from "../text.ts";
-import { repository, runUrl, taskFile } from "./common.ts";
+import { ciResults, platform, runUrl, taskFile } from "./common.ts";
 
 /**
  * Picks the one task this run works on and writes its context for the next jobs. Runs no LLM,
  * so it may hold a token that writes to issues.
  */
 export async function select(): Promise<void> {
-  const repo = repository();
-  const bot = `${core.getInput("app-slug", { required: true })}[bot]`;
+  const repo = platform("github-token", core.getInput("app-slug", { required: true }));
+  const ci = ciResults();
+  const bot = repo.self();
   const inputs = inputSettings();
   // Rules and settings come from the default branch, where the agent cannot change them.
   const defaultBranch = await repo.defaultBranch();
@@ -66,13 +64,13 @@ export async function select(): Promise<void> {
   core.info(`Found ${tasks.length} open issue(s) labeled "codeman".`);
 
   // Permission per user, asked once per run.
-  const permissions = new Map<string, Promise<string>>();
+  const permissions = new Map<string, Promise<boolean>>();
   const maintainersAmong = async (logins: readonly string[]): Promise<Set<string>> => {
     for (const login of logins) {
-      if (!permissions.has(login)) permissions.set(login, repo.permission(login));
+      if (!permissions.has(login)) permissions.set(login, repo.isMaintainer(login));
     }
-    const levels = await Promise.all(logins.map((login) => permissions.get(login)));
-    return new Set(logins.filter((_, index) => MAINTAINER_PERMISSIONS.has(levels[index] ?? "")));
+    const maintainer = await Promise.all(logins.map((login) => permissions.get(login)));
+    return new Set(logins.filter((_, index) => maintainer[index]));
   };
 
   // Everything maintainers said about a task: on the issue and on its pull request.
@@ -85,7 +83,7 @@ export async function select(): Promise<void> {
         const status = findStatus(comments, bot);
         const pullRequest = status?.record?.pullRequest;
         const reviews = pullRequest ? await repo.listReviews(pullRequest) : [];
-        if (pullRequest) comments.push(...(await repo.listComments(pullRequest)));
+        if (pullRequest) comments.push(...(await repo.listChangeRequestComments(pullRequest)));
         const maintainers = await maintainersAmong(commenters([...comments, ...reviews]));
         return { comments, reviews, status, maintainers };
       })();
@@ -123,7 +121,7 @@ export async function select(): Promise<void> {
   };
 
   // Finished runs of the workflows each waiting task asked for.
-  const workflowRuns = new Map<number, WorkflowRun[]>();
+  const workflowRuns = new Map<number, CiRun[]>();
 
   const candidates: Candidate[] = [];
   for (const task of tasks) {
@@ -159,7 +157,7 @@ export async function select(): Promise<void> {
         if (result.state === "awaiting-workflow" && record.awaiting?.length) {
           const head = await repo.branchSha(record.branch);
           const runs = head
-            ? finishedRuns(await repo.runsForCommit(head), record.awaiting)
+            ? finishedRuns(await ci.runsForCommit(head), record.awaiting)
             : undefined;
           if (runs) workflowRuns.set(task.number, runs);
           candidate.workflowsDone = runs !== undefined;
@@ -236,8 +234,8 @@ export async function select(): Promise<void> {
   const context: TaskContext = {
     version: 1,
     action: choice.action,
-    owner: repo.owner,
-    repo: repo.repo,
+    owner: repo.repository.owner,
+    repo: repo.repository.name,
     number: task.number,
     title: task.title,
     body: description.text,
@@ -293,8 +291,8 @@ export async function select(): Promise<void> {
         runUrl: context.runUrl,
         message: startMessage(t, context),
         cost: { task: record?.spent, budget: settings.value["task-budget"] },
-        reportUrl: reportUrl(task.url, record),
-        decisionsUrl: decisionsUrl(task.url, record),
+        reportUrl: reportUrl(record, (id) => repo.commentUrl(task.url, id)),
+        decisionsUrl: decisionsUrl(record, (id) => repo.commentUrl(task.url, id)),
       }),
     );
   }
@@ -322,8 +320,8 @@ function fromStateOf(labels: readonly string[]): State | "new" {
 }
 
 interface Conversation {
-  comments: CommentLike[];
-  reviews: ReviewLike[];
+  comments: Comment[];
+  reviews: Review[];
   status: ReturnType<typeof findStatus>;
   maintainers: Set<string>;
 }
