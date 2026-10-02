@@ -14,6 +14,7 @@ import {
   stagePrompt,
   TASK_FILE,
 } from "../prompt.ts";
+import { nextDecisionId } from "../record.ts";
 import { downloadResults, RESULTS_DIR } from "../results.ts";
 import { agentRules, readRules } from "../rules.ts";
 import {
@@ -99,6 +100,7 @@ export async function agent(services: Services): Promise<void> {
       stage,
       outputLimits(task.settings),
       conventions.workflows,
+      nextDecisionId(task.record),
     );
     if (problems.length > 0) {
       runtime.info(`Asking the agent to fix ${OUTPUT_FILE}:`);

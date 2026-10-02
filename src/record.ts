@@ -25,7 +25,10 @@ export interface Decision {
   answer?: Answer;
 }
 
-/** What Codeman knows about a task. Stored in its status comment on the issue. */
+/**
+ * What Codeman knows about a task. Stored in its status comment on the issue. A new plan, first
+ * or revised, keeps every field except its own and those in PLAN_RESETS: see `planRecord`.
+ */
 export interface TaskRecord {
   branch: string;
   planPath: string;
@@ -72,6 +75,52 @@ export interface TaskRecord {
   reviewed?: boolean | undefined;
   /** Workflows a maintainer accepted since the last stage run, for the next one to know. */
   accepted?: { by: string; workflows: string[] } | undefined;
+}
+
+/**
+ * What a new plan starts over: its decisions get a comment of their own, after the run comments
+ * before it, and work starts again at the first stage. Everything else is the task's history and
+ * bookkeeping, such as the spend table and the handled accepts, and is kept. A plan without
+ * decisions keeps the decisions comment, which then says there are none.
+ */
+export const PLAN_RESETS = [
+  "decisionsCommentId",
+  "reportCommentId",
+  "stage",
+  "handoff",
+  "reviewRounds",
+  "awaiting",
+  "deferred",
+  "reviewed",
+] as const satisfies readonly (keyof TaskRecord)[];
+
+/** What a planning run writes into the record. */
+export type PlanFields = Pick<
+  TaskRecord,
+  | "branch"
+  | "planPath"
+  | "summary"
+  | "decisions"
+  | "processedCommentId"
+  | "processedReviewId"
+  | "language"
+>;
+
+/** The record of a new plan: the previous record, if any, with the plan's fields and resets. */
+export function planRecord(previous: TaskRecord | null | undefined, plan: PlanFields): TaskRecord {
+  const record: TaskRecord = { ...previous, ...plan, runs: 0 };
+  for (const field of PLAN_RESETS) {
+    if (field !== "decisionsCommentId" || plan.decisions.length > 0) delete record[field];
+  }
+  return record;
+}
+
+/**
+ * The number of a new plan's first decision: after every decision the task had, so a revised
+ * plan's decisions never take the number of a settled one.
+ */
+export function nextDecisionId(record: TaskRecord | null | undefined): number {
+  return Math.max(0, ...(record?.decisions ?? []).map((decision) => decision.id)) + 1;
 }
 
 export interface CommandSource {

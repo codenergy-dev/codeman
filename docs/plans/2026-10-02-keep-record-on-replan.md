@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-10-02T10:00:00-03:00
-updated_at: 2026-10-02T11:30:00-03:00
+updated_at: 2026-10-02T12:30:00-03:00
 commit: 205373a
 ---
 
@@ -25,7 +25,7 @@ Building from scratch drops other fields too:
 | `acceptedCommentId` | An earlier `/codeman accept-workflows` counts as new again: the next run handles it, finds nothing staged, and posts a run comment about it. | Keep. |
 | `commitMessage` | The pull request's "Suggested squash commit message" section disappears if the code stage after the replan reports `skipped`, since it only writes a message when it changes files. | Decision 3. |
 | `reports` | None: every stage runs again after a replan and writes its report, `skipped` included. | Keep, for simplicity. |
-| `decisionsCommentId`, `reportCommentId` | The revised decisions get a new comment, after the run comments before it. | Reset, as today: the responsible person wants the issue to show what happened in order. |
+| `decisionsCommentId`, `reportCommentId` | The revised decisions get a new comment, after the run comments before it. | Reset, as today: the responsible person wants the issue to show what happened in order. When the revised plan has no decisions, the decisions comment is kept, so it says there are none instead of showing questions that no longer apply (found during the work). |
 | `stage`, `runs`, `handoff`, `reviewRounds`, `awaiting`, `deferred`, `reviewed` | Work starts again at design, and each stage decides whether it has work. | Reset, as today (decision 2). |
 | `accepted` | The next stage is not told which workflows a maintainer accepted. | Keep, until a stage has seen it. |
 
@@ -46,11 +46,11 @@ Rows already lost on existing tasks cannot be rebuilt: only their costs are left
 
 ## Steps
 
-1. [ ] A pure function `replannedRecord(previous, plan)` in `src/steps/apply.ts` returns the new plan's record: the previous record, if any, with the new summary, decisions, handled IDs and language, and with the fields this plan resets cleared (`decisionsCommentId`, `reportCommentId`, and the stages' progress). Fields added to `TaskRecord` later are kept unless they are added to that list. `applyPlan` uses it. Done when unit tests show which fields are kept and which are reset.
-2. [ ] Decisions after a replan: the planning prompt names the settled decisions with their numbers and tells the agent to number new decisions from the next one, in `output.json` and in the plan; `parsePlanOutput` expects them from there; the record keeps the settled decisions before the new ones. Done when unit tests cover the prompt, the parser and the record, and `writeAnswers` lists settled and new decisions.
-3. [ ] `TaskRecord` in `src/record.ts` says, next to each field, whether a replan keeps or resets it. Done when every field has it.
-4. [ ] The flow test on the fake platform (`src/steps/flow.test.ts`) goes through a replan after the code stage: the spend table keeps its earlier rows plus the replan's, the revised decisions get a new comment numbered after the settled ones, and the next stage is design. Done when it passes.
-5. [ ] `docs/architecture.md` says what a replan keeps and what starts over (planning; status and run comments, which says today that the record keeps the decisions comment's ID). Done when it does.
+1. [x] A pure function `planRecord(previous, plan)` in `src/record.ts`, next to the record's definition, returns the new plan's record: the previous record, if any, with the new summary, decisions, handled IDs and language, and with the fields in `PLAN_RESETS` cleared (`decisionsCommentId`, unless the plan has no decisions, `reportCommentId`, and the stages' progress). Fields added to `TaskRecord` later are kept unless they are added to that list. `applyPlan` uses it. Done when unit tests show which fields are kept and which are reset.
+2. [x] Decisions after a replan: the planning prompt names the settled decisions with their numbers and tells the agent to number new decisions from the next one, in `output.json` and in the plan; `parsePlanOutput` expects them from there; the record keeps the settled decisions before the new ones. Done when unit tests cover the prompt, the parser and the record, and `writeAnswers` lists settled and new decisions.
+3. [x] `TaskRecord` in `src/record.ts` says that a new plan keeps every field but its own and those in `PLAN_RESETS`, which documents why each is reset. One list instead of a note next to each field, so the code and its documentation cannot disagree. Done when both are in place.
+4. [x] The flow test on the fake platform (`src/steps/flow.test.ts`) goes through a replan after the code stage: the spend table keeps its earlier rows plus the replan's, the revised decisions get a new comment numbered after the settled ones, and the next stage is design. Done when it passes.
+5. [x] `docs/architecture.md` says what a replan keeps and what starts over (planning; status and run comments, which says today that the record keeps the decisions comment's ID). Done when it does.
 6. [ ] `npm run check` passes, and a replan on the test repository keeps the spend table and numbers the revised decisions after the settled ones.
 
 ## Out of scope

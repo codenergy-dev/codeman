@@ -47,7 +47,13 @@ function agentResult(files: Record<string, string>, output: unknown): void {
   writeFileSync(join(dir, "output.json"), JSON.stringify(output));
 }
 
+/** What each agent run costs, and what the task spent before the next one, as OpenRouter says. */
+const RUN_COST = 0.01;
+let taskSpent = 0;
+
 async function applyStep(platform: FakePlatform, agentRan = true): Promise<FakeRuntime> {
+  const spent = taskSpent;
+  if (agentRan) taskSpent += RUN_COST;
   const runtime = new FakeRuntime({
     inputs: {
       workdir,
@@ -56,8 +62,8 @@ async function applyStep(platform: FakePlatform, agentRan = true): Promise<FakeR
             "key-job-result": "success",
             "key-status": "opened",
             "agent-job-result": "success",
-            "task-spent": "0",
-            "run-cost": "0.01",
+            "task-spent": spent.toFixed(4),
+            "run-cost": RUN_COST.toFixed(4),
           }
         : { "key-job-result": "skipped", "agent-job-result": "skipped" }),
     },
@@ -165,6 +171,69 @@ test("plans, records answers, and works through the stages on a platform unlike 
   assert.ok(changeRequest?.body.includes(`https://forge.test/o/r/files/${task.branch}/`));
   const latest = platform.botComments(issue).find((body) => body.includes("codeman:status"));
   assert.match(latest ?? "", /\[!1001\]\(https:\/\/forge\.test\/o\/r\/changes\/1001\)/);
+
+  // A replan keeps the spend table, and numbers its decisions after the settled one.
+  const decisionsComments = () =>
+    platform.botComments(issue).filter((body) => body.includes("codeman:decisions"));
+  assert.equal(decisionsComments().length, 1);
+  const rows = record(platform, issue)?.spending?.rows.length;
+  assert.equal(rows, 3, "plan, design and code");
+  platform.say(issue, "alice", "/codeman replan Expire the counters.");
+  runtime = await selectStep(platform);
+  assert.deepEqual([runtime.outputs.action, runtime.outputs.stage], ["plan", "plan"]);
+  assert.deepEqual(
+    readTask(runtime).settled.map((decision) => [decision.id, decision.answer?.option]),
+    [[1, "b"]],
+  );
+  agentResult(
+    { [task.planPath]: "# Plan\n\nDecision 1 is settled: Redis.\n" },
+    {
+      summary: "Adds a limiter whose counters expire.",
+      decisions: [
+        {
+          id: 2,
+          title: "Expiry",
+          question: "When do counters expire?",
+          options: [
+            { key: "a", label: "After a minute" },
+            { key: "b", label: "After an hour" },
+          ],
+          recommendation: "a",
+        },
+      ],
+    },
+  );
+  await applyStep(platform);
+  const revised = record(platform, issue);
+  assert.deepEqual(
+    revised?.decisions.map((decision) => [decision.id, decision.answer?.option]),
+    [
+      [1, "b"],
+      [2, undefined],
+    ],
+  );
+  assert.equal(revised?.spending?.rows.length, 4, "the earlier rows, and the replan's");
+  assert.equal(revised?.pullRequest, 1001);
+  assert.equal(revised?.stage, undefined, "the stages start over");
+  assert.deepEqual(stateLabels(platform, issue), ["codeman:awaiting-decision"]);
+  const replanned = platform.botComments(issue).find((body) => body.includes("codeman:status"));
+  assert.ok(!replanned?.includes("Runs without a row"), "every run keeps its row");
+  assert.equal(decisionsComments().length, 2, "the revised decisions get a comment of their own");
+  assert.match(decisionsComments()[1] ?? "", /\*\*1\. Storage\*\*[\s\S]*\*\*2\. Expiry\*\*/);
+  assert.match(
+    platform.file(task.branch, task.planPath) ?? "",
+    /Decision 1 \(Storage\): \(b\) Redis, chosen by alice\./,
+    "the settled answers are in the plan from the start",
+  );
+
+  platform.say(issue, "alice", "/codeman decide 2 b");
+  assert.equal((await selectStep(platform)).outputs.action, "record");
+  await applyStep(platform, false);
+  const plan = platform.file(task.branch, task.planPath) ?? "";
+  assert.match(plan, /Decision 1 \(Storage\): \(b\) Redis, chosen by alice\./);
+  assert.match(plan, /Decision 2 \(Expiry\): \(b\) After an hour, chosen by alice\./);
+  runtime = await selectStep(platform);
+  assert.deepEqual([runtime.outputs.action, runtime.outputs.stage], ["implement", "design"]);
 });
 
 test("an issue a maintainer did not open is left alone", async () => {

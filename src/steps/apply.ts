@@ -17,7 +17,14 @@ import {
 } from "../policy.ts";
 import type { CommandError } from "../problems.ts";
 import { pullRequestBody, pullRequestFooter, pullRequestTitle, replaceFooter } from "../pull.ts";
-import { applyCommands, pendingDecisions, type TaskRecord, writeAnswers } from "../record.ts";
+import {
+  applyCommands,
+  nextDecisionId,
+  pendingDecisions,
+  planRecord,
+  type TaskRecord,
+  writeAnswers,
+} from "../record.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import type { Services } from "../services.ts";
 import { addRow, parseCosts, refreshCosts, type SpendRow } from "../spend.ts";
@@ -177,30 +184,31 @@ async function applyPlan(task: TaskContext, io: Io): Promise<void> {
   const output = parsePlanOutput(
     readFileSync(outputFile, "utf8").slice(0, MAX_OUTPUT_BYTES),
     outputLimits(task.settings),
+    nextDecisionId(task.record),
   );
   if (!output.ok) return blocked(io, task, output.error);
 
+  // A revised plan keeps the settled decisions, numbered before its own.
+  const record = planRecord(task.record, {
+    branch: task.branch,
+    planPath: task.planPath,
+    summary: output.value.summary,
+    decisions: [...task.settled, ...output.value.decisions],
+    // Commands posted before this plan existed do not answer its decisions.
+    processedCommentId: task.processed.commentId,
+    processedReviewId: task.processed.reviewId,
+    language: output.value.language ?? task.record?.language,
+  });
   await io.repo.commit({
     branch: task.branch,
     baseSha: task.baseSha,
     createBranch: !task.branchExists,
-    changes: [{ path: task.planPath, content: Buffer.from(plan, "utf8") }],
+    // The settled decisions' answers, in the plan from the start.
+    changes: [{ path: task.planPath, content: Buffer.from(writeAnswers(plan, record), "utf8") }],
     message: `Plan #${task.number}: ${truncate(oneLine(task.title), 60)}`,
   });
 
-  const record: TaskRecord = {
-    branch: task.branch,
-    planPath: task.planPath,
-    summary: output.value.summary,
-    decisions: output.value.decisions,
-    // Commands posted before this plan existed do not answer its decisions.
-    processedCommentId: task.processed.commentId,
-    processedReviewId: task.processed.reviewId,
-    pullRequest: task.record?.pullRequest,
-    runs: 0,
-    language: output.value.language ?? task.record?.language,
-  };
-  const state = record.decisions.length > 0 ? "awaiting-decision" : "ready";
+  const state = pendingDecisions(record).length > 0 ? "awaiting-decision" : "ready";
   const t = say(task, record);
   const ignored = checked.value.ignored.map((path) => t.ignoredChange(path));
   await finish(io, task, state, {

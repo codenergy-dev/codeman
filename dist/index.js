@@ -24913,7 +24913,7 @@ function outputLimits(settings) {
 function cutText(cut) {
   return `${cut.field} has ${cut.length} characters; the limit is ${cut.limit}.`;
 }
-function parsePlanOutput(text, limits) {
+function parsePlanOutput(text, limits, firstId = 1) {
   let data;
   try {
     data = JSON.parse(text);
@@ -24924,7 +24924,7 @@ function parsePlanOutput(text, limits) {
   const cuts = [];
   const summary2 = string(data.summary, "summary", limits.summary, cuts);
   if (!summary2.ok) return summary2;
-  const decisions = parseDecisions(data.decisions, limits, cuts);
+  const decisions = parseDecisions(data.decisions, limits, cuts, firstId);
   if (!decisions.ok) return decisions;
   const language = typeof data.language === "string" && isLanguageTag(data.language) ? data.language : void 0;
   return {
@@ -24932,9 +24932,9 @@ function parsePlanOutput(text, limits) {
     value: { summary: summary2.value, decisions: decisions.value, language, cuts }
   };
 }
-function outputProblems(text, stage, limits, workflows) {
+function outputProblems(text, stage, limits, workflows, firstDecision = 1) {
   if (text === void 0) return ["output.json is missing."];
-  const parsed = stage === void 0 ? parsePlanOutput(text, limits) : parseStageOutput(text, stage, limits, workflows);
+  const parsed = stage === void 0 ? parsePlanOutput(text, limits, firstDecision) : parseStageOutput(text, stage, limits, workflows);
   if (!parsed.ok) return [parsed.error];
   return parsed.value.cuts.map(cutText);
 }
@@ -24999,13 +24999,13 @@ function parseStageOutput(text, stage, limits, workflows) {
   }
   return { ok: true, value: output };
 }
-function parseDecisions(value, limits, cuts) {
+function parseDecisions(value, limits, cuts, firstId = 1) {
   if (!Array.isArray(value) || value.length > limits.decisions) {
     return { ok: false, error: `decisions must be a list of at most ${limits.decisions}.` };
   }
   const decisions = [];
   for (const [index, item] of value.entries()) {
-    const decision = parseDecision(item, index + 1, limits, cuts);
+    const decision = parseDecision(item, index, firstId + index, limits, cuts);
     if (!decision.ok) return decision;
     decisions.push(decision.value);
   }
@@ -25021,8 +25021,8 @@ function parseDecisions(value, limits, cuts) {
   }
   return { ok: true, value: decisions };
 }
-function parseDecision(item, id, limits, cuts) {
-  const where = `decisions[${id - 1}]`;
+function parseDecision(item, index, id, limits, cuts) {
+  const where = `decisions[${index}]`;
   if (!isObject(item)) return { ok: false, error: `${where} must be an object.` };
   if (item.id !== id) return { ok: false, error: `${where}.id must be ${id}.` };
   const title = string(item.title, `${where}.title`, limits.title, cuts);
@@ -25033,12 +25033,12 @@ function parseDecision(item, id, limits, cuts) {
     return { ok: false, error: `${where}.options must have 2 to ${limits.options} items.` };
   }
   const options = [];
-  for (const [index, option] of item.options.entries()) {
-    const key = String.fromCharCode(97 + index);
+  for (const [index2, option] of item.options.entries()) {
+    const key = String.fromCharCode(97 + index2);
     if (!isObject(option) || option.key !== key) {
-      return { ok: false, error: `${where}.options[${index}].key must be "${key}".` };
+      return { ok: false, error: `${where}.options[${index2}].key must be "${key}".` };
     }
-    const label = string(option.label, `${where}.options[${index}].label`, limits.label, cuts);
+    const label = string(option.label, `${where}.options[${index2}].label`, limits.label, cuts);
     if (!label.ok) return label;
     options.push({ key, label: label.value });
   }
@@ -25681,6 +25681,122 @@ function checkChanges(manifest, policy) {
   return { ok: true, value: { accepted, staged, dropped } };
 }
 
+// src/record.ts
+import { gunzipSync, gzipSync } from "node:zlib";
+var PLAN_RESETS = [
+  "decisionsCommentId",
+  "reportCommentId",
+  "stage",
+  "handoff",
+  "reviewRounds",
+  "awaiting",
+  "deferred",
+  "reviewed"
+];
+function planRecord(previous, plan) {
+  const record = { ...previous, ...plan, runs: 0 };
+  for (const field of PLAN_RESETS) {
+    if (field !== "decisionsCommentId" || plan.decisions.length > 0) delete record[field];
+  }
+  return record;
+}
+function nextDecisionId(record) {
+  return Math.max(0, ...(record?.decisions ?? []).map((decision) => decision.id)) + 1;
+}
+function pendingDecisions(record) {
+  return record.decisions.filter((decision) => decision.answer === void 0);
+}
+function applyCommands(record, sources) {
+  const decisions = record.decisions.map((decision) => ({ ...decision }));
+  const errors = [];
+  let processedCommentId = record.processedCommentId;
+  for (const { commentId, author, command } of sources) {
+    processedCommentId = Math.max(processedCommentId, commentId);
+    if (command.kind === "invalid") {
+      errors.push({ text: command.text, problem: command.problem });
+    } else if (command.kind === "approve") {
+      for (const decision of decisions) {
+        decision.answer ??= { option: decision.recommendation, by: author };
+      }
+    } else if (command.kind === "decide") {
+      for (const [id, option] of command.answers) {
+        const decision = decisions.find((candidate) => candidate.id === id);
+        if (!decision) {
+          errors.push({ problem: { kind: "no-decision", id } });
+        } else if (!decision.options.some((candidate) => candidate.key === option)) {
+          errors.push({ problem: { kind: "no-option", id, option } });
+        } else {
+          decision.answer = { option, by: author };
+        }
+      }
+    } else if (command.kind === "answer") {
+      const decision = decisions.find((candidate) => candidate.id === command.id);
+      if (decision) decision.answer = { text: command.text, by: author };
+      else errors.push({ problem: { kind: "no-decision", id: command.id } });
+    }
+  }
+  return { record: { ...record, decisions, processedCommentId }, errors };
+}
+var ANSWERS_START = "<!-- codeman:answers:start -->";
+var ANSWERS_END = "<!-- codeman:answers:end -->";
+function writeAnswers(plan, record) {
+  const answered = record.decisions.filter((decision) => decision.answer);
+  if (answered.length === 0) return plan;
+  const lines = answered.flatMap((decision) => {
+    const head = `- Decision ${decision.id} (${oneLineTitle(decision.title)}):`;
+    const answer = decision.answer;
+    if (answer?.text !== void 0) {
+      const quoted = answer.text.split("\n").map((line) => `  > ${line.replace(/<!--/g, "&lt;!--")}`);
+      return [`${head} answered by ${answer.by}:`, "", ...quoted, ""];
+    }
+    const option = decision.options.find((candidate) => candidate.key === answer?.option);
+    return [
+      `${head} (${answer?.option}) ${oneLineTitle(option?.label ?? "")}, chosen by ${answer?.by}.`
+    ];
+  });
+  const block = [ANSWERS_START, ...lines, ANSWERS_END].join("\n");
+  const start = plan.indexOf(ANSWERS_START);
+  const end = plan.indexOf(ANSWERS_END);
+  if (start !== -1 && end > start) {
+    return plan.slice(0, start) + block + plan.slice(end + ANSWERS_END.length);
+  }
+  return `${plan.trimEnd()}
+
+## Answers
+
+Recorded by Codeman from \`/codeman\` commands on the issue.
+
+${block}
+`;
+}
+function oneLineTitle(text) {
+  return text.replace(/\s+/g, " ").trim();
+}
+var STATUS_MARKER = /<!-- codeman:status ([A-Za-z0-9_-]*) -->/;
+var MAX_RECORD_BYTES = 4 * 1024 * 1024;
+function encodeStatus(record) {
+  const json = JSON.stringify({ version: 2, record: record ?? null });
+  const data = gzipSync(json, { level: 9 }).toString("base64url");
+  return `<!-- codeman:status ${data} -->`;
+}
+function isStatusComment(body) {
+  return STATUS_MARKER.test(body);
+}
+function decodeStatus(body) {
+  const data = STATUS_MARKER.exec(body)?.[1];
+  if (!data) return void 0;
+  try {
+    const bytes = Buffer.from(data, "base64url");
+    const json = bytes[0] === 31 && bytes[1] === 139 ? gunzipSync(bytes, { maxOutputLength: MAX_RECORD_BYTES }) : bytes;
+    const parsed = JSON.parse(json.toString("utf8"));
+    if (typeof parsed !== "object" || parsed === null || !("record" in parsed)) return void 0;
+    const record = parsed.record;
+    return record ?? void 0;
+  } catch {
+    return void 0;
+  }
+}
+
 // src/results.ts
 import { spawnSync as spawnSync4 } from "node:child_process";
 import { mkdirSync as mkdirSync3, rmSync as rmSync3, writeFileSync as writeFileSync3 } from "node:fs";
@@ -25807,6 +25923,7 @@ function outputLanguage(task) {
 }
 function planPrompt(task, conventions) {
   const limits = outputLimits(task.settings);
+  const first = nextDecisionId(task.record);
   const quote = quoter();
   const previous = task.record ? `A previous plan exists at \`${task.planPath}\`. Update it instead of starting over: apply the revision requests and settled decisions below, if any, and remove its \`## Answers\` section.` : `Create the plan at \`${task.planPath}\`.`;
   const settled = task.settled.flatMap((decision) => {
@@ -25818,7 +25935,7 @@ function planPrompt(task, conventions) {
   const revision = task.replan.length === 0 && settled.length === 0 ? "" : `
 ## Revision
 
-This run writes a new version of the plan. Apply the revision requests, if any. Write the settled decisions into the plan as decided, and do not list them as decisions again. List only decisions that are still open or that the revision raises.
+This run writes a new version of the plan. Apply the revision requests, if any. Write the settled decisions into the plan as decided, with their numbers, and do not list them as decisions again. List only decisions that are still open or that the revision raises, numbered from ${first}, so no number means two decisions; refer to every decision in the plan by its number.
 
 ### Revision requests
 
@@ -25854,7 +25971,7 @@ ${untrustedRule(conventions)}
   "language": "pt-BR",
   "decisions": [
     {
-      "id": 1,
+      "id": ${first},
       "title": "Short name of the decision",
       "question": "The question, with the context needed to answer it and each option's trade-offs.",
       "options": [
@@ -25867,7 +25984,7 @@ ${untrustedRule(conventions)}
 }
 \`\`\`
 
-   Number decisions from 1 and give options the keys a, b, c and so on, in order. Use an empty list when there are no decisions.
+   Number decisions from ${first} and give options the keys a, b, c and so on, in order. Use an empty list when there are no decisions.
 
    ${limitsText(limits)}
 6. ${planLanguage(task)}
@@ -26168,7 +26285,8 @@ async function agent(services) {
       readAgentOutput(runtime2, `${worktree}/${OUTPUT_FILE}`),
       stage,
       outputLimits(task.settings),
-      conventions.workflows
+      conventions.workflows,
+      nextDecisionId(task.record)
     );
     if (problems.length > 0) {
       runtime2.info(`Asking the agent to fix ${OUTPUT_FILE}:`);
@@ -26383,102 +26501,6 @@ function pullRequestFooter(t, runUrl, spent) {
 }
 function replaceFooter(body, footer) {
   return FOOTER.test(body) ? body.replace(FOOTER, () => footer) : body;
-}
-
-// src/record.ts
-import { gunzipSync, gzipSync } from "node:zlib";
-function pendingDecisions(record) {
-  return record.decisions.filter((decision) => decision.answer === void 0);
-}
-function applyCommands(record, sources) {
-  const decisions = record.decisions.map((decision) => ({ ...decision }));
-  const errors = [];
-  let processedCommentId = record.processedCommentId;
-  for (const { commentId, author, command } of sources) {
-    processedCommentId = Math.max(processedCommentId, commentId);
-    if (command.kind === "invalid") {
-      errors.push({ text: command.text, problem: command.problem });
-    } else if (command.kind === "approve") {
-      for (const decision of decisions) {
-        decision.answer ??= { option: decision.recommendation, by: author };
-      }
-    } else if (command.kind === "decide") {
-      for (const [id, option] of command.answers) {
-        const decision = decisions.find((candidate) => candidate.id === id);
-        if (!decision) {
-          errors.push({ problem: { kind: "no-decision", id } });
-        } else if (!decision.options.some((candidate) => candidate.key === option)) {
-          errors.push({ problem: { kind: "no-option", id, option } });
-        } else {
-          decision.answer = { option, by: author };
-        }
-      }
-    } else if (command.kind === "answer") {
-      const decision = decisions.find((candidate) => candidate.id === command.id);
-      if (decision) decision.answer = { text: command.text, by: author };
-      else errors.push({ problem: { kind: "no-decision", id: command.id } });
-    }
-  }
-  return { record: { ...record, decisions, processedCommentId }, errors };
-}
-var ANSWERS_START = "<!-- codeman:answers:start -->";
-var ANSWERS_END = "<!-- codeman:answers:end -->";
-function writeAnswers(plan, record) {
-  const answered = record.decisions.filter((decision) => decision.answer);
-  if (answered.length === 0) return plan;
-  const lines = answered.flatMap((decision) => {
-    const head = `- Decision ${decision.id} (${oneLineTitle(decision.title)}):`;
-    const answer = decision.answer;
-    if (answer?.text !== void 0) {
-      const quoted = answer.text.split("\n").map((line) => `  > ${line.replace(/<!--/g, "&lt;!--")}`);
-      return [`${head} answered by ${answer.by}:`, "", ...quoted, ""];
-    }
-    const option = decision.options.find((candidate) => candidate.key === answer?.option);
-    return [
-      `${head} (${answer?.option}) ${oneLineTitle(option?.label ?? "")}, chosen by ${answer?.by}.`
-    ];
-  });
-  const block = [ANSWERS_START, ...lines, ANSWERS_END].join("\n");
-  const start = plan.indexOf(ANSWERS_START);
-  const end = plan.indexOf(ANSWERS_END);
-  if (start !== -1 && end > start) {
-    return plan.slice(0, start) + block + plan.slice(end + ANSWERS_END.length);
-  }
-  return `${plan.trimEnd()}
-
-## Answers
-
-Recorded by Codeman from \`/codeman\` commands on the issue.
-
-${block}
-`;
-}
-function oneLineTitle(text) {
-  return text.replace(/\s+/g, " ").trim();
-}
-var STATUS_MARKER = /<!-- codeman:status ([A-Za-z0-9_-]*) -->/;
-var MAX_RECORD_BYTES = 4 * 1024 * 1024;
-function encodeStatus(record) {
-  const json = JSON.stringify({ version: 2, record: record ?? null });
-  const data = gzipSync(json, { level: 9 }).toString("base64url");
-  return `<!-- codeman:status ${data} -->`;
-}
-function isStatusComment(body) {
-  return STATUS_MARKER.test(body);
-}
-function decodeStatus(body) {
-  const data = STATUS_MARKER.exec(body)?.[1];
-  if (!data) return void 0;
-  try {
-    const bytes = Buffer.from(data, "base64url");
-    const json = bytes[0] === 31 && bytes[1] === 139 ? gunzipSync(bytes, { maxOutputLength: MAX_RECORD_BYTES }) : bytes;
-    const parsed = JSON.parse(json.toString("utf8"));
-    if (typeof parsed !== "object" || parsed === null || !("record" in parsed)) return void 0;
-    const record = parsed.record;
-    return record ?? void 0;
-  } catch {
-    return void 0;
-  }
 }
 
 // src/spend.ts
@@ -27126,29 +27148,29 @@ async function applyPlan(task, io) {
   if (!existsSync3(outputFile)) return blocked(io, task, "The agent did not write output.json.");
   const output = parsePlanOutput(
     readFileSync5(outputFile, "utf8").slice(0, MAX_OUTPUT_BYTES),
-    outputLimits(task.settings)
+    outputLimits(task.settings),
+    nextDecisionId(task.record)
   );
   if (!output.ok) return blocked(io, task, output.error);
+  const record = planRecord(task.record, {
+    branch: task.branch,
+    planPath: task.planPath,
+    summary: output.value.summary,
+    decisions: [...task.settled, ...output.value.decisions],
+    // Commands posted before this plan existed do not answer its decisions.
+    processedCommentId: task.processed.commentId,
+    processedReviewId: task.processed.reviewId,
+    language: output.value.language ?? task.record?.language
+  });
   await io.repo.commit({
     branch: task.branch,
     baseSha: task.baseSha,
     createBranch: !task.branchExists,
-    changes: [{ path: task.planPath, content: Buffer.from(plan, "utf8") }],
+    // The settled decisions' answers, in the plan from the start.
+    changes: [{ path: task.planPath, content: Buffer.from(writeAnswers(plan, record), "utf8") }],
     message: `Plan #${task.number}: ${truncate(oneLine(task.title), 60)}`
   });
-  const record = {
-    branch: task.branch,
-    planPath: task.planPath,
-    summary: output.value.summary,
-    decisions: output.value.decisions,
-    // Commands posted before this plan existed do not answer its decisions.
-    processedCommentId: task.processed.commentId,
-    processedReviewId: task.processed.reviewId,
-    pullRequest: task.record?.pullRequest,
-    runs: 0,
-    language: output.value.language ?? task.record?.language
-  };
-  const state = record.decisions.length > 0 ? "awaiting-decision" : "ready";
+  const state = pendingDecisions(record).length > 0 ? "awaiting-decision" : "ready";
   const t = say(task, record);
   const ignored = checked.value.ignored.map((path) => t.ignoredChange(path));
   await finish(io, task, state, {

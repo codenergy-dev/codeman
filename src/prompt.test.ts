@@ -128,6 +128,36 @@ test("a revision carries the requests and the settled decisions", () => {
   assert.ok(!prompt.includes("DECISION 3"));
 });
 
+test("a revised plan numbers its decisions after every earlier one", () => {
+  const decision = (id: number) => ({
+    id,
+    title: `Decision ${id}`,
+    question: "?",
+    options: [
+      { key: "a", label: "x" },
+      { key: "b", label: "y" },
+    ],
+    recommendation: "a",
+  });
+  const earlier = { branch: "b", planPath: "p.md", summary: "s", processedCommentId: 0 };
+  const revised = planPrompt(
+    {
+      ...task,
+      replan: ["Use Redis."],
+      record: { ...earlier, decisions: [decision(1), decision(2), decision(3)] },
+      settled: [{ ...decision(1), answer: { option: "b", by: "alice" } }],
+    },
+    GITHUB,
+  );
+  assert.match(revised, /Write the settled decisions into the plan as decided, with their numbers/);
+  assert.match(revised, /numbered from 4, so no number means two decisions/);
+  assert.match(revised, /"id": 4,/);
+  assert.match(revised, /Number decisions from 4 and give options/);
+  const first = planPrompt(task, GITHUB);
+  assert.match(first, /"id": 1,/);
+  assert.match(first, /Number decisions from 1 and give options/);
+});
+
 test("a first plan has no revision section", () => {
   assert.ok(!planPrompt(task, GITHUB).includes("## Revision"));
 });

@@ -7,7 +7,10 @@ import {
   type CommandSource,
   decodeStatus,
   encodeStatus,
+  nextDecisionId,
+  PLAN_RESETS,
   pendingDecisions,
+  planRecord,
   type TaskRecord,
   writeAnswers,
 } from "./record.ts";
@@ -150,4 +153,66 @@ test("text answers cannot end the answers block", () => {
   const plan = writeAnswers("# Plan\n", updated);
   assert.equal(plan.match(/<!-- codeman:answers:end -->/g)?.length, 1);
   assert.equal(writeAnswers(plan, updated), plan);
+});
+
+test("a new plan keeps the task's history and starts the stages over", () => {
+  const previous: TaskRecord = {
+    ...record,
+    pullRequest: 12,
+    runs: 2,
+    spent: 0.42,
+    spending: { rows: [], earlier: { runs: 3, cost: 0.42 } },
+    acceptedCommentId: 30,
+    reports: { code: "Added x." },
+    commitMessage: "Add x",
+    accepted: { by: "alice", workflows: [".github/workflows/ios.yml"] },
+    language: "pt-BR",
+    decisionsCommentId: 20,
+    reportCommentId: 21,
+    stage: "test",
+    handoff: { stage: "code", text: "Notes." },
+    reviewRounds: 1,
+    awaiting: [".github/workflows/ios.yml"],
+    deferred: { stage: "test", workflows: [".github/workflows/ios.yml"] },
+    reviewed: true,
+  };
+  const plan = {
+    branch: previous.branch,
+    planPath: previous.planPath,
+    summary: "Revised.",
+    decisions: [],
+    processedCommentId: 40,
+    processedReviewId: 5,
+    language: undefined,
+  };
+  const revised = planRecord(previous, plan);
+  assert.deepEqual(revised, {
+    ...plan,
+    language: undefined,
+    pullRequest: 12,
+    runs: 0,
+    spent: 0.42,
+    spending: previous.spending,
+    acceptedCommentId: 30,
+    reports: previous.reports,
+    commitMessage: "Add x",
+    accepted: previous.accepted,
+    decisionsCommentId: 20,
+  });
+  for (const field of PLAN_RESETS.filter((name) => name !== "decisionsCommentId")) {
+    assert.ok(!(field in revised), `${field} is reset`);
+  }
+  assert.deepEqual(planRecord(null, plan), { ...plan, runs: 0 }, "a first plan");
+  assert.equal(
+    planRecord(previous, { ...plan, decisions: record.decisions }).decisionsCommentId,
+    undefined,
+    "decisions get a new comment",
+  );
+  assert.equal(revised.decisionsCommentId, 20, "the old comment says there are none");
+});
+
+test("a new plan's decisions are numbered after every decision the task had", () => {
+  assert.equal(nextDecisionId(null), 1);
+  assert.equal(nextDecisionId({ ...record, decisions: [] }), 1);
+  assert.equal(nextDecisionId(record), 3);
 });

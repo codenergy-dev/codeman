@@ -303,3 +303,16 @@ test("lists what the agent must fix, with the limits it was told", () => {
     [],
   );
 });
+
+test("a revised plan's decisions start after the settled ones", () => {
+  const text = (ids: number[]) => JSON.stringify({ summary: "s", decisions: ids.map(decision) });
+  const revised = parsePlan(text([3, 4]), limits, 3);
+  assert.deepEqual(revised.ok && revised.value.decisions.map((d) => d.id), [3, 4]);
+  assert.deepEqual(parsePlan(text([1, 2]), limits, 3), {
+    ok: false,
+    error: "decisions[0].id must be 3.",
+  });
+  assert.deepEqual(outputProblems(text([1]), undefined, limits, GITHUB.workflows, 3), [
+    "decisions[0].id must be 3.",
+  ]);
+});

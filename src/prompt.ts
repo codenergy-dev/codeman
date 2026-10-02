@@ -9,6 +9,7 @@ import {
 } from "./output.ts";
 import type { Conventions } from "./platform/conventions.ts";
 import { defaultIgnore } from "./policy.ts";
+import { nextDecisionId } from "./record.ts";
 import { RESULTS_DIR } from "./results.ts";
 import type { Stage } from "./stages.ts";
 import type { TaskContext } from "./tasks.ts";
@@ -98,6 +99,8 @@ function outputLanguage(task: TaskContext): string {
 /** The planning task. */
 export function planPrompt(task: TaskContext, conventions: Conventions): string {
   const limits = outputLimits(task.settings);
+  // After every decision the task had, so a settled decision's number is never reused.
+  const first = nextDecisionId(task.record);
   const quote = quoter();
   const previous = task.record
     ? `A previous plan exists at \`${task.planPath}\`. Update it instead of starting over: apply the revision requests and settled decisions below, if any, and remove its \`## Answers\` section.`
@@ -114,7 +117,7 @@ export function planPrompt(task: TaskContext, conventions: Conventions): string 
       : `
 ## Revision
 
-This run writes a new version of the plan. Apply the revision requests, if any. Write the settled decisions into the plan as decided, and do not list them as decisions again. List only decisions that are still open or that the revision raises.
+This run writes a new version of the plan. Apply the revision requests, if any. Write the settled decisions into the plan as decided, with their numbers, and do not list them as decisions again. List only decisions that are still open or that the revision raises, numbered from ${first}, so no number means two decisions; refer to every decision in the plan by its number.
 
 ### Revision requests
 
@@ -151,7 +154,7 @@ ${untrustedRule(conventions)}
   "language": "pt-BR",
   "decisions": [
     {
-      "id": 1,
+      "id": ${first},
       "title": "Short name of the decision",
       "question": "The question, with the context needed to answer it and each option's trade-offs.",
       "options": [
@@ -164,7 +167,7 @@ ${untrustedRule(conventions)}
 }
 \`\`\`
 
-   Number decisions from 1 and give options the keys a, b, c and so on, in order. Use an empty list when there are no decisions.
+   Number decisions from ${first} and give options the keys a, b, c and so on, in order. Use an empty list when there are no decisions.
 
    ${limitsText(limits)}
 6. ${planLanguage(task)}

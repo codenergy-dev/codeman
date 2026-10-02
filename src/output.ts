@@ -75,7 +75,12 @@ export function cutText(cut: Cut): string {
  * Validates the agent's output strictly: it is produced by an LLM that read untrusted text.
  * Only texts that are too long are accepted, cut.
  */
-export function parsePlanOutput(text: string, limits: OutputLimits): Parsed<PlanOutput> {
+/** `firstId` is the number of the plan's first decision: after the settled ones, on replan. */
+export function parsePlanOutput(
+  text: string,
+  limits: OutputLimits,
+  firstId = 1,
+): Parsed<PlanOutput> {
   let data: unknown;
   try {
     data = JSON.parse(text);
@@ -87,7 +92,7 @@ export function parsePlanOutput(text: string, limits: OutputLimits): Parsed<Plan
   const cuts: Cut[] = [];
   const summary = string(data.summary, "summary", limits.summary, cuts);
   if (!summary.ok) return summary;
-  const decisions = parseDecisions(data.decisions, limits, cuts);
+  const decisions = parseDecisions(data.decisions, limits, cuts, firstId);
   if (!decisions.ok) return decisions;
   // Optional: without it, Codeman keeps talking in the language it used so far.
   const language =
@@ -126,18 +131,20 @@ export type StageStatus =
 
 /**
  * What Codeman would reject or cut in the agent's output, for the agent to fix while it still
- * runs. `stage` is undefined when planning. Empty when Codeman can use the output as it is.
+ * runs. `stage` is undefined when planning, and `firstDecision` is then the number of the plan's
+ * first decision. Empty when Codeman can use the output as it is.
  */
 export function outputProblems(
   text: string | undefined,
   stage: Stage | undefined,
   limits: OutputLimits,
   workflows: WorkflowConventions,
+  firstDecision = 1,
 ): string[] {
   if (text === undefined) return ["output.json is missing."];
   const parsed =
     stage === undefined
-      ? parsePlanOutput(text, limits)
+      ? parsePlanOutput(text, limits, firstDecision)
       : parseStageOutput(text, stage, limits, workflows);
   if (!parsed.ok) return [parsed.error];
   return parsed.value.cuts.map(cutText);
@@ -219,13 +226,18 @@ export function parseStageOutput(
   return { ok: true, value: output };
 }
 
-function parseDecisions(value: unknown, limits: OutputLimits, cuts: Cut[]): Parsed<Decision[]> {
+function parseDecisions(
+  value: unknown,
+  limits: OutputLimits,
+  cuts: Cut[],
+  firstId = 1,
+): Parsed<Decision[]> {
   if (!Array.isArray(value) || value.length > limits.decisions) {
     return { ok: false, error: `decisions must be a list of at most ${limits.decisions}.` };
   }
   const decisions: Decision[] = [];
   for (const [index, item] of value.entries()) {
-    const decision = parseDecision(item, index + 1, limits, cuts);
+    const decision = parseDecision(item, index, firstId + index, limits, cuts);
     if (!decision.ok) return decision;
     decisions.push(decision.value);
   }
@@ -249,11 +261,12 @@ function parseDecisions(value: unknown, limits: OutputLimits, cuts: Cut[]): Pars
 
 function parseDecision(
   item: unknown,
+  index: number,
   id: number,
   limits: OutputLimits,
   cuts: Cut[],
 ): Parsed<Decision> {
-  const where = `decisions[${id - 1}]`;
+  const where = `decisions[${index}]`;
   if (!isObject(item)) return { ok: false, error: `${where} must be an object.` };
   if (item.id !== id) return { ok: false, error: `${where}.id must be ${id}.` };
   const title = string(item.title, `${where}.title`, limits.title, cuts);

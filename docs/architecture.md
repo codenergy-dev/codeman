@@ -90,6 +90,8 @@ Every agent run gets Codeman's working rules: the `##` sections of Codeman's own
 2. `agent` gives the harness a task file with the rules, the issue and the maintainer comments. The agent writes the plan and `.codeman/output.json`, which lists the decisions: a title, a question, options and a recommendation each. See [agent output](#agent-output) for its limits.
 3. `apply` accepts only the plan file; other changes are ignored and listed in the run comment. It validates `output.json` strictly, commits the plan to the task branch through the Git Data API, and sets `codeman:awaiting-decision`, or `codeman:ready` when there are no decisions.
 
+A revised plan (`/codeman replan`) keeps the decisions settled so far, with their numbers and answers, and the agent numbers its new decisions after every earlier one, so one number never means two decisions. The plan's `## Answers` section lists the settled answers from the start. The task record keeps its history: the spend table, the pull request, the handled accepts, the stages' reports and the suggested squash message. What starts over is the stages' progress, from design, and the decisions comment: the revised decisions get a new one, after the run comments before it, unless the revised plan has none.
+
 If the agent fails, runs out of time or produces an invalid result, the task becomes `codeman:blocked`.
 
 ## Stages
@@ -218,7 +220,7 @@ Only comments from maintainers count, both for commands and for the text the age
 
 Codeman keeps one status comment per task up to date, as the task's panel: where the task is now and what comes next, plan and pull request links, a link to the decisions, workflows to review, the task's spend, the model, and links to the last run and its report. A hidden block in it stores the task record (branch, plan path, decisions, answers, last handled comment and review, pull request, runs in a row, spend), gzip-compressed and in base64url, because the comment holds at most 65,536 characters. Records written before compression are still read. Codeman reads that block only from comments written by its own GitHub App, because anyone can post a comment containing it.
 
-Once a task has decisions, a decisions comment shows them, with the recommendations, the answers and how to answer. Codeman renders it from the task record, edits it in place, and never reads it back: the record stays the only state, and an update that fails is repaired by the next one. The record keeps its ID; if it was deleted, Codeman posts a new one. When a revised plan has no decisions, it says so. Tasks from before this comment existed get it in their next run.
+Once a task has decisions, a decisions comment shows them, with the recommendations, the answers and how to answer. Codeman renders it from the task record, edits it in place, and never reads it back: the record stays the only state, and an update that fails is repaired by the next one. The record keeps its ID; if it was deleted, Codeman posts a new one. A revised plan's decisions get a new comment, and the earlier one stays as it was; when a revised plan has no decisions, the earlier comment says so. Tasks from before this comment existed get it in their next run.
 
 No comment Codeman writes exceeds the platform's limit: 65,536 characters on GitHub. When the decisions do not fit, answered ones are shown in one line each, then left out, then pending ones from the last, with a note that the plan has them all. When the panel does not fit, it keeps its record and links and leaves out the rest, with a note.
 
