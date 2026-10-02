@@ -114,7 +114,7 @@ After planning, a task goes through four stages, one run and one agent each, in 
    - `changes` from review: the report goes on the pull request, and the code stage works on it next. After `max-runs` rounds in a row, the task becomes `codeman:blocked`.
    - `decisions`: the task becomes `codeman:awaiting-decision`, with the new decisions after the plan's. When they are answered, design goes on; after review, code does, with the review's report.
    - `partial`, or out of time: the stage runs again, up to `max-runs` runs in a row. Then the task becomes `codeman:blocked`, and a maintainer can grant another round with `/codeman continue <guidance>`.
-   - `blocked`, or an invalid result: `codeman:blocked`, with the reason. `/codeman continue <guidance>` tries the stage again, and so does accepting the task's staged workflows.
+   - `blocked`, or an invalid result: `codeman:blocked`, with the reason. `/codeman continue <guidance>` tries the stage again, and so does accepting the task's staged workflows. When the agent reported `blocked`, the run comment also suggests `/codeman replan`: a request the plan does not cover, such as a `fix` that widens the task's scope, needs a revised plan.
 
 ### Feedback
 

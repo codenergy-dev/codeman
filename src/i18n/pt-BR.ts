@@ -167,6 +167,8 @@ export const ptBR: Messages = {
   startContinue: "O Codeman está continuando o trabalho, como pedido.",
 
   continueHint: "Comente `/codeman continue <orientação>` para tentar de novo.",
+  stageBlockedHint:
+    "Comente `/codeman continue <orientação>` para tentar de novo, ou `/codeman replan <o que mudar>` para revisar o plano, por exemplo para ampliar o escopo.",
   replanHint: "Comente `/codeman replan <o que mudar>` para tentar de novo.",
   removeLabelHint: "Remova a label `codeman:blocked` para tentar de novo.",
 

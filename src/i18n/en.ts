@@ -154,6 +154,8 @@ export const en: Messages = {
   startContinue: "Codeman is continuing the work, as requested.",
 
   continueHint: "Comment `/codeman continue <guidance>` to try again.",
+  stageBlockedHint:
+    "Comment `/codeman continue <guidance>` to try again, or `/codeman replan <what to change>` to revise the plan, for example to widen its scope.",
   replanHint: "Comment `/codeman replan <what to change>` to try again.",
   removeLabelHint: "Remove the `codeman:blocked` label to try again.",
 

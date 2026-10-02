@@ -323,7 +323,7 @@ async function applyStage(task: TaskContext, io: Io): Promise<void> {
       return finish(io, task, "blocked", {
         outcome: "blocked",
         record,
-        message: `${t.stageNeedsMaintainer(stage)} ${retryHint(t, task)}`,
+        message: `${t.stageNeedsMaintainer(stage)} ${t.stageBlockedHint}`,
         report: summary,
         errors: [t.agentReports(reason ?? ""), ...warnings],
       });

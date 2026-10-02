@@ -234,6 +234,17 @@ test("plans, records answers, and works through the stages on a platform unlike 
   assert.match(plan, /Decision 2 \(Expiry\): \(b\) After an hour, chosen by alice\./);
   runtime = await selectStep(platform);
   assert.deepEqual([runtime.outputs.action, runtime.outputs.stage], ["implement", "design"]);
+
+  // A stage that blocks suggests revising the plan, besides trying again.
+  agentResult(
+    {},
+    { status: "blocked", summary: "Stopped.", reason: "The request goes beyond the plan." },
+  );
+  await applyStep(platform);
+  assert.deepEqual(stateLabels(platform, issue), ["codeman:blocked"]);
+  const blocked = platform.botComments(issue).at(-1) ?? "";
+  assert.match(blocked, /`\/codeman continue <guidance>`/);
+  assert.match(blocked, /`\/codeman replan <what to change>` to revise the plan/);
 });
 
 test("an issue a maintainer did not open is left alone", async () => {

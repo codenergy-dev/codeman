@@ -120,6 +120,8 @@ export interface Messages {
 
   // How to go on.
   continueHint: string;
+  /** After a stage's agent reported `blocked`, often over a request the plan does not cover. */
+  stageBlockedHint: string;
   replanHint: string;
   removeLabelHint: string;
 
