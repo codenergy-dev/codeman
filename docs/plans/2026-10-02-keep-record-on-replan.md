@@ -1,7 +1,7 @@
 ---
-status: in progress
+status: completed
 created_at: 2026-10-02T10:00:00-03:00
-updated_at: 2026-10-02T12:30:00-03:00
+updated_at: 2026-10-02T13:00:00-03:00
 commit: 205373a
 ---
 
@@ -51,7 +51,8 @@ Rows already lost on existing tasks cannot be rebuilt: only their costs are left
 3. [x] `TaskRecord` in `src/record.ts` says that a new plan keeps every field but its own and those in `PLAN_RESETS`, which documents why each is reset. One list instead of a note next to each field, so the code and its documentation cannot disagree. Done when both are in place.
 4. [x] The flow test on the fake platform (`src/steps/flow.test.ts`) goes through a replan after the code stage: the spend table keeps its earlier rows plus the replan's, the revised decisions get a new comment numbered after the settled ones, and the next stage is design. Done when it passes.
 5. [x] `docs/architecture.md` says what a replan keeps and what starts over (planning; status and run comments, which says today that the record keeps the decisions comment's ID). Done when it does.
-6. [ ] `npm run check` passes, and a replan on the test repository keeps the spend table and numbers the revised decisions after the settled ones.
+6. [x] `npm run check` passes, and a replan on the test repository keeps the spend table and numbers the revised decisions after the settled ones.
+   `npm run check` passes (208 tests), and the flow test fails with the previous behavior. On 2026-10-02 the responsible person marked the plan completed without a replan on the test repository yet; it is reopened if one shows a problem.
 
 ## Out of scope
 
