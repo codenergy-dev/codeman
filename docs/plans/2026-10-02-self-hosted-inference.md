@@ -1,7 +1,7 @@
 ---
 status: pending
 created_at: 2026-10-02T18:25:00-03:00
-updated_at: 2026-10-02T19:20:00-03:00
+updated_at: 2026-10-02T19:40:00-03:00
 commit: d0637c8
 ---
 
@@ -148,28 +148,36 @@ Decisions 1 to 8 were answered on 2026-10-02 by the responsible person: the reco
 
    **Answer:** (a). The cap is still to be stated here before step 8.
 
-Answer these before work starts.
+Decisions 9 to 12 were answered on 2026-10-02 by the responsible person: the recommendation of each.
 
 9. **The serverless engine.** Options:
    - (a) Runpod's official vLLM worker. This adds a vLLM `InferenceEngine` adapter, small since the worker is configured by environment (model as a Hugging Face ID, context length). Ollama stays the engine on pods.
    - (b) Codeman's own serverless worker running Ollama, built and published like the pod image.
 
    Recommendation: (a). It is maintained by Runpod, tuned for FlashBoot, and serves the OpenAI-compatible route already. (b) means maintaining a worker and its handler. The price is two engines from the start, and model names that differ between modes.
+
+   **Answer:** (a).
 10. **Who creates the serverless endpoint.** Options:
     - (a) A maintainer creates it in Runpod's console (Secure Cloud, flex workers only, at most one worker, a short idle timeout), with a key restricted to it; Codeman gets the endpoint's ID in `serverless-endpoint` and the key as a secret.
     - (b) Codeman creates and updates endpoints through Runpod's API, with the account key.
 
     Recommendation: (a). The endpoint lives across tasks and costs nothing while idle, which is what makes FlashBoot starts likely; the key the agent job holds can reach that endpoint only. Codeman checks the endpoint's settings at `open` and refuses one that breaks the rules above.
+
+    **Answer:** (a).
 11. **Where the serverless key lives.** Options:
     - (a) In the gateway, which the agent job runs outside the sandbox. The agent gets a local URL and the run's token, valid for that run only and limited by its budget.
     - (b) The agent gets the restricted key, as it gets an OpenRouter key today.
 
     Recommendation: (a). The key does not expire and has no spending limit, and the agent reads hostile text; leaked, it would run the endpoint at the account's cost until someone revokes it.
+
+    **Answer:** (a).
 12. **Keeping a pod for a task.** Options:
     - (a) A setting, `pod-reuse`, with `task` as the default and `run` as the alternative. With `task`, `apply` says whether the task goes on to another agent run; if so, the pod stays, with a new deadline and its tokens revoked, and the next run of the task reuses it when the model and GPU type match, with new tokens. Otherwise a new job, `release-pod`, with the account key only, terminates it. A kept pod terminates itself after 15 minutes without a run.
     - (b) The same setting, with `run` as the default.
 
     Recommendation: (a). Most runs that move a task are followed by another within minutes, and a wrong guess costs at most the idle limit at the pod's price.
+
+    **Answer:** (a).
 
 ## Steps
 
