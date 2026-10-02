@@ -1,7 +1,7 @@
 ---
 status: pending
 created_at: 2026-10-02T18:15:00-03:00
-updated_at: 2026-10-02T18:15:00-03:00
+updated_at: 2026-10-02T19:05:00-03:00
 commit: d0637c8
 ---
 
@@ -32,10 +32,11 @@ What constrains the design:
 - A run that only routes moves the task, so `next-run` starts the first stage of the route.
 - `max-runs`, review rounds and the budgets keep bounding the loop.
 - `/codeman continue`, accepting workflows and `partial` resume the stage they belong to; they do not route.
+- A route may leave out any stage (decision 2), so the task's end no longer depends on review. When the route's last stage ends, Codeman does what a passing review does today: it opens the pull request if there is none yet, adds the proposed `.codemanignore`, marks the pull request ready and sets `codeman:done`, or waits for staged workflows to be accepted. Without review, the pull request's description says that the router left review out, and why.
 
 ## Decisions
 
-Answer these before work starts.
+Answered on 2026-10-02 by the responsible person: the recommendation of each, except decision 2.
 
 1. **What the router decides.** Options:
    - (a) The whole route: an ordered subset of the stages, each with a brief for its agent. It runs once at each trigger.
@@ -48,6 +49,8 @@ Answer these before work starts.
    - (c) Any stage, including review.
 
    Recommendation: (a). Review stays the independent check before the pull request is ready, and a fixed order keeps the handoffs between stages the same as today.
+
+   **Answer:** the router may leave out any stage, review included, because each task has its own needs. Every stage it leaves out comes with a reason, shown in the run comment. Stages that run keep their order. A route with no stage means that, in the router's view, nothing should run next: the task becomes `codeman:blocked`, and the run comment gives the router's reason and what it suggests doing (for example `/codeman replan`, a `/codeman fix` with more detail, or closing the issue).
 3. **When the plan has no decisions.** Options:
    - (a) The router also runs when planning ends without decisions, so every task starts through it.
    - (b) Without decisions, the fixed order applies.
@@ -73,13 +76,14 @@ Answer these before work starts.
 
 1. `route` in the task record: the stages still to run, each with its brief, and the trigger that made it. Records without it follow the fixed order. Done when `record` tests cover old and new records.
 2. Selection: `select` picks the router at each trigger (decisions answered, `fix`, review `changes`, and per decision 3), sets the label (decision 6), and outputs `stage: route`. A stage that finishes with `done` or `skipped` hands over to the next stage of the route instead of `nextStage`. Done when `select` and `flow` tests cover each trigger and a route that leaves out design and test.
-3. The router's prompt and output: it reads the plan, the decisions and answers, the requests (`fix` texts, reviews with line comments), the earlier run comments and the task branch's diff against the default branch. It writes `.codeman/output.json` with a status (`done` or `blocked`), a summary, and the route. Its file changes are discarded, like review's. Done when `output` tests validate a route per decision 2 and reject anything else.
+3. The router's prompt and output: it reads the plan, the decisions and answers, the requests (`fix` texts, reviews with line comments), the earlier run comments and the task branch's diff against the default branch. It writes `.codeman/output.json` with a status (`done` or `blocked`), a summary, the stages to run with a brief each, and the stages left out with a reason each. An empty route requires a reason and a suggestion. Its file changes are discarded, like review's. Done when `output` tests accept any subset of stages in order with a reason for each left out, and reject a stage out of order, repeated or without a reason.
 4. Stages get their brief from the route next to the previous stage's notes. Done when `prompt` tests show it.
-5. `apply` for the router: records the route, posts the run comment with the route and the briefs, and moves the task to the first stage; on failure, per decision 4. Done when `apply` tests cover a route, a block and each failure.
-6. The spend table, run comments and i18n catalogs name the new stage in English and Brazilian Portuguese. Done when `status` tests pass in both.
-7. Update [`docs/architecture.md`](../architecture.md) (states, runs, stages, feedback) and the README's flow. Done when they describe the router.
-8. Rebuild `dist/`, run `npm run check`. Done when it passes.
-9. The responsible person runs, on the test repository, a task with a screen, a task without one, a `/codeman fix` and a review that requests changes, and checks the routes.
+5. `apply` for the router: records the route, posts the run comment with the route, the briefs and the reasons for what it left out, and moves the task to the first stage; an empty route blocks the task with the router's suggestion (decision 2); on failure, per decision 4. Done when `apply` tests cover a full route, a route without review, an empty route and each failure.
+6. The end of a route without review, as in the context: the pull request is opened if missing, marked ready, and its description says review was left out. Done when `apply` tests cover a route that ends in code and one that ends in test.
+7. The spend table, run comments and i18n catalogs name the new stage in English and Brazilian Portuguese. Done when `status` tests pass in both.
+8. Update [`docs/architecture.md`](../architecture.md) (states, runs, stages, feedback) and the README's flow. Done when they describe the router.
+9. Rebuild `dist/`, run `npm run check`. Done when it passes.
+10. The responsible person runs, on the test repository, a task with a screen, a task without one, a `/codeman fix` and a review that requests changes, and checks the routes and their reasons.
 
 ## Out of scope
 

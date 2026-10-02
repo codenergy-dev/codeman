@@ -1,7 +1,7 @@
 ---
 status: pending
 created_at: 2026-10-02T18:10:00-03:00
-updated_at: 2026-10-02T18:10:00-03:00
+updated_at: 2026-10-02T19:00:00-03:00
 commit: d0637c8
 ---
 
@@ -9,7 +9,7 @@ commit: d0637c8
 
 ## Goal
 
-Each row of the spend table also shows the run's context length (the most input tokens in one request of the run's key) and its throughput (the mean tokens per second over the key's requests), both read from OpenRouter's analytics API. The task's figures go under the table.
+Each row of the spend table also shows the run's context length (the most input tokens in one request of the run's key) and its throughput (the mean tokens per second over the key's requests), both read from OpenRouter's analytics API. A last row totals every column over all the task's runs.
 
 ## Context
 
@@ -32,7 +32,7 @@ Keys live at most 48 hours and `close-key` reads them right after the run, so th
 
 ## Decisions
 
-Answer these before work starts.
+Answered on 2026-10-02 by the responsible person: the recommendation of each, and a totals row (decision 3).
 
 1. **Where the figures show.** Options:
    - (a) Two new columns in the spend table, "Context" and "Tok/s", in the status comment and in each run comment, plus the task's maximum context and mean throughput under the table.
@@ -45,6 +45,7 @@ Answer these before work starts.
    - (b) The mean of the runs' means.
 
    Recommendation: (a). It is "the mean of the requests" across the task, and a short run with three requests does not weigh as much as a long one.
+3. **A totals row**, asked for by the responsible person: a last row, after the folded and the "runs without a record" rows, totals each column over all the task's runs. Agent time, input and output tokens and cost are summed; the cost then equals the task's total from OpenRouter. Context length is the largest of the task, and throughput the mean of decision 2, since neither adds up. The key's limit and the budgets are limits, not amounts, and stay empty. The totals row replaces the lines under the table that repeat it (the task's spend, tokens and agent time); what it does not show stays there.
 
 ## Steps
 
@@ -54,10 +55,11 @@ Answer these before work starts.
 2. `OpenRouter` in [`src/budget.ts`](../../src/budget.ts) gets `keyStats(hash, since, until)`: requests, mean throughput and largest prompt, undefined while analytics has no rows. Done when unit tests cover the request bodies, counts sent as strings, and an empty answer.
 3. `close-key` reads them after the tokens, with the same retries, and outputs `max-input-tokens`, `tokens-per-second` and `requests`. A failure is only logged, as for tokens. Done when `keys` tests cover a read, a late read and a failure.
 4. `action.yml` and [`templates/codeman.yml`](../../templates/codeman.yml) declare and pass the outputs to `apply`. Done when both agree.
-5. `SpendRow` gets `maxInputTokens`, `tokensPerSecond` and `requests`; folding keeps the largest context and a request-weighted throughput (decision 2). The table and the summary under it render them (decision 1), with "—" for missing values, as with an older workflow file. Done when `spend` and `status` tests cover new rows, folded rows, old records and missing values, in both catalogs.
-6. Update [`docs/architecture.md`](../architecture.md) (Budget). Done when it describes both figures and where they come from.
-7. Rebuild `dist/`, run `npm run check`. Done when it passes.
-8. The responsible person updates the test repository's workflow file and checks the figures after a few runs against OpenRouter's activity page.
+5. `SpendRow` gets `maxInputTokens`, `tokensPerSecond` and `requests`; folding keeps the largest context and a request-weighted throughput (decision 2). The table renders them (decision 1), with "—" for missing values, as with an older workflow file. Done when `spend` tests cover new rows, folded rows, old records and missing values.
+6. The totals row (decision 3), in the status comment's table; a run comment's table has one row and gets none. The lines under the table keep only what the row does not show. Done when `spend` and `status` tests cover it with and without folded rows and the difference row, in both catalogs.
+7. Update [`docs/architecture.md`](../architecture.md) (Budget). Done when it describes both figures, where they come from, and the totals row.
+8. Rebuild `dist/`, run `npm run check`. Done when it passes.
+9. The responsible person updates the test repository's workflow file and checks the figures after a few runs against OpenRouter's activity page.
 
 ## Out of scope
 
