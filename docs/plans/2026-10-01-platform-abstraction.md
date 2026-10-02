@@ -1,7 +1,7 @@
 ---
-status: in progress
+status: completed
 created_at: 2026-10-01T16:10:00-03:00
-updated_at: 2026-10-01T19:10:00-03:00
+updated_at: 2026-10-02T10:00:00-03:00
 commit: 6658cb9
 ---
 
@@ -85,8 +85,8 @@ Reading the code before starting refined steps 4 and 5, so the plan was updated 
 8. [x] Composition root: `src/main.ts` builds the runtime, platform, CI results and conventions for GitHub (`Services`) and passes them to the steps. Done when steps take their dependencies as arguments.
 9. [x] In-memory fake platform and runtime in `src/testing/`, with tests for `select` and `apply` that cover planning, recording answers, a stage, and opening a pull request. Done when they pass without network access.
 10. [x] `docs/architecture.md` gets a "Platforms" section: the interfaces, what each adapter must guarantee (monotonic IDs, atomic guarded commits, an identity that others cannot forge, a maintainer check, a record that survives in a comment, safe Markdown, secret masking or an equivalent, per-job credentials), and that the security model must be reviewed for each new runtime. `docs/development.md` says where adapters live. Done when both describe the new layout.
-11. [ ] `npm run check` passes, and the built `dist/index.js` behaves the same on a test repository: plan, answers, stages and pull request. Done when a full task runs as before.
-    `npm run check` passes (204 tests). Prompts, the proposed `.codemanignore` and rendered comments were compared byte for byte with the previous code for GitHub. The run on a test repository is left to the responsible person: it needs the App, OpenRouter credits and a repository Codeman may write to.
+11. [x] `npm run check` passes, and the built `dist/index.js` behaves the same on a test repository: plan, answers, stages and pull request. Done when a full task runs as before.
+    `npm run check` passes (204 tests). Prompts, the proposed `.codemanignore` and rendered comments were compared byte for byte with the previous code for GitHub. On 2026-10-02 the responsible person ran a task end to end on a test repository with `205373a`: plan, answers, a `replan`, every stage and the pull request, up to `codeman:done`. The replan showed that a new plan drops the task's spend rows; that predates this plan and has its own, [`2026-10-02-keep-record-on-replan`](2026-10-02-keep-record-on-replan.md).
 
 ## Out of scope
 
