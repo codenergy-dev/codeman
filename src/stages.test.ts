@@ -12,7 +12,7 @@ import {
 import { chooseTask } from "./tasks.ts";
 
 test("stages run in order, each with its own state", () => {
-  assert.deepEqual(STAGES, ["design", "code", "test", "review"]);
+  assert.deepEqual(STAGES, ["web", "design", "code", "test", "review"]);
   assert.equal(nextStage("design"), "code");
   assert.equal(nextStage("review"), undefined);
   for (const stage of STAGES) assert.equal(stageOfState(STAGE_STATE[stage]), stage);

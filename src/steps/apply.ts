@@ -16,6 +16,7 @@ import type { Conventions } from "../platform/conventions.ts";
 import type { Platform } from "../platform/platform.ts";
 import type { FileChange } from "../platform/types.ts";
 import {
+  type CheckedChanges,
   checkChanges,
   defaultIgnore,
   IGNORE_FILE,
@@ -43,6 +44,15 @@ import { decisionsUrl, renderDecisions, renderRun, renderStatus, reportUrl } fro
 import { commandsAfter, type TaskContext } from "../tasks.ts";
 import { oneLine, safeInline, safeMarkdown, truncate } from "../text.ts";
 import { checkPlanResult, decodeText, isManifest } from "../validate.ts";
+import {
+  frontMatter,
+  isWebPath,
+  WEB_DIR,
+  WEB_TOOLS_DIR,
+  type WebPage,
+  webFileProblem,
+  webPages,
+} from "../webdocs.ts";
 import { MAX_OUTPUT_BYTES } from "./agent.ts";
 import { readTask, resultDir } from "./common.ts";
 
@@ -260,8 +270,12 @@ async function applyStage(task: TaskContext, io: Io): Promise<void> {
           maxFiles: task.settings["max-files"],
           maxFileBytes: task.settings["max-file-bytes"],
           planPath: task.planPath,
+          webDocs: stage === "web" ? "only" : "never",
         });
   if (!checked.ok) return blocked(io, task, checked.error);
+  if (stage === "web") {
+    checked.value = await checkWebFiles(io.repo, task.baseSha, join(dir, "tree"), checked.value);
+  }
   // What the maintainers should know of: dropped changes, and texts of the output that were cut.
   const warnings = checked.value.dropped.map(({ path, reason }) => t.droppedChange(path, reason));
 
@@ -637,6 +651,7 @@ function routeReport(t: Messages, output: RouteOutput): string {
 }
 
 const STAGE_NAMES: Record<Stage, string> = {
+  web: "Third-party docs",
   design: "Design",
   code: "Code",
   test: "Tests",
@@ -878,6 +893,80 @@ export function afterAccept(
   return { state, record: accepted, message: "" };
 }
 
+/**
+ * The web stage's pages and tools that follow the format; the others are dropped, with why.
+ * Tools are checked first, so a page may name a tool written in the same run only if it is
+ * valid. Other tools must be on the branch at `ref`.
+ */
+async function checkWebFiles(
+  repo: Platform,
+  ref: string,
+  tree: string,
+  checked: CheckedChanges,
+): Promise<CheckedChanges> {
+  const text = (path: string): string => {
+    const file = join(tree, path);
+    return lstatSync(file).isFile() ? readFileSync(file, "utf8") : "";
+  };
+  const written = checked.accepted.filter(
+    (change) => change.status !== "deleted" && isWebPath(change.path),
+  );
+  const tools = new Set<string>();
+  const dropped = [...checked.dropped];
+  const bad = new Set<string>();
+  for (const change of written.filter((file) => file.path.startsWith(WEB_TOOLS_DIR))) {
+    const problem = webFileProblem(change.path, text(change.path), () => true);
+    if (!problem) {
+      tools.add(change.path);
+      continue;
+    }
+    bad.add(change.path);
+    dropped.push({ path: change.path, reason: { kind: "invalid-web-page", problem } });
+  }
+  const onBranch = new Map<string, boolean>();
+  for (const change of written.filter((file) => !file.path.startsWith(WEB_TOOLS_DIR))) {
+    const content = text(change.path);
+    const tool = frontMatter(content)?.get("tool");
+    if (tool?.startsWith(WEB_TOOLS_DIR) && !tools.has(tool) && !onBranch.has(tool)) {
+      onBranch.set(tool, !bad.has(tool) && (await repo.readFile(ref, tool)) !== undefined);
+    }
+    const problem = webFileProblem(
+      change.path,
+      content,
+      (path) => tools.has(path) || onBranch.get(path) === true,
+    );
+    if (problem) {
+      bad.add(change.path);
+      dropped.push({ path: change.path, reason: { kind: "invalid-web-page", problem } });
+    }
+  }
+  return {
+    ...checked,
+    accepted: checked.accepted.filter((change) => !bad.has(change.path)),
+    dropped,
+  };
+}
+
+/**
+ * The record's pages under `docs/web/`, as they are on the task branch now, or on the default
+ * branch before the task has one. Failures keep what the record had: the list is informational.
+ */
+async function currentWebPages(
+  io: Io,
+  task: TaskContext,
+  known: Record<string, WebPage> | undefined,
+): Promise<Record<string, WebPage> | undefined> {
+  for (const ref of [task.branch, task.defaultBranch]) {
+    try {
+      return await webPages(io.repo, ref, known);
+    } catch {
+      // The task branch may not exist yet.
+    }
+  }
+  io.runtime.warning(`Could not read the pages under ${WEB_DIR}.`);
+  return known;
+}
+
 /** Reads the accepted changes from the agent's result. Each file is checked again. */
 function readChanges(
   tree: string,
@@ -999,6 +1088,7 @@ async function finish(
       spending: refreshCosts(record.spending, costs, (url) => io.runtime.runIdOf(url)),
     };
   }
+  if (record) record = { ...record, webPages: await currentWebPages(io, task, record.webPages) };
   // A stage ran and saw the accepted workflows.
   if (record && task.action === "implement" && !view.retry)
     record = { ...record, accepted: undefined };

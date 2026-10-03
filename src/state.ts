@@ -7,6 +7,8 @@ export const STATES = [
   "ready",
   /** The routing agent chooses the stages that run next. */
   "routing",
+  /** The web stage records third-party documentation. */
+  "researching",
   "designing",
   "coding",
   "testing",

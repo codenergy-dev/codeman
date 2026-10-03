@@ -329,7 +329,7 @@ test("a route lists stages in order with briefs, and leaves the others out with 
       { stage: "code", brief: "Rename it." },
       { stage: "review", brief: "Check the rename." },
     ],
-    skipped: left("design", "test"),
+    skipped: left("web", "design", "test"),
   });
   assert.ok(parsed.ok);
   assert.deepEqual(
@@ -338,7 +338,7 @@ test("a route lists stages in order with briefs, and leaves the others out with 
   );
   assert.deepEqual(
     parsed.value.skipped.map((step) => step.stage),
-    ["design", "test"],
+    ["web", "design", "test"],
   );
 });
 
@@ -350,27 +350,33 @@ test("a route rejects stages out of order, listed twice, missing or without a re
           { stage: "review", brief: "b" },
           { stage: "code", brief: "c" },
         ],
-        skipped: left("design", "test"),
+        skipped: left("web", "design", "test"),
       },
       /order of stages/,
     ],
     [
-      { route: [{ stage: "code", brief: "c" }], skipped: left("code", "design", "test", "review") },
+      {
+        route: [{ stage: "code", brief: "c" }],
+        skipped: left("web", "code", "design", "test", "review"),
+      },
       /code is listed twice/,
     ],
-    [{ route: [{ stage: "code", brief: "c" }], skipped: left("design") }, /missing: test, review/],
+    [
+      { route: [{ stage: "code", brief: "c" }], skipped: left("design") },
+      /missing: web, test, review/,
+    ],
     [
       {
         route: [{ stage: "code", brief: "c" }],
-        skipped: [...left("design", "test"), { stage: "review" }],
+        skipped: [...left("web", "design", "test"), { stage: "review" }],
       },
-      /skipped\[2\]\.reason must be a non-empty string/,
+      /skipped\[3\]\.reason must be a non-empty string/,
     ],
     [
-      { route: [{ stage: "plan", brief: "p" }], skipped: left("design", "test", "review") },
-      /route\[0\]\.stage must be one of design, code, test, review/,
+      { route: [{ stage: "plan", brief: "p" }], skipped: left("web", "design", "test", "review") },
+      /route\[0\]\.stage must be one of web, design, code, test, review/,
     ],
-    [{ route: [], skipped: left("design", "code", "test", "review") }, /report blocked/],
+    [{ route: [], skipped: left("web", "design", "code", "test", "review") }, /report blocked/],
   ];
   for (const [value, error] of cases) {
     const parsed = route({ status: "done", summary: "s", ...value });
@@ -380,7 +386,7 @@ test("a route rejects stages out of order, listed twice, missing or without a re
 });
 
 test("a blocked route is empty, and says why and what to do", () => {
-  const all = left("design", "code", "test", "review");
+  const all = left("web", "design", "code", "test", "review");
   const blocked = route({
     status: "blocked",
     summary: "s",
@@ -398,7 +404,7 @@ test("a blocked route is empty, and says why and what to do", () => {
     status: "blocked",
     summary: "s",
     route: [{ stage: "code", brief: "c" }],
-    skipped: left("design", "test", "review"),
+    skipped: left("web", "design", "test", "review"),
     reason: "r",
     suggestion: "s",
   });

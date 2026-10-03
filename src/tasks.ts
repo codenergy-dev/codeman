@@ -226,6 +226,7 @@ export const DECIDING: ReadonlySet<State | "new"> = new Set(["awaiting-decision"
 export const RESUMABLE: ReadonlySet<State | "new"> = new Set([
   "ready",
   "routing",
+  "researching",
   "designing",
   "coding",
   "testing",

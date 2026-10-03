@@ -14,6 +14,7 @@ import {
   routePrompt,
   stagePrompt,
   TASK_FILE,
+  WEB_TOOL_PATH,
 } from "../prompt.ts";
 import { nextDecisionId } from "../record.ts";
 import { downloadResults, RESULTS_DIR } from "../results.ts";
@@ -29,6 +30,7 @@ import {
 } from "../sandbox.ts";
 import type { Services } from "../services.ts";
 import { oneLine } from "../text.ts";
+import { GENERIC_TOOL } from "../webdocs.ts";
 import { positiveNumber, readTask, resultDir, workdir } from "./common.ts";
 
 export const MAX_OUTPUT_BYTES = 1024 * 1024;
@@ -77,6 +79,9 @@ export async function agent(services: Services): Promise<void> {
         ? routePrompt(task, conventions)
         : planPrompt(task, conventions);
   writeAsAgent(`${worktree}/${TASK_FILE}`, prompt);
+  if (task.action === "implement" && task.stage === "web") {
+    writeAsAgent(`${worktree}/${WEB_TOOL_PATH}`, readFileSync(GENERIC_TOOL, "utf8"));
+  }
   const rules = agentRules(readRules(), repositoryRules(workspace));
   if (rules.omitted.length > 0) {
     runtime.info(`The repository's instructions already cover: ${rules.omitted.join(", ")}.`);

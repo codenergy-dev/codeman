@@ -3,6 +3,7 @@ import type { Messages } from "./messages.ts";
 const STAGES = {
   plan: "plano",
   route: "roteamento",
+  web: "pesquisa",
   design: "design",
   code: "código",
   test: "testes",
@@ -70,6 +71,7 @@ export const ptBR: Messages = {
       "awaiting-decision": "Aguardando as suas decisões",
       ready: "Pronto para implementar",
       routing: "Escolhendo as próximas etapas",
+      researching: "Registrando documentação de terceiros",
       designing: "Desenhando",
       coding: "Escrevendo o código",
       testing: "Testando",
@@ -97,6 +99,12 @@ export const ptBR: Messages = {
   workflowsToReview: "Workflows para revisar",
   workflowsHelp:
     "O agente escreveu estes workflows. Eles estão guardados em `.codeman/workflows/` na branch da tarefa e não rodam. Um workflow roda com os segredos do repositório, então leia-os antes no pull request ou na branch. Para movê-los para `.github/workflows/`, comente `/codeman accept-workflows`.",
+  oldDocs: "Documentação de terceiros para atualizar",
+  oldDocsHelp: (days) =>
+    `Estas páginas em \`docs/web/\` foram buscadas há mais de ${days} dias, ou não têm um \`updated_at\` válido. O Codeman não as atualiza sozinho. Para atualizar algumas, peça numa tarefa, por exemplo com \`/codeman fix Atualize docs/web/<terceiro>/\`: o agente de roteamento a envia para a etapa de pesquisa.`,
+  daysOld: (days) => `${days} dias`,
+  noDate: "sem `updated_at` válido",
+  morePages: (count) => `E mais ${count}.`,
   spending: "Gastos",
   spent: ({ run, task, budget }) =>
     `Gasto: ${run ? `${run} nesta rodada, ` : ""}${task} de ${budget} da tarefa`,
@@ -114,6 +122,7 @@ export const ptBR: Messages = {
       "awaiting-decision": "as suas decisões, no comentário de decisões da tarefa.",
       ready: "o agente de roteamento, que escolhe as etapas que rodam em seguida.",
       routing: "o agente de roteamento, que escolhe as etapas que rodam em seguida.",
+      researching: "etapa de pesquisa.",
       designing: "etapa de design.",
       coding: "etapa de código.",
       testing: "etapa de testes.",
@@ -166,6 +175,7 @@ export const ptBR: Messages = {
       : "O Codeman está lendo a issue e escrevendo um plano.",
   startStage: (stage) =>
     ({
+      web: "O Codeman está registrando a documentação de terceiros de que a tarefa depende.",
       design: "O Codeman está desenhando: fluxos e telas, se a tarefa precisar.",
       code: "O Codeman está escrevendo o código.",
       test: "O Codeman está testando o trabalho.",
@@ -204,6 +214,9 @@ export const ptBR: Messages = {
       "not-a-file": "não é um arquivo comum",
       "too-large": `maior que ${reason.kind === "too-large" ? number(0).format(reason.max) : 0} bytes`,
       "workflow-deletion": "apagar um workflow fica a cargo de um mantenedor",
+      "web-stage-only": "a etapa de pesquisa só muda docs/web/",
+      "web-docs": "só a etapa de pesquisa muda docs/web/",
+      "invalid-web-page": reason.kind === "invalid-web-page" ? reason.problem : "",
     }[reason.kind];
     return `Mudança em ${path} descartada: ${why}.`;
   },

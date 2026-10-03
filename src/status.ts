@@ -4,6 +4,7 @@ import { type Decision, encodeStatus, pendingDecisions, type TaskRecord } from "
 import { type SpendRow, spendTable } from "./spend.ts";
 import type { State } from "./state.ts";
 import { inlineText, safeInline, safeMarkdown } from "./text.ts";
+import { OLD_PAGE_DAYS, oldPages } from "./webdocs.ts";
 
 export interface StatusView {
   /** The task's language. */
@@ -27,7 +28,12 @@ export interface StatusView {
   reportUrl?: string | undefined;
   /** The task's decisions comment. */
   decisionsUrl?: string | undefined;
+  /** When the panel is written, to tell how old the third-party pages are; now by default. */
+  now?: Date | undefined;
 }
+
+/** Old third-party pages the panel lists at most; the others are counted. */
+const MAX_OLD_PAGES = 20;
 
 /** What a run and its task spent, in USD, as far as known. */
 export interface Cost {
@@ -63,6 +69,7 @@ export function renderStatus(view: StatusView): string {
     for (const path of view.staged) rest.push(`- ${inlineText(path, md)}`);
     rest.push("", t.workflowsHelp, "");
   }
+  rest.push(...oldDocsSection(t, md, record, view.now ?? new Date()));
   if (record?.spending?.rows.length || view.cost?.task !== undefined) {
     rest.push(
       `#### ${t.spending}`,
@@ -248,6 +255,29 @@ export function renderRun(view: RunView): string {
       : spentText(t, view.spend ? { ...view.cost, run: undefined } : view.cost);
   lines.push(t.runFooter(modelName(view.model), spent, view.runUrl));
   return lines.join("\n");
+}
+
+/**
+ * Pages under `docs/web/` fetched long ago, grouped by third party (the directory they are in),
+ * with how to ask for a refresh. Paths come from the repository, so they are made inert.
+ */
+function oldDocsSection(
+  t: Messages,
+  md: MarkdownDialect,
+  record: TaskRecord | undefined,
+  now: Date,
+): string[] {
+  const old = oldPages(record?.webPages, now);
+  if (old.length === 0) return [];
+  const third = (path: string) => path.split("/")[2] ?? "";
+  const sorted = [...old].sort((a, b) => third(a.path).localeCompare(third(b.path)));
+  const lines = [`#### ${t.oldDocs}`, "", t.oldDocsHelp(OLD_PAGE_DAYS), ""];
+  for (const page of sorted.slice(0, MAX_OLD_PAGES)) {
+    const age = page.days === undefined ? t.noDate : t.daysOld(page.days);
+    lines.push(`- ${inlineText(page.path, md)}: ${age}`);
+  }
+  if (sorted.length > MAX_OLD_PAGES) lines.push("", t.morePages(sorted.length - MAX_OLD_PAGES));
+  return [...lines, ""];
 }
 
 function spentText(t: Messages, cost: Cost): string {

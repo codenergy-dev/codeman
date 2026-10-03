@@ -14,6 +14,7 @@ Each task has at most one state label. A task without one has not started yet (`
 | `codeman:awaiting-decision` | Plan posted; decisions pending. |
 | `codeman:ready` | All decisions answered; the next run starts the routing agent. |
 | `codeman:routing` | The routing agent is choosing the stages that run next. |
+| `codeman:researching` | The web stage is recording third-party documentation. |
 | `codeman:designing` | The design stage is working. |
 | `codeman:coding` | The code stage is working. |
 | `codeman:testing` | The test stage is working. |
@@ -99,10 +100,11 @@ If the agent fails, runs out of time or produces an invalid result, the task bec
 
 ## Stages
 
-After planning, a task goes through up to four stages, one run and one agent each, in this order: design, code, test and review. A routing agent chooses which of them run.
+After planning, a task goes through up to five stages, one run and one agent each, in this order: web, design, code, test and review. A routing agent chooses which of them run.
 
 | Stage | Does |
 | --- | --- |
+| Web | The documentation of the third-party services the task relies on, in `docs/web/`, following the rules for [third-party documentation](#third-party-documentation). It changes nothing else but the plan. |
 | Design | Flowcharts in Mermaid (`docs/flows/*.md`), screen drafts in plain HTML (`docs/design/*.html`) and their images (`docs/screenshots/*.png`, rendered with the runner's headless Chrome), linked from the plan. It may ask the maintainers decisions, such as a choice between two layouts. |
 | Code | The implementation, with unit tests for the code it writes, and the documentation it changes. |
 | Test | Integration and end-to-end tests where they apply, more unit tests where coverage is thin, and every check the repository has. What can only be tested outside the task branch (a deploy, a release) goes in a "Manual tests" section of its report, which the pull request's description shows; it is no reason to block. |
@@ -146,6 +148,15 @@ The routing agent chooses the stages that carry out the request, and each of the
 
 Codeman records the last comment and review it handled. A request is handled once a run for it ends, whatever the outcome, so a failing request does not start run after run; when the monthly budget stopped the run from starting, the request waits for a later run.
 
+## Third-party documentation
+
+Repositories keep the documentation of the third-party services they rely on in `docs/web/`: one page per file in `docs/web/<third-party>/<slug>.md`, and in `docs/web/tools/` how each kind of page is fetched. The format, and when a page may be a full copy, are rules in [`AGENTS.md`](../AGENTS.md) ("Third-party documentation"), which every agent receives. Codeman's own catalog is in [`docs/web/`](web/).
+
+- Only the web stage writes there; the other stages' changes under `docs/web/` are dropped, and every agent is told to read it as data. The web stage changes nothing else but the plan.
+- Before committing, `apply` checks each page and tool: its path, a file name that is the slug of its title, the front matter's fields, ISO 8601 dates, a `tool` that exists on the branch or in the same run, and a non-empty `license` when there is one. A file that fails is dropped, with why, in the run comment.
+- The web stage gets Codeman's generic tool in `.codeman/fetch-markdown.md`, and copies it into `docs/web/tools/` when the repository has none.
+- Pages are not refreshed on their own. After each run, Codeman reads the front matter of the pages on the task branch (only those whose blob changed; the record keeps the rest), and the status comment lists the pages fetched more than 30 days ago, or whose `updated_at` cannot be read, with how to ask for a refresh: a request such as `/codeman fix Refresh docs/web/<third-party>/`, which the routing agent sends to the web stage.
+
 ## Agent output
 
 The agent reports in `.codeman/output.json`: a summary and decisions when planning, and a status, a summary, a reason, a commit message and decisions in a stage. What it writes there ends up in comments on GitHub, which hold at most 65,536 characters, so each text has a limit; see [settings](#settings).
@@ -166,6 +177,7 @@ Apply commits only regular files that pass these rules; it drops the others and 
 - Whatever the file says, the agent never changes `.codemanignore` or `.codeman/`, since it must not change its own rules.
 - Workflow files are never committed where they would run; see [on-demand workflows](#on-demand-workflows). The proposed rules protect all of `.github/`. To let the agent write workflows while keeping the rest of `.github/` protected, use `/.github/**`, `!/.github/workflows/` and `!/.github/workflows/**`.
 - The plan file is always accepted.
+- Only the web stage changes `docs/web/`, and it changes nothing else; see [third-party documentation](#third-party-documentation).
 - Each file may have at most `max-file-bytes`. A run that changes more than `max-files` files commits nothing and blocks the task.
 
 Codeman reads the rules from the default branch, never from the task branch, so one run cannot loosen them for the next. Matching uses `git check-ignore` in an empty repository, so git's own rules apply.

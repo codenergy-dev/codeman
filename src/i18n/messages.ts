@@ -67,6 +67,13 @@ export interface Messages {
   panelCut: string;
   workflowsToReview: string;
   workflowsHelp: string;
+  /** Pages under `docs/web/` fetched more than `days` days ago. */
+  oldDocs: string;
+  oldDocsHelp(days: number): string;
+  daysOld(days: number): string;
+  /** A page whose `updated_at` cannot be read. */
+  noDate: string;
+  morePages(count: number): string;
   spending: string;
   spent(cost: { run?: string | undefined; task: string; budget: string }): string;
   panelFooter(model: string, runUrl: string, reportUrl: string | undefined): string;

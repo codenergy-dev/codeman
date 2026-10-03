@@ -165,8 +165,8 @@ test("plans, records answers, and works through the stages on a platform unlike 
   assert.deepEqual(stateLabels(platform, issue), ["codeman:ready"]);
   assert.match(platform.file(task.branch, task.planPath) ?? "", /\(b\) Redis, chosen by alice/);
 
-  // The routing agent chooses every stage.
-  await routeStep(platform, [...STAGES]);
+  // The routing agent chooses every stage but web.
+  await routeStep(platform, ["design", "code", "test", "review"]);
   assert.deepEqual(stateLabels(platform, issue), ["codeman:designing"]);
 
   // Design has nothing to do.
@@ -409,6 +409,55 @@ test("a route with no stage blocks the task with the router's suggestion, and co
   assert.deepEqual([runtime.outputs.action, runtime.outputs.stage], ["route", "route"]);
   assert.deepEqual(readTask(runtime).route, { trigger: "continue", fallback: "design" });
   assert.deepEqual(stateLabels(platform, issue), ["codeman:routing"]);
+});
+
+test("the web stage commits only valid pages under docs/web/, and the panel lists old ones", async () => {
+  const platform = new FakePlatform({ ".codeman/settings.yml": "model: a/b\n" });
+  const { issue, branch } = await plannedTask(platform);
+  await routeStep(platform, ["web", "code"]);
+  assert.deepEqual(stateLabels(platform, issue), ["codeman:researching"]);
+
+  const runtime = await selectStep(platform);
+  assert.deepEqual([runtime.outputs.action, runtime.outputs.stage], ["implement", "web"]);
+  const dates = "created_at: 2026-01-01T00:00:00Z\nupdated_at: 2026-01-01T00:00:00Z";
+  agentResult(
+    {
+      "docs/web/tools/fetch-markdown.md": `---\ntitle: Fetch Markdown\n${dates}\n---\n\n# Fetch Markdown\n`,
+      "docs/web/acme/acme-api.md": `---\ntitle: Acme API\nurl: https://acme.test/api\n${dates}\ntool: docs/web/tools/fetch-markdown.md\n---\n\nFacts.\n`,
+      "docs/web/acme/broken.md": "No front matter.\n",
+      "src/limit.ts": "export const limit = 10;\n",
+    },
+    { status: "done", summary: "Recorded the Acme API.", commitMessage: "Record the Acme API" },
+  );
+  await applyStep(platform);
+  assert.deepEqual(stateLabels(platform, issue), ["codeman:coding"]);
+  assert.ok(platform.file(branch, "docs/web/acme/acme-api.md")?.includes("Facts."));
+  assert.ok(platform.file(branch, "docs/web/tools/fetch-markdown.md"));
+  assert.equal(platform.file(branch, "docs/web/acme/broken.md"), undefined);
+  assert.equal(platform.file(branch, "src/limit.ts"), undefined);
+  const comment = platform.botComments(issue).at(-1) ?? "";
+  assert.match(comment, /docs\/web\/acme\/broken\.md: it has no front matter/);
+  assert.match(comment, /src\/limit\.ts: the web stage changes only docs\/web\//);
+
+  const pages = record(platform, issue)?.webPages;
+  assert.deepEqual(Object.keys(pages ?? {}), ["docs/web/acme/acme-api.md"], "tools are not pages");
+  const panel = platform.botComments(issue).find((body) => body.includes("codeman:status")) ?? "";
+  assert.match(panel, /#### Third-party documentation to refresh/);
+  assert.match(panel, /- docs\/web\/acme\/acme-api\.md: \d+ days/);
+
+  // Other stages read docs/web/ as data, and cannot change it.
+  await selectStep(platform);
+  agentResult(
+    { "docs/web/acme/acme-api.md": "Changed.\n", "src/limit.ts": "export const limit = 10;\n" },
+    { status: "done", summary: "Added the limiter.", commitMessage: "Add a limiter" },
+  );
+  await applyStep(platform);
+  assert.ok(platform.file(branch, "docs/web/acme/acme-api.md")?.includes("Facts."));
+  assert.equal(platform.file(branch, "src/limit.ts"), "export const limit = 10;\n");
+  assert.match(
+    platform.botComments(issue).at(-1) ?? "",
+    /docs\/web\/acme\/acme-api\.md: only the web stage changes docs\/web\//,
+  );
 });
 
 test("an issue a maintainer did not open is left alone", async () => {

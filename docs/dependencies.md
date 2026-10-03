@@ -40,6 +40,17 @@ Pinned to full commit SHAs.
 | `actions/upload-artifact` | v7.0.1 | Target repository workflow |
 | `actions/download-artifact` | v8.0.1 | Target repository workflow |
 
+## External services
+
+Codeman calls these APIs with `fetch` or through the packages above. Their documentation is kept in [`docs/web/`](web/), with how each page was fetched.
+
+| Service | Used for | Pages |
+| --- | --- | --- |
+| GitHub REST and GraphQL APIs | Issues, labels, comments, pull requests and reviews, commits through the Git Data API, contents, collaborators' permissions, Actions runs, jobs, logs and artifacts, App installation tokens, and marking a pull request ready | [`docs/web/github/`](web/github/) |
+| OpenRouter API | Task keys (list, create, get, disable) and analytics (tokens, requests, throughput, largest prompt) | [`docs/web/openrouter/`](web/openrouter/) |
+| npm registry | Downloading the harness's pinned package and checking its integrity | [`docs/web/npm/`](web/npm/) |
+| OpenCode | The harness's configuration, permissions, providers and `run` command | [`docs/web/opencode/`](web/opencode/) |
+
 ## Agent harness: OpenCode
 
 - **Version:** OpenCode v1 1.18.32 (`opencode-ai`), pinned in [`src/harness/opencode.ts`](../src/harness/opencode.ts) with the npm `dist.integrity` of each platform package (`opencode-linux-x64`, `opencode-linux-arm64`). MIT; repository [anomalyco/opencode](https://github.com/anomalyco/opencode); very active, with near-daily releases.

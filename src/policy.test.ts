@@ -179,3 +179,29 @@ test("the proposed rules keep workflows out entirely", () => {
   assert.ok(result.ok);
   assert.deepEqual(result.value.staged, []);
 });
+
+test("the web stage changes only docs/web/ and the plan, and other stages never docs/web/", () => {
+  const changes = manifest([
+    file("docs/web/acme/acme-api.md"),
+    file(policy.planPath),
+    file("src/index.ts"),
+  ]);
+  const web = checkChanges(changes, { ...policy, ignore: "", webDocs: "only" });
+  assert.ok(web.ok);
+  assert.deepEqual(
+    web.value.accepted.map((change) => change.path),
+    ["docs/web/acme/acme-api.md", policy.planPath],
+  );
+  assert.deepEqual(web.value.dropped, [
+    { path: "src/index.ts", reason: { kind: "web-stage-only" } },
+  ]);
+  const code = checkChanges(changes, { ...policy, ignore: "", webDocs: "never" });
+  assert.ok(code.ok);
+  assert.deepEqual(
+    code.value.accepted.map((change) => change.path),
+    [policy.planPath, "src/index.ts"],
+  );
+  assert.deepEqual(code.value.dropped, [
+    { path: "docs/web/acme/acme-api.md", reason: { kind: "web-docs" } },
+  ]);
+});

@@ -155,6 +155,7 @@ export function outputProblems(
 
 /** What each stage may report. Review never leaves work half done; it judges. */
 export const STAGE_STATUSES: Readonly<Record<Stage, readonly StageStatus[]>> = {
+  web: ["done", "skipped", "partial", "blocked"],
   design: ["done", "skipped", "partial", "blocked", "decisions"],
   code: ["done", "skipped", "partial", "blocked", "awaiting-workflow"],
   test: ["done", "skipped", "partial", "blocked", "awaiting-workflow"],

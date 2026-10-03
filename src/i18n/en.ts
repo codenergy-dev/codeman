@@ -15,6 +15,7 @@ const OUTCOMES = {
 const STAGES = {
   plan: "plan",
   route: "routing",
+  web: "web",
   design: "design",
   code: "code",
   test: "test",
@@ -63,6 +64,7 @@ export const en: Messages = {
       "awaiting-decision": "Waiting for your decisions",
       ready: "Ready to implement",
       routing: "Choosing the next stages",
+      researching: "Recording third-party documentation",
       designing: "Designing",
       coding: "Writing the code",
       testing: "Testing",
@@ -89,6 +91,12 @@ export const en: Messages = {
   workflowsToReview: "Workflows to review",
   workflowsHelp:
     "The agent wrote these workflows. They are staged under `.codeman/workflows/` on the task branch and do not run. A workflow runs with the repository's secrets, so read them in the pull request or on the branch first. To move them into `.github/workflows/`, comment `/codeman accept-workflows`.",
+  oldDocs: "Third-party documentation to refresh",
+  oldDocsHelp: (days) =>
+    `These pages in \`docs/web/\` were fetched more than ${days} days ago, or have no valid \`updated_at\`. Codeman does not refresh them on its own. To refresh some, ask for it in a task, such as with \`/codeman fix Refresh docs/web/<third-party>/\`: the routing agent sends it to the web stage.`,
+  daysOld: (days) => `${days} days`,
+  noDate: "no valid `updated_at`",
+  morePages: (count) => `And ${count} more.`,
   spending: "Spending",
   spent: ({ run, task, budget }) =>
     `Spent: ${run ? `${run} this run, ` : ""}${task} of ${budget} for the task`,
@@ -106,6 +114,7 @@ export const en: Messages = {
       "awaiting-decision": "your decisions, in the task's decisions comment.",
       ready: "the routing agent, which chooses the stages that run next.",
       routing: "the routing agent, which chooses the stages that run next.",
+      researching: "the web stage.",
       designing: "the design stage.",
       coding: "the code stage.",
       testing: "the test stage.",
@@ -158,6 +167,7 @@ export const en: Messages = {
       : "Codeman is reading the issue and writing a plan.",
   startStage: (stage) =>
     ({
+      web: "Codeman is recording the third-party documentation the task relies on.",
       design: "Codeman is designing: flows and screens, if the task needs them.",
       code: "Codeman is writing the code.",
       test: "Codeman is testing the work.",
@@ -195,6 +205,9 @@ export const en: Messages = {
       "not-a-file": "not a regular file",
       "too-large": `larger than ${reason.kind === "too-large" ? reason.max : 0} bytes`,
       "workflow-deletion": "deleting a workflow is left to a maintainer",
+      "web-stage-only": "the web stage changes only docs/web/",
+      "web-docs": "only the web stage changes docs/web/",
+      "invalid-web-page": reason.kind === "invalid-web-page" ? reason.problem : "",
     }[reason.kind];
     return `Dropped the change to ${path}: ${why}.`;
   },

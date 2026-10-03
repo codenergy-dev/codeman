@@ -3,6 +3,7 @@ import type { Command } from "./commands.ts";
 import type { CommandError } from "./problems.ts";
 import type { Spending } from "./spend.ts";
 import type { Stage } from "./stages.ts";
+import type { WebPage } from "./webdocs.ts";
 
 export interface Option {
   key: string;
@@ -102,6 +103,11 @@ export interface TaskRecord {
    * request's description.
    */
   reviewLeftOut?: string | undefined;
+  /**
+   * The pages under `docs/web/` on the task branch, by path, with when each was last fetched,
+   * for the panel to list old ones without reading every file again.
+   */
+  webPages?: Record<string, WebPage> | undefined;
   /** Workflows a maintainer accepted since the last stage run, for the next one to know. */
   accepted?: { by: string; workflows: string[] } | undefined;
 }

@@ -6,6 +6,7 @@ import type { Change } from "./collect.ts";
 import type { Parsed } from "./output.ts";
 import type { WorkflowConventions } from "./platform/conventions.ts";
 import { isManifest } from "./validate.ts";
+import { isWebPath } from "./webdocs.ts";
 
 export const IGNORE_FILE = ".codemanignore";
 /** Where apply puts the agent's workflow files until a maintainer accepts them. */
@@ -64,7 +65,13 @@ export type DropReason =
   | { kind: "protected" }
   | { kind: "not-a-file" }
   | { kind: "too-large"; max: number }
-  | { kind: "workflow-deletion" };
+  | { kind: "workflow-deletion" }
+  /** The web stage changes only `docs/web/`. */
+  | { kind: "web-stage-only" }
+  /** Only the web stage changes `docs/web/`. */
+  | { kind: "web-docs" }
+  /** A page or tool in `docs/web/` whose front matter or name is invalid. */
+  | { kind: "invalid-web-page"; problem: string };
 
 /** Why a change is never applied, whatever `.codemanignore` says; undefined if it may be. */
 function hardRule(path: string): DropReason | undefined {
@@ -73,6 +80,15 @@ function hardRule(path: string): DropReason | undefined {
     return { kind: "invalid-path" };
   }
   if (path === IGNORE_FILE || segments[0] === ".codeman") return { kind: "codeman-settings" };
+  return undefined;
+}
+
+/** Who may change third-party documentation: the web stage, and only it. */
+function webRule(path: string, policy: Policy): DropReason | undefined {
+  if (policy.webDocs === "only" && path !== policy.planPath && !isWebPath(path)) {
+    return { kind: "web-stage-only" };
+  }
+  if (policy.webDocs === "never" && isWebPath(path)) return { kind: "web-docs" };
   return undefined;
 }
 
@@ -147,6 +163,11 @@ export interface Policy {
   maxFileBytes: number;
   /** The task's plan, which the agent keeps current whatever the rules say. */
   planPath: string;
+  /**
+   * Third-party documentation: `only` for the web stage, which changes nothing else but the
+   * plan; `never` for the other stages, which read it as data.
+   */
+  webDocs?: "only" | "never" | undefined;
 }
 
 export interface CheckedChanges {
@@ -169,7 +190,7 @@ export function checkChanges(manifest: unknown, policy: Policy): Parsed<CheckedC
   const dropped: CheckedChanges["dropped"] = [];
   const candidates: Change[] = [];
   for (const change of manifest.changes) {
-    const reason = hardRule(change.path);
+    const reason = hardRule(change.path) ?? webRule(change.path, policy);
     if (reason) dropped.push({ path: change.path, reason });
     else candidates.push(change);
   }

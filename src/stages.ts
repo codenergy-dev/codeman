@@ -1,11 +1,12 @@
 import type { State } from "./state.ts";
 
 /** The stages after planning, in order. Each runs its own agent, one run at a time. */
-export const STAGES = ["design", "code", "test", "review"] as const;
+export const STAGES = ["web", "design", "code", "test", "review"] as const;
 export type Stage = (typeof STAGES)[number];
 
 /** The state label of a task while a stage works on it. */
 export const STAGE_STATE: Readonly<Record<Stage, State>> = {
+  web: "researching",
   design: "designing",
   code: "coding",
   test: "testing",

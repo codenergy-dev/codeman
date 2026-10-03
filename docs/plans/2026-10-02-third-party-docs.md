@@ -1,7 +1,7 @@
 ---
-status: pending
+status: completed
 created_at: 2026-10-02T21:10:00-03:00
-updated_at: 2026-10-02T21:45:00-03:00
+updated_at: 2026-10-02T22:00:00-03:00
 commit: 1094766
 ---
 
@@ -103,6 +103,16 @@ Answered on 2026-10-02 by the responsible person: the recommendations of decisio
 10. Update [`docs/architecture.md`](../architecture.md) (states, stages, change policy, status comment), [`docs/security.md`](../security.md) (third-party text committed to the repository) and the README's flow, in English, and the i18n catalogs in both languages. Done when they describe the `web` agent and the list of old pages.
 11. Rebuild `dist/`, run `npm run check`. Done when it passes.
 12. The responsible person runs, on the test repository, a task that uses a third-party API and one that uses none, and asks for a refresh of an old page. Done when the router sends only the first to `web`, its pages are valid, and the refresh updates `updated_at`.
+
+## Outcome
+
+Steps 1 to 11 are done; step 12 is left to the responsible person, on the test repository.
+
+- **Catalog.** `docs/web/` holds 4 tools and 32 pages: 19 of GitHub's REST reference, copied in full (CC BY 4.0); GraphQL's `markPullRequestReadyForReview`, in our own words, because GitHub's list of mutations is too large to keep; 7 of OpenRouter's, in our own words (its terms reserve its materials, and the OpenAPI description's MIT license is the API's, not the documentation's); 4 of OpenCode's, copied in full (MIT); and npm's package metadata, in our own words (its repository states no license). A test checks that every file follows the format.
+- **Names.** A slug has at most 80 characters, from Codeman's `slugify`. Specialized tools are titled with the third party's name ("GitHub"), so their files are named after it. A page in our own words has no `license` field.
+- **Web stage.** It is the first of the stages (`codeman:researching`), and the router chooses it like any other. It gets Codeman's generic tool in `.codeman/fetch-markdown.md`. `apply` drops its changes outside `docs/web/` (but the plan), the pages and tools that fail the format, and other stages' changes under `docs/web/`.
+- **Old pages.** `apply` reads the catalog on the task branch at the end of every run, reading again only the blobs that changed, and keeps it in the record; `select`'s panel at the start of a run shows the record's list as it is.
+- The `updated_at` of the three plans implemented today were first written with guessed times, later than the clock; they now hold the times of their commits.
 
 ## Out of scope
 
