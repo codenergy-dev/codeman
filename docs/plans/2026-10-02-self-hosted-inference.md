@@ -1,7 +1,7 @@
 ---
 status: pending
 created_at: 2026-10-02T18:25:00-03:00
-updated_at: 2026-10-02T19:40:00-03:00
+updated_at: 2026-10-02T21:15:00-03:00
 commit: d0637c8
 ---
 
@@ -70,7 +70,7 @@ Cost per run stays the time from `open` to `close` at the pod's price. The idle 
 - **The repository's code leaves GitHub for a GPU host.** With OpenRouter it goes to the model's provider; here it goes to Runpod (decision 6).
 - **A long-lived credential near the agent.** The serverless key does not expire; it stays outside the sandbox (decision 11).
 
-This plan depends on [`2026-10-02-context-and-throughput`](2026-10-02-context-and-throughput.md): the spend row's fields and the meaning of each figure come from it.
+This plan depends on [`2026-10-02-context-and-throughput`](2026-10-02-context-and-throughput.md): the spend row's fields and the meaning of each figure come from it. It also comes after [`2026-10-02-third-party-docs`](2026-10-02-third-party-docs.md), so the pages it relies on are recorded in `docs/web/`.
 
 ### Preliminary audit
 
@@ -181,7 +181,7 @@ Decisions 9 to 12 were answered on 2026-10-02 by the responsible person: the rec
 
 ## Steps
 
-1. Verify the APIs and complete the audit. Pods: create, wait for, terminate and list a pod, read its billing, and check self-termination from inside the pod with the least privileged key Runpod allows. Ollama: the chosen context length, and its counts against the tokens sent, cached prompt included. Serverless: a restricted key's reach, the vLLM worker's `usage` in plain and streamed responses, what Runpod reports per request or per endpoint for billing, and cold and warm start times. Done when `docs/dependencies.md` has the audit and this plan is updated with what differs.
+1. Verify the APIs and complete the audit. Pods: create, wait for, terminate and list a pod, read its billing, and check self-termination from inside the pod with the least privileged key Runpod allows. Ollama: the chosen context length, and its counts against the tokens sent, cached prompt included. Serverless: a restricted key's reach, the vLLM worker's `usage` in plain and streamed responses, what Runpod reports per request or per endpoint for billing, and cold and warm start times. The pages each check relies on go in `docs/web/`, following its tools. Done when `docs/dependencies.md` has the audit, `docs/web/` has the pages, and this plan is updated with what differs.
 2. Extract `InferenceProvider` from `src/budget.ts` and `src/steps/keys.ts`, with OpenRouter as its implementation and no change in behavior. Done when `keys` tests pass unchanged in meaning and key names are identical.
 3. `GpuProvider` with a Runpod adapter for pods and serverless and a fake; `InferenceEngine` with Ollama and vLLM adapters (decision 9) and a fake. Done when unit tests cover create, ready, terminate, list, billing and the deadline for pods, and the endpoint's check for serverless, without the network.
 4. The gateway: token check and rotation, forwarding with streaming, a record per request, `/usage`, the budget limit, and, in a pod, termination at the deadline and the idle limit. Its image for pods (decision 3), with the publishing workflow pinned by commit SHA. Done when its tests cover a rejected token, a rotated token, a streamed and a non-streamed request, the budget limit and `/usage`, against a fake engine.
