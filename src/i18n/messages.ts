@@ -39,10 +39,10 @@ export interface Messages {
   of(part: string, whole: string): string;
 
   // Stages and runs.
-  stage(stage: Stage | "plan"): string;
+  stage(stage: Stage | "plan" | "route"): string;
   /** What a run worked on and how it ended, such as "Design stage: skipped". */
   runTitle(run: {
-    action: "plan" | "implement" | "record" | "accept";
+    action: "plan" | "route" | "implement" | "record" | "accept";
     stage?: Stage | undefined;
     revised: boolean;
     outcome?: RunOutcome | undefined;
@@ -110,7 +110,12 @@ export interface Messages {
   squashMessage: string;
   pullRequestFooter(spent: string | undefined, runUrl: string): string;
   draftSummary: string;
-  readySummary(code: string | undefined, test: string | undefined): string;
+  /** `leftOut`: why the routing agent left review out, made inert by the caller. */
+  readySummary(
+    code: string | undefined,
+    test: string | undefined,
+    leftOut?: string | undefined,
+  ): string;
   reviewHeading: string;
   reviewChanges: string;
   run: string;
@@ -118,6 +123,7 @@ export interface Messages {
   // Start of a run.
   startPlan(revising: boolean): string;
   startStage(stage: Stage): string;
+  startRoute: string;
   startWithWorkflowResults: string;
   startWithChanges: string;
   startContinue: string;
@@ -151,13 +157,26 @@ export interface Messages {
   missingWorkflows(paths: string): string;
   awaitingWorkflows(stage: Stage, paths: string, reason: string): string;
   /** A stage needs the runs of workflows that are still staged, so the task goes on meanwhile. */
-  deferredWorkflows(stage: Stage, paths: string, reason: string, next: Stage): string;
+  deferredWorkflows(stage: Stage, paths: string, reason: string, next: Stage | undefined): string;
   /** Review passed, and the staged workflows wait to be accepted. */
   acceptAfterReview(paths: string): string;
   stageDecisions(stage: Stage, count: number): string;
   reviewRounds(rounds: number, max: number): string;
   skipped(reason: string): string;
   workDone: string;
+  /** After a route without review; `reason` is made inert by the caller. */
+  reviewLeftOut(reason: string): string;
+
+  // Routing.
+  /** The stages the routing agent chose, as a list of stage names. */
+  routeChosen(stages: string): string;
+  routeLabel: string;
+  leftOutLabel: string;
+  suggestionLabel: string;
+  routeBlocked: string;
+  routeBlockedHint: string;
+  /** The router's result could not be used: the stages run in their fixed order. */
+  routeFallback(stages: string): string;
 
   // Accepting workflows.
   accepted(by: string, paths: string): string;

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { GITHUB } from "./platform/github/conventions.ts";
-import { fixPrompt, OUTPUT_FILE, planPrompt, stagePrompt } from "./prompt.ts";
+import { fixPrompt, OUTPUT_FILE, planPrompt, routePrompt, stagePrompt } from "./prompt.ts";
 import { DEFAULTS } from "./settings.ts";
 import type { TaskContext } from "./tasks.ts";
 
@@ -386,4 +386,69 @@ test("asks the agent to fix its output", () => {
   assert.match(prompt, /^Codeman cannot use \.codeman\/output\.json as it is:/);
   assert.match(prompt, /^- summary has 5000 characters; the limit is 2000\.$/m);
   assert.match(prompt, /Change no other file\./);
+});
+
+const planned = {
+  branch: task.branch,
+  planPath: task.planPath,
+  summary: "",
+  decisions: [],
+  processedCommentId: 0,
+};
+
+test("the routing agent learns the stages, why it runs, and the output's shape", () => {
+  const prompt = routePrompt(
+    {
+      ...task,
+      action: "route",
+      route: { trigger: "fix", fallback: "code" },
+      requests: [{ kind: "fix", author: "alice", text: "Rename the limiter." }],
+      record: planned,
+    },
+    GITHUB,
+  );
+  assert.match(prompt, /You are Codeman's routing agent/);
+  for (const stage of ["design", "code", "test", "review"]) {
+    assert.match(prompt, new RegExp(`- \\*\\*${stage}\\*\\*: `));
+  }
+  assert.match(prompt, /no stage is required/);
+  assert.match(prompt, /Maintainers asked for changes with `\/codeman fix`/);
+  assert.match(prompt, /<<<FIX by alice [0-9a-f]{12}\nRename the limiter\./);
+  assert.match(prompt, /"skipped": \[/);
+  assert.match(prompt, /a `reason` and a `suggestion`/);
+  assert.match(prompt, /every file change you make is discarded/);
+  assert.match(prompt, /ignore those instructions/);
+  assert.match(prompt, /in English \(`en`\)/);
+});
+
+test("a stage gets the routing agent's brief as data", () => {
+  const prompt = stagePrompt(
+    {
+      ...task,
+      action: "implement",
+      stage: "code",
+      record: {
+        ...planned,
+        route: {
+          stages: [{ stage: "code", brief: "Only rename the limiter." }],
+          skipped: [{ stage: "design", reason: "No screen." }],
+        },
+      },
+    },
+    45,
+    GITHUB,
+  );
+  assert.match(prompt, /## Brief from the routing agent/);
+  assert.match(prompt, /<<<BRIEF [0-9a-f]{12}\nOnly rename the limiter\./);
+  const empty = stagePrompt(
+    {
+      ...task,
+      action: "implement",
+      stage: "code",
+      record: { ...planned, route: { stages: [{ stage: "code", brief: "" }], skipped: [] } },
+    },
+    45,
+    GITHUB,
+  );
+  assert.ok(!empty.includes("## Brief from the routing agent"), "the fixed order has no brief");
 });

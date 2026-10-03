@@ -12,7 +12,8 @@ Each task has at most one state label. A task without one has not started yet (`
 | --- | --- |
 | `codeman:planning` | Agent is writing the plan. |
 | `codeman:awaiting-decision` | Plan posted; decisions pending. |
-| `codeman:ready` | All decisions answered; the next run starts the next stage. |
+| `codeman:ready` | All decisions answered; the next run starts the routing agent. |
+| `codeman:routing` | The routing agent is choosing the stages that run next. |
 | `codeman:designing` | The design stage is working. |
 | `codeman:coding` | The code stage is working. |
 | `codeman:testing` | The test stage is working. |
@@ -31,7 +32,7 @@ A task with more than one state label is invalid: Codeman reports a warning and 
 - Only one run per repository is active (`concurrency`). GitHub keeps at most one queued run and replaces older queued runs.
 - Each run reads the state of every task from GitHub instead of reacting only to the event that started it. A replaced or failed run therefore loses no work; the next run picks it up.
 - When a run moved a task (it recorded answers, or the agent ran), the `next-run` job starts another run with `workflow_dispatch`, carrying over a manual run's inputs. That run's `select` picks the next task, or stops without an LLM when none can move. Runs without a key (monthly budget reached, or the key job failed) start no other run, because the same task would be picked again without moving. The loop is bounded by the budgets, `max-runs` and the states: tasks that are blocked, done or awaiting an answer never start a run.
-- Each run works on one task. Accepting workflows and recording answers come first, because they need no LLM; then the oldest task that needs a plan; then the oldest task in a stage: resumed with `fix` or `continue`, or already in a stage, before `codeman:ready`.
+- Each run works on one task. Accepting workflows and recording answers come first, because they need no LLM; then the oldest task that needs a plan; then the oldest task in a stage or routing: resumed with `fix` or `continue`, or already in a stage, before `codeman:ready`.
 
 ## Jobs
 
@@ -45,7 +46,7 @@ Jobs that do not apply to a run are skipped: a run that only records answers goe
 
 | Job | Does | Credentials |
 | --- | --- | --- |
-| `select` | Reads the settings and `.codemanignore` from the default branch, picks the task and the action (`plan`, `implement` with its stage, `record`, `accept` or `none`), sets `codeman:planning` or the stage's label, and writes the task context (`task.json`) as an artifact. | App token: issues write; contents, pull requests and actions read |
+| `select` | Reads the settings and `.codemanignore` from the default branch, picks the task and the action (`plan`, `route`, `implement` with its stage, `record`, `accept` or `none`), sets `codeman:planning`, `codeman:routing` or the stage's label, and writes the task context (`task.json`) as an artifact. | App token: issues write; contents, pull requests and actions read |
 | `open-key` | Checks the task and monthly budgets and creates the run's OpenRouter key. | OpenRouter management key, encryption secret |
 | `agent` | Runs the harness on a copy of the checkout and uploads what it changed as an artifact, even when the agent fails or runs out of time. | `GITHUB_TOKEN` with contents and actions read (for workflow results; the agent never sees it), the run's key |
 | `close-key` | Disables the run's key and reads what it and each earlier run of the task spent. Runs whatever happened before. | OpenRouter management key |
@@ -98,7 +99,7 @@ If the agent fails, runs out of time or produces an invalid result, the task bec
 
 ## Stages
 
-After planning, a task goes through four stages, one run and one agent each, in order: design, code, test and review. Each stage's agent first decides whether its stage has work; when it does not, it reports `skipped` with the reason, and the next run starts the next stage.
+After planning, a task goes through up to four stages, one run and one agent each, in this order: design, code, test and review. A routing agent chooses which of them run.
 
 | Stage | Does |
 | --- | --- |
@@ -107,14 +108,30 @@ After planning, a task goes through four stages, one run and one agent each, in 
 | Test | Integration and end-to-end tests where they apply, more unit tests where coverage is thin, and every check the repository has. What can only be tested outside the task branch (a deploy, a release) goes in a "Manual tests" section of its report, which the pull request's description shows; it is no reason to block. |
 | Review | A critical review against the plan and the decisions, and a merge of the default branch in its sandbox to find conflicts and integration problems early. It changes nothing; its report goes on the pull request. It is not an approval to merge. |
 
-1. `select` picks the task and its stage (the task record keeps it; a `fix` request always goes to code), and sets the stage's label. The agent starts from the head of the task branch, with the default branch's history, and gets the notes the previous stage left.
-2. The agent writes `.codeman/output.json`: a status, a summary and, when it changed files, a commit message. Each stage may report only some statuses: `done`, `skipped`, `partial` (more work for another run of the same stage), `blocked`, `awaiting-workflow` (code and test), `decisions` (design and review) and `changes` (review).
+### Routing
+
+The routing agent runs, in a run of its own, whenever the task needs to know what comes next: after the decisions are answered (or the plan has none), after a `fix` request, and after review asks for changes. It reads the plan, the decisions, the requests, the earlier run comments and the task branch's changes, and chooses:
+
+- the stages that run, in the order above, each with a brief for its agent;
+- the stages it leaves out, each with a reason. No stage is required, review included: each task has its own needs.
+
+Its run comment shows the route, the briefs and the reasons. Its file changes are discarded.
+
+- When no stage should run next, the route is empty: the task becomes `codeman:blocked`, with the router's reason and suggestion. `/codeman continue <guidance>` routes again.
+- When its result cannot be used (it failed, ran out of time, or wrote an invalid output), the stages run in their fixed order, from where the task was: design after planning, code after a request or a review. The run comment says so.
+- The stages of a route read the requests the router handled, as well as newer ones.
+- `/codeman continue`, accepting workflows and an unfinished stage go on with the stage they belong to; they do not route. Tasks from before routing go on in the fixed order.
+
+### Running a stage
+
+1. `select` picks the task and its stage, from the task record, and sets the stage's label. The agent starts from the head of the task branch, with the default branch's history, and gets the notes the previous stage left and the router's brief.
+2. Each stage's agent first decides whether its stage has work; when it does not, it reports `skipped` with the reason. It writes `.codeman/output.json`: a status, a summary and, when it changed files, a commit message. Each stage may report only some statuses: `done`, `skipped`, `partial` (more work for another run of the same stage), `blocked`, `awaiting-workflow` (code and test), `decisions` (design and review) and `changes` (review).
 3. `apply` filters the changes through the [change policy](#change-policy) and commits the rest to the task branch through the Git Data API, even when the agent failed or ran out of time, so no work is lost. Review's changes are discarded.
 4. Then, by status:
-   - `done` or `skipped`: the next stage runs next, with this stage's summary (or reason) as its notes. When code ends, Codeman opens the pull request as a draft, titled like the issue (`Closes #<issue>`, the plan's summary, and the code stage's commit message as the suggested squash message), so the repository's CI runs during test and review. Repositories without draft pull requests get a regular one.
-   - `done` from review: Codeman adds its proposed `.codemanignore` if the repository has none, updates the pull request's description, marks it ready for review, posts the review report on it, and sets `codeman:done`. While the agent's workflows are still staged, the task waits for them to be accepted instead, and the pull request stays a draft; see [on-demand workflows](#on-demand-workflows).
-   - `changes` from review: the report goes on the pull request, and the code stage works on it next. After `max-runs` rounds in a row, the task becomes `codeman:blocked`.
-   - `decisions`: the task becomes `codeman:awaiting-decision`, with the new decisions after the plan's. When they are answered, design goes on; after review, code does, with the review's report.
+   - `done` or `skipped`: the route's next stage runs next, with this stage's summary (or reason) as its notes. When code ends, Codeman opens the pull request as a draft, titled like the issue (`Closes #<issue>`, the plan's summary, and the code stage's commit message as the suggested squash message), so the repository's CI runs during test and review. Repositories without draft pull requests get a regular one.
+   - `done` from review, or the end of a route: Codeman adds its proposed `.codemanignore` if the repository has none, opens the pull request if there is none yet or updates its description, marks it ready for review, and sets `codeman:done`. Review also posts its report on the pull request. When the route left review out, the pull request's description and the run comment say so, with the router's reason. While the agent's workflows are still staged, the task waits for them to be accepted instead, and the pull request stays a draft; see [on-demand workflows](#on-demand-workflows).
+   - `changes` from review: the report goes on the pull request, and the routing agent chooses what addresses it. After `max-runs` rounds in a row, the task becomes `codeman:blocked`.
+   - `decisions`: the task becomes `codeman:awaiting-decision`, with the new decisions after the plan's. When they are answered, the routing agent runs, with review's report if review asked them.
    - `partial`, or out of time: the stage runs again, up to `max-runs` runs in a row. Then the task becomes `codeman:blocked`, and a maintainer can grant another round with `/codeman continue <guidance>`.
    - `blocked`, or an invalid result: `codeman:blocked`, with the reason. `/codeman continue <guidance>` tries the stage again, and so does accepting the task's staged workflows. When the agent reported `blocked`, the run comment also suggests `/codeman replan`: a request the plan does not cover, such as a `fix` that widens the task's scope, needs a revised plan.
 
@@ -125,7 +142,7 @@ After the pull request is open, maintainers ask for changes in either of these w
 - a review that requests changes; its text is the request;
 - `/codeman fix <what to change>` in a comment on the pull request or the issue, or in a review's text.
 
-The task goes back to the code stage (`codeman:coding`) with a new run count, then through test and review again. The agent gets the requests and every maintainer review since the last run that handled reviews, with the line comments and their file and line. It pushes to the same branch, and when review passes again, Codeman updates the pull request's description. `/codeman replan` also works on the pull request.
+The routing agent chooses the stages that carry out the request, and each of them gets the requests and every maintainer review since the last run that handled reviews, with the line comments and their file and line. They push to the same branch, and when the route ends, Codeman updates the pull request's description. `/codeman replan` also works on the pull request.
 
 Codeman records the last comment and review it handled. A request is handled once a run for it ends, whatever the outcome, so a failing request does not start run after run; when the monthly budget stopped the run from starting, the request waits for a later run.
 
@@ -226,7 +243,7 @@ Once a task has decisions, a decisions comment shows them, with the recommendati
 
 No comment Codeman writes exceeds the platform's limit: 65,536 characters on GitHub. When the decisions do not fit, answered ones are shown in one line each, then left out, then pending ones from the last, with a note that the plan has them all. When the panel does not fit, it keeps its record and links and leaves out the rest, with a note.
 
-Each run that moves the task also posts a new comment on the issue, so the issue keeps the task's history in order: its title says what the run worked on (the plan, a stage, recorded answers or accepted workflows) and how it ended (such as "Design stage: skipped"); then come the agent's report, problems, what comes next (the next stage, the maintainers' decisions, accepting workflows, a maintainer, or reviewing the pull request), and what the run spent. A run that only waits to try again later, because the monthly budget is reached, updates the panel only.
+Each run that moves the task also posts a new comment on the issue, so the issue keeps the task's history in order: its title says what the run worked on (the plan, the route, a stage, recorded answers or accepted workflows) and how it ended (such as "Design stage: skipped"); then come the agent's report, problems, what comes next (the next stage, the maintainers' decisions, accepting workflows, a maintainer, or reviewing the pull request), and what the run spent. A run that only waits to try again later, because the monthly budget is reached, updates the panel only.
 
 Each stage's agent reads Codeman's earlier run comments on the task, oldest first, up to 20,000 characters (older ones are dropped first). Only comments by the App with the run marker count, and the agent treats them as data: the agents that wrote them read untrusted text.
 

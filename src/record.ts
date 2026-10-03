@@ -16,6 +16,25 @@ export interface Answer {
   by: string;
 }
 
+/** Comment and review IDs up to which a task's requests are handled. */
+export interface Handled {
+  commentId: number;
+  reviewId: number;
+}
+
+/** The stages the routing agent chose to run next, and the ones it left out. */
+export interface Route {
+  /** The stages to run, in the order of stages, each with the router's brief for its agent. */
+  stages: { stage: Stage; brief: string }[];
+  /** The stages left out, each with the router's reason. */
+  skipped: { stage: Stage; reason: string }[];
+  /**
+   * The requests the route answers: maintainer comments after `after` and up to `upTo`, and
+   * reviews likewise. The router handled them, and its stages read them again.
+   */
+  requests?: { after: Handled; upTo: Handled } | undefined;
+}
+
 export interface Decision {
   id: number;
   title: string;
@@ -50,6 +69,11 @@ export interface TaskRecord {
   awaiting?: string[] | undefined;
   /** The stage that works on the task next, or is working on it. */
   stage?: Stage | undefined;
+  /**
+   * The routing agent's choice, while its stages run. Without one, as in records from before
+   * routing, stages follow their fixed order. An empty route means the router blocked the task.
+   */
+  route?: Route | undefined;
   /** What the last stage left for the next one: its report, or why it had nothing to do. */
   handoff?: { stage: Stage; text: string } | undefined;
   /** Times review sent the work back to code in a row. */
@@ -73,6 +97,11 @@ export interface TaskRecord {
   deferred?: { stage: Stage; workflows: string[] } | undefined;
   /** Review passed, and the task waits for its staged workflows to be accepted. */
   reviewed?: boolean | undefined;
+  /**
+   * Why the routing agent left review out of the route that completed the work, for the pull
+   * request's description.
+   */
+  reviewLeftOut?: string | undefined;
   /** Workflows a maintainer accepted since the last stage run, for the next one to know. */
   accepted?: { by: string; workflows: string[] } | undefined;
 }
@@ -87,6 +116,8 @@ export const PLAN_RESETS = [
   "decisionsCommentId",
   "reportCommentId",
   "stage",
+  "route",
+  "reviewLeftOut",
   "handoff",
   "reviewRounds",
   "awaiting",

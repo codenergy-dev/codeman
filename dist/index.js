@@ -23994,6 +23994,8 @@ var STATES = [
   "planning",
   "awaiting-decision",
   "ready",
+  /** The routing agent chooses the stages that run next. */
+  "routing",
   "designing",
   "coding",
   "testing",
@@ -24896,6 +24898,30 @@ function resolveSettings(...layers) {
   return { ok: true, value: merged };
 }
 
+// src/stages.ts
+var STAGES = ["design", "code", "test", "review"];
+var STAGE_STATE = {
+  design: "designing",
+  code: "coding",
+  test: "testing",
+  review: "reviewing"
+};
+function stageOfState(state) {
+  if (state === "in-progress") return "code";
+  return STAGES.find((stage) => STAGE_STATE[stage] === state);
+}
+function nextStage(stage) {
+  return STAGES[STAGES.indexOf(stage) + 1];
+}
+function nextInRoute(route, stage) {
+  if (!route) return nextStage(stage);
+  const index = STAGES.indexOf(stage);
+  return route.stages.map((step) => step.stage).find((next) => STAGES.indexOf(next) > index);
+}
+function stagesFrom(first) {
+  return STAGES.slice(STAGES.indexOf(first));
+}
+
 // src/output.ts
 var MARGIN = 2;
 var DECISIONS_TOTAL = 25e3;
@@ -24934,7 +24960,7 @@ function parsePlanOutput(text, limits, firstId = 1) {
 }
 function outputProblems(text, stage, limits, workflows, firstDecision = 1) {
   if (text === void 0) return ["output.json is missing."];
-  const parsed = stage === void 0 ? parsePlanOutput(text, limits, firstDecision) : parseStageOutput(text, stage, limits, workflows);
+  const parsed = stage === void 0 ? parsePlanOutput(text, limits, firstDecision) : stage === "route" ? parseRouteOutput(text, limits) : parseStageOutput(text, stage, limits, workflows);
   if (!parsed.ok) return [parsed.error];
   return parsed.value.cuts.map(cutText);
 }
@@ -24998,6 +25024,75 @@ function parseStageOutput(text, stage, limits, workflows) {
     output.decisions = decisions.value;
   }
   return { ok: true, value: output };
+}
+function parseRouteOutput(text, limits) {
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    return { ok: false, error: "output.json is not valid JSON." };
+  }
+  if (!isObject(data)) return { ok: false, error: "output.json must be an object." };
+  if (data.status !== "done" && data.status !== "blocked") {
+    return { ok: false, error: "status must be done or blocked for the routing agent." };
+  }
+  const cuts = [];
+  const summary2 = string(data.summary, "summary", limits.summary, cuts);
+  if (!summary2.ok) return summary2;
+  const seen = /* @__PURE__ */ new Set();
+  const steps = (value, name, field) => {
+    if (!Array.isArray(value)) return { ok: false, error: `${name} must be a list.` };
+    const list = [];
+    for (const [index, item] of value.entries()) {
+      const where = `${name}[${index}]`;
+      if (!isObject(item) || !STAGES.includes(item.stage)) {
+        return { ok: false, error: `${where}.stage must be one of ${STAGES.join(", ")}.` };
+      }
+      const stage = item.stage;
+      if (seen.has(stage)) return { ok: false, error: `${where}: ${stage} is listed twice.` };
+      seen.add(stage);
+      const text2 = string(item[field], `${where}.${field}`, limits.summary, cuts);
+      if (!text2.ok) return text2;
+      list.push({ stage, [field]: text2.value });
+    }
+    return { ok: true, value: list };
+  };
+  const route = steps(data.route ?? [], "route", "brief");
+  if (!route.ok) return route;
+  const order = route.value.map((step) => STAGES.indexOf(step.stage));
+  if (order.some((position, index) => index > 0 && position < (order[index - 1] ?? 0))) {
+    return { ok: false, error: `route must keep the order of stages: ${STAGES.join(", ")}.` };
+  }
+  const skipped = steps(data.skipped ?? [], "skipped", "reason");
+  if (!skipped.ok) return skipped;
+  const missing = STAGES.filter((stage) => !seen.has(stage));
+  if (missing.length > 0) {
+    return {
+      ok: false,
+      error: `Every stage must be in route or in skipped; missing: ${missing.join(", ")}.`
+    };
+  }
+  const output = {
+    status: data.status,
+    summary: summary2.value,
+    route: route.value,
+    skipped: skipped.value,
+    cuts
+  };
+  if (data.status === "done") {
+    if (route.value.length === 0) {
+      return { ok: false, error: "route must not be empty when status is done; report blocked." };
+    }
+    return { ok: true, value: output };
+  }
+  if (route.value.length > 0) {
+    return { ok: false, error: "route must be empty when status is blocked." };
+  }
+  const reason = string(data.reason, "reason", limits.summary, cuts);
+  if (!reason.ok) return reason;
+  const suggestion = string(data.suggestion, "suggestion", limits.summary, cuts);
+  if (!suggestion.ok) return suggestion;
+  return { ok: true, value: { ...output, reason: reason.value, suggestion: suggestion.value } };
 }
 function parseDecisions(value, limits, cuts, firstId = 1) {
   if (!Array.isArray(value) || value.length > limits.decisions) {
@@ -25085,7 +25180,14 @@ var OUTCOMES = {
   "out-of-time": "out of time",
   failed: "failed"
 };
-var STAGES = { plan: "plan", design: "design", code: "code", test: "test", review: "review" };
+var STAGES2 = {
+  plan: "plan",
+  route: "routing",
+  design: "design",
+  code: "code",
+  test: "test",
+  review: "review"
+};
 var number = (digits) => new Intl.NumberFormat("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits });
 var en = {
   locale: "en-US",
@@ -25095,14 +25197,16 @@ var en = {
   rate: (perSecond) => number(1).format(perSecond),
   dateTime: (iso) => `${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC`,
   of: (part, whole) => `${part} of ${whole}`,
-  stage: (stage) => STAGES[stage],
+  stage: (stage) => STAGES2[stage],
   runTitle: ({ action, stage, revised, outcome }) => {
     const ended = outcome ? OUTCOMES[outcome] : "";
     switch (action) {
       case "plan":
         return outcome === "done" ? revised ? "Plan: revised" : "Plan: written" : `Plan: ${ended}`;
+      case "route":
+        return outcome === "done" ? "Next stages chosen" : `Routing: ${ended}`;
       case "implement":
-        return `${capitalize(STAGES[stage ?? "code"])} stage${ended ? `: ${ended}` : ""}`;
+        return `${capitalize(STAGES2[stage ?? "code"])} stage${ended ? `: ${ended}` : ""}`;
       case "record":
         return "Answers recorded";
       case "accept":
@@ -25114,6 +25218,7 @@ var en = {
     planning: "Writing the plan",
     "awaiting-decision": "Waiting for your decisions",
     ready: "Ready to implement",
+    routing: "Choosing the next stages",
     designing: "Designing",
     coding: "Writing the code",
     testing: "Testing",
@@ -25146,7 +25251,8 @@ var en = {
     new: "Codeman tries again in a later run.",
     planning: "the plan.",
     "awaiting-decision": "your decisions, in the task's decisions comment.",
-    ready: "the implementation, in the next run.",
+    ready: "the routing agent, which chooses the stages that run next.",
+    routing: "the routing agent, which chooses the stages that run next.",
     designing: "the design stage.",
     coding: "the code stage.",
     testing: "the test stage.",
@@ -25182,9 +25288,11 @@ var en = {
   squashMessage: "Suggested squash commit message",
   pullRequestFooter: (spent, runUrl) => `<sub>Opened by Codeman${spent ? ` \xB7 Spent: ${spent}` : ""} \xB7 [Last run](${runUrl})</sub>`,
   draftSummary: "Codeman is still working on this pull request: test and review come next. It becomes ready for review when they pass.",
-  readySummary: (code, test) => `Code: ${code ?? "(no report)"}
+  readySummary: (code, test, leftOut) => `Code: ${code ?? "(no report)"}
 
-Tests: ${test ?? "(no report)"}`,
+Tests: ${test ?? "(no report)"}${leftOut ? `
+
+Review: left out by the routing agent: ${leftOut}` : ""}`,
   reviewHeading: "Codeman review",
   reviewChanges: "Changes asked of the code stage",
   run: "Run",
@@ -25195,6 +25303,7 @@ Tests: ${test ?? "(no report)"}`,
     test: "Codeman is testing the work.",
     review: "Codeman is reviewing the work."
   })[stage],
+  startRoute: "Codeman's routing agent is choosing the stages that run next.",
   startWithWorkflowResults: "Codeman is going on with the results of the workflows it asked for.",
   startWithChanges: "Codeman is working on the requested changes.",
   startContinue: "Codeman is continuing the work, as requested.",
@@ -25224,20 +25333,28 @@ Tests: ${test ?? "(no report)"}`,
   },
   outOfTime: "The agent ran out of time. Its work so far is committed.",
   partial: "Work so far is committed to the task branch.",
-  maxRuns: (stage, runs, max) => `The ${STAGES[stage]} stage has run ${runs} times in a row without finishing (\`max-runs\` is ${max}). Comment \`/codeman continue <guidance>\` to allow ${max} more runs.`,
-  stageNeedsMaintainer: (stage) => `The ${STAGES[stage]} stage needs a maintainer.`,
+  maxRuns: (stage, runs, max) => `The ${STAGES2[stage]} stage has run ${runs} times in a row without finishing (\`max-runs\` is ${max}). Comment \`/codeman continue <guidance>\` to allow ${max} more runs.`,
+  stageNeedsMaintainer: (stage) => `The ${STAGES2[stage]} stage needs a maintainer.`,
   agentReports: (reason) => `The agent reports: ${reason}`,
   missingWorkflows: (paths) => `The agent waits for workflows that are not on the branch: ${paths}.`,
-  awaitingWorkflows: (stage, paths, reason) => `The ${STAGES[stage]} stage needs ${paths} to run: ${reason} Codeman goes on when their runs on the task branch finish. \`/codeman continue <guidance>\` goes on without them.`,
-  deferredWorkflows: (stage, paths, reason, next) => `The ${STAGES[stage]} stage needs ${paths} to run: ${reason} The workflows are staged and wait for a maintainer, so the task goes on to the ${STAGES[next]} stage meanwhile, up to review. Once they are accepted and their runs finish, the ${STAGES[stage]} stage goes on with their results.`,
+  awaitingWorkflows: (stage, paths, reason) => `The ${STAGES2[stage]} stage needs ${paths} to run: ${reason} Codeman goes on when their runs on the task branch finish. \`/codeman continue <guidance>\` goes on without them.`,
+  deferredWorkflows: (stage, paths, reason, next) => `The ${STAGES2[stage]} stage needs ${paths} to run: ${reason} The workflows are staged and wait for a maintainer, so the task goes on ${next ? `to the ${STAGES2[next]} stage meanwhile, up to the end of its route` : "to the end of its route meanwhile"}. Once they are accepted and their runs finish, the ${STAGES2[stage]} stage goes on with their results.`,
   acceptAfterReview: (paths) => `Review passed. The task waits for the staged workflows to be accepted: ${paths}. Read them, with review's report on the pull request, and comment \`/codeman accept-workflows\`. The pull request stays a draft until then, since merged now they would never run.`,
-  stageDecisions: (stage, count2) => `The ${STAGES[stage]} stage needs ${count2} decision(s) from the maintainers.`,
+  stageDecisions: (stage, count2) => `The ${STAGES2[stage]} stage needs ${count2} decision(s) from the maintainers.`,
   reviewRounds: (rounds, max) => `Review sent the work back to the code stage ${rounds} times in a row (\`max-runs\` is ${max}). Comment \`/codeman continue <guidance>\` to go on.`,
   skipped: (reason) => `Skipped: ${reason}`,
+  reviewLeftOut: (reason) => `The routing agent left review out: ${reason}`,
+  routeChosen: (stages) => `The routing agent chose these stages, in order: ${stages}.`,
+  routeLabel: "Route",
+  leftOutLabel: "Left out",
+  suggestionLabel: "Suggestion",
+  routeBlocked: "The routing agent found nothing that should run next.",
+  routeBlockedHint: "Comment `/codeman continue <guidance>` to route again, `/codeman fix <what to change>` to ask for something else, or `/codeman replan <what to change>` to revise the plan.",
+  routeFallback: (stages) => `Codeman could not use the routing agent's result, so the stages run in their fixed order: ${stages}.`,
   workDone: "The work is done and reviewed. Review the pull request. To ask for changes, submit a review that requests them, or comment `/codeman fix <what to change>` on the pull request.",
   accepted: (by, paths) => `${by} accepted ${paths}, now in \`.github/workflows/\` on the task branch.`,
   acceptWaits: "Codeman goes on when their runs finish.",
-  acceptResumes: (stage) => `The ${STAGES[stage]} stage goes on.`,
+  acceptResumes: (stage) => `The ${STAGES2[stage]} stage goes on.`,
   nothingStaged: "There are no staged workflows to accept.",
   stagedChanged: "The staged workflows changed after they were accepted.",
   stagedChangedDetail: (by, paths) => `Changed after ${by}'s comment: ${paths}. Read them again, then comment \`/codeman accept-workflows\` again.`,
@@ -25284,8 +25401,9 @@ function capitalize(text) {
 }
 
 // src/i18n/pt-BR.ts
-var STAGES2 = {
+var STAGES3 = {
   plan: "plano",
+  route: "roteamento",
   design: "design",
   code: "c\xF3digo",
   test: "testes",
@@ -25302,7 +25420,7 @@ var OUTCOMES2 = {
   "out-of-time": "sem tempo",
   failed: "falhou"
 };
-var OF_STAGE = (stage) => `etapa de ${STAGES2[stage]}`;
+var OF_STAGE = (stage) => `etapa de ${STAGES3[stage]}`;
 var number2 = (digits) => new Intl.NumberFormat("pt-BR", { minimumFractionDigits: digits, maximumFractionDigits: digits });
 var ptBR = {
   locale: "pt-BR",
@@ -25312,12 +25430,14 @@ var ptBR = {
   rate: (perSecond) => number2(1).format(perSecond),
   dateTime: (iso) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)} ${iso.slice(11, 16)} UTC`,
   of: (part, whole) => `${part} de ${whole}`,
-  stage: (stage) => STAGES2[stage],
+  stage: (stage) => STAGES3[stage],
   runTitle: ({ action, stage, revised, outcome }) => {
     const ended = outcome ? OUTCOMES2[outcome] : "";
     switch (action) {
       case "plan":
         return outcome === "done" ? revised ? "Plano: revisado" : "Plano: escrito" : `Plano: ${outcome === "failed" ? "falhou" : ended}`;
+      case "route":
+        return outcome === "done" ? "Pr\xF3ximas etapas escolhidas" : `Roteamento: ${outcome === "failed" ? "falhou" : ended}`;
       case "implement":
         return `${capitalize2(OF_STAGE(stage ?? "code"))}${ended ? `: ${ended}` : ""}`;
       case "record":
@@ -25331,6 +25451,7 @@ var ptBR = {
     planning: "Escrevendo o plano",
     "awaiting-decision": "Aguardando as suas decis\xF5es",
     ready: "Pronto para implementar",
+    routing: "Escolhendo as pr\xF3ximas etapas",
     designing: "Desenhando",
     coding: "Escrevendo o c\xF3digo",
     testing: "Testando",
@@ -25363,7 +25484,8 @@ var ptBR = {
     new: "o Codeman tenta de novo numa pr\xF3xima rodada.",
     planning: "o plano.",
     "awaiting-decision": "as suas decis\xF5es, no coment\xE1rio de decis\xF5es da tarefa.",
-    ready: "a implementa\xE7\xE3o, na pr\xF3xima rodada.",
+    ready: "o agente de roteamento, que escolhe as etapas que rodam em seguida.",
+    routing: "o agente de roteamento, que escolhe as etapas que rodam em seguida.",
     designing: "etapa de design.",
     coding: "etapa de c\xF3digo.",
     testing: "etapa de testes.",
@@ -25399,9 +25521,11 @@ var ptBR = {
   squashMessage: "Mensagem sugerida para o squash commit",
   pullRequestFooter: (spent, runUrl) => `<sub>Aberto pelo Codeman${spent ? ` \xB7 Gasto: ${spent}` : ""} \xB7 [\xDAltima rodada](${runUrl})</sub>`,
   draftSummary: "O Codeman ainda est\xE1 trabalhando neste pull request: os testes e a revis\xE3o v\xEAm a seguir. Ele fica pronto para revis\xE3o quando os dois passarem.",
-  readySummary: (code, test) => `C\xF3digo: ${code ?? "(sem relat\xF3rio)"}
+  readySummary: (code, test, leftOut) => `C\xF3digo: ${code ?? "(sem relat\xF3rio)"}
 
-Testes: ${test ?? "(sem relat\xF3rio)"}`,
+Testes: ${test ?? "(sem relat\xF3rio)"}${leftOut ? `
+
+Revis\xE3o: deixada de fora pelo agente de roteamento: ${leftOut}` : ""}`,
   reviewHeading: "Revis\xE3o do Codeman",
   reviewChanges: "Mudan\xE7as pedidas \xE0 etapa de c\xF3digo",
   run: "Rodada",
@@ -25412,6 +25536,7 @@ Testes: ${test ?? "(sem relat\xF3rio)"}`,
     test: "O Codeman est\xE1 testando o trabalho.",
     review: "O Codeman est\xE1 revisando o trabalho."
   })[stage],
+  startRoute: "O agente de roteamento do Codeman est\xE1 escolhendo as etapas que rodam em seguida.",
   startWithWorkflowResults: "O Codeman est\xE1 continuando com os resultados dos workflows que pediu.",
   startWithChanges: "O Codeman est\xE1 trabalhando nas mudan\xE7as pedidas.",
   startContinue: "O Codeman est\xE1 continuando o trabalho, como pedido.",
@@ -25446,11 +25571,19 @@ Testes: ${test ?? "(sem relat\xF3rio)"}`,
   agentReports: (reason) => `O agente relata: ${reason}`,
   missingWorkflows: (paths) => `O agente aguarda workflows que n\xE3o est\xE3o na branch: ${paths}.`,
   awaitingWorkflows: (stage, paths, reason) => `A ${OF_STAGE(stage)} precisa que ${paths} rode: ${reason} O Codeman continua quando essas execu\xE7\xF5es terminarem na branch da tarefa. \`/codeman continue <orienta\xE7\xE3o>\` continua sem elas.`,
-  deferredWorkflows: (stage, paths, reason, next) => `A ${OF_STAGE(stage)} precisa que ${paths} rode: ${reason} Os workflows est\xE3o guardados e aguardam um mantenedor, ent\xE3o a tarefa segue para a ${OF_STAGE(next)} enquanto isso, at\xE9 a revis\xE3o. Quando forem aceitos e as execu\xE7\xF5es terminarem, a ${OF_STAGE(stage)} continua com os resultados.`,
+  deferredWorkflows: (stage, paths, reason, next) => `A ${OF_STAGE(stage)} precisa que ${paths} rode: ${reason} Os workflows est\xE3o guardados e aguardam um mantenedor, ent\xE3o a tarefa segue ${next ? `para a ${OF_STAGE(next)} enquanto isso, at\xE9 o fim da sua rota` : "at\xE9 o fim da sua rota enquanto isso"}. Quando forem aceitos e as execu\xE7\xF5es terminarem, a ${OF_STAGE(stage)} continua com os resultados.`,
   acceptAfterReview: (paths) => `A revis\xE3o passou. A tarefa aguarda que os workflows guardados sejam aceitos: ${paths}. Leia-os, junto com o relat\xF3rio da revis\xE3o no pull request, e comente \`/codeman accept-workflows\`. O pull request continua em rascunho at\xE9 l\xE1, porque, mergeados agora, eles nunca rodariam.`,
   stageDecisions: (stage, count2) => `A ${OF_STAGE(stage)} precisa de ${count2} decis\xE3o(\xF5es) dos mantenedores.`,
   reviewRounds: (rounds, max) => `A revis\xE3o devolveu o trabalho \xE0 etapa de c\xF3digo ${rounds} vezes seguidas (\`max-runs\` \xE9 ${max}). Comente \`/codeman continue <orienta\xE7\xE3o>\` para continuar.`,
   skipped: (reason) => `Pulada: ${reason}`,
+  reviewLeftOut: (reason) => `O agente de roteamento deixou a revis\xE3o de fora: ${reason}`,
+  routeChosen: (stages) => `O agente de roteamento escolheu estas etapas, nesta ordem: ${stages}.`,
+  routeLabel: "Rota",
+  leftOutLabel: "Deixadas de fora",
+  suggestionLabel: "Sugest\xE3o",
+  routeBlocked: "O agente de roteamento n\xE3o encontrou nada que deva rodar em seguida.",
+  routeBlockedHint: "Comente `/codeman continue <orienta\xE7\xE3o>` para rotear de novo, `/codeman fix <o que mudar>` para pedir outra coisa, ou `/codeman replan <o que mudar>` para revisar o plano.",
+  routeFallback: (stages) => `O Codeman n\xE3o conseguiu usar o resultado do agente de roteamento, ent\xE3o as etapas rodam na ordem fixa: ${stages}.`,
   workDone: "O trabalho est\xE1 feito e revisado. Revise o pull request. Para pedir mudan\xE7as, envie uma revis\xE3o pedindo-as ou comente `/codeman fix <o que mudar>` no pull request.",
   accepted: (by, paths) => `${by} aceitou ${paths}, agora em \`.github/workflows/\` na branch da tarefa.`,
   acceptWaits: "O Codeman continua quando essas execu\xE7\xF5es terminarem.",
@@ -25695,6 +25828,8 @@ var PLAN_RESETS = [
   "decisionsCommentId",
   "reportCommentId",
   "stage",
+  "route",
+  "reviewLeftOut",
   "handoff",
   "reviewRounds",
   "awaiting",
@@ -26000,6 +26135,80 @@ ${untrustedRule(conventions)}
 ${issueSection(task, quote)}
 ${revision}`;
 }
+var STAGE_ROLES = {
+  design: "flowcharts in Mermaid and screen drafts in plain HTML, with their images, when the task has a flow or a screen worth drawing. It may ask the maintainers to choose between designs.",
+  code: "the implementation, with unit tests for the code it writes and the documentation it changes.",
+  test: "integration and end-to-end tests where they apply, more unit tests where coverage is thin, and every check the repository has.",
+  review: "an independent, critical review against the plan and the decisions, with a merge of the default branch to find conflicts early. It changes nothing; it can send the work back, ask the maintainers, or pass it."
+};
+var TRIGGERS = {
+  decisions: "The plan is written and its decisions are answered (or it had none). Choose the stages that carry it out.",
+  fix: "Maintainers asked for changes with `/codeman fix`, or in a review that requests changes; they are under Requests. Choose the stages that carry them out.",
+  changes: "The review stage asked for changes; its report is under the notes from the review stage. Choose the stages that address them.",
+  continue: "You found nothing to run before, and a maintainer asked to go on; their guidance is under Requests. Choose again."
+};
+function routePrompt(task, conventions) {
+  const limits = outputLimits(task.settings);
+  const quote = quoter();
+  const trigger = task.route?.trigger ?? "decisions";
+  const requests = requestsSection(task, quote);
+  const handoff = task.record?.handoff ? `
+## Notes from the ${task.record.handoff.stage} stage
+
+${quote(`${task.record.handoff.stage.toUpperCase()} NOTES`, task.record.handoff.text)}
+` : "";
+  const tag = taskLanguage(task.settings.language, task.record?.language);
+  return `# Codeman task: choose the next stages of issue #${task.number}
+
+You are Codeman's routing agent. Codeman carries out an approved plan in stages, each run by a different agent, one run at a time. You choose which stages run next, in which order, and what each one must focus on. You do not do any stage's work, and you change nothing: every file change you make is discarded.
+
+The plan at \`${task.planPath}\` is approved: its decisions are answered in its \`## Answers\` section. The current directory is the task branch \`${task.branch}\`, which may already hold work from earlier stages and runs. The default branch is \`${task.defaultBranch}\`, available as \`origin/${task.defaultBranch}\`.
+
+## Rules
+
+${RULES_RULE}
+${untrustedRule(conventions)}
+- Never write secrets or environment variable values into any file.
+
+## The stages
+
+${STAGES.map((stage) => `- **${stage}**: ${STAGE_ROLES[stage]}`).join("\n")}
+
+## Why you run
+
+${TRIGGERS[trigger]}
+
+## Steps
+
+1. Read the plan, the issue, the maintainer comments${requests ? ", the requests" : ""} and the notes below, if any, and what earlier runs did: the plan's progress notes, \`git log\` and \`git diff origin/${task.defaultBranch}...HEAD\`${task.history?.length ? ", and the reports under Earlier runs" : ""}.
+2. Decide, for each stage, whether it should run now. Each task has its own needs: no stage is required. Leave a stage out when it would have nothing to do, or nothing worth its cost, and say why. Stages that run keep the order above.
+3. For each stage that runs, write a brief for its agent: what to focus on, and what earlier work it builds on. It does not repeat the plan.
+4. If nothing should run next (the request is already done, it contradicts the plan, or it needs a decision the plan does not cover), report \`blocked\` with an empty \`route\`, the \`reason\`, and a \`suggestion\` of what the maintainers could do, such as \`/codeman replan <what to change>\` or a \`/codeman fix\` with more detail.
+5. Write \`${OUTPUT_FILE}\` in this exact shape:
+
+\`\`\`json
+{
+  "status": "done",
+  "summary": "One short paragraph: what runs next, and why.",
+  "route": [
+    { "stage": "code", "brief": "What the code stage must focus on." },
+    { "stage": "review", "brief": "What the review stage must check." }
+  ],
+  "skipped": [
+    { "stage": "design", "reason": "Why design is left out." },
+    { "stage": "test", "reason": "Why test is left out." }
+  ]
+}
+\`\`\`
+
+   Every stage appears once, in \`route\` or in \`skipped\`. \`status\` is \`done\` with at least one stage in \`route\`, or \`blocked\` with an empty \`route\`, a \`reason\` and a \`suggestion\`.
+
+   Limits, in characters: \`summary\`, each \`brief\` and \`reason\`, and \`suggestion\` up to ${limits.summary} each.
+6. Write \`summary\`, the briefs, the reasons and \`suggestion\` in ${languageName(tag)} (\`${tag}\`): Codeman shows them to the maintainers.
+
+${issueSection(task, quote)}
+${historySection(task, quote)}${handoff}${requests}`;
+}
 var STAGE_WORK = {
   design: () => `Your stage is **design**. You do not write the implementation.
 
@@ -26071,6 +26280,14 @@ function stagePrompt(task, minutes, conventions) {
 
 ${quote(`${task.record.handoff.stage.toUpperCase()} NOTES`, task.record.handoff.text)}
 ` : "";
+  const brief = task.record?.route?.stages.find((step) => step.stage === stage)?.brief;
+  const briefSection = brief ? `
+## Brief from the routing agent
+
+The routing agent chose the stages that run for this task, and wrote this for yours. It refines your stage's work within the plan; it does not change the plan.
+
+${quote("BRIEF", brief)}
+` : "";
   const accepted = task.record?.accepted ? `
 ## Accepted workflows
 
@@ -26099,7 +26316,7 @@ ${rules.trim()}
 
 ## Your stage
 
-Read the plan, then the issue, the maintainer comments${requests ? ", the requests" : ""} and the notes from the previous stage below, if any. Check what earlier runs did: the plan's progress notes, \`git log\`${task.history?.length ? " and the reports under Earlier runs" : ""}.${requests ? " Address every request and review comment under Requests first: they refine the approved plan." : ""}
+Read the plan, then the issue, the maintainer comments${requests ? ", the requests" : ""}, the notes from the previous stage and the routing agent's brief below, if any. Check what earlier runs did: the plan's progress notes, \`git log\`${task.history?.length ? " and the reports under Earlier runs" : ""}.${requests ? " Address every request and review comment under Requests first: they refine the approved plan." : ""}
 
 ${STAGE_WORK[stage](task, conventions)}
 
@@ -26110,7 +26327,7 @@ ${outputLanguage(task)}
 ${outputShape(stage, outputLimits(task.settings), conventions.workflows)}
 
 ${issueSection(task, quote)}
-${historySection(task, quote)}${handoff}${accepted}${requests}${workflowResultsSection(task)}`;
+${historySection(task, quote)}${handoff}${briefSection}${accepted}${requests}${workflowResultsSection(task)}`;
 }
 function historySection(task, quote) {
   if (!task.history?.length) return "";
@@ -26269,7 +26486,7 @@ async function agent(services) {
     copyToAgent(results, `${worktree}/${RESULTS_DIR}`);
     runtime2.endGroup();
   }
-  const prompt = task.action === "implement" ? stagePrompt(task, minutes, conventions) : planPrompt(task, conventions);
+  const prompt = task.action === "implement" ? stagePrompt(task, minutes, conventions) : task.action === "route" ? routePrompt(task, conventions) : planPrompt(task, conventions);
   writeAsAgent(`${worktree}/${TASK_FILE}`, prompt);
   const rules = agentRules(readRules(), repositoryRules(workspace));
   if (rules.omitted.length > 0) {
@@ -26288,7 +26505,7 @@ async function agent(services) {
   let run2 = await runAsAgent(harness.command(options), worktree, minutes * 6e4, runtime2);
   const left = started + minutes * 6e4 - Date.now();
   if (!run2.timedOut && left >= FIX_MS) {
-    const stage = task.action === "implement" ? task.stage ?? "code" : void 0;
+    const stage = task.action === "implement" ? task.stage ?? "code" : task.action === "route" ? "route" : void 0;
     const problems = outputProblems(
       readAgentOutput(runtime2, `${worktree}/${OUTPUT_FILE}`),
       stage,
@@ -26692,22 +26909,6 @@ function duration(ms) {
   return `${Math.floor(minutes / 60)} h${rest ? ` ${rest} min` : ""}`;
 }
 
-// src/stages.ts
-var STAGES3 = ["design", "code", "test", "review"];
-var STAGE_STATE = {
-  design: "designing",
-  code: "coding",
-  test: "testing",
-  review: "reviewing"
-};
-function stageOfState(state) {
-  if (state === "in-progress") return "code";
-  return STAGES3.find((stage) => STAGE_STATE[stage] === state);
-}
-function nextStage(stage) {
-  return STAGES3[STAGES3.indexOf(stage) + 1];
-}
-
 // src/status.ts
 function renderStatus(view) {
   const { record, t } = view;
@@ -27061,6 +27262,7 @@ function taskSettings(comments, description = []) {
 var DECIDING = /* @__PURE__ */ new Set(["awaiting-decision", "ready"]);
 var RESUMABLE = /* @__PURE__ */ new Set([
   "ready",
+  "routing",
   "designing",
   "coding",
   "testing",
@@ -27101,7 +27303,7 @@ function chooseTask(candidates) {
   );
   if (plan) return { number: plan.number, action: "plan" };
   const implement = sorted.find(
-    (task) => task.pending === "resume" && task.planned || stageOfState(task.state) !== void 0 && !task.pending || task.state === "awaiting-workflow" && task.workflowsDone && !task.pending
+    (task) => task.pending === "resume" && task.planned || (stageOfState(task.state) !== void 0 || task.state === "routing") && !task.pending || task.state === "awaiting-workflow" && task.workflowsDone && !task.pending
   ) ?? sorted.find((task) => task.state === "ready" && !task.pending);
   if (implement) return { number: implement.number, action: "implement" };
   return void 0;
@@ -27144,6 +27346,7 @@ async function apply(services) {
   else if (task.action === "accept") await acceptWorkflows(task, io);
   else if (await keyFailed(task, io)) return;
   else if (task.action === "implement") await applyStage(task, io);
+  else if (task.action === "route") await applyRoute(task, io);
   else await applyPlan(task, io);
   runtime2.output("chain", String(chain));
 }
@@ -27341,27 +27544,27 @@ async function applyStage(task, io) {
       });
     case "awaiting-workflow": {
       const workflows = output.value.workflows ?? [];
-      const staged2 = new Set(
+      const staged = new Set(
         [...(await io.repo.filesUnder(head, STAGED_WORKFLOWS_DIR)).keys()].map(
           (path) => workflowPath(path, io.conventions.workflows)
         )
       );
       const present = /* @__PURE__ */ new Set([
         ...(await io.repo.filesUnder(head, io.conventions.workflows.dir)).keys(),
-        ...staged2
+        ...staged
       ]);
       const missing = workflows.filter((path) => !present.has(path));
       if (missing.length > 0) {
         return blocked(io, task, t.missingWorkflows(missing.join(", ")), warnings, record);
       }
-      const deferring = defer(record, stage, workflows, staged2);
+      const deferring = defer(record, stage, workflows, staged);
       if (deferring) {
-        const next2 = nextStage(stage) ?? "review";
+        const next = nextInRoute(record.route, stage);
         return handOver(
           "awaiting-workflow",
           summary2,
           deferring,
-          t.deferredWorkflows(stage, workflows.join(", "), reason ?? "", next2)
+          t.deferredWorkflows(stage, workflows.join(", "), reason ?? "", next)
         );
       }
       return finish(io, task, "awaiting-workflow", {
@@ -27385,6 +27588,8 @@ async function applyStage(task, io) {
           ...record,
           decisions: [...record.decisions, ...added],
           stage: stage === "review" ? "code" : stage,
+          // Once they are answered, the routing agent chooses again.
+          route: void 0,
           runs: 0,
           handoff: stage === "review" ? { stage, text: truncate(summary2, 4e3) } : record.handoff
         },
@@ -27405,11 +27610,12 @@ async function applyStage(task, io) {
           errors: warnings
         });
       }
-      return finish(io, task, STAGE_STATE.code, {
+      return finish(io, task, "routing", {
         outcome: "changes",
         record: {
           ...record,
           stage: "code",
+          route: void 0,
           runs: 0,
           reviewRounds: rounds,
           handoff: { stage, text: truncate(`${reason ?? ""}
@@ -27424,57 +27630,23 @@ ${summary2}`, 4e3) }
   if (stage !== "review") {
     return status2 === "skipped" ? handOver("skipped", reason ?? "", record, void 0, t.skipped(reason ?? "")) : handOver("done", summary2, record);
   }
-  if (task.ignore === null && await io.repo.readFile(task.branch, IGNORE_FILE) === void 0) {
-    head = await io.repo.commit({
-      branch: task.branch,
-      baseSha: head,
-      createBranch: false,
-      changes: [
-        {
-          path: IGNORE_FILE,
-          content: Buffer.from(defaultIgnore(io.conventions.workflows), "utf8")
-        }
-      ],
-      message: `Add ${IGNORE_FILE}
-
-The paths Codeman's agent may not change. Review them before merging.`
-    });
-  }
-  const staged = [...(await io.repo.filesUnder(head, STAGED_WORKFLOWS_DIR)).keys()].map(
-    (path) => workflowPath(path, io.conventions.workflows)
-  );
-  const next = afterReview(t, record, staged);
-  const pullRequest = await openPullRequest(
-    io,
-    task,
-    record,
-    next.state === "done" ? "ready" : "draft"
-  );
-  const reviewed = { ...next.record, pullRequest };
-  await postReview(io, t, { ...task, record: reviewed }, reviewed, summary2, void 0);
-  await finish(io, task, next.state, {
-    outcome: "done",
-    pullRequestWritten: true,
-    record: reviewed,
-    message: next.message,
-    report: summary2,
-    errors: warnings
-  });
+  return complete2(record, "done", summary2);
   async function handOver(outcome, report, base, message, notes = report) {
-    const next2 = nextStage(stage) ?? "review";
+    const next = nextInRoute(base.route, stage);
     const text = truncate(notes, 2e3);
     const updated = {
       ...base,
-      stage: next2,
+      stage: next,
       runs: 0,
       handoff: { stage, text },
       reports: { ...base.reports, [stage]: text },
       commitMessage: stage === "code" && output.ok && output.value.commitMessage ? output.value.commitMessage : base.commitMessage
     };
+    if (next === void 0) return complete2(updated, outcome, report, message);
     if (stage === "code") {
       updated.pullRequest = await openPullRequest(io, task, updated, "draft");
     }
-    return finish(io, task, STAGE_STATE[next2], {
+    return finish(io, task, STAGE_STATE[next], {
       outcome,
       record: updated,
       message,
@@ -27482,6 +27654,138 @@ The paths Codeman's agent may not change. Review them before merging.`
       errors: warnings
     });
   }
+  async function complete2(base, outcome, report, message) {
+    if (task.ignore === null && await io.repo.readFile(task.branch, IGNORE_FILE) === void 0) {
+      head = await io.repo.commit({
+        branch: task.branch,
+        baseSha: head,
+        createBranch: false,
+        changes: [
+          {
+            path: IGNORE_FILE,
+            content: Buffer.from(defaultIgnore(io.conventions.workflows), "utf8")
+          }
+        ],
+        message: `Add ${IGNORE_FILE}
+
+The paths Codeman's agent may not change. Review them before merging.`
+      });
+    }
+    const staged = [...(await io.repo.filesUnder(head, STAGED_WORKFLOWS_DIR)).keys()].map(
+      (path) => workflowPath(path, io.conventions.workflows)
+    );
+    const reviewed = stage === "review";
+    const leftOut = reviewed ? void 0 : base.route?.skipped.find((step) => step.stage === "review")?.reason;
+    const record2 = { ...base, reviewLeftOut: leftOut };
+    const next = afterReview(t, record2, staged);
+    const pullRequest = await openPullRequest(
+      io,
+      task,
+      record2,
+      next.state === "done" ? "ready" : "draft"
+    );
+    const done = { ...next.record, pullRequest };
+    if (reviewed) await postReview(io, t, { ...task, record: done }, done, report, void 0);
+    const notes = [
+      message,
+      next.message,
+      leftOut ? t.reviewLeftOut(safeInline(leftOut, io.conventions.markdown)) : void 0
+    ];
+    await finish(io, task, next.state, {
+      outcome,
+      pullRequestWritten: true,
+      record: done,
+      message: notes.filter((note) => note).join(" "),
+      report,
+      errors: warnings
+    });
+  }
+}
+async function applyRoute(task, io) {
+  if (!task.record) return blocked(io, task, "The task has no record of its plan.");
+  const t = say(task);
+  const requests = task.requests.length > 0 || task.reviews.length > 0 ? {
+    after: {
+      commentId: task.record.processedCommentId,
+      reviewId: task.record.processedReviewId ?? 0
+    },
+    upTo: task.processed
+  } : void 0;
+  const start = (route, view) => {
+    const first = route.stages[0]?.stage ?? "code";
+    const record = {
+      ...task.record,
+      route,
+      stage: first,
+      runs: 0,
+      reviewLeftOut: void 0
+    };
+    return finish(io, task, STAGE_STATE[first], { ...view, record });
+  };
+  const fallback = (error2) => {
+    const stages2 = stagesFrom(task.route?.fallback ?? "design");
+    io.runtime.warning(oneLine(error2));
+    return start(
+      { stages: stages2.map((stage) => ({ stage, brief: "" })), skipped: [], requests },
+      {
+        outcome: "failed",
+        message: t.routeFallback(stages2.map((stage) => t.stage(stage)).join(", ")),
+        errors: [error2]
+      }
+    );
+  };
+  const outputFile = join7(io.resultDir, "output.json");
+  if (io.jobs.agentJob !== "success" || !existsSync3(outputFile)) {
+    return fallback("The routing agent did not finish, or wrote no output.json.");
+  }
+  const output = parseRouteOutput(
+    readFileSync5(outputFile, "utf8").slice(0, MAX_OUTPUT_BYTES),
+    outputLimits(task.settings)
+  );
+  if (!output.ok) return fallback(output.error);
+  const { value } = output;
+  const cuts = cutTexts(t, value.cuts);
+  const skipped = value.skipped.map(({ stage, reason }) => ({
+    stage,
+    reason: truncate(reason, 1e3)
+  }));
+  if (value.status === "blocked") {
+    return finish(io, task, "blocked", {
+      outcome: "blocked",
+      record: { ...task.record, route: { stages: [], skipped } },
+      message: `${t.routeBlocked} ${t.routeBlockedHint}`,
+      report: routeReport(t, value),
+      errors: cuts
+    });
+  }
+  const stages = value.route.map(({ stage, brief }) => ({ stage, brief: truncate(brief, 2e3) }));
+  return start(
+    { stages, skipped, requests },
+    {
+      outcome: "done",
+      message: t.routeChosen(stages.map(({ stage }) => t.stage(stage)).join(", ")),
+      report: routeReport(t, value),
+      errors: cuts
+    }
+  );
+}
+function routeReport(t, output) {
+  const lines = [output.summary, ""];
+  if (output.route.length > 0) {
+    lines.push(`**${t.routeLabel}**`, "");
+    for (const { stage, brief } of output.route)
+      lines.push(`1. **${t.stage(stage)}**: ${oneLine(brief)}`);
+    lines.push("");
+  }
+  if (output.skipped.length > 0) {
+    lines.push(`**${t.leftOutLabel}**`, "");
+    for (const { stage, reason } of output.skipped)
+      lines.push(`- **${t.stage(stage)}**: ${oneLine(reason)}`);
+    lines.push("");
+  }
+  if (output.reason) lines.push(t.agentReports(oneLine(output.reason)), "");
+  if (output.suggestion) lines.push(`**${t.suggestionLabel}:** ${oneLine(output.suggestion)}`);
+  return lines.join("\n").trim();
 }
 var STAGE_NAMES = {
   design: "Design",
@@ -27499,7 +27803,7 @@ async function openPullRequest(io, task, record, mode) {
     planPath: task.planPath,
     planUrl: io.repo.fileUrl(task.branch, task.planPath),
     planSummary: record.summary,
-    summary: mode === "ready" ? t.readySummary(record.reports?.code, record.reports?.test) : t.draftSummary,
+    summary: mode === "ready" ? t.readySummary(record.reports?.code, record.reports?.test, record.reviewLeftOut) : t.draftSummary,
     commitMessage: record.commitMessage ?? "",
     runUrl: task.runUrl,
     spent: spentLine(t, task, runCosts(io, task).task)
@@ -27592,6 +27896,7 @@ function afterReview(t, record, staged) {
   const reviewed = {
     ...record,
     stage: void 0,
+    route: void 0,
     runs: 0,
     reviewRounds: 0,
     handoff: void 0
@@ -27697,7 +28002,7 @@ function cutTexts(t, cuts) {
   return cuts.map((cut) => t.cutText(cut.field, cut.length, cut.limit * MARGIN));
 }
 function retryHint(t, task) {
-  if (task.action === "implement") return t.continueHint;
+  if (task.action === "implement" || task.action === "route") return t.continueHint;
   if (task.record) return t.replanHint;
   return t.removeLabelHint;
 }
@@ -27827,11 +28132,13 @@ function runCosts(io, task) {
 }
 function spendRow(io, task, cost) {
   if (io.jobs.keyStatus !== "opened") return void 0;
-  if (task.action !== "plan" && task.action !== "implement") return void 0;
+  if (task.action !== "plan" && task.action !== "route" && task.action !== "implement") {
+    return void 0;
+  }
   return {
     runUrl: task.runUrl,
     at: (/* @__PURE__ */ new Date()).toISOString(),
-    stage: task.action === "plan" ? "plan" : task.stage ?? "code",
+    stage: task.action === "implement" ? task.stage ?? "code" : task.action,
     model: task.model,
     cost,
     keyLimit: io.jobs.keyLimit,
@@ -28122,8 +28429,8 @@ async function select(services) {
     runtime2.info(`${line} [${result.state}]${candidate.pending ? ` (${candidate.pending})` : ""}`);
   }
   const choice = chooseTask(candidates);
-  runtime2.output("action", choice?.action ?? "none");
   if (!choice) {
+    runtime2.output("action", "none");
     runtime2.info("Nothing to do.");
     return;
   }
@@ -28146,8 +28453,25 @@ async function select(services) {
   const replan = choice.action === "plan" ? replanRequests(sources) : [];
   const settled = choice.action === "plan" && record ? applyCommands(record, sources).record.decisions.filter((decision) => decision.answer) : [];
   const resume = pending === "resume";
-  const requests = choice.action === "implement" ? resumeRequests(sources) : [];
-  const stage = choice.action !== "implement" ? void 0 : requests.some((request2) => request2.kind === "fix") ? "code" : record?.stage ?? stageOfState(fromStateOf(task.labels)) ?? firstStage(task.labels);
+  const newRequests = choice.action === "implement" ? resumeRequests(sources) : [];
+  const route = choice.action === "implement" ? routing(task.labels, record, newRequests) : void 0;
+  const action = route ? "route" : choice.action;
+  runtime2.output("action", action);
+  const window = action === "implement" ? record?.route?.requests : void 0;
+  const windowReviews = window ? authorizedReviews(
+    talk.reviews,
+    reviewComments,
+    talk.maintainers,
+    window.after.reviewId
+  ).filter((review) => review.id <= window.upTo.reviewId) : [];
+  const windowSources = window ? [
+    ...commandsAfter(maintainerComments, window.after.commentId).filter(
+      (source) => source.commentId <= window.upTo.commentId
+    ),
+    ...reviewCommands(windowReviews)
+  ] : [];
+  const requests = [...resumeRequests(windowSources), ...newRequests];
+  const stage = action !== "implement" ? void 0 : record?.stage ?? stageOfState(fromStateOf(task.labels)) ?? firstStage(task.labels);
   const description = descriptionCommands(task.body);
   const problems = [...description.commands, ...sources.map(({ command }) => command)].flatMap(
     (command) => command.kind === "invalid" ? [{ text: command.text, problem: command.problem }] : []
@@ -28168,7 +28492,7 @@ async function select(services) {
   const model = settings.value.model;
   const context3 = {
     version: 1,
-    action: choice.action,
+    action,
     owner: repo.repository.owner,
     repo: repo.repository.name,
     number: task.number,
@@ -28176,13 +28500,14 @@ async function select(services) {
     body: description.text,
     url: task.url,
     comments: maintainerComments,
-    reviews,
+    reviews: [...windowReviews, ...reviews],
     requests,
     resume,
     accept: choice.action === "accept" ? acceptRequest(maintainerComments, record?.acceptedCommentId ?? 0) : void 0,
-    workflowRuns: choice.action === "implement" ? workflowRuns.get(task.number) : void 0,
-    history: choice.action === "implement" ? runHistory(talk.comments, bot) : void 0,
+    workflowRuns: action === "implement" ? workflowRuns.get(task.number) : void 0,
+    history: action === "implement" || route ? runHistory(talk.comments, bot) : void 0,
     stage,
+    route,
     processed: {
       commentId: Math.max(
         record?.processedCommentId ?? 0,
@@ -28206,10 +28531,10 @@ async function select(services) {
     statusCommentId: talk.status?.id ?? null,
     runUrl: runtime2.run.url
   };
-  const needsAgent = choice.action === "plan" || choice.action === "implement";
+  const needsAgent = action === "plan" || action === "route" || action === "implement";
   if (needsAgent) {
     const t = messages(taskLanguage(settings.value.language, record?.language));
-    const state = stage ? STAGE_STATE[stage] : "planning";
+    const state = stage ? STAGE_STATE[stage] : route ? "routing" : "planning";
     await repo.setState(task.number, task.labels, state);
     context3.statusCommentId = await repo.upsertComment(
       task.number,
@@ -28234,10 +28559,26 @@ async function select(services) {
   runtime2.output("model", model);
   runtime2.output("base-sha", baseSha);
   runtime2.output("needs-agent", String(needsAgent));
-  runtime2.output("stage", stage ?? (choice.action === "plan" ? "plan" : ""));
+  runtime2.output("stage", stage ?? (action === "plan" || action === "route" ? action : ""));
   runtime2.output("task-budget", String(settings.value["task-budget"]));
   runtime2.output("monthly-budget", String(settings.value["monthly-budget"]));
-  runtime2.info(`Selected #${task.number} to ${choice.action}, with model ${model}.`);
+  runtime2.info(`Selected #${task.number} to ${action}, with model ${model}.`);
+}
+function routing(labels, record, requests) {
+  const state = fromStateOf(labels);
+  if (requests.some((request2) => request2.kind === "fix")) {
+    return { trigger: "fix", fallback: "code" };
+  }
+  if (record?.route?.stages.length === 0) {
+    return { trigger: "continue", fallback: record.stage ?? "design" };
+  }
+  if (state === "routing" && record?.handoff?.stage === "review") {
+    return { trigger: "changes", fallback: "code" };
+  }
+  if (state === "ready" || state === "routing") {
+    return { trigger: "decisions", fallback: record?.stage ?? "design" };
+  }
+  return void 0;
 }
 function firstStage(labels) {
   return fromStateOf(labels) === "done" ? "code" : "design";
@@ -28247,6 +28588,7 @@ function fromStateOf(labels) {
   return result.ok ? result.state : "new";
 }
 function startMessage(t, task) {
+  if (task.action === "route") return t.startRoute;
   if (task.action === "implement") {
     if (task.workflowRuns?.length) return t.startWithWorkflowResults;
     if (task.requests.some((request2) => request2.kind === "fix") || task.reviews.length > 0) {

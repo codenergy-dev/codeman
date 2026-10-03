@@ -6,7 +6,7 @@ export interface SpendRow {
   runUrl: string;
   /** When the run ended, as an ISO timestamp. */
   at: string;
-  stage: Stage | "plan";
+  stage: Stage | "plan" | "route";
   model: string;
   /** Undefined when the run's cost could not be read. */
   cost?: number | undefined;

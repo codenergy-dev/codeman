@@ -1,7 +1,7 @@
 import type { WorkflowConventions } from "./platform/conventions.ts";
 import type { Decision } from "./record.ts";
 import { isLanguageTag, type Settings } from "./settings.ts";
-import type { Stage } from "./stages.ts";
+import { STAGES, type Stage } from "./stages.ts";
 import { truncate } from "./text.ts";
 
 /** What the agent reports after planning, in `.codeman/output.json`. */
@@ -132,11 +132,12 @@ export type StageStatus =
 /**
  * What Codeman would reject or cut in the agent's output, for the agent to fix while it still
  * runs. `stage` is undefined when planning, and `firstDecision` is then the number of the plan's
- * first decision. Empty when Codeman can use the output as it is.
+ * first decision; it is `route` for the routing agent. Empty when Codeman can use the output as
+ * it is.
  */
 export function outputProblems(
   text: string | undefined,
-  stage: Stage | undefined,
+  stage: Stage | "route" | undefined,
   limits: OutputLimits,
   workflows: WorkflowConventions,
   firstDecision = 1,
@@ -145,7 +146,9 @@ export function outputProblems(
   const parsed =
     stage === undefined
       ? parsePlanOutput(text, limits, firstDecision)
-      : parseStageOutput(text, stage, limits, workflows);
+      : stage === "route"
+        ? parseRouteOutput(text, limits)
+        : parseStageOutput(text, stage, limits, workflows);
   if (!parsed.ok) return [parsed.error];
   return parsed.value.cuts.map(cutText);
 }
@@ -224,6 +227,102 @@ export function parseStageOutput(
     output.decisions = decisions.value;
   }
   return { ok: true, value: output };
+}
+
+/** What the routing agent reports, in `.codeman/output.json`. */
+export interface RouteOutput {
+  /** `done` with the stages to run; `blocked` when nothing should run next. */
+  status: "done" | "blocked";
+  summary: string;
+  /** The stages to run, in the order of stages, each with a brief for its agent. */
+  route: { stage: Stage; brief: string }[];
+  /** Every other stage, with why it is left out. */
+  skipped: { stage: Stage; reason: string }[];
+  /** When blocked: why nothing should run next, and what the maintainers could do. */
+  reason?: string;
+  suggestion?: string;
+  cuts: Cut[];
+}
+
+/**
+ * Validates the routing agent's output strictly. Every stage is either in the route or left out
+ * with a reason; the route keeps the order of stages; and an empty route is a block, which must
+ * say why and what to do.
+ */
+export function parseRouteOutput(text: string, limits: OutputLimits): Parsed<RouteOutput> {
+  let data: unknown;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    return { ok: false, error: "output.json is not valid JSON." };
+  }
+  if (!isObject(data)) return { ok: false, error: "output.json must be an object." };
+  if (data.status !== "done" && data.status !== "blocked") {
+    return { ok: false, error: "status must be done or blocked for the routing agent." };
+  }
+  const cuts: Cut[] = [];
+  const summary = string(data.summary, "summary", limits.summary, cuts);
+  if (!summary.ok) return summary;
+
+  const seen = new Set<Stage>();
+  const steps = <T extends string>(
+    value: unknown,
+    name: "route" | "skipped",
+    field: T,
+  ): Parsed<({ stage: Stage } & Record<T, string>)[]> => {
+    if (!Array.isArray(value)) return { ok: false, error: `${name} must be a list.` };
+    const list: ({ stage: Stage } & Record<T, string>)[] = [];
+    for (const [index, item] of value.entries()) {
+      const where = `${name}[${index}]`;
+      if (!isObject(item) || !(STAGES as readonly unknown[]).includes(item.stage)) {
+        return { ok: false, error: `${where}.stage must be one of ${STAGES.join(", ")}.` };
+      }
+      const stage = item.stage as Stage;
+      if (seen.has(stage)) return { ok: false, error: `${where}: ${stage} is listed twice.` };
+      seen.add(stage);
+      const text = string(item[field], `${where}.${field}`, limits.summary, cuts);
+      if (!text.ok) return text;
+      list.push({ stage, [field]: text.value } as { stage: Stage } & Record<T, string>);
+    }
+    return { ok: true, value: list };
+  };
+  const route = steps(data.route ?? [], "route", "brief");
+  if (!route.ok) return route;
+  const order = route.value.map((step) => STAGES.indexOf(step.stage));
+  if (order.some((position, index) => index > 0 && position < (order[index - 1] ?? 0))) {
+    return { ok: false, error: `route must keep the order of stages: ${STAGES.join(", ")}.` };
+  }
+  const skipped = steps(data.skipped ?? [], "skipped", "reason");
+  if (!skipped.ok) return skipped;
+  const missing = STAGES.filter((stage) => !seen.has(stage));
+  if (missing.length > 0) {
+    return {
+      ok: false,
+      error: `Every stage must be in route or in skipped; missing: ${missing.join(", ")}.`,
+    };
+  }
+
+  const output: RouteOutput = {
+    status: data.status,
+    summary: summary.value,
+    route: route.value,
+    skipped: skipped.value,
+    cuts,
+  };
+  if (data.status === "done") {
+    if (route.value.length === 0) {
+      return { ok: false, error: "route must not be empty when status is done; report blocked." };
+    }
+    return { ok: true, value: output };
+  }
+  if (route.value.length > 0) {
+    return { ok: false, error: "route must be empty when status is blocked." };
+  }
+  const reason = string(data.reason, "reason", limits.summary, cuts);
+  if (!reason.ok) return reason;
+  const suggestion = string(data.suggestion, "suggestion", limits.summary, cuts);
+  if (!suggestion.ok) return suggestion;
+  return { ok: true, value: { ...output, reason: reason.value, suggestion: suggestion.value } };
 }
 
 function parseDecisions(

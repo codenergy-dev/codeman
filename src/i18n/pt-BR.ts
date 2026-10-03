@@ -2,6 +2,7 @@ import type { Messages } from "./messages.ts";
 
 const STAGES = {
   plan: "plano",
+  route: "roteamento",
   design: "design",
   code: "código",
   test: "testes",
@@ -49,6 +50,10 @@ export const ptBR: Messages = {
             ? "Plano: revisado"
             : "Plano: escrito"
           : `Plano: ${outcome === "failed" ? "falhou" : ended}`;
+      case "route":
+        return outcome === "done"
+          ? "Próximas etapas escolhidas"
+          : `Roteamento: ${outcome === "failed" ? "falhou" : ended}`;
       case "implement":
         return `${capitalize(OF_STAGE(stage ?? "code"))}${ended ? `: ${ended}` : ""}`;
       case "record":
@@ -64,6 +69,7 @@ export const ptBR: Messages = {
       planning: "Escrevendo o plano",
       "awaiting-decision": "Aguardando as suas decisões",
       ready: "Pronto para implementar",
+      routing: "Escolhendo as próximas etapas",
       designing: "Desenhando",
       coding: "Escrevendo o código",
       testing: "Testando",
@@ -106,7 +112,8 @@ export const ptBR: Messages = {
       new: "o Codeman tenta de novo numa próxima rodada.",
       planning: "o plano.",
       "awaiting-decision": "as suas decisões, no comentário de decisões da tarefa.",
-      ready: "a implementação, na próxima rodada.",
+      ready: "o agente de roteamento, que escolhe as etapas que rodam em seguida.",
+      routing: "o agente de roteamento, que escolhe as etapas que rodam em seguida.",
       designing: "etapa de design.",
       coding: "etapa de código.",
       testing: "etapa de testes.",
@@ -147,8 +154,8 @@ export const ptBR: Messages = {
     `<sub>Aberto pelo Codeman${spent ? ` · Gasto: ${spent}` : ""} · [Última rodada](${runUrl})</sub>`,
   draftSummary:
     "O Codeman ainda está trabalhando neste pull request: os testes e a revisão vêm a seguir. Ele fica pronto para revisão quando os dois passarem.",
-  readySummary: (code, test) =>
-    `Código: ${code ?? "(sem relatório)"}\n\nTestes: ${test ?? "(sem relatório)"}`,
+  readySummary: (code, test, leftOut) =>
+    `Código: ${code ?? "(sem relatório)"}\n\nTestes: ${test ?? "(sem relatório)"}${leftOut ? `\n\nRevisão: deixada de fora pelo agente de roteamento: ${leftOut}` : ""}`,
   reviewHeading: "Revisão do Codeman",
   reviewChanges: "Mudanças pedidas à etapa de código",
   run: "Rodada",
@@ -164,6 +171,7 @@ export const ptBR: Messages = {
       test: "O Codeman está testando o trabalho.",
       review: "O Codeman está revisando o trabalho.",
     })[stage],
+  startRoute: "O agente de roteamento do Codeman está escolhendo as etapas que rodam em seguida.",
   startWithWorkflowResults: "O Codeman está continuando com os resultados dos workflows que pediu.",
   startWithChanges: "O Codeman está trabalhando nas mudanças pedidas.",
   startContinue: "O Codeman está continuando o trabalho, como pedido.",
@@ -209,7 +217,7 @@ export const ptBR: Messages = {
   awaitingWorkflows: (stage, paths, reason) =>
     `A ${OF_STAGE(stage)} precisa que ${paths} rode: ${reason} O Codeman continua quando essas execuções terminarem na branch da tarefa. \`/codeman continue <orientação>\` continua sem elas.`,
   deferredWorkflows: (stage, paths, reason, next) =>
-    `A ${OF_STAGE(stage)} precisa que ${paths} rode: ${reason} Os workflows estão guardados e aguardam um mantenedor, então a tarefa segue para a ${OF_STAGE(next)} enquanto isso, até a revisão. Quando forem aceitos e as execuções terminarem, a ${OF_STAGE(stage)} continua com os resultados.`,
+    `A ${OF_STAGE(stage)} precisa que ${paths} rode: ${reason} Os workflows estão guardados e aguardam um mantenedor, então a tarefa segue ${next ? `para a ${OF_STAGE(next)} enquanto isso, até o fim da sua rota` : "até o fim da sua rota enquanto isso"}. Quando forem aceitos e as execuções terminarem, a ${OF_STAGE(stage)} continua com os resultados.`,
   acceptAfterReview: (paths) =>
     `A revisão passou. A tarefa aguarda que os workflows guardados sejam aceitos: ${paths}. Leia-os, junto com o relatório da revisão no pull request, e comente \`/codeman accept-workflows\`. O pull request continua em rascunho até lá, porque, mergeados agora, eles nunca rodariam.`,
   stageDecisions: (stage, count) =>
@@ -217,6 +225,16 @@ export const ptBR: Messages = {
   reviewRounds: (rounds, max) =>
     `A revisão devolveu o trabalho à etapa de código ${rounds} vezes seguidas (\`max-runs\` é ${max}). Comente \`/codeman continue <orientação>\` para continuar.`,
   skipped: (reason) => `Pulada: ${reason}`,
+  reviewLeftOut: (reason) => `O agente de roteamento deixou a revisão de fora: ${reason}`,
+  routeChosen: (stages) => `O agente de roteamento escolheu estas etapas, nesta ordem: ${stages}.`,
+  routeLabel: "Rota",
+  leftOutLabel: "Deixadas de fora",
+  suggestionLabel: "Sugestão",
+  routeBlocked: "O agente de roteamento não encontrou nada que deva rodar em seguida.",
+  routeBlockedHint:
+    "Comente `/codeman continue <orientação>` para rotear de novo, `/codeman fix <o que mudar>` para pedir outra coisa, ou `/codeman replan <o que mudar>` para revisar o plano.",
+  routeFallback: (stages) =>
+    `O Codeman não conseguiu usar o resultado do agente de roteamento, então as etapas rodam na ordem fixa: ${stages}.`,
   workDone:
     "O trabalho está feito e revisado. Revise o pull request. Para pedir mudanças, envie uma revisão pedindo-as ou comente `/codeman fix <o que mudar>` no pull request.",
 

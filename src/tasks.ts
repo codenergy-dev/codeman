@@ -191,7 +191,14 @@ export function taskSettings(
   return settings;
 }
 
-export type Action = "plan" | "record" | "implement" | "accept";
+/** `route`: the routing agent chooses the stages that run next. */
+export type Action = "plan" | "record" | "route" | "implement" | "accept";
+
+/**
+ * What made the router run: answered decisions (or a plan without any), a `fix` request, or
+ * review asking for changes; `continue` after the router blocked the task.
+ */
+export type RouteTrigger = "decisions" | "fix" | "changes" | "continue";
 
 export interface Candidate {
   number: number;
@@ -218,6 +225,7 @@ export const DECIDING: ReadonlySet<State | "new"> = new Set(["awaiting-decision"
 /** States in which `fix` and `continue` resume the work. */
 export const RESUMABLE: ReadonlySet<State | "new"> = new Set([
   "ready",
+  "routing",
   "designing",
   "coding",
   "testing",
@@ -305,7 +313,7 @@ export function chooseTask(
     sorted.find(
       (task) =>
         (task.pending === "resume" && task.planned) ||
-        (stageOfState(task.state) !== undefined && !task.pending) ||
+        ((stageOfState(task.state) !== undefined || task.state === "routing") && !task.pending) ||
         (task.state === "awaiting-workflow" && task.workflowsDone && !task.pending),
     ) ?? sorted.find((task) => task.state === "ready" && !task.pending);
   if (implement) return { number: implement.number, action: "implement" };
@@ -336,6 +344,11 @@ export interface TaskContext {
   problems: CommandError[];
   /** For `implement`: the stage this run works on. */
   stage?: Stage | undefined;
+  /**
+   * For `route`: what made the router run, and the first stage of the fixed order that runs
+   * when its result cannot be used.
+   */
+  route?: { trigger: RouteTrigger; fallback: Stage } | undefined;
   /** For `accept`: the comment that accepted the staged workflows. */
   accept?: TaskComment | undefined;
   /** Finished runs of the workflows the agent waited for, whose results it gets. */

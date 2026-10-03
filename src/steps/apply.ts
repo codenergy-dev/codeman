@@ -3,7 +3,15 @@ import { join } from "node:path";
 import { MIN_RUN_BUDGET, runLimit } from "../budget.ts";
 import type { Change } from "../collect.ts";
 import { type Messages, messages, type RunOutcome, taskLanguage } from "../i18n/index.ts";
-import { type Cut, MARGIN, outputLimits, parsePlanOutput, parseStageOutput } from "../output.ts";
+import {
+  type Cut,
+  MARGIN,
+  outputLimits,
+  parsePlanOutput,
+  parseRouteOutput,
+  parseStageOutput,
+  type RouteOutput,
+} from "../output.ts";
 import type { Conventions } from "../platform/conventions.ts";
 import type { Platform } from "../platform/platform.ts";
 import type { FileChange } from "../platform/types.ts";
@@ -22,17 +30,18 @@ import {
   nextDecisionId,
   pendingDecisions,
   planRecord,
+  type Route,
   type TaskRecord,
   writeAnswers,
 } from "../record.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import type { Services } from "../services.ts";
 import { addRow, parseCosts, refreshCosts, type SpendRow } from "../spend.ts";
-import { nextStage, STAGE_STATE, type Stage } from "../stages.ts";
+import { nextInRoute, STAGE_STATE, type Stage, stagesFrom } from "../stages.ts";
 import type { State } from "../state.ts";
 import { decisionsUrl, renderDecisions, renderRun, renderStatus, reportUrl } from "../status.ts";
 import { commandsAfter, type TaskContext } from "../tasks.ts";
-import { oneLine, safeMarkdown, truncate } from "../text.ts";
+import { oneLine, safeInline, safeMarkdown, truncate } from "../text.ts";
 import { checkPlanResult, decodeText, isManifest } from "../validate.ts";
 import { MAX_OUTPUT_BYTES } from "./agent.ts";
 import { readTask, resultDir } from "./common.ts";
@@ -57,6 +66,7 @@ export async function apply(services: Services): Promise<void> {
   else if (task.action === "accept") await acceptWorkflows(task, io);
   else if (await keyFailed(task, io)) return;
   else if (task.action === "implement") await applyStage(task, io);
+  else if (task.action === "route") await applyRoute(task, io);
   else await applyPlan(task, io);
   runtime.output("chain", String(chain));
 }
@@ -350,7 +360,7 @@ async function applyStage(task: TaskContext, io: Io): Promise<void> {
       }
       const deferring = defer(record, stage, workflows, staged);
       if (deferring) {
-        const next = nextStage(stage) ?? "review";
+        const next = nextInRoute(record.route, stage);
         return handOver(
           "awaiting-workflow",
           summary,
@@ -380,6 +390,8 @@ async function applyStage(task: TaskContext, io: Io): Promise<void> {
           ...record,
           decisions: [...record.decisions, ...added],
           stage: stage === "review" ? "code" : stage,
+          // Once they are answered, the routing agent chooses again.
+          route: undefined,
           runs: 0,
           handoff: stage === "review" ? { stage, text: truncate(summary, 4000) } : record.handoff,
         },
@@ -400,11 +412,13 @@ async function applyStage(task: TaskContext, io: Io): Promise<void> {
           errors: warnings,
         });
       }
-      return finish(io, task, STAGE_STATE.code, {
+      // The routing agent chooses what addresses the review.
+      return finish(io, task, "routing", {
         outcome: "changes",
         record: {
           ...record,
           stage: "code",
+          route: undefined,
           runs: 0,
           reviewRounds: rounds,
           handoff: { stage, text: truncate(`${reason ?? ""}\n\n${summary}`, 4000) },
@@ -422,44 +436,12 @@ async function applyStage(task: TaskContext, io: Io): Promise<void> {
   }
 
   // Review passed.
-  if (task.ignore === null && (await io.repo.readFile(task.branch, IGNORE_FILE)) === undefined) {
-    head = await io.repo.commit({
-      branch: task.branch,
-      baseSha: head,
-      createBranch: false,
-      changes: [
-        {
-          path: IGNORE_FILE,
-          content: Buffer.from(defaultIgnore(io.conventions.workflows), "utf8"),
-        },
-      ],
-      message: `Add ${IGNORE_FILE}\n\nThe paths Codeman's agent may not change. Review them before merging.`,
-    });
-  }
-  const staged = [...(await io.repo.filesUnder(head, STAGED_WORKFLOWS_DIR)).keys()].map((path) =>
-    workflowPath(path, io.conventions.workflows),
-  );
-  const next = afterReview(t, record, staged);
-  const pullRequest = await openPullRequest(
-    io,
-    task,
-    record,
-    next.state === "done" ? "ready" : "draft",
-  );
-  const reviewed = { ...next.record, pullRequest };
-  await postReview(io, t, { ...task, record: reviewed }, reviewed, summary, undefined);
-  await finish(io, task, next.state, {
-    outcome: "done",
-    pullRequestWritten: true,
-    record: reviewed,
-    message: next.message,
-    report: summary,
-    errors: warnings,
-  });
+  return complete(record, "done", summary);
 
   /**
-   * Hands the task over to the next stage, with this stage's report as its notes. When code
-   * ends, the pull request opens as a draft.
+   * Hands the task over to the next stage of its route, with this stage's report as its notes.
+   * When code ends, the pull request opens as a draft. When the route ends here, the work is
+   * complete.
    */
   async function handOver(
     outcome: "done" | "skipped" | "awaiting-workflow",
@@ -468,7 +450,7 @@ async function applyStage(task: TaskContext, io: Io): Promise<void> {
     message?: string,
     notes = report,
   ): Promise<void> {
-    const next = nextStage(stage) ?? "review";
+    const next = nextInRoute(base.route, stage);
     // Kept short: the record lives in the status comment, which the platform limits in size.
     const text = truncate(notes, 2000);
     const updated: TaskRecord = {
@@ -482,6 +464,7 @@ async function applyStage(task: TaskContext, io: Io): Promise<void> {
           ? output.value.commitMessage
           : base.commitMessage,
     };
+    if (next === undefined) return complete(updated, outcome, report, message);
     if (stage === "code") {
       updated.pullRequest = await openPullRequest(io, task, updated, "draft");
     }
@@ -493,6 +476,164 @@ async function applyStage(task: TaskContext, io: Io): Promise<void> {
       errors: warnings,
     });
   }
+
+  /**
+   * Ends the work, after review passed or after the last stage of a route without review: adds
+   * the proposed `.codemanignore` if the repository has none, opens or updates the pull request
+   * and marks it ready, unless staged workflows still wait for a maintainer. Only review posts
+   * its report on the pull request.
+   */
+  async function complete(
+    base: TaskRecord,
+    outcome: "done" | "skipped" | "awaiting-workflow",
+    report: string,
+    message?: string,
+  ): Promise<void> {
+    if (task.ignore === null && (await io.repo.readFile(task.branch, IGNORE_FILE)) === undefined) {
+      head = await io.repo.commit({
+        branch: task.branch,
+        baseSha: head,
+        createBranch: false,
+        changes: [
+          {
+            path: IGNORE_FILE,
+            content: Buffer.from(defaultIgnore(io.conventions.workflows), "utf8"),
+          },
+        ],
+        message: `Add ${IGNORE_FILE}\n\nThe paths Codeman's agent may not change. Review them before merging.`,
+      });
+    }
+    const staged = [...(await io.repo.filesUnder(head, STAGED_WORKFLOWS_DIR)).keys()].map((path) =>
+      workflowPath(path, io.conventions.workflows),
+    );
+    const reviewed = stage === "review";
+    const leftOut = reviewed
+      ? undefined
+      : base.route?.skipped.find((step) => step.stage === "review")?.reason;
+    const record: TaskRecord = { ...base, reviewLeftOut: leftOut };
+    const next = afterReview(t, record, staged);
+    const pullRequest = await openPullRequest(
+      io,
+      task,
+      record,
+      next.state === "done" ? "ready" : "draft",
+    );
+    const done = { ...next.record, pullRequest };
+    if (reviewed) await postReview(io, t, { ...task, record: done }, done, report, undefined);
+    const notes = [
+      message,
+      next.message,
+      leftOut ? t.reviewLeftOut(safeInline(leftOut, io.conventions.markdown)) : undefined,
+    ];
+    await finish(io, task, next.state, {
+      outcome,
+      pullRequestWritten: true,
+      record: done,
+      message: notes.filter((note) => note).join(" "),
+      report,
+      errors: warnings,
+    });
+  }
+}
+
+/**
+ * Records the routing agent's choice and starts its first stage. A route that cannot be used
+ * falls back to the fixed order, so a router failure does not stop the task. An empty route
+ * blocks the task, with the router's reason and suggestion.
+ */
+async function applyRoute(task: TaskContext, io: Io): Promise<void> {
+  if (!task.record) return blocked(io, task, "The task has no record of its plan.");
+  const t = say(task);
+  // The requests the router handled, which its stages read again.
+  const requests =
+    task.requests.length > 0 || task.reviews.length > 0
+      ? {
+          after: {
+            commentId: task.record.processedCommentId,
+            reviewId: task.record.processedReviewId ?? 0,
+          },
+          upTo: task.processed,
+        }
+      : undefined;
+  const start = (route: Route, view: Parameters<typeof finish>[3]): Promise<void> => {
+    const first = route.stages[0]?.stage ?? "code";
+    const record: TaskRecord = {
+      ...(task.record as TaskRecord),
+      route,
+      stage: first,
+      runs: 0,
+      reviewLeftOut: undefined,
+    };
+    return finish(io, task, STAGE_STATE[first], { ...view, record });
+  };
+  const fallback = (error: string): Promise<void> => {
+    const stages = stagesFrom(task.route?.fallback ?? "design");
+    io.runtime.warning(oneLine(error));
+    return start(
+      { stages: stages.map((stage) => ({ stage, brief: "" })), skipped: [], requests },
+      {
+        outcome: "failed",
+        message: t.routeFallback(stages.map((stage) => t.stage(stage)).join(", ")),
+        errors: [error],
+      },
+    );
+  };
+
+  const outputFile = join(io.resultDir, "output.json");
+  if (io.jobs.agentJob !== "success" || !existsSync(outputFile)) {
+    return fallback("The routing agent did not finish, or wrote no output.json.");
+  }
+  const output = parseRouteOutput(
+    readFileSync(outputFile, "utf8").slice(0, MAX_OUTPUT_BYTES),
+    outputLimits(task.settings),
+  );
+  if (!output.ok) return fallback(output.error);
+  const { value } = output;
+  const cuts = cutTexts(t, value.cuts);
+  // Kept short: the record lives in the status comment, which the platform limits in size.
+  const skipped = value.skipped.map(({ stage, reason }) => ({
+    stage,
+    reason: truncate(reason, 1000),
+  }));
+  if (value.status === "blocked") {
+    return finish(io, task, "blocked", {
+      outcome: "blocked",
+      record: { ...task.record, route: { stages: [], skipped } },
+      message: `${t.routeBlocked} ${t.routeBlockedHint}`,
+      report: routeReport(t, value),
+      errors: cuts,
+    });
+  }
+  const stages = value.route.map(({ stage, brief }) => ({ stage, brief: truncate(brief, 2000) }));
+  return start(
+    { stages, skipped, requests },
+    {
+      outcome: "done",
+      message: t.routeChosen(stages.map(({ stage }) => t.stage(stage)).join(", ")),
+      report: routeReport(t, value),
+      errors: cuts,
+    },
+  );
+}
+
+/** The routing agent's report: its summary, the route with briefs, and what it left out. */
+function routeReport(t: Messages, output: RouteOutput): string {
+  const lines = [output.summary, ""];
+  if (output.route.length > 0) {
+    lines.push(`**${t.routeLabel}**`, "");
+    for (const { stage, brief } of output.route)
+      lines.push(`1. **${t.stage(stage)}**: ${oneLine(brief)}`);
+    lines.push("");
+  }
+  if (output.skipped.length > 0) {
+    lines.push(`**${t.leftOutLabel}**`, "");
+    for (const { stage, reason } of output.skipped)
+      lines.push(`- **${t.stage(stage)}**: ${oneLine(reason)}`);
+    lines.push("");
+  }
+  if (output.reason) lines.push(t.agentReports(oneLine(output.reason)), "");
+  if (output.suggestion) lines.push(`**${t.suggestionLabel}:** ${oneLine(output.suggestion)}`);
+  return lines.join("\n").trim();
 }
 
 const STAGE_NAMES: Record<Stage, string> = {
@@ -523,7 +664,7 @@ async function openPullRequest(
     planSummary: record.summary,
     summary:
       mode === "ready"
-        ? t.readySummary(record.reports?.code, record.reports?.test)
+        ? t.readySummary(record.reports?.code, record.reports?.test, record.reviewLeftOut)
         : t.draftSummary,
     commitMessage: record.commitMessage ?? "",
     runUrl: task.runUrl,
@@ -663,6 +804,7 @@ export function afterReview(
   const reviewed: TaskRecord = {
     ...record,
     stage: undefined,
+    route: undefined,
     runs: 0,
     reviewRounds: 0,
     handoff: undefined,
@@ -795,7 +937,7 @@ function cutTexts(t: Messages, cuts: readonly Cut[]): string[] {
 
 /** How a maintainer sends a blocked task back to work. */
 function retryHint(t: Messages, task: TaskContext): string {
-  if (task.action === "implement") return t.continueHint;
+  if (task.action === "implement" || task.action === "route") return t.continueHint;
   if (task.record) return t.replanHint;
   return t.removeLabelHint;
 }
@@ -977,11 +1119,13 @@ function runCosts(
 /** The spend table's row for a run that opened a key; older workflow files lack some inputs. */
 function spendRow(io: Io, task: TaskContext, cost: number | undefined): SpendRow | undefined {
   if (io.jobs.keyStatus !== "opened") return undefined;
-  if (task.action !== "plan" && task.action !== "implement") return undefined;
+  if (task.action !== "plan" && task.action !== "route" && task.action !== "implement") {
+    return undefined;
+  }
   return {
     runUrl: task.runUrl,
     at: new Date().toISOString(),
-    stage: task.action === "plan" ? "plan" : (task.stage ?? "code"),
+    stage: task.action === "implement" ? (task.stage ?? "code") : task.action,
     model: task.model,
     cost,
     keyLimit: io.jobs.keyLimit,

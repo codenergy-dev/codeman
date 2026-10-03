@@ -70,11 +70,11 @@ inputs:
     description: "Directory for Codeman's files. Defaults to RUNNER_TEMP/codeman."
 outputs:
   action:
-    description: "(select) What this run does: plan, implement, record, accept or none."
+    description: "(select) What this run does: plan, route, implement, record, accept or none."
   needs-agent:
     description: "(select) Whether this run needs a key and the agent: true or false."
   stage:
-    description: "(select) The stage the agent works on: plan, design, code, test or review."
+    description: "(select) What the agent works on: plan, route, design, code, test or review."
   task:
     description: "(select) Issue number of the selected task."
   model:

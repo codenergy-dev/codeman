@@ -25,3 +25,21 @@ export function nextStage(stage: Stage): Stage | undefined {
 export function isStage(value: unknown): value is Stage {
   return typeof value === "string" && (STAGES as readonly string[]).includes(value);
 }
+
+/**
+ * The stage after `stage` in a route: the first of the route's stages that comes later in the
+ * order of stages. Undefined when the route ends with `stage`. Without a route, the fixed order.
+ */
+export function nextInRoute(
+  route: { stages: readonly { stage: Stage }[] } | undefined,
+  stage: Stage,
+): Stage | undefined {
+  if (!route) return nextStage(stage);
+  const index = STAGES.indexOf(stage);
+  return route.stages.map((step) => step.stage).find((next) => STAGES.indexOf(next) > index);
+}
+
+/** The fixed order from `first` on: what runs when the router cannot choose. */
+export function stagesFrom(first: Stage): Stage[] {
+  return STAGES.slice(STAGES.indexOf(first));
+}

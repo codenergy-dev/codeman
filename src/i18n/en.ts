@@ -12,7 +12,14 @@ const OUTCOMES = {
   failed: "failed",
 };
 
-const STAGES = { plan: "plan", design: "design", code: "code", test: "test", review: "review" };
+const STAGES = {
+  plan: "plan",
+  route: "routing",
+  design: "design",
+  code: "code",
+  test: "test",
+  review: "review",
+};
 
 const number = (digits: number) =>
   new Intl.NumberFormat("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits });
@@ -38,6 +45,8 @@ export const en: Messages = {
             ? "Plan: revised"
             : "Plan: written"
           : `Plan: ${ended}`;
+      case "route":
+        return outcome === "done" ? "Next stages chosen" : `Routing: ${ended}`;
       case "implement":
         return `${capitalize(STAGES[stage ?? "code"])} stage${ended ? `: ${ended}` : ""}`;
       case "record":
@@ -53,6 +62,7 @@ export const en: Messages = {
       planning: "Writing the plan",
       "awaiting-decision": "Waiting for your decisions",
       ready: "Ready to implement",
+      routing: "Choosing the next stages",
       designing: "Designing",
       coding: "Writing the code",
       testing: "Testing",
@@ -94,7 +104,8 @@ export const en: Messages = {
       new: "Codeman tries again in a later run.",
       planning: "the plan.",
       "awaiting-decision": "your decisions, in the task's decisions comment.",
-      ready: "the implementation, in the next run.",
+      ready: "the routing agent, which chooses the stages that run next.",
+      routing: "the routing agent, which chooses the stages that run next.",
       designing: "the design stage.",
       coding: "the code stage.",
       testing: "the test stage.",
@@ -135,7 +146,8 @@ export const en: Messages = {
     `<sub>Opened by Codeman${spent ? ` · Spent: ${spent}` : ""} · [Last run](${runUrl})</sub>`,
   draftSummary:
     "Codeman is still working on this pull request: test and review come next. It becomes ready for review when they pass.",
-  readySummary: (code, test) => `Code: ${code ?? "(no report)"}\n\nTests: ${test ?? "(no report)"}`,
+  readySummary: (code, test, leftOut) =>
+    `Code: ${code ?? "(no report)"}\n\nTests: ${test ?? "(no report)"}${leftOut ? `\n\nReview: left out by the routing agent: ${leftOut}` : ""}`,
   reviewHeading: "Codeman review",
   reviewChanges: "Changes asked of the code stage",
   run: "Run",
@@ -151,6 +163,7 @@ export const en: Messages = {
       test: "Codeman is testing the work.",
       review: "Codeman is reviewing the work.",
     })[stage],
+  startRoute: "Codeman's routing agent is choosing the stages that run next.",
   startWithWorkflowResults: "Codeman is going on with the results of the workflows it asked for.",
   startWithChanges: "Codeman is working on the requested changes.",
   startContinue: "Codeman is continuing the work, as requested.",
@@ -196,7 +209,7 @@ export const en: Messages = {
   awaitingWorkflows: (stage, paths, reason) =>
     `The ${STAGES[stage]} stage needs ${paths} to run: ${reason} Codeman goes on when their runs on the task branch finish. \`/codeman continue <guidance>\` goes on without them.`,
   deferredWorkflows: (stage, paths, reason, next) =>
-    `The ${STAGES[stage]} stage needs ${paths} to run: ${reason} The workflows are staged and wait for a maintainer, so the task goes on to the ${STAGES[next]} stage meanwhile, up to review. Once they are accepted and their runs finish, the ${STAGES[stage]} stage goes on with their results.`,
+    `The ${STAGES[stage]} stage needs ${paths} to run: ${reason} The workflows are staged and wait for a maintainer, so the task goes on ${next ? `to the ${STAGES[next]} stage meanwhile, up to the end of its route` : "to the end of its route meanwhile"}. Once they are accepted and their runs finish, the ${STAGES[stage]} stage goes on with their results.`,
   acceptAfterReview: (paths) =>
     `Review passed. The task waits for the staged workflows to be accepted: ${paths}. Read them, with review's report on the pull request, and comment \`/codeman accept-workflows\`. The pull request stays a draft until then, since merged now they would never run.`,
   stageDecisions: (stage, count) =>
@@ -204,6 +217,16 @@ export const en: Messages = {
   reviewRounds: (rounds, max) =>
     `Review sent the work back to the code stage ${rounds} times in a row (\`max-runs\` is ${max}). Comment \`/codeman continue <guidance>\` to go on.`,
   skipped: (reason) => `Skipped: ${reason}`,
+  reviewLeftOut: (reason) => `The routing agent left review out: ${reason}`,
+  routeChosen: (stages) => `The routing agent chose these stages, in order: ${stages}.`,
+  routeLabel: "Route",
+  leftOutLabel: "Left out",
+  suggestionLabel: "Suggestion",
+  routeBlocked: "The routing agent found nothing that should run next.",
+  routeBlockedHint:
+    "Comment `/codeman continue <guidance>` to route again, `/codeman fix <what to change>` to ask for something else, or `/codeman replan <what to change>` to revise the plan.",
+  routeFallback: (stages) =>
+    `Codeman could not use the routing agent's result, so the stages run in their fixed order: ${stages}.`,
   workDone:
     "The work is done and reviewed. Review the pull request. To ask for changes, submit a review that requests them, or comment `/codeman fix <what to change>` on the pull request.",
 

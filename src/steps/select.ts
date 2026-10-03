@@ -5,7 +5,7 @@ import { type Messages, messages, taskLanguage } from "../i18n/index.ts";
 import type { WorkflowConventions } from "../platform/conventions.ts";
 import type { CiRun, Comment, Review } from "../platform/types.ts";
 import { IGNORE_FILE, unprotected } from "../policy.ts";
-import { applyCommands, type CommandSource, pendingDecisions } from "../record.ts";
+import { applyCommands, type CommandSource, pendingDecisions, type TaskRecord } from "../record.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import type { Services } from "../services.ts";
 import {
@@ -31,6 +31,7 @@ import {
   finishedRuns,
   openedByMaintainer,
   pendingWork,
+  type Request,
   replanRequests,
   resumeRequests,
   reviewCommands,
@@ -172,8 +173,8 @@ export async function select(services: Services): Promise<void> {
   }
 
   const choice = chooseTask(candidates);
-  runtime.output("action", choice?.action ?? "none");
   if (!choice) {
+    runtime.output("action", "none");
     runtime.info("Nothing to do.");
     return;
   }
@@ -203,14 +204,35 @@ export async function select(services: Services): Promise<void> {
       ? applyCommands(record, sources).record.decisions.filter((decision) => decision.answer)
       : [];
   const resume = pending === "resume";
-  const requests = choice.action === "implement" ? resumeRequests(sources) : [];
-  // A fix changes code; anything else goes on where the task was.
+  const newRequests = choice.action === "implement" ? resumeRequests(sources) : [];
+  const route =
+    choice.action === "implement" ? routing(task.labels, record, newRequests) : undefined;
+  const action = route ? "route" : choice.action;
+  runtime.output("action", action);
+  // A route's stages read the requests its router handled, then any newer ones.
+  const window = action === "implement" ? record?.route?.requests : undefined;
+  const windowReviews = window
+    ? authorizedReviews(
+        talk.reviews,
+        reviewComments,
+        talk.maintainers,
+        window.after.reviewId,
+      ).filter((review) => review.id <= window.upTo.reviewId)
+    : [];
+  const windowSources = window
+    ? [
+        ...commandsAfter(maintainerComments, window.after.commentId).filter(
+          (source) => source.commentId <= window.upTo.commentId,
+        ),
+        ...reviewCommands(windowReviews),
+      ]
+    : [];
+  const requests = [...resumeRequests(windowSources), ...newRequests];
+  // Without a route, a stage goes on where the task was.
   const stage: Stage | undefined =
-    choice.action !== "implement"
+    action !== "implement"
       ? undefined
-      : requests.some((request) => request.kind === "fix")
-        ? "code"
-        : (record?.stage ?? stageOfState(fromStateOf(task.labels)) ?? firstStage(task.labels));
+      : (record?.stage ?? stageOfState(fromStateOf(task.labels)) ?? firstStage(task.labels));
   // Settings may also come from the description, which the agent reads without command lines.
   const description = descriptionCommands(task.body);
   // Problems in the description are reported in every run, until a maintainer fixes them.
@@ -236,7 +258,7 @@ export async function select(services: Services): Promise<void> {
 
   const context: TaskContext = {
     version: 1,
-    action: choice.action,
+    action,
     owner: repo.repository.owner,
     repo: repo.repository.name,
     number: task.number,
@@ -244,16 +266,17 @@ export async function select(services: Services): Promise<void> {
     body: description.text,
     url: task.url,
     comments: maintainerComments,
-    reviews,
+    reviews: [...windowReviews, ...reviews],
     requests,
     resume,
     accept:
       choice.action === "accept"
         ? acceptRequest(maintainerComments, record?.acceptedCommentId ?? 0)
         : undefined,
-    workflowRuns: choice.action === "implement" ? workflowRuns.get(task.number) : undefined,
-    history: choice.action === "implement" ? runHistory(talk.comments, bot) : undefined,
+    workflowRuns: action === "implement" ? workflowRuns.get(task.number) : undefined,
+    history: action === "implement" || route ? runHistory(talk.comments, bot) : undefined,
     stage,
+    route,
     processed: {
       commentId: Math.max(
         record?.processedCommentId ?? 0,
@@ -278,10 +301,10 @@ export async function select(services: Services): Promise<void> {
     runUrl: runtime.run.url,
   };
 
-  const needsAgent = choice.action === "plan" || choice.action === "implement";
+  const needsAgent = action === "plan" || action === "route" || action === "implement";
   if (needsAgent) {
     const t = messages(taskLanguage(settings.value.language, record?.language));
-    const state = stage ? STAGE_STATE[stage] : "planning";
+    const state = stage ? STAGE_STATE[stage] : route ? "routing" : "planning";
     await repo.setState(task.number, task.labels, state);
     context.statusCommentId = await repo.upsertComment(
       task.number,
@@ -307,10 +330,37 @@ export async function select(services: Services): Promise<void> {
   runtime.output("model", model);
   runtime.output("base-sha", baseSha);
   runtime.output("needs-agent", String(needsAgent));
-  runtime.output("stage", stage ?? (choice.action === "plan" ? "plan" : ""));
+  runtime.output("stage", stage ?? (action === "plan" || action === "route" ? action : ""));
   runtime.output("task-budget", String(settings.value["task-budget"]));
   runtime.output("monthly-budget", String(settings.value["monthly-budget"]));
-  runtime.info(`Selected #${task.number} to ${choice.action}, with model ${model}.`);
+  runtime.info(`Selected #${task.number} to ${action}, with model ${model}.`);
+}
+
+/**
+ * Whether the routing agent runs instead of a stage, and why: after decisions are answered (or
+ * a plan has none), which leaves the task ready; after a `fix` request, or review asking for
+ * changes, which leaves it routing; and on `continue` after the router blocked the task. The
+ * fallback is the first stage of the fixed order, for when its result cannot be used.
+ */
+export function routing(
+  labels: readonly string[],
+  record: TaskRecord | undefined,
+  requests: readonly Request[],
+): TaskContext["route"] {
+  const state = fromStateOf(labels);
+  if (requests.some((request) => request.kind === "fix")) {
+    return { trigger: "fix", fallback: "code" };
+  }
+  if (record?.route?.stages.length === 0) {
+    return { trigger: "continue", fallback: record.stage ?? "design" };
+  }
+  if (state === "routing" && record?.handoff?.stage === "review") {
+    return { trigger: "changes", fallback: "code" };
+  }
+  if (state === "ready" || state === "routing") {
+    return { trigger: "decisions", fallback: record?.stage ?? "design" };
+  }
+  return undefined;
 }
 
 /** Where work starts without a recorded stage: design, or code once a task was done. */
@@ -331,6 +381,7 @@ interface Conversation {
 }
 
 function startMessage(t: Messages, task: TaskContext): string {
+  if (task.action === "route") return t.startRoute;
   if (task.action === "implement") {
     if (task.workflowRuns?.length) return t.startWithWorkflowResults;
     if (task.requests.some((request) => request.kind === "fix") || task.reviews.length > 0) {

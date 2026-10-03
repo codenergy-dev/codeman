@@ -1,7 +1,7 @@
 ---
-status: pending
+status: completed
 created_at: 2026-10-02T18:15:00-03:00
-updated_at: 2026-10-02T19:05:00-03:00
+updated_at: 2026-10-03T00:30:00-03:00
 commit: d0637c8
 ---
 
@@ -84,6 +84,16 @@ Answered on 2026-10-02 by the responsible person: the recommendation of each, ex
 8. Update [`docs/architecture.md`](../architecture.md) (states, runs, stages, feedback) and the README's flow. Done when they describe the router.
 9. Rebuild `dist/`, run `npm run check`. Done when it passes.
 10. The responsible person runs, on the test repository, a task with a screen, a task without one, a `/codeman fix` and a review that requests changes, and checks the routes and their reasons.
+
+## Outcome
+
+Steps 1 to 9 are done; step 10 is left to the responsible person, on the test repository.
+
+- The router is a run of its own, with the action `route` and the label `codeman:routing`. `select` runs it when the task is `ready` (after answers, or a plan without decisions), when it is `routing` (review asked for changes, or an interrupted router run), on a `fix`, and on `continue` after the router blocked the task. Its spend row's stage is "routing".
+- The record keeps the route: the stages with their briefs, the stages left out with their reasons, and the range of comment and review IDs the router handled, so the stages of a route read those requests again. Review is a stage of the route like the others, so it also reads the `fix` it checks.
+- When the router's result cannot be used, the route is the fixed order from the stage the task was at: design after planning, code after a `fix` or a review. Decision 4's fallback reuses the route's machinery, with empty briefs.
+- The end of a route without review completes the work as a passing review does, and the record keeps the router's reason (`reviewLeftOut`) for the pull request's description, which a later accept of staged workflows rewrites.
+- [`docs/security.md`](../security.md) now notes that a manipulated router can leave review out.
 
 ## Out of scope
 

@@ -170,6 +170,8 @@ test("a new plan keeps the task's history and starts the stages over", () => {
     decisionsCommentId: 20,
     reportCommentId: 21,
     stage: "test",
+    route: { stages: [{ stage: "test", brief: "Brief." }], skipped: [] },
+    reviewLeftOut: "Small change.",
     handoff: { stage: "code", text: "Notes." },
     reviewRounds: 1,
     awaiting: [".github/workflows/ios.yml"],

@@ -5,6 +5,8 @@ export const STATES = [
   "planning",
   "awaiting-decision",
   "ready",
+  /** The routing agent chooses the stages that run next. */
+  "routing",
   "designing",
   "coding",
   "testing",

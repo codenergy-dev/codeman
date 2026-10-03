@@ -11,8 +11,8 @@ import type { Conventions } from "./platform/conventions.ts";
 import { defaultIgnore } from "./policy.ts";
 import { nextDecisionId } from "./record.ts";
 import { RESULTS_DIR } from "./results.ts";
-import type { Stage } from "./stages.ts";
-import type { TaskContext } from "./tasks.ts";
+import { STAGES, type Stage } from "./stages.ts";
+import type { RouteTrigger, TaskContext } from "./tasks.ts";
 
 export const OUTPUT_DIR = ".codeman";
 export const TASK_FILE = `${OUTPUT_DIR}/task.md`;
@@ -176,6 +176,89 @@ ${issueSection(task, quote)}
 ${revision}`;
 }
 
+/** What each stage does, as the routing agent is told. */
+const STAGE_ROLES: Record<Stage, string> = {
+  design:
+    "flowcharts in Mermaid and screen drafts in plain HTML, with their images, when the task has a flow or a screen worth drawing. It may ask the maintainers to choose between designs.",
+  code: "the implementation, with unit tests for the code it writes and the documentation it changes.",
+  test: "integration and end-to-end tests where they apply, more unit tests where coverage is thin, and every check the repository has.",
+  review:
+    "an independent, critical review against the plan and the decisions, with a merge of the default branch to find conflicts early. It changes nothing; it can send the work back, ask the maintainers, or pass it.",
+};
+
+/** Why the routing agent runs, as it is told. */
+const TRIGGERS: Record<RouteTrigger, string> = {
+  decisions:
+    "The plan is written and its decisions are answered (or it had none). Choose the stages that carry it out.",
+  fix: "Maintainers asked for changes with `/codeman fix`, or in a review that requests changes; they are under Requests. Choose the stages that carry them out.",
+  changes:
+    "The review stage asked for changes; its report is under the notes from the review stage. Choose the stages that address them.",
+  continue:
+    "You found nothing to run before, and a maintainer asked to go on; their guidance is under Requests. Choose again.",
+};
+
+/** The routing agent's task: choose the stages that run next, each with a brief. */
+export function routePrompt(task: TaskContext, conventions: Conventions): string {
+  const limits = outputLimits(task.settings);
+  const quote = quoter();
+  const trigger = task.route?.trigger ?? "decisions";
+  const requests = requestsSection(task, quote);
+  const handoff = task.record?.handoff
+    ? `\n## Notes from the ${task.record.handoff.stage} stage\n\n${quote(`${task.record.handoff.stage.toUpperCase()} NOTES`, task.record.handoff.text)}\n`
+    : "";
+  const tag = taskLanguage(task.settings.language, task.record?.language);
+  return `# Codeman task: choose the next stages of issue #${task.number}
+
+You are Codeman's routing agent. Codeman carries out an approved plan in stages, each run by a different agent, one run at a time. You choose which stages run next, in which order, and what each one must focus on. You do not do any stage's work, and you change nothing: every file change you make is discarded.
+
+The plan at \`${task.planPath}\` is approved: its decisions are answered in its \`## Answers\` section. The current directory is the task branch \`${task.branch}\`, which may already hold work from earlier stages and runs. The default branch is \`${task.defaultBranch}\`, available as \`origin/${task.defaultBranch}\`.
+
+## Rules
+
+${RULES_RULE}
+${untrustedRule(conventions)}
+- Never write secrets or environment variable values into any file.
+
+## The stages
+
+${STAGES.map((stage) => `- **${stage}**: ${STAGE_ROLES[stage]}`).join("\n")}
+
+## Why you run
+
+${TRIGGERS[trigger]}
+
+## Steps
+
+1. Read the plan, the issue, the maintainer comments${requests ? ", the requests" : ""} and the notes below, if any, and what earlier runs did: the plan's progress notes, \`git log\` and \`git diff origin/${task.defaultBranch}...HEAD\`${task.history?.length ? ", and the reports under Earlier runs" : ""}.
+2. Decide, for each stage, whether it should run now. Each task has its own needs: no stage is required. Leave a stage out when it would have nothing to do, or nothing worth its cost, and say why. Stages that run keep the order above.
+3. For each stage that runs, write a brief for its agent: what to focus on, and what earlier work it builds on. It does not repeat the plan.
+4. If nothing should run next (the request is already done, it contradicts the plan, or it needs a decision the plan does not cover), report \`blocked\` with an empty \`route\`, the \`reason\`, and a \`suggestion\` of what the maintainers could do, such as \`/codeman replan <what to change>\` or a \`/codeman fix\` with more detail.
+5. Write \`${OUTPUT_FILE}\` in this exact shape:
+
+\`\`\`json
+{
+  "status": "done",
+  "summary": "One short paragraph: what runs next, and why.",
+  "route": [
+    { "stage": "code", "brief": "What the code stage must focus on." },
+    { "stage": "review", "brief": "What the review stage must check." }
+  ],
+  "skipped": [
+    { "stage": "design", "reason": "Why design is left out." },
+    { "stage": "test", "reason": "Why test is left out." }
+  ]
+}
+\`\`\`
+
+   Every stage appears once, in \`route\` or in \`skipped\`. \`status\` is \`done\` with at least one stage in \`route\`, or \`blocked\` with an empty \`route\`, a \`reason\` and a \`suggestion\`.
+
+   Limits, in characters: \`summary\`, each \`brief\` and \`reason\`, and \`suggestion\` up to ${limits.summary} each.
+6. Write \`summary\`, the briefs, the reasons and \`suggestion\` in ${languageName(tag)} (\`${tag}\`): Codeman shows them to the maintainers.
+
+${issueSection(task, quote)}
+${historySection(task, quote)}${handoff}${requests}`;
+}
+
 /** What each stage's agent does, after deciding whether its stage has work. */
 const STAGE_WORK: Record<Stage, (task: TaskContext, conventions: Conventions) => string> = {
   design: () => `Your stage is **design**. You do not write the implementation.
@@ -259,6 +342,10 @@ export function stagePrompt(task: TaskContext, minutes: number, conventions: Con
   const handoff = task.record?.handoff
     ? `\n## Notes from the ${task.record.handoff.stage} stage\n\n${quote(`${task.record.handoff.stage.toUpperCase()} NOTES`, task.record.handoff.text)}\n`
     : "";
+  const brief = task.record?.route?.stages.find((step) => step.stage === stage)?.brief;
+  const briefSection = brief
+    ? `\n## Brief from the routing agent\n\nThe routing agent chose the stages that run for this task, and wrote this for yours. It refines your stage's work within the plan; it does not change the plan.\n\n${quote("BRIEF", brief)}\n`
+    : "";
   const accepted = task.record?.accepted
     ? `\n## Accepted workflows\n\nMaintainer ${task.record.accepted.by} read and accepted the workflows the agent wrote. They are now in \`${conventions.workflows.dir}\` on the task branch: ${task.record.accepted.workflows.map((path) => `\`${path.replace(/[\s`]+/g, " ")}\``).join(", ")}.\n`
     : "";
@@ -285,7 +372,7 @@ ${rules.trim()}
 
 ## Your stage
 
-Read the plan, then the issue, the maintainer comments${requests ? ", the requests" : ""} and the notes from the previous stage below, if any. Check what earlier runs did: the plan's progress notes, \`git log\`${task.history?.length ? " and the reports under Earlier runs" : ""}.${requests ? " Address every request and review comment under Requests first: they refine the approved plan." : ""}
+Read the plan, then the issue, the maintainer comments${requests ? ", the requests" : ""}, the notes from the previous stage and the routing agent's brief below, if any. Check what earlier runs did: the plan's progress notes, \`git log\`${task.history?.length ? " and the reports under Earlier runs" : ""}.${requests ? " Address every request and review comment under Requests first: they refine the approved plan." : ""}
 
 ${STAGE_WORK[stage](task, conventions)}
 
@@ -296,7 +383,7 @@ ${outputLanguage(task)}
 ${outputShape(stage, outputLimits(task.settings), conventions.workflows)}
 
 ${issueSection(task, quote)}
-${historySection(task, quote)}${handoff}${accepted}${requests}${workflowResultsSection(task)}`;
+${historySection(task, quote)}${handoff}${briefSection}${accepted}${requests}${workflowResultsSection(task)}`;
 }
 
 /** Codeman's reports of earlier runs on the task, if any. */

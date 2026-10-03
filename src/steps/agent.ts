@@ -11,6 +11,7 @@ import {
   OUTPUT_FILE,
   planPrompt,
   RULES_PATH,
+  routePrompt,
   stagePrompt,
   TASK_FILE,
 } from "../prompt.ts";
@@ -72,7 +73,9 @@ export async function agent(services: Services): Promise<void> {
   const prompt =
     task.action === "implement"
       ? stagePrompt(task, minutes, conventions)
-      : planPrompt(task, conventions);
+      : task.action === "route"
+        ? routePrompt(task, conventions)
+        : planPrompt(task, conventions);
   writeAsAgent(`${worktree}/${TASK_FILE}`, prompt);
   const rules = agentRules(readRules(), repositoryRules(workspace));
   if (rules.omitted.length > 0) {
@@ -94,7 +97,12 @@ export async function agent(services: Services): Promise<void> {
   // Once, while time is left: an output Codeman would reject or cut goes back to the agent.
   const left = started + minutes * 60_000 - Date.now();
   if (!run.timedOut && left >= FIX_MS) {
-    const stage = task.action === "implement" ? (task.stage ?? "code") : undefined;
+    const stage =
+      task.action === "implement"
+        ? (task.stage ?? "code")
+        : task.action === "route"
+          ? "route"
+          : undefined;
     const problems = outputProblems(
       readAgentOutput(runtime, `${worktree}/${OUTPUT_FILE}`),
       stage,
