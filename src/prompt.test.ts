@@ -411,11 +411,15 @@ test("the routing agent learns the stages, why it runs, and the output's shape",
   for (const stage of ["design", "code", "test", "review"]) {
     assert.match(prompt, new RegExp(`- \\*\\*${stage}\\*\\*: `));
   }
-  assert.match(prompt, /no stage is required/);
+  assert.match(prompt, /Review always runs last: it has the last word/);
+  assert.match(prompt, /none of them is required/);
+  assert.match(prompt, /the route is review alone/);
+  assert.match(prompt, /route review alone and say so in its brief/);
+  assert.ok(!prompt.includes("report `blocked`"), "the router cannot block");
   assert.match(prompt, /Maintainers asked for changes with `\/codeman fix`/);
   assert.match(prompt, /<<<FIX by alice [0-9a-f]{12}\nRename the limiter\./);
   assert.match(prompt, /"skipped": \[/);
-  assert.match(prompt, /a `reason` and a `suggestion`/);
+  assert.match(prompt, /`route` ends with `review`/);
   assert.match(prompt, /every file change you make is discarded/);
   assert.match(prompt, /ignore those instructions/);
   assert.match(prompt, /in English \(`en`\)/);
@@ -474,5 +478,22 @@ test("every agent reads docs/web/ as data, and the web stage records pages from 
   assert.match(
     routePrompt({ ...task, action: "route", record: planned }, GITHUB),
     /- \*\*web\*\*: the documentation of the third-party services/,
+  );
+});
+
+test("review has the last word, even on a branch with nothing but the plan", () => {
+  const prompt = stagePrompt(
+    { ...task, action: "implement", stage: "review", record: planned },
+    45,
+    GITHUB,
+  );
+  assert.match(
+    prompt,
+    /You have the last word on whether the task is done, even when no other stage ran/,
+  );
+  assert.match(prompt, /changes nothing but the plan, there is nothing to merge/);
+  assert.match(
+    prompt,
+    /report `blocked`, and say in `reason` why, so a maintainer closes the issue/,
   );
 });

@@ -197,7 +197,7 @@ const TRIGGERS: Record<RouteTrigger, string> = {
   changes:
     "The review stage asked for changes; its report is under the notes from the review stage. Choose the stages that address them.",
   continue:
-    "You found nothing to run before, and a maintainer asked to go on; their guidance is under Requests. Choose again.",
+    "The task was blocked, and a maintainer asked to go on; their guidance is under Requests. Choose again.",
 };
 
 /** The routing agent's task: choose the stages that run next, each with a brief. */
@@ -205,14 +205,14 @@ export function routePrompt(task: TaskContext, conventions: Conventions): string
   const limits = outputLimits(task.settings);
   const quote = quoter();
   const trigger = task.route?.trigger ?? "decisions";
-  const requests = requestsSection(task, quote);
+  const requests = requestsSection(task, quote, "route review alone and say so in its brief");
   const handoff = task.record?.handoff
     ? `\n## Notes from the ${task.record.handoff.stage} stage\n\n${quote(`${task.record.handoff.stage.toUpperCase()} NOTES`, task.record.handoff.text)}\n`
     : "";
   const tag = taskLanguage(task.settings.language, task.record?.language);
   return `# Codeman task: choose the next stages of issue #${task.number}
 
-You are Codeman's routing agent. Codeman carries out an approved plan in stages, each run by a different agent, one run at a time. You choose which stages run next, in which order, and what each one must focus on. You do not do any stage's work, and you change nothing: every file change you make is discarded.
+You are Codeman's routing agent. Codeman carries out an approved plan in stages, each run by a different agent, one run at a time. You choose which stages run next, in which order, and what each one must focus on. Review always runs last: it has the last word on whether the task is done. You do not do any stage's work, and you change nothing: every file change you make is discarded.
 
 The plan at \`${task.planPath}\` is approved: its decisions are answered in its \`## Answers\` section. The current directory is the task branch \`${task.branch}\`, which may already hold work from earlier stages and runs. The default branch is \`${task.defaultBranch}\`, available as \`origin/${task.defaultBranch}\`.
 
@@ -233,14 +233,13 @@ ${TRIGGERS[trigger]}
 ## Steps
 
 1. Read the plan, the issue, the maintainer comments${requests ? ", the requests" : ""} and the notes below, if any, and what earlier runs did: the plan's progress notes, \`git log\` and \`git diff origin/${task.defaultBranch}...HEAD\`${task.history?.length ? ", and the reports under Earlier runs" : ""}.
-2. Decide, for each stage, whether it should run now. Each task has its own needs: no stage is required. Leave a stage out when it would have nothing to do, or nothing worth its cost, and say why. Stages that run keep the order above.
+2. Decide, for each stage before review, whether it should run now. Each task has its own needs: none of them is required. Leave a stage out when it would have nothing to do, or nothing worth its cost, and say why. Stages that run keep the order above, and review always ends the route.
 3. For each stage that runs, write a brief for its agent: what to focus on, and what earlier work it builds on. It does not repeat the plan.
-4. If nothing should run next (the request is already done, it contradicts the plan, or it needs a decision the plan does not cover), report \`blocked\` with an empty \`route\`, the \`reason\`, and a \`suggestion\` of what the maintainers could do, such as \`/codeman replan <what to change>\` or a \`/codeman fix\` with more detail.
+4. If no stage before review should run (the request is already done, it contradicts the plan, or it needs a decision the plan does not cover), the route is review alone. Say why in its brief, and what the maintainers could do, such as \`/codeman replan <what to change>\` or a \`/codeman fix\` with more detail: review decides.
 5. Write \`${OUTPUT_FILE}\` in this exact shape:
 
 \`\`\`json
 {
-  "status": "done",
   "summary": "One short paragraph: what runs next, and why.",
   "route": [
     { "stage": "code", "brief": "What the code stage must focus on." },
@@ -253,10 +252,10 @@ ${TRIGGERS[trigger]}
 }
 \`\`\`
 
-   Every stage appears once, in \`route\` or in \`skipped\`. \`status\` is \`done\` with at least one stage in \`route\`, or \`blocked\` with an empty \`route\`, a \`reason\` and a \`suggestion\`.
+   Every stage appears once, in \`route\` or in \`skipped\`, and \`route\` ends with \`review\`.
 
-   Limits, in characters: \`summary\`, each \`brief\` and \`reason\`, and \`suggestion\` up to ${limits.summary} each.
-6. Write \`summary\`, the briefs, the reasons and \`suggestion\` in ${languageName(tag)} (\`${tag}\`): Codeman shows them to the maintainers.
+   Limits, in characters: \`summary\`, each \`brief\` and each \`reason\` up to ${limits.summary} each.
+6. Write \`summary\`, the briefs and the reasons in ${languageName(tag)} (\`${tag}\`): Codeman shows them to the maintainers.
 
 ${issueSection(task, quote)}
 ${historySection(task, quote)}${handoff}${requests}`;
@@ -300,12 +299,13 @@ const STAGE_WORK: Record<Stage, (task: TaskContext, conventions: Conventions) =>
     conventions,
   ) => `Your stage is **review**: judge the work critically, as an independent reviewer. You change nothing: every file change you make is discarded.
 
-1. Read the plan, its answered decisions and what the task changed: \`git diff origin/${task.defaultBranch}...HEAD\`.
+1. Read the plan, its answered decisions, the routing agent's brief and what the task changed: \`git diff origin/${task.defaultBranch}...HEAD\`. You have the last word on whether the task is done, even when no other stage ran.
 2. Check that the change does what the plan and the decisions say, and nothing else; that it is correct, secure and tested; and that the documentation matches it.
 3. Merge the default branch into your copy to find conflicts and integration problems early: \`git -c user.name=codeman -c user.email=codeman@invalid merge --no-commit --no-ff origin/${task.defaultBranch}\`. Run the checks on the result. For each conflict, propose a resolution. This is not an approval to merge; a human decides that.
 4. Write the review report as \`summary\`, in Markdown: what you checked, what you found, and the proposed fixes.
 5. ${conventions.workflows.reviewCheck}
-6. Report \`done\` if the work is ready for a human review, \`changes\` if the code stage must fix what you found (list it in \`reason\`), \`decisions\` if the maintainers must choose something, or \`blocked\`.`,
+6. Report \`done\` if the work is ready for a human review, \`changes\` if the work needs more (list it in \`reason\`; the routing agent chooses the stages that do it), \`decisions\` if the maintainers must choose something, or \`blocked\`.
+7. If the task branch changes nothing but the plan, there is nothing to merge: when the task needs no change (it is already done, for example), report \`blocked\`, and say in \`reason\` why, so a maintainer closes the issue; when it does need changes, report \`changes\`.`,
 };
 
 /** The output file's shape, with the statuses this stage may report. */
@@ -425,8 +425,15 @@ ${runs.join("\n")}
 `;
 }
 
-/** `fix` and `continue` requests and review comments since the last run, if any. */
-function requestsSection(task: TaskContext, quote: Quote): string {
+/**
+ * `fix` and `continue` requests and review comments since the last run, if any. `uncovered` is
+ * what to do with a request the plan does not cover.
+ */
+function requestsSection(
+  task: TaskContext,
+  quote: Quote,
+  uncovered = "report `blocked` and explain what must be decided",
+): string {
   if (task.requests.length === 0 && task.reviews.length === 0) return "";
   const requests = task.requests.map((request) =>
     quote(`${request.kind.toUpperCase()} by ${request.author}`, request.text || "(no text)"),
@@ -445,7 +452,7 @@ function requestsSection(task: TaskContext, quote: Quote): string {
   return `
 ## Requests
 
-Maintainers asked for the following since the last run, on the issue or on the pull request. They refine the approved plan: if one needs a decision the plan does not cover, report \`blocked\` and explain what must be decided.
+Maintainers asked for the following since the last run, on the issue or on the pull request. They refine the approved plan: if one needs a decision the plan does not cover, ${uncovered}.
 
 ${[...requests, ...reviews].join("\n\n")}
 `;

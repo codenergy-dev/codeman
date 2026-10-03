@@ -232,23 +232,18 @@ export function parseStageOutput(
 
 /** What the routing agent reports, in `.codeman/output.json`. */
 export interface RouteOutput {
-  /** `done` with the stages to run; `blocked` when nothing should run next. */
-  status: "done" | "blocked";
   summary: string;
-  /** The stages to run, in the order of stages, each with a brief for its agent. */
+  /** The stages to run, in the order of stages, each with a brief; review always ends it. */
   route: { stage: Stage; brief: string }[];
   /** Every other stage, with why it is left out. */
   skipped: { stage: Stage; reason: string }[];
-  /** When blocked: why nothing should run next, and what the maintainers could do. */
-  reason?: string;
-  suggestion?: string;
   cuts: Cut[];
 }
 
 /**
  * Validates the routing agent's output strictly. Every stage is either in the route or left out
- * with a reason; the route keeps the order of stages; and an empty route is a block, which must
- * say why and what to do.
+ * with a reason; the route keeps the order of stages; and it always ends with review, which has
+ * the last word on the task. A route of review alone means no other stage has work.
  */
 export function parseRouteOutput(text: string, limits: OutputLimits): Parsed<RouteOutput> {
   let data: unknown;
@@ -258,9 +253,6 @@ export function parseRouteOutput(text: string, limits: OutputLimits): Parsed<Rou
     return { ok: false, error: "output.json is not valid JSON." };
   }
   if (!isObject(data)) return { ok: false, error: "output.json must be an object." };
-  if (data.status !== "done" && data.status !== "blocked") {
-    return { ok: false, error: "status must be done or blocked for the routing agent." };
-  }
   const cuts: Cut[] = [];
   const summary = string(data.summary, "summary", limits.summary, cuts);
   if (!summary.ok) return summary;
@@ -287,11 +279,14 @@ export function parseRouteOutput(text: string, limits: OutputLimits): Parsed<Rou
     }
     return { ok: true, value: list };
   };
-  const route = steps(data.route ?? [], "route", "brief");
+  const route = steps(data.route, "route", "brief");
   if (!route.ok) return route;
   const order = route.value.map((step) => STAGES.indexOf(step.stage));
   if (order.some((position, index) => index > 0 && position < (order[index - 1] ?? 0))) {
     return { ok: false, error: `route must keep the order of stages: ${STAGES.join(", ")}.` };
+  }
+  if (route.value.at(-1)?.stage !== "review") {
+    return { ok: false, error: "route must end with review, which always runs." };
   }
   const skipped = steps(data.skipped ?? [], "skipped", "reason");
   if (!skipped.ok) return skipped;
@@ -302,28 +297,10 @@ export function parseRouteOutput(text: string, limits: OutputLimits): Parsed<Rou
       error: `Every stage must be in route or in skipped; missing: ${missing.join(", ")}.`,
     };
   }
-
-  const output: RouteOutput = {
-    status: data.status,
-    summary: summary.value,
-    route: route.value,
-    skipped: skipped.value,
-    cuts,
+  return {
+    ok: true,
+    value: { summary: summary.value, route: route.value, skipped: skipped.value, cuts },
   };
-  if (data.status === "done") {
-    if (route.value.length === 0) {
-      return { ok: false, error: "route must not be empty when status is done; report blocked." };
-    }
-    return { ok: true, value: output };
-  }
-  if (route.value.length > 0) {
-    return { ok: false, error: "route must be empty when status is blocked." };
-  }
-  const reason = string(data.reason, "reason", limits.summary, cuts);
-  if (!reason.ok) return reason;
-  const suggestion = string(data.suggestion, "suggestion", limits.summary, cuts);
-  if (!suggestion.ok) return suggestion;
-  return { ok: true, value: { ...output, reason: reason.value, suggestion: suggestion.value } };
 }
 
 function parseDecisions(

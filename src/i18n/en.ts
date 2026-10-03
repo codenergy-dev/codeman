@@ -155,8 +155,7 @@ export const en: Messages = {
     `<sub>Opened by Codeman${spent ? ` · Spent: ${spent}` : ""} · [Last run](${runUrl})</sub>`,
   draftSummary:
     "Codeman is still working on this pull request: test and review come next. It becomes ready for review when they pass.",
-  readySummary: (code, test, leftOut) =>
-    `Code: ${code ?? "(no report)"}\n\nTests: ${test ?? "(no report)"}${leftOut ? `\n\nReview: left out by the routing agent: ${leftOut}` : ""}`,
+  readySummary: (code, test) => `Code: ${code ?? "(no report)"}\n\nTests: ${test ?? "(no report)"}`,
   reviewHeading: "Codeman review",
   reviewChanges: "Changes asked of the code stage",
   run: "Run",
@@ -230,14 +229,9 @@ export const en: Messages = {
   reviewRounds: (rounds, max) =>
     `Review sent the work back to the code stage ${rounds} times in a row (\`max-runs\` is ${max}). Comment \`/codeman continue <guidance>\` to go on.`,
   skipped: (reason) => `Skipped: ${reason}`,
-  reviewLeftOut: (reason) => `The routing agent left review out: ${reason}`,
   routeChosen: (stages) => `The routing agent chose these stages, in order: ${stages}.`,
   routeLabel: "Route",
   leftOutLabel: "Left out",
-  suggestionLabel: "Suggestion",
-  routeBlocked: "The routing agent found nothing that should run next.",
-  routeBlockedHint:
-    "Comment `/codeman continue <guidance>` to route again, `/codeman fix <what to change>` to ask for something else, or `/codeman replan <what to change>` to revise the plan.",
   routeFallback: (stages) =>
     `Codeman could not use the routing agent's result, so the stages run in their fixed order: ${stages}.`,
   workDone:

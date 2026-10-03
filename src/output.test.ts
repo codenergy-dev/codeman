@@ -321,9 +321,8 @@ test("a revised plan's decisions start after the settled ones", () => {
 const route = (value: Record<string, unknown>) => parseRouteOutput(JSON.stringify(value), limits);
 const left = (...stages: Stage[]) => stages.map((stage) => ({ stage, reason: `No ${stage}.` }));
 
-test("a route lists stages in order with briefs, and leaves the others out with reasons", () => {
+test("a route lists stages in order with briefs, ends with review, and leaves the others out with reasons", () => {
   const parsed = route({
-    status: "done",
     summary: "Code and review.",
     route: [
       { stage: "code", brief: "Rename it." },
@@ -340,77 +339,59 @@ test("a route lists stages in order with briefs, and leaves the others out with 
     parsed.value.skipped.map((step) => step.stage),
     ["web", "design", "test"],
   );
+  const alone = route({
+    summary: "Nothing to do but review.",
+    route: [{ stage: "review", brief: "The request is already done: judge it." }],
+    skipped: left("web", "design", "code", "test"),
+  });
+  assert.ok(alone.ok, "review alone is a route");
 });
 
-test("a route rejects stages out of order, listed twice, missing or without a reason", () => {
+test("a route rejects one without review, out of order, listed twice, missing or without a reason", () => {
+  const review = { stage: "review", brief: "r" };
   const cases: [Record<string, unknown>, RegExp][] = [
     [
-      {
-        route: [
-          { stage: "review", brief: "b" },
-          { stage: "code", brief: "c" },
-        ],
-        skipped: left("web", "design", "test"),
-      },
+      { route: [{ stage: "code", brief: "c" }], skipped: left("web", "design", "test", "review") },
+      /route must end with review/,
+    ],
+    [{ route: [], skipped: left("web", "design", "code", "test", "review") }, /end with review/],
+    [{ skipped: left("web", "design", "code", "test", "review") }, /route must be a list/],
+    [
+      { route: [review, { stage: "code", brief: "c" }], skipped: left("web", "design", "test") },
       /order of stages/,
     ],
     [
       {
-        route: [{ stage: "code", brief: "c" }],
-        skipped: left("web", "code", "design", "test", "review"),
+        route: [{ stage: "code", brief: "c" }, review],
+        skipped: left("web", "code", "design", "test"),
       },
       /code is listed twice/,
     ],
     [
-      { route: [{ stage: "code", brief: "c" }], skipped: left("design") },
-      /missing: web, test, review/,
+      { route: [{ stage: "code", brief: "c" }, review], skipped: left("design") },
+      /missing: web, test/,
     ],
     [
       {
-        route: [{ stage: "code", brief: "c" }],
-        skipped: [...left("web", "design", "test"), { stage: "review" }],
+        route: [{ stage: "code", brief: "c" }, review],
+        skipped: [...left("web", "design"), { stage: "test" }],
       },
-      /skipped\[3\]\.reason must be a non-empty string/,
+      /skipped\[2\]\.reason must be a non-empty string/,
     ],
     [
-      { route: [{ stage: "plan", brief: "p" }], skipped: left("web", "design", "test", "review") },
+      {
+        route: [{ stage: "plan", brief: "p" }, review],
+        skipped: left("web", "design", "code", "test"),
+      },
       /route\[0\]\.stage must be one of web, design, code, test, review/,
     ],
-    [{ route: [], skipped: left("web", "design", "code", "test", "review") }, /report blocked/],
   ];
   for (const [value, error] of cases) {
-    const parsed = route({ status: "done", summary: "s", ...value });
+    const parsed = route({ summary: "s", ...value });
     assert.ok(!parsed.ok);
     assert.match(parsed.error, error);
   }
-});
-
-test("a blocked route is empty, and says why and what to do", () => {
-  const all = left("web", "design", "code", "test", "review");
-  const blocked = route({
-    status: "blocked",
-    summary: "s",
-    route: [],
-    skipped: all,
-    reason: "Already done.",
-    suggestion: "Close the issue.",
-  });
-  assert.ok(blocked.ok);
-  assert.equal(blocked.value.suggestion, "Close the issue.");
-  const vague = route({ status: "blocked", summary: "s", route: [], skipped: all, reason: "r" });
-  assert.ok(!vague.ok);
-  assert.match(vague.error, /suggestion must be a non-empty string/);
-  const busy = route({
-    status: "blocked",
-    summary: "s",
-    route: [{ stage: "code", brief: "c" }],
-    skipped: left("web", "design", "test", "review"),
-    reason: "r",
-    suggestion: "s",
-  });
-  assert.ok(!busy.ok);
-  assert.match(busy.error, /route must be empty when status is blocked/);
   assert.deepEqual(outputProblems("{}", "route", limits, GITHUB.workflows), [
-    "status must be done or blocked for the routing agent.",
+    "summary must be a non-empty string.",
   ]);
 });

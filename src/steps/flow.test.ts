@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, test } from "node:test";
 import type { Change, Manifest } from "../collect.ts";
-import { decodeStatus } from "../record.ts";
+import { decodeStatus, encodeStatus, isStatusComment } from "../record.ts";
 import { STAGES, type Stage } from "../stages.ts";
 import { FakePlatform, fakeServices } from "../testing/fake-platform.ts";
 import { FakeRuntime } from "../testing/fake-runtime.ts";
@@ -290,24 +290,20 @@ async function plannedTask(platform: FakePlatform): Promise<{ issue: number; bra
   return { issue, branch };
 }
 
-test("the routing agent chooses the stages, and a route without review completes the work", async () => {
+test("the routing agent chooses the stages, and review has the last word", async () => {
   const platform = new FakePlatform({ ".codeman/settings.yml": "model: a/b\n" });
   const { issue, branch } = await plannedTask(platform);
 
-  // A plan without decisions goes to the router too; it leaves out design and review.
-  let runtime = await routeStep(platform, ["code", "test"]);
+  // A plan without decisions goes to the router too; it leaves out web, design and test.
+  let runtime = await routeStep(platform, ["code", "review"]);
   assert.deepEqual(readTask(runtime).route, { trigger: "decisions", fallback: "design" });
   assert.deepEqual(stateLabels(platform, issue), ["codeman:coding"]);
   const routed = platform.botComments(issue).at(-1) ?? "";
   assert.match(routed, /### Codeman · Next stages chosen/);
-  assert.match(routed, /chose these stages, in order: code, test\./);
+  assert.match(routed, /chose these stages, in order: code, review\./);
   assert.match(routed, /\*\*design\*\*: No design needed\./);
-  assert.deepEqual(
-    record(platform, issue)?.route?.stages.map((step) => step.stage),
-    ["code", "test"],
-  );
 
-  // Each stage gets its brief, and hands over to the next stage of the route.
+  // Each stage hands over to the next stage of the route.
   runtime = await selectStep(platform);
   assert.deepEqual([runtime.outputs.action, runtime.outputs.stage], ["implement", "code"]);
   agentResult(
@@ -315,24 +311,18 @@ test("the routing agent chooses the stages, and a route without review completes
     { status: "done", summary: "Added the limiter.", commitMessage: "Add a limiter" },
   );
   await applyStep(platform);
-  assert.deepEqual(stateLabels(platform, issue), ["codeman:testing"]);
+  assert.deepEqual(stateLabels(platform, issue), ["codeman:reviewing"]);
   assert.equal(platform.changeRequests.get(1001)?.draft, true);
 
-  // The route ends with test: the work is done without review, and the pull request says why.
+  // Review ends the route and the task.
   runtime = await selectStep(platform);
-  assert.deepEqual([runtime.outputs.action, runtime.outputs.stage], ["implement", "test"]);
-  agentResult(
-    {},
-    { status: "skipped", summary: "Nothing to add.", reason: "Unit tests cover it." },
-  );
+  assert.deepEqual([runtime.outputs.action, runtime.outputs.stage], ["implement", "review"]);
+  agentResult({}, { status: "done", summary: "Looks right." });
   await applyStep(platform);
   assert.deepEqual(stateLabels(platform, issue), ["codeman:done"]);
-  const pullRequest = platform.changeRequests.get(1001);
-  assert.equal(pullRequest?.draft, false);
-  assert.match(pullRequest?.body ?? "", /left out by the routing agent: No review needed\./);
+  assert.equal(platform.changeRequests.get(1001)?.draft, false);
   assert.equal(platform.file(branch, ".codemanignore")?.includes("AGENTS.md"), true);
-  assert.equal(platform.changeRequestComments.get(1001)?.length ?? 0, 0, "no review report");
-  assert.match(platform.botComments(issue).at(-1) ?? "", /left review out: No review needed\./);
+  assert.equal(platform.changeRequestComments.get(1001)?.length, 1, "review's report");
   assert.equal(record(platform, issue)?.route, undefined);
 
   // A fix goes to the router, and the stages it chooses read the request.
@@ -368,12 +358,14 @@ test("the routing agent chooses the stages, and a route without review completes
   runtime = await selectStep(platform);
   assert.deepEqual(readTask(runtime).route, { trigger: "changes", fallback: "code" });
 
-  // A result the router cannot use falls back to the fixed order, from the fallback stage.
-  agentResult({}, { status: "done", summary: "Oops.", route: [], skipped: [] });
+  // A route without review cannot be used: the stages run in their fixed order.
+  routeResult(["code"]);
   await applyStep(platform);
   assert.deepEqual(stateLabels(platform, issue), ["codeman:coding"]);
+  const fallback = platform.botComments(issue).at(-1) ?? "";
+  assert.match(fallback, /route must end with review/);
   assert.match(
-    platform.botComments(issue).at(-1) ?? "",
+    fallback,
     /could not use the routing agent's result, so the stages run in their fixed order: code, test, review\./,
   );
   assert.deepEqual(
@@ -382,27 +374,35 @@ test("the routing agent chooses the stages, and a route without review completes
   );
 });
 
-test("a route with no stage blocks the task with the router's suggestion, and continue routes again", async () => {
+test("a route of review alone lets review decide that nothing was needed", async () => {
   const platform = new FakePlatform({ ".codeman/settings.yml": "model: a/b\n" });
   const { issue } = await plannedTask(platform);
-  await selectStep(platform);
+  await routeStep(platform, ["review"]);
+  assert.deepEqual(stateLabels(platform, issue), ["codeman:reviewing"]);
+
+  const runtime = await selectStep(platform);
+  assert.deepEqual([runtime.outputs.action, runtime.outputs.stage], ["implement", "review"]);
   agentResult(
     {},
-    {
-      status: "blocked",
-      summary: "Nothing to do.",
-      route: [],
-      skipped: STAGES.map((stage) => ({ stage, reason: "Already done." })),
-      reason: "The main branch already limits requests.",
-      suggestion: "Close the issue.",
-    },
+    { status: "blocked", summary: "Nothing to merge.", reason: "The limiter already exists." },
   );
   await applyStep(platform);
   assert.deepEqual(stateLabels(platform, issue), ["codeman:blocked"]);
-  const comment = platform.botComments(issue).at(-1) ?? "";
-  assert.match(comment, /found nothing that should run next/);
-  assert.match(comment, /\*\*Suggestion:\*\* Close the issue\./);
-  assert.match(comment, /`\/codeman continue <guidance>` to route again/);
+  assert.equal(platform.changeRequests.size, 0, "no pull request with the plan alone");
+  assert.match(platform.botComments(issue).at(-1) ?? "", /The limiter already exists\./);
+});
+
+test("a task the router blocked before review always ran routes again on continue", async () => {
+  const platform = new FakePlatform({ ".codeman/settings.yml": "model: a/b\n" });
+  const { issue } = await plannedTask(platform);
+  const panel = platform.comments.get(issue)?.find((comment) => isStatusComment(comment.body));
+  const before = record(platform, issue);
+  assert.ok(panel && before);
+  panel.body = panel.body.replace(
+    /<!-- codeman:status [A-Za-z0-9_-]* -->/,
+    encodeStatus({ ...before, route: { stages: [], skipped: [] } }),
+  );
+  await platform.setState(issue, [], "blocked");
 
   platform.say(issue, "alice", "/codeman continue Check again.");
   const runtime = await selectStep(platform);
@@ -414,7 +414,7 @@ test("a route with no stage blocks the task with the router's suggestion, and co
 test("the web stage commits only valid pages under docs/web/, and the panel lists old ones", async () => {
   const platform = new FakePlatform({ ".codeman/settings.yml": "model: a/b\n" });
   const { issue, branch } = await plannedTask(platform);
-  await routeStep(platform, ["web", "code"]);
+  await routeStep(platform, ["web", "code", "review"]);
   assert.deepEqual(stateLabels(platform, issue), ["codeman:researching"]);
 
   const runtime = await selectStep(platform);

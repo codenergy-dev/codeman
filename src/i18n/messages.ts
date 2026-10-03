@@ -117,12 +117,7 @@ export interface Messages {
   squashMessage: string;
   pullRequestFooter(spent: string | undefined, runUrl: string): string;
   draftSummary: string;
-  /** `leftOut`: why the routing agent left review out, made inert by the caller. */
-  readySummary(
-    code: string | undefined,
-    test: string | undefined,
-    leftOut?: string | undefined,
-  ): string;
+  readySummary(code: string | undefined, test: string | undefined): string;
   reviewHeading: string;
   reviewChanges: string;
   run: string;
@@ -171,17 +166,12 @@ export interface Messages {
   reviewRounds(rounds: number, max: number): string;
   skipped(reason: string): string;
   workDone: string;
-  /** After a route without review; `reason` is made inert by the caller. */
-  reviewLeftOut(reason: string): string;
 
   // Routing.
   /** The stages the routing agent chose, as a list of stage names. */
   routeChosen(stages: string): string;
   routeLabel: string;
   leftOutLabel: string;
-  suggestionLabel: string;
-  routeBlocked: string;
-  routeBlockedHint: string;
   /** The router's result could not be used: the stages run in their fixed order. */
   routeFallback(stages: string): string;
 

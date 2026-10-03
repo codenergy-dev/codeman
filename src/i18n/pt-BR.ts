@@ -163,8 +163,8 @@ export const ptBR: Messages = {
     `<sub>Aberto pelo Codeman${spent ? ` · Gasto: ${spent}` : ""} · [Última rodada](${runUrl})</sub>`,
   draftSummary:
     "O Codeman ainda está trabalhando neste pull request: os testes e a revisão vêm a seguir. Ele fica pronto para revisão quando os dois passarem.",
-  readySummary: (code, test, leftOut) =>
-    `Código: ${code ?? "(sem relatório)"}\n\nTestes: ${test ?? "(sem relatório)"}${leftOut ? `\n\nRevisão: deixada de fora pelo agente de roteamento: ${leftOut}` : ""}`,
+  readySummary: (code, test) =>
+    `Código: ${code ?? "(sem relatório)"}\n\nTestes: ${test ?? "(sem relatório)"}`,
   reviewHeading: "Revisão do Codeman",
   reviewChanges: "Mudanças pedidas à etapa de código",
   run: "Rodada",
@@ -238,14 +238,9 @@ export const ptBR: Messages = {
   reviewRounds: (rounds, max) =>
     `A revisão devolveu o trabalho à etapa de código ${rounds} vezes seguidas (\`max-runs\` é ${max}). Comente \`/codeman continue <orientação>\` para continuar.`,
   skipped: (reason) => `Pulada: ${reason}`,
-  reviewLeftOut: (reason) => `O agente de roteamento deixou a revisão de fora: ${reason}`,
   routeChosen: (stages) => `O agente de roteamento escolheu estas etapas, nesta ordem: ${stages}.`,
   routeLabel: "Rota",
   leftOutLabel: "Deixadas de fora",
-  suggestionLabel: "Sugestão",
-  routeBlocked: "O agente de roteamento não encontrou nada que deva rodar em seguida.",
-  routeBlockedHint:
-    "Comente `/codeman continue <orientação>` para rotear de novo, `/codeman fix <o que mudar>` para pedir outra coisa, ou `/codeman replan <o que mudar>` para revisar o plano.",
   routeFallback: (stages) =>
     `O Codeman não conseguiu usar o resultado do agente de roteamento, então as etapas rodam na ordem fixa: ${stages}.`,
   workDone:

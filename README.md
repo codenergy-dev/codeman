@@ -22,7 +22,7 @@ Codeman turns ambiguity into questions instead. The flow it is being built for:
    You can also accept every recommendation with `/codeman approve`, ask for a revised plan with `/codeman replan <what to change>`, or pick another model for the task with `/codeman set model <openrouter-model-id>`.
 
    Codeman answers in the language of the issue. Code, commit messages and documentation stay in English, unless your `AGENTS.md` says otherwise.
-4. Codeman carries out the plan in stages, one agent each: web (the documentation of the third-party services the task relies on, in `docs/web/`), design (flows and screen drafts), code, test and review. A routing agent chooses which stages each task needs, and says why it leaves any out. Then Codeman opens a pull request. You review it: a review that requests changes, or `/codeman fix <what to change>`, sends it back to the routing agent. You merge it; Codeman never merges.
+4. Codeman carries out the plan in stages, one agent each: web (the documentation of the third-party services the task relies on, in `docs/web/`), design (flows and screen drafts), code, test and review. A routing agent chooses which stages each task needs, and says why it leaves any out; review always runs, and has the last word. Then Codeman opens a pull request. You review it: a review that requests changes, or `/codeman fix <what to change>`, sends it back to the routing agent. You merge it; Codeman never merges.
 
 Only maintainers (people with write access to the repository) can steer Codeman, and it works only on issues they opened. Comments from anyone else are ignored. [docs/security.md](docs/security.md) explains what Codeman protects, the risks that remain, and how to protect your repository.
 

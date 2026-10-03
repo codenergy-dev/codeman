@@ -71,8 +71,9 @@ export interface TaskRecord {
   /** The stage that works on the task next, or is working on it. */
   stage?: Stage | undefined;
   /**
-   * The routing agent's choice, while its stages run. Without one, as in records from before
-   * routing, stages follow their fixed order. An empty route means the router blocked the task.
+   * The routing agent's choice, while its stages run; review always ends it. Without one, as in
+   * records from before routing, stages follow their fixed order. An empty route is from before
+   * review always ran, when the router could block the task.
    */
   route?: Route | undefined;
   /** What the last stage left for the next one: its report, or why it had nothing to do. */
@@ -99,11 +100,6 @@ export interface TaskRecord {
   /** Review passed, and the task waits for its staged workflows to be accepted. */
   reviewed?: boolean | undefined;
   /**
-   * Why the routing agent left review out of the route that completed the work, for the pull
-   * request's description.
-   */
-  reviewLeftOut?: string | undefined;
-  /**
    * The pages under `docs/web/` on the task branch, by path, with when each was last fetched,
    * for the panel to list old ones without reading every file again.
    */
@@ -123,7 +119,6 @@ export const PLAN_RESETS = [
   "reportCommentId",
   "stage",
   "route",
-  "reviewLeftOut",
   "handoff",
   "reviewRounds",
   "awaiting",

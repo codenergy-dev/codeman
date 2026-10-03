@@ -42,7 +42,7 @@ import { nextInRoute, STAGE_STATE, type Stage, stagesFrom } from "../stages.ts";
 import type { State } from "../state.ts";
 import { decisionsUrl, renderDecisions, renderRun, renderStatus, reportUrl } from "../status.ts";
 import { commandsAfter, type TaskContext } from "../tasks.ts";
-import { oneLine, safeInline, safeMarkdown, truncate } from "../text.ts";
+import { oneLine, safeMarkdown, truncate } from "../text.ts";
 import { checkPlanResult, decodeText, isManifest } from "../validate.ts";
 import {
   frontMatter,
@@ -449,13 +449,12 @@ async function applyStage(task: TaskContext, io: Io): Promise<void> {
       : handOver("done", summary, record);
   }
 
-  // Review passed.
-  return complete(record, "done", summary);
+  return reviewPassed(record, summary);
 
   /**
    * Hands the task over to the next stage of its route, with this stage's report as its notes.
-   * When code ends, the pull request opens as a draft. When the route ends here, the work is
-   * complete.
+   * Review always ends a route, also one recorded before it had to. When code ends, the pull
+   * request opens as a draft.
    */
   async function handOver(
     outcome: "done" | "skipped" | "awaiting-workflow",
@@ -464,7 +463,7 @@ async function applyStage(task: TaskContext, io: Io): Promise<void> {
     message?: string,
     notes = report,
   ): Promise<void> {
-    const next = nextInRoute(base.route, stage);
+    const next = nextInRoute(base.route, stage) ?? "review";
     // Kept short: the record lives in the status comment, which the platform limits in size.
     const text = truncate(notes, 2000);
     const updated: TaskRecord = {
@@ -478,7 +477,6 @@ async function applyStage(task: TaskContext, io: Io): Promise<void> {
           ? output.value.commitMessage
           : base.commitMessage,
     };
-    if (next === undefined) return complete(updated, outcome, report, message);
     if (stage === "code") {
       updated.pullRequest = await openPullRequest(io, task, updated, "draft");
     }
@@ -492,17 +490,11 @@ async function applyStage(task: TaskContext, io: Io): Promise<void> {
   }
 
   /**
-   * Ends the work, after review passed or after the last stage of a route without review: adds
-   * the proposed `.codemanignore` if the repository has none, opens or updates the pull request
-   * and marks it ready, unless staged workflows still wait for a maintainer. Only review posts
-   * its report on the pull request.
+   * Ends the work once review passed: adds the proposed `.codemanignore` if the repository has
+   * none, opens or updates the pull request and marks it ready, unless staged workflows still
+   * wait for a maintainer, and posts review's report on it.
    */
-  async function complete(
-    base: TaskRecord,
-    outcome: "done" | "skipped" | "awaiting-workflow",
-    report: string,
-    message?: string,
-  ): Promise<void> {
+  async function reviewPassed(record: TaskRecord, report: string): Promise<void> {
     if (task.ignore === null && (await io.repo.readFile(task.branch, IGNORE_FILE)) === undefined) {
       head = await io.repo.commit({
         branch: task.branch,
@@ -520,11 +512,6 @@ async function applyStage(task: TaskContext, io: Io): Promise<void> {
     const staged = [...(await io.repo.filesUnder(head, STAGED_WORKFLOWS_DIR)).keys()].map((path) =>
       workflowPath(path, io.conventions.workflows),
     );
-    const reviewed = stage === "review";
-    const leftOut = reviewed
-      ? undefined
-      : base.route?.skipped.find((step) => step.stage === "review")?.reason;
-    const record: TaskRecord = { ...base, reviewLeftOut: leftOut };
     const next = afterReview(t, record, staged);
     const pullRequest = await openPullRequest(
       io,
@@ -533,17 +520,12 @@ async function applyStage(task: TaskContext, io: Io): Promise<void> {
       next.state === "done" ? "ready" : "draft",
     );
     const done = { ...next.record, pullRequest };
-    if (reviewed) await postReview(io, t, { ...task, record: done }, done, report, undefined);
-    const notes = [
-      message,
-      next.message,
-      leftOut ? t.reviewLeftOut(safeInline(leftOut, io.conventions.markdown)) : undefined,
-    ];
+    await postReview(io, t, { ...task, record: done }, done, report, undefined);
     await finish(io, task, next.state, {
-      outcome,
+      outcome: "done",
       pullRequestWritten: true,
       record: done,
-      message: notes.filter((note) => note).join(" "),
+      message: next.message,
       report,
       errors: warnings,
     });
@@ -551,9 +533,9 @@ async function applyStage(task: TaskContext, io: Io): Promise<void> {
 }
 
 /**
- * Records the routing agent's choice and starts its first stage. A route that cannot be used
- * falls back to the fixed order, so a router failure does not stop the task. An empty route
- * blocks the task, with the router's reason and suggestion.
+ * Records the routing agent's choice and starts its first stage; review always ends the route.
+ * A route that cannot be used falls back to the fixed order, so a router failure does not stop
+ * the task.
  */
 async function applyRoute(task: TaskContext, io: Io): Promise<void> {
   if (!task.record) return blocked(io, task, "The task has no record of its plan.");
@@ -576,7 +558,6 @@ async function applyRoute(task: TaskContext, io: Io): Promise<void> {
       route,
       stage: first,
       runs: 0,
-      reviewLeftOut: undefined,
     };
     return finish(io, task, STAGE_STATE[first], { ...view, record });
   };
@@ -609,15 +590,6 @@ async function applyRoute(task: TaskContext, io: Io): Promise<void> {
     stage,
     reason: truncate(reason, 1000),
   }));
-  if (value.status === "blocked") {
-    return finish(io, task, "blocked", {
-      outcome: "blocked",
-      record: { ...task.record, route: { stages: [], skipped } },
-      message: `${t.routeBlocked} ${t.routeBlockedHint}`,
-      report: routeReport(t, value),
-      errors: cuts,
-    });
-  }
   const stages = value.route.map(({ stage, brief }) => ({ stage, brief: truncate(brief, 2000) }));
   return start(
     { stages, skipped, requests },
@@ -632,22 +604,17 @@ async function applyRoute(task: TaskContext, io: Io): Promise<void> {
 
 /** The routing agent's report: its summary, the route with briefs, and what it left out. */
 function routeReport(t: Messages, output: RouteOutput): string {
-  const lines = [output.summary, ""];
-  if (output.route.length > 0) {
-    lines.push(`**${t.routeLabel}**`, "");
-    for (const { stage, brief } of output.route)
-      lines.push(`1. **${t.stage(stage)}**: ${oneLine(brief)}`);
-    lines.push("");
+  const lines = [output.summary, "", `**${t.routeLabel}**`, ""];
+  for (const { stage, brief } of output.route) {
+    lines.push(`1. **${t.stage(stage)}**: ${oneLine(brief)}`);
   }
   if (output.skipped.length > 0) {
-    lines.push(`**${t.leftOutLabel}**`, "");
-    for (const { stage, reason } of output.skipped)
+    lines.push("", `**${t.leftOutLabel}**`, "");
+    for (const { stage, reason } of output.skipped) {
       lines.push(`- **${t.stage(stage)}**: ${oneLine(reason)}`);
-    lines.push("");
+    }
   }
-  if (output.reason) lines.push(t.agentReports(oneLine(output.reason)), "");
-  if (output.suggestion) lines.push(`**${t.suggestionLabel}:** ${oneLine(output.suggestion)}`);
-  return lines.join("\n").trim();
+  return lines.join("\n");
 }
 
 const STAGE_NAMES: Record<Stage, string> = {
@@ -679,7 +646,7 @@ async function openPullRequest(
     planSummary: record.summary,
     summary:
       mode === "ready"
-        ? t.readySummary(record.reports?.code, record.reports?.test, record.reviewLeftOut)
+        ? t.readySummary(record.reports?.code, record.reports?.test)
         : t.draftSummary,
     commitMessage: record.commitMessage ?? "",
     runUrl: task.runUrl,
