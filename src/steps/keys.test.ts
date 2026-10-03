@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { FakeRuntime } from "../testing/fake-runtime.ts";
-import { runCost, runTokens, taskCosts } from "./keys.ts";
+import { runCost, runStats, runTokens, taskCosts } from "./keys.ts";
 
 /** A fake analytics API that answers each query with the next result. */
 function analytics(results: ({ input: number; output: number } | undefined | Error)[]) {
@@ -48,6 +48,42 @@ test("a key that spent nothing used no tokens, without waiting", async () => {
 test("a failed query leaves the tokens unknown, and does not fail the job", async () => {
   const api = analytics([new Error("OpenRouter POST /analytics/query failed with 403.")]);
   assert.equal(await runTokens(api, "h", true, new FakeRuntime(), noWait), undefined);
+});
+
+/** A fake analytics API that answers each stats query with the next result. */
+function stats(results: ({ requests: number } | undefined | Error)[]) {
+  let calls = 0;
+  return {
+    get calls() {
+      return calls;
+    },
+    async keyStats() {
+      const result = results[Math.min(calls++, results.length - 1)];
+      if (result instanceof Error) throw result;
+      return result;
+    },
+  };
+}
+
+test("asks again for the requests of a key that generated tokens", async () => {
+  const api = stats([undefined, { requests: 3 }]);
+  assert.deepEqual(await runStats(api, "h", true, new FakeRuntime(), noWait), { requests: 3 });
+  assert.equal(api.calls, 2);
+});
+
+test("gives up on requests after about a minute, and does not wait for a key that generated nothing", async () => {
+  const late = stats([undefined]);
+  assert.equal(await runStats(late, "h", true, new FakeRuntime(), noWait), undefined);
+  assert.equal(late.calls, 7);
+  const idle = stats([undefined]);
+  assert.equal(await runStats(idle, "h", false, new FakeRuntime(), noWait), undefined);
+  assert.equal(idle.calls, 1);
+});
+
+test("a failed stats query leaves them unknown, and does not fail the job", async () => {
+  const api = stats([new Error("OpenRouter POST /analytics/query failed with 400.")]);
+  const runtime = new FakeRuntime();
+  assert.equal(await runStats(api, "h", true, runtime, noWait), undefined);
 });
 
 /** A fake key whose usage reads the next value each time. */

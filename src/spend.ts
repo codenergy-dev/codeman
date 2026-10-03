@@ -20,6 +20,12 @@ export interface SpendRow {
   /** Tokens, as OpenRouter's analytics counts them. */
   inputTokens?: number | undefined;
   outputTokens?: number | undefined;
+  /** Requests made with the run's key, which weigh its throughput in the task's mean. */
+  requests?: number | undefined;
+  /** The run's context length: the input tokens of its largest request. */
+  maxInputTokens?: number | undefined;
+  /** Mean completion tokens per second over the run's requests. */
+  tokensPerSecond?: number | undefined;
 }
 
 /** Sums over several runs. */
@@ -29,6 +35,19 @@ export interface SpendTotals {
   durationMs: number;
   inputTokens: number;
   outputTokens: number;
+  /** The largest context length; 0 when no run has one. */
+  maxInputTokens: number;
+  /** Throughput times requests, over the runs with both: a request-weighted mean's numerator. */
+  throughputSum: number;
+  /** Requests of the runs counted in `throughputSum`. */
+  throughputRequests: number;
+}
+
+/** The mean tokens per second over every measured request; undefined when none was. */
+export function meanThroughput(totals: SpendTotals): number | undefined {
+  return totals.throughputRequests > 0
+    ? totals.throughputSum / totals.throughputRequests
+    : undefined;
 }
 
 /** A task's spend table, as kept in its record: the newest rows, and the older ones folded. */
@@ -101,16 +120,21 @@ export function spendTotals(spending: Spending | undefined): SpendTotals {
 }
 
 function add(totals: SpendTotals, row: SpendRow): SpendTotals {
+  const weighed = row.tokensPerSecond !== undefined && (row.requests ?? 0) > 0;
   return {
     runs: totals.runs + 1,
     cost: totals.cost + (row.cost ?? 0),
     durationMs: totals.durationMs + (row.durationMs ?? 0),
     inputTokens: totals.inputTokens + (row.inputTokens ?? 0),
     outputTokens: totals.outputTokens + (row.outputTokens ?? 0),
+    maxInputTokens: Math.max(totals.maxInputTokens, row.maxInputTokens ?? 0),
+    throughputSum:
+      totals.throughputSum + (weighed ? (row.tokensPerSecond ?? 0) * (row.requests ?? 0) : 0),
+    throughputRequests: totals.throughputRequests + (weighed ? (row.requests ?? 0) : 0),
   };
 }
 
-/** Older records folded only runs and cost. */
+/** Older records folded only runs and cost, and later ones no context or throughput. */
 function complete(totals: Partial<SpendTotals> | undefined): SpendTotals {
   return {
     runs: totals?.runs ?? 0,
@@ -118,26 +142,39 @@ function complete(totals: Partial<SpendTotals> | undefined): SpendTotals {
     durationMs: totals?.durationMs ?? 0,
     inputTokens: totals?.inputTokens ?? 0,
     outputTokens: totals?.outputTokens ?? 0,
+    maxInputTokens: totals?.maxInputTokens ?? 0,
+    throughputSum: totals?.throughputSum ?? 0,
+    throughputRequests: totals?.throughputRequests ?? 0,
   };
 }
 
 /**
- * The spend table in Markdown. With the task's total from OpenRouter, a last row shows what
- * runs without a row spent, such as a run whose apply failed.
+ * The spend table in Markdown. With the task's total from OpenRouter, a row shows what runs
+ * without a row spent, such as a run whose apply failed. With `totals`, a last row totals every
+ * column over all the task's runs: sums, the largest context, and the request-weighted mean
+ * throughput. Limits and budgets are not amounts, so it leaves them empty.
  */
-export function spendTable(t: Messages, spending: Spending | undefined, total?: number): string[] {
+export function spendTable(
+  t: Messages,
+  spending: Spending | undefined,
+  total?: number,
+  options: { totals?: boolean } = {},
+): string[] {
   const rows = spending?.rows ?? [];
   const earlier = spending?.earlier;
   const dash = (value: number | undefined, format: (value: number) => string) =>
     value === undefined ? "—" : format(value);
+  // Zero means "never recorded" for folded figures that older records lack.
+  const known = (value: number | undefined) => (value ? value : undefined);
   const lines = [
     `| ${t.tableHeader.join(" | ")} |`,
-    "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+    "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
   ];
   if (earlier?.runs) {
-    // Records from before time and tokens were kept folded only runs and cost.
+    // Records from before time, tokens, context and throughput were kept folded fewer sums.
+    const folded = complete(earlier);
     lines.push(
-      `| ${t.earlierRuns(earlier.runs)} | | | ${dash(earlier.durationMs, duration)} | ${dash(earlier.inputTokens, t.tokens)} | ${dash(earlier.outputTokens, t.tokens)} | ${t.cost(earlier.cost ?? 0)} | | | |`,
+      `| ${t.earlierRuns(earlier.runs)} | | | ${dash(earlier.durationMs, duration)} | ${dash(earlier.inputTokens, t.tokens)} | ${dash(earlier.outputTokens, t.tokens)} | ${dash(known(folded.maxInputTokens), t.tokens)} | ${dash(meanThroughput(folded), t.rate)} | ${t.cost(earlier.cost ?? 0)} | | | |`,
     );
   }
   for (const row of rows) {
@@ -155,6 +192,8 @@ export function spendTable(t: Messages, spending: Spending | undefined, total?: 
         dash(row.durationMs, duration),
         dash(row.inputTokens, t.tokens),
         dash(row.outputTokens, t.tokens),
+        dash(row.maxInputTokens, t.tokens),
+        dash(row.tokensPerSecond, t.rate),
         dash(row.cost, t.cost),
         dash(row.keyLimit, t.money),
         t.money(row.taskBudget),
@@ -165,9 +204,15 @@ export function spendTable(t: Messages, spending: Spending | undefined, total?: 
         .trim(),
     );
   }
-  const recorded = spendTotals(spending).cost;
-  if (total !== undefined && total - recorded >= 0.001) {
-    lines.push(`| ${t.runsWithoutRow} | | | | | | ${t.cost(total - recorded)} | | | |`);
+  const sums = spendTotals(spending);
+  const missing = total !== undefined && total - sums.cost >= 0.001 ? total - sums.cost : 0;
+  if (missing > 0) {
+    lines.push(`| ${t.runsWithoutRow} | | | | | | | | ${t.cost(missing)} | | | |`);
+  }
+  if (options.totals && sums.runs > 0) {
+    lines.push(
+      `| **${t.totalRow(sums.runs)}** | | | ${dash(known(sums.durationMs), duration)} | ${dash(known(sums.inputTokens), t.tokens)} | ${dash(known(sums.outputTokens), t.tokens)} | ${dash(known(sums.maxInputTokens), t.tokens)} | ${dash(meanThroughput(sums), t.rate)} | **${t.cost(sums.cost + missing)}** | | | |`,
+    );
   }
   return lines;
 }

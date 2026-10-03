@@ -1,7 +1,7 @@
 import type { Messages } from "./i18n/index.ts";
 import type { Conventions, MarkdownDialect } from "./platform/conventions.ts";
 import { type Decision, encodeStatus, pendingDecisions, type TaskRecord } from "./record.ts";
-import { duration, type SpendRow, spendTable, spendTotals } from "./spend.ts";
+import { type SpendRow, spendTable } from "./spend.ts";
 import type { State } from "./state.ts";
 import { inlineText, safeInline, safeMarkdown } from "./text.ts";
 
@@ -64,21 +64,15 @@ export function renderStatus(view: StatusView): string {
     rest.push("", t.workflowsHelp, "");
   }
   if (record?.spending?.rows.length || view.cost?.task !== undefined) {
-    rest.push(`#### ${t.spending}`, "", ...spendTable(t, record?.spending, view.cost?.task), "");
+    rest.push(
+      `#### ${t.spending}`,
+      "",
+      ...spendTable(t, record?.spending, view.cost?.task, { totals: true }),
+      "",
+    );
+    // The totals row has the task's spend, but not the budget it is spent from.
     if (view.cost?.task !== undefined) {
       rest.push(`${spentText(t, { ...view.cost, run: undefined })}.`, "");
-    }
-    const totals = spendTotals(record?.spending);
-    // Rows from before tokens and time were recorded have neither.
-    if (totals.inputTokens + totals.outputTokens + totals.durationMs > 0) {
-      rest.push(
-        t.usedTokens(
-          t.tokens(totals.inputTokens),
-          t.tokens(totals.outputTokens),
-          duration(totals.durationMs),
-        ),
-        "",
-      );
     }
   }
 

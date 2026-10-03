@@ -24,6 +24,7 @@ export const en: Messages = {
   tokens: (count) =>
     new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(count),
   cost: (amount) => `US$ ${number(3).format(amount)}`,
+  rate: (perSecond) => number(1).format(perSecond),
   dateTime: (iso) => `${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC`,
   of: (part, whole) => `${part} of ${whole}`,
 
@@ -116,14 +117,15 @@ export const en: Messages = {
     "Time",
     "Input tokens",
     "Output tokens",
+    "Context",
+    "Tok/s",
     "Cost",
     "Key limit",
     "Task budget",
     "Monthly budget",
   ],
-  usedTokens: (input, output, time) =>
-    `Tokens: ${input} input and ${output} output, in ${time} of agent time.`,
   earlierRuns: (runs) => `Earlier runs (${runs})`,
+  totalRow: (runs) => `Total (${runs} ${runs === 1 ? "run" : "runs"})`,
   runsWithoutRow: "Runs without a row",
 
   fullPlan: "Full plan",

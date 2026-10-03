@@ -34,6 +34,7 @@ export const ptBR: Messages = {
   tokens: (count) =>
     new Intl.NumberFormat("pt-BR", { notation: "compact", maximumFractionDigits: 1 }).format(count),
   cost: (amount) => `US$ ${number(3).format(amount)}`,
+  rate: (perSecond) => number(1).format(perSecond),
   dateTime: (iso) =>
     `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)} ${iso.slice(11, 16)} UTC`,
   of: (part, whole) => `${part} de ${whole}`,
@@ -128,14 +129,15 @@ export const ptBR: Messages = {
     "Tempo",
     "Tokens de entrada",
     "Tokens de saída",
+    "Contexto",
+    "Tok/s",
     "Custo",
     "Limite da chave",
     "Orçamento da tarefa",
     "Orçamento mensal",
   ],
-  usedTokens: (input, output, time) =>
-    `Tokens: ${input} de entrada e ${output} de saída, em ${time} de agente.`,
   earlierRuns: (runs) => `Rodadas anteriores (${runs})`,
+  totalRow: (runs) => `Total (${runs} ${runs === 1 ? "rodada" : "rodadas"})`,
   runsWithoutRow: "Rodadas sem linha",
 
   fullPlan: "Plano completo",

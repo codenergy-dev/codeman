@@ -1,6 +1,7 @@
 import {
   costsByRun,
   expiresAt,
+  type KeyStats,
   keyPrefix,
   MIN_RUN_BUDGET,
   OpenRouter,
@@ -93,6 +94,19 @@ export async function closeKey({ runtime }: Services): Promise<void> {
     runtime.output("output-tokens", String(tokens.output));
     runtime.info(`This run used ${tokens.input} input and ${tokens.output} output tokens.`);
   }
+  const stats = await runStats(router, hash, tokens !== undefined && tokens.output > 0, runtime);
+  if (stats) {
+    runtime.output("requests", String(stats.requests));
+    if (stats.maxInputTokens !== undefined) {
+      runtime.output("max-input-tokens", String(stats.maxInputTokens));
+    }
+    if (stats.tokensPerSecond !== undefined) {
+      runtime.output("tokens-per-second", stats.tokensPerSecond.toFixed(1));
+    }
+    runtime.info(
+      `Requests: ${stats.requests}; largest prompt: ${stats.maxInputTokens ?? "unknown"} tokens; mean throughput: ${stats.tokensPerSecond?.toFixed(1) ?? "unknown"} tokens per second.`,
+    );
+  }
 
   const costs = await taskCosts(router, hash, runtime.repository, runtime);
   if (costs) runtime.output("task-costs", JSON.stringify(costs));
@@ -177,6 +191,37 @@ export async function runTokens(
   } catch (error) {
     log.warning(
       `Could not read this run's tokens: ${error instanceof Error ? error.message : error}`,
+    );
+    return undefined;
+  }
+}
+
+/**
+ * How the key's requests went, from OpenRouter's analytics. When the key generated tokens,
+ * analytics may still be counting its requests, so this asks again for up to about a minute.
+ * Failures are only logged: these figures are informational.
+ */
+export async function runStats(
+  router: Pick<OpenRouter, "keyStats">,
+  hash: string,
+  generated: boolean,
+  log: Log,
+  wait = sleep,
+): Promise<KeyStats | undefined> {
+  try {
+    for (let attempt = 0; ; attempt++) {
+      const now = new Date();
+      const stats = await router.keyStats(hash, new Date(now.getTime() - KEY_LIFETIME_MS), now);
+      if (stats || !generated) return stats;
+      if (attempt === 6) {
+        log.warning("OpenRouter's analytics has no requests for this run's key yet.");
+        return undefined;
+      }
+      await wait(10_000);
+    }
+  } catch (error) {
+    log.warning(
+      `Could not read this run's requests: ${error instanceof Error ? error.message : error}`,
     );
     return undefined;
   }

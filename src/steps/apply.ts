@@ -87,6 +87,9 @@ export interface JobResults {
   runCost?: number | undefined;
   inputTokens?: number | undefined;
   outputTokens?: number | undefined;
+  requests?: number | undefined;
+  maxInputTokens?: number | undefined;
+  tokensPerSecond?: number | undefined;
   /** What each run of the task spent, by run ID, as `close-key` read it. */
   taskCosts?: Record<string, number> | undefined;
 }
@@ -106,6 +109,9 @@ export function jobResults(runtime: Runtime): JobResults {
     runCost: amount("run-cost"),
     inputTokens: amount("input-tokens"),
     outputTokens: amount("output-tokens"),
+    requests: amount("requests"),
+    maxInputTokens: amount("max-input-tokens"),
+    tokensPerSecond: amount("tokens-per-second"),
     taskCosts: parseCosts(runtime.input("task-costs")),
   };
 }
@@ -985,6 +991,9 @@ function spendRow(io: Io, task: TaskContext, cost: number | undefined): SpendRow
     durationMs: agentDuration(io.resultDir),
     inputTokens: io.jobs.inputTokens,
     outputTokens: io.jobs.outputTokens,
+    requests: io.jobs.requests,
+    maxInputTokens: io.jobs.maxInputTokens,
+    tokensPerSecond: io.jobs.tokensPerSecond,
   };
 }
 

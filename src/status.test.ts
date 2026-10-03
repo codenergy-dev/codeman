@@ -222,38 +222,36 @@ const spendRow = {
   durationMs: 120_000,
   inputTokens: 12_345,
   outputTokens: 800,
+  requests: 6,
+  maxInputTokens: 4_012,
+  tokensPerSecond: 61.24,
 };
 
-test("the panel shows the spend table, and a run comment its own row", () => {
+test("the panel shows the spend table with its totals, and a run comment its own row", () => {
   const panel = renderStatus({
     ...view,
     record: { ...record, spending: { rows: [spendRow] } },
     cost: { task: 0.5, budget: 2 },
   });
   assert.match(panel, /#### Spending\n\n\| Run \| Stage/);
-  assert.match(panel, /\| test \| `a\/b` \| 2 min \| 12\.3K \| 800 \| US\$ 0\.123 \|/);
-  assert.match(panel, /\| Runs without a row \| \| \| \| \| \| US\$ 0\.377 \|/);
-  assert.match(panel, /Spent: US\$ 0\.50 of US\$ 2\.00 for the task\./);
-  assert.match(panel, /Tokens: 12\.3K input and 800 output, in 2 min of agent time\./);
-  const old = {
-    ...spendRow,
-    durationMs: undefined,
-    inputTokens: undefined,
-    outputTokens: undefined,
-  };
-  assert.ok(
-    !renderStatus({ ...view, record: { ...record, spending: { rows: [old] } } }).includes(
-      "Tokens:",
-    ),
-    "rows from before tokens were kept",
+  assert.match(
+    panel,
+    /\| test \| `a\/b` \| 2 min \| 12\.3K \| 800 \| 4K \| 61\.2 \| US\$ 0\.123 \|/,
   );
+  assert.match(panel, /\| Runs without a row \| \| \| \| \| \| \| \| US\$ 0\.377 \|/);
+  assert.match(
+    panel,
+    /\| \*\*Total \(1 run\)\*\* \| \| \| 2 min \| 12\.3K \| 800 \| 4K \| 61\.2 \| \*\*US\$ 0\.500\*\* \| \| \| \|\n\nSpent: US\$ 0\.50 of US\$ 2\.00 for the task\./,
+  );
+  assert.ok(!panel.includes("Tokens:"), "the totals row has the task's tokens and time");
 
   const body = renderRun({ ...run, spend: spendRow, cost: { run: 0.1234, task: 0.5, budget: 2 } });
   assert.match(body, /#### Cost\n\n\| Run \| Stage/);
   assert.match(
     body,
-    /\| test \| `a\/b` \| 2 min \| 12\.3K \| 800 \| US\$ 0\.123 \| US\$ 1\.50 \| US\$ 2\.00 \| US\$ 3\.00 of US\$ 20\.00 \|/,
+    /\| test \| `a\/b` \| 2 min \| 12\.3K \| 800 \| 4K \| 61\.2 \| US\$ 0\.123 \| US\$ 1\.50 \| US\$ 2\.00 \| US\$ 3\.00 of US\$ 20\.00 \|/,
   );
+  assert.ok(!body.includes("Total ("), "a run comment has one row and no totals");
   assert.ok(!body.includes("this run"), "the row shows the run's cost");
   assert.match(body, /Spent: US\$ 0\.50 of US\$ 2\.00 for the task/);
 });

@@ -1,7 +1,7 @@
 ---
-status: pending
+status: completed
 created_at: 2026-10-02T18:10:00-03:00
-updated_at: 2026-10-02T19:00:00-03:00
+updated_at: 2026-10-02T22:40:00-03:00
 commit: d0637c8
 ---
 
@@ -60,6 +60,15 @@ Answered on 2026-10-02 by the responsible person: the recommendation of each, an
 7. Update [`docs/architecture.md`](../architecture.md) (Budget). Done when it describes both figures, where they come from, and the totals row.
 8. Rebuild `dist/`, run `npm run check`. Done when it passes.
 9. The responsible person updates the test repository's workflow file and checks the figures after a few runs against OpenRouter's activity page.
+
+## Outcome
+
+Steps 2 to 8 are done; steps 1 and 9 are left to the responsible person, who holds the management key and the test repository.
+
+- `OpenRouter.keyStats` ([`src/budget.ts`](../../src/budget.ts)) makes the two queries of step 1 as OpenRouter's documentation describes them, without having run them against the API. It does not depend on getting one row: several rows are weighed by their requests, and the largest prompt is the largest of any row returned. If step 1 finds that the queries differ, `keyStats` and this plan change together.
+- `close-key` outputs `requests`, `max-input-tokens` and `tokens-per-second`; with an older workflow file, both columns show "—".
+- The line under the table that repeated the task's tokens and agent time is gone. The line with what the task spent stays, because it also shows the task's budget, which the totals row leaves empty.
+- The run comment's table has no totals row: it has one row.
 
 ## Out of scope
 

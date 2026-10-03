@@ -58,6 +58,12 @@ inputs:
     description: "(apply) input-tokens output of the close-key job."
   output-tokens:
     description: "(apply) output-tokens output of the close-key job."
+  requests:
+    description: "(apply) requests output of the close-key job."
+  max-input-tokens:
+    description: "(apply) max-input-tokens output of the close-key job."
+  tokens-per-second:
+    description: "(apply) tokens-per-second output of the close-key job."
   task-costs:
     description: "(apply) task-costs output of the close-key job."
   workdir:
@@ -93,6 +99,12 @@ outputs:
     description: "(close-key) Input tokens of this run's key, from OpenRouter's analytics."
   output-tokens:
     description: "(close-key) Output tokens of this run's key, from OpenRouter's analytics."
+  requests:
+    description: "(close-key) Requests made with this run's key, from OpenRouter's analytics."
+  max-input-tokens:
+    description: "(close-key) Input tokens of the largest request of this run's key, from OpenRouter's analytics."
+  tokens-per-second:
+    description: "(close-key) Mean completion tokens per second of this run's key's requests, from OpenRouter's analytics."
   task-costs:
     description: "(close-key) What each run of the task spent, in USD, by run ID, as JSON."
   reason:

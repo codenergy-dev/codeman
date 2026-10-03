@@ -25092,6 +25092,7 @@ var en = {
   money: (amount) => `US$ ${number(2).format(amount)}`,
   tokens: (count2) => new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(count2),
   cost: (amount) => `US$ ${number(3).format(amount)}`,
+  rate: (perSecond) => number(1).format(perSecond),
   dateTime: (iso) => `${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC`,
   of: (part, whole) => `${part} of ${whole}`,
   stage: (stage) => STAGES[stage],
@@ -25166,13 +25167,15 @@ var en = {
     "Time",
     "Input tokens",
     "Output tokens",
+    "Context",
+    "Tok/s",
     "Cost",
     "Key limit",
     "Task budget",
     "Monthly budget"
   ],
-  usedTokens: (input, output, time) => `Tokens: ${input} input and ${output} output, in ${time} of agent time.`,
   earlierRuns: (runs) => `Earlier runs (${runs})`,
+  totalRow: (runs) => `Total (${runs} ${runs === 1 ? "run" : "runs"})`,
   runsWithoutRow: "Runs without a row",
   fullPlan: "Full plan",
   changes: "Changes",
@@ -25306,6 +25309,7 @@ var ptBR = {
   money: (amount) => `US$ ${number2(2).format(amount)}`,
   tokens: (count2) => new Intl.NumberFormat("pt-BR", { notation: "compact", maximumFractionDigits: 1 }).format(count2),
   cost: (amount) => `US$ ${number2(3).format(amount)}`,
+  rate: (perSecond) => number2(1).format(perSecond),
   dateTime: (iso) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)} ${iso.slice(11, 16)} UTC`,
   of: (part, whole) => `${part} de ${whole}`,
   stage: (stage) => STAGES2[stage],
@@ -25380,13 +25384,15 @@ var ptBR = {
     "Tempo",
     "Tokens de entrada",
     "Tokens de sa\xEDda",
+    "Contexto",
+    "Tok/s",
     "Custo",
     "Limite da chave",
     "Or\xE7amento da tarefa",
     "Or\xE7amento mensal"
   ],
-  usedTokens: (input, output, time) => `Tokens: ${input} de entrada e ${output} de sa\xEDda, em ${time} de agente.`,
   earlierRuns: (runs) => `Rodadas anteriores (${runs})`,
+  totalRow: (runs) => `Total (${runs} ${runs === 1 ? "rodada" : "rodadas"})`,
   runsWithoutRow: "Rodadas sem linha",
   fullPlan: "Plano completo",
   changes: "Mudan\xE7as",
@@ -26384,6 +26390,10 @@ function count(value) {
   const number3 = typeof value === "string" ? Number(value) : value;
   return typeof number3 === "number" && Number.isFinite(number3) && number3 > 0 ? Math.round(number3) : 0;
 }
+function rate(value) {
+  const number3 = typeof value === "string" ? Number(value) : value;
+  return typeof number3 === "number" && Number.isFinite(number3) && number3 >= 0 ? number3 : void 0;
+}
 function utcSeconds(date) {
   return `${date.toISOString().slice(0, 19)}Z`;
 }
@@ -26427,13 +26437,12 @@ var OpenRouter = class {
    * Undefined when analytics has no rows for the key yet.
    */
   async keyTokens(hash, since, until) {
-    const response = await this.#request("/analytics/query", "POST", {
+    const rows = await this.#query({
       metrics: ["tokens_prompt", "tokens_completion"],
       filters: [{ field: "api_key_id", operator: "eq", value: hash }],
       time_range: { start: utcSeconds(since), end: utcSeconds(until) }
     });
-    const rows = response.data?.data;
-    if (!Array.isArray(rows) || rows.length === 0) return void 0;
+    if (rows.length === 0) return void 0;
     let input = 0;
     let output = 0;
     for (const row of rows) {
@@ -26441,6 +26450,48 @@ var OpenRouter = class {
       output += count(row.tokens_completion);
     }
     return { input, output };
+  }
+  /**
+   * How one key's requests went between `since` and `until`, from OpenRouter's analytics: how
+   * many there were, their mean throughput (completion tokens per second) and the largest
+   * prompt among them, cached tokens included. Undefined when analytics has no requests for the
+   * key yet. Throughput and per-request rows cover at most 31 days.
+   */
+  async keyStats(hash, since, until) {
+    const filters = [{ field: "api_key_id", operator: "eq", value: hash }];
+    const time_range = { start: utcSeconds(since), end: utcSeconds(until) };
+    const rows = await this.#query({
+      metrics: ["request_count", "avg_throughput"],
+      filters,
+      time_range
+    });
+    let requests = 0;
+    let weighted = 0;
+    let measured = 0;
+    for (const row of rows) {
+      const n = count(row.request_count);
+      const throughput = rate(row.avg_throughput);
+      requests += n;
+      if (throughput !== void 0 && n > 0) {
+        weighted += throughput * n;
+        measured += n;
+      }
+    }
+    if (requests === 0) return void 0;
+    const largest = await this.#query({
+      metrics: ["tokens_prompt"],
+      dimensions: ["generation_id"],
+      filters,
+      time_range,
+      order_by: { field: "tokens_prompt", direction: "desc" },
+      limit: 1
+    });
+    const maxInputTokens = largest.reduce((max, row) => Math.max(max, count(row.tokens_prompt)), 0);
+    return {
+      requests,
+      tokensPerSecond: measured > 0 ? weighted / measured : void 0,
+      maxInputTokens: largest.length > 0 ? maxInputTokens : void 0
+    };
   }
   async createKey(options) {
     const response = await this.#request("/keys", "POST", {
@@ -26453,6 +26504,12 @@ var OpenRouter = class {
   /** Disables instead of deleting, so the key's usage still counts towards the monthly cap. */
   async disableKey(hash) {
     await this.#request(`/keys/${encodeURIComponent(hash)}`, "PATCH", { disabled: true });
+  }
+  /** The rows of an analytics query. */
+  async #query(body) {
+    const response = await this.#request("/analytics/query", "POST", body);
+    const rows = response.data?.data;
+    return Array.isArray(rows) ? rows : [];
   }
   async #request(path, method = "GET", body) {
     const response = await this.#fetch(`${API}${path}`, {
@@ -26506,6 +26563,9 @@ function replaceFooter(body, footer) {
 }
 
 // src/spend.ts
+function meanThroughput(totals) {
+  return totals.throughputRequests > 0 ? totals.throughputSum / totals.throughputRequests : void 0;
+}
 var MAX_ROWS = 30;
 function addRow(spending, row, max = MAX_ROWS) {
   const rows = [...spending?.rows ?? [], row];
@@ -26547,12 +26607,16 @@ function spendTotals(spending) {
   return (spending?.rows ?? []).reduce(add, complete(spending?.earlier));
 }
 function add(totals, row) {
+  const weighed = row.tokensPerSecond !== void 0 && (row.requests ?? 0) > 0;
   return {
     runs: totals.runs + 1,
     cost: totals.cost + (row.cost ?? 0),
     durationMs: totals.durationMs + (row.durationMs ?? 0),
     inputTokens: totals.inputTokens + (row.inputTokens ?? 0),
-    outputTokens: totals.outputTokens + (row.outputTokens ?? 0)
+    outputTokens: totals.outputTokens + (row.outputTokens ?? 0),
+    maxInputTokens: Math.max(totals.maxInputTokens, row.maxInputTokens ?? 0),
+    throughputSum: totals.throughputSum + (weighed ? (row.tokensPerSecond ?? 0) * (row.requests ?? 0) : 0),
+    throughputRequests: totals.throughputRequests + (weighed ? row.requests ?? 0 : 0)
   };
 }
 function complete(totals) {
@@ -26561,20 +26625,25 @@ function complete(totals) {
     cost: totals?.cost ?? 0,
     durationMs: totals?.durationMs ?? 0,
     inputTokens: totals?.inputTokens ?? 0,
-    outputTokens: totals?.outputTokens ?? 0
+    outputTokens: totals?.outputTokens ?? 0,
+    maxInputTokens: totals?.maxInputTokens ?? 0,
+    throughputSum: totals?.throughputSum ?? 0,
+    throughputRequests: totals?.throughputRequests ?? 0
   };
 }
-function spendTable(t, spending, total) {
+function spendTable(t, spending, total, options = {}) {
   const rows = spending?.rows ?? [];
   const earlier = spending?.earlier;
   const dash = (value, format) => value === void 0 ? "\u2014" : format(value);
+  const known = (value) => value ? value : void 0;
   const lines = [
     `| ${t.tableHeader.join(" | ")} |`,
-    "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |"
+    "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |"
   ];
   if (earlier?.runs) {
+    const folded = complete(earlier);
     lines.push(
-      `| ${t.earlierRuns(earlier.runs)} | | | ${dash(earlier.durationMs, duration)} | ${dash(earlier.inputTokens, t.tokens)} | ${dash(earlier.outputTokens, t.tokens)} | ${t.cost(earlier.cost ?? 0)} | | | |`
+      `| ${t.earlierRuns(earlier.runs)} | | | ${dash(earlier.durationMs, duration)} | ${dash(earlier.inputTokens, t.tokens)} | ${dash(earlier.outputTokens, t.tokens)} | ${dash(known(folded.maxInputTokens), t.tokens)} | ${dash(meanThroughput(folded), t.rate)} | ${t.cost(earlier.cost ?? 0)} | | | |`
     );
   }
   for (const row of rows) {
@@ -26589,6 +26658,8 @@ function spendTable(t, spending, total) {
         dash(row.durationMs, duration),
         dash(row.inputTokens, t.tokens),
         dash(row.outputTokens, t.tokens),
+        dash(row.maxInputTokens, t.tokens),
+        dash(row.tokensPerSecond, t.rate),
         dash(row.cost, t.cost),
         dash(row.keyLimit, t.money),
         t.money(row.taskBudget),
@@ -26597,9 +26668,15 @@ function spendTable(t, spending, total) {
       ].join(" | ").trim()
     );
   }
-  const recorded = spendTotals(spending).cost;
-  if (total !== void 0 && total - recorded >= 1e-3) {
-    lines.push(`| ${t.runsWithoutRow} | | | | | | ${t.cost(total - recorded)} | | | |`);
+  const sums = spendTotals(spending);
+  const missing = total !== void 0 && total - sums.cost >= 1e-3 ? total - sums.cost : 0;
+  if (missing > 0) {
+    lines.push(`| ${t.runsWithoutRow} | | | | | | | | ${t.cost(missing)} | | | |`);
+  }
+  if (options.totals && sums.runs > 0) {
+    lines.push(
+      `| **${t.totalRow(sums.runs)}** | | | ${dash(known(sums.durationMs), duration)} | ${dash(known(sums.inputTokens), t.tokens)} | ${dash(known(sums.outputTokens), t.tokens)} | ${dash(known(sums.maxInputTokens), t.tokens)} | ${dash(meanThroughput(sums), t.rate)} | **${t.cost(sums.cost + missing)}** | | | |`
+    );
   }
   return lines;
 }
@@ -26654,20 +26731,14 @@ function renderStatus(view) {
     rest.push("", t.workflowsHelp, "");
   }
   if (record?.spending?.rows.length || view.cost?.task !== void 0) {
-    rest.push(`#### ${t.spending}`, "", ...spendTable(t, record?.spending, view.cost?.task), "");
+    rest.push(
+      `#### ${t.spending}`,
+      "",
+      ...spendTable(t, record?.spending, view.cost?.task, { totals: true }),
+      ""
+    );
     if (view.cost?.task !== void 0) {
       rest.push(`${spentText(t, { ...view.cost, run: void 0 })}.`, "");
-    }
-    const totals = spendTotals(record?.spending);
-    if (totals.inputTokens + totals.outputTokens + totals.durationMs > 0) {
-      rest.push(
-        t.usedTokens(
-          t.tokens(totals.inputTokens),
-          t.tokens(totals.outputTokens),
-          duration(totals.durationMs)
-        ),
-        ""
-      );
     }
   }
   const footer = t.panelFooter(modelName(view.model), view.runUrl, view.reportUrl);
@@ -27091,6 +27162,9 @@ function jobResults(runtime2) {
     runCost: amount("run-cost"),
     inputTokens: amount("input-tokens"),
     outputTokens: amount("output-tokens"),
+    requests: amount("requests"),
+    maxInputTokens: amount("max-input-tokens"),
+    tokensPerSecond: amount("tokens-per-second"),
     taskCosts: parseCosts(runtime2.input("task-costs"))
   };
 }
@@ -27766,7 +27840,10 @@ function spendRow(io, task, cost) {
     monthSpent: io.jobs.monthSpent,
     durationMs: agentDuration(io.resultDir),
     inputTokens: io.jobs.inputTokens,
-    outputTokens: io.jobs.outputTokens
+    outputTokens: io.jobs.outputTokens,
+    requests: io.jobs.requests,
+    maxInputTokens: io.jobs.maxInputTokens,
+    tokensPerSecond: io.jobs.tokensPerSecond
   };
 }
 function agentDuration(dir) {
@@ -27849,6 +27926,19 @@ async function closeKey({ runtime: runtime2 }) {
     runtime2.output("output-tokens", String(tokens.output));
     runtime2.info(`This run used ${tokens.input} input and ${tokens.output} output tokens.`);
   }
+  const stats = await runStats(router, hash, tokens !== void 0 && tokens.output > 0, runtime2);
+  if (stats) {
+    runtime2.output("requests", String(stats.requests));
+    if (stats.maxInputTokens !== void 0) {
+      runtime2.output("max-input-tokens", String(stats.maxInputTokens));
+    }
+    if (stats.tokensPerSecond !== void 0) {
+      runtime2.output("tokens-per-second", stats.tokensPerSecond.toFixed(1));
+    }
+    runtime2.info(
+      `Requests: ${stats.requests}; largest prompt: ${stats.maxInputTokens ?? "unknown"} tokens; mean throughput: ${stats.tokensPerSecond?.toFixed(1) ?? "unknown"} tokens per second.`
+    );
+  }
   const costs = await taskCosts(router, hash, runtime2.repository, runtime2);
   if (costs) runtime2.output("task-costs", JSON.stringify(costs));
 }
@@ -27897,6 +27987,25 @@ async function runTokens(router, hash, spent, log, wait = sleep) {
   } catch (error2) {
     log.warning(
       `Could not read this run's tokens: ${error2 instanceof Error ? error2.message : error2}`
+    );
+    return void 0;
+  }
+}
+async function runStats(router, hash, generated, log, wait = sleep) {
+  try {
+    for (let attempt = 0; ; attempt++) {
+      const now = /* @__PURE__ */ new Date();
+      const stats = await router.keyStats(hash, new Date(now.getTime() - KEY_LIFETIME_MS), now);
+      if (stats || !generated) return stats;
+      if (attempt === 6) {
+        log.warning("OpenRouter's analytics has no requests for this run's key yet.");
+        return void 0;
+      }
+      await wait(1e4);
+    }
+  } catch (error2) {
+    log.warning(
+      `Could not read this run's requests: ${error2 instanceof Error ? error2.message : error2}`
     );
     return void 0;
   }

@@ -164,6 +164,72 @@ test("a key with no analytics rows yet has no tokens", async () => {
   assert.equal(await new OpenRouter("mk", fetch).keyTokens("h", new Date(), new Date()), undefined);
 });
 
+test("reads a key's requests, mean throughput and largest prompt from analytics", async () => {
+  const { fetch, calls } = fakeFetch([
+    { data: { data: [{ request_count: "12", avg_throughput: "48.5" }] } },
+    { data: { data: [{ generation_id: "gen-1", tokens_prompt: "31000" }] } },
+  ]);
+  const stats = await new OpenRouter("mk", fetch).keyStats(
+    "k",
+    new Date("2026-09-27T10:00:00.123Z"),
+    new Date("2026-09-28T10:00:00.456Z"),
+  );
+  assert.deepEqual(stats, { requests: 12, tokensPerSecond: 48.5, maxInputTokens: 31_000 });
+  const filters = [{ field: "api_key_id", operator: "eq", value: "k" }];
+  const time_range = { start: "2026-09-27T10:00:00Z", end: "2026-09-28T10:00:00Z" };
+  assert.deepEqual(JSON.parse(String(calls[0]?.[1].body)), {
+    metrics: ["request_count", "avg_throughput"],
+    filters,
+    time_range,
+  });
+  assert.deepEqual(JSON.parse(String(calls[1]?.[1].body)), {
+    metrics: ["tokens_prompt"],
+    dimensions: ["generation_id"],
+    filters,
+    time_range,
+    order_by: { field: "tokens_prompt", direction: "desc" },
+    limit: 1,
+  });
+});
+
+test("weighs throughput by requests over several rows, and takes the largest prompt of any row", async () => {
+  const { fetch } = fakeFetch([
+    {
+      data: {
+        data: [
+          { request_count: 10, avg_throughput: 40 },
+          { request_count: 30, avg_throughput: 20 },
+          { request_count: 5, avg_throughput: null },
+        ],
+      },
+    },
+    { data: { data: [{ tokens_prompt: 900 }, { tokens_prompt: 1_200 }] } },
+  ]);
+  assert.deepEqual(await new OpenRouter("mk", fetch).keyStats("k", new Date(), new Date()), {
+    requests: 45,
+    tokensPerSecond: 25,
+    maxInputTokens: 1_200,
+  });
+});
+
+test("a key with no requests in analytics yet has no stats, without a second query", async () => {
+  const { fetch, calls } = fakeFetch([{ data: { data: [] } }]);
+  assert.equal(await new OpenRouter("mk", fetch).keyStats("k", new Date(), new Date()), undefined);
+  assert.equal(calls.length, 1);
+});
+
+test("a key whose largest prompt is not listed has no context length", async () => {
+  const { fetch } = fakeFetch([
+    { data: { data: [{ request_count: 2, avg_throughput: 10 }] } },
+    { data: {} },
+  ]);
+  assert.deepEqual(await new OpenRouter("mk", fetch).keyStats("k", new Date(), new Date()), {
+    requests: 2,
+    tokensPerSecond: 10,
+    maxInputTokens: undefined,
+  });
+});
+
 test("names keys by repository and task, as earlier runs did", () => {
   assert.equal(keyPrefix(o), "codeman/o/r/");
   assert.equal(taskKeyPrefix(o, 7), "codeman/o/r/7/");

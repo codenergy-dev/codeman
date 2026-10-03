@@ -31,6 +31,8 @@ export interface Messages {
   tokens(count: number): string;
   /** With a third decimal: runs often cost less than a cent. */
   cost(amount: number): string;
+  /** Tokens per second, with one decimal. */
+  rate(perSecond: number): string;
   /** An ISO timestamp, in UTC. */
   dateTime(iso: string): string;
   /** "X of Y", for amounts. */
@@ -94,10 +96,12 @@ export interface Messages {
     string,
     string,
     string,
+    string,
+    string,
   ];
-  /** Tokens used by the task's recorded runs, and for how long agents ran. */
-  usedTokens(input: string, output: string, time: string): string;
   earlierRuns(runs: number): string;
+  /** The label of the row that totals every run of the task. */
+  totalRow(runs: number): string;
   runsWithoutRow: string;
 
   // Pull request.

@@ -198,6 +198,9 @@ jobs:
       run-cost: ${{ steps.codeman.outputs.run-cost }}
       input-tokens: ${{ steps.codeman.outputs.input-tokens }}
       output-tokens: ${{ steps.codeman.outputs.output-tokens }}
+      requests: ${{ steps.codeman.outputs.requests }}
+      max-input-tokens: ${{ steps.codeman.outputs.max-input-tokens }}
+      tokens-per-second: ${{ steps.codeman.outputs.tokens-per-second }}
       task-costs: ${{ steps.codeman.outputs.task-costs }}
     steps:
       - uses: codenergy-dev/codeman@COMMIT_SHA
@@ -262,6 +265,9 @@ jobs:
           month-spent: ${{ needs.open-key.outputs.month-spent }}
           input-tokens: ${{ needs.close-key.outputs.input-tokens }}
           output-tokens: ${{ needs.close-key.outputs.output-tokens }}
+          requests: ${{ needs.close-key.outputs.requests }}
+          max-input-tokens: ${{ needs.close-key.outputs.max-input-tokens }}
+          tokens-per-second: ${{ needs.close-key.outputs.tokens-per-second }}
           task-costs: ${{ needs.close-key.outputs.task-costs }}
 
   # Starts another run when this one moved a task, so the next task (or the next step of this

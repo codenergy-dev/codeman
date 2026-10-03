@@ -75,6 +75,21 @@ function count(value: unknown): number {
     : 0;
 }
 
+/** A non-negative finite rate from a number or a numeric string; undefined otherwise. */
+function rate(value: unknown): number | undefined {
+  const number = typeof value === "string" ? Number(value) : value;
+  return typeof number === "number" && Number.isFinite(number) && number >= 0 ? number : undefined;
+}
+
+/** How a key's requests went, as OpenRouter's analytics counts them. */
+export interface KeyStats {
+  requests: number;
+  /** Mean completion tokens per second over the requests; undefined when none was measured. */
+  tokensPerSecond?: number | undefined;
+  /** The largest prompt of one request, cached tokens included. */
+  maxInputTokens?: number | undefined;
+}
+
 /** Analytics wants seconds precision: `YYYY-MM-DDTHH:MM:SSZ`. */
 function utcSeconds(date: Date): string {
   return `${date.toISOString().slice(0, 19)}Z`;
@@ -134,21 +149,66 @@ export class OpenRouter {
     since: Date,
     until: Date,
   ): Promise<{ input: number; output: number } | undefined> {
-    const response = (await this.#request("/analytics/query", "POST", {
+    const rows = await this.#query({
       metrics: ["tokens_prompt", "tokens_completion"],
       filters: [{ field: "api_key_id", operator: "eq", value: hash }],
       time_range: { start: utcSeconds(since), end: utcSeconds(until) },
-    })) as { data?: { data?: unknown } };
-    const rows = response.data?.data;
-    if (!Array.isArray(rows) || rows.length === 0) return undefined;
+    });
+    if (rows.length === 0) return undefined;
     let input = 0;
     let output = 0;
-    for (const row of rows as Record<string, unknown>[]) {
+    for (const row of rows) {
       // Counts may come back as strings.
       input += count(row.tokens_prompt);
       output += count(row.tokens_completion);
     }
     return { input, output };
+  }
+
+  /**
+   * How one key's requests went between `since` and `until`, from OpenRouter's analytics: how
+   * many there were, their mean throughput (completion tokens per second) and the largest
+   * prompt among them, cached tokens included. Undefined when analytics has no requests for the
+   * key yet. Throughput and per-request rows cover at most 31 days.
+   */
+  async keyStats(hash: string, since: Date, until: Date): Promise<KeyStats | undefined> {
+    const filters = [{ field: "api_key_id", operator: "eq", value: hash }];
+    const time_range = { start: utcSeconds(since), end: utcSeconds(until) };
+    const rows = await this.#query({
+      metrics: ["request_count", "avg_throughput"],
+      filters,
+      time_range,
+    });
+    // One row is expected; several (such as time buckets) are weighed by their requests.
+    let requests = 0;
+    let weighted = 0;
+    let measured = 0;
+    for (const row of rows) {
+      const n = count(row.request_count);
+      const throughput = rate(row.avg_throughput);
+      requests += n;
+      if (throughput !== undefined && n > 0) {
+        weighted += throughput * n;
+        measured += n;
+      }
+    }
+    if (requests === 0) return undefined;
+
+    // There is no max aggregate: the largest prompt is the first request by prompt size.
+    const largest = await this.#query({
+      metrics: ["tokens_prompt"],
+      dimensions: ["generation_id"],
+      filters,
+      time_range,
+      order_by: { field: "tokens_prompt", direction: "desc" },
+      limit: 1,
+    });
+    const maxInputTokens = largest.reduce((max, row) => Math.max(max, count(row.tokens_prompt)), 0);
+    return {
+      requests,
+      tokensPerSecond: measured > 0 ? weighted / measured : undefined,
+      maxInputTokens: largest.length > 0 ? maxInputTokens : undefined,
+    };
   }
 
   async createKey(options: {
@@ -167,6 +227,15 @@ export class OpenRouter {
   /** Disables instead of deleting, so the key's usage still counts towards the monthly cap. */
   async disableKey(hash: string): Promise<void> {
     await this.#request(`/keys/${encodeURIComponent(hash)}`, "PATCH", { disabled: true });
+  }
+
+  /** The rows of an analytics query. */
+  async #query(body: Record<string, unknown>): Promise<Record<string, unknown>[]> {
+    const response = (await this.#request("/analytics/query", "POST", body)) as {
+      data?: { data?: unknown };
+    };
+    const rows = response.data?.data;
+    return Array.isArray(rows) ? (rows as Record<string, unknown>[]) : [];
   }
 
   async #request(path: string, method = "GET", body?: unknown): Promise<unknown> {
