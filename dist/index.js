@@ -28533,6 +28533,9 @@ async function closeKey({ runtime: runtime2, inference }) {
     );
   }
   if (usage.taskCosts) runtime2.output("task-costs", JSON.stringify(usage.taskCosts));
+  if (usage.pod) runtime2.output("pod", usage.pod);
+  if (usage.podCosts) runtime2.output("pod-costs", JSON.stringify(usage.podCosts));
+  if (usage.keptPod) runtime2.output("kept-pod", usage.keptPod);
 }
 
 // src/steps/select.ts

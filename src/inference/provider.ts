@@ -51,4 +51,10 @@ export interface RunUsage {
   tokensPerSecond?: number | undefined;
   /** What each run of the task spent, by run ID, when the provider can tell. */
   taskCosts?: Record<string, number> | undefined;
+  /** The pod that served the run, for a provider that bills pods. */
+  pod?: string | undefined;
+  /** What each of the task's pods was billed so far, by pod ID. */
+  podCosts?: Record<string, number> | undefined;
+  /** The pod kept for the task's next run, which `release-pod` terminates if none follows. */
+  keptPod?: string | undefined;
 }

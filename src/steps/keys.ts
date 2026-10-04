@@ -82,4 +82,7 @@ export async function closeKey({ runtime, inference }: Services): Promise<void> 
     );
   }
   if (usage.taskCosts) runtime.output("task-costs", JSON.stringify(usage.taskCosts));
+  if (usage.pod) runtime.output("pod", usage.pod);
+  if (usage.podCosts) runtime.output("pod-costs", JSON.stringify(usage.podCosts));
+  if (usage.keptPod) runtime.output("kept-pod", usage.keptPod);
 }
