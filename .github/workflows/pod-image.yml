@@ -1,0 +1,41 @@
+# Builds Codeman's pod image (docker/pod/Dockerfile) and publishes it to GitHub's container
+# registry. The image is then pinned by digest in src/inference/ollama.ts, by a reviewed commit.
+name: Pod image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - docker/pod/**
+      - dist/gateway.js
+      - .github/workflows/pod-image.yml
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/codeman-pod
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # dist/gateway.js is checked against the source by CI, so the image needs no npm install.
+      - name: Build
+        run: docker build --pull --platform linux/amd64 -f docker/pod/Dockerfile -t "$IMAGE:$GITHUB_SHA" dist
+      - name: Publish
+        run: |
+          echo "$TOKEN" | docker login ghcr.io --username "$ACTOR" --password-stdin
+          docker push "$IMAGE:$GITHUB_SHA"
+          docker logout ghcr.io
+          digest="$(docker inspect --format '{{index .RepoDigests 0}}' "$IMAGE:$GITHUB_SHA")"
+          echo "Published \`$digest\`. Pin it in \`src/inference/ollama.ts\`." >> "$GITHUB_STEP_SUMMARY"
+        env:
+          TOKEN: ${{ github.token }}
+          ACTOR: ${{ github.actor }}

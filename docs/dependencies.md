@@ -34,7 +34,7 @@ Pinned to full commit SHAs.
 
 | Action | Version | Used in |
 | --- | --- | --- |
-| `actions/checkout` | v7.0.1 | CI, target repository workflow |
+| `actions/checkout` | v7.0.1 | CI, pod image, target repository workflow |
 | `actions/setup-node` | v7.0.0 | CI |
 | `actions/create-github-app-token` | v3.2.0 | Target repository workflow |
 | `actions/upload-artifact` | v7.0.1 | Target repository workflow |
@@ -87,7 +87,7 @@ Audited on 2026-10-03 for the [self-hosted inference plan](plans/2026-10-02-self
 ### Ollama
 
 - **What and why:** the inference engine in Codeman's pod image. It pulls a model by name and serves an OpenAI-compatible API ([OpenAI compatibility](web/ollama/openai-compatibility.md)). MIT, [ollama/ollama](https://github.com/ollama/ollama), very active (releases every few days).
-- **Version:** 0.35.1, from its official image `ollama/ollama`, pinned by digest (`sha256:292ee7945dfc3d5840a181f3ab86fedb1e66703e02c8af98b50f4da56b7e278c`, the multi-platform index), in Codeman's pod image.
+- **Version:** 0.35.1, from its official image `ollama/ollama`, pinned by digest (`sha256:292ee7945dfc3d5840a181f3ab86fedb1e66703e02c8af98b50f4da56b7e278c`, the multi-platform index) in [`docker/pod/Dockerfile`](../docker/pod/Dockerfile).
 - **Known vulnerabilities** (OSV, 2026-10-03): path traversal (CVE-2024-37032, fixed in 0.1.34; CVE-2026-7020, reported up to 0.20.2), file deletion and archive extraction outside its directory (fixed in 0.1.34 and 0.1.47), out-of-bounds reads in model loading (CVE-2026-7482, fixed in 0.17.1), several denials of service, a token leak to a malicious registry during `pull` (CVE-2025-51471, reported up to 0.9.6), and an API without authentication (CVE-2025-63389). Accepted for 0.35.1: its API listens only on the pod's loopback, behind Codeman's gateway, which forwards only the OpenAI-compatible routes, and Codeman pulls models only from Ollama's own registry.
 - **Permissions:** it runs as root in the pod's container, which holds nothing but the model and the gateway.
 
@@ -95,3 +95,9 @@ Audited on 2026-10-03 for the [self-hosted inference plan](plans/2026-10-02-self
 
 - **What and why:** Runpod's official Serverless worker, [runpod-workers/worker-vllm](https://github.com/runpod-workers/worker-vllm), running vLLM, with an OpenAI-compatible route ([OpenAI API compatibility](web/runpod/openai-api-compatibility.md)). MIT, maintained by Runpod, released weekly (v2.28.0 on 2026-09-28).
 - **How:** a maintainer chooses it, pinned to a release image (`runpod/worker-v1-vllm:<version>`), when creating the endpoint in Runpod's console. Codeman never runs it and does not install it; it checks the endpoint's settings when a run opens.
+
+### Codeman's pod image
+
+- Built by [`.github/workflows/pod-image.yml`](../.github/workflows/pod-image.yml) from [`docker/pod/Dockerfile`](../docker/pod/Dockerfile) when either changes, or `dist/gateway.js`: Ollama's image, the `node` binary of `node:24.21.0-bookworm-slim` (pinned by digest, `sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6`), and the gateway, `dist/gateway.js`, bundled from [`src/gateway/`](../src/gateway/) with Node's modules only. CI checks that `dist/` matches the source, so the image needs no npm install.
+- Published to GitHub's container registry as `ghcr.io/<owner>/codeman-pod`, and referenced by digest in [`src/inference/ollama.ts`](../src/inference/ollama.ts) by a reviewed commit, never by tag.
+- The workflow uses only `actions/checkout` (pinned) and the runner's `docker`, with `packages: write` and `contents: read`.
