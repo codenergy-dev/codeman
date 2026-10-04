@@ -1,6 +1,6 @@
 # Installation
 
-Setting up Codeman on a repository takes four parts: a GitHub App, an OpenRouter account, credentials in the repository or organization, and a workflow. Before the first task, go through the [security checklist](security.md#checklist).
+Setting up Codeman on a repository takes four parts: a GitHub App, an OpenRouter account, credentials in the repository or organization, and a workflow. To serve models on your own rented GPUs instead of OpenRouter, see [self-hosted inference on Runpod](#self-hosted-inference-on-runpod). Before the first task, go through the [security checklist](security.md#checklist).
 
 ## 1. Register the GitHub App
 
@@ -42,6 +42,8 @@ Add these under **Settings → Secrets and variables → Actions**, either in th
 | Secret | `CODEMAN_GITHUB_APP_PRIVATE_KEY` | The full contents of the private key file |
 | Secret | `CODEMAN_OPENROUTER_MANAGEMENT_KEY` | The OpenRouter management key |
 | Secret | `CODEMAN_OPENROUTER_KEY_ENCRYPTION_SECRET` | A random value of at least 32 characters |
+| Secret | `CODEMAN_RUNPOD_API_KEY` | Self-hosted inference only: the Runpod account's API key |
+| Secret | `CODEMAN_RUNPOD_SERVERLESS_KEY` | Self-hosted inference on Serverless only: a key restricted to the endpoint |
 
 Generate the encryption secret with:
 
@@ -49,7 +51,7 @@ Generate the encryption secret with:
 openssl rand -base64 32
 ```
 
-It encrypts each task key while it travels from the job that creates it to the agent job; see [architecture](architecture.md#budget).
+It encrypts each task key, or self-hosted run token, while it travels from the job that creates it to the agent job; see [architecture](architecture.md#budget). Self-hosted inference needs it too.
 
 ## 4. Add the workflow and settings
 
@@ -63,6 +65,47 @@ It encrypts each task key while it travels from the job that creates it to the a
 Codeman reads `.codeman/settings.yml` and `.codemanignore` from the default branch. A manual run (**Actions → Codeman → Run workflow**) can override the model and the budgets for that run.
 
 The agent job needs a Linux runner (x64 or arm64).
+
+## Self-hosted inference on Runpod
+
+Instead of OpenRouter, Codeman can serve the model itself on GPUs rented from [Runpod](https://www.runpod.io): on a pod it creates for the task (`gpu-mode: pod`), or on the workers of a Serverless endpoint you create (`gpu-mode: serverless`). See [architecture](architecture.md#self-hosted-inference) for how it works and what it costs, and [security](security.md) for the secrets. OpenRouter's management key is not needed then; the encryption secret still is.
+
+### The account
+
+1. Create a Runpod account, or a team, for Codeman only: the whole account's spend this month counts against `monthly-budget`.
+2. Add prepaid credits, about the monthly budget, and leave auto-pay off. At a balance of US$ 0, Runpod stops every pod, so the credits cap what Codeman can spend there.
+3. Create an API key on the console's **Credentials** page, **API Keys** tab, with **All** permissions (pods and billing need it), and add it as the secret `CODEMAN_RUNPOD_API_KEY`. Only the key jobs of the workflow receive it.
+
+### Pods
+
+1. In `.codeman/settings.yml`:
+
+   ```yaml
+   inference: self-hosted
+   model: qwen3-coder:30b        # an Ollama model name
+   gpu-type: "NVIDIA RTX A6000"  # as Runpod names it, quoted; on Secure Cloud
+   ```
+
+   Choose a GPU with enough memory for the model at its full context length: Codeman loads it with the context length the model supports.
+2. Codeman runs its own pod image, pinned by digest in the version you use. Until that version pins one (`POD_IMAGE` in `src/inference/ollama.ts` is empty), build it with this repository's [pod image workflow](../.github/workflows/pod-image.yml), make the package public in GitHub's container registry (or add a registry credential in Runpod), and set `pod-image: ghcr.io/<owner>/codeman-pod@sha256:<digest>` on the `open-key` step.
+
+### Serverless
+
+1. In Runpod's console, create a Serverless endpoint from the vLLM worker, pinned to a release (`runpod/worker-v1-vllm:<version>`), queue-based:
+   - **Active workers:** 0. **Max workers:** 1. **Idle timeout:** 60 seconds or less. **FlashBoot:** on.
+   - Data centers on Secure Cloud.
+   - Environment: `MODEL_NAME` (the Hugging Face model), `MAX_MODEL_LEN`, `ENABLE_AUTO_TOOL_CHOICE=true` and the `TOOL_CALL_PARSER` that matches the model, which the agent's tool calls need.
+2. Create an API key with **Restricted** permissions and access to this endpoint only, and add it as the secret `CODEMAN_RUNPOD_SERVERLESS_KEY`. Only Codeman's step in the agent job receives it, outside the sandbox.
+3. In `.codeman/settings.yml`:
+
+   ```yaml
+   inference: self-hosted
+   gpu-mode: serverless
+   serverless-endpoint: <the endpoint's ID>
+   model: Qwen/Qwen3-Coder-30B-A3B-Instruct   # what the worker serves
+   ```
+
+Codeman checks the endpoint before each run and reports what to change. After 7 days without requests, Runpod sets its max workers to 0; set it back to 1.
 
 ## Try it
 

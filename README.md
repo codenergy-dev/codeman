@@ -32,6 +32,16 @@ You need a GitHub App for Codeman, an [OpenRouter](https://openrouter.ai) accoun
 
 Codeman is model-agnostic: it reaches models through OpenRouter, and each task gets its own key with a spending limit, inside a monthly budget per repository. You choose the model and the budgets in `.codeman/settings.yml`, and the paths the agent may not change in `.codemanignore`.
 
+You can also serve an open model yourself, on GPUs rented from [Runpod](https://www.runpod.io), with the same budgets:
+
+```yaml
+inference: self-hosted
+model: qwen3-coder:30b
+gpu-type: "NVIDIA RTX A6000"
+```
+
+Codeman then starts a GPU for the task, serves the model with Ollama behind its own gateway, and stops the GPU when the task no longer needs it. A Serverless endpoint works too. See [self-hosted inference](docs/installation.md#self-hosted-inference-on-runpod).
+
 The workflow runs once a day, when you start it manually, when a maintainer comments a `/codeman` command, and when a review on one of Codeman's pull requests asks for changes:
 
 ```yaml

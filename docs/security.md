@@ -12,8 +12,10 @@ The workflow is [`templates/codeman.yml`](../templates/codeman.yml); the jobs ar
 | --- | --- | --- | --- | --- | --- |
 | `CODEMAN_GITHUB_APP_PRIVATE_KEY`, and the App tokens made from it | `select`, `apply` | Yes | These jobs run no LLM and no repository code. Each requests a token with only the permissions it needs. `apply` treats the agent's result as untrusted and filters it through the [change policy](architecture.md#change-policy). The token that may write workflows is requested only to move workflows a maintainer accepted. | The App may write to every branch of the repositories it is installed on. Codeman only writes to task branches, but nothing else stops it. | Install the App on selected repositories only. Add a ruleset on the default branch that requires a pull request. |
 | `CODEMAN_OPENROUTER_MANAGEMENT_KEY` | `open-key`, `close-key` | Yes | These jobs check out nothing, run no LLM and only call OpenRouter. | None known. | — |
+| `CODEMAN_RUNPOD_API_KEY` (self-hosted inference) | `open-key`, `close-key`, `release-pod` | Yes | These jobs check out nothing, run no LLM and only call Runpod and the pods' gateways. Pods get only the hash of their admin token, derived from this key. | It may do anything in the Runpod account, including spend all its credits. | An account dedicated to Codeman, with prepaid credits and no auto-pay ([installation](installation.md#self-hosted-inference-on-runpod)). |
+| `CODEMAN_RUNPOD_SERVERLESS_KEY` (self-hosted inference on Serverless) | Codeman's step in `agent`, which runs the gateway | Yes, with the `agent` job as the template has it | The same isolation as the encryption secret: the agent gets only a local URL and the run's token, which stops working when the run ends or its budget is spent. | It does not expire and has no spending limit. A step added to `agent` that runs repository code can read it ([risk 3](#3-steps-added-to-the-agent-job-run-outside-the-sandbox)), and run the endpoint at the account's cost until someone revokes it. | Restrict it to the endpoint; keep the endpoint at one worker; prepaid credits. If a step did run repository code, revoke the key. |
 | `CODEMAN_OPENROUTER_KEY_ENCRYPTION_SECRET` | `open-key`, `agent` | Yes, with the `agent` job as the template has it | In `agent`, only Codeman's own step holds it. The agent runs as another user, which cannot read that step's process. See [agent sandbox](architecture.md#agent-sandbox). | A step added to `agent` that runs repository code runs as the runner's user and can read it ([risk 3](#3-steps-added-to-the-agent-job-run-outside-the-sandbox)). With it, anyone can decrypt the task keys in the run logs, which are public on public repositories. | Run no repository code in `agent`. If a step did, rotate the secret. Each key it protects is disabled when its run ends and expires within 24 hours. |
-| The run's task key | The agent, in `agent` | Partly | It is the agent's own credential. Its limit is what remains of the task's budget. `close-key` disables it when the run ends, it expires after 24 hours, it is masked in the logs, and it travels between jobs encrypted. See [budget](architecture.md#budget). | A manipulated agent can send it out ([risk 4](#4-the-agent-can-send-its-task-key-out)). | Keep the task budget low. [Roadmap](#roadmap) item 1. |
+| The run's task key, or its token for a self-hosted gateway | The agent, in `agent` | Partly | It is the agent's own credential. Its limit is what remains of the task's budget. `close-key` disables it (or ends the run on its gateway) when the run ends; a key expires after 24 hours, a pod's run at its deadline. It is masked in the logs, and it travels between jobs encrypted. See [budget](architecture.md#budget). | A manipulated agent can send it out ([risk 4](#4-the-agent-can-send-its-task-key-out)). | Keep the task budget low. [Roadmap](#roadmap) item 1. |
 | `GITHUB_TOKEN` of `agent` (contents and actions read) | Codeman's step in `agent`, to download the results of workflows | Yes | The same isolation as the encryption secret. It can only read. | The same as the encryption secret. | The same as the encryption secret. |
 | `GITHUB_TOKEN` of `forward-review` and `next-run` (actions write) | These jobs | Yes | They only start the Codeman workflow with `gh workflow run`. They check out nothing, and values reach the command through environment variables, not the script. | None known. | — |
 | The repository's own secrets, used by its other workflows | The repository's workflows. Codeman never reads them. | Depends on those workflows | Codeman does not reference them. | Workflows that run on Codeman's branches run code the agent wrote, with the secrets those workflows expose ([risk 1](#1-code-the-agent-wrote-runs-with-the-repositorys-secrets)). | See risk 1. |
@@ -62,6 +64,8 @@ How to protect: in the `agent` job, add only steps that install tools, such as `
 
 The agent's network is not restricted, and it holds its task key. A manipulated agent can send the key out and spend it until the run ends and `close-key` disables it. The loss is bounded by the key's limit: what remains of the task's budget, never more than the monthly budget allows.
 
+With self-hosted inference on a pod, the token opens the pod's gateway, which Runpod's proxy makes public, until the run ends or its budget is spent; the pod costs the same whether the requests come from the agent or not. On Serverless, the gateway listens only on the runner's loopback.
+
 How to protect: keep `task-budget` and `monthly-budget` low. [Roadmap](#roadmap) item 1 would close the channel.
 
 ### 5. Results of accepted workflows reach the agent
@@ -76,15 +80,15 @@ How to protect: before `/codeman accept-workflows`, check that the workflow take
 
 *Logs: public repositories. Model provider: both.*
 
-The agent job logs what the agent does, and run logs are public on public repositories. The task key is masked. Anything else the agent prints appears in the log. The repository's code, issues and comments go to the model provider through OpenRouter.
+The agent job logs what the agent does, and run logs are public on public repositories. The task key is masked. Anything else the agent prints appears in the log. The repository's code, issues and comments go to the model provider through OpenRouter, or, with self-hosted inference, to a container on Runpod. Codeman creates pods on Secure Cloud only, in Runpod's certified data centers; a Serverless endpoint runs where the maintainer who created it chose. A pod's gateway is public behind Runpod's proxy, and serves only whoever holds the run's token; Ollama's own port stays inside the pod.
 
-How to protect: keep secrets out of the repository, as you would anyway. On private repositories, choose a model and provider whose data policy you accept; OpenRouter's privacy settings can restrict providers.
+How to protect: keep secrets out of the repository, as you would anyway. On private repositories, choose a model and provider whose data policy you accept; OpenRouter's privacy settings can restrict providers. With Serverless, choose Secure Cloud data centers.
 
 ### 7. Codeman's own code and dependencies
 
 *Public and private repositories.*
 
-The workflow runs Codeman, third-party actions and the OpenCode harness with the permissions above. The template pins Codeman and every action to a full commit SHA. OpenCode is pinned to a version and checked against its npm integrity hash. See [dependencies](dependencies.md).
+The workflow runs Codeman, third-party actions and the OpenCode harness with the permissions above. The template pins Codeman and every action to a full commit SHA. OpenCode is pinned to a version and checked against its npm integrity hash. Codeman's pod image, with Ollama, is pinned by digest. See [dependencies](dependencies.md).
 
 How to protect: pin Codeman to a SHA, as [installation](installation.md) says, and read the changes before moving to a new one.
 
@@ -107,14 +111,14 @@ Before running Codeman on a repository:
 3. Add a ruleset on the default branch that requires a reviewed pull request.
 4. Check which secrets the workflows that run on `codeman/*` branches expose. Move secrets that deploy or publish to an Environment with required reviewers ([risk 1](#1-code-the-agent-wrote-runs-with-the-repositorys-secrets)).
 5. In the `agent` job, add only steps that install tools ([risk 3](#3-steps-added-to-the-agent-job-run-outside-the-sandbox)).
-6. Keep `task-budget` and `monthly-budget` low ([risk 4](#4-the-agent-can-send-its-task-key-out)).
+6. Keep `task-budget` and `monthly-budget` low ([risk 4](#4-the-agent-can-send-its-task-key-out)). With self-hosted inference, use a Runpod account dedicated to Codeman, with prepaid credits and no auto-pay.
 7. Label only issues you opened, written in your own words.
 
 ## Roadmap
 
 Planned improvements, most valuable first. Each will get its own plan.
 
-1. **Restrict the agent's network** to an allowlist (OpenRouter, package registries), with `iptables` rules that match the agent's user. This reduces risks 2 and 4.
+1. **Restrict the agent's network** to an allowlist (OpenRouter or the run's gateway, package registries), with `iptables` rules that match the agent's user. This reduces risks 2 and 4.
 2. **Test the sandbox against a hostile agent.** A CI job on a GitHub-hosted runner replaces the harness with a script that tries to read secrets: other users' `/proc/*/environ`, the runner's home, `sudo`, `docker`, the runner's credentials and cloud metadata endpoints. The build fails if any attempt succeeds. This keeps the [secrets](#secrets) table true as Codeman and the runner images change.
 3. **Warn about secrets exposed to task branches.** `select` warns when a workflow that runs on `push` or `pull_request` for `codeman/*` references `secrets.*` outside an Environment. This reduces risk 1.
 4. **Warn about extra steps in the agent job.** `select` reads the workflow and warns when the `agent` job has `run` steps, or actions other than known setup actions. This reduces risk 3.

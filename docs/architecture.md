@@ -41,17 +41,19 @@ Each stage of a run is its own job, so the workflow graph shows where a run is a
 
 ```
 select ──▶ open-key ──▶ agent ──▶ close-key ──▶ apply ──▶ next-run
+                                                      └──▶ release-pod
 ```
 
-Jobs that do not apply to a run are skipped: a run that only records answers goes from `select` to `apply`.
+Jobs that do not apply to a run are skipped: a run that only records answers goes from `select` to `apply`, and `release-pod` runs only after a run on a pod that was kept; see [self-hosted inference](#self-hosted-inference).
 
 | Job | Does | Credentials |
 | --- | --- | --- |
 | `select` | Reads the settings and `.codemanignore` from the default branch, picks the task and the action (`plan`, `route`, `implement` with its stage, `record`, `accept` or `none`), sets `codeman:planning`, `codeman:routing` or the stage's label, and writes the task context (`task.json`) as an artifact. | App token: issues write; contents, pull requests and actions read |
-| `open-key` | Checks the task and monthly budgets and creates the run's OpenRouter key. | OpenRouter management key, encryption secret |
-| `agent` | Runs the harness on a copy of the checkout and uploads what it changed as an artifact, even when the agent fails or runs out of time. | `GITHUB_TOKEN` with contents and actions read (for workflow results; the agent never sees it), the run's key |
-| `close-key` | Disables the run's key and reads what it and each earlier run of the task spent. Runs whatever happened before. | OpenRouter management key |
-| `apply` | Validates the agent's result and writes it: commits, pull request, labels, run and status comments, spend. When the action is `record`, it applies the maintainers' answers instead; when it is `accept`, it moves the accepted workflows. | App token: contents, issues and pull requests write; for `accept` only, a second token with contents and workflows write |
+| `open-key` | Checks the task and monthly budgets and gives the run access to its model: an OpenRouter key, or a token for a self-hosted model's gateway, which may start a pod. | OpenRouter management key or GPU account key, encryption secret |
+| `agent` | Runs the harness on a copy of the checkout and uploads what it changed as an artifact, even when the agent fails or runs out of time. For a Serverless run, also runs the gateway, outside the sandbox. | `GITHUB_TOKEN` with contents and actions read (for workflow results; the agent never sees it), the run's key or token; for Serverless, the endpoint's key, which only Codeman's step holds |
+| `close-key` | Ends the run's access (disables the key, or ends the run on its gateway) and reads what it and each earlier run of the task spent. Keeps a pod for the task's next run or terminates it. Runs whatever happened before. | OpenRouter management key or GPU account key |
+| `apply` | Validates the agent's result and writes it: commits, pull request, labels, run and status comments, spend. When the action is `record`, it applies the maintainers' answers instead; when it is `accept`, it moves the accepted workflows. Says whether the task goes on to another agent run (`continues`). | App token: contents, issues and pull requests write; for `accept` only, a second token with contents and workflows write |
+| `release-pod` | Terminates the pod `close-key` kept, when the task does not go on to another run now, or `apply` failed. | GPU account key |
 | `next-run` | Starts another run when this one moved a task. | `GITHUB_TOKEN` with `actions: write` |
 
 Only `agent` runs an LLM. The jobs that write to GitHub never run one, and they treat everything the agent produced as untrusted.
@@ -64,7 +66,7 @@ The agent reads text that may be hostile (see [security](security.md#risks)) and
 - The runner's home, which holds the job's temporary files, is closed to other users before the agent starts. The agent is not in the `docker` group.
 - Its environment is rebuilt from an allowlist: its own `HOME` and XDG directories, the job's `PATH` without entries in the runner's home, and the harness's variables. Nothing else from the runner passes, including what `sudo`'s PAM session adds from `/etc/environment`.
 - Its tools and network are not restricted: it can use what the runner image has and what earlier steps of the job set up. The sandbox protects credentials, not the runner.
-- The task key reaches it only through its environment. It is the only credential the agent holds.
+- Its credential (the run's OpenRouter key, or its token for a self-hosted gateway) reaches it only through its environment. It is the only credential the agent holds: a Serverless endpoint's key stays in Codeman's step, outside the sandbox.
 - When the harness exits or reaches its time limit, every process of that user is killed.
 - Codeman finds changes with `git status`, using the original checkout's `.git` against the agent's copy; the agent's `.git` is never used. Changed files are copied without following symlinks.
 
@@ -77,6 +79,8 @@ Every agent run gets Codeman's working rules: the `##` sections of Codeman's own
 
 ## Budget
 
+This section describes OpenRouter, the default. With self-hosted inference, the budgets mean the same, but spend is counted from GPU time; see [self-hosted inference](#self-hosted-inference).
+
 - The task budget (default US$ 2) covers the whole task, from the first plan to the last fix, across all its runs.
 - Each run gets its own OpenRouter key, expiring after 24 hours. Keys are named `codeman/<owner>/<repo>/<issue>/<run>` and are disabled, not deleted, so their usage still counts.
 - Before creating a key, `open-key` adds up the total usage (`usage`) of the task's keys (prefix `codeman/<owner>/<repo>/<issue>/`). The new key's limit is what remains, in whole cents rounded down. Below US$ 0.10 no key is created, and the task becomes `codeman:blocked`; a maintainer can raise the budget with `/codeman set task-budget <usd>` and then comment `/codeman continue`.
@@ -87,6 +91,54 @@ Every agent run gets Codeman's working rules: the `##` sections of Codeman's own
 - The agent job measures the agent's time outside the sandbox. `close-key` reads the key's tokens from OpenRouter's analytics (`POST /api/v1/analytics/query`, filtered by the key's hash), as OpenRouter counts them: input includes cached prompt tokens, and output is the completion tokens. Analytics and billing may count a request at different times, so it asks again for up to about a minute; a run whose tokens are not there by then shows "—".
 - From the same analytics, `close-key` reads the run's requests, their mean throughput (`avg_throughput`: completion tokens per second) and its context length: the input tokens of its largest request (`tokens_prompt` by `generation_id`, largest first), cached tokens included. These come from OpenRouter, never from the harness, whose counts differ. Analytics keeps throughput and single requests for 31 days, longer than any key lives.
 - Values passed between jobs appear in plain text in the logs of the job that reads them. `open-key` therefore passes the key encrypted with AES-256-GCM, using a key derived from `CODEMAN_OPENROUTER_KEY_ENCRYPTION_SECRET`.
+
+## Self-hosted inference
+
+With `inference: self-hosted`, a task's agents use a model that Codeman serves on GPUs rented from Runpod, instead of OpenRouter. The choice was made in the [self-hosted inference plan](plans/2026-10-02-self-hosted-inference.md), which records its decisions. Runpod charges per second of GPU, whether or not the agent is generating, so a run's cost is time, not tokens.
+
+| Mode (`gpu-mode`) | GPU | Engine | Billed | Start |
+| --- | --- | --- | --- | --- |
+| `pod` (default) | A pod Codeman creates, with the task's `gpu-type`, on Secure Cloud | Ollama, in Codeman's pod image | Every second the pod exists, from its creation | Minutes, unless the task's pod was kept |
+| `serverless` | The workers of an endpoint a maintainer created ([installation](installation.md#self-hosted-inference-on-runpod)) | Runpod's vLLM worker | Every second a worker runs, its idle timeout included | Seconds when the endpoint ran recently |
+
+### Layers
+
+| Interface | Covers | Implementations |
+| --- | --- | --- |
+| `InferenceProvider` ([`src/inference/provider.ts`](../src/inference/provider.ts)) | What the key jobs use: the task's and the month's spend, opening a run with a limit (a handle, a credential, an API) and closing it (its usage). | OpenRouter; pods and Serverless ([`selfhosted.ts`](../src/inference/selfhosted.ts)) |
+| `GpuProvider` ([`gpu.ts`](../src/inference/gpu.ts)) | Pods (price, create, get, list, terminate, URL, billing) and Serverless endpoints (settings, price, OpenAI URL), and the account's month. | Runpod's REST API v2 ([`runpod.ts`](../src/inference/runpod.ts)) |
+| `InferenceEngine` ([`engine.ts`](../src/inference/engine.ts)) | Model names and usage from responses. | Ollama, vLLM |
+| Gateway ([`src/gateway/`](../src/gateway/)) | In front of the engine: the run's token, forwarding, a record per request, the budget limit, and usage in OpenRouter's terms. | One program, in the pod or in the agent job |
+
+### The gateway
+
+- It serves one run at a time. The run's token, random, reaches the agent encrypted, like an OpenRouter key; the gateway keeps only its hash. A new run's token replaces the last one, and ending the run revokes it.
+- Only `POST /v1/chat/completions`, `POST /v1/completions` and `GET /v1/models` reach the engine. Streamed requests ask the engine for usage in their last chunk.
+- It records each request's input and output tokens (as the engine reports them; cached prompt tokens are input), when its response began, and when it ended. A run's usage is reported like OpenRouter's: tokens, requests, the largest request's input tokens (the context length), and mean completion tokens per second, from the response's first byte to its end.
+- It stops serving, with `402`, once the run's cost reaches its limit: for a pod, the time since the run started at the pod's price (its deadline is known in advance); for Serverless, the estimated busy time of the workers.
+- `GET /usage` and the `/admin/` routes, which start and end runs, take an admin token: an HMAC of the GPU account key and a nonce in the pod's environment, which also holds the token's hash. Only the jobs with the account key manage pods, and no token is stored anywhere.
+- A pod's gateway is public, through Runpod's proxy, which drops a request that gets no response within 100 seconds. The gateway answers a streamed request at once, and sends SSE comments while the engine is silent. Ollama listens only on the pod's loopback.
+
+### Pods
+
+1. `open-key` lists the repository's pods (by `CODEMAN_REPOSITORY` in their environment, since pods carry no other metadata) and asks each gateway its state. No other run of the repository is active while it runs (`concurrency`), so it terminates every pod that is starting, serving, silent or unreachable, and leaves only other tasks' kept pods within their idle limit.
+2. It reuses the task's kept pod when its model, GPU type and image still match, with a new token, and the run's cost starts then. Otherwise it terminates the task's other pods and creates one: Codeman's image, pinned by digest, on Secure Cloud, with the model, the admin token's hash and its limits in the environment. The run's cost starts with the pod, since Runpod bills the image and model pulls. It waits up to 25 minutes for the gateway to report the model served, and terminates a pod that does not.
+3. In the pod, the gateway starts Ollama, pulls the model, restarts Ollama with the model's own context length, and loads it.
+4. `close-key` ends the run on the gateway and reads its usage. The run's cost is the pod's time since the run started, at the pod's billed rate. With `pod-reuse: task` (the default), it keeps the pod for the task's next run; `release-pod` terminates it when `apply` says the task does not go on (it is not ready, routing or in a stage). With `pod-reuse: run`, or when the gateway does not answer, it terminates the pod.
+5. A pod also terminates itself: it asks Runpod to, with the pod-scoped key Runpod gives it, and stops its container either way. It does so when its model is not served within 25 minutes of its creation (and at once when its container restarts after that), at its run's deadline, after 30 minutes without a request during a run, and after 15 minutes without a run while kept.
+
+### Serverless
+
+- `open-key` checks the endpoint before each run: no active workers, at most one worker, a queue, an idle timeout of 60 seconds or less, and a vLLM worker that serves the task's model and calls tools (`ENABLE_AUTO_TOOL_CHOICE` and `TOOL_CALL_PARSER`). Runpod's API does not say whether an endpoint runs on Secure Cloud; the installation steps do.
+- The agent job runs the gateway on the loopback, with the endpoint's key, and gives the agent a local URL and the run's token. When the agent ends, the gateway stops, and its usage becomes the job's `gateway-usage` output.
+- Runpod bills endpoints by the hour at the finest, so a run's cost is estimated: each request's span plus the idle timeout after it, merged, at the flex price of the endpoint's dearest GPU type. Without a report, as after a cancelled job, the run counts its whole limit.
+
+### Spend
+
+- **Month.** The Runpod account's whole spend this month (`GET /v2/billing`) counts against `monthly-budget`, since Runpod cannot list terminated pods and pods do not say which repository they belong to. Use an account dedicated to Codeman, for one repository or a group that shares the budget.
+- **Task.** Providers bill pods, not tasks, so the task's record lists its pods (the last 20), with what its total counts for each. A run adds its cost; then each pod's billing, read by `close-key`, adds what it is above what was counted, such as a kept pod's idle time between runs. The spend table shows that time in its row for what the task spent outside its runs. A run whose pod served it alone gets the pod's billing as its cost, once billed; Runpod bills every 5 minutes. Serverless runs add their estimate.
+- `select` passes the task's spend and pods to the key jobs (`inference` output), with the rest of its choice.
+- A task that changes `inference` counts each provider's spend apart: the task budget counts OpenRouter's keys with OpenRouter, and the record's total with self-hosted inference. Mixing providers within a task is not supported.
 
 ## Planning
 
@@ -201,14 +253,14 @@ A workflow file runs as soon as it reaches a branch, if it listens to `push`, an
 
 Each value comes from the first of these that sets it:
 
-1. A `/codeman set` command on the task, in a comment or in the issue's description (only `model`, `task-budget`, `max-runs` and `language`).
+1. A `/codeman set` command on the task, in a comment or in the issue's description (only `model`, `task-budget`, `max-runs`, `language` and `gpu-type`).
 2. The workflow's inputs, in a manual run.
 3. `.codeman/settings.yml` on the default branch.
 4. Codeman's default.
 
 | Name | Default | Meaning |
 | --- | --- | --- |
-| `model` | none; required | OpenRouter model ID |
+| `model` | none; required | Model ID: OpenRouter's; with self-hosted inference, Ollama's on pods (such as `qwen3-coder:30b`) or the vLLM worker's on Serverless (its Hugging Face ID) |
 | `task-budget` | `2` | Spending limit of each task, across all its runs, in USD |
 | `monthly-budget` | `20` | Spending limit per calendar month for the repository, in USD |
 | `max-runs` | `3` | Implementation runs in a row without finishing before a task is blocked |
@@ -221,6 +273,15 @@ Each value comes from the first of these that sets it:
 | `max-label-chars` | `150` | Characters of an option's label, at most 300 |
 | `max-summary-chars` | `2000` | Characters of the agent's summary and reason, at most 4,000 |
 | `language` | `auto` | The language Codeman talks to maintainers in, as a BCP 47 tag such as `pt-BR`; `auto` uses the conversation's. See [conversation language](#conversation-language) |
+| `inference` | `openrouter` | `openrouter`, or `self-hosted`; see [self-hosted inference](#self-hosted-inference) |
+| `gpu-provider` | `runpod` | The GPU cloud of self-hosted inference |
+| `gpu-mode` | `pod` | `pod` or `serverless` |
+| `gpu-type` | none; required on pods | The pod's GPU type, as Runpod names it, such as `"NVIDIA RTX A6000"` (quoted in the file; `/codeman set gpu-type` takes the rest of its line) |
+| `engine` | `ollama` on pods, `vllm` on Serverless | What serves the model; each mode has one |
+| `serverless-endpoint` | none; required on Serverless | The endpoint's ID |
+| `pod-reuse` | `task` | `task`: a pod serves the task's next run too, while the task goes on; `run`: one pod per run |
+
+The inference settings are checked together once resolved: a model that does not fit the engine, or a mode without its GPU type or endpoint, stops the run with an error. A task's own `model` or `gpu-type` that does not fit is reported as a problem instead, and the run goes on without it.
 
 The `max-*-chars` and count limits are what the agent is told; see [agent output](#agent-output) for the margin.
 
@@ -239,7 +300,7 @@ Maintainers steer a task with comments on its issue or on its pull request, and 
 | `/codeman fix <text>` | Asks for changes to the implementation. Also a review that requests changes. See [feedback](#feedback). |
 | `/codeman accept-workflows` | Moves the workflows the agent staged under `.codeman/workflows/` into `.github/workflows/`, after a maintainer has read them. See [on-demand workflows](#on-demand-workflows). |
 | `/codeman continue <text>` | Resumes a blocked or unfinished task with a new run count. The text is optional guidance for the agent. |
-| `/codeman set <name> <value>` | Changes `model`, `task-budget`, `max-runs` or `language` for this task from now on. The last valid one wins. |
+| `/codeman set <name> <value>` | Changes `model`, `task-budget`, `max-runs`, `language` or `gpu-type` for this task from now on. The last valid one wins. |
 | `/codeman model <id>` | Short for `/codeman set model <id>`. |
 
 The issue's description may also hold `set` and `model` lines, to choose settings when opening the issue. Comments come after it, so a `set` in a comment wins. The agent reads the description without its command lines. Any other command in the description is a problem. Problems in the description, including invalid settings, are reported in every run while the description has them. The description does not start a run.
@@ -290,7 +351,7 @@ Every adapter must guarantee:
 - **Comments kept as written.** The task record lives in a hidden HTML comment inside the status comment, so the platform must keep Markdown as written, HTML comments included, up to its `commentLimit`, which must be at least 65,536 characters: the agent's output limits are set for it.
 - **Atomic, guarded commits.** `commit` writes all changes at once, without running git on the agent's files, and fails without writing if the branch moved since the base commit.
 - **Safe Markdown.** The dialect matches every mention and reference the platform renders. This is a security boundary: a reference it misses lets the agent notify or link anyone.
-- **Unambiguous key names.** OpenRouter keys are named `codeman/<owner>/<repo>/<issue>/<run>`. An owner of several segments, such as a group path, must not make one repository's name a prefix of another's.
+- **Unambiguous key names.** OpenRouter keys are named `codeman/<owner>/<repo>/<issue>/<run>`. An owner of several segments, such as a group path, must not make one repository's name a prefix of another's. Pods carry `<owner>/<repo>` in `CODEMAN_REPOSITORY`, compared whole.
 
 The [security model](security.md) relies on GitHub Actions: credentials scoped to each job, secrets masked at runtime, and runs started by comments and reviews. Another runtime must provide each of these or an equivalent, and the security document must be reviewed for it before Codeman runs there.
 
