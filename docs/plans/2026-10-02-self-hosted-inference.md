@@ -2,7 +2,7 @@
 status: blocked
 reason: "Step 8 needs the Runpod test account, which the responsible person creates once the implementation is done; the pod image must be published and pinned first."
 created_at: 2026-10-02T18:25:00-03:00
-updated_at: 2026-10-04T02:40:00-03:00
+updated_at: 2026-10-04T00:50:00-03:00
 commit: d0637c8
 ---
 
@@ -205,7 +205,7 @@ Decisions 9 to 12 were answered on 2026-10-02 by the responsible person: the rec
    - Runpod accepts the pod's name, environment and container disk as Codeman sends them, and `RUNPOD_API_KEY` lets a pod terminate itself; if not, what happens when its container exits (stopped, or restarted).
    - The least privileged key that creates pods and reads billing; the installation steps ask for **All**.
    - OpenCode 1.18.32 ships `@ai-sdk/openai-compatible`, or installs it at run time inside the sandbox.
-   - Ollama's OpenAI-compatible `prompt_tokens` against `prompt_eval_count` and `prompt_eval_cached_count`: if it leaves cached tokens out, Ollama's engine reads them with `openAiUsage(body, true)`.
+   - Checked locally on 2026-10-04, without a GPU: the pod image builds (Node 24.21.0, Ollama 0.35.1); the pod pulls `smollm2:135m`, restarts Ollama with its context length (8192) and serves it; the gateway refuses a wrong token, streams with usage, reports the run in OpenRouter's terms, and the pod stops itself at its run's deadline. Ollama's `prompt_tokens` already counts the cached prompt (435 tokens, 434 of them cached, as `prompt_eval_count` and `prompt_eval_cached_count` say), so input tokens match OpenRouter's. Throughput is measured on streamed requests only: a plain response arrives whole, and measured from its first byte it read 10,000 tokens per second.
    - The vLLM worker's `usage`, plain and streamed, and whether `api.runpod.ai` drops a request whose cold start passes 100 seconds.
    - Whether 35 minutes for `open-key` covers a new pod's start, and how often Runpod has no capacity for the chosen GPU: such a failure now blocks the task, as a failed key does; retrying in a later run may suit it better.
 

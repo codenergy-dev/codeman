@@ -1,7 +1,9 @@
 /** One request the gateway forwarded, with times in milliseconds since the epoch. */
 export interface RequestRecord {
   start: number;
-  /** When the engine's response body began. */
+  /** Whether the response was streamed, token by token. */
+  streamed?: boolean | undefined;
+  /** When the engine's response body began: its first token, when streamed. */
   firstByte?: number | undefined;
   end?: number | undefined;
   /** Prompt tokens, cached ones included, and completion tokens, as the engine reported them. */
@@ -25,7 +27,10 @@ export interface GatewayUsage {
   outputTokens: number;
   /** The input tokens of the largest request; undefined when no request reported them. */
   maxInputTokens?: number | undefined;
-  /** Mean completion tokens per second over the requests that generated any. */
+  /**
+   * Mean completion tokens per second over the streamed requests that generated any, from their
+   * first token to their end. A plain response arrives whole, so it says nothing of speed.
+   */
   tokensPerSecond?: number | undefined;
   /** The run's cost so far, in USD, as the meter estimates it. */
   cost: number;
@@ -85,7 +90,7 @@ export function summarize(
     outputTokens += record.output ?? 0;
     if (record.input !== undefined) maxInputTokens = Math.max(maxInputTokens ?? 0, record.input);
     const from = record.firstByte ?? record.start;
-    if (record.output && record.end !== undefined && record.end > from) {
+    if (record.streamed && record.output && record.end !== undefined && record.end > from) {
       rates += record.output / ((record.end - from) / 1000);
       measured++;
     }

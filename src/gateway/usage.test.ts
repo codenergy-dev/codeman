@@ -29,21 +29,23 @@ test("a pod costs its time; a worker its busy time", () => {
   );
 });
 
-test("sums requests as OpenRouter reports a key's: tokens, largest prompt and mean throughput", () => {
+test("sums requests as OpenRouter reports a key's: tokens, largest prompt and streamed throughput", () => {
   const usage = summarize(
     [
-      { start: 0, firstByte: 1_000, end: 3_000, input: 1_000, output: 100 },
-      { start: 5_000, firstByte: 5_500, end: 6_500, input: 3_000, output: 20 },
+      { start: 0, streamed: true, firstByte: 1_000, end: 3_000, input: 1_000, output: 100 },
+      { start: 5_000, streamed: true, firstByte: 5_500, end: 6_500, input: 3_000, output: 20 },
       { start: 7_000, end: 7_100 },
+      // A plain response arrives whole: its tokens count, not its speed.
+      { start: 8_000, firstByte: 8_900, end: 8_901, input: 10, output: 50 },
     ],
     { kind: "time", pricePerSecond: 0.001 },
     0,
     10_000,
   );
   assert.deepEqual(usage, {
-    requests: 3,
-    inputTokens: 4_000,
-    outputTokens: 120,
+    requests: 4,
+    inputTokens: 4_010,
+    outputTokens: 170,
     maxInputTokens: 3_000,
     tokensPerSecond: 35,
     cost: 0.01,

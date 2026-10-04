@@ -20333,7 +20333,7 @@ function summarize(records, meter, start, now) {
     outputTokens += record.output ?? 0;
     if (record.input !== void 0) maxInputTokens = Math.max(maxInputTokens ?? 0, record.input);
     const from = record.firstByte ?? record.start;
-    if (record.output && record.end !== void 0 && record.end > from) {
+    if (record.streamed && record.output && record.end !== void 0 && record.end > from) {
       rates += record.output / ((record.end - from) / 1e3);
       measured++;
     }
@@ -20510,7 +20510,7 @@ var Gateway = class {
       }
       body = JSON.stringify(payload);
     }
-    const record = { start: this.#now() };
+    const record = { start: this.#now(), streamed: stream };
     this.#records.push(record);
     const abort = new AbortController();
     response.on("close", () => {

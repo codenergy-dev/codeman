@@ -200,7 +200,7 @@ export class Gateway {
       }
       body = JSON.stringify(payload);
     }
-    const record: RequestRecord = { start: this.#now() };
+    const record: RequestRecord = { start: this.#now(), streamed: stream };
     this.#records.push(record);
     const abort = new AbortController();
     response.on("close", () => {
