@@ -50,6 +50,11 @@ test("pulls the model, restarts Ollama with its context length and loads it", as
     for await (const chunk of request) body += chunk;
     calls.push(`${request.method} ${request.url} ${body}`);
     response.writeHead(200, { "Content-Type": "application/json" });
+    if (request.url === "/api/pull") {
+      response.write('{"status":"pulling manifest"}\n{"status":"downloading","completed":5}\n');
+      response.end('{"status":"success"}\n');
+      return;
+    }
     response.end(
       request.url === "/api/show"
         ? JSON.stringify({ model_info: { "qwen3moe.context_length": 262144 } })
@@ -77,6 +82,22 @@ test("pulls the model, restarts Ollama with its context length and loads it", as
       "POST /api/generate",
     ],
   );
-  assert.match(calls[1] ?? "", /"model":"qwen3-coder:30b","stream":false/);
+  assert.match(calls[1] ?? "", /"model":"qwen3-coder:30b","stream":true/);
   assert.match(calls[4] ?? "", /"keep_alive":-1/);
+});
+
+test("a pull that reports an error stops the pod's start", async () => {
+  const server: Server = createServer((request, response) => {
+    response.writeHead(200);
+    response.end(
+      request.url === "/api/pull" ? '{"error":"pull model manifest: file does not exist"}\n' : "{}",
+    );
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  await assert.rejects(
+    prepareOllama({ url, restart: async () => undefined }, "nope", () => undefined),
+    /could not pull nope: pull model manifest/,
+  );
+  server.close();
 });

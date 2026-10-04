@@ -93,13 +93,43 @@ export async function prepareOllama(
   };
   await untilUp(server);
   log(`Pulling ${model}.`);
-  await call("/api/pull", { model, stream: false });
+  await pull(server, model);
   const contextLength = ollamaContextLength(await call("/api/show", { model }));
   log(`Serving ${model} with a context length of ${contextLength ?? "Ollama's default"}.`);
   await server.restart(contextLength);
   await untilUp(server);
   await call("/api/generate", { model, keep_alive: -1 });
   return contextLength;
+}
+
+/**
+ * Pulls the model, streaming Ollama's progress: a large model takes longer to pull than `fetch`
+ * waits for a response to start. Throws when a line reports an error.
+ */
+async function pull(server: OllamaServer, model: string): Promise<void> {
+  const response = await (server.fetch ?? fetch)(`${server.url}/api/pull`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model, stream: true }),
+  });
+  if (!response.ok || !response.body)
+    throw new Error(`Ollama /api/pull failed with ${response.status}.`);
+  const decoder = new TextDecoder();
+  let rest = "";
+  let last: { status?: string; error?: string } = {};
+  for await (const chunk of response.body as AsyncIterable<Uint8Array>) {
+    const lines = (rest + decoder.decode(chunk, { stream: true })).split("\n");
+    rest = lines.pop() ?? "";
+    for (const line of lines) {
+      if (line.trim() === "") continue;
+      last = JSON.parse(line) as typeof last;
+      if (last.error) throw new Error(`Ollama could not pull ${model}: ${last.error}`);
+    }
+  }
+  if (rest.trim() !== "") last = JSON.parse(rest) as typeof last;
+  if (last.error || last.status !== "success") {
+    throw new Error(`Ollama could not pull ${model}: ${last.error ?? last.status ?? "no status"}`);
+  }
 }
 
 async function untilUp(server: OllamaServer): Promise<void> {

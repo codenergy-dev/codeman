@@ -207,7 +207,11 @@ function amount(value) {
 
 // src/gateway/gateway.ts
 import { createHash, timingSafeEqual } from "node:crypto";
-import { createServer } from "node:http";
+import {
+  createServer,
+  request as httpRequest
+} from "node:http";
+import { request as httpsRequest } from "node:https";
 
 // src/gateway/usage.ts
 function busyMs(records, idleMs, now) {
@@ -439,44 +443,42 @@ var Gateway = class {
       Math.max(1, Math.floor((this.#options.keepAliveMs ?? KEEP_ALIVE_MS) / 2))
     ) : void 0;
     try {
-      const upstream = await (this.#options.fetch ?? fetch)(
-        `${this.#options.upstream}${path.slice("/v1".length)}`,
-        {
-          method: request.method ?? "GET",
-          headers: {
-            ...body === void 0 ? {} : { "Content-Type": "application/json" },
-            ...this.#options.upstreamHeaders
-          },
-          body: body ?? null,
-          signal: abort.signal
+      const upstream = await forward(`${this.#options.upstream}${path.slice("/v1".length)}`, {
+        method: request.method ?? "GET",
+        headers: {
+          ...body === void 0 ? {} : { "Content-Type": "application/json" },
+          ...this.#options.upstreamHeaders
+        },
+        body,
+        signal: abort.signal
+      });
+      const contentType = header(upstream.headers["content-type"]) ?? "application/json";
+      const status = upstream.statusCode ?? 502;
+      if (status < 200 || status >= 300) {
+        let text2 = "";
+        for await (const chunk of upstream) {
+          if (text2.length < 4e3) text2 += chunk.toString("utf8");
         }
-      );
-      if (!upstream.ok || !upstream.body) {
-        const text2 = (await upstream.text()).slice(0, 4e3);
+        text2 = text2.slice(0, 4e3);
         record.end = this.#now();
         if (response.headersSent) {
           response.end(
-            `data: ${JSON.stringify(error(text2 || "Engine error.", `upstream_${upstream.status}`))}
+            `data: ${JSON.stringify(error(text2 || "Engine error.", `upstream_${status}`))}
 
 `
           );
         } else {
-          response.writeHead(upstream.status, {
-            "Content-Type": upstream.headers.get("content-type") ?? "application/json"
-          });
+          response.writeHead(status, { "Content-Type": contentType });
           response.end(text2);
         }
         return;
       }
       if (!response.headersSent) {
-        response.writeHead(upstream.status, {
-          "Content-Type": upstream.headers.get("content-type") ?? "application/json",
-          "Cache-Control": "no-cache"
-        });
+        response.writeHead(status, { "Content-Type": contentType, "Cache-Control": "no-cache" });
       }
       const decoder = new TextDecoder();
       let text = "";
-      for await (const chunk of upstream.body) {
+      for await (const chunk of upstream) {
         record.firstByte ??= this.#now();
         const part = decoder.decode(chunk, { stream: true });
         if (stream) reader.feed(part);
@@ -509,6 +511,22 @@ var Gateway = class {
     this.#options.log?.(message);
   }
 };
+function forward(url, options) {
+  const request = url.startsWith("https:") ? httpsRequest : httpRequest;
+  return new Promise((resolve, reject) => {
+    const outgoing = request(url, {
+      method: options.method,
+      headers: options.headers,
+      signal: options.signal
+    });
+    outgoing.on("response", resolve);
+    outgoing.on("error", reject);
+    outgoing.end(options.body);
+  });
+}
+function header(value) {
+  return Array.isArray(value) ? value[0] : value;
+}
 var SSE_HEADERS = {
   "Content-Type": "text/event-stream",
   "Cache-Control": "no-cache",
@@ -522,8 +540,8 @@ function send(response, status, body) {
   response.end(JSON.stringify(body));
 }
 function bearer(request) {
-  const header = request.headers.authorization ?? "";
-  return /^Bearer (\S+)$/.exec(header)?.[1];
+  const header2 = request.headers.authorization ?? "";
+  return /^Bearer (\S+)$/.exec(header2)?.[1];
 }
 async function readBody(request, max) {
   const chunks = [];
@@ -605,13 +623,38 @@ async function prepareOllama(server, model, log) {
   };
   await untilUp(server);
   log(`Pulling ${model}.`);
-  await call("/api/pull", { model, stream: false });
+  await pull(server, model);
   const contextLength = ollamaContextLength(await call("/api/show", { model }));
   log(`Serving ${model} with a context length of ${contextLength ?? "Ollama's default"}.`);
   await server.restart(contextLength);
   await untilUp(server);
   await call("/api/generate", { model, keep_alive: -1 });
   return contextLength;
+}
+async function pull(server, model) {
+  const response = await (server.fetch ?? fetch)(`${server.url}/api/pull`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model, stream: true })
+  });
+  if (!response.ok || !response.body)
+    throw new Error(`Ollama /api/pull failed with ${response.status}.`);
+  const decoder = new TextDecoder();
+  let rest = "";
+  let last = {};
+  for await (const chunk of response.body) {
+    const lines = (rest + decoder.decode(chunk, { stream: true })).split("\n");
+    rest = lines.pop() ?? "";
+    for (const line of lines) {
+      if (line.trim() === "") continue;
+      last = JSON.parse(line);
+      if (last.error) throw new Error(`Ollama could not pull ${model}: ${last.error}`);
+    }
+  }
+  if (rest.trim() !== "") last = JSON.parse(rest);
+  if (last.error || last.status !== "success") {
+    throw new Error(`Ollama could not pull ${model}: ${last.error ?? last.status ?? "no status"}`);
+  }
 }
 async function untilUp(server) {
   const wait = server.wait ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));

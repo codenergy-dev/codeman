@@ -1,5 +1,12 @@
 import { createHash, timingSafeEqual } from "node:crypto";
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import {
+  createServer,
+  request as httpRequest,
+  type IncomingMessage,
+  type Server,
+  type ServerResponse,
+} from "node:http";
+import { request as httpsRequest } from "node:https";
 import type { AddressInfo } from "node:net";
 import type { InferenceEngine } from "../inference/engine.ts";
 import {
@@ -51,7 +58,6 @@ export interface GatewayOptions {
   adminSha256?: string | undefined;
   now?: () => number;
   keepAliveMs?: number;
-  fetch?: typeof fetch;
   log?: (message: string) => void;
 }
 
@@ -220,43 +226,41 @@ export class Gateway {
       : undefined;
 
     try {
-      const upstream = await (this.#options.fetch ?? fetch)(
-        `${this.#options.upstream}${path.slice("/v1".length)}`,
-        {
-          method: request.method ?? "GET",
-          headers: {
-            ...(body === undefined ? {} : { "Content-Type": "application/json" }),
-            ...this.#options.upstreamHeaders,
-          },
-          body: body ?? null,
-          signal: abort.signal,
+      const upstream = await forward(`${this.#options.upstream}${path.slice("/v1".length)}`, {
+        method: request.method ?? "GET",
+        headers: {
+          ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+          ...this.#options.upstreamHeaders,
         },
-      );
-      if (!upstream.ok || !upstream.body) {
-        const text = (await upstream.text()).slice(0, 4000);
+        body,
+        signal: abort.signal,
+      });
+      const contentType = header(upstream.headers["content-type"]) ?? "application/json";
+      const status = upstream.statusCode ?? 502;
+      if (status < 200 || status >= 300) {
+        let text = "";
+        for await (const chunk of upstream as AsyncIterable<Buffer>) {
+          if (text.length < 4000) text += chunk.toString("utf8");
+        }
+        text = text.slice(0, 4000);
         record.end = this.#now();
         if (response.headersSent) {
           // The stream already started: the error becomes its only event.
           response.end(
-            `data: ${JSON.stringify(error(text || "Engine error.", `upstream_${upstream.status}`))}\n\n`,
+            `data: ${JSON.stringify(error(text || "Engine error.", `upstream_${status}`))}\n\n`,
           );
         } else {
-          response.writeHead(upstream.status, {
-            "Content-Type": upstream.headers.get("content-type") ?? "application/json",
-          });
+          response.writeHead(status, { "Content-Type": contentType });
           response.end(text);
         }
         return;
       }
       if (!response.headersSent) {
-        response.writeHead(upstream.status, {
-          "Content-Type": upstream.headers.get("content-type") ?? "application/json",
-          "Cache-Control": "no-cache",
-        });
+        response.writeHead(status, { "Content-Type": contentType, "Cache-Control": "no-cache" });
       }
       const decoder = new TextDecoder();
       let text = "";
-      for await (const chunk of upstream.body as AsyncIterable<Uint8Array>) {
+      for await (const chunk of upstream as AsyncIterable<Buffer>) {
         record.firstByte ??= this.#now();
         const part = decoder.decode(chunk, { stream: true });
         if (stream) reader.feed(part);
@@ -287,6 +291,36 @@ export class Gateway {
   #log(message: string): void {
     this.#options.log?.(message);
   }
+}
+
+/**
+ * Sends a request to the engine with `node:http`, which, unlike `fetch`, does not give up on a
+ * response that takes minutes to start, such as a long prompt or a worker's cold start.
+ */
+function forward(
+  url: string,
+  options: {
+    method: string;
+    headers: Record<string, string>;
+    body: string | undefined;
+    signal: AbortSignal;
+  },
+): Promise<IncomingMessage> {
+  const request = url.startsWith("https:") ? httpsRequest : httpRequest;
+  return new Promise((resolve, reject) => {
+    const outgoing = request(url, {
+      method: options.method,
+      headers: options.headers,
+      signal: options.signal,
+    });
+    outgoing.on("response", resolve);
+    outgoing.on("error", reject);
+    outgoing.end(options.body);
+  });
+}
+
+function header(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
 }
 
 const SSE_HEADERS = {

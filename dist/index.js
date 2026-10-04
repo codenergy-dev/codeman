@@ -1864,11 +1864,11 @@ var require_request = __commonJS({
           }
         } else if (headers && typeof headers === "object") {
           if (headers[Symbol.iterator]) {
-            for (const header of headers) {
-              if (!Array.isArray(header) || header.length !== 2) {
+            for (const header2 of headers) {
+              if (!Array.isArray(header2) || header2.length !== 2) {
                 throw new InvalidArgumentError("headers must be in key-value pair format");
               }
-              processHeader(this, header[0], header[1]);
+              processHeader(this, header2[0], header2[1]);
             }
           } else {
             const keys = Object.keys(headers);
@@ -4200,10 +4200,10 @@ var require_util2 = __commonJS({
     function TAOCheck() {
       return "success";
     }
-    function appendFetchMetadata(httpRequest) {
-      let header = null;
-      header = httpRequest.mode;
-      httpRequest.headersList.set("sec-fetch-mode", header, true);
+    function appendFetchMetadata(httpRequest2) {
+      let header2 = null;
+      header2 = httpRequest2.mode;
+      httpRequest2.headersList.set("sec-fetch-mode", header2, true);
     }
     function appendRequestOriginHeader(request2) {
       let serializedOrigin = request2.origin;
@@ -6549,22 +6549,22 @@ var require_client_h1 = __commonJS({
       if (blocking) {
         socket[kBlocking] = true;
       }
-      let header = `${method} ${path} HTTP/1.1\r
+      let header2 = `${method} ${path} HTTP/1.1\r
 `;
       if (typeof host === "string") {
-        header += `host: ${host}\r
+        header2 += `host: ${host}\r
 `;
       } else {
-        header += client[kHostHeader];
+        header2 += client[kHostHeader];
       }
       if (upgrade) {
-        header += `connection: upgrade\r
+        header2 += `connection: upgrade\r
 upgrade: ${upgrade}\r
 `;
       } else if (client[kPipelining] && !socket[kReset]) {
-        header += "connection: keep-alive\r\n";
+        header2 += "connection: keep-alive\r\n";
       } else {
-        header += "connection: close\r\n";
+        header2 += "connection: close\r\n";
       }
       if (Array.isArray(headers)) {
         for (let n = 0; n < headers.length; n += 2) {
@@ -6572,41 +6572,41 @@ upgrade: ${upgrade}\r
           const val = headers[n + 1];
           if (Array.isArray(val)) {
             for (let i = 0; i < val.length; i++) {
-              header += `${key}: ${val[i]}\r
+              header2 += `${key}: ${val[i]}\r
 `;
             }
           } else {
-            header += `${key}: ${val}\r
+            header2 += `${key}: ${val}\r
 `;
           }
         }
       }
       if (channels.sendHeaders.hasSubscribers) {
-        channels.sendHeaders.publish({ request: request2, headers: header, socket });
+        channels.sendHeaders.publish({ request: request2, headers: header2, socket });
       }
       if (!body || bodyLength === 0) {
-        writeBuffer(abort, null, client, request2, socket, contentLength, header, expectsPayload);
+        writeBuffer(abort, null, client, request2, socket, contentLength, header2, expectsPayload);
       } else if (util.isBuffer(body)) {
-        writeBuffer(abort, body, client, request2, socket, contentLength, header, expectsPayload);
+        writeBuffer(abort, body, client, request2, socket, contentLength, header2, expectsPayload);
       } else if (util.isBlobLike(body)) {
         if (typeof body.stream === "function") {
-          writeIterable(abort, body.stream(), client, request2, socket, contentLength, header, expectsPayload);
+          writeIterable(abort, body.stream(), client, request2, socket, contentLength, header2, expectsPayload);
         } else {
-          writeBlob(abort, body, client, request2, socket, contentLength, header, expectsPayload);
+          writeBlob(abort, body, client, request2, socket, contentLength, header2, expectsPayload);
         }
       } else if (util.isStream(body)) {
-        writeStream(abort, body, client, request2, socket, contentLength, header, expectsPayload);
+        writeStream(abort, body, client, request2, socket, contentLength, header2, expectsPayload);
       } else if (util.isIterable(body)) {
-        writeIterable(abort, body, client, request2, socket, contentLength, header, expectsPayload);
+        writeIterable(abort, body, client, request2, socket, contentLength, header2, expectsPayload);
       } else {
         assert(false);
       }
       return true;
     }
-    function writeStream(abort, body, client, request2, socket, contentLength, header, expectsPayload) {
+    function writeStream(abort, body, client, request2, socket, contentLength, header2, expectsPayload) {
       assert(contentLength !== 0 || client[kRunning] === 0, "stream body cannot be pipelined");
       let finished = false;
-      const writer = new AsyncWriter({ abort, socket, request: request2, contentLength, client, expectsPayload, header });
+      const writer = new AsyncWriter({ abort, socket, request: request2, contentLength, client, expectsPayload, header: header2 });
       const onData = function(chunk) {
         if (finished) {
           return;
@@ -6672,22 +6672,22 @@ upgrade: ${upgrade}\r
         setImmediate(onClose);
       }
     }
-    function writeBuffer(abort, body, client, request2, socket, contentLength, header, expectsPayload) {
+    function writeBuffer(abort, body, client, request2, socket, contentLength, header2, expectsPayload) {
       try {
         if (!body) {
           if (contentLength === 0) {
-            socket.write(`${header}content-length: 0\r
+            socket.write(`${header2}content-length: 0\r
 \r
 `, "latin1");
           } else {
             assert(contentLength === null, "no body must not have content length");
-            socket.write(`${header}\r
+            socket.write(`${header2}\r
 `, "latin1");
           }
         } else if (util.isBuffer(body)) {
           assert(contentLength === body.byteLength, "buffer body must have content length");
           socket.cork();
-          socket.write(`${header}content-length: ${contentLength}\r
+          socket.write(`${header2}content-length: ${contentLength}\r
 \r
 `, "latin1");
           socket.write(body);
@@ -6703,7 +6703,7 @@ upgrade: ${upgrade}\r
         abort(err);
       }
     }
-    async function writeBlob(abort, body, client, request2, socket, contentLength, header, expectsPayload) {
+    async function writeBlob(abort, body, client, request2, socket, contentLength, header2, expectsPayload) {
       assert(contentLength === body.size, "blob body must have content length");
       try {
         if (contentLength != null && contentLength !== body.size) {
@@ -6711,7 +6711,7 @@ upgrade: ${upgrade}\r
         }
         const buffer = Buffer.from(await body.arrayBuffer());
         socket.cork();
-        socket.write(`${header}content-length: ${contentLength}\r
+        socket.write(`${header2}content-length: ${contentLength}\r
 \r
 `, "latin1");
         socket.write(buffer);
@@ -6726,7 +6726,7 @@ upgrade: ${upgrade}\r
         abort(err);
       }
     }
-    async function writeIterable(abort, body, client, request2, socket, contentLength, header, expectsPayload) {
+    async function writeIterable(abort, body, client, request2, socket, contentLength, header2, expectsPayload) {
       assert(contentLength !== 0 || client[kRunning] === 0, "iterator body cannot be pipelined");
       let callback = null;
       function onDrain() {
@@ -6745,7 +6745,7 @@ upgrade: ${upgrade}\r
         }
       });
       socket.on("close", onDrain).on("drain", onDrain);
-      const writer = new AsyncWriter({ abort, socket, request: request2, contentLength, client, expectsPayload, header });
+      const writer = new AsyncWriter({ abort, socket, request: request2, contentLength, client, expectsPayload, header: header2 });
       try {
         for await (const chunk of body) {
           if (socket[kError]) {
@@ -6763,19 +6763,19 @@ upgrade: ${upgrade}\r
       }
     }
     var AsyncWriter = class {
-      constructor({ abort, socket, request: request2, contentLength, client, expectsPayload, header }) {
+      constructor({ abort, socket, request: request2, contentLength, client, expectsPayload, header: header2 }) {
         this.socket = socket;
         this.request = request2;
         this.contentLength = contentLength;
         this.client = client;
         this.bytesWritten = 0;
         this.expectsPayload = expectsPayload;
-        this.header = header;
+        this.header = header2;
         this.abort = abort;
         socket[kWriting] = true;
       }
       write(chunk) {
-        const { socket, request: request2, contentLength, client, bytesWritten, expectsPayload, header } = this;
+        const { socket, request: request2, contentLength, client, bytesWritten, expectsPayload, header: header2 } = this;
         if (socket[kError]) {
           throw socket[kError];
         }
@@ -6798,10 +6798,10 @@ upgrade: ${upgrade}\r
             socket[kReset] = true;
           }
           if (contentLength === null) {
-            socket.write(`${header}transfer-encoding: chunked\r
+            socket.write(`${header2}transfer-encoding: chunked\r
 `, "latin1");
           } else {
-            socket.write(`${header}content-length: ${contentLength}\r
+            socket.write(`${header2}content-length: ${contentLength}\r
 \r
 `, "latin1");
           }
@@ -6825,7 +6825,7 @@ ${len.toString(16)}\r
         return ret;
       }
       end() {
-        const { socket, contentLength, client, bytesWritten, expectsPayload, header, request: request2 } = this;
+        const { socket, contentLength, client, bytesWritten, expectsPayload, header: header2, request: request2 } = this;
         request2.onRequestSent();
         socket[kWriting] = false;
         if (socket[kError]) {
@@ -6836,11 +6836,11 @@ ${len.toString(16)}\r
         }
         if (bytesWritten === 0) {
           if (expectsPayload) {
-            socket.write(`${header}content-length: 0\r
+            socket.write(`${header2}content-length: 0\r
 \r
 `, "latin1");
           } else {
-            socket.write(`${header}\r
+            socket.write(`${header2}\r
 `, "latin1");
           }
         } else if (contentLength === null) {
@@ -7537,15 +7537,15 @@ var require_redirect_handler = __commonJS({
         }
       }
     }
-    function shouldRemoveHeader(header, removeContent, unknownOrigin) {
-      if (header.length === 4) {
-        return util.headerNameToString(header) === "host";
+    function shouldRemoveHeader(header2, removeContent, unknownOrigin) {
+      if (header2.length === 4) {
+        return util.headerNameToString(header2) === "host";
       }
-      if (removeContent && util.headerNameToString(header).startsWith("content-")) {
+      if (removeContent && util.headerNameToString(header2).startsWith("content-")) {
         return true;
       }
-      if (unknownOrigin && (header.length === 13 || header.length === 6 || header.length === 19)) {
-        const name = util.headerNameToString(header);
+      if (unknownOrigin && (header2.length === 13 || header2.length === 6 || header2.length === 19)) {
+        const name = util.headerNameToString(header2);
         return name === "authorization" || name === "cookie" || name === "proxy-authorization";
       }
       return false;
@@ -11929,14 +11929,14 @@ var require_headers = __commonJS({
     function fill(headers, object) {
       if (Array.isArray(object)) {
         for (let i = 0; i < object.length; ++i) {
-          const header = object[i];
-          if (header.length !== 2) {
+          const header2 = object[i];
+          if (header2.length !== 2) {
             throw webidl.errors.exception({
               header: "Headers constructor",
-              message: `expected name/value pair to be length 2, found ${header.length}.`
+              message: `expected name/value pair to be length 2, found ${header2.length}.`
             });
           }
-          appendHeader(headers, header[0], header[1]);
+          appendHeader(headers, header2[0], header2[1]);
         }
       } else if (typeof object === "object" && object !== null) {
         const keys = Object.keys(object);
@@ -14119,74 +14119,74 @@ var require_fetch = __commonJS({
     async function httpNetworkOrCacheFetch(fetchParams, isAuthenticationFetch = false, isNewConnectionFetch = false) {
       const request2 = fetchParams.request;
       let httpFetchParams = null;
-      let httpRequest = null;
+      let httpRequest2 = null;
       let response = null;
       const httpCache = null;
       const revalidatingFlag = false;
       if (request2.window === "no-window" && request2.redirect === "error") {
         httpFetchParams = fetchParams;
-        httpRequest = request2;
+        httpRequest2 = request2;
       } else {
-        httpRequest = cloneRequest(request2);
+        httpRequest2 = cloneRequest(request2);
         httpFetchParams = { ...fetchParams };
-        httpFetchParams.request = httpRequest;
+        httpFetchParams.request = httpRequest2;
       }
       const includeCredentials = request2.credentials === "include" || request2.credentials === "same-origin" && request2.responseTainting === "basic";
-      const contentLength = httpRequest.body ? httpRequest.body.length : null;
+      const contentLength = httpRequest2.body ? httpRequest2.body.length : null;
       let contentLengthHeaderValue = null;
-      if (httpRequest.body == null && ["POST", "PUT"].includes(httpRequest.method)) {
+      if (httpRequest2.body == null && ["POST", "PUT"].includes(httpRequest2.method)) {
         contentLengthHeaderValue = "0";
       }
       if (contentLength != null) {
         contentLengthHeaderValue = isomorphicEncode(`${contentLength}`);
       }
       if (contentLengthHeaderValue != null) {
-        httpRequest.headersList.append("content-length", contentLengthHeaderValue, true);
+        httpRequest2.headersList.append("content-length", contentLengthHeaderValue, true);
       }
-      if (contentLength != null && httpRequest.keepalive) {
+      if (contentLength != null && httpRequest2.keepalive) {
       }
-      if (httpRequest.referrer instanceof URL) {
-        httpRequest.headersList.append("referer", isomorphicEncode(httpRequest.referrer.href), true);
+      if (httpRequest2.referrer instanceof URL) {
+        httpRequest2.headersList.append("referer", isomorphicEncode(httpRequest2.referrer.href), true);
       }
-      appendRequestOriginHeader(httpRequest);
-      appendFetchMetadata(httpRequest);
-      if (!httpRequest.headersList.contains("user-agent", true)) {
-        httpRequest.headersList.append("user-agent", defaultUserAgent);
+      appendRequestOriginHeader(httpRequest2);
+      appendFetchMetadata(httpRequest2);
+      if (!httpRequest2.headersList.contains("user-agent", true)) {
+        httpRequest2.headersList.append("user-agent", defaultUserAgent);
       }
-      if (httpRequest.cache === "default" && (httpRequest.headersList.contains("if-modified-since", true) || httpRequest.headersList.contains("if-none-match", true) || httpRequest.headersList.contains("if-unmodified-since", true) || httpRequest.headersList.contains("if-match", true) || httpRequest.headersList.contains("if-range", true))) {
-        httpRequest.cache = "no-store";
+      if (httpRequest2.cache === "default" && (httpRequest2.headersList.contains("if-modified-since", true) || httpRequest2.headersList.contains("if-none-match", true) || httpRequest2.headersList.contains("if-unmodified-since", true) || httpRequest2.headersList.contains("if-match", true) || httpRequest2.headersList.contains("if-range", true))) {
+        httpRequest2.cache = "no-store";
       }
-      if (httpRequest.cache === "no-cache" && !httpRequest.preventNoCacheCacheControlHeaderModification && !httpRequest.headersList.contains("cache-control", true)) {
-        httpRequest.headersList.append("cache-control", "max-age=0", true);
+      if (httpRequest2.cache === "no-cache" && !httpRequest2.preventNoCacheCacheControlHeaderModification && !httpRequest2.headersList.contains("cache-control", true)) {
+        httpRequest2.headersList.append("cache-control", "max-age=0", true);
       }
-      if (httpRequest.cache === "no-store" || httpRequest.cache === "reload") {
-        if (!httpRequest.headersList.contains("pragma", true)) {
-          httpRequest.headersList.append("pragma", "no-cache", true);
+      if (httpRequest2.cache === "no-store" || httpRequest2.cache === "reload") {
+        if (!httpRequest2.headersList.contains("pragma", true)) {
+          httpRequest2.headersList.append("pragma", "no-cache", true);
         }
-        if (!httpRequest.headersList.contains("cache-control", true)) {
-          httpRequest.headersList.append("cache-control", "no-cache", true);
+        if (!httpRequest2.headersList.contains("cache-control", true)) {
+          httpRequest2.headersList.append("cache-control", "no-cache", true);
         }
       }
-      if (httpRequest.headersList.contains("range", true)) {
-        httpRequest.headersList.append("accept-encoding", "identity", true);
+      if (httpRequest2.headersList.contains("range", true)) {
+        httpRequest2.headersList.append("accept-encoding", "identity", true);
       }
-      if (!httpRequest.headersList.contains("accept-encoding", true)) {
-        if (urlHasHttpsScheme(requestCurrentURL(httpRequest))) {
-          httpRequest.headersList.append("accept-encoding", "br, gzip, deflate", true);
+      if (!httpRequest2.headersList.contains("accept-encoding", true)) {
+        if (urlHasHttpsScheme(requestCurrentURL(httpRequest2))) {
+          httpRequest2.headersList.append("accept-encoding", "br, gzip, deflate", true);
         } else {
-          httpRequest.headersList.append("accept-encoding", "gzip, deflate", true);
+          httpRequest2.headersList.append("accept-encoding", "gzip, deflate", true);
         }
       }
-      httpRequest.headersList.delete("host", true);
+      httpRequest2.headersList.delete("host", true);
       if (includeCredentials) {
       }
       if (httpCache == null) {
-        httpRequest.cache = "no-store";
+        httpRequest2.cache = "no-store";
       }
-      if (httpRequest.cache !== "no-store" && httpRequest.cache !== "reload") {
+      if (httpRequest2.cache !== "no-store" && httpRequest2.cache !== "reload") {
       }
       if (response == null) {
-        if (httpRequest.cache === "only-if-cached") {
+        if (httpRequest2.cache === "only-if-cached") {
           return makeNetworkError("only if cached");
         }
         const forwardResponse = await httpNetworkFetch(
@@ -14194,7 +14194,7 @@ var require_fetch = __commonJS({
           includeCredentials,
           isNewConnectionFetch
         );
-        if (!safeMethodsSet.has(httpRequest.method) && forwardResponse.status >= 200 && forwardResponse.status <= 399) {
+        if (!safeMethodsSet.has(httpRequest2.method) && forwardResponse.status >= 200 && forwardResponse.status <= 399) {
         }
         if (revalidatingFlag && forwardResponse.status === 304) {
         }
@@ -14202,8 +14202,8 @@ var require_fetch = __commonJS({
           response = forwardResponse;
         }
       }
-      response.urlList = [...httpRequest.urlList];
-      if (httpRequest.headersList.contains("range", true)) {
+      response.urlList = [...httpRequest2.urlList];
+      if (httpRequest2.headersList.contains("range", true)) {
         response.rangeRequested = true;
       }
       response.requestIncludesCredentials = includeCredentials;
@@ -15382,10 +15382,10 @@ var require_util5 = __commonJS({
       const serializedB = URLSerializer(B, excludeFragment);
       return serializedA === serializedB;
     }
-    function getFieldValues(header) {
-      assert(header !== null);
+    function getFieldValues(header2) {
+      assert(header2 !== null);
       const values = [];
-      for (let value of header.split(",")) {
+      for (let value of header2.split(",")) {
         value = value.trim();
         if (isValidHeaderName(value)) {
           values.push(value);
@@ -16284,20 +16284,20 @@ var require_parse = __commonJS({
     var { isCTLExcludingHtab } = require_util6();
     var { collectASequenceOfCodePointsFast } = require_data_url();
     var assert = __require("node:assert");
-    function parseSetCookie(header) {
-      if (isCTLExcludingHtab(header)) {
+    function parseSetCookie(header2) {
+      if (isCTLExcludingHtab(header2)) {
         return null;
       }
       let nameValuePair = "";
       let unparsedAttributes = "";
       let name = "";
       let value = "";
-      if (header.includes(";")) {
+      if (header2.includes(";")) {
         const position = { position: 0 };
-        nameValuePair = collectASequenceOfCodePointsFast(";", header, position);
-        unparsedAttributes = header.slice(position.position);
+        nameValuePair = collectASequenceOfCodePointsFast(";", header2, position);
+        unparsedAttributes = header2.slice(position.position);
       } else {
-        nameValuePair = header;
+        nameValuePair = header2;
       }
       if (!nameValuePair.includes("=")) {
         value = nameValuePair;
@@ -19387,9 +19387,9 @@ var require_lib = __commonJS({
               }
               yield response.readBody();
               if (parsedRedirectUrl.hostname !== parsedUrl.hostname) {
-                for (const header in headers) {
-                  if (header.toLowerCase() === "authorization") {
-                    delete headers[header];
+                for (const header2 in headers) {
+                  if (header2.toLowerCase() === "authorization") {
+                    delete headers[header2];
                   }
                 }
               }
@@ -19542,15 +19542,15 @@ var require_lib = __commonJS({
        * For headers that must always be a single string (like Content-Type), use the
        * specialized _getExistingOrDefaultContentTypeHeader method instead.
        */
-      _getExistingOrDefaultHeader(additionalHeaders, header, _default) {
+      _getExistingOrDefaultHeader(additionalHeaders, header2, _default) {
         let clientHeader;
         if (this.requestOptions && this.requestOptions.headers) {
-          const headerValue = lowercaseKeys2(this.requestOptions.headers)[header];
+          const headerValue = lowercaseKeys2(this.requestOptions.headers)[header2];
           if (headerValue) {
             clientHeader = typeof headerValue === "number" ? headerValue.toString() : headerValue;
           }
         }
-        const additionalValue = additionalHeaders[header];
+        const additionalValue = additionalHeaders[header2];
         if (additionalValue !== void 0) {
           return typeof additionalValue === "number" ? additionalValue.toString() : additionalValue;
         }
@@ -20295,7 +20295,11 @@ import { createHmac, randomBytes } from "node:crypto";
 
 // src/gateway/gateway.ts
 import { createHash, timingSafeEqual } from "node:crypto";
-import { createServer } from "node:http";
+import {
+  createServer,
+  request as httpRequest
+} from "node:http";
+import { request as httpsRequest } from "node:https";
 
 // src/gateway/usage.ts
 function busyMs(records, idleMs, now) {
@@ -20527,44 +20531,42 @@ var Gateway = class {
       Math.max(1, Math.floor((this.#options.keepAliveMs ?? KEEP_ALIVE_MS) / 2))
     ) : void 0;
     try {
-      const upstream = await (this.#options.fetch ?? fetch)(
-        `${this.#options.upstream}${path.slice("/v1".length)}`,
-        {
-          method: request2.method ?? "GET",
-          headers: {
-            ...body === void 0 ? {} : { "Content-Type": "application/json" },
-            ...this.#options.upstreamHeaders
-          },
-          body: body ?? null,
-          signal: abort.signal
+      const upstream = await forward(`${this.#options.upstream}${path.slice("/v1".length)}`, {
+        method: request2.method ?? "GET",
+        headers: {
+          ...body === void 0 ? {} : { "Content-Type": "application/json" },
+          ...this.#options.upstreamHeaders
+        },
+        body,
+        signal: abort.signal
+      });
+      const contentType = header(upstream.headers["content-type"]) ?? "application/json";
+      const status2 = upstream.statusCode ?? 502;
+      if (status2 < 200 || status2 >= 300) {
+        let text2 = "";
+        for await (const chunk of upstream) {
+          if (text2.length < 4e3) text2 += chunk.toString("utf8");
         }
-      );
-      if (!upstream.ok || !upstream.body) {
-        const text2 = (await upstream.text()).slice(0, 4e3);
+        text2 = text2.slice(0, 4e3);
         record.end = this.#now();
         if (response.headersSent) {
           response.end(
-            `data: ${JSON.stringify(error(text2 || "Engine error.", `upstream_${upstream.status}`))}
+            `data: ${JSON.stringify(error(text2 || "Engine error.", `upstream_${status2}`))}
 
 `
           );
         } else {
-          response.writeHead(upstream.status, {
-            "Content-Type": upstream.headers.get("content-type") ?? "application/json"
-          });
+          response.writeHead(status2, { "Content-Type": contentType });
           response.end(text2);
         }
         return;
       }
       if (!response.headersSent) {
-        response.writeHead(upstream.status, {
-          "Content-Type": upstream.headers.get("content-type") ?? "application/json",
-          "Cache-Control": "no-cache"
-        });
+        response.writeHead(status2, { "Content-Type": contentType, "Cache-Control": "no-cache" });
       }
       const decoder = new TextDecoder();
       let text = "";
-      for await (const chunk of upstream.body) {
+      for await (const chunk of upstream) {
         record.firstByte ??= this.#now();
         const part = decoder.decode(chunk, { stream: true });
         if (stream) reader.feed(part);
@@ -20597,6 +20599,22 @@ var Gateway = class {
     this.#options.log?.(message);
   }
 };
+function forward(url, options) {
+  const request2 = url.startsWith("https:") ? httpsRequest : httpRequest;
+  return new Promise((resolve, reject) => {
+    const outgoing = request2(url, {
+      method: options.method,
+      headers: options.headers,
+      signal: options.signal
+    });
+    outgoing.on("response", resolve);
+    outgoing.on("error", reject);
+    outgoing.end(options.body);
+  });
+}
+function header(value) {
+  return Array.isArray(value) ? value[0] : value;
+}
 var SSE_HEADERS = {
   "Content-Type": "text/event-stream",
   "Cache-Control": "no-cache",
@@ -20610,8 +20628,8 @@ function send(response, status2, body) {
   response.end(JSON.stringify(body));
 }
 function bearer(request2) {
-  const header = request2.headers.authorization ?? "";
-  return /^Bearer (\S+)$/.exec(header)?.[1];
+  const header2 = request2.headers.authorization ?? "";
+  return /^Bearer (\S+)$/.exec(header2)?.[1];
 }
 async function readBody(request2, max) {
   const chunks = [];
@@ -21769,11 +21787,11 @@ var NullObject = /* @__PURE__ */ (() => {
   C.prototype = /* @__PURE__ */ Object.create(null);
   return C;
 })();
-function parse2(header, options) {
+function parse2(header2, options) {
   const stopFlags = SEMI_FLAG | (options?.comma === true ? COMMA_FLAG : 0);
-  const len = header.length;
+  const len = header2.length;
   let valueStart = options?.start ?? 0;
-  while ((CHAR_MAP[header.charCodeAt(valueStart)] & OWS) !== 0) {
+  while ((CHAR_MAP[header2.charCodeAt(valueStart)] & OWS) !== 0) {
     valueStart++;
   }
   let index = valueStart;
@@ -21781,7 +21799,7 @@ function parse2(header, options) {
   let whitespace = -1;
   let stop = options?.parameters === false ? COMMA_FLAG : 0;
   while (index < len) {
-    const code = header.charCodeAt(index);
+    const code = header2.charCodeAt(index);
     const flags = CHAR_MAP[code];
     if ((flags & stopFlags) !== 0) {
       stop |= flags & COMMA_FLAG;
@@ -21797,25 +21815,25 @@ function parse2(header, options) {
     index++;
   }
   const valueEnd = whitespace === -1 ? index : whitespace;
-  const value = header.slice(valueStart, valueEnd);
+  const value = header2.slice(valueStart, valueEnd);
   const type = (typeFlags & CASE_FLAGS) === 0 ? value : value.toLowerCase();
   if (index === len || stop !== 0) {
     return { type, index, parameters: new NullObject() };
   }
-  return parseParameters(header, type, index, len, stopFlags);
+  return parseParameters(header2, type, index, len, stopFlags);
 }
-function parseParameters(header, type, index, len, stopFlags) {
+function parseParameters(header2, type, index, len, stopFlags) {
   const parameters = new NullObject();
   parameter: while (index < len) {
     index++;
-    while ((CHAR_MAP[header.charCodeAt(index)] & OWS) !== 0) {
+    while ((CHAR_MAP[header2.charCodeAt(index)] & OWS) !== 0) {
       index++;
     }
     const keyStart = index;
     let keyFlags = 0;
     let keyWhitespace = -1;
     while (index < len) {
-      const code = header.charCodeAt(index);
+      const code = header2.charCodeAt(index);
       const flags = CHAR_MAP[code];
       if ((flags & stopFlags) !== 0) {
         if ((flags & COMMA_FLAG) !== 0)
@@ -21824,25 +21842,25 @@ function parseParameters(header, type, index, len, stopFlags) {
       }
       if (code === EQ) {
         const keyEnd = keyWhitespace === -1 ? index : keyWhitespace;
-        const value = header.slice(keyStart, keyEnd);
+        const value = header2.slice(keyStart, keyEnd);
         const key = (keyFlags & CASE_FLAGS) === 0 ? value : value.toLowerCase();
         index++;
-        while ((CHAR_MAP[header.charCodeAt(index)] & OWS) !== 0) {
+        while ((CHAR_MAP[header2.charCodeAt(index)] & OWS) !== 0) {
           index++;
         }
-        if (index < len && header.charCodeAt(index) === DQUOTE) {
+        if (index < len && header2.charCodeAt(index) === DQUOTE) {
           const quotedStart = ++index;
           let escaped = false;
           while (index < len) {
-            const code2 = header.charCodeAt(index);
+            const code2 = header2.charCodeAt(index);
             if (code2 === DQUOTE) {
               if (parameters[key] === void 0) {
-                parameters[key] = escaped ? unescapeQuotedPairs(header, quotedStart, index) : header.slice(quotedStart, index);
+                parameters[key] = escaped ? unescapeQuotedPairs(header2, quotedStart, index) : header2.slice(quotedStart, index);
               }
               index++;
               let stop2 = 0;
               while (index < len) {
-                const code3 = header.charCodeAt(index);
+                const code3 = header2.charCodeAt(index);
                 const flags2 = CHAR_MAP[code3];
                 if ((flags2 & stopFlags) !== 0) {
                   stop2 = flags2 & COMMA_FLAG;
@@ -21867,7 +21885,7 @@ function parseParameters(header, type, index, len, stopFlags) {
         let stop = 0;
         let valueWhitespace = -1;
         while (index < len) {
-          const code2 = header.charCodeAt(index);
+          const code2 = header2.charCodeAt(index);
           const flags2 = CHAR_MAP[code2];
           if ((flags2 & stopFlags) !== 0) {
             stop = flags2 & COMMA_FLAG;
@@ -21883,7 +21901,7 @@ function parseParameters(header, type, index, len, stopFlags) {
         }
         if (parameters[key] === void 0) {
           const valueEnd = valueWhitespace === -1 ? index : valueWhitespace;
-          parameters[key] = header.slice(valueStart, valueEnd);
+          parameters[key] = header2.slice(valueStart, valueEnd);
         }
         if (stop !== 0)
           break parameter;
@@ -30520,8 +30538,8 @@ var Summary = class {
         if (typeof cell === "string") {
           return this.wrap("td", cell);
         }
-        const { header, data, colspan, rowspan } = cell;
-        const tag = header ? "th" : "td";
+        const { header: header2, data, colspan, rowspan } = cell;
+        const tag = header2 ? "th" : "td";
         const attrs = Object.assign(Object.assign({}, colspan && { colspan }), rowspan && { rowspan });
         return this.wrap(tag, data, attrs);
       }).join("");
