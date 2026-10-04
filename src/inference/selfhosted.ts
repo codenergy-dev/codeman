@@ -6,7 +6,15 @@ import type { GatewayUsage } from "../gateway/usage.ts";
 import type { RepositoryRef } from "../platform/types.ts";
 import type { Log } from "../runtime/runtime.ts";
 import type { InferenceEngine } from "./engine.ts";
-import { type GpuProvider, type Pod, type PodHost, podCost, waitUntilReady } from "./gpu.ts";
+import {
+  endpointProblems,
+  type GpuProvider,
+  type Pod,
+  type PodHost,
+  podCost,
+  type ServerlessHost,
+  waitUntilReady,
+} from "./gpu.ts";
 import type { InferenceProvider, OpenedRun, RunRequest, RunUsage } from "./provider.ts";
 
 /** How long a new pod has to pull its image and model and serve it. */
@@ -348,4 +356,121 @@ export interface ServerlessHandle {
   idleSeconds: number;
   limit: number;
   contextLength?: number | undefined;
+}
+
+export interface ServerlessSettings extends SelfHostedSettings {
+  endpoint: string;
+  /** Checks the endpoint's environment for serving `model`; empty when it can. */
+  engineProblems(env: Record<string, string>, model: string): string[];
+  contextLength(env: Record<string, string>): number | undefined;
+}
+
+/**
+ * Self-hosted inference on a Serverless endpoint a maintainer created: the agent job runs the
+ * gateway outside the sandbox, with the endpoint's key, and gives the agent a local URL and the
+ * run's token. A run's cost is estimated from the gateway's measures, since the provider bills
+ * endpoints by the hour. See docs/architecture.md#self-hosted-inference.
+ */
+export class ServerlessInference implements InferenceProvider {
+  readonly name: string;
+  readonly #settings: ServerlessSettings;
+  readonly #gpu: GpuProvider;
+  readonly #host: ServerlessHost;
+  readonly #usage: string;
+  readonly #now: () => Date;
+
+  /** `usage` is what the agent job's gateway reported, as JSON; empty when it reported nothing. */
+  constructor(
+    settings: ServerlessSettings,
+    gpu: GpuProvider,
+    options: { usage?: string; now?: () => Date } = {},
+  ) {
+    if (!gpu.serverless) throw new Error(`${gpu.name} has no Serverless endpoints.`);
+    this.name = `${gpu.name} Serverless`;
+    this.#settings = settings;
+    this.#gpu = gpu;
+    this.#host = gpu.serverless;
+    this.#usage = options.usage ?? "";
+    this.#now = options.now ?? (() => new Date());
+  }
+
+  async taskSpent(): Promise<number> {
+    return this.#settings.taskSpent;
+  }
+
+  async monthSpent(): Promise<number> {
+    return this.#gpu.monthSpent(this.#now());
+  }
+
+  /** Checks the endpoint (decision 10 of the plan) and prices its workers. */
+  async open(run: RunRequest, log: Log): Promise<OpenedRun> {
+    const { endpoint: id, model } = this.#settings;
+    const endpoint = await this.#host.endpoint(id);
+    const problems = [
+      ...endpointProblems(endpoint),
+      ...this.#settings.engineProblems(endpoint.env, model),
+    ];
+    if (problems.length > 0) {
+      throw new Error(`Serverless endpoint ${id} cannot serve this run: ${problems.join("; ")}.`);
+    }
+    const handle: ServerlessHandle = {
+      mode: "serverless",
+      endpoint: id,
+      url: this.#host.openAiUrl(id),
+      pricePerSecond: await this.#host.price(id),
+      idleSeconds: endpoint.idleTimeoutSeconds ?? 0,
+      limit: run.limit,
+      contextLength: this.#settings.contextLength(endpoint.env),
+    };
+    log.info(
+      `Endpoint ${id} serves ${model}, at up to ${usd(handle.pricePerSecond * 3600)} per worker-hour; the run may use ${usd(run.limit)}.`,
+    );
+    return {
+      handle: JSON.stringify(handle),
+      // The agent's token for the agent job's gateway, which holds the endpoint's key.
+      credential: randomBytes(32).toString("base64url"),
+      contextLength: handle.contextLength,
+    };
+  }
+
+  /**
+   * Costs the run from what the agent job's gateway measured: its workers' busy time at the
+   * endpoint's price. Without a report, such as after a cancelled job, the run counts its whole
+   * limit, so the task's budget never counts less than was spent.
+   */
+  async close(text: string, log: Log): Promise<RunUsage> {
+    const handle = parseHandle(text);
+    if (handle.mode !== "serverless") throw new Error("The handle is not a Serverless run's.");
+    const usage = parseUsage(this.#usage);
+    if (!usage) {
+      log.warning(
+        `The agent job reported no usage; the run counts its whole limit, ${usd(handle.limit)}.`,
+      );
+      return { cost: handle.limit };
+    }
+    return {
+      cost: usage.cost,
+      inputTokens: usage.inputTokens,
+      outputTokens: usage.outputTokens,
+      requests: usage.requests,
+      maxInputTokens: usage.maxInputTokens,
+      tokensPerSecond: usage.tokensPerSecond,
+    };
+  }
+}
+
+/** The gateway's usage report, as the agent job outputs it; undefined when missing or invalid. */
+export function parseUsage(text: string): GatewayUsage | undefined {
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  const usage = value as Partial<GatewayUsage> | null;
+  const finite = (field: unknown) =>
+    typeof field === "number" && Number.isFinite(field) && field >= 0;
+  if (!usage || !finite(usage.cost) || !finite(usage.requests)) return undefined;
+  if (!finite(usage.inputTokens) || !finite(usage.outputTokens)) return undefined;
+  return usage as GatewayUsage;
 }
