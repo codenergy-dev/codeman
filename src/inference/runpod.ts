@@ -1,0 +1,240 @@
+import type { Fetch } from "../budget.ts";
+import type {
+  Endpoint,
+  GpuProvider,
+  Pod,
+  PodHost,
+  PodSpec,
+  PodStatus,
+  ServerlessHost,
+} from "./gpu.ts";
+
+const API = "https://api.runpod.io/v2";
+
+/** Pod states as Runpod names them, in Codeman's terms. */
+const STATUS: Record<string, PodStatus> = {
+  PROVISIONING: "starting",
+  STARTING: "starting",
+  RUNNING: "running",
+  EXITED: "stopped",
+  ERROR: "failed",
+  TERMINATED: "terminated",
+};
+
+/** The fields of Runpod's `Pod` that Codeman reads. See docs/web/runpod/get-a-pod.md. */
+interface RunpodPod {
+  id: string;
+  name: string;
+  status: string;
+  image?: string;
+  env?: Record<string, string> | null;
+  gpu?: { id?: string; count?: number } | null;
+  cost?: number;
+  createdAt: string;
+}
+
+interface RunpodGpu {
+  id: string;
+  pool?: string | null;
+  secure?: boolean;
+  price?: { secure?: number; community?: number; serverless?: number };
+}
+
+interface RunpodEndpoint {
+  id: string;
+  type?: string;
+  gpu?: { pools?: string[]; excludedTypes?: string[]; count?: number } | null;
+  workers?: { min?: number; max?: number; idleTimeout?: number };
+  env?: Record<string, string> | null;
+}
+
+/**
+ * Runpod's REST API v2, for pods and Serverless endpoints, with an account API key. Pods are
+ * created on Secure Cloud only. See docs/web/runpod/.
+ */
+export class Runpod implements GpuProvider {
+  readonly name = "runpod";
+  readonly pods: PodHost;
+  readonly serverless: ServerlessHost;
+  readonly #apiKey: string;
+  readonly #fetch: Fetch;
+
+  constructor(apiKey: string, fetchFn: Fetch = fetch) {
+    this.#apiKey = apiKey;
+    this.#fetch = fetchFn;
+    this.pods = {
+      price: (gpuType) => this.#podPrice(gpuType),
+      create: (spec) => this.#createPod(spec),
+      get: (id) => this.#getPod(id),
+      list: (env) => this.#listPods(env),
+      terminate: (id) => this.#terminatePod(id),
+      url: (id, port) => `https://${id}-${port}.proxy.runpod.net`,
+      billing: (ids, since) => this.#podBilling(ids, since),
+    };
+    this.serverless = {
+      endpoint: (id) => this.#endpoint(id),
+      price: (id) => this.#serverlessPrice(id),
+      openAiUrl: (id) => `https://api.runpod.ai/v2/${encodeURIComponent(id)}/openai/v1`,
+    };
+  }
+
+  /** `GET /v2/billing`, by month: the account's total since the month began (UTC). */
+  async monthSpent(now: Date): Promise<number> {
+    const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+    const response = (await this.#request(
+      `/billing?bucketSize=month&startTime=${encodeURIComponent(start.toISOString())}`,
+    )) as { records?: { startTime?: string; totalAmount?: number }[] };
+    // The window is snapped to whole months; only this month's bucket counts.
+    return (response.records ?? [])
+      .filter((record) => !record.startTime || Date.parse(record.startTime) >= start.getTime())
+      .reduce((total, record) => total + amount(record.totalAmount), 0);
+  }
+
+  async #podPrice(gpuType: string): Promise<number> {
+    const gpu = (await this.#request(`/catalog/gpus/${encodeURIComponent(gpuType)}`)) as RunpodGpu;
+    const hourly = gpu.price?.secure;
+    if (gpu.secure === false || typeof hourly !== "number" || !(hourly > 0)) {
+      throw new Error(`Runpod does not offer ${gpuType} on Secure Cloud.`);
+    }
+    return hourly / 3600;
+  }
+
+  async #createPod(spec: PodSpec): Promise<Pod> {
+    const pod = (await this.#request("/pods", "POST", {
+      name: spec.name,
+      image: spec.image,
+      gpu: { id: spec.gpuType, count: 1 },
+      // Decision 6 of the self-hosted inference plan: Runpod's own data centers only.
+      cloud: "SECURE",
+      env: spec.env,
+      ports: [`${spec.port}/http`],
+      disk: spec.diskGb,
+    })) as RunpodPod;
+    return toPod(pod);
+  }
+
+  async #getPod(id: string): Promise<Pod | undefined> {
+    const pod = (await this.#request(`/pods/${encodeURIComponent(id)}`, "GET", undefined, [404])) as
+      | RunpodPod
+      | undefined;
+    return pod ? toPod(pod) : undefined;
+  }
+
+  async #listPods(env: Record<string, string>): Promise<Pod[]> {
+    const pods: Pod[] = [];
+    let cursor: string | null | undefined;
+    for (let page = 0; page < 100; page++) {
+      const response = (await this.#request(
+        `/pods${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,
+      )) as {
+        pods?: RunpodPod[];
+        pagination?: { nextCursor?: string | null; hasNextPage?: boolean };
+      };
+      for (const pod of response.pods ?? []) {
+        const found = toPod(pod);
+        if (Object.entries(env).every(([name, value]) => found.env[name] === value)) {
+          pods.push(found);
+        }
+      }
+      cursor = response.pagination?.nextCursor;
+      if (!response.pagination?.hasNextPage || !cursor) return pods;
+    }
+    throw new Error("Too many Runpod pods to list.");
+  }
+
+  async #terminatePod(id: string): Promise<void> {
+    await this.#request(`/pods/${encodeURIComponent(id)}`, "DELETE", undefined, [404]);
+  }
+
+  /** `GET /v2/billing/pods`, by day, once for every pod; records are per pod per bucket. */
+  async #podBilling(ids: readonly string[], since: Date): Promise<Record<string, number>> {
+    if (ids.length === 0) return {};
+    const start = new Date(
+      Date.UTC(since.getUTCFullYear(), since.getUTCMonth(), since.getUTCDate()),
+    );
+    const response = (await this.#request(
+      `/billing/pods?bucketSize=day&startTime=${encodeURIComponent(start.toISOString())}`,
+    )) as { records?: { podId?: string; totalAmount?: number }[] };
+    const wanted = new Set(ids);
+    const billed: Record<string, number> = {};
+    for (const record of response.records ?? []) {
+      if (!record.podId || !wanted.has(record.podId)) continue;
+      billed[record.podId] = (billed[record.podId] ?? 0) + amount(record.totalAmount);
+    }
+    return billed;
+  }
+
+  async #endpoint(id: string): Promise<Endpoint> {
+    const endpoint = (await this.#request(
+      `/serverless/${encodeURIComponent(id)}`,
+    )) as RunpodEndpoint;
+    return {
+      id: endpoint.id,
+      type: endpoint.type,
+      workersMin: endpoint.workers?.min ?? 0,
+      workersMax: endpoint.workers?.max ?? 0,
+      idleTimeoutSeconds: endpoint.workers?.idleTimeout,
+      gpuCount: endpoint.gpu?.count ?? 1,
+      env: endpoint.env ?? {},
+    };
+  }
+
+  /**
+   * The flex price of the endpoint's dearest GPU type, times its GPUs per worker: a worker may
+   * land on any type of its pools. Throws when no price is listed.
+   */
+  async #serverlessPrice(id: string): Promise<number> {
+    const endpoint = (await this.#request(
+      `/serverless/${encodeURIComponent(id)}`,
+    )) as RunpodEndpoint;
+    const pools = new Set(endpoint.gpu?.pools ?? []);
+    const excluded = new Set(endpoint.gpu?.excludedTypes ?? []);
+    const { gpus } = (await this.#request("/catalog/gpus")) as { gpus?: RunpodGpu[] };
+    const prices = (gpus ?? [])
+      .filter((gpu) => gpu.pool && pools.has(gpu.pool) && !excluded.has(gpu.id))
+      .map((gpu) => gpu.price?.serverless)
+      .filter((price): price is number => typeof price === "number" && price > 0);
+    if (prices.length === 0)
+      throw new Error(`Runpod lists no Serverless price for endpoint ${id}.`);
+    return (Math.max(...prices) * (endpoint.gpu?.count ?? 1)) / 3600;
+  }
+
+  async #request(
+    path: string,
+    method = "GET",
+    body?: unknown,
+    absent: readonly number[] = [],
+  ): Promise<unknown> {
+    const response = await this.#fetch(`${API}${path}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${this.#apiKey}`,
+        ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+      },
+      body: body === undefined ? null : JSON.stringify(body),
+    });
+    if (absent.includes(response.status)) return undefined;
+    if (!response.ok) {
+      // The body may echo request data, such as the pod's environment; report only the status.
+      throw new Error(`Runpod ${method} ${path.split("?")[0]} failed with ${response.status}.`);
+    }
+    return response.status === 204 ? undefined : response.json();
+  }
+}
+
+function toPod(pod: RunpodPod): Pod {
+  return {
+    id: pod.id,
+    name: pod.name,
+    status: STATUS[pod.status] ?? "starting",
+    image: pod.image ?? "",
+    env: pod.env ?? {},
+    gpuType: pod.gpu?.id,
+    createdAt: new Date(pod.createdAt),
+    pricePerSecond: typeof pod.cost === "number" && pod.cost > 0 ? pod.cost / 3600 : undefined,
+  };
+}
+
+function amount(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
+}
