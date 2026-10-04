@@ -2,7 +2,7 @@
 
 Every dependency is audited before it is added (see `AGENTS.md`). This page records what is used, why, and the result of the last audit. Update it whenever a dependency is added, removed or upgraded.
 
-Last audit: 2026-09-23. `npm audit` reported no known vulnerabilities.
+Last audit: 2026-09-23; self-hosted inference: 2026-10-03. `npm audit` reported no known vulnerabilities.
 
 ## Runtime
 
@@ -50,6 +50,8 @@ Codeman calls these APIs with `fetch` or through the packages above. Their docum
 | OpenRouter API | Task keys (list, create, get, disable) and analytics (tokens, requests, throughput, largest prompt) | [`docs/web/openrouter/`](web/openrouter/) |
 | npm registry | Downloading the harness's pinned package and checking its integrity | [`docs/web/npm/`](web/npm/) |
 | OpenCode | The harness's configuration, permissions, providers and `run` command | [`docs/web/opencode/`](web/opencode/) |
+| Runpod REST API v2 | Self-hosted inference: pods (create, get, list, terminate), Serverless endpoints (get), GPU prices, and billing (account, pods) | [`docs/web/runpod/`](web/runpod/) |
+| Ollama | The engine in Codeman's pod image: pulling a model, its context length, and its OpenAI-compatible API | [`docs/web/ollama/`](web/ollama/) |
 
 ## Agent harness: OpenCode
 
@@ -68,3 +70,28 @@ How Codeman uses it:
 2. Configuration goes through `OPENCODE_CONFIG_CONTENT`, which overrides the repository's: `autoupdate: false`, `share: "disabled"`, only the `openrouter` provider, and `deny` for `webfetch`, `websearch`, `external_directory`, `question` and `doom_loop`. No permission is left as `ask`, because nobody is there to answer.
 3. The apply job accepts only the files a stage allows (the plan, while planning), so the agent cannot change `opencode.json` or `.opencode/`.
 4. It is called as a child process (`opencode run --format json`); `@opencode-ai/sdk` is not used.
+
+## Self-hosted inference
+
+Audited on 2026-10-03 for the [self-hosted inference plan](plans/2026-10-02-self-hosted-inference.md). No npm package is added: the Runpod API is called with `fetch`, and the gateway uses only Node's built-in modules.
+
+### Runpod
+
+- **What:** a GPU cloud billed per second, with pods (a container on a GPU, billed while it exists) and Serverless endpoints (workers started on demand, billed while they run). Codeman uses the REST API v2 (`https://api.runpod.io/v2`); v1, which the plan first named, is deprecated and retired on 2026-11-15 ([migrate from API v1](web/runpod/migrate-from-api-v1.md)).
+- **Why:** it serves the GPU for `inference: self-hosted`. A small in-house replacement is not possible: it is the hardware.
+- **Data:** the agent's prompts, and so the repository's code, go to a container on Runpod. Codeman creates pods on Secure Cloud only, which runs in certified data centers of vetted partners ([data security](web/runpod/data-security-and-legal-compliance.md)). A Serverless endpoint does not report its cloud ([get a Serverless endpoint](web/runpod/get-a-serverless-endpoint.md)); the maintainer who creates it chooses.
+- **Credentials:** API keys are **All**, **Restricted** or **Read Only**; a restricted key can be limited to one Serverless endpoint, but no key expires or has a spending limit ([manage credentials](web/runpod/manage-credentials.md)). Codeman uses two: an account key in the jobs that manage pods and read billing, which run no LLM, and, for Serverless, a key restricted to the endpoint, held by the agent job's gateway, outside the sandbox.
+- **Spending:** the account spends prepaid credits; at US$ 0 Runpod stops every pod, and terminates those without a network volume ([billing overview](web/runpod/billing-overview.md)). An account without auto-pay therefore caps what Codeman can spend there.
+- **Terms:** the console's terms apply; Runpod's terms forbid hosts to inspect a pod's data.
+
+### Ollama
+
+- **What and why:** the inference engine in Codeman's pod image. It pulls a model by name and serves an OpenAI-compatible API ([OpenAI compatibility](web/ollama/openai-compatibility.md)). MIT, [ollama/ollama](https://github.com/ollama/ollama), very active (releases every few days).
+- **Version:** 0.35.1, from its official image `ollama/ollama`, pinned by digest (`sha256:292ee7945dfc3d5840a181f3ab86fedb1e66703e02c8af98b50f4da56b7e278c`, the multi-platform index), in Codeman's pod image.
+- **Known vulnerabilities** (OSV, 2026-10-03): path traversal (CVE-2024-37032, fixed in 0.1.34; CVE-2026-7020, reported up to 0.20.2), file deletion and archive extraction outside its directory (fixed in 0.1.34 and 0.1.47), out-of-bounds reads in model loading (CVE-2026-7482, fixed in 0.17.1), several denials of service, a token leak to a malicious registry during `pull` (CVE-2025-51471, reported up to 0.9.6), and an API without authentication (CVE-2025-63389). Accepted for 0.35.1: its API listens only on the pod's loopback, behind Codeman's gateway, which forwards only the OpenAI-compatible routes, and Codeman pulls models only from Ollama's own registry.
+- **Permissions:** it runs as root in the pod's container, which holds nothing but the model and the gateway.
+
+### Runpod's vLLM worker
+
+- **What and why:** Runpod's official Serverless worker, [runpod-workers/worker-vllm](https://github.com/runpod-workers/worker-vllm), running vLLM, with an OpenAI-compatible route ([OpenAI API compatibility](web/runpod/openai-api-compatibility.md)). MIT, maintained by Runpod, released weekly (v2.28.0 on 2026-09-28).
+- **How:** a maintainer chooses it, pinned to a release image (`runpod/worker-v1-vllm:<version>`), when creating the endpoint in Runpod's console. Codeman never runs it and does not install it; it checks the endpoint's settings when a run opens.

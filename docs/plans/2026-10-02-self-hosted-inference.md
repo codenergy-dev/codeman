@@ -1,7 +1,7 @@
 ---
-status: pending
+status: in progress
 created_at: 2026-10-02T18:25:00-03:00
-updated_at: 2026-10-02T21:15:00-03:00
+updated_at: 2026-10-03T22:50:00-03:00
 commit: d0637c8
 ---
 
@@ -56,13 +56,18 @@ The responsible person asked that a pod can serve consecutive runs of one task (
 
 Cost per run stays the time from `open` to `close` at the pod's price. The idle time between runs belongs to no run; it shows in the spend table's row for what the task spent outside its runs, since the task's total comes from the billing of its pods.
 
-### Found while writing this plan (2026-10-02), to verify in step 1
+### Found while writing this plan (2026-10-02), verified in step 1 (2026-10-03)
 
-- Runpod's REST API (`https://rest.runpod.io/v1`) creates, stops and terminates pods, and `GET /billing/pods` filters by `podId` and returns `amount` (USD) and `timeBilledMs`. A pod sees its own ID in `RUNPOD_POD_ID`. Exposed HTTP ports are reached through a public URL (`https://<pod>-<port>.proxy.runpod.net`).
-- Runpod's `GET /v2/billing` returns the account's spend, with serverless amounts apart, in buckets of one hour at least, and documents no filter by endpoint. A run's serverless cost may therefore have to be estimated from the gateway's measures.
-- Serverless: flex workers are billed per second from start to stop, rounded up, including the idle timeout. Runpod documents FlashBoot starts under a second for endpoints that ran recently.
-- vLLM's OpenAI server reports `usage` in responses, and in streams when asked (`stream_options.include_usage`); whether Runpod's worker passes it through is not documented.
-- Ollama reports per request `prompt_eval_count`, `eval_count`, `eval_duration` and `prompt_eval_duration` (nanoseconds). Its API has no authentication. Its default context window is small, and a longer prompt is cut without an error, so the engine must set the context length to what the model supports. Its `prompt_eval_count` may leave out the prompt it reused from its cache, while OpenRouter's `tokens_prompt` includes it; if so, the gateway counts the prompt another way, or the difference is documented.
+From the documentation only: the Runpod account does not exist yet, so every check that needs one moved to step 8. Pages are in [`docs/web/runpod/`](../web/runpod/) and [`docs/web/ollama/`](../web/ollama/).
+
+- **Runpod's REST API v1 is deprecated** and retired on 2026-11-15. Codeman uses v2, `https://api.runpod.io/v2`: pods at `/v2/pods`, termination with `DELETE /v2/pods/{id}`, wrapped list responses and RFC 9457 errors ([migrate from API v1](../web/runpod/migrate-from-api-v1.md)).
+- **Pods.** A created pod goes from `PROVISIONING` through `STARTING` to `RUNNING`; its `cost` is the billed rate in USD per hour, and `env` returns what it was created with ([get a pod](../web/runpod/get-a-pod.md)). `cloud` defaults to `SECURE`. A pod sees its ID in `RUNPOD_POD_ID`, and gets a "pod-scoped" key in `RUNPOD_API_KEY`, whose reach is not documented: step 8 checks whether it can terminate its own pod ([environment variables](../web/runpod/environment-variables.md)). Exposed HTTP ports are at `https://<pod>-<port>.proxy.runpod.net`, behind Cloudflare, which drops a request that gets no response within 100 seconds ([expose ports](../web/runpod/expose-ports.md)): the gateway answers a streamed request at once and keeps it alive until the engine responds.
+- **Billing.** `GET /v2/billing/pods` reports per pod per bucket, terminated pods included ([pod billing](../web/runpod/get-pod-billing-history.md)), and `GET /v2/billing` the account's total ([aggregated billing](../web/runpod/get-aggregated-billing-history.md)). Billing runs every 5 minutes ([billing overview](../web/runpod/billing-overview.md)), so a pod's billing lags behind its end, as decision 4 expected. `GET /v2/billing/serverless` filters by endpoint, but in buckets of an hour at least ([Serverless billing](../web/runpod/get-serverless-billing-history.md)): a run's Serverless cost is estimated from the gateway's measures.
+- **Serverless.** Flex workers are billed per second from start to stop, rounded up, idle timeout included ([pricing](../web/runpod/pricing.md)). An endpoint reports its workers, idle timeout, GPU pools, FlashBoot and environment, but no cloud: Secure Cloud for endpoints cannot be checked, only stated in the installation steps ([get a Serverless endpoint](../web/runpod/get-a-serverless-endpoint.md)). After 7 days without requests, Runpod sets its max workers to 0 ([endpoint settings](../web/runpod/endpoint-settings.md)); Codeman reports that instead of starting a run.
+- **vLLM worker.** The model is `MODEL_NAME` (or `OPENAI_SERVED_MODEL_NAME_OVERRIDE`), the context length `MAX_MODEL_LEN`, and tool calling, which the harness needs, `ENABLE_AUTO_TOOL_CHOICE` with a `TOOL_CALL_PARSER` ([vLLM environment variables](../web/runpod/vllm-environment-variables.md)). Whether `usage` is returned, streamed or not, is still undocumented: step 8.
+- **Ollama.** Its default context length now depends on VRAM (4k below 24 GiB, 256k from 48 GiB; [context length](../web/ollama/context-length.md)); the engine sets `OLLAMA_CONTEXT_LENGTH` to the model's own, read from `/api/show`. Its native API reports `prompt_eval_cached_count` apart from `prompt_eval_count` ([usage](../web/ollama/usage.md)), and its OpenAI-compatible API supports `stream_options.include_usage` ([OpenAI compatibility](../web/ollama/openai-compatibility.md)). Whether that API's `prompt_tokens` counts cached tokens is checked in step 8.
+- **Restricted keys** can be limited to one Serverless endpoint and do not expire ([manage credentials](../web/runpod/manage-credentials.md)), as the plan assumed.
+- **A hard cap.** At a balance of US$ 0, Runpod stops every pod and terminates those without a network volume ([billing overview](../web/runpod/billing-overview.md)). A prepaid account without auto-pay is therefore a cap no bug in Codeman can exceed.
 
 ### Risks
 
@@ -72,16 +77,9 @@ Cost per run stays the time from `open` to `close` at the pod's price. The idle 
 
 This plan depends on [`2026-10-02-context-and-throughput`](2026-10-02-context-and-throughput.md): the spend row's fields and the meaning of each figure come from it. It also comes after [`2026-10-02-third-party-docs`](2026-10-02-third-party-docs.md), so the pages it relies on are recorded in `docs/web/`.
 
-### Preliminary audit
+### Audit
 
-To complete in step 1 and record in [`docs/dependencies.md`](../dependencies.md). No npm package is planned: the Runpod REST API is called with `fetch`, as OpenRouter's is.
-
-| Component | What it is | Notes |
-| --- | --- | --- |
-| Runpod | Paid GPU cloud: pods and serverless, per-second billing. | New secrets: an account key for pods and billing, in the key jobs only; for serverless, a key restricted to the endpoint, in the agent job's gateway only. Check data handling on Secure Cloud, and terms. |
-| Ollama | Inference server, MIT, very active. | Runs from its official image, pinned by digest, inside Codeman's image. Past vulnerabilities include path traversal and unauthenticated access to an exposed API; its port stays inside the pod. |
-| Runpod's vLLM worker | Runpod's official serverless worker (`runpod-workers/worker-vllm`), running vLLM. | Per decision 9. Chosen in the endpoint's settings by a maintainer (decision 10), pinned to a release. |
-| Gateway | Code Codeman writes. | In Codeman's image for pods, and run by the agent job for serverless. |
+Recorded in [`docs/dependencies.md`](../dependencies.md#self-hosted-inference) (step 1). No npm package is added: the Runpod API is called with `fetch`, as OpenRouter's is, and the gateway uses Node's built-in modules only.
 
 ## Decisions
 
@@ -148,6 +146,8 @@ Decisions 1 to 8 were answered on 2026-10-02 by the responsible person: the reco
 
    **Answer:** (a). The cap is still to be stated here before step 8.
 
+   **Cap** (2026-10-03): US$ 20 per month, as OpenRouter's current monthly budget, and US$ 2 per task, as its task budget. Step 8 runs with `monthly-budget: 20` and `task-budget: 2`, on an account with US$ 20 of credits and no auto-pay, which caps it at Runpod too.
+
 Decisions 9 to 12 were answered on 2026-10-02 by the responsible person: the recommendation of each.
 
 9. **The serverless engine.** Options:
@@ -181,14 +181,14 @@ Decisions 9 to 12 were answered on 2026-10-02 by the responsible person: the rec
 
 ## Steps
 
-1. Verify the APIs and complete the audit. Pods: create, wait for, terminate and list a pod, read its billing, and check self-termination from inside the pod with the least privileged key Runpod allows. Ollama: the chosen context length, and its counts against the tokens sent, cached prompt included. Serverless: a restricted key's reach, the vLLM worker's `usage` in plain and streamed responses, what Runpod reports per request or per endpoint for billing, and cold and warm start times. The pages each check relies on go in `docs/web/`, following its tools. Done when `docs/dependencies.md` has the audit, `docs/web/` has the pages, and this plan is updated with what differs.
+1. Verify the APIs and complete the audit. **Done on 2026-10-03 from the documentation**: the checks that need an account (every one below that creates, measures or calls something) moved to step 8, since the account is created after the implementation. Pods: create, wait for, terminate and list a pod, read its billing, and check self-termination from inside the pod with the least privileged key Runpod allows. Ollama: the chosen context length, and its counts against the tokens sent, cached prompt included. Serverless: a restricted key's reach, the vLLM worker's `usage` in plain and streamed responses, what Runpod reports per request or per endpoint for billing, and cold and warm start times. The pages each check relies on go in `docs/web/`, following its tools. Done when `docs/dependencies.md` has the audit, `docs/web/` has the pages, and this plan is updated with what differs.
 2. Extract `InferenceProvider` from `src/budget.ts` and `src/steps/keys.ts`, with OpenRouter as its implementation and no change in behavior. Done when `keys` tests pass unchanged in meaning and key names are identical.
 3. `GpuProvider` with a Runpod adapter for pods and serverless and a fake; `InferenceEngine` with Ollama and vLLM adapters (decision 9) and a fake. Done when unit tests cover create, ready, terminate, list, billing and the deadline for pods, and the endpoint's check for serverless, without the network.
 4. The gateway: token check and rotation, forwarding with streaming, a record per request, `/usage`, the budget limit, and, in a pod, termination at the deadline and the idle limit. Its image for pods (decision 3), with the publishing workflow pinned by commit SHA. Done when its tests cover a rejected token, a rotated token, a streamed and a non-streamed request, the budget limit and `/usage`, against a fake engine.
 5. The self-hosted `InferenceProvider` for pods: `open` sweeps pods past their deadline or idle limit, reuses the task's kept pod or creates one with the run's deadline (limit ÷ price per second), waits until the model is served, and outputs the URL and encrypted tokens; `close` reads `/usage` and computes the run's usage (decision 4); then the pod is kept or terminated (decision 12). Done when tests with the fakes cover a run, a reused pod, a model change that replaces it, a failed close, an expired pod and an exceeded budget.
 6. The self-hosted `InferenceProvider` for serverless: `open` checks the endpoint (decision 10) and the budgets; the agent job starts the gateway outside the sandbox before the agent (decision 11) and stops it after; `close` reads its usage and estimates the cost from the flex price. Done when tests with the fakes cover a run, a rejected endpoint, a gateway that stops at the limit, and a sandbox that cannot read the key.
 7. Workflow, harness and settings: `apply`'s new output and the `release-pod` job (decision 12); OpenCode gets an OpenAI-compatible provider with the gateway's URL instead of `openrouter`, still the only provider enabled; settings per decision 7; `action.yml` and [`templates/codeman.yml`](../../templates/codeman.yml) get the new secrets, outputs and job, unchanged for OpenRouter. Done when `settings`, `harness` and `apply` tests cover the three modes.
-8. On the test account (decision 8): run a full task on a small model with each mode, compare cost and figures with Runpod's billing, measure starts with and without a kept pod and on a warm and a cold endpoint, and confirm no pod is left after a cancelled workflow. Done when the results are recorded in this plan.
+8. On the test account (decision 8), first the checks of step 1 that need it: create, wait for, terminate and list a pod, read its billing, a pod's self-termination with `RUNPOD_API_KEY`, Ollama's counts against the tokens sent, a restricted key's reach, the vLLM worker's `usage`, and start times. Then run a full task on a small model with each mode, compare cost and figures with Runpod's billing, measure starts with and without a kept pod and on a warm and a cold endpoint, and confirm no pod is left after a cancelled workflow. Done when the results are recorded in this plan.
 9. Update [`docs/architecture.md`](../architecture.md) (budget, jobs, a section on self-hosted inference), [`docs/security.md`](../security.md) (where code goes, the new secrets, the public URL, the gateway outside the sandbox), [`docs/installation.md`](../installation.md) (the endpoint's settings, for serverless) and the README's "Getting started". Done when they describe every mode.
 10. Rebuild `dist/`, run `npm run check`. Done when it passes.
 
