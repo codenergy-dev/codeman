@@ -1,165 +1,83 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { decrypt } from "../crypto.ts";
+import { FakeInference } from "../testing/fake-inference.ts";
+import { FakePlatform, fakeServices } from "../testing/fake-platform.ts";
 import { FakeRuntime } from "../testing/fake-runtime.ts";
-import { runCost, runStats, runTokens, taskCosts } from "./keys.ts";
+import { closeKey, openKey } from "./keys.ts";
 
-/** A fake analytics API that answers each query with the next result. */
-function analytics(results: ({ input: number; output: number } | undefined | Error)[]) {
-  let calls = 0;
+const secret = "s".repeat(32);
+
+function openInputs(extra: Record<string, string> = {}): Record<string, string> {
   return {
-    get calls() {
-      return calls;
-    },
-    async keyTokens() {
-      const result = results[Math.min(calls++, results.length - 1)];
-      if (result instanceof Error) throw result;
-      return result;
-    },
+    "encryption-secret": secret,
+    task: "7",
+    "task-budget": "2",
+    "monthly-budget": "20",
+    ...extra,
   };
 }
 
-const noWait = async () => undefined;
-const repository = { owner: "o", name: "r" };
+async function open(inference: FakeInference, inputs = openInputs()) {
+  const runtime = new FakeRuntime({ inputs, runId: "300" });
+  await openKey(fakeServices(new FakePlatform(), runtime, undefined, inference));
+  return runtime;
+}
 
-test("asks again until analytics counts a key that spent something", async () => {
-  const api = analytics([undefined, { input: 0, output: 0 }, { input: 1500, output: 40 }]);
-  assert.deepEqual(await runTokens(api, "h", true, new FakeRuntime(), noWait), {
-    input: 1500,
-    output: 40,
+test("opens a run limited to what remains of the task's budget", async () => {
+  const inference = new FakeInference({ spent: 0.25, month: 3 });
+  const runtime = await open(inference);
+  assert.deepEqual(inference.opened, [{ task: "7", runId: "300", limit: 1.75 }]);
+  assert.equal(runtime.outputs.status, "opened");
+  assert.equal(runtime.outputs["key-limit"], "1.75");
+  assert.equal(runtime.outputs["task-spent"], "0.2500");
+  assert.equal(runtime.outputs["month-spent"], "3.0000");
+  assert.equal(runtime.outputs.handle, "handle-300");
+  assert.equal(runtime.outputs["key-hash"], "handle-300");
+  assert.equal(decrypt(runtime.outputs["encrypted-key"] ?? "", secret), "credential-300");
+  assert.deepEqual(runtime.masked, ["credential-300"]);
+});
+
+test("opens nothing when the task's budget is spent or the month's would be passed", async () => {
+  const spent = new FakeInference({ spent: 1.95 });
+  assert.equal((await open(spent)).outputs.status, "task-budget-spent");
+  const month = new FakeInference({ month: 19 });
+  const runtime = await open(month);
+  assert.equal(runtime.outputs.status, "over-budget");
+  assert.match(runtime.outputs.reason ?? "", /US\$ 19\.00 used of US\$ 20\.00/);
+  assert.equal(spent.opened.length + month.opened.length, 0);
+});
+
+test("closes the run by its handle, and reports what it used", async () => {
+  const inference = new FakeInference({
+    usage: {
+      cost: 0.0312,
+      inputTokens: 1500,
+      outputTokens: 40,
+      requests: 3,
+      maxInputTokens: 900,
+      tokensPerSecond: 48.25,
+      taskCosts: { "100": 0.1, "300": 0.0312 },
+    },
   });
-  assert.equal(api.calls, 3);
-});
-
-test("gives up after about a minute without tokens", async () => {
-  const api = analytics([undefined]);
-  assert.equal(await runTokens(api, "h", true, new FakeRuntime(), noWait), undefined);
-  assert.equal(api.calls, 7);
-});
-
-test("a key that spent nothing used no tokens, without waiting", async () => {
-  const api = analytics([undefined]);
-  assert.deepEqual(await runTokens(api, "h", false, new FakeRuntime(), noWait), {
-    input: 0,
-    output: 0,
-  });
-  assert.equal(api.calls, 1);
-});
-
-test("a failed query leaves the tokens unknown, and does not fail the job", async () => {
-  const api = analytics([new Error("OpenRouter POST /analytics/query failed with 403.")]);
-  assert.equal(await runTokens(api, "h", true, new FakeRuntime(), noWait), undefined);
-});
-
-/** A fake analytics API that answers each stats query with the next result. */
-function stats(results: ({ requests: number } | undefined | Error)[]) {
-  let calls = 0;
-  return {
-    get calls() {
-      return calls;
-    },
-    async keyStats() {
-      const result = results[Math.min(calls++, results.length - 1)];
-      if (result instanceof Error) throw result;
-      return result;
-    },
-  };
-}
-
-test("asks again for the requests of a key that generated tokens", async () => {
-  const api = stats([undefined, { requests: 3 }]);
-  assert.deepEqual(await runStats(api, "h", true, new FakeRuntime(), noWait), { requests: 3 });
-  assert.equal(api.calls, 2);
-});
-
-test("gives up on requests after about a minute, and does not wait for a key that generated nothing", async () => {
-  const late = stats([undefined]);
-  assert.equal(await runStats(late, "h", true, new FakeRuntime(), noWait), undefined);
-  assert.equal(late.calls, 7);
-  const idle = stats([undefined]);
-  assert.equal(await runStats(idle, "h", false, new FakeRuntime(), noWait), undefined);
-  assert.equal(idle.calls, 1);
-});
-
-test("a failed stats query leaves them unknown, and does not fail the job", async () => {
-  const api = stats([new Error("OpenRouter POST /analytics/query failed with 400.")]);
-  const runtime = new FakeRuntime();
-  assert.equal(await runStats(api, "h", true, runtime, noWait), undefined);
-});
-
-/** A fake key whose usage reads the next value each time. */
-function usage(values: number[]) {
-  let calls = 0;
-  return {
-    get calls() {
-      return calls;
-    },
-    async keyUsage() {
-      return values[Math.min(calls++, values.length - 1)] ?? 0;
-    },
-  };
-}
-
-test("reads the usage until it stops changing", async () => {
-  const api = usage([0.01, 0.03, 0.03]);
-  assert.equal(await runCost(api, "h", false, noWait), 0.03);
-  assert.equal(api.calls, 3);
-});
-
-test("a key that spent nothing is read twice", async () => {
-  const api = usage([0]);
-  assert.equal(await runCost(api, "h", false, noWait), 0);
-  assert.equal(api.calls, 2);
-});
-
-test("a used key's zero usage is read again until the cost shows", async () => {
-  const api = usage([0, 0, 0, 0.05, 0.05]);
-  assert.equal(await runCost(api, "h", true, noWait), 0.05);
-  assert.equal(api.calls, 5);
-});
-
-test("a used key's zero usage is read for about a minute at most", async () => {
-  const api = usage([0]);
-  assert.equal(await runCost(api, "h", true, noWait), 0);
-  assert.equal(api.calls, 13);
-});
-
-/** A fake OpenRouter with the run's key and the account's keys. */
-function keys(name: string, listed: { name: string; usage?: number }[] | Error) {
-  return {
-    async key() {
-      return { hash: "h", name };
-    },
-    async listKeys() {
-      if (listed instanceof Error) throw listed;
-      return listed.map((key, index) => ({ hash: String(index), ...key }));
-    },
-  };
-}
-
-test("reads what each run of the key's task spent", async () => {
-  const api = keys("codeman/o/r/7/300", [
-    { name: "codeman/o/r/7/100", usage: 0.05123 },
-    { name: "codeman/o/r/7/200" },
-    { name: "codeman/o/r/7/300", usage: 0.036 },
-    { name: "codeman/o/r/70/400", usage: 1 },
-    { name: "codeman/o/other/7/500", usage: 1 },
-  ]);
-  assert.deepEqual(await taskCosts(api, "h", repository, new FakeRuntime()), {
-    "100": 0.0512,
-    "200": 0,
-    "300": 0.036,
+  const runtime = new FakeRuntime({ inputs: { handle: "h" } });
+  await closeKey(fakeServices(new FakePlatform(), runtime, undefined, inference));
+  assert.deepEqual(inference.closed, ["h"]);
+  assert.deepEqual(runtime.outputs, {
+    "run-cost": "0.0312",
+    "input-tokens": "1500",
+    "output-tokens": "40",
+    requests: "3",
+    "max-input-tokens": "900",
+    "tokens-per-second": "48.3",
+    "task-costs": '{"100":0.1,"300":0.0312}',
   });
 });
 
-test("a key that is not a task key of this repository, or a failed listing, gives no costs", async () => {
-  assert.equal(
-    await taskCosts(keys("codeman/o/other/7/300", []), "h", repository, new FakeRuntime()),
-    undefined,
-  );
-  assert.equal(
-    await taskCosts(keys("codeman/o/r/300", []), "h", repository, new FakeRuntime()),
-    undefined,
-  );
-  const failed = keys("codeman/o/r/7/300", new Error("OpenRouter GET /keys failed with 500."));
-  assert.equal(await taskCosts(failed, "h", repository, new FakeRuntime()), undefined);
+test("an older workflow file passes the handle as key-hash; unknown figures are left out", async () => {
+  const inference = new FakeInference({ usage: { cost: 0 } });
+  const runtime = new FakeRuntime({ inputs: { "key-hash": "old" } });
+  await closeKey(fakeServices(new FakePlatform(), runtime, undefined, inference));
+  assert.deepEqual(inference.closed, ["old"]);
+  assert.deepEqual(runtime.outputs, { "run-cost": "0.0000" });
 });

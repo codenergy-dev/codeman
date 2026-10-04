@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { InferenceProvider } from "../inference/provider.ts";
 import type { Conventions } from "../platform/conventions.ts";
 import type { CiResults, Platform } from "../platform/platform.ts";
 import type {
@@ -19,6 +20,7 @@ import type {
 import type { Runtime } from "../runtime/runtime.ts";
 import type { Services } from "../services.ts";
 import { OPT_IN_LABEL, STATES, type State, stateLabel } from "../state.ts";
+import { FakeInference } from "./fake-inference.ts";
 import { FakeRuntime } from "./fake-runtime.ts";
 
 /**
@@ -411,16 +413,18 @@ export class FakeCi implements CiResults {
   }
 }
 
-/** Services over a fake platform and CI, for one step with this runtime. */
+/** Services over a fake platform, CI and inference, for one step with this runtime. */
 export function fakeServices(
   platform: FakePlatform,
   runtime: Runtime = new FakeRuntime(),
   ci: CiResults = new FakeCi(),
+  inference: InferenceProvider = new FakeInference(),
 ): Services {
   return {
     runtime,
     conventions: FAKE_CONVENTIONS,
     platform: () => platform,
     ci: () => ci,
+    inference: () => inference,
   };
 }

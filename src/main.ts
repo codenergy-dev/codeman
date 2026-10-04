@@ -1,3 +1,4 @@
+import { inferenceProvider } from "./inference/index.ts";
 import { GitHubActionsResults } from "./platform/github/ci.ts";
 import { GITHUB } from "./platform/github/conventions.ts";
 import { GitHubPlatform, octokit } from "./platform/github/platform.ts";
@@ -17,7 +18,10 @@ const STEPS: Record<string, (services: Services) => Promise<void>> = {
   "close-key": closeKey,
 };
 
-/** Codeman on GitHub: the App's tokens for the platform, the job's token for CI results. */
+/**
+ * Codeman on GitHub: the App's tokens for the platform, the job's token for CI results, and the
+ * inference provider with the key jobs' credentials.
+ */
 export function gitHubServices(runtime: Runtime): Services {
   const client = (input: string) => octokit(runtime.input(input, { required: true }));
   return {
@@ -30,6 +34,7 @@ export function gitHubServices(runtime: Runtime): Services {
         { appSlug: runtime.input("app-slug") || undefined },
       ),
     ci: () => new GitHubActionsResults(client("github-token"), runtime.repository),
+    inference: () => inferenceProvider(runtime),
   };
 }
 

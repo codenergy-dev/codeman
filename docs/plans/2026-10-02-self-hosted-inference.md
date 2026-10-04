@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-10-02T18:25:00-03:00
-updated_at: 2026-10-03T22:50:00-03:00
+updated_at: 2026-10-03T23:20:00-03:00
 commit: d0637c8
 ---
 
@@ -182,7 +182,7 @@ Decisions 9 to 12 were answered on 2026-10-02 by the responsible person: the rec
 ## Steps
 
 1. Verify the APIs and complete the audit. **Done on 2026-10-03 from the documentation**: the checks that need an account (every one below that creates, measures or calls something) moved to step 8, since the account is created after the implementation. Pods: create, wait for, terminate and list a pod, read its billing, and check self-termination from inside the pod with the least privileged key Runpod allows. Ollama: the chosen context length, and its counts against the tokens sent, cached prompt included. Serverless: a restricted key's reach, the vLLM worker's `usage` in plain and streamed responses, what Runpod reports per request or per endpoint for billing, and cold and warm start times. The pages each check relies on go in `docs/web/`, following its tools. Done when `docs/dependencies.md` has the audit, `docs/web/` has the pages, and this plan is updated with what differs.
-2. Extract `InferenceProvider` from `src/budget.ts` and `src/steps/keys.ts`, with OpenRouter as its implementation and no change in behavior. Done when `keys` tests pass unchanged in meaning and key names are identical.
+2. Extract `InferenceProvider` from `src/budget.ts` and `src/steps/keys.ts`, with OpenRouter as its implementation and no change in behavior. Done when `keys` tests pass unchanged in meaning and key names are identical. **Done on 2026-10-03**: [`src/inference/provider.ts`](../../src/inference/provider.ts) and [`src/inference/openrouter.ts`](../../src/inference/openrouter.ts); `open-key` also outputs the handle as `handle`, next to `key-hash`.
 3. `GpuProvider` with a Runpod adapter for pods and serverless and a fake; `InferenceEngine` with Ollama and vLLM adapters (decision 9) and a fake. Done when unit tests cover create, ready, terminate, list, billing and the deadline for pods, and the endpoint's check for serverless, without the network.
 4. The gateway: token check and rotation, forwarding with streaming, a record per request, `/usage`, the budget limit, and, in a pod, termination at the deadline and the idle limit. Its image for pods (decision 3), with the publishing workflow pinned by commit SHA. Done when its tests cover a rejected token, a rotated token, a streamed and a non-streamed request, the budget limit and `/usage`, against a fake engine.
 5. The self-hosted `InferenceProvider` for pods: `open` sweeps pods past their deadline or idle limit, reuses the task's kept pod or creates one with the run's deadline (limit ÷ price per second), waits until the model is served, and outputs the URL and encrypted tokens; `close` reads `/usage` and computes the run's usage (decision 4); then the pod is kept or terminated (decision 12). Done when tests with the fakes cover a run, a reused pod, a model change that replaces it, a failed close, an expired pod and an exceeded budget.

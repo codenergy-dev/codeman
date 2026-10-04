@@ -19739,6 +19739,336 @@ var require_lib = __commonJS({
   }
 });
 
+// src/steps/common.ts
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+function positiveNumber(runtime2, name) {
+  const value = Number(runtime2.input(name, { required: true }));
+  if (!Number.isFinite(value) || value <= 0)
+    throw new Error(`Input ${name} must be a positive number.`);
+  return value;
+}
+function workdir(runtime2) {
+  return runtime2.input("workdir") || join(runtime2.tempDir, "codeman");
+}
+var taskFile = (runtime2) => join(workdir(runtime2), "task", "task.json");
+var resultDir = (runtime2) => join(workdir(runtime2), "result");
+function readTask(runtime2) {
+  const task = JSON.parse(readFileSync(taskFile(runtime2), "utf8"));
+  if (task.version !== 1) throw new Error("The task file has an unknown version.");
+  return task;
+}
+
+// src/budget.ts
+var MIN_RUN_BUDGET = 0.1;
+function runLimit(taskBudget, spent) {
+  const remaining = Math.floor((taskBudget - spent) * 100 + 1e-9) / 100;
+  return remaining >= MIN_RUN_BUDGET ? remaining : void 0;
+}
+function usd(amount) {
+  return `US$ ${amount.toFixed(2)}`;
+}
+
+// src/inference/openrouter.ts
+var API = "https://openrouter.ai/api/v1";
+function keyPrefix(repository) {
+  return `codeman/${repository.owner}/${repository.name}/`;
+}
+function taskKeyPrefix(repository, issue2) {
+  return `${keyPrefix(repository)}${issue2}/`;
+}
+function sumUsage(keys, prefix, field) {
+  return keys.filter((key) => key.name.startsWith(prefix)).reduce((total, key) => total + (key[field] ?? 0), 0);
+}
+function costsByRun(keys, prefix) {
+  const costs = {};
+  for (const key of keys) {
+    const run2 = key.name.slice(prefix.length);
+    if (!key.name.startsWith(prefix) || !/^\d+$/.test(run2)) continue;
+    costs[run2] = (costs[run2] ?? 0) + (key.usage ?? 0);
+  }
+  return costs;
+}
+function count(value) {
+  const number3 = typeof value === "string" ? Number(value) : value;
+  return typeof number3 === "number" && Number.isFinite(number3) && number3 > 0 ? Math.round(number3) : 0;
+}
+function rate(value) {
+  const number3 = typeof value === "string" ? Number(value) : value;
+  return typeof number3 === "number" && Number.isFinite(number3) && number3 >= 0 ? number3 : void 0;
+}
+function utcSeconds(date) {
+  return `${date.toISOString().slice(0, 19)}Z`;
+}
+function expiresAt(now, hours) {
+  return `${new Date(now.getTime() + hours * 36e5).toISOString().slice(0, 19)}Z`;
+}
+var OpenRouter = class {
+  #managementKey;
+  #fetch;
+  constructor(managementKey, fetchFn = fetch) {
+    this.#managementKey = managementKey;
+    this.#fetch = fetchFn;
+  }
+  /** Every key of the account, disabled ones included. */
+  async listKeys() {
+    const keys = [];
+    for (let page = 0; page < 100; page++) {
+      const { data } = await this.#request(
+        `/keys?include_disabled=true&offset=${keys.length}`
+      );
+      if (data.length === 0) return keys;
+      keys.push(...data);
+    }
+    throw new Error("Too many OpenRouter keys to add up.");
+  }
+  /** This month's usage, in USD, of every key whose name starts with `prefix`, disabled ones included. */
+  async monthlyUsage(prefix) {
+    return sumUsage(await this.listKeys(), prefix, "usage_monthly");
+  }
+  async key(hash) {
+    const { data } = await this.#request(`/keys/${encodeURIComponent(hash)}`);
+    return data;
+  }
+  /** The total usage of one key, in USD. */
+  async keyUsage(hash) {
+    return (await this.key(hash)).usage ?? 0;
+  }
+  /**
+   * The tokens one key used between `since` and `until`, from OpenRouter's analytics, as
+   * OpenRouter counts them: prompt tokens (cached ones included) and completion tokens.
+   * Undefined when analytics has no rows for the key yet.
+   */
+  async keyTokens(hash, since, until) {
+    const rows = await this.#query({
+      metrics: ["tokens_prompt", "tokens_completion"],
+      filters: [{ field: "api_key_id", operator: "eq", value: hash }],
+      time_range: { start: utcSeconds(since), end: utcSeconds(until) }
+    });
+    if (rows.length === 0) return void 0;
+    let input = 0;
+    let output = 0;
+    for (const row of rows) {
+      input += count(row.tokens_prompt);
+      output += count(row.tokens_completion);
+    }
+    return { input, output };
+  }
+  /**
+   * How one key's requests went between `since` and `until`, from OpenRouter's analytics: how
+   * many there were, their mean throughput (completion tokens per second) and the largest
+   * prompt among them, cached tokens included. Undefined when analytics has no requests for the
+   * key yet. Throughput and per-request rows cover at most 31 days.
+   */
+  async keyStats(hash, since, until) {
+    const filters = [{ field: "api_key_id", operator: "eq", value: hash }];
+    const time_range = { start: utcSeconds(since), end: utcSeconds(until) };
+    const rows = await this.#query({
+      metrics: ["request_count", "avg_throughput"],
+      filters,
+      time_range
+    });
+    let requests = 0;
+    let weighted = 0;
+    let measured = 0;
+    for (const row of rows) {
+      const n = count(row.request_count);
+      const throughput = rate(row.avg_throughput);
+      requests += n;
+      if (throughput !== void 0 && n > 0) {
+        weighted += throughput * n;
+        measured += n;
+      }
+    }
+    if (requests === 0) return void 0;
+    const largest = await this.#query({
+      metrics: ["tokens_prompt"],
+      dimensions: ["generation_id"],
+      filters,
+      time_range,
+      order_by: { field: "tokens_prompt", direction: "desc" },
+      limit: 1
+    });
+    const maxInputTokens = largest.reduce((max, row) => Math.max(max, count(row.tokens_prompt)), 0);
+    return {
+      requests,
+      tokensPerSecond: measured > 0 ? weighted / measured : void 0,
+      maxInputTokens: largest.length > 0 ? maxInputTokens : void 0
+    };
+  }
+  async createKey(options) {
+    const response = await this.#request("/keys", "POST", {
+      name: options.name,
+      limit: options.limit,
+      expires_at: options.expiresAt
+    });
+    return { key: response.key, hash: response.data.hash };
+  }
+  /** Disables instead of deleting, so the key's usage still counts towards the monthly cap. */
+  async disableKey(hash) {
+    await this.#request(`/keys/${encodeURIComponent(hash)}`, "PATCH", { disabled: true });
+  }
+  /** The rows of an analytics query. */
+  async #query(body) {
+    const response = await this.#request("/analytics/query", "POST", body);
+    const rows = response.data?.data;
+    return Array.isArray(rows) ? rows : [];
+  }
+  async #request(path, method = "GET", body) {
+    const response = await this.#fetch(`${API}${path}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${this.#managementKey}`,
+        "Content-Type": "application/json"
+      },
+      body: body === void 0 ? null : JSON.stringify(body)
+    });
+    if (!response.ok) {
+      throw new Error(`OpenRouter ${method} ${path.split("?")[0]} failed with ${response.status}.`);
+    }
+    return response.json();
+  }
+};
+var OpenRouterProvider = class {
+  name = "openrouter";
+  #router;
+  #repository;
+  #expiryHours;
+  #keys;
+  constructor(router, repository, expiryHours) {
+    this.#router = router;
+    this.#repository = repository;
+    this.#expiryHours = expiryHours;
+  }
+  /** The account's keys, listed once for both sums. */
+  #listKeys() {
+    this.#keys ??= this.#router.listKeys();
+    return this.#keys;
+  }
+  async taskSpent(task) {
+    return sumUsage(await this.#listKeys(), taskKeyPrefix(this.#repository, task), "usage");
+  }
+  async monthSpent() {
+    return sumUsage(await this.#listKeys(), keyPrefix(this.#repository), "usage_monthly");
+  }
+  async open(run2, log) {
+    const hours = this.#expiryHours();
+    const { key, hash } = await this.#router.createKey({
+      name: `${keyPrefix(this.#repository)}${run2.task}/${run2.runId}`,
+      limit: run2.limit,
+      expiresAt: expiresAt(/* @__PURE__ */ new Date(), hours)
+    });
+    log.info(`Created a key limited to ${usd(run2.limit)}, expiring in ${hours} hours.`);
+    return { handle: hash, credential: key };
+  }
+  /**
+   * Disables the run's key, then reads what it spent and used, and what each run of the task
+   * spent, so apply can refresh the costs that earlier runs read too soon.
+   */
+  async close(hash, log) {
+    const router = this.#router;
+    await router.disableKey(hash);
+    log.info("Disabled the key.");
+    let cost = await runCost(router, hash, false);
+    const tokens = await runTokens(router, hash, cost > 0, log);
+    if (cost === 0 && tokens && tokens.input + tokens.output > 0) {
+      log.info("OpenRouter has tokens for this run's key but no cost yet; reading it again.");
+      cost = await runCost(router, hash, true);
+      if (cost === 0) log.warning("OpenRouter has no cost for this run's key yet.");
+    }
+    const stats = await runStats(router, hash, tokens !== void 0 && tokens.output > 0, log);
+    return {
+      cost,
+      inputTokens: tokens?.input,
+      outputTokens: tokens?.output,
+      requests: stats?.requests,
+      maxInputTokens: stats?.maxInputTokens,
+      tokensPerSecond: stats?.tokensPerSecond,
+      taskCosts: await taskCosts(router, hash, this.#repository, log)
+    };
+  }
+};
+async function runCost(router, hash, used, wait = sleep) {
+  let cost = await router.keyUsage(hash);
+  for (let attempt = 0; attempt < (used ? 12 : 6); attempt++) {
+    await wait(5e3);
+    const latest = await router.keyUsage(hash);
+    if (latest === cost && (latest > 0 || !used)) break;
+    cost = latest;
+  }
+  return cost;
+}
+async function taskCosts(router, hash, repository, log) {
+  try {
+    const { name } = await router.key(hash);
+    const prefix = name.slice(0, name.lastIndexOf("/") + 1);
+    if (!prefix.startsWith(keyPrefix(repository)) || prefix === keyPrefix(repository)) {
+      throw new Error("the key's name is not a task key's.");
+    }
+    const costs = costsByRun(await router.listKeys(), prefix);
+    return Object.fromEntries(
+      Object.entries(costs).map(([run2, cost]) => [run2, Number(cost.toFixed(4))])
+    );
+  } catch (error2) {
+    log.warning(
+      `Could not read what the task's runs spent: ${error2 instanceof Error ? error2.message : error2}`
+    );
+    return void 0;
+  }
+}
+var KEY_LIFETIME_MS = 48 * 36e5;
+async function runTokens(router, hash, spent, log, wait = sleep) {
+  try {
+    for (let attempt = 0; ; attempt++) {
+      const now = /* @__PURE__ */ new Date();
+      const tokens = await router.keyTokens(hash, new Date(now.getTime() - KEY_LIFETIME_MS), now);
+      const counted = tokens !== void 0 && tokens.input + tokens.output > 0;
+      if (counted || !spent) return tokens ?? (spent ? void 0 : { input: 0, output: 0 });
+      if (attempt === 6) {
+        log.warning("OpenRouter's analytics has no tokens for this run's key yet.");
+        return void 0;
+      }
+      await wait(1e4);
+    }
+  } catch (error2) {
+    log.warning(
+      `Could not read this run's tokens: ${error2 instanceof Error ? error2.message : error2}`
+    );
+    return void 0;
+  }
+}
+async function runStats(router, hash, generated, log, wait = sleep) {
+  try {
+    for (let attempt = 0; ; attempt++) {
+      const now = /* @__PURE__ */ new Date();
+      const stats = await router.keyStats(hash, new Date(now.getTime() - KEY_LIFETIME_MS), now);
+      if (stats || !generated) return stats;
+      if (attempt === 6) {
+        log.warning("OpenRouter's analytics has no requests for this run's key yet.");
+        return void 0;
+      }
+      await wait(1e4);
+    }
+  } catch (error2) {
+    log.warning(
+      `Could not read this run's requests: ${error2 instanceof Error ? error2.message : error2}`
+    );
+    return void 0;
+  }
+}
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// src/inference/index.ts
+function inferenceProvider(runtime2) {
+  return new OpenRouterProvider(
+    new OpenRouter(runtime2.input("management-key", { required: true })),
+    runtime2.repository,
+    () => positiveNumber(runtime2, "key-expiry-hours")
+  );
+}
+
 // src/platform/github/ci.ts
 function toCiRun(run2) {
   return {
@@ -19824,7 +20154,7 @@ var GITHUB = {
 };
 
 // node_modules/@actions/github/lib/context.js
-import { readFileSync, existsSync } from "fs";
+import { readFileSync as readFileSync2, existsSync } from "fs";
 import { EOL } from "os";
 var Context = class {
   /**
@@ -19835,7 +20165,7 @@ var Context = class {
     this.payload = {};
     if (process.env.GITHUB_EVENT_PATH) {
       if (existsSync(process.env.GITHUB_EVENT_PATH)) {
-        this.payload = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, { encoding: "utf8" }));
+        this.payload = JSON.parse(readFileSync2(process.env.GITHUB_EVENT_PATH, { encoding: "utf8" }));
       } else {
         const path = process.env.GITHUB_EVENT_PATH;
         process.stdout.write(`GITHUB_EVENT_PATH ${path} does not exist${EOL}`);
@@ -24371,7 +24701,7 @@ import { join as join6 } from "node:path";
 
 // src/collect.ts
 import { lstatSync, mkdirSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { join as join2 } from "node:path";
 
 // src/sandbox.ts
 import { spawn, spawnSync } from "node:child_process";
@@ -24591,7 +24921,7 @@ function collectChanges(options) {
   const changes = parseStatus(status2).filter(
     ({ path }) => !options.exclude.some((prefix) => path === prefix || path.startsWith(`${prefix}/`))
   );
-  const tree = join(options.outDir, "tree");
+  const tree = join2(options.outDir, "tree");
   mkdirSync(tree, { recursive: true });
   const copies = changes.filter((change) => change.status !== "deleted").map(({ path }) => path);
   if (copies.length > 0) {
@@ -24611,7 +24941,7 @@ function collectChanges(options) {
   }
   return changes.map((change) => {
     if (change.status === "deleted") return change;
-    const copy = join(tree, change.path);
+    const copy = join2(tree, change.path);
     const stats = lstatSync(copy);
     if (!stats.isFile()) {
       rmSync(copy, { recursive: true, force: true });
@@ -24675,7 +25005,7 @@ function deriveKey(secret, salt) {
 import { spawnSync as spawnSync2 } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, mkdirSync as mkdirSync2, writeFileSync } from "node:fs";
-import { join as join2 } from "node:path";
+import { join as join3 } from "node:path";
 var OPENCODE_VERSION = "1.18.32";
 var PACKAGES = {
   "linux-x64": {
@@ -24730,13 +25060,13 @@ var openCode = {
       throw new Error(`${pkg.name}@${OPENCODE_VERSION} does not match its pinned integrity.`);
     }
     mkdirSync2(dir, { recursive: true });
-    const file = join2(dir, "opencode.tgz");
+    const file = join3(dir, "opencode.tgz");
     writeFileSync(file, tarball);
     const tar = spawnSync2("tar", ["-xzf", file, "-C", dir, "package/bin/opencode"], {
       stdio: "inherit"
     });
     if (tar.status !== 0) throw new Error("Extracting OpenCode failed.");
-    const executable = join2(dir, "package", "bin", "opencode");
+    const executable = join3(dir, "package", "bin", "opencode");
     chmodSync(executable, 493);
     return executable;
   },
@@ -25657,7 +25987,7 @@ function languageName(tag) {
 import { spawnSync as spawnSync3 } from "node:child_process";
 import { mkdtempSync, rmSync as rmSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join as join3 } from "node:path";
+import { join as join4 } from "node:path";
 
 // src/validate.ts
 var MAX_PLAN_BYTES = 256 * 1024;
@@ -25833,7 +26163,7 @@ function webRule(path, policy) {
 }
 function ignoredPaths(rules, paths) {
   if (paths.length === 0) return /* @__PURE__ */ new Set();
-  const dir = mkdtempSync(join3(tmpdir(), "codeman-ignore-"));
+  const dir = mkdtempSync(join4(tmpdir(), "codeman-ignore-"));
   try {
     const env = {
       PATH: process.env.PATH ?? "",
@@ -25842,7 +26172,7 @@ function ignoredPaths(rules, paths) {
     };
     const init = spawnSync3("git", ["init", "-q", dir], { env, encoding: "utf8" });
     if (init.status !== 0) throw new Error(`git init failed: ${init.stderr.trim()}`);
-    writeFileSync2(join3(dir, ".git", "info", "exclude"), rules);
+    writeFileSync2(join4(dir, ".git", "info", "exclude"), rules);
     const result = spawnSync3(
       "git",
       [
@@ -26037,7 +26367,7 @@ function decodeStatus(body) {
 // src/results.ts
 import { spawnSync as spawnSync4 } from "node:child_process";
 import { mkdirSync as mkdirSync3, rmSync as rmSync3, writeFileSync as writeFileSync3 } from "node:fs";
-import { join as join4 } from "node:path";
+import { join as join5 } from "node:path";
 var RESULTS_DIR = ".codeman/results";
 var MAX_LOG_BYTES = 64 * 1024;
 var MAX_ARTIFACT_BYTES = 50 * 1024 * 1024;
@@ -26057,8 +26387,8 @@ async function downloadResults(ci, runs, dir) {
   let budget = MAX_ARTIFACT_BYTES;
   const index = ["# Workflow results", ""];
   for (const run2 of runs) {
-    const runDir = join4(dir, String(run2.id));
-    mkdirSync3(join4(runDir, "logs"), { recursive: true });
+    const runDir = join5(dir, String(run2.id));
+    mkdirSync3(join5(runDir, "logs"), { recursive: true });
     const lines = [
       `## ${run2.name} (${run2.path})`,
       "",
@@ -26070,7 +26400,7 @@ async function downloadResults(ci, runs, dir) {
       if (job.conclusion === "success" || job.conclusion === "skipped") continue;
       try {
         const log = logTail(await ci.jobLog(job.id));
-        writeFileSync3(join4(runDir, "logs", `${job.id}-${safeName(job.name)}.txt`), log);
+        writeFileSync3(join5(runDir, "logs", `${job.id}-${safeName(job.name)}.txt`), log);
       } catch {
         lines.push("  (its log could not be downloaded)");
       }
@@ -26084,18 +26414,18 @@ async function downloadResults(ci, runs, dir) {
         lines.push(`- Artifact "${name}": skipped, over the ${MAX_ARTIFACT_BYTES} byte limit`);
       } else {
         budget -= artifact.bytes;
-        const target = join4(runDir, "artifacts", name);
+        const target = join5(runDir, "artifacts", name);
         const extracted = extract(await ci.downloadArtifact(artifact.id), target);
         lines.push(
           `- Artifact "${name}": ${extracted ? `artifacts/${name}/` : "could not be extracted"}`
         );
       }
     }
-    writeFileSync3(join4(runDir, "README.md"), `${lines.join("\n")}
+    writeFileSync3(join5(runDir, "README.md"), `${lines.join("\n")}
 `);
     index.push(`- ${run2.name}: ${run2.conclusion ?? "unknown"}, in \`${run2.id}/\``);
   }
-  writeFileSync3(join4(dir, "README.md"), `${index.join("\n")}
+  writeFileSync3(join5(dir, "README.md"), `${index.join("\n")}
 `);
 }
 function extract(zip, target) {
@@ -26483,7 +26813,7 @@ ${[...requests, ...reviews].join("\n\n")}
 }
 
 // src/rules.ts
-import { readFileSync as readFileSync2 } from "node:fs";
+import { readFileSync as readFileSync3 } from "node:fs";
 var RULES_FILE = new URL("../AGENTS.md", import.meta.url);
 var UNDER_CODEMAN = `## Working under Codeman
 
@@ -26535,27 +26865,7 @@ function agentRules(rules, repositoryRules2) {
 `, omitted: omitted.map((block) => block.heading) };
 }
 function readRules() {
-  return readFileSync2(RULES_FILE, "utf8");
-}
-
-// src/steps/common.ts
-import { readFileSync as readFileSync3 } from "node:fs";
-import { join as join5 } from "node:path";
-function positiveNumber(runtime2, name) {
-  const value = Number(runtime2.input(name, { required: true }));
-  if (!Number.isFinite(value) || value <= 0)
-    throw new Error(`Input ${name} must be a positive number.`);
-  return value;
-}
-function workdir(runtime2) {
-  return runtime2.input("workdir") || join5(runtime2.tempDir, "codeman");
-}
-var taskFile = (runtime2) => join5(workdir(runtime2), "task", "task.json");
-var resultDir = (runtime2) => join5(workdir(runtime2), "result");
-function readTask(runtime2) {
-  const task = JSON.parse(readFileSync3(taskFile(runtime2), "utf8"));
-  if (task.version !== 1) throw new Error("The task file has an unknown version.");
-  return task;
+  return readFileSync3(RULES_FILE, "utf8");
 }
 
 // src/steps/agent.ts
@@ -26681,175 +26991,6 @@ function repositoryRules(workspace) {
 // src/steps/apply.ts
 import { existsSync as existsSync3, lstatSync as lstatSync3, readFileSync as readFileSync5 } from "node:fs";
 import { join as join7 } from "node:path";
-
-// src/budget.ts
-var API = "https://openrouter.ai/api/v1";
-function keyPrefix(repository) {
-  return `codeman/${repository.owner}/${repository.name}/`;
-}
-function taskKeyPrefix(repository, issue2) {
-  return `${keyPrefix(repository)}${issue2}/`;
-}
-function sumUsage(keys, prefix, field) {
-  return keys.filter((key) => key.name.startsWith(prefix)).reduce((total, key) => total + (key[field] ?? 0), 0);
-}
-function costsByRun(keys, prefix) {
-  const costs = {};
-  for (const key of keys) {
-    const run2 = key.name.slice(prefix.length);
-    if (!key.name.startsWith(prefix) || !/^\d+$/.test(run2)) continue;
-    costs[run2] = (costs[run2] ?? 0) + (key.usage ?? 0);
-  }
-  return costs;
-}
-var MIN_RUN_BUDGET = 0.1;
-function runLimit(taskBudget, spent) {
-  const remaining = Math.floor((taskBudget - spent) * 100 + 1e-9) / 100;
-  return remaining >= MIN_RUN_BUDGET ? remaining : void 0;
-}
-function usd(amount) {
-  return `US$ ${amount.toFixed(2)}`;
-}
-function count(value) {
-  const number3 = typeof value === "string" ? Number(value) : value;
-  return typeof number3 === "number" && Number.isFinite(number3) && number3 > 0 ? Math.round(number3) : 0;
-}
-function rate(value) {
-  const number3 = typeof value === "string" ? Number(value) : value;
-  return typeof number3 === "number" && Number.isFinite(number3) && number3 >= 0 ? number3 : void 0;
-}
-function utcSeconds(date) {
-  return `${date.toISOString().slice(0, 19)}Z`;
-}
-function expiresAt(now, hours) {
-  return `${new Date(now.getTime() + hours * 36e5).toISOString().slice(0, 19)}Z`;
-}
-var OpenRouter = class {
-  #managementKey;
-  #fetch;
-  constructor(managementKey, fetchFn = fetch) {
-    this.#managementKey = managementKey;
-    this.#fetch = fetchFn;
-  }
-  /** Every key of the account, disabled ones included. */
-  async listKeys() {
-    const keys = [];
-    for (let page = 0; page < 100; page++) {
-      const { data } = await this.#request(
-        `/keys?include_disabled=true&offset=${keys.length}`
-      );
-      if (data.length === 0) return keys;
-      keys.push(...data);
-    }
-    throw new Error("Too many OpenRouter keys to add up.");
-  }
-  /** This month's usage, in USD, of every key whose name starts with `prefix`, disabled ones included. */
-  async monthlyUsage(prefix) {
-    return sumUsage(await this.listKeys(), prefix, "usage_monthly");
-  }
-  async key(hash) {
-    const { data } = await this.#request(`/keys/${encodeURIComponent(hash)}`);
-    return data;
-  }
-  /** The total usage of one key, in USD. */
-  async keyUsage(hash) {
-    return (await this.key(hash)).usage ?? 0;
-  }
-  /**
-   * The tokens one key used between `since` and `until`, from OpenRouter's analytics, as
-   * OpenRouter counts them: prompt tokens (cached ones included) and completion tokens.
-   * Undefined when analytics has no rows for the key yet.
-   */
-  async keyTokens(hash, since, until) {
-    const rows = await this.#query({
-      metrics: ["tokens_prompt", "tokens_completion"],
-      filters: [{ field: "api_key_id", operator: "eq", value: hash }],
-      time_range: { start: utcSeconds(since), end: utcSeconds(until) }
-    });
-    if (rows.length === 0) return void 0;
-    let input = 0;
-    let output = 0;
-    for (const row of rows) {
-      input += count(row.tokens_prompt);
-      output += count(row.tokens_completion);
-    }
-    return { input, output };
-  }
-  /**
-   * How one key's requests went between `since` and `until`, from OpenRouter's analytics: how
-   * many there were, their mean throughput (completion tokens per second) and the largest
-   * prompt among them, cached tokens included. Undefined when analytics has no requests for the
-   * key yet. Throughput and per-request rows cover at most 31 days.
-   */
-  async keyStats(hash, since, until) {
-    const filters = [{ field: "api_key_id", operator: "eq", value: hash }];
-    const time_range = { start: utcSeconds(since), end: utcSeconds(until) };
-    const rows = await this.#query({
-      metrics: ["request_count", "avg_throughput"],
-      filters,
-      time_range
-    });
-    let requests = 0;
-    let weighted = 0;
-    let measured = 0;
-    for (const row of rows) {
-      const n = count(row.request_count);
-      const throughput = rate(row.avg_throughput);
-      requests += n;
-      if (throughput !== void 0 && n > 0) {
-        weighted += throughput * n;
-        measured += n;
-      }
-    }
-    if (requests === 0) return void 0;
-    const largest = await this.#query({
-      metrics: ["tokens_prompt"],
-      dimensions: ["generation_id"],
-      filters,
-      time_range,
-      order_by: { field: "tokens_prompt", direction: "desc" },
-      limit: 1
-    });
-    const maxInputTokens = largest.reduce((max, row) => Math.max(max, count(row.tokens_prompt)), 0);
-    return {
-      requests,
-      tokensPerSecond: measured > 0 ? weighted / measured : void 0,
-      maxInputTokens: largest.length > 0 ? maxInputTokens : void 0
-    };
-  }
-  async createKey(options) {
-    const response = await this.#request("/keys", "POST", {
-      name: options.name,
-      limit: options.limit,
-      expires_at: options.expiresAt
-    });
-    return { key: response.key, hash: response.data.hash };
-  }
-  /** Disables instead of deleting, so the key's usage still counts towards the monthly cap. */
-  async disableKey(hash) {
-    await this.#request(`/keys/${encodeURIComponent(hash)}`, "PATCH", { disabled: true });
-  }
-  /** The rows of an analytics query. */
-  async #query(body) {
-    const response = await this.#request("/analytics/query", "POST", body);
-    const rows = response.data?.data;
-    return Array.isArray(rows) ? rows : [];
-  }
-  async #request(path, method = "GET", body) {
-    const response = await this.#fetch(`${API}${path}`, {
-      method,
-      headers: {
-        Authorization: `Bearer ${this.#managementKey}`,
-        "Content-Type": "application/json"
-      },
-      body: body === void 0 ? null : JSON.stringify(body)
-    });
-    if (!response.ok) {
-      throw new Error(`OpenRouter ${method} ${path.split("?")[0]} failed with ${response.status}.`);
-    }
-    return response.json();
-  }
-};
 
 // src/pull.ts
 function pullRequestTitle(issueTitle) {
@@ -28328,21 +28469,18 @@ function readJson(file) {
 }
 
 // src/steps/keys.ts
-async function openKey({ runtime: runtime2 }) {
-  const router = new OpenRouter(runtime2.input("management-key", { required: true }));
+async function openKey({ runtime: runtime2, inference }) {
+  const provider = inference();
   const secret = runtime2.input("encryption-secret", { required: true });
   const task = runtime2.input("task", { required: true });
   const taskBudget = positiveNumber(runtime2, "task-budget");
   const monthlyBudget = positiveNumber(runtime2, "monthly-budget");
-  const hours = positiveNumber(runtime2, "key-expiry-hours");
-  const prefix = keyPrefix(runtime2.repository);
-  const keys = await router.listKeys();
-  const spent = sumUsage(keys, taskKeyPrefix(runtime2.repository, task), "usage");
-  const used = sumUsage(keys, prefix, "usage_monthly");
+  const spent = await provider.taskSpent(task);
+  const used = await provider.monthSpent();
   runtime2.output("task-spent", spent.toFixed(4));
   runtime2.output("month-spent", used.toFixed(4));
   runtime2.info(`This task has spent ${usd(spent)} of ${usd(taskBudget)}.`);
-  runtime2.info(`OpenRouter usage this month: ${usd(used)} of ${usd(monthlyBudget)}.`);
+  runtime2.info(`Usage this month (${provider.name}): ${usd(used)} of ${usd(monthlyBudget)}.`);
   const limit = runLimit(taskBudget, spent);
   if (limit === void 0) {
     runtime2.output("status", "task-budget-spent");
@@ -28360,123 +28498,41 @@ async function openKey({ runtime: runtime2 }) {
     );
     return;
   }
-  const { key, hash } = await router.createKey({
-    name: `${prefix}${task}/${runtime2.run.id}`,
-    limit,
-    expiresAt: expiresAt(/* @__PURE__ */ new Date(), hours)
-  });
-  runtime2.mask(key);
+  const run2 = await provider.open({ task, runId: runtime2.run.id, limit }, runtime2);
+  runtime2.mask(run2.credential);
   runtime2.output("status", "opened");
   runtime2.output("key-limit", limit.toFixed(2));
-  runtime2.output("key-hash", hash);
-  runtime2.output("encrypted-key", encrypt(key, secret));
-  runtime2.info(`Created a key limited to ${usd(limit)}, expiring in ${hours} hours.`);
+  runtime2.output("handle", run2.handle);
+  runtime2.output("key-hash", run2.handle);
+  runtime2.output("encrypted-key", encrypt(run2.credential, secret));
+  if (run2.baseUrl) runtime2.output("base-url", run2.baseUrl);
+  if (run2.contextLength) runtime2.output("context-length", String(run2.contextLength));
 }
-async function closeKey({ runtime: runtime2 }) {
-  const router = new OpenRouter(runtime2.input("management-key", { required: true }));
-  const hash = runtime2.input("key-hash", { required: true });
-  await router.disableKey(hash);
-  runtime2.info("Disabled the key.");
-  let cost = await runCost(router, hash, false);
-  const tokens = await runTokens(router, hash, cost > 0, runtime2);
-  if (cost === 0 && tokens && tokens.input + tokens.output > 0) {
-    runtime2.info("OpenRouter has tokens for this run's key but no cost yet; reading it again.");
-    cost = await runCost(router, hash, true);
-    if (cost === 0) runtime2.warning("OpenRouter has no cost for this run's key yet.");
+async function closeKey({ runtime: runtime2, inference }) {
+  const handle = runtime2.input("handle") || runtime2.input("key-hash", { required: true });
+  const usage = await inference().close(handle, runtime2);
+  runtime2.output("run-cost", usage.cost.toFixed(4));
+  runtime2.info(`This run spent ${usd(usage.cost)}.`);
+  if (usage.inputTokens !== void 0 && usage.outputTokens !== void 0) {
+    runtime2.output("input-tokens", String(usage.inputTokens));
+    runtime2.output("output-tokens", String(usage.outputTokens));
+    runtime2.info(
+      `This run used ${usage.inputTokens} input and ${usage.outputTokens} output tokens.`
+    );
   }
-  runtime2.output("run-cost", cost.toFixed(4));
-  runtime2.info(`This run spent ${usd(cost)}.`);
-  if (tokens) {
-    runtime2.output("input-tokens", String(tokens.input));
-    runtime2.output("output-tokens", String(tokens.output));
-    runtime2.info(`This run used ${tokens.input} input and ${tokens.output} output tokens.`);
-  }
-  const stats = await runStats(router, hash, tokens !== void 0 && tokens.output > 0, runtime2);
-  if (stats) {
-    runtime2.output("requests", String(stats.requests));
-    if (stats.maxInputTokens !== void 0) {
-      runtime2.output("max-input-tokens", String(stats.maxInputTokens));
+  if (usage.requests !== void 0) {
+    runtime2.output("requests", String(usage.requests));
+    if (usage.maxInputTokens !== void 0) {
+      runtime2.output("max-input-tokens", String(usage.maxInputTokens));
     }
-    if (stats.tokensPerSecond !== void 0) {
-      runtime2.output("tokens-per-second", stats.tokensPerSecond.toFixed(1));
+    if (usage.tokensPerSecond !== void 0) {
+      runtime2.output("tokens-per-second", usage.tokensPerSecond.toFixed(1));
     }
     runtime2.info(
-      `Requests: ${stats.requests}; largest prompt: ${stats.maxInputTokens ?? "unknown"} tokens; mean throughput: ${stats.tokensPerSecond?.toFixed(1) ?? "unknown"} tokens per second.`
+      `Requests: ${usage.requests}; largest prompt: ${usage.maxInputTokens ?? "unknown"} tokens; mean throughput: ${usage.tokensPerSecond?.toFixed(1) ?? "unknown"} tokens per second.`
     );
   }
-  const costs = await taskCosts(router, hash, runtime2.repository, runtime2);
-  if (costs) runtime2.output("task-costs", JSON.stringify(costs));
-}
-async function runCost(router, hash, used, wait = sleep) {
-  let cost = await router.keyUsage(hash);
-  for (let attempt = 0; attempt < (used ? 12 : 6); attempt++) {
-    await wait(5e3);
-    const latest = await router.keyUsage(hash);
-    if (latest === cost && (latest > 0 || !used)) break;
-    cost = latest;
-  }
-  return cost;
-}
-async function taskCosts(router, hash, repository, log) {
-  try {
-    const { name } = await router.key(hash);
-    const prefix = name.slice(0, name.lastIndexOf("/") + 1);
-    if (!prefix.startsWith(keyPrefix(repository)) || prefix === keyPrefix(repository)) {
-      throw new Error("the key's name is not a task key's.");
-    }
-    const costs = costsByRun(await router.listKeys(), prefix);
-    return Object.fromEntries(
-      Object.entries(costs).map(([run2, cost]) => [run2, Number(cost.toFixed(4))])
-    );
-  } catch (error2) {
-    log.warning(
-      `Could not read what the task's runs spent: ${error2 instanceof Error ? error2.message : error2}`
-    );
-    return void 0;
-  }
-}
-var KEY_LIFETIME_MS = 48 * 36e5;
-async function runTokens(router, hash, spent, log, wait = sleep) {
-  try {
-    for (let attempt = 0; ; attempt++) {
-      const now = /* @__PURE__ */ new Date();
-      const tokens = await router.keyTokens(hash, new Date(now.getTime() - KEY_LIFETIME_MS), now);
-      const counted = tokens !== void 0 && tokens.input + tokens.output > 0;
-      if (counted || !spent) return tokens ?? (spent ? void 0 : { input: 0, output: 0 });
-      if (attempt === 6) {
-        log.warning("OpenRouter's analytics has no tokens for this run's key yet.");
-        return void 0;
-      }
-      await wait(1e4);
-    }
-  } catch (error2) {
-    log.warning(
-      `Could not read this run's tokens: ${error2 instanceof Error ? error2.message : error2}`
-    );
-    return void 0;
-  }
-}
-async function runStats(router, hash, generated, log, wait = sleep) {
-  try {
-    for (let attempt = 0; ; attempt++) {
-      const now = /* @__PURE__ */ new Date();
-      const stats = await router.keyStats(hash, new Date(now.getTime() - KEY_LIFETIME_MS), now);
-      if (stats || !generated) return stats;
-      if (attempt === 6) {
-        log.warning("OpenRouter's analytics has no requests for this run's key yet.");
-        return void 0;
-      }
-      await wait(1e4);
-    }
-  } catch (error2) {
-    log.warning(
-      `Could not read this run's requests: ${error2 instanceof Error ? error2.message : error2}`
-    );
-    return void 0;
-  }
-}
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  if (usage.taskCosts) runtime2.output("task-costs", JSON.stringify(usage.taskCosts));
 }
 
 // src/steps/select.ts
@@ -28807,7 +28863,8 @@ function gitHubServices(runtime2) {
       runtime2.repository,
       { appSlug: runtime2.input("app-slug") || void 0 }
     ),
-    ci: () => new GitHubActionsResults(client("github-token"), runtime2.repository)
+    ci: () => new GitHubActionsResults(client("github-token"), runtime2.repository),
+    inference: () => inferenceProvider(runtime2)
   };
 }
 async function run(services) {
