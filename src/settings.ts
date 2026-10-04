@@ -1,3 +1,4 @@
+import { ENGINES, MODE_ENGINE } from "./inference/engines.ts";
 import type { Parsed } from "./output.ts";
 
 export const SETTINGS_FILE = ".codeman/settings.yml";
@@ -19,6 +20,20 @@ export interface Settings {
   "max-summary-chars": number;
   /** The language Codeman talks to maintainers in: a BCP 47 tag, or `auto` for the issue's. */
   language: string;
+  /** Where agent runs get their model: `openrouter`, or `self-hosted` on rented GPUs. */
+  inference: string;
+  /** The GPU cloud of self-hosted inference: `runpod`. */
+  "gpu-provider": string;
+  /** `pod`: a GPU rented for the run; `serverless`: an endpoint's workers, started on demand. */
+  "gpu-mode": string;
+  /** The GPU type of a pod, as the provider names it, such as `NVIDIA RTX A6000`. */
+  "gpu-type"?: string | undefined;
+  /** What serves the model: `ollama` on pods, `vllm` on Serverless endpoints. */
+  engine?: string | undefined;
+  /** The ID of the Serverless endpoint a maintainer created. */
+  "serverless-endpoint"?: string | undefined;
+  /** `task`: a pod serves the task's next run too, while the task goes on; `run`: one run. */
+  "pod-reuse": string;
 }
 
 export type SettingName = keyof Settings;
@@ -38,6 +53,10 @@ export const DEFAULTS: Omit<Settings, "model"> = {
   "max-label-chars": 150,
   "max-summary-chars": 2000,
   language: "auto",
+  inference: "openrouter",
+  "gpu-provider": "runpod",
+  "gpu-mode": "pod",
+  "pod-reuse": "task",
 };
 
 /**
@@ -59,7 +78,17 @@ export const TASK_SETTINGS: ReadonlySet<SettingName> = new Set([
   "task-budget",
   "max-runs",
   "language",
+  "gpu-type",
 ]);
+
+/** Settings that take one of a few values. */
+export const CHOICES: Readonly<Partial<Record<SettingName, readonly string[]>>> = {
+  inference: ["openrouter", "self-hosted"],
+  "gpu-provider": ["runpod"],
+  "gpu-mode": ["pod", "serverless"],
+  engine: Object.keys(ENGINES),
+  "pod-reuse": ["task", "run"],
+};
 
 const NAMES: readonly SettingName[] = [
   "model",
@@ -75,6 +104,13 @@ const NAMES: readonly SettingName[] = [
   "max-label-chars",
   "max-summary-chars",
   "language",
+  "inference",
+  "gpu-provider",
+  "gpu-mode",
+  "gpu-type",
+  "engine",
+  "serverless-endpoint",
+  "pod-reuse",
 ];
 
 /** OpenRouter model IDs, such as `deepseek/deepseek-v4.1-flash` or `~deepseek/deepseek-flash-latest`. */
@@ -84,6 +120,16 @@ export function isModelId(text: string): boolean {
   return text.length <= 100 && MODEL_ID.test(text);
 }
 
+/** A model name of OpenRouter or of one of the engines; which one fits is checked once resolved. */
+export function isModelName(text: string): boolean {
+  return isModelId(text) || Object.values(ENGINES).some((engine) => engine.isModel(text));
+}
+
+/** GPU type IDs, such as `NVIDIA GeForce RTX 4090`. */
+const GPU_TYPE = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,78}[A-Za-z0-9]$/;
+/** Serverless endpoint IDs. */
+const ENDPOINT_ID = /^[a-z0-9]{1,64}$/i;
+
 /** BCP 47 language tags, such as `pt-BR`, without the rarer extensions. */
 const LANGUAGE_TAG = /^[a-z]{2,3}(-[a-z0-9]{2,8}){0,3}$/i;
 
@@ -91,9 +137,20 @@ export function isLanguageTag(text: string): boolean {
   return LANGUAGE_TAG.test(text);
 }
 
+export type SettingKind =
+  | "model"
+  | "language"
+  | "number"
+  | "integer"
+  | "choice"
+  | "gpu-type"
+  | "endpoint";
+
 /** What kind of value a setting takes. */
-export function settingKind(name: SettingName): "model" | "language" | "number" | "integer" {
-  if (name === "model" || name === "language") return name;
+export function settingKind(name: SettingName): SettingKind {
+  if (name === "model" || name === "language" || name === "gpu-type") return name;
+  if (name === "serverless-endpoint") return "endpoint";
+  if (CHOICES[name]) return "choice";
   return name === "task-budget" || name === "monthly-budget" ? "number" : "integer";
 }
 
@@ -104,12 +161,31 @@ export function isSettingName(name: string): name is SettingName {
 /** Validates one value, given as text. */
 export function parseSetting(name: SettingName, text: string): Parsed<string | number> {
   if (name === "model") {
-    return isModelId(text)
+    return isModelName(text)
       ? { ok: true, value: text }
       : {
           ok: false,
-          error: `\`${name}\` must be an OpenRouter model ID, such as \`provider/model\`.`,
+          error: `\`${name}\` must be a model ID, such as \`provider/model\` on OpenRouter.`,
         };
+  }
+  const choices = CHOICES[name];
+  if (choices) {
+    return choices.includes(text)
+      ? { ok: true, value: text }
+      : {
+          ok: false,
+          error: `\`${name}\` must be one of ${choices.map((c) => `\`${c}\``).join(", ")}.`,
+        };
+  }
+  if (name === "gpu-type") {
+    return GPU_TYPE.test(text)
+      ? { ok: true, value: text }
+      : { ok: false, error: `\`${name}\` must be a GPU type, such as \`NVIDIA RTX A6000\`.` };
+  }
+  if (name === "serverless-endpoint") {
+    return ENDPOINT_ID.test(text)
+      ? { ok: true, value: text }
+      : { ok: false, error: `\`${name}\` must be an endpoint's ID, letters and digits.` };
   }
   if (name === "language") {
     return text === "auto" || isLanguageTag(text)
@@ -190,5 +266,36 @@ export function resolveSettings(...layers: PartialSettings[]): Parsed<Settings> 
       error: `No model is configured. Set \`model\` in ${SETTINGS_FILE} or in the workflow's inputs.`,
     };
   }
-  return { ok: true, value: merged as Settings };
+  const settings = merged as Settings;
+  const error = inferenceError(settings);
+  if (error) return { ok: false, error };
+  if (settings.inference === "self-hosted") {
+    settings.engine ??= MODE_ENGINE[settings["gpu-mode"] as keyof typeof MODE_ENGINE];
+  }
+  return { ok: true, value: settings };
+}
+
+/** Why the inference settings do not fit together; undefined when they do. */
+function inferenceError(settings: Settings): string | undefined {
+  if (settings.inference !== "self-hosted") {
+    return isModelId(settings.model)
+      ? undefined
+      : `\`model\` must be an OpenRouter model ID, such as \`provider/model\`, not \`${settings.model}\`.`;
+  }
+  const mode = settings["gpu-mode"] as keyof typeof MODE_ENGINE;
+  const engine = settings.engine ?? MODE_ENGINE[mode];
+  if (engine !== MODE_ENGINE[mode]) {
+    return `With \`gpu-mode: ${mode}\`, the engine is \`${MODE_ENGINE[mode]}\`, not \`${engine}\`.`;
+  }
+  if (mode === "pod" && !settings["gpu-type"]) {
+    return `Self-hosted inference on pods needs \`gpu-type\`, such as \`"NVIDIA RTX A6000"\`, in ${SETTINGS_FILE}.`;
+  }
+  if (mode === "serverless" && !settings["serverless-endpoint"]) {
+    return `Self-hosted inference on Serverless needs \`serverless-endpoint\` in ${SETTINGS_FILE}.`;
+  }
+  const model = ENGINES[engine];
+  if (model && !model.isModel(settings.model)) {
+    return `\`model\` must be a ${engine} model name, such as \`${model.example}\`, not \`${settings.model}\`.`;
+  }
+  return undefined;
 }

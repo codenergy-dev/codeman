@@ -50,9 +50,11 @@ test("reports invalid commands", () => {
     "/codeman set task-budget 1e400",
     "/codeman set max-runs 2.5",
     "/codeman set max-runs 2 3",
-    "/codeman set model a",
+    "/codeman set model ~a",
+    "/codeman set gpu-type",
+    "/codeman set inference local",
   ].map((line) => parseCommands(line)[0]?.kind);
-  assert.deepEqual(kinds, Array(17).fill("invalid"));
+  assert.deepEqual(kinds, Array(19).fill("invalid"));
 });
 
 test("finds commands among other lines, skipping quotes and code blocks", () => {
@@ -220,5 +222,19 @@ test("keeps a description without commands as it is", () => {
   assert.deepEqual(descriptionCommands("Fix the /codeman docs.\n"), {
     commands: [],
     text: "Fix the /codeman docs.",
+  });
+});
+
+test("a GPU type takes the rest of the line, since its name has spaces", () => {
+  assert.deepEqual(parseCommands("/codeman set gpu-type NVIDIA GeForce RTX 4090"), [
+    { kind: "set", name: "gpu-type", value: "NVIDIA GeForce RTX 4090" },
+  ]);
+  assert.deepEqual(parseCommands("/codeman set inference local")[0], {
+    kind: "invalid",
+    text: "/codeman set inference local",
+    problem: {
+      kind: "set-which",
+      names: ["model", "task-budget", "max-runs", "language", "gpu-type"],
+    },
   });
 });

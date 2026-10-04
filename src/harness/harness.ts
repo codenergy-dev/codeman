@@ -8,9 +8,14 @@ export interface HarnessCommand {
 export interface HarnessOptions {
   /** Path to the executable returned by `install`. */
   executable: string;
-  /** OpenRouter model ID, such as `deepseek/deepseek-v4.1-flash`. */
+  /** The model's ID: OpenRouter's, such as `deepseek/deepseek-v4.1-flash`, or the engine's. */
   model: string;
   apiKey: string;
+  /**
+   * An OpenAI-compatible API to use instead of OpenRouter: a gateway of Codeman's self-hosted
+   * inference, which takes `apiKey` as its token.
+   */
+  provider?: { baseUrl: string; contextLength?: number | undefined } | undefined;
   /** Short instruction for the agent; the full task is in a file it is pointed to. */
   prompt: string;
   /** Absolute path of Codeman's working rules, to load next to the repository's `AGENTS.md`. */

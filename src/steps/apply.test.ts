@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { en } from "../i18n/en.ts";
 import type { TaskRecord } from "../record.ts";
-import { afterAccept, afterReview, chains, defer } from "./apply.ts";
+import { afterAccept, afterReview, chains, defer, goesOn } from "./apply.ts";
 
 test("starts another run only when this one moved a task", () => {
   assert.equal(chains("record", "skipped", ""), true);
@@ -105,4 +105,26 @@ test("accepting after review finishes the task, or waits for the deferred runs",
   assert.equal(runs.record.deferred, undefined);
   assert.equal(runs.record.reviewed, undefined);
   assert.deepEqual(runs.record.accepted, { by: "alice", workflows: [ios] });
+});
+
+test("a task goes on to another agent run while it is ready, routing or in a stage", () => {
+  for (const state of [
+    "ready",
+    "routing",
+    "designing",
+    "coding",
+    "reviewing",
+    "in-progress",
+  ] as const) {
+    assert.equal(goesOn(state), true, state);
+  }
+  for (const state of [
+    "new",
+    "awaiting-decision",
+    "awaiting-workflow",
+    "blocked",
+    "done",
+  ] as const) {
+    assert.equal(goesOn(state), false, state);
+  }
 });

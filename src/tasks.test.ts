@@ -131,7 +131,7 @@ test("the last valid setting command wins", () => {
   const comments = authorized([
     comment(1, "/codeman model a/one\n/codeman set task-budget 5"),
     comment(2, "/codeman set model b/two"),
-    comment(3, "/codeman model not-a-model\n/codeman set max-runs 0"),
+    comment(3, "/codeman model ~not-a-model\n/codeman set max-runs 0"),
   ]);
   assert.deepEqual(taskSettings(comments), { model: "b/two", "task-budget": 5 });
 });

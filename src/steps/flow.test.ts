@@ -470,3 +470,75 @@ test("an issue a maintainer did not open is left alone", async () => {
   assert.equal(platform.botComments(issue).length, 1, "a panel that says why");
   assert.ok(runtime.logged("warning").some((line) => line.includes("not opened by a maintainer")));
 });
+
+test("self-hosted inference: select hands the task's pods to the key jobs, and apply adds up their billing", async () => {
+  const platform = new FakePlatform({
+    ".codeman/settings.yml": 'inference: self-hosted\nmodel: qwen3-coder:30b\ngpu-type: "GPU A"\n',
+  });
+  platform.maintainers.add("alice");
+  const issue = platform.openIssue("alice", "Add a cache", "Cache responses.");
+  const step = async (runId: string) => {
+    const selected = new FakeRuntime({ inputs: { workdir }, runId });
+    await select(fakeServices(platform, selected));
+    return selected;
+  };
+  const applied = async (runId: string, inputs: Record<string, string>) => {
+    const runtime = new FakeRuntime({
+      inputs: {
+        workdir,
+        "key-job-result": "success",
+        "key-status": "opened",
+        "agent-job-result": "success",
+        ...inputs,
+      },
+      runId,
+    });
+    await apply(fakeServices(platform, runtime));
+    return runtime;
+  };
+
+  let selected = await step("1");
+  assert.deepEqual(JSON.parse(selected.outputs.inference ?? ""), {
+    inference: "self-hosted",
+    gpuProvider: "runpod",
+    engine: "ollama",
+    model: "qwen3-coder:30b",
+    taskSpent: 0,
+    pods: [],
+    mode: "pod",
+    gpuType: "GPU A",
+    podReuse: "task",
+  });
+  const task = readTask(selected);
+  agentResult({ [task.planPath]: "# Plan\n" }, { summary: "Plan.", language: "en", decisions: [] });
+  let runtime = await applied("1", { "task-spent": "0", "run-cost": "0.3000", pod: "pod1" });
+  assert.equal(runtime.outputs.continues, "true", "ready: the next run routes it");
+  assert.deepEqual(record(platform, issue)?.inference, {
+    pods: [{ id: "pod1", runs: ["1"], counted: 0.3 }],
+  });
+  assert.equal(record(platform, issue)?.spent, 0.3);
+
+  // The kept pod serves the routing run; its billing includes the time it waited.
+  selected = await step("2");
+  const choice = JSON.parse(selected.outputs.inference ?? "") as {
+    taskSpent: number;
+    pods: string[];
+  };
+  assert.equal(choice.taskSpent, 0.3);
+  assert.deepEqual(choice.pods, ["pod1"]);
+  routeResult(["code"]);
+  runtime = await applied("2", {
+    "task-spent": "0.3000",
+    "run-cost": "0.1000",
+    pod: "pod1",
+    "pod-costs": '{"pod1":0.5}',
+  });
+  assert.equal(runtime.outputs.continues, "true", "the code stage runs next");
+  const updated = record(platform, issue);
+  assert.ok(Math.abs((updated?.spent ?? 0) - 0.5) < 1e-9, "billing above the runs' estimates");
+  assert.deepEqual(
+    updated?.spending?.rows.map((row) => row.cost),
+    [0.3, 0.1],
+    "a pod that served two runs refreshes neither",
+  );
+});

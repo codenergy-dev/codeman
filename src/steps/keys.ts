@@ -1,5 +1,7 @@
 import { MIN_RUN_BUDGET, runLimit, usd } from "../budget.ts";
 import { encrypt } from "../crypto.ts";
+import { gpuProvider, parseInferenceChoice } from "../inference/index.ts";
+import { releasePod } from "../inference/selfhosted.ts";
 import type { Services } from "../services.ts";
 import { positiveNumber } from "./common.ts";
 
@@ -85,4 +87,20 @@ export async function closeKey({ runtime, inference }: Services): Promise<void> 
   if (usage.pod) runtime.output("pod", usage.pod);
   if (usage.podCosts) runtime.output("pod-costs", JSON.stringify(usage.podCosts));
   if (usage.keptPod) runtime.output("kept-pod", usage.keptPod);
+}
+
+/**
+ * Terminates the pod that `closeKey` kept for the task's next run, once `apply` says the task
+ * does not go on to one now. A kept pod that this job does not reach terminates itself after its
+ * idle limit.
+ */
+export async function release({ runtime }: Services): Promise<void> {
+  const choice = parseInferenceChoice(runtime.input("inference"));
+  if (choice.inference !== "self-hosted" || choice.mode !== "pod") {
+    runtime.info("Nothing to release: the run had no pod.");
+    return;
+  }
+  const gpu = gpuProvider(choice.gpuProvider, runtime.input("gpu-key", { required: true }));
+  if (!gpu.pods) throw new Error(`${gpu.name} has no pods.`);
+  await releasePod(gpu.pods, runtime.input("handle", { required: true }), runtime);
 }

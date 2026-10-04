@@ -6,7 +6,7 @@ import type { Runtime } from "./runtime/runtime.ts";
 import type { Services } from "./services.ts";
 import { agent } from "./steps/agent.ts";
 import { apply } from "./steps/apply.ts";
-import { closeKey, openKey } from "./steps/keys.ts";
+import { closeKey, openKey, release } from "./steps/keys.ts";
 import { select } from "./steps/select.ts";
 
 /** Each job of the Codeman workflow runs one step. See docs/architecture.md. */
@@ -16,6 +16,7 @@ const STEPS: Record<string, (services: Services) => Promise<void>> = {
   agent,
   apply,
   "close-key": closeKey,
+  "release-pod": release,
 };
 
 /**

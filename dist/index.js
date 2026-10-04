@@ -245,18 +245,18 @@ var require_tunnel = __commonJS({
             res.statusCode
           );
           socket.destroy();
-          var error2 = new Error("tunneling socket could not be established, statusCode=" + res.statusCode);
-          error2.code = "ECONNRESET";
-          options.request.emit("error", error2);
+          var error3 = new Error("tunneling socket could not be established, statusCode=" + res.statusCode);
+          error3.code = "ECONNRESET";
+          options.request.emit("error", error3);
           self.removeSocket(placeholder);
           return;
         }
         if (head.length > 0) {
           debug2("got illegal response body from proxy");
           socket.destroy();
-          var error2 = new Error("got illegal response body from proxy");
-          error2.code = "ECONNRESET";
-          options.request.emit("error", error2);
+          var error3 = new Error("got illegal response body from proxy");
+          error3.code = "ECONNRESET";
+          options.request.emit("error", error3);
           self.removeSocket(placeholder);
           return;
         }
@@ -271,9 +271,9 @@ var require_tunnel = __commonJS({
           cause.message,
           cause.stack
         );
-        var error2 = new Error("tunneling socket could not be established, cause=" + cause.message);
-        error2.code = "ECONNRESET";
-        options.request.emit("error", error2);
+        var error3 = new Error("tunneling socket could not be established, cause=" + cause.message);
+        error3.code = "ECONNRESET";
+        options.request.emit("error", error3);
         self.removeSocket(placeholder);
       }
     };
@@ -1602,14 +1602,14 @@ var require_diagnostics = __commonJS({
       diagnosticsChannel.channel("undici:client:connectError").subscribe((evt) => {
         const {
           connectParams: { version, protocol, port, host },
-          error: error2
+          error: error3
         } = evt;
         debuglog(
           "connection to %s using %s%s errored - %s",
           `${host}${port ? `:${port}` : ""}`,
           protocol,
           version,
-          error2.message
+          error3.message
         );
       });
       diagnosticsChannel.channel("undici:client:sendHeaders").subscribe((evt) => {
@@ -1640,14 +1640,14 @@ var require_diagnostics = __commonJS({
       diagnosticsChannel.channel("undici:request:error").subscribe((evt) => {
         const {
           request: { method, path, origin },
-          error: error2
+          error: error3
         } = evt;
         debuglog(
           "request to %s %s/%s errored - %s",
           method,
           origin,
           path,
-          error2.message
+          error3.message
         );
       });
       isClientSet = true;
@@ -1682,7 +1682,7 @@ var require_diagnostics = __commonJS({
         diagnosticsChannel.channel("undici:client:connectError").subscribe((evt) => {
           const {
             connectParams: { version, protocol, port, host },
-            error: error2
+            error: error3
           } = evt;
           debuglog(
             "connection to %s%s using %s%s errored - %s",
@@ -1690,7 +1690,7 @@ var require_diagnostics = __commonJS({
             port ? `:${port}` : "",
             protocol,
             version,
-            error2.message
+            error3.message
           );
         });
         diagnosticsChannel.channel("undici:client:sendHeaders").subscribe((evt) => {
@@ -1960,16 +1960,16 @@ var require_request = __commonJS({
           this.onError(err);
         }
       }
-      onError(error2) {
+      onError(error3) {
         this.onFinally();
         if (channels.error.hasSubscribers) {
-          channels.error.publish({ request: this, error: error2 });
+          channels.error.publish({ request: this, error: error3 });
         }
         if (this.aborted) {
           return;
         }
         this.aborted = true;
-        return this[kHandler].onError(error2);
+        return this[kHandler].onError(error3);
       }
       onFinally() {
         if (this.errorHandler) {
@@ -5707,7 +5707,7 @@ Content-Type: ${value.type || "application/octet-stream"}\r
       }
       throwIfAborted(object[kState]);
       const promise = createDeferredPromise();
-      const errorSteps = (error2) => promise.reject(error2);
+      const errorSteps = (error3) => promise.reject(error3);
       const successSteps = (data) => {
         try {
           promise.resolve(convertBytesToJSValue(data));
@@ -7319,8 +7319,8 @@ var require_client_h2 = __commonJS({
         }
         request2.onRequestSent();
         client[kResume]();
-      } catch (error2) {
-        abort(error2);
+      } catch (error3) {
+        abort(error3);
       }
     }
     function writeStream(abort, socket, expectsPayload, h2stream, body, client, request2, contentLength) {
@@ -7475,8 +7475,8 @@ var require_redirect_handler = __commonJS({
       onUpgrade(statusCode, headers, socket) {
         this.handler.onUpgrade(statusCode, headers, socket);
       }
-      onError(error2) {
-        this.handler.onError(error2);
+      onError(error3) {
+        this.handler.onError(error3);
       }
       onHeaders(statusCode, headers, resume, statusText) {
         this.location = this.history.length >= this.maxRedirections || util.isDisturbed(this.opts.body) ? null : parseLocation(statusCode, headers);
@@ -8405,7 +8405,7 @@ var require_pool = __commonJS({
         this[kOptions] = { ...util.deepClone(options), connect, allowH2 };
         this[kOptions].interceptors = options.interceptors ? { ...options.interceptors } : void 0;
         this[kFactory] = factory;
-        this.on("connectionError", (origin2, targets, error2) => {
+        this.on("connectionError", (origin2, targets, error3) => {
           for (const target of targets) {
             const idx = this[kClients].indexOf(target);
             if (idx !== -1) {
@@ -10823,13 +10823,13 @@ var require_mock_utils = __commonJS({
       if (mockDispatch2.data.callback) {
         mockDispatch2.data = { ...mockDispatch2.data, ...mockDispatch2.data.callback(opts) };
       }
-      const { data: { statusCode, data, headers, trailers, error: error2 }, delay, persist } = mockDispatch2;
+      const { data: { statusCode, data, headers, trailers, error: error3 }, delay, persist } = mockDispatch2;
       const { timesInvoked, times } = mockDispatch2;
       mockDispatch2.consumed = !persist && timesInvoked >= times;
       mockDispatch2.pending = timesInvoked < times;
-      if (error2 !== null) {
+      if (error3 !== null) {
         deleteMockDispatch(this[kDispatches], key);
-        handler2.onError(error2);
+        handler2.onError(error3);
         return true;
       }
       if (typeof delay === "number" && delay > 0) {
@@ -10867,19 +10867,19 @@ var require_mock_utils = __commonJS({
         if (agent2.isMockActive) {
           try {
             mockDispatch.call(this, opts, handler2);
-          } catch (error2) {
-            if (error2 instanceof MockNotMatchedError) {
+          } catch (error3) {
+            if (error3 instanceof MockNotMatchedError) {
               const netConnect = agent2[kGetNetConnect]();
               if (netConnect === false) {
-                throw new MockNotMatchedError(`${error2.message}: subsequent request to origin ${origin} was not allowed (net.connect disabled)`);
+                throw new MockNotMatchedError(`${error3.message}: subsequent request to origin ${origin} was not allowed (net.connect disabled)`);
               }
               if (checkNetConnect(netConnect, origin)) {
                 originalDispatch.call(this, opts, handler2);
               } else {
-                throw new MockNotMatchedError(`${error2.message}: subsequent request to origin ${origin} was not allowed (net.connect is not enabled for this origin)`);
+                throw new MockNotMatchedError(`${error3.message}: subsequent request to origin ${origin} was not allowed (net.connect is not enabled for this origin)`);
               }
             } else {
-              throw error2;
+              throw error3;
             }
           }
         } else {
@@ -11044,11 +11044,11 @@ var require_mock_interceptor = __commonJS({
       /**
        * Mock an undici request with a defined error.
        */
-      replyWithError(error2) {
-        if (typeof error2 === "undefined") {
+      replyWithError(error3) {
+        if (typeof error3 === "undefined") {
           throw new InvalidArgumentError("error must be defined");
         }
-        const newMockDispatch = addMockDispatch(this[kDispatches], this[kDispatchKey], { error: error2 });
+        const newMockDispatch = addMockDispatch(this[kDispatches], this[kDispatchKey], { error: error3 });
         return new MockScope(newMockDispatch);
       }
       /**
@@ -11211,11 +11211,11 @@ var require_pluralizer = __commonJS({
         this.singular = singular;
         this.plural = plural;
       }
-      pluralize(count2) {
-        const one = count2 === 1;
+      pluralize(count3) {
+        const one = count3 === 1;
         const keys = one ? singulars : plurals;
         const noun = one ? this.singular : this.plural;
-        return { ...keys, count: count2, noun };
+        return { ...keys, count: count3, noun };
       }
     };
   }
@@ -13566,17 +13566,17 @@ var require_fetch = __commonJS({
         this.emit("terminated", reason);
       }
       // https://fetch.spec.whatwg.org/#fetch-controller-abort
-      abort(error2) {
+      abort(error3) {
         if (this.state !== "ongoing") {
           return;
         }
         this.state = "aborted";
-        if (!error2) {
-          error2 = new DOMException("The operation was aborted.", "AbortError");
+        if (!error3) {
+          error3 = new DOMException("The operation was aborted.", "AbortError");
         }
-        this.serializedAbortReason = error2;
-        this.connection?.destroy(error2);
-        this.emit("terminated", error2);
+        this.serializedAbortReason = error3;
+        this.connection?.destroy(error3);
+        this.emit("terminated", error3);
       }
     };
     function handleFetchDone(response) {
@@ -13672,12 +13672,12 @@ var require_fetch = __commonJS({
       );
     }
     var markResourceTiming = performance.markResourceTiming;
-    function abortFetch(p, request2, responseObject, error2) {
+    function abortFetch(p, request2, responseObject, error3) {
       if (p) {
-        p.reject(error2);
+        p.reject(error3);
       }
       if (request2.body != null && isReadable(request2.body?.stream)) {
-        request2.body.stream.cancel(error2).catch((err) => {
+        request2.body.stream.cancel(error3).catch((err) => {
           if (err.code === "ERR_INVALID_STATE") {
             return;
           }
@@ -13689,7 +13689,7 @@ var require_fetch = __commonJS({
       }
       const response = responseObject[kState];
       if (response.body != null && isReadable(response.body?.stream)) {
-        response.body.stream.cancel(error2).catch((err) => {
+        response.body.stream.cancel(error3).catch((err) => {
           if (err.code === "ERR_INVALID_STATE") {
             return;
           }
@@ -14510,13 +14510,13 @@ var require_fetch = __commonJS({
               fetchParams.controller.ended = true;
               this.body.push(null);
             },
-            onError(error2) {
+            onError(error3) {
               if (this.abort) {
                 fetchParams.controller.off("terminated", this.abort);
               }
-              this.body?.destroy(error2);
-              fetchParams.controller.terminate(error2);
-              reject(error2);
+              this.body?.destroy(error3);
+              fetchParams.controller.terminate(error3);
+              reject(error3);
             },
             onUpgrade(status2, rawHeaders, socket) {
               if (status2 !== 101) {
@@ -14979,8 +14979,8 @@ var require_util4 = __commonJS({
                   }
                   fr[kResult] = result;
                   fireAProgressEvent("load", fr);
-                } catch (error2) {
-                  fr[kError] = error2;
+                } catch (error3) {
+                  fr[kError] = error3;
                   fireAProgressEvent("error", fr);
                 }
                 if (fr[kState] !== "loading") {
@@ -14989,13 +14989,13 @@ var require_util4 = __commonJS({
               });
               break;
             }
-          } catch (error2) {
+          } catch (error3) {
             if (fr[kAborted]) {
               return;
             }
             queueMicrotask(() => {
               fr[kState] = "done";
-              fr[kError] = error2;
+              fr[kError] = error3;
               fireAProgressEvent("error", fr);
               if (fr[kState] !== "loading") {
                 fireAProgressEvent("loadend", fr);
@@ -17301,11 +17301,11 @@ var require_connection = __commonJS({
         });
       }
     }
-    function onSocketError(error2) {
+    function onSocketError(error3) {
       const { ws } = this;
       ws[kReadyState] = states.CLOSING;
       if (channels.socketError.hasSubscribers) {
-        channels.socketError.publish(error2);
+        channels.socketError.publish(error3);
       }
       this.destroy();
     }
@@ -17597,10 +17597,10 @@ var require_receiver = __commonJS({
                 this.#extensions.get("permessage-deflate").decompress(
                   body,
                   this.#info.fin,
-                  (error2, data) => {
-                    if (error2) {
-                      const code = error2 instanceof MessageSizeExceededError ? 1009 : 1007;
-                      failWebsocketConnectionWithCode(this.ws, code, error2.message);
+                  (error3, data) => {
+                    if (error3) {
+                      const code = error3 instanceof MessageSizeExceededError ? 1009 : 1007;
+                      failWebsocketConnectionWithCode(this.ws, code, error3.message);
                       return;
                     }
                     if (!this.writeFragments(data)) {
@@ -18561,15 +18561,15 @@ ${value}`;
           pos = 0;
         }
       }
-      discardLeadingBytes(count2) {
-        while (count2 > 0 && this.lineChunkIndex < this.chunks.length) {
+      discardLeadingBytes(count3) {
+        while (count3 > 0 && this.lineChunkIndex < this.chunks.length) {
           const chunk = this.chunks[this.lineChunkIndex];
           const remaining = chunk.length - this.linePos;
-          if (count2 < remaining) {
-            this.linePos += count2;
-            count2 = 0;
+          if (count3 < remaining) {
+            this.linePos += count3;
+            count3 = 0;
           } else {
-            count2 -= remaining;
+            count3 -= remaining;
             this.lineChunkIndex++;
             this.linePos = 0;
           }
@@ -18774,8 +18774,8 @@ var require_eventsource = __commonJS({
           pipeline(
             response.body.stream,
             eventSourceStream,
-            (error2) => {
-              if (error2?.aborted === false) {
+            (error3) => {
+              if (error3?.aborted === false) {
                 this.close();
                 this.dispatchEvent(new Event("error"));
               }
@@ -19759,14 +19759,77 @@ function readTask(runtime2) {
   return task;
 }
 
+// src/inference/engine.ts
+function openAiUsage(body, cachedApart = false) {
+  if (typeof body !== "object" || body === null) return void 0;
+  const usage = body.usage;
+  if (typeof usage !== "object" || usage === null) return void 0;
+  const fields = usage;
+  const input = count(fields.prompt_tokens);
+  const output = count(fields.completion_tokens);
+  if (input === void 0 || output === void 0) return void 0;
+  const cached = cachedApart ? count(fields.prompt_tokens_details?.cached_tokens) ?? 0 : 0;
+  return { input: input + cached, output };
+}
+function count(value) {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : void 0;
+}
+
+// src/inference/ollama.ts
+var POD_IMAGE = "";
+var MODEL = /^[a-z0-9][a-z0-9._-]*(\/[a-z0-9][a-z0-9._-]*){0,2}(:[a-z0-9][a-z0-9._-]*)?$/i;
+var ollama = {
+  name: "ollama",
+  example: "qwen3-coder:30b",
+  isModel: (model) => model.length <= 100 && MODEL.test(model),
+  usage: (body) => openAiUsage(body)
+};
+
+// src/inference/vllm.ts
+var MODEL2 = /^[A-Za-z0-9][A-Za-z0-9._-]*(\/[A-Za-z0-9][A-Za-z0-9._-]*)?$/;
+var vllm = {
+  name: "vllm",
+  example: "Qwen/Qwen3-Coder-30B-A3B-Instruct",
+  isModel: (model) => model.length <= 100 && MODEL2.test(model),
+  usage: (body) => openAiUsage(body)
+};
+function servedModels(env) {
+  return [env.OPENAI_SERVED_MODEL_NAME_OVERRIDE, env.MODEL_NAME].filter(
+    (name) => typeof name === "string" && name !== ""
+  );
+}
+function vllmProblems(env, model) {
+  const problems = [];
+  const served = servedModels(env);
+  if (!served.includes(model)) {
+    problems.push(
+      `it serves ${served.length > 0 ? served.map((name) => `\`${name}\``).join(" or ") : "no model"}, not \`${model}\` (MODEL_NAME or OPENAI_SERVED_MODEL_NAME_OVERRIDE)`
+    );
+  }
+  if (env.ENABLE_AUTO_TOOL_CHOICE?.toLowerCase() !== "true" || !env.TOOL_CALL_PARSER) {
+    problems.push(
+      "it does not call tools: set ENABLE_AUTO_TOOL_CHOICE to true and TOOL_CALL_PARSER"
+    );
+  }
+  return problems;
+}
+function vllmContextLength(env) {
+  const value = Number(env.MAX_MODEL_LEN);
+  return Number.isInteger(value) && value > 0 ? value : void 0;
+}
+
+// src/inference/engines.ts
+var ENGINES = { ollama, vllm };
+var MODE_ENGINE = { pod: "ollama", serverless: "vllm" };
+
 // src/budget.ts
 var MIN_RUN_BUDGET = 0.1;
 function runLimit(taskBudget, spent) {
   const remaining = Math.floor((taskBudget - spent) * 100 + 1e-9) / 100;
   return remaining >= MIN_RUN_BUDGET ? remaining : void 0;
 }
-function usd(amount) {
-  return `US$ ${amount.toFixed(2)}`;
+function usd(amount2) {
+  return `US$ ${amount2.toFixed(2)}`;
 }
 
 // src/inference/openrouter.ts
@@ -19789,7 +19852,7 @@ function costsByRun(keys, prefix) {
   }
   return costs;
 }
-function count(value) {
+function count2(value) {
   const number3 = typeof value === "string" ? Number(value) : value;
   return typeof number3 === "number" && Number.isFinite(number3) && number3 > 0 ? Math.round(number3) : 0;
 }
@@ -19849,8 +19912,8 @@ var OpenRouter = class {
     let input = 0;
     let output = 0;
     for (const row of rows) {
-      input += count(row.tokens_prompt);
-      output += count(row.tokens_completion);
+      input += count2(row.tokens_prompt);
+      output += count2(row.tokens_completion);
     }
     return { input, output };
   }
@@ -19872,7 +19935,7 @@ var OpenRouter = class {
     let weighted = 0;
     let measured = 0;
     for (const row of rows) {
-      const n = count(row.request_count);
+      const n = count2(row.request_count);
       const throughput = rate(row.avg_throughput);
       requests += n;
       if (throughput !== void 0 && n > 0) {
@@ -19889,7 +19952,7 @@ var OpenRouter = class {
       order_by: { field: "tokens_prompt", direction: "desc" },
       limit: 1
     });
-    const maxInputTokens = largest.reduce((max, row) => Math.max(max, count(row.tokens_prompt)), 0);
+    const maxInputTokens = largest.reduce((max, row) => Math.max(max, count2(row.tokens_prompt)), 0);
     return {
       requests,
       tokensPerSecond: measured > 0 ? weighted / measured : void 0,
@@ -20009,9 +20072,9 @@ async function taskCosts(router, hash, repository, log) {
     return Object.fromEntries(
       Object.entries(costs).map(([run2, cost]) => [run2, Number(cost.toFixed(4))])
     );
-  } catch (error2) {
+  } catch (error3) {
     log.warning(
-      `Could not read what the task's runs spent: ${error2 instanceof Error ? error2.message : error2}`
+      `Could not read what the task's runs spent: ${error3 instanceof Error ? error3.message : error3}`
     );
     return void 0;
   }
@@ -20030,9 +20093,9 @@ async function runTokens(router, hash, spent, log, wait = sleep) {
       }
       await wait(1e4);
     }
-  } catch (error2) {
+  } catch (error3) {
     log.warning(
-      `Could not read this run's tokens: ${error2 instanceof Error ? error2.message : error2}`
+      `Could not read this run's tokens: ${error3 instanceof Error ? error3.message : error3}`
     );
     return void 0;
   }
@@ -20049,9 +20112,9 @@ async function runStats(router, hash, generated, log, wait = sleep) {
       }
       await wait(1e4);
     }
-  } catch (error2) {
+  } catch (error3) {
     log.warning(
-      `Could not read this run's requests: ${error2 instanceof Error ? error2.message : error2}`
+      `Could not read this run's requests: ${error3 instanceof Error ? error3.message : error3}`
     );
     return void 0;
   }
@@ -20060,12 +20123,973 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// src/inference/runpod.ts
+var API2 = "https://api.runpod.io/v2";
+var STATUS = {
+  PROVISIONING: "starting",
+  STARTING: "starting",
+  RUNNING: "running",
+  EXITED: "stopped",
+  ERROR: "failed",
+  TERMINATED: "terminated"
+};
+var Runpod = class {
+  name = "runpod";
+  pods;
+  serverless;
+  #apiKey;
+  #fetch;
+  constructor(apiKey, fetchFn = fetch) {
+    this.#apiKey = apiKey;
+    this.#fetch = fetchFn;
+    this.pods = {
+      price: (gpuType) => this.#podPrice(gpuType),
+      create: (spec) => this.#createPod(spec),
+      get: (id) => this.#getPod(id),
+      list: (env) => this.#listPods(env),
+      terminate: (id) => this.#terminatePod(id),
+      url: (id, port) => `https://${id}-${port}.proxy.runpod.net`,
+      billing: (ids, since) => this.#podBilling(ids, since)
+    };
+    this.serverless = {
+      endpoint: (id) => this.#endpoint(id),
+      price: (id) => this.#serverlessPrice(id),
+      openAiUrl: (id) => `https://api.runpod.ai/v2/${encodeURIComponent(id)}/openai/v1`
+    };
+  }
+  /** `GET /v2/billing`, by month: the account's total since the month began (UTC). */
+  async monthSpent(now) {
+    const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+    const response = await this.#request(
+      `/billing?bucketSize=month&startTime=${encodeURIComponent(start.toISOString())}`
+    );
+    return (response.records ?? []).filter((record) => !record.startTime || Date.parse(record.startTime) >= start.getTime()).reduce((total, record) => total + amount(record.totalAmount), 0);
+  }
+  async #podPrice(gpuType) {
+    const gpu = await this.#request(`/catalog/gpus/${encodeURIComponent(gpuType)}`);
+    const hourly = gpu.price?.secure;
+    if (gpu.secure === false || typeof hourly !== "number" || !(hourly > 0)) {
+      throw new Error(`Runpod does not offer ${gpuType} on Secure Cloud.`);
+    }
+    return hourly / 3600;
+  }
+  async #createPod(spec) {
+    const pod = await this.#request("/pods", "POST", {
+      name: spec.name,
+      image: spec.image,
+      gpu: { id: spec.gpuType, count: 1 },
+      // Decision 6 of the self-hosted inference plan: Runpod's own data centers only.
+      cloud: "SECURE",
+      env: spec.env,
+      ports: [`${spec.port}/http`],
+      disk: spec.diskGb
+    });
+    return toPod(pod);
+  }
+  async #getPod(id) {
+    const pod = await this.#request(`/pods/${encodeURIComponent(id)}`, "GET", void 0, [404]);
+    return pod ? toPod(pod) : void 0;
+  }
+  async #listPods(env) {
+    const pods = [];
+    let cursor;
+    for (let page = 0; page < 100; page++) {
+      const response = await this.#request(
+        `/pods${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`
+      );
+      for (const pod of response.pods ?? []) {
+        const found = toPod(pod);
+        if (Object.entries(env).every(([name, value]) => found.env[name] === value)) {
+          pods.push(found);
+        }
+      }
+      cursor = response.pagination?.nextCursor;
+      if (!response.pagination?.hasNextPage || !cursor) return pods;
+    }
+    throw new Error("Too many Runpod pods to list.");
+  }
+  async #terminatePod(id) {
+    await this.#request(`/pods/${encodeURIComponent(id)}`, "DELETE", void 0, [404]);
+  }
+  /** `GET /v2/billing/pods`, by day, once for every pod; records are per pod per bucket. */
+  async #podBilling(ids, since) {
+    if (ids.length === 0) return {};
+    const start = new Date(
+      Date.UTC(since.getUTCFullYear(), since.getUTCMonth(), since.getUTCDate())
+    );
+    const response = await this.#request(
+      `/billing/pods?bucketSize=day&startTime=${encodeURIComponent(start.toISOString())}`
+    );
+    const wanted = new Set(ids);
+    const billed = {};
+    for (const record of response.records ?? []) {
+      if (!record.podId || !wanted.has(record.podId)) continue;
+      billed[record.podId] = (billed[record.podId] ?? 0) + amount(record.totalAmount);
+    }
+    return billed;
+  }
+  async #endpoint(id) {
+    const endpoint2 = await this.#request(
+      `/serverless/${encodeURIComponent(id)}`
+    );
+    return {
+      id: endpoint2.id,
+      type: endpoint2.type,
+      workersMin: endpoint2.workers?.min ?? 0,
+      workersMax: endpoint2.workers?.max ?? 0,
+      idleTimeoutSeconds: endpoint2.workers?.idleTimeout,
+      gpuCount: endpoint2.gpu?.count ?? 1,
+      env: endpoint2.env ?? {}
+    };
+  }
+  /**
+   * The flex price of the endpoint's dearest GPU type, times its GPUs per worker: a worker may
+   * land on any type of its pools. Throws when no price is listed.
+   */
+  async #serverlessPrice(id) {
+    const endpoint2 = await this.#request(
+      `/serverless/${encodeURIComponent(id)}`
+    );
+    const pools = new Set(endpoint2.gpu?.pools ?? []);
+    const excluded = new Set(endpoint2.gpu?.excludedTypes ?? []);
+    const { gpus } = await this.#request("/catalog/gpus");
+    const prices = (gpus ?? []).filter((gpu) => gpu.pool && pools.has(gpu.pool) && !excluded.has(gpu.id)).map((gpu) => gpu.price?.serverless).filter((price) => typeof price === "number" && price > 0);
+    if (prices.length === 0)
+      throw new Error(`Runpod lists no Serverless price for endpoint ${id}.`);
+    return Math.max(...prices) * (endpoint2.gpu?.count ?? 1) / 3600;
+  }
+  async #request(path, method = "GET", body, absent = []) {
+    const response = await this.#fetch(`${API2}${path}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${this.#apiKey}`,
+        ...body === void 0 ? {} : { "Content-Type": "application/json" }
+      },
+      body: body === void 0 ? null : JSON.stringify(body)
+    });
+    if (absent.includes(response.status)) return void 0;
+    if (!response.ok) {
+      throw new Error(`Runpod ${method} ${path.split("?")[0]} failed with ${response.status}.`);
+    }
+    return response.status === 204 ? void 0 : response.json();
+  }
+};
+function toPod(pod) {
+  return {
+    id: pod.id,
+    name: pod.name,
+    status: STATUS[pod.status] ?? "starting",
+    image: pod.image ?? "",
+    env: pod.env ?? {},
+    gpuType: pod.gpu?.id,
+    createdAt: new Date(pod.createdAt),
+    pricePerSecond: typeof pod.cost === "number" && pod.cost > 0 ? pod.cost / 3600 : void 0
+  };
+}
+function amount(value) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+// src/inference/selfhosted.ts
+import { createHmac, randomBytes } from "node:crypto";
+
+// src/gateway/gateway.ts
+import { createHash, timingSafeEqual } from "node:crypto";
+import { createServer } from "node:http";
+
+// src/gateway/usage.ts
+function busyMs(records, idleMs, now) {
+  const spans = records.map((record) => [record.start, (record.end ?? now) + idleMs]).sort((a, b) => a[0] - b[0]);
+  let total = 0;
+  let from;
+  let to = 0;
+  for (const [start, end] of spans) {
+    if (from === void 0 || start > to) {
+      if (from !== void 0) total += to - from;
+      from = start;
+      to = end;
+    } else {
+      to = Math.max(to, end);
+    }
+  }
+  return from === void 0 ? 0 : total + to - from;
+}
+function meterCost(meter, start, records, now) {
+  const ms = meter.kind === "time" ? Math.max(0, now - start) : busyMs(records, meter.idleMs, now);
+  return ms / 1e3 * meter.pricePerSecond;
+}
+function summarize(records, meter, start, now) {
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let maxInputTokens;
+  let rates = 0;
+  let measured = 0;
+  for (const record of records) {
+    inputTokens += record.input ?? 0;
+    outputTokens += record.output ?? 0;
+    if (record.input !== void 0) maxInputTokens = Math.max(maxInputTokens ?? 0, record.input);
+    const from = record.firstByte ?? record.start;
+    if (record.output && record.end !== void 0 && record.end > from) {
+      rates += record.output / ((record.end - from) / 1e3);
+      measured++;
+    }
+  }
+  return {
+    requests: records.length,
+    inputTokens,
+    outputTokens,
+    maxInputTokens,
+    tokensPerSecond: measured > 0 ? rates / measured : void 0,
+    cost: meterCost(meter, start, records, now),
+    start,
+    end: now
+  };
+}
+var EventReader = class {
+  #buffer = "";
+  #onData;
+  constructor(onData) {
+    this.#onData = onData;
+  }
+  /** Whether the text read so far ends at an event's end. */
+  get atBoundary() {
+    return this.#buffer === "" && this.#ended;
+  }
+  #ended = true;
+  feed(text) {
+    this.#buffer += text;
+    const lines = this.#buffer.split(/\r?\n/);
+    this.#buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      this.#ended = line === "";
+      if (!line.startsWith("data:")) continue;
+      const payload = line.slice(5).trim();
+      if (payload === "" || payload === "[DONE]") continue;
+      try {
+        this.#onData(JSON.parse(payload));
+      } catch {
+      }
+    }
+    if (this.#buffer !== "") this.#ended = false;
+  }
+};
+
+// src/gateway/gateway.ts
+var ROUTES = /* @__PURE__ */ new Set(["POST /v1/chat/completions", "POST /v1/completions", "GET /v1/models"]);
+var MAX_BODY_BYTES = 32 * 1024 * 1024;
+var KEEP_ALIVE_MS = 2e4;
+function sha256(text) {
+  return createHash("sha256").update(text).digest("hex");
+}
+function matches(token, hash) {
+  if (!token || !hash) return false;
+  const given = Buffer.from(sha256(token), "hex");
+  const expected = Buffer.from(hash, "hex");
+  return given.length === expected.length && timingSafeEqual(given, expected);
+}
+var Gateway = class {
+  #options;
+  #now;
+  #run;
+  #records = [];
+  /** The last time a request arrived or a run started or ended. */
+  lastActivity;
+  ready = false;
+  contextLength;
+  constructor(options) {
+    this.#options = options;
+    this.#now = options.now ?? Date.now;
+    this.lastActivity = this.#now();
+  }
+  /** Starts a run, whose token replaces any earlier one. */
+  startRun(run2) {
+    this.#run = { ...run2, active: true };
+    this.#records = [];
+    this.lastActivity = this.#now();
+  }
+  /** Ends the run: its token stops working. Returns what it used. */
+  endRun() {
+    const usage = this.usage();
+    if (this.#run) this.#run.active = false;
+    this.lastActivity = this.#now();
+    return usage;
+  }
+  /** What the current or last run used so far. */
+  usage() {
+    const run2 = this.#run;
+    return run2 ? summarize(this.#records, run2.meter, run2.start, this.#now()) : void 0;
+  }
+  /** Whether a run is being served. */
+  get serving() {
+    return this.#run?.active === true;
+  }
+  /** When the current run's budget is spent, for a meter that knows in advance. */
+  get deadline() {
+    const run2 = this.#run;
+    if (!run2?.active || run2.meter.kind !== "time") return void 0;
+    return run2.start + Math.floor(run2.limit / run2.meter.pricePerSecond * 1e3);
+  }
+  /** Whether the current run may still spend. */
+  #withinBudget() {
+    const run2 = this.#run;
+    if (!run2) return false;
+    return meterCost(run2.meter, run2.start, this.#records, this.#now()) < run2.limit;
+  }
+  status() {
+    return {
+      ready: this.ready,
+      contextLength: this.contextLength,
+      serving: this.serving,
+      deadline: this.deadline,
+      lastActivity: this.lastActivity
+    };
+  }
+  /** Listens on `host` (the loopback by default) and a free port unless one is given. */
+  async listen(host = "127.0.0.1", port = 0) {
+    const server = createServer((request2, response) => {
+      this.handle(request2, response).catch((error3) => {
+        this.#log(`Request failed: ${error3 instanceof Error ? error3.message : String(error3)}`);
+        if (!response.headersSent) send(response, 500, { error: { message: "Gateway error." } });
+        else response.end();
+      });
+    });
+    await new Promise((resolve) => server.listen(port, host, resolve));
+    const address = server.address();
+    return { server, url: `http://${host}:${address.port}` };
+  }
+  async handle(request2, response) {
+    const path = (request2.url ?? "/").split("?")[0] ?? "/";
+    const route = `${request2.method} ${path}`;
+    if (route === "GET /health") return send(response, 200, { ready: this.ready });
+    if (path.startsWith("/admin/") || path === "/usage")
+      return this.#admin(route, request2, response);
+    if (!ROUTES.has(route)) return send(response, 404, error("Not found."));
+    if (!this.serving || !matches(bearer(request2), this.#run?.tokenSha256)) {
+      return send(response, 401, error("Invalid token."));
+    }
+    this.lastActivity = this.#now();
+    if (!this.#withinBudget()) {
+      return send(response, 402, error("This run's budget is spent.", "budget_exceeded"));
+    }
+    if (!this.ready) return send(response, 503, error("The model is not loaded yet."));
+    await this.#forward(request2, response, path);
+  }
+  async #admin(route, request2, response) {
+    if (!matches(bearer(request2), this.#options.adminSha256)) {
+      return send(response, 401, error("Invalid token."));
+    }
+    if (route === "GET /usage") return send(response, 200, this.usage() ?? null);
+    if (route === "GET /admin/status") return send(response, 200, this.status());
+    if (route === "POST /admin/run") {
+      const body = parseJson(await readBody(request2, 64 * 1024));
+      const run2 = runSettings(body);
+      if (!run2) return send(response, 400, error("Invalid run."));
+      this.startRun(run2);
+      return send(response, 200, this.status());
+    }
+    if (route === "POST /admin/end") return send(response, 200, this.endRun() ?? null);
+    return send(response, 404, error("Not found."));
+  }
+  async #forward(request2, response, path) {
+    let body;
+    let stream = false;
+    if (request2.method === "POST") {
+      const json = parseJson(await readBody(request2, MAX_BODY_BYTES));
+      if (typeof json !== "object" || json === null) {
+        return send(response, 400, error("The body must be a JSON object."));
+      }
+      const payload = json;
+      stream = payload.stream === true;
+      if (stream) {
+        const options = typeof payload.stream_options === "object" ? payload.stream_options : {};
+        payload.stream_options = { ...options, include_usage: true };
+      }
+      body = JSON.stringify(payload);
+    }
+    const record = { start: this.#now() };
+    this.#records.push(record);
+    const abort = new AbortController();
+    response.on("close", () => {
+      if (!response.writableFinished) abort.abort();
+    });
+    let lastWrite = this.#now();
+    const reader = new EventReader((data) => {
+      const usage = this.#options.engine.usage(data);
+      if (usage) Object.assign(record, usage);
+    });
+    const keepAlive = stream ? setInterval(
+      () => {
+        if (this.#now() - lastWrite < (this.#options.keepAliveMs ?? KEEP_ALIVE_MS)) return;
+        if (!response.headersSent) response.writeHead(200, SSE_HEADERS);
+        if (reader.atBoundary) response.write(": keep-alive\n\n");
+        lastWrite = this.#now();
+      },
+      Math.max(1, Math.floor((this.#options.keepAliveMs ?? KEEP_ALIVE_MS) / 2))
+    ) : void 0;
+    try {
+      const upstream = await (this.#options.fetch ?? fetch)(
+        `${this.#options.upstream}${path.slice("/v1".length)}`,
+        {
+          method: request2.method ?? "GET",
+          headers: {
+            ...body === void 0 ? {} : { "Content-Type": "application/json" },
+            ...this.#options.upstreamHeaders
+          },
+          body: body ?? null,
+          signal: abort.signal
+        }
+      );
+      if (!upstream.ok || !upstream.body) {
+        const text2 = (await upstream.text()).slice(0, 4e3);
+        record.end = this.#now();
+        if (response.headersSent) {
+          response.end(
+            `data: ${JSON.stringify(error(text2 || "Engine error.", `upstream_${upstream.status}`))}
+
+`
+          );
+        } else {
+          response.writeHead(upstream.status, {
+            "Content-Type": upstream.headers.get("content-type") ?? "application/json"
+          });
+          response.end(text2);
+        }
+        return;
+      }
+      if (!response.headersSent) {
+        response.writeHead(upstream.status, {
+          "Content-Type": upstream.headers.get("content-type") ?? "application/json",
+          "Cache-Control": "no-cache"
+        });
+      }
+      const decoder = new TextDecoder();
+      let text = "";
+      for await (const chunk of upstream.body) {
+        record.firstByte ??= this.#now();
+        const part = decoder.decode(chunk, { stream: true });
+        if (stream) reader.feed(part);
+        else text += part;
+        response.write(chunk);
+        lastWrite = this.#now();
+      }
+      record.end = this.#now();
+      if (!stream) {
+        const usage = this.#options.engine.usage(parseJson(text));
+        if (usage) Object.assign(record, usage);
+      }
+      response.end();
+    } catch (failure) {
+      record.end ??= this.#now();
+      if (abort.signal.aborted) return;
+      this.#log(
+        `The engine failed: ${failure instanceof Error ? failure.message : String(failure)}`
+      );
+      if (!response.headersSent) send(response, 502, error("The engine did not answer."));
+      else response.end(`data: ${JSON.stringify(error("The engine did not answer."))}
+
+`);
+    } finally {
+      clearInterval(keepAlive);
+      this.lastActivity = this.#now();
+    }
+  }
+  #log(message) {
+    this.#options.log?.(message);
+  }
+};
+var SSE_HEADERS = {
+  "Content-Type": "text/event-stream",
+  "Cache-Control": "no-cache",
+  Connection: "keep-alive"
+};
+function error(message, code) {
+  return { error: { message: `Codeman gateway: ${message}`, ...code ? { code } : {} } };
+}
+function send(response, status2, body) {
+  response.writeHead(status2, { "Content-Type": "application/json" });
+  response.end(JSON.stringify(body));
+}
+function bearer(request2) {
+  const header = request2.headers.authorization ?? "";
+  return /^Bearer (\S+)$/.exec(header)?.[1];
+}
+async function readBody(request2, max) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of request2) {
+    size += chunk.length;
+    if (size > max) throw new Error("The request body is too large.");
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+function parseJson(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return void 0;
+  }
+}
+function runSettings(body) {
+  if (typeof body !== "object" || body === null) return void 0;
+  const { tokenSha256, limit, start, pricePerSecond, idleSeconds } = body;
+  const positive = (value) => typeof value === "number" && Number.isFinite(value) && value > 0;
+  if (typeof tokenSha256 !== "string" || !/^[0-9a-f]{64}$/.test(tokenSha256)) return void 0;
+  if (!positive(limit) || !positive(start) || !positive(pricePerSecond)) return void 0;
+  if (idleSeconds === void 0) {
+    return { tokenSha256, limit, start, meter: { kind: "time", pricePerSecond } };
+  }
+  if (typeof idleSeconds !== "number" || !Number.isFinite(idleSeconds) || idleSeconds < 0) {
+    return void 0;
+  }
+  return {
+    tokenSha256,
+    limit,
+    start,
+    meter: { kind: "busy", pricePerSecond, idleMs: idleSeconds * 1e3 }
+  };
+}
+
+// src/gateway/pod.ts
+var GATEWAY_PORT = 8080;
+
+// src/inference/gpu.ts
+var MAX_IDLE_TIMEOUT_SECONDS = 60;
+function endpointProblems(endpoint2) {
+  const problems = [];
+  if (endpoint2.type !== void 0 && endpoint2.type !== "QUEUE") {
+    problems.push(`it is a ${endpoint2.type} endpoint; the vLLM worker needs a queue-based one`);
+  }
+  if (endpoint2.workersMin !== 0) {
+    problems.push(
+      `it keeps ${endpoint2.workersMin} active worker(s), billed all the time; set active workers to 0`
+    );
+  }
+  if (endpoint2.workersMax === 0) {
+    problems.push(
+      "its max workers is 0, as the provider sets it after 7 days without requests; set it to 1"
+    );
+  } else if (endpoint2.workersMax !== 1) {
+    problems.push(`it may run ${endpoint2.workersMax} workers at once; set max workers to 1`);
+  }
+  const idle = endpoint2.idleTimeoutSeconds;
+  if (idle === void 0 || idle > MAX_IDLE_TIMEOUT_SECONDS) {
+    problems.push(
+      `its idle timeout is ${idle === void 0 ? "unknown" : `${idle} seconds`}; set it to ${MAX_IDLE_TIMEOUT_SECONDS} seconds or less`
+    );
+  }
+  return problems;
+}
+function podCost(start, end, pricePerSecond) {
+  return Math.max(0, end.getTime() - start.getTime()) / 1e3 * pricePerSecond;
+}
+async function waitUntilReady(host, id, ready, options) {
+  const wait = options.wait ?? sleep2;
+  const interval = options.intervalMs ?? 1e4;
+  for (let waited = 0; ; waited += interval) {
+    const pod = await host.get(id);
+    if (!pod) throw new Error(`Pod ${id} no longer exists.`);
+    if (pod.status === "failed" || pod.status === "stopped" || pod.status === "terminated") {
+      throw new Error(`Pod ${id} is ${pod.status}.`);
+    }
+    if (pod.status === "running" && await ready().catch(() => false)) return pod;
+    if (waited >= options.timeoutMs) {
+      throw new Error(
+        `Pod ${id} was not ready within ${Math.round(options.timeoutMs / 6e4)} minutes.`
+      );
+    }
+    await wait(interval);
+  }
+}
+function sleep2(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// src/inference/selfhosted.ts
+var START_MINUTES = 25;
+var KEPT_IDLE_MINUTES = 15;
+var RUN_IDLE_MINUTES = 30;
+var DISK_GB = 80;
+var BILLING_DAYS = 30;
+function podOwner(repository) {
+  return { CODEMAN_REPOSITORY: `${repository.owner}/${repository.name}` };
+}
+function adminToken(accountKey, nonce) {
+  return createHmac("sha256", accountKey).update(`codeman-gateway-admin:${nonce}`).digest("base64url");
+}
+var PodInference = class {
+  name;
+  #settings;
+  #options;
+  #host;
+  constructor(settings, options) {
+    if (!options.gpu.pods) throw new Error(`${options.gpu.name} has no pods.`);
+    this.name = `${options.gpu.name} pods`;
+    this.#settings = settings;
+    this.#options = options;
+    this.#host = options.gpu.pods;
+  }
+  #now() {
+    return this.#options.now?.() ?? /* @__PURE__ */ new Date();
+  }
+  async taskSpent() {
+    return this.#settings.taskSpent;
+  }
+  async monthSpent() {
+    return this.#options.gpu.monthSpent(this.#now());
+  }
+  async open(run2, log) {
+    const kept = await this.#sweep(run2.task, log);
+    const token = randomBytes(32).toString("base64url");
+    const handle = kept ? await this.#reuse(kept, run2, token, log) : await this.#create(run2, token, log);
+    const status2 = await this.#admin(handle, "GET", "/admin/status");
+    return {
+      handle: JSON.stringify(handle),
+      credential: token,
+      baseUrl: `${handle.url}/v1`,
+      contextLength: status2.contextLength
+    };
+  }
+  /**
+   * Ends the run on the pod, reads what it used, and keeps the pod for the task's next run or
+   * terminates it. The run's cost is the pod's time since the run started, at its price.
+   */
+  async close(text, log) {
+    const handle = parseHandle(text);
+    if (handle.mode !== "pod") throw new Error("The handle is not a pod run's.");
+    let usage;
+    try {
+      usage = await this.#admin(handle, "POST", "/admin/end");
+    } catch (error3) {
+      log.warning(
+        `Could not read the run's usage from its pod: ${error3 instanceof Error ? error3.message : error3}`
+      );
+    }
+    const keep = handle.reuse === "task" && usage !== void 0;
+    if (!keep) {
+      await this.#host.terminate(handle.podId);
+      log.info(`Terminated pod ${handle.podId}.`);
+    } else {
+      log.info(
+        `Kept pod ${handle.podId} for the task's next run, for ${KEPT_IDLE_MINUTES} minutes at most.`
+      );
+    }
+    const cost = podCost(new Date(handle.start), this.#now(), handle.pricePerSecond);
+    const pods = [.../* @__PURE__ */ new Set([...this.#settings.pods, handle.podId])];
+    const podCosts = await this.#host.billing(pods, new Date(this.#now().getTime() - BILLING_DAYS * 864e5)).catch((error3) => {
+      log.warning(
+        `Could not read the pods' billing: ${error3 instanceof Error ? error3.message : error3}`
+      );
+      return void 0;
+    });
+    return {
+      cost,
+      inputTokens: usage?.inputTokens,
+      outputTokens: usage?.outputTokens,
+      requests: usage?.requests,
+      maxInputTokens: usage?.maxInputTokens,
+      tokensPerSecond: usage?.tokensPerSecond,
+      pod: handle.podId,
+      podCosts,
+      keptPod: keep ? handle.podId : void 0
+    };
+  }
+  /**
+   * Terminates this repository's pods that serve nobody: no other run of the repository is
+   * active while open-key runs, so a pod that is still starting or serving lost its run. Other
+   * tasks' kept pods stay until their idle limit. Returns the task's kept pod, if it fits.
+   */
+  async #sweep(task, log) {
+    let kept;
+    for (const pod of await this.#host.list(podOwner(this.#options.repository))) {
+      const nonce = pod.env.CODEMAN_NONCE ?? "";
+      const handle = { podId: pod.id, nonce, url: this.#host.url(pod.id, GATEWAY_PORT) };
+      const status2 = await this.#admin(handle, "GET", "/admin/status").catch(() => void 0);
+      const idle = status2?.ready === true && status2.serving === false && this.#now().getTime() - (status2.lastActivity ?? 0) < KEPT_IDLE_MINUTES * 6e4;
+      const fits = pod.env.CODEMAN_TASK === task && pod.env.CODEMAN_MODEL === this.#settings.model && pod.gpuType === this.#settings.gpuType && pod.image === this.#settings.image;
+      if (idle && fits && !kept) {
+        kept = { pod, nonce };
+      } else if (!idle || pod.env.CODEMAN_TASK === task) {
+        const why = !idle ? "it serves no run of this repository" : "the task's settings changed";
+        log.info(`Terminating pod ${pod.id} (task #${pod.env.CODEMAN_TASK ?? "?"}): ${why}.`);
+        await this.#host.terminate(pod.id);
+      }
+    }
+    return kept;
+  }
+  async #reuse(kept, run2, token, log) {
+    const { pod, nonce } = kept;
+    const pricePerSecond = pod.pricePerSecond ?? await this.#host.price(this.#settings.gpuType);
+    const handle = {
+      mode: "pod",
+      podId: pod.id,
+      nonce,
+      url: this.#host.url(pod.id, GATEWAY_PORT),
+      start: this.#now().getTime(),
+      pricePerSecond,
+      reuse: this.#settings.reuse
+    };
+    await this.#startRun(handle, run2, token);
+    log.info(`Reusing pod ${pod.id}, kept from the task's last run, for up to ${usd(run2.limit)}.`);
+    return handle;
+  }
+  async #create(run2, token, log) {
+    const { model, gpuType, image, engine } = this.#settings;
+    if (!image) throw new Error("No pod image is pinned; see docs/installation.md.");
+    const listed = await this.#host.price(gpuType);
+    const nonce = randomBytes(16).toString("hex");
+    const now = this.#now();
+    const pod = await this.#host.create({
+      name: `codeman-${this.#options.repository.name}-${run2.task}-${run2.runId}`.slice(0, 100),
+      image,
+      env: {
+        ...podOwner(this.#options.repository),
+        CODEMAN_TASK: run2.task,
+        CODEMAN_RUN: run2.runId,
+        CODEMAN_NONCE: nonce,
+        CODEMAN_MODEL: model,
+        CODEMAN_ENGINE: engine.name,
+        CODEMAN_ADMIN_SHA256: sha256(adminToken(this.#options.accountKey, nonce)),
+        CODEMAN_START_BY: new Date(now.getTime() + START_MINUTES * 6e4).toISOString(),
+        CODEMAN_KEPT_IDLE_MINUTES: String(KEPT_IDLE_MINUTES),
+        CODEMAN_RUN_IDLE_MINUTES: String(RUN_IDLE_MINUTES)
+      },
+      port: GATEWAY_PORT,
+      gpuType,
+      diskGb: DISK_GB
+    });
+    log.info(
+      `Created pod ${pod.id} with ${gpuType}, at ${usd(listed * 3600)} per hour; waiting for ${model}.`
+    );
+    const url = this.#host.url(pod.id, GATEWAY_PORT);
+    try {
+      const ready = await waitUntilReady(
+        this.#host,
+        pod.id,
+        async () => {
+          const response = await (this.#options.fetch ?? fetch)(`${url}/health`);
+          return response.ok && (await response.json()).ready === true;
+        },
+        { timeoutMs: START_MINUTES * 6e4, wait: this.#options.wait }
+      );
+      const handle = {
+        mode: "pod",
+        podId: pod.id,
+        nonce,
+        url,
+        // Billing starts with the pod, while it pulls the image and the model.
+        start: pod.createdAt.getTime(),
+        pricePerSecond: ready.pricePerSecond ?? pod.pricePerSecond ?? listed,
+        reuse: this.#settings.reuse
+      };
+      await this.#startRun(handle, run2, token);
+      const minutes = (this.#now().getTime() - handle.start) / 6e4;
+      log.info(`Pod ${pod.id} serves ${model} after ${minutes.toFixed(1)} minutes.`);
+      return handle;
+    } catch (error3) {
+      await this.#host.terminate(pod.id);
+      log.warning(
+        `Terminated pod ${pod.id}, which did not serve ${model}; it cost about ${usd(podCost(pod.createdAt, this.#now(), listed))}.`
+      );
+      throw error3;
+    }
+  }
+  async #startRun(handle, run2, token) {
+    await this.#admin(handle, "POST", "/admin/run", {
+      tokenSha256: sha256(token),
+      limit: run2.limit,
+      start: handle.start,
+      pricePerSecond: handle.pricePerSecond
+    });
+  }
+  async #admin(handle, method, path, body) {
+    const response = await (this.#options.fetch ?? fetch)(`${handle.url}${path}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${adminToken(this.#options.accountKey, handle.nonce)}`,
+        ...body === void 0 && method === "GET" ? {} : { "Content-Type": "application/json" }
+      },
+      body: method === "GET" ? null : JSON.stringify(body ?? {}),
+      signal: AbortSignal.timeout(3e4)
+    });
+    if (!response.ok)
+      throw new Error(`The pod's gateway answered ${path} with ${response.status}.`);
+    return response.json();
+  }
+};
+async function releasePod(host, text, log) {
+  const handle = parseHandle(text);
+  if (handle.mode !== "pod") return;
+  await host.terminate(handle.podId);
+  log.info(`Terminated pod ${handle.podId}: the task does not go on to another run now.`);
+}
+function parseHandle(text) {
+  const handle = JSON.parse(text);
+  if (handle.mode !== "pod" && handle.mode !== "serverless") {
+    throw new Error("The handle is not a self-hosted run's.");
+  }
+  return handle;
+}
+var ServerlessInference = class {
+  name;
+  #settings;
+  #gpu;
+  #host;
+  #usage;
+  #now;
+  /** `usage` is what the agent job's gateway reported, as JSON; empty when it reported nothing. */
+  constructor(settings, gpu, options = {}) {
+    if (!gpu.serverless) throw new Error(`${gpu.name} has no Serverless endpoints.`);
+    this.name = `${gpu.name} Serverless`;
+    this.#settings = settings;
+    this.#gpu = gpu;
+    this.#host = gpu.serverless;
+    this.#usage = options.usage ?? "";
+    this.#now = options.now ?? (() => /* @__PURE__ */ new Date());
+  }
+  async taskSpent() {
+    return this.#settings.taskSpent;
+  }
+  async monthSpent() {
+    return this.#gpu.monthSpent(this.#now());
+  }
+  /** Checks the endpoint (decision 10 of the plan) and prices its workers. */
+  async open(run2, log) {
+    const { endpoint: id, model } = this.#settings;
+    const endpoint2 = await this.#host.endpoint(id);
+    const problems = [
+      ...endpointProblems(endpoint2),
+      ...this.#settings.engineProblems(endpoint2.env, model)
+    ];
+    if (problems.length > 0) {
+      throw new Error(`Serverless endpoint ${id} cannot serve this run: ${problems.join("; ")}.`);
+    }
+    const handle = {
+      mode: "serverless",
+      endpoint: id,
+      url: this.#host.openAiUrl(id),
+      pricePerSecond: await this.#host.price(id),
+      idleSeconds: endpoint2.idleTimeoutSeconds ?? 0,
+      limit: run2.limit,
+      contextLength: this.#settings.contextLength(endpoint2.env)
+    };
+    log.info(
+      `Endpoint ${id} serves ${model}, at up to ${usd(handle.pricePerSecond * 3600)} per worker-hour; the run may use ${usd(run2.limit)}.`
+    );
+    return {
+      handle: JSON.stringify(handle),
+      // The agent's token for the agent job's gateway, which holds the endpoint's key.
+      credential: randomBytes(32).toString("base64url"),
+      contextLength: handle.contextLength
+    };
+  }
+  /**
+   * Costs the run from what the agent job's gateway measured: its workers' busy time at the
+   * endpoint's price. Without a report, such as after a cancelled job, the run counts its whole
+   * limit, so the task's budget never counts less than was spent.
+   */
+  async close(text, log) {
+    const handle = parseHandle(text);
+    if (handle.mode !== "serverless") throw new Error("The handle is not a Serverless run's.");
+    const usage = parseUsage(this.#usage);
+    if (!usage) {
+      log.warning(
+        `The agent job reported no usage; the run counts its whole limit, ${usd(handle.limit)}.`
+      );
+      return { cost: handle.limit };
+    }
+    return {
+      cost: usage.cost,
+      inputTokens: usage.inputTokens,
+      outputTokens: usage.outputTokens,
+      requests: usage.requests,
+      maxInputTokens: usage.maxInputTokens,
+      tokensPerSecond: usage.tokensPerSecond
+    };
+  }
+};
+function parseUsage(text) {
+  let value;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return void 0;
+  }
+  const usage = value;
+  const finite = (field) => typeof field === "number" && Number.isFinite(field) && field >= 0;
+  if (!usage || !finite(usage.cost) || !finite(usage.requests)) return void 0;
+  if (!finite(usage.inputTokens) || !finite(usage.outputTokens)) return void 0;
+  return usage;
+}
+
 // src/inference/index.ts
+function inferenceChoice(settings, record) {
+  if (settings.inference !== "self-hosted") return { inference: "openrouter" };
+  const common = {
+    inference: "self-hosted",
+    gpuProvider: settings["gpu-provider"],
+    engine: settings.engine ?? "",
+    model: settings.model,
+    taskSpent: record?.spent ?? 0,
+    pods: record?.inference?.pods.map((pod) => pod.id) ?? []
+  };
+  return settings["gpu-mode"] === "serverless" ? { ...common, mode: "serverless", endpoint: settings["serverless-endpoint"] ?? "" } : {
+    ...common,
+    mode: "pod",
+    gpuType: settings["gpu-type"] ?? "",
+    podReuse: settings["pod-reuse"] === "run" ? "run" : "task"
+  };
+}
+function parseInferenceChoice(text) {
+  if (text.trim() === "") return { inference: "openrouter" };
+  const choice = JSON.parse(text);
+  if (choice.inference === "openrouter") return choice;
+  const valid = choice.inference === "self-hosted" && typeof choice.model === "string" && ENGINES[choice.engine] !== void 0 && Number.isFinite(choice.taskSpent) && Array.isArray(choice.pods) && (choice.mode === "pod" ? typeof choice.gpuType === "string" : choice.mode === "serverless");
+  if (!valid) throw new Error("The inference input is not a valid choice.");
+  return choice;
+}
+function agentMode(choice) {
+  return choice.inference === "openrouter" ? "openrouter" : choice.mode;
+}
+function gpuProvider(name, key) {
+  if (name === "runpod") return new Runpod(key);
+  throw new Error(`Unknown GPU provider "${name}".`);
+}
 function inferenceProvider(runtime2) {
-  return new OpenRouterProvider(
-    new OpenRouter(runtime2.input("management-key", { required: true })),
-    runtime2.repository,
-    () => positiveNumber(runtime2, "key-expiry-hours")
+  const choice = parseInferenceChoice(runtime2.input("inference"));
+  if (choice.inference === "openrouter") {
+    return new OpenRouterProvider(
+      new OpenRouter(runtime2.input("management-key", { required: true })),
+      runtime2.repository,
+      () => positiveNumber(runtime2, "key-expiry-hours")
+    );
+  }
+  return selfHosted(choice, runtime2.repository, {
+    accountKey: runtime2.input("gpu-key", { required: true }),
+    image: runtime2.input("pod-image") || POD_IMAGE,
+    usage: runtime2.input("gateway-usage")
+  });
+}
+function selfHosted(choice, repository, inputs) {
+  const gpu = inputs.gpu ?? gpuProvider(choice.gpuProvider, inputs.accountKey);
+  const engine = ENGINES[choice.engine];
+  if (!engine) throw new Error(`Unknown engine "${choice.engine}".`);
+  const common = { model: choice.model, engine, taskSpent: choice.taskSpent, pods: choice.pods };
+  if (choice.mode === "pod") {
+    return new PodInference(
+      { ...common, gpuType: choice.gpuType, image: inputs.image, reuse: choice.podReuse },
+      { repository, gpu, accountKey: inputs.accountKey }
+    );
+  }
+  return new ServerlessInference(
+    {
+      ...common,
+      endpoint: choice.endpoint,
+      engineProblems: vllmProblems,
+      contextLength: vllmContextLength
+    },
+    gpu,
+    { usage: inputs.usage }
   );
 }
 
@@ -20332,8 +21356,8 @@ function addHook(state, kind, name, hook2) {
   }
   if (kind === "error") {
     hook2 = (method, options) => {
-      return Promise.resolve().then(method.bind(null, options)).catch((error2) => {
-        return orig(error2, options);
+      return Promise.resolve().then(method.bind(null, options)).catch((error3) => {
+        return orig(error3, options);
       });
     };
   }
@@ -20481,11 +21505,11 @@ function removeNonChars(variableName) {
   return variableName.replace(/(?:^\W+)|(?:(?<!\W)\W+$)/g, "").split(/,/);
 }
 function extractUrlVariableNames(url) {
-  const matches = url.match(urlVariableRegex);
-  if (!matches) {
+  const matches2 = url.match(urlVariableRegex);
+  if (!matches2) {
     return [];
   }
-  return matches.map(removeNonChars).reduce((a, b) => a.concat(b), []);
+  return matches2.map(removeNonChars).reduce((a, b) => a.concat(b), []);
 }
 function omit(object, keysToOmit) {
   const result = { __proto__: null };
@@ -21091,8 +22115,8 @@ var JSONStringify = (value, replacer, space) => {
     );
     const denoisedJSON = processedJSON.replace(noiseStringify, "$1$2$3");
     return denoisedJSON;
-  } catch (error2) {
-    if (error2 instanceof RangeError) {
+  } catch (error3) {
+    if (error3 instanceof RangeError) {
       const convertedJSON = stringifyIteratively(value, replacer, space);
       if (convertedJSON === void 0) return void 0;
       const supportsRawJSON = "rawJSON" in JSON;
@@ -21100,7 +22124,7 @@ var JSONStringify = (value, replacer, space) => {
       const processedJSON = convertedJSON.replace(bigIntsStringify, "$1$2$3");
       return processedJSON.replace(noiseStringify, "$1$2$3");
     }
-    throw error2;
+    throw error3;
   }
 };
 var featureCache = /* @__PURE__ */ new Map();
@@ -21213,13 +22237,13 @@ var JSONParse = (text, reviver) => {
       serializedData,
       (key, value, context3) => convertMarkedBigIntsReviver(key, value, context3, reviver)
     );
-  } catch (error2) {
-    if (error2 instanceof RangeError) {
+  } catch (error3) {
+    if (error3 instanceof RangeError) {
       const serializedData = serializeBigInts(text);
       const parsed = originalParse(serializedData);
       return applyReviverIteratively(parsed, reviver);
     }
-    throw error2;
+    throw error3;
   }
 };
 
@@ -21306,26 +22330,26 @@ async function fetchWrapper(requestOptions) {
       // See https://fetch.spec.whatwg.org/#dom-requestinit-duplex.
       ...requestOptions.body && { duplex: "half" }
     });
-  } catch (error2) {
+  } catch (error3) {
     let message = "Unknown Error";
-    if (error2 instanceof Error) {
-      if (error2.name === "AbortError") {
-        error2.status = 500;
-        throw error2;
+    if (error3 instanceof Error) {
+      if (error3.name === "AbortError") {
+        error3.status = 500;
+        throw error3;
       }
-      message = error2.message;
-      if (error2.name === "TypeError" && "cause" in error2) {
-        if (error2.cause instanceof Error) {
-          message = error2.cause.message;
-        } else if (typeof error2.cause === "string") {
-          message = error2.cause;
+      message = error3.message;
+      if (error3.name === "TypeError" && "cause" in error3) {
+        if (error3.cause instanceof Error) {
+          message = error3.cause.message;
+        } else if (typeof error3.cause === "string") {
+          message = error3.cause;
         }
       }
     }
     const requestError = new RequestError(message, 500, {
       request: requestOptions
     });
-    requestError.cause = error2;
+    requestError.cause = error3;
     throw requestError;
   }
   const status2 = fetchResponse.status;
@@ -21341,8 +22365,8 @@ async function fetchWrapper(requestOptions) {
     data: ""
   };
   if ("deprecation" in responseHeaders) {
-    const matches = responseHeaders.link && responseHeaders.link.match(/<([^<>]+)>; rel="deprecation"/);
-    const deprecationLink = matches && matches.pop();
+    const matches2 = responseHeaders.link && responseHeaders.link.match(/<([^<>]+)>; rel="deprecation"/);
+    const deprecationLink = matches2 && matches2.pop();
     log.warn(
       `[@octokit/request] "${requestOptions.method} ${requestOptions.url}" is deprecated. It is scheduled to be removed on ${responseHeaders.sunset}${deprecationLink ? `. See ${deprecationLink}` : ""}`
     );
@@ -24230,8 +25254,8 @@ function iterator(octokit2, route, parameters) {
             }
           }
           return { value: normalizedResponse };
-        } catch (error2) {
-          if (error2.status !== 409) throw error2;
+        } catch (error3) {
+          if (error3.status !== 409) throw error3;
           url = "";
           return {
             value: {
@@ -24444,8 +25468,8 @@ var GitHubPlatform = class {
             issue_number: issue2,
             name: label
           });
-        } catch (error2) {
-          if (status(error2) !== 404) throw error2;
+        } catch (error3) {
+          if (status(error3) !== 404) throw error3;
         }
       }
     }
@@ -24489,8 +25513,8 @@ var GitHubPlatform = class {
           body
         });
         return commentId;
-      } catch (error2) {
-        if (status(error2) !== 404) throw error2;
+      } catch (error3) {
+        if (status(error3) !== 404) throw error3;
       }
     }
     return this.comment(issue2, body);
@@ -24513,8 +25537,8 @@ var GitHubPlatform = class {
     try {
       const { data } = await this.#octokit.rest.pulls.create({ ...this.#scope, ...options });
       return data.number;
-    } catch (error2) {
-      if (!options.draft || status(error2) !== 422) throw error2;
+    } catch (error3) {
+      if (!options.draft || status(error3) !== 422) throw error3;
       const { data } = await this.#octokit.rest.pulls.create({
         ...this.#scope,
         ...options,
@@ -24563,9 +25587,9 @@ var GitHubPlatform = class {
         username: login
       });
       return MAINTAINER_PERMISSIONS.has(data.permission);
-    } catch (error2) {
-      if (status(error2) === 404) return false;
-      throw error2;
+    } catch (error3) {
+      if (status(error3) === 404) return false;
+      throw error3;
     }
   }
   /** The GitHub App's bot account. Only the App can post as it. */
@@ -24584,9 +25608,9 @@ var GitHubPlatform = class {
         ref: `heads/${branch}`
       });
       return data.object.sha;
-    } catch (error2) {
-      if (status(error2) === 404) return void 0;
-      throw error2;
+    } catch (error3) {
+      if (status(error3) === 404) return void 0;
+      throw error3;
     }
   }
   async commitAt(branch, time) {
@@ -24603,9 +25627,9 @@ var GitHubPlatform = class {
       const { data } = await this.#octokit.rest.repos.getContent({ ...this.#scope, path, ref });
       if (Array.isArray(data) || data.type !== "file") return void 0;
       return Buffer.from(data.content, "base64").toString("utf8");
-    } catch (error2) {
-      if (status(error2) === 404) return void 0;
-      throw error2;
+    } catch (error3) {
+      if (status(error3) === 404) return void 0;
+      throw error3;
     }
   }
   async filesUnder(ref, prefix) {
@@ -24691,8 +25715,8 @@ var GitHubPlatform = class {
     return `Closes #${issue2}`;
   }
 };
-function status(error2) {
-  return typeof error2 === "object" && error2 !== null && "status" in error2 ? Number(error2.status) : void 0;
+function status(error3) {
+  return typeof error3 === "object" && error3 !== null && "status" in error3 ? Number(error3.status) : void 0;
 }
 
 // src/steps/agent.ts
@@ -24763,10 +25787,10 @@ function outsideCode(line, transform) {
     const open2 = line.indexOf("`", index);
     if (open2 === -1) break;
     const ticks = /^`+/.exec(line.slice(open2))?.[0] ?? "`";
-    const close = line.indexOf(ticks, open2 + ticks.length);
-    if (close === -1) break;
-    result += transform(line.slice(index, open2)) + line.slice(open2, close + ticks.length);
-    index = close + ticks.length;
+    const close2 = line.indexOf(ticks, open2 + ticks.length);
+    if (close2 === -1) break;
+    result += transform(line.slice(index, open2)) + line.slice(open2, close2 + ticks.length);
+    index = close2 + ticks.length;
   }
   return result + transform(line.slice(index));
 }
@@ -24967,13 +25991,13 @@ function copyAgentFile(source, target, maxBytes) {
 }
 
 // src/crypto.ts
-import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, hkdfSync, randomBytes as randomBytes2 } from "node:crypto";
 var VERSION7 = "v1";
 var INFO = "codeman/openrouter-task-key";
 var MIN_SECRET_LENGTH = 32;
 function encrypt(plaintext, secret) {
-  const salt = randomBytes(16);
-  const iv = randomBytes(12);
+  const salt = randomBytes2(16);
+  const iv = randomBytes2(12);
   const cipher = createCipheriv("aes-256-gcm", deriveKey(secret, salt), iv);
   const data = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
   return [VERSION7, salt, iv, cipher.getAuthTag(), data].map((part) => typeof part === "string" ? part : part.toString("base64url")).join(".");
@@ -25003,7 +26027,7 @@ function deriveKey(secret, salt) {
 
 // src/harness/opencode.ts
 import { spawnSync as spawnSync2 } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash as createHash2 } from "node:crypto";
 import { chmodSync, mkdirSync as mkdirSync2, writeFileSync } from "node:fs";
 import { join as join3 } from "node:path";
 var OPENCODE_VERSION = "1.18.32";
@@ -25017,17 +26041,32 @@ var PACKAGES = {
     integrity: "sha512-SDMw716oYxxJ9CWDO5roCpziw98ANwPZSz6L8evUOHkFCq6OU31xZGQwv/T1ROJnoPNJKWODmm1vzS6s6uEgUA=="
   }
 };
-function openCodeConfig(model, instructions) {
+var SELF_HOSTED_PROVIDER = "codeman";
+function openCodeConfig(model, instructions, provider) {
+  const id = provider ? SELF_HOSTED_PROVIDER : "openrouter";
+  const limit = provider?.contextLength ? {
+    limit: {
+      context: provider.contextLength,
+      output: Math.min(32768, Math.floor(provider.contextLength / 4))
+    }
+  } : {};
   return {
     $schema: "https://opencode.ai/config.json",
     // Added to the repository's AGENTS.md, not used in its place.
     ...instructions ? { instructions: [instructions] } : {},
     autoupdate: false,
     share: "disabled",
-    enabled_providers: ["openrouter"],
-    model: `openrouter/${model}`,
+    enabled_providers: [id],
+    model: `${id}/${model}`,
     // Registers the model in case the model catalog does not list it yet.
-    provider: { openrouter: { models: { [model]: {} } } },
+    provider: provider ? {
+      [id]: {
+        npm: "@ai-sdk/openai-compatible",
+        name: "Codeman",
+        options: { baseURL: provider.baseUrl, apiKey: provider.apiKey },
+        models: { [model]: { name: model, ...limit } }
+      }
+    } : { openrouter: { models: { [model]: {} } } },
     permission: {
       read: "allow",
       edit: "allow",
@@ -25055,7 +26094,7 @@ var openCode = {
     const response = await fetch(url);
     if (!response.ok) throw new Error(`Downloading ${url} failed with ${response.status}.`);
     const tarball = Buffer.from(await response.arrayBuffer());
-    const integrity = `sha512-${createHash("sha512").update(tarball).digest("base64")}`;
+    const integrity = `sha512-${createHash2("sha512").update(tarball).digest("base64")}`;
     if (integrity !== pkg.integrity) {
       throw new Error(`${pkg.name}@${OPENCODE_VERSION} does not match its pinned integrity.`);
     }
@@ -25074,10 +26113,12 @@ var openCode = {
     executable,
     model,
     apiKey,
+    provider,
     prompt,
     instructions,
     resume
   }) {
+    const config = openCodeConfig(model, instructions, provider && { ...provider, apiKey });
     return {
       file: executable,
       // `--continue` takes the last session that is not a subagent's.
@@ -25086,13 +26127,14 @@ var openCode = {
         "--format",
         "json",
         "--model",
-        `openrouter/${model}`,
+        `${provider ? SELF_HOSTED_PROVIDER : "openrouter"}/${model}`,
         ...resume ? ["--continue"] : [],
         prompt
       ],
+      // Secrets only in the environment: any user can list arguments.
       env: {
-        OPENROUTER_API_KEY: apiKey,
-        OPENCODE_CONFIG_CONTENT: JSON.stringify(openCodeConfig(model, instructions))
+        ...provider ? {} : { OPENROUTER_API_KEY: apiKey },
+        OPENCODE_CONFIG_CONTENT: JSON.stringify(config)
       }
     };
   }
@@ -25100,6 +26142,61 @@ var openCode = {
 
 // src/harness/index.ts
 var harnesses = { [openCode.name]: openCode };
+
+// src/inference/access.ts
+async function agentAccess(inputs) {
+  const done = async () => void 0;
+  if (inputs.mode === "openrouter") return { apiKey: inputs.credential, finish: done };
+  if (inputs.mode === "pod") {
+    if (!inputs.baseUrl) throw new Error("The pod's gateway URL is missing.");
+    return {
+      apiKey: inputs.credential,
+      baseUrl: inputs.baseUrl,
+      contextLength: inputs.contextLength,
+      finish: done
+    };
+  }
+  const handle = parseHandle(inputs.handle ?? "");
+  if (handle.mode !== "serverless") throw new Error("The handle is not a Serverless run's.");
+  if (!inputs.serverlessKey) throw new Error("The Serverless endpoint's key is missing.");
+  if (!inputs.engine) throw new Error("The Serverless engine is missing.");
+  const now = inputs.now ?? Date.now;
+  const gateway = new Gateway({
+    upstream: handle.url,
+    upstreamHeaders: { Authorization: `Bearer ${inputs.serverlessKey}` },
+    engine: inputs.engine,
+    now,
+    log: inputs.log
+  });
+  gateway.ready = true;
+  gateway.startRun({
+    tokenSha256: sha256(inputs.credential),
+    limit: handle.limit,
+    start: now(),
+    meter: {
+      kind: "busy",
+      pricePerSecond: handle.pricePerSecond,
+      idleMs: handle.idleSeconds * 1e3
+    }
+  });
+  const { server, url } = await gateway.listen("127.0.0.1", 0);
+  return {
+    apiKey: inputs.credential,
+    baseUrl: `${url}/v1`,
+    contextLength: handle.contextLength,
+    finish: async () => {
+      const usage = gateway.endRun();
+      await close(server);
+      return usage;
+    }
+  };
+}
+function close(server) {
+  return new Promise((resolve) => {
+    server.close(() => resolve());
+    server.closeAllConnections();
+  });
+}
 
 // src/settings.ts
 var SETTINGS_FILE = ".codeman/settings.yml";
@@ -25115,7 +26212,11 @@ var DEFAULTS2 = {
   "max-question-chars": 600,
   "max-label-chars": 150,
   "max-summary-chars": 2e3,
-  language: "auto"
+  language: "auto",
+  inference: "openrouter",
+  "gpu-provider": "runpod",
+  "gpu-mode": "pod",
+  "pod-reuse": "task"
 };
 var LIMIT_BOUNDS = {
   "max-decisions": { min: 1, max: 10 },
@@ -25129,8 +26230,16 @@ var TASK_SETTINGS = /* @__PURE__ */ new Set([
   "model",
   "task-budget",
   "max-runs",
-  "language"
+  "language",
+  "gpu-type"
 ]);
+var CHOICES = {
+  inference: ["openrouter", "self-hosted"],
+  "gpu-provider": ["runpod"],
+  "gpu-mode": ["pod", "serverless"],
+  engine: Object.keys(ENGINES),
+  "pod-reuse": ["task", "run"]
+};
 var NAMES = [
   "model",
   "task-budget",
@@ -25144,18 +26253,32 @@ var NAMES = [
   "max-question-chars",
   "max-label-chars",
   "max-summary-chars",
-  "language"
+  "language",
+  "inference",
+  "gpu-provider",
+  "gpu-mode",
+  "gpu-type",
+  "engine",
+  "serverless-endpoint",
+  "pod-reuse"
 ];
 var MODEL_ID = /^~?[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._:-]*$/i;
 function isModelId(text) {
   return text.length <= 100 && MODEL_ID.test(text);
 }
+function isModelName(text) {
+  return isModelId(text) || Object.values(ENGINES).some((engine) => engine.isModel(text));
+}
+var GPU_TYPE = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,78}[A-Za-z0-9]$/;
+var ENDPOINT_ID = /^[a-z0-9]{1,64}$/i;
 var LANGUAGE_TAG = /^[a-z]{2,3}(-[a-z0-9]{2,8}){0,3}$/i;
 function isLanguageTag(text) {
   return LANGUAGE_TAG.test(text);
 }
 function settingKind(name) {
-  if (name === "model" || name === "language") return name;
+  if (name === "model" || name === "language" || name === "gpu-type") return name;
+  if (name === "serverless-endpoint") return "endpoint";
+  if (CHOICES[name]) return "choice";
   return name === "task-budget" || name === "monthly-budget" ? "number" : "integer";
 }
 function isSettingName(name) {
@@ -25163,10 +26286,23 @@ function isSettingName(name) {
 }
 function parseSetting(name, text) {
   if (name === "model") {
-    return isModelId(text) ? { ok: true, value: text } : {
+    return isModelName(text) ? { ok: true, value: text } : {
       ok: false,
-      error: `\`${name}\` must be an OpenRouter model ID, such as \`provider/model\`.`
+      error: `\`${name}\` must be a model ID, such as \`provider/model\` on OpenRouter.`
     };
+  }
+  const choices = CHOICES[name];
+  if (choices) {
+    return choices.includes(text) ? { ok: true, value: text } : {
+      ok: false,
+      error: `\`${name}\` must be one of ${choices.map((c) => `\`${c}\``).join(", ")}.`
+    };
+  }
+  if (name === "gpu-type") {
+    return GPU_TYPE.test(text) ? { ok: true, value: text } : { ok: false, error: `\`${name}\` must be a GPU type, such as \`NVIDIA RTX A6000\`.` };
+  }
+  if (name === "serverless-endpoint") {
+    return ENDPOINT_ID.test(text) ? { ok: true, value: text } : { ok: false, error: `\`${name}\` must be an endpoint's ID, letters and digits.` };
   }
   if (name === "language") {
     return text === "auto" || isLanguageTag(text) ? { ok: true, value: text } : {
@@ -25227,7 +26363,34 @@ function resolveSettings(...layers) {
       error: `No model is configured. Set \`model\` in ${SETTINGS_FILE} or in the workflow's inputs.`
     };
   }
-  return { ok: true, value: merged };
+  const settings = merged;
+  const error3 = inferenceError(settings);
+  if (error3) return { ok: false, error: error3 };
+  if (settings.inference === "self-hosted") {
+    settings.engine ??= MODE_ENGINE[settings["gpu-mode"]];
+  }
+  return { ok: true, value: settings };
+}
+function inferenceError(settings) {
+  if (settings.inference !== "self-hosted") {
+    return isModelId(settings.model) ? void 0 : `\`model\` must be an OpenRouter model ID, such as \`provider/model\`, not \`${settings.model}\`.`;
+  }
+  const mode = settings["gpu-mode"];
+  const engine = settings.engine ?? MODE_ENGINE[mode];
+  if (engine !== MODE_ENGINE[mode]) {
+    return `With \`gpu-mode: ${mode}\`, the engine is \`${MODE_ENGINE[mode]}\`, not \`${engine}\`.`;
+  }
+  if (mode === "pod" && !settings["gpu-type"]) {
+    return `Self-hosted inference on pods needs \`gpu-type\`, such as \`"NVIDIA RTX A6000"\`, in ${SETTINGS_FILE}.`;
+  }
+  if (mode === "serverless" && !settings["serverless-endpoint"]) {
+    return `Self-hosted inference on Serverless needs \`serverless-endpoint\` in ${SETTINGS_FILE}.`;
+  }
+  const model = ENGINES[engine];
+  if (model && !model.isModel(settings.model)) {
+    return `\`model\` must be a ${engine} model name, such as \`${model.example}\`, not \`${settings.model}\`.`;
+  }
+  return void 0;
 }
 
 // src/stages.ts
@@ -25483,7 +26646,7 @@ function isObject(value) {
 }
 
 // src/prompt.ts
-import { randomBytes as randomBytes2 } from "node:crypto";
+import { randomBytes as randomBytes3 } from "node:crypto";
 
 // src/i18n/en.ts
 var OUTCOMES = {
@@ -25509,9 +26672,9 @@ var STAGES2 = {
 var number = (digits) => new Intl.NumberFormat("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits });
 var en = {
   locale: "en-US",
-  money: (amount) => `US$ ${number(2).format(amount)}`,
-  tokens: (count2) => new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(count2),
-  cost: (amount) => `US$ ${number(3).format(amount)}`,
+  money: (amount2) => `US$ ${number(2).format(amount2)}`,
+  tokens: (count3) => new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(count3),
+  cost: (amount2) => `US$ ${number(3).format(amount2)}`,
   rate: (perSecond) => number(1).format(perSecond),
   dateTime: (iso) => `${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC`,
   of: (part, whole) => `${part} of ${whole}`,
@@ -25556,7 +26719,7 @@ var en = {
   howToAnswer: "Answer with `/codeman decide 1 a` (several at once: `/codeman decide 1 a 2 b`), or accept every recommendation with `/codeman approve`. To answer in your own words, use `/codeman answer 1 <text>`; to have the plan revised, use `/codeman replan <what to change>`. Only people with write access to the repository can answer.",
   decisionsLink: (pending) => pending === 0 ? "all answered" : `${pending} waiting for an answer`,
   noDecisions: "The plan has no decisions now.",
-  decisionsOmitted: (count2) => `${count2} decision(s) are not shown here, to fit GitHub's size limit for comments. The plan has them all.`,
+  decisionsOmitted: (count3) => `${count3} decision(s) are not shown here, to fit GitHub's size limit for comments. The plan has them all.`,
   panelCut: "Part of this panel is not shown, to fit GitHub's size limit for comments. The last run comment has the details.",
   workflowsToReview: "Workflows to review",
   workflowsHelp: "The agent wrote these workflows. They are staged under `.codeman/workflows/` on the task branch and do not run. A workflow runs with the repository's secrets, so read them in the pull request or on the branch first. To move them into `.github/workflows/`, comment `/codeman accept-workflows`.",
@@ -25564,7 +26727,7 @@ var en = {
   oldDocsHelp: (days) => `These pages in \`docs/web/\` were fetched more than ${days} days ago, or have no valid \`updated_at\`. Codeman does not refresh them on its own. To refresh some, ask for it in a task, such as with \`/codeman fix Refresh docs/web/<third-party>/\`: the routing agent sends it to the web stage.`,
   daysOld: (days) => `${days} days`,
   noDate: "no valid `updated_at`",
-  morePages: (count2) => `And ${count2} more.`,
+  morePages: (count3) => `And ${count3} more.`,
   spending: "Spending",
   spent: ({ run: run2, task, budget }) => `Spent: ${run2 ? `${run2} this run, ` : ""}${task} of ${budget} for the task`,
   refusedHeading: "Not a task",
@@ -25635,7 +26798,7 @@ Tests: ${test ?? "(no report)"}`,
   stageBlockedHint: "Comment `/codeman continue <guidance>` to try again, or `/codeman replan <what to change>` to revise the plan, for example to widen its scope.",
   replanHint: "Comment `/codeman replan <what to change>` to try again.",
   removeLabelHint: "Remove the `codeman:blocked` label to try again.",
-  noKey: "Codeman could not create the OpenRouter key for this task. See the run log.",
+  noKey: "Codeman could not give this run access to its model (an OpenRouter key, or a GPU). See the run log.",
   taskBudgetSpent: (spent, budget, minimum) => `The task has spent ${spent} of its ${budget} budget, and a run needs at least ${minimum}. A maintainer can raise it with \`/codeman set task-budget <usd>\`, then comment \`/codeman continue\`.`,
   monthlyBudgetReached: (used, budget, limit) => `The monthly budget is reached: ${used} used of ${budget}, and this run may use up to ${limit}.`,
   tryLater: (reason) => `${reason} Codeman will try again in a later run.`,
@@ -25667,7 +26830,7 @@ Tests: ${test ?? "(no report)"}`,
   awaitingWorkflows: (stage, paths, reason) => `The ${STAGES2[stage]} stage needs ${paths} to run: ${reason} Codeman goes on when their runs on the task branch finish. \`/codeman continue <guidance>\` goes on without them.`,
   deferredWorkflows: (stage, paths, reason, next) => `The ${STAGES2[stage]} stage needs ${paths} to run: ${reason} The workflows are staged and wait for a maintainer, so the task goes on ${next ? `to the ${STAGES2[next]} stage meanwhile, up to the end of its route` : "to the end of its route meanwhile"}. Once they are accepted and their runs finish, the ${STAGES2[stage]} stage goes on with their results.`,
   acceptAfterReview: (paths) => `Review passed. The task waits for the staged workflows to be accepted: ${paths}. Read them, with review's report on the pull request, and comment \`/codeman accept-workflows\`. The pull request stays a draft until then, since merged now they would never run.`,
-  stageDecisions: (stage, count2) => `The ${STAGES2[stage]} stage needs ${count2} decision(s) from the maintainers.`,
+  stageDecisions: (stage, count3) => `The ${STAGES2[stage]} stage needs ${count3} decision(s) from the maintainers.`,
   reviewRounds: (rounds, max) => `Review sent the work back to the code stage ${rounds} times in a row (\`max-runs\` is ${max}). Comment \`/codeman continue <guidance>\` to go on.`,
   skipped: (reason) => `Skipped: ${reason}`,
   routeChosen: (stages) => `The routing agent chose these stages, in order: ${stages}.`,
@@ -25682,7 +26845,7 @@ Tests: ${test ?? "(no report)"}`,
   stagedChanged: "The staged workflows changed after they were accepted.",
   stagedChangedDetail: (by, paths) => `Changed after ${by}'s comment: ${paths}. Read them again, then comment \`/codeman accept-workflows\` again.`,
   allAnswered: "All decisions are answered. Codeman implements the plan in its next run.",
-  stillPending: (count2) => `${count2} decision(s) still need an answer.`,
+  stillPending: (count3) => `${count3} decision(s) still need an answer.`,
   commandProblem: (problem) => {
     switch (problem.kind) {
       case "takes-no-arguments":
@@ -25705,11 +26868,16 @@ Tests: ${test ?? "(no report)"}`,
         return `\`set ${problem.name}\` needs one value.`;
       case "invalid-setting":
         return {
-          model: `\`${problem.name}\` must be an OpenRouter model ID, such as \`provider/model\`.`,
+          model: `\`${problem.name}\` must be a model ID, such as \`provider/model\` on OpenRouter or \`qwen3-coder:30b\` on Ollama.`,
           language: `\`${problem.name}\` must be \`auto\` or a language tag, such as \`pt-BR\`.`,
           number: `\`${problem.name}\` must be a positive number.`,
-          integer: `\`${problem.name}\` must be a positive whole number.`
+          integer: `\`${problem.name}\` must be a positive whole number.`,
+          choice: `\`${problem.name}\` must be one of ${(problem.values ?? []).map((value) => `\`${value}\``).join(", ")}.`,
+          "gpu-type": `\`${problem.name}\` must be a GPU type, such as \`NVIDIA RTX A6000\`.`,
+          endpoint: `\`${problem.name}\` must be an endpoint's ID, letters and digits.`
         }[problem.type];
+      case "settings-rejected":
+        return `The task's settings were not applied: ${problem.error}`;
       case "text-too-long":
         return `The text must have at most ${problem.max} characters.`;
       case "no-decision":
@@ -25748,9 +26916,9 @@ var OF_STAGE = (stage) => `etapa de ${STAGES3[stage]}`;
 var number2 = (digits) => new Intl.NumberFormat("pt-BR", { minimumFractionDigits: digits, maximumFractionDigits: digits });
 var ptBR = {
   locale: "pt-BR",
-  money: (amount) => `US$ ${number2(2).format(amount)}`,
-  tokens: (count2) => new Intl.NumberFormat("pt-BR", { notation: "compact", maximumFractionDigits: 1 }).format(count2),
-  cost: (amount) => `US$ ${number2(3).format(amount)}`,
+  money: (amount2) => `US$ ${number2(2).format(amount2)}`,
+  tokens: (count3) => new Intl.NumberFormat("pt-BR", { notation: "compact", maximumFractionDigits: 1 }).format(count3),
+  cost: (amount2) => `US$ ${number2(3).format(amount2)}`,
   rate: (perSecond) => number2(1).format(perSecond),
   dateTime: (iso) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)} ${iso.slice(11, 16)} UTC`,
   of: (part, whole) => `${part} de ${whole}`,
@@ -25795,7 +26963,7 @@ var ptBR = {
   howToAnswer: "Responda com `/codeman decide 1 a` (v\xE1rias de uma vez: `/codeman decide 1 a 2 b`) ou aceite todas as recomenda\xE7\xF5es com `/codeman approve`. Para responder com as suas palavras, use `/codeman answer 1 <texto>`; para revisar o plano, use `/codeman replan <o que mudar>`. S\xF3 quem tem acesso de escrita ao reposit\xF3rio pode responder.",
   decisionsLink: (pending) => pending === 0 ? "todas respondidas" : `${pending} aguardando resposta`,
   noDecisions: "O plano n\xE3o tem decis\xF5es agora.",
-  decisionsOmitted: (count2) => `${count2} decis\xE3o(\xF5es) n\xE3o aparecem aqui, para caber no limite de tamanho de coment\xE1rios do GitHub. O plano tem todas.`,
+  decisionsOmitted: (count3) => `${count3} decis\xE3o(\xF5es) n\xE3o aparecem aqui, para caber no limite de tamanho de coment\xE1rios do GitHub. O plano tem todas.`,
   panelCut: "Parte deste painel n\xE3o aparece, para caber no limite de tamanho de coment\xE1rios do GitHub. O coment\xE1rio da \xFAltima rodada tem os detalhes.",
   workflowsToReview: "Workflows para revisar",
   workflowsHelp: "O agente escreveu estes workflows. Eles est\xE3o guardados em `.codeman/workflows/` na branch da tarefa e n\xE3o rodam. Um workflow roda com os segredos do reposit\xF3rio, ent\xE3o leia-os antes no pull request ou na branch. Para mov\xEA-los para `.github/workflows/`, comente `/codeman accept-workflows`.",
@@ -25803,7 +26971,7 @@ var ptBR = {
   oldDocsHelp: (days) => `Estas p\xE1ginas em \`docs/web/\` foram buscadas h\xE1 mais de ${days} dias, ou n\xE3o t\xEAm um \`updated_at\` v\xE1lido. O Codeman n\xE3o as atualiza sozinho. Para atualizar algumas, pe\xE7a numa tarefa, por exemplo com \`/codeman fix Atualize docs/web/<terceiro>/\`: o agente de roteamento a envia para a etapa de pesquisa.`,
   daysOld: (days) => `${days} dias`,
   noDate: "sem `updated_at` v\xE1lido",
-  morePages: (count2) => `E mais ${count2}.`,
+  morePages: (count3) => `E mais ${count3}.`,
   spending: "Gastos",
   spent: ({ run: run2, task, budget }) => `Gasto: ${run2 ? `${run2} nesta rodada, ` : ""}${task} de ${budget} da tarefa`,
   refusedHeading: "N\xE3o \xE9 uma tarefa",
@@ -25874,7 +27042,7 @@ Testes: ${test ?? "(sem relat\xF3rio)"}`,
   stageBlockedHint: "Comente `/codeman continue <orienta\xE7\xE3o>` para tentar de novo, ou `/codeman replan <o que mudar>` para revisar o plano, por exemplo para ampliar o escopo.",
   replanHint: "Comente `/codeman replan <o que mudar>` para tentar de novo.",
   removeLabelHint: "Remova a label `codeman:blocked` para tentar de novo.",
-  noKey: "O Codeman n\xE3o conseguiu criar a chave do OpenRouter para esta tarefa. Veja o log da rodada.",
+  noKey: "O Codeman n\xE3o conseguiu dar a esta rodada acesso ao modelo (uma chave do OpenRouter, ou uma GPU). Veja o log da rodada.",
   taskBudgetSpent: (spent, budget, minimum) => `A tarefa gastou ${spent} do or\xE7amento de ${budget}, e uma rodada precisa de pelo menos ${minimum}. Um mantenedor pode aument\xE1-lo com \`/codeman set task-budget <usd>\` e depois comentar \`/codeman continue\`.`,
   monthlyBudgetReached: (used, budget, limit) => `O or\xE7amento mensal foi atingido: ${used} usados de ${budget}, e esta rodada pode usar at\xE9 ${limit}.`,
   tryLater: (reason) => `${reason} O Codeman tenta de novo numa pr\xF3xima rodada.`,
@@ -25906,7 +27074,7 @@ Testes: ${test ?? "(sem relat\xF3rio)"}`,
   awaitingWorkflows: (stage, paths, reason) => `A ${OF_STAGE(stage)} precisa que ${paths} rode: ${reason} O Codeman continua quando essas execu\xE7\xF5es terminarem na branch da tarefa. \`/codeman continue <orienta\xE7\xE3o>\` continua sem elas.`,
   deferredWorkflows: (stage, paths, reason, next) => `A ${OF_STAGE(stage)} precisa que ${paths} rode: ${reason} Os workflows est\xE3o guardados e aguardam um mantenedor, ent\xE3o a tarefa segue ${next ? `para a ${OF_STAGE(next)} enquanto isso, at\xE9 o fim da sua rota` : "at\xE9 o fim da sua rota enquanto isso"}. Quando forem aceitos e as execu\xE7\xF5es terminarem, a ${OF_STAGE(stage)} continua com os resultados.`,
   acceptAfterReview: (paths) => `A revis\xE3o passou. A tarefa aguarda que os workflows guardados sejam aceitos: ${paths}. Leia-os, junto com o relat\xF3rio da revis\xE3o no pull request, e comente \`/codeman accept-workflows\`. O pull request continua em rascunho at\xE9 l\xE1, porque, mergeados agora, eles nunca rodariam.`,
-  stageDecisions: (stage, count2) => `A ${OF_STAGE(stage)} precisa de ${count2} decis\xE3o(\xF5es) dos mantenedores.`,
+  stageDecisions: (stage, count3) => `A ${OF_STAGE(stage)} precisa de ${count3} decis\xE3o(\xF5es) dos mantenedores.`,
   reviewRounds: (rounds, max) => `A revis\xE3o devolveu o trabalho \xE0 etapa de c\xF3digo ${rounds} vezes seguidas (\`max-runs\` \xE9 ${max}). Comente \`/codeman continue <orienta\xE7\xE3o>\` para continuar.`,
   skipped: (reason) => `Pulada: ${reason}`,
   routeChosen: (stages) => `O agente de roteamento escolheu estas etapas, nesta ordem: ${stages}.`,
@@ -25921,7 +27089,7 @@ Testes: ${test ?? "(sem relat\xF3rio)"}`,
   stagedChanged: "Os workflows guardados mudaram depois de terem sido aceitos.",
   stagedChangedDetail: (by, paths) => `Mudaram depois do coment\xE1rio de ${by}: ${paths}. Leia-os de novo e comente \`/codeman accept-workflows\` outra vez.`,
   allAnswered: "Todas as decis\xF5es foram respondidas. O Codeman implementa o plano na pr\xF3xima rodada.",
-  stillPending: (count2) => `${count2} decis\xE3o(\xF5es) ainda precisam de resposta.`,
+  stillPending: (count3) => `${count3} decis\xE3o(\xF5es) ainda precisam de resposta.`,
   commandProblem: (problem) => {
     switch (problem.kind) {
       case "takes-no-arguments":
@@ -25944,11 +27112,16 @@ Testes: ${test ?? "(sem relat\xF3rio)"}`,
         return `\`set ${problem.name}\` precisa de um valor.`;
       case "invalid-setting":
         return {
-          model: `\`${problem.name}\` precisa ser o ID de um modelo do OpenRouter, como \`provedor/modelo\`.`,
+          model: `\`${problem.name}\` precisa ser o ID de um modelo, como \`provedor/modelo\` no OpenRouter ou \`qwen3-coder:30b\` no Ollama.`,
           language: `\`${problem.name}\` precisa ser \`auto\` ou a tag de um idioma, como \`pt-BR\`.`,
           number: `\`${problem.name}\` precisa ser um n\xFAmero positivo.`,
-          integer: `\`${problem.name}\` precisa ser um n\xFAmero inteiro positivo.`
+          integer: `\`${problem.name}\` precisa ser um n\xFAmero inteiro positivo.`,
+          choice: `\`${problem.name}\` precisa ser um destes valores: ${(problem.values ?? []).map((value) => `\`${value}\``).join(", ")}.`,
+          "gpu-type": `\`${problem.name}\` precisa ser um tipo de GPU, como \`NVIDIA RTX A6000\`.`,
+          endpoint: `\`${problem.name}\` precisa ser o ID de um endpoint, com letras e d\xEDgitos.`
         }[problem.type];
+      case "settings-rejected":
+        return `As configura\xE7\xF5es da tarefa n\xE3o foram aplicadas: ${problem.error}`;
       case "text-too-long":
         return `O texto pode ter no m\xE1ximo ${problem.max} caracteres.`;
       case "no-decision":
@@ -26237,11 +27410,11 @@ function checkChanges(manifest, policy) {
     else if (workflow) staged.push(change);
     else accepted.push(change);
   }
-  const count2 = accepted.length + staged.length;
-  if (count2 > policy.maxFiles) {
+  const count3 = accepted.length + staged.length;
+  if (count3 > policy.maxFiles) {
     return {
       ok: false,
-      error: `The agent changed ${count2} files; the limit is ${policy.maxFiles} per run (\`max-files\`).`
+      error: `The agent changed ${count3} files; the limit is ${policy.maxFiles} per run (\`max-files\`).`
     };
   }
   return { ok: true, value: { accepted, staged, dropped } };
@@ -26457,7 +27630,7 @@ ${problems.map((problem) => `- ${problem}`).join("\n")}
 Rewrite ${OUTPUT_FILE} so that it follows the shape and the limits in ${TASK_FILE}. Keep its content, shortened where it is too long. Change no other file.`;
 }
 function quoter() {
-  const nonce = randomBytes2(6).toString("hex");
+  const nonce = randomBytes3(6).toString("hex");
   return (label, text) => [`<<<${label} ${nonce}`, text.trim() || "(empty)", `>>>${label} ${nonce}`].join("\n");
 }
 function issueSection(task, quote) {
@@ -26910,41 +28083,50 @@ async function agent(services) {
     runtime2.info(`The repository's instructions already cover: ${rules.omitted.join(", ")}.`);
   }
   writeAsAgent(`${worktree}/${RULES_PATH}`, rules.text);
-  runtime2.info(`Running ${harness.name} with ${task.model} for up to ${minutes} minutes.`);
-  const started = Date.now();
-  const options = {
-    executable,
-    model: task.model,
-    apiKey,
-    prompt: HARNESS_PROMPT,
-    instructions: `${worktree}/${RULES_PATH}`
-  };
-  let run2 = await runAsAgent(harness.command(options), worktree, minutes * 6e4, runtime2);
-  const left = started + minutes * 6e4 - Date.now();
-  if (!run2.timedOut && left >= FIX_MS) {
-    const stage = task.action === "implement" ? task.stage ?? "code" : task.action === "route" ? "route" : void 0;
-    const problems = outputProblems(
-      readAgentOutput(runtime2, `${worktree}/${OUTPUT_FILE}`),
-      stage,
-      outputLimits(task.settings),
-      conventions.workflows,
-      nextDecisionId(task.record)
-    );
-    if (problems.length > 0) {
-      runtime2.info(`Asking the agent to fix ${OUTPUT_FILE}:`);
-      for (const problem of problems) runtime2.info(`  ${oneLine(problem)}`);
-      const fix = await runAsAgent(
-        harness.command({ ...options, prompt: fixPrompt(problems), resume: true }),
-        worktree,
-        left,
-        runtime2
+  const access2 = await modelAccess(runtime2, task, apiKey);
+  let run2;
+  let durationMs;
+  try {
+    runtime2.info(`Running ${harness.name} with ${task.model} for up to ${minutes} minutes.`);
+    const started = Date.now();
+    const options = {
+      executable,
+      model: task.model,
+      apiKey: access2.apiKey,
+      provider: access2.baseUrl ? { baseUrl: access2.baseUrl, contextLength: access2.contextLength } : void 0,
+      prompt: HARNESS_PROMPT,
+      instructions: `${worktree}/${RULES_PATH}`
+    };
+    run2 = await runAsAgent(harness.command(options), worktree, minutes * 6e4, runtime2);
+    const left = started + minutes * 6e4 - Date.now();
+    if (!run2.timedOut && left >= FIX_MS) {
+      const stage = task.action === "implement" ? task.stage ?? "code" : task.action === "route" ? "route" : void 0;
+      const problems = outputProblems(
+        readAgentOutput(runtime2, `${worktree}/${OUTPUT_FILE}`),
+        stage,
+        outputLimits(task.settings),
+        conventions.workflows,
+        nextDecisionId(task.record)
       );
-      if (fix.exitCode === 0 && !fix.timedOut) run2 = fix;
-      else runtime2.warning(`The agent did not finish fixing ${OUTPUT_FILE}.`);
+      if (problems.length > 0) {
+        runtime2.info(`Asking the agent to fix ${OUTPUT_FILE}:`);
+        for (const problem of problems) runtime2.info(`  ${oneLine(problem)}`);
+        const fix = await runAsAgent(
+          harness.command({ ...options, prompt: fixPrompt(problems), resume: true }),
+          worktree,
+          left,
+          runtime2
+        );
+        if (fix.exitCode === 0 && !fix.timedOut) run2 = fix;
+        else runtime2.warning(`The agent did not finish fixing ${OUTPUT_FILE}.`);
+      }
     }
+    durationMs = Date.now() - started;
+    killAgentProcesses();
+  } finally {
+    const usage = await access2.finish();
+    if (usage) runtime2.output("gateway-usage", JSON.stringify(usage));
   }
-  const durationMs = Date.now() - started;
-  killAgentProcesses();
   const out = resultDir(runtime2);
   rmSync4(out, { recursive: true, force: true });
   mkdirSync4(out, { recursive: true });
@@ -26972,6 +28154,22 @@ async function agent(services) {
   if (run2.timedOut) runtime2.fail(`The agent did not finish within ${minutes} minutes.`);
   else if (run2.exitCode !== 0) runtime2.fail(`The agent exited with code ${run2.exitCode}.`);
 }
+async function modelAccess(runtime2, task, credential) {
+  const choice = inferenceChoice(task.settings, task.record);
+  const serverlessKey = runtime2.input("serverless-key");
+  if (serverlessKey) runtime2.mask(serverlessKey);
+  const contextLength = Number(runtime2.input("context-length"));
+  return agentAccess({
+    mode: agentMode(choice),
+    credential,
+    baseUrl: runtime2.input("base-url") || void 0,
+    contextLength: Number.isInteger(contextLength) && contextLength > 0 ? contextLength : void 0,
+    handle: runtime2.input("handle"),
+    serverlessKey: serverlessKey || void 0,
+    engine: choice.inference === "self-hosted" ? ENGINES[choice.engine] : void 0,
+    log: (message) => runtime2.info(oneLine(message))
+  });
+}
 function readAgentOutput(runtime2, source) {
   const copy = join6(workdir(runtime2), "output-check.json");
   try {
@@ -26991,6 +28189,49 @@ function repositoryRules(workspace) {
 // src/steps/apply.ts
 import { existsSync as existsSync3, lstatSync as lstatSync3, readFileSync as readFileSync5 } from "node:fs";
 import { join as join7 } from "node:path";
+
+// src/inference/spend.ts
+var MAX_PODS = 20;
+function countRun(pods, run2, billed = {}) {
+  const next = (pods ?? []).map((pod) => ({ ...pod, runs: [...pod.runs] }));
+  let added = run2.cost;
+  if (run2.pod) {
+    let pod = next.find((candidate) => candidate.id === run2.pod);
+    if (!pod) {
+      pod = { id: run2.pod, runs: [], counted: 0 };
+      next.push(pod);
+    }
+    if (!pod.runs.includes(run2.runId)) pod.runs.push(run2.runId);
+    pod.counted += run2.cost;
+  }
+  const costs = {};
+  for (const pod of next) {
+    const amount2 = billed[pod.id];
+    if (amount2 !== void 0 && amount2 > pod.counted) {
+      added += amount2 - pod.counted;
+      pod.counted = amount2;
+    }
+    const [only] = pod.runs;
+    if (amount2 !== void 0 && only !== void 0 && pod.runs.length === 1) {
+      costs[only] = Number(pod.counted.toFixed(4));
+    }
+  }
+  return { pods: next.slice(-MAX_PODS), added, costs };
+}
+function parsePodCosts(text) {
+  let value;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return void 0;
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return void 0;
+  const entries = Object.entries(value);
+  const valid = entries.every(
+    ([id, cost]) => /^[\w-]{1,64}$/.test(id) && typeof cost === "number" && Number.isFinite(cost) && cost >= 0
+  );
+  return valid ? Object.fromEntries(entries) : void 0;
+}
 
 // src/pull.ts
 function pullRequestTitle(issueTitle) {
@@ -27280,7 +28521,7 @@ function renderRun(view) {
   if (view.report) lines.push(`#### ${t.report}`, "", safeMarkdown(view.report, md), "");
   if (view.errors && view.errors.length > 0) {
     lines.push(`#### ${t.problems}`, "");
-    for (const error2 of view.errors) lines.push(`- ${safeInline(error2, md)}`);
+    for (const error3 of view.errors) lines.push(`- ${safeInline(error3, md)}`);
     lines.push("");
   }
   lines.push(`**${t.nextStepLabel}:** ${t.nextStep(view.state)}`, "");
@@ -27325,13 +28566,13 @@ var MAX_TEXT = 2e3;
 function parseCommands(body) {
   const commands = [];
   let open2;
-  const close = () => {
+  const close2 = () => {
     if (open2) commands.push(finishText(open2));
     open2 = void 0;
   };
   for (const { raw, command } of scan(body)) {
     if (command) {
-      close();
+      close2();
       const parsed = parseLine(raw.trim());
       if ("lines" in parsed) open2 = parsed;
       else commands.push(parsed);
@@ -27339,7 +28580,7 @@ function parseCommands(body) {
     }
     open2?.lines.push(raw);
   }
-  close();
+  close2();
   return commands;
 }
 function descriptionCommands(body) {
@@ -27423,13 +28664,21 @@ function parseDecide(args, invalid) {
   return { kind: "decide", answers };
 }
 function parseSet(args, invalid) {
-  const [name = "", value, ...rest] = args;
+  const [name = "", ...values] = args;
   if (!isSettingName(name) || !TASK_SETTINGS.has(name)) {
     return invalid({ kind: "set-which", names: [...TASK_SETTINGS] });
   }
-  if (value === void 0 || rest.length > 0) return invalid({ kind: "set-one-value", name });
+  const value = name === "gpu-type" && values.length > 0 ? values.join(" ") : values[0];
+  if (value === void 0 || name !== "gpu-type" && values.length > 1) {
+    return invalid({ kind: "set-one-value", name });
+  }
   const parsed = parseSetting(name, value);
-  return parsed.ok ? { kind: "set", name, value: parsed.value } : invalid({ kind: "invalid-setting", name, type: settingKind(name) });
+  return parsed.ok ? { kind: "set", name, value: parsed.value } : invalid({
+    kind: "invalid-setting",
+    name,
+    type: settingKind(name),
+    ...CHOICES[name] ? { values: CHOICES[name] } : {}
+  });
 }
 function finishText(open2) {
   const text = open2.lines.join("\n").trim();
@@ -27615,7 +28864,7 @@ async function apply(services) {
   runtime2.output("chain", String(chain));
 }
 function jobResults(runtime2) {
-  const amount = (name) => {
+  const amount2 = (name) => {
     const value = Number.parseFloat(runtime2.input(name));
     return Number.isFinite(value) ? value : void 0;
   };
@@ -27623,17 +28872,22 @@ function jobResults(runtime2) {
     keyJob: runtime2.input("key-job-result"),
     keyStatus: runtime2.input("key-status"),
     agentJob: runtime2.input("agent-job-result"),
-    taskSpent: amount("task-spent"),
-    monthSpent: amount("month-spent"),
-    keyLimit: amount("key-limit"),
-    runCost: amount("run-cost"),
-    inputTokens: amount("input-tokens"),
-    outputTokens: amount("output-tokens"),
-    requests: amount("requests"),
-    maxInputTokens: amount("max-input-tokens"),
-    tokensPerSecond: amount("tokens-per-second"),
-    taskCosts: parseCosts(runtime2.input("task-costs"))
+    taskSpent: amount2("task-spent"),
+    monthSpent: amount2("month-spent"),
+    keyLimit: amount2("key-limit"),
+    runCost: amount2("run-cost"),
+    inputTokens: amount2("input-tokens"),
+    outputTokens: amount2("output-tokens"),
+    requests: amount2("requests"),
+    maxInputTokens: amount2("max-input-tokens"),
+    tokensPerSecond: amount2("tokens-per-second"),
+    taskCosts: parseCosts(runtime2.input("task-costs")),
+    pod: /^[\w-]{1,64}$/.test(runtime2.input("pod")) ? runtime2.input("pod") : void 0,
+    podCosts: parsePodCosts(runtime2.input("pod-costs"))
   };
+}
+function goesOn(state) {
+  return state === "ready" || state === "routing" || stageOfState(state) !== void 0;
 }
 function chains(action, keyJob, keyStatus) {
   return action === "record" || action === "accept" || keyJob === "success" && keyStatus === "opened";
@@ -27980,15 +29234,15 @@ async function applyRoute(task, io) {
     };
     return finish(io, task, STAGE_STATE[first], { ...view, record });
   };
-  const fallback = (error2) => {
+  const fallback = (error3) => {
     const stages2 = stagesFrom(task.route?.fallback ?? "design");
-    io.runtime.warning(oneLine(error2));
+    io.runtime.warning(oneLine(error3));
     return start(
       { stages: stages2.map((stage) => ({ stage, brief: "" })), skipped: [], requests },
       {
         outcome: "failed",
         message: t.routeFallback(stages2.map((stage) => t.stage(stage)).join(", ")),
-        errors: [error2]
+        errors: [error3]
       }
     );
   };
@@ -28292,7 +29546,7 @@ async function recordAnswers(task, io) {
   const t = say(task);
   await finish(io, task, pending === 0 ? "ready" : "awaiting-decision", {
     record,
-    errors: errors.map((error2) => commandError(t, error2)),
+    errors: errors.map((error3) => commandError(t, error3)),
     message: pending === 0 ? t.allAnswered : t.stillPending(pending)
   });
 }
@@ -28307,26 +29561,30 @@ function retryHint(t, task) {
 function say(task, record = task.record) {
   return messages(taskLanguage(task.settings.language, record?.language));
 }
-function commandError(t, error2) {
-  return `${error2.text ? `${error2.text}: ` : ""}${t.commandProblem(error2.problem)}`;
+function commandError(t, error3) {
+  return `${error3.text ? `${error3.text}: ` : ""}${t.commandProblem(error3.problem)}`;
 }
-function blocked(io, task, error2, more = [], record) {
-  io.runtime.error(oneLine(error2));
+function blocked(io, task, error3, more = [], record) {
+  io.runtime.error(oneLine(error3));
   const t = say(task, record);
   return finish(io, task, "blocked", {
     outcome: "failed",
     record,
     message: `${t.couldNotUse} ${retryHint(t, task)}`,
-    errors: [error2, ...more]
+    errors: [error3, ...more]
   });
 }
 async function finish(io, task, state, view) {
+  io.runtime.output("continues", String(goesOn(state)));
   const cost = runCosts(io, task);
   const spend = spendRow(io, task, cost.run);
   let record = view.record ?? task.record ?? void 0;
+  const pods = record && selfHostedRun(io, task) ? podSpend(io, task, record) : void 0;
+  if (pods) cost.task = pods.spent;
   if (record && cost.task !== void 0) record = { ...record, spent: cost.task };
+  if (record && pods) record = { ...record, inference: { pods: pods.pods } };
   if (record && spend) record = { ...record, spending: addRow(record.spending, spend) };
-  const costs = io.jobs.taskCosts;
+  const costs = pods?.costs ?? io.jobs.taskCosts;
   if (record?.spending && costs) {
     record = {
       ...record,
@@ -28345,7 +29603,7 @@ async function finish(io, task, state, view) {
   }
   const t = say(task, record);
   const problems = task.action === "record" ? [] : task.problems;
-  const errors = [...problems.map((error2) => commandError(t, error2)), ...view.errors ?? []];
+  const errors = [...problems.map((error3) => commandError(t, error3)), ...view.errors ?? []];
   const staged = task.action === "implement" || task.action === "accept" ? [
     ...(await io.repo.filesUnder(task.branch, STAGED_WORKFLOWS_DIR).catch(() => /* @__PURE__ */ new Map())).keys()
   ].map((path) => workflowPath(path, io.conventions.workflows)) : [];
@@ -28420,6 +29678,7 @@ async function finish(io, task, state, view) {
   io.runtime.info(`#${task.number} is now ${state}.`);
 }
 function runCosts(io, task) {
+  if (selfHostedRun(io, task)) return { run: io.jobs.runCost };
   const { taskSpent: before, runCost: run2, taskCosts: costs } = io.jobs;
   if (costs) {
     const id = io.runtime.runIdOf(task.runUrl);
@@ -28428,6 +29687,22 @@ function runCosts(io, task) {
   }
   if (before === void 0) return { task: task.record?.spent };
   return { run: run2, task: before + (run2 ?? 0) };
+}
+function selfHostedRun(io, task) {
+  return task.settings.inference === "self-hosted" && io.jobs.keyStatus === "opened";
+}
+function podSpend(io, task, record) {
+  const before = io.jobs.taskSpent ?? task.record?.spent ?? 0;
+  const counted = countRun(
+    record.inference?.pods,
+    {
+      runId: io.runtime.runIdOf(task.runUrl) ?? io.runtime.run.id,
+      cost: io.jobs.runCost ?? 0,
+      pod: io.jobs.pod
+    },
+    io.jobs.podCosts
+  );
+  return { spent: before + counted.added, pods: counted.pods, costs: counted.costs };
 }
 function spendRow(io, task, cost) {
   if (io.jobs.keyStatus !== "opened") return void 0;
@@ -28536,6 +29811,16 @@ async function closeKey({ runtime: runtime2, inference }) {
   if (usage.pod) runtime2.output("pod", usage.pod);
   if (usage.podCosts) runtime2.output("pod-costs", JSON.stringify(usage.podCosts));
   if (usage.keptPod) runtime2.output("kept-pod", usage.keptPod);
+}
+async function release({ runtime: runtime2 }) {
+  const choice = parseInferenceChoice(runtime2.input("inference"));
+  if (choice.inference !== "self-hosted" || choice.mode !== "pod") {
+    runtime2.info("Nothing to release: the run had no pod.");
+    return;
+  }
+  const gpu = gpuProvider(choice.gpuProvider, runtime2.input("gpu-key", { required: true }));
+  if (!gpu.pods) throw new Error(`${gpu.name} has no pods.`);
+  await releasePod(gpu.pods, runtime2.input("handle", { required: true }), runtime2);
 }
 
 // src/steps/select.ts
@@ -28690,7 +29975,10 @@ async function select(services) {
   const requests = [...resumeRequests(windowSources), ...newRequests];
   const stage = action !== "implement" ? void 0 : record?.stage ?? stageOfState(fromStateOf(task.labels)) ?? firstStage(task.labels);
   const description = descriptionCommands(task.body);
-  const problems = [...description.commands, ...sources.map(({ command }) => command)].flatMap(
+  const problems = [
+    ...description.commands,
+    ...sources.map(({ command }) => command)
+  ].flatMap(
     (command) => command.kind === "invalid" ? [{ text: command.text, problem: command.problem }] : []
   );
   const fromState = stateOf(task.labels);
@@ -28700,11 +29988,16 @@ async function select(services) {
   const branchSha = await repo.branchSha(branch);
   const baseSha = branchSha ?? await repo.branchSha(defaultBranch);
   if (!baseSha) throw new Error(`Branch ${defaultBranch} not found.`);
-  const settings = resolveSettings(
-    taskSettings(maintainerComments, description.commands),
-    inputs,
-    fileSettings.value
-  );
+  const own = taskSettings(maintainerComments, description.commands);
+  let settings = resolveSettings(own, inputs, fileSettings.value);
+  if (!settings.ok && (own.model !== void 0 || own["gpu-type"] !== void 0)) {
+    const { model: _model, "gpu-type": _gpuType, ...rest } = own;
+    const fallback = resolveSettings(rest, inputs, fileSettings.value);
+    if (fallback.ok) {
+      problems.push({ problem: { kind: "settings-rejected", error: settings.error } });
+      settings = fallback;
+    }
+  }
   if (!settings.ok) throw new Error(settings.error);
   const model = settings.value.model;
   const context3 = {
@@ -28779,6 +30072,7 @@ async function select(services) {
   runtime2.output("stage", stage ?? (action === "plan" || action === "route" ? action : ""));
   runtime2.output("task-budget", String(settings.value["task-budget"]));
   runtime2.output("monthly-budget", String(settings.value["monthly-budget"]));
+  runtime2.output("inference", JSON.stringify(inferenceChoice(settings.value, record ?? null)));
   runtime2.info(`Selected #${task.number} to ${action}, with model ${model}.`);
 }
 function routing(labels, record, requests) {
@@ -28854,7 +30148,8 @@ var STEPS = {
   "open-key": openKey,
   agent,
   apply,
-  "close-key": closeKey
+  "close-key": closeKey,
+  "release-pod": release
 };
 function gitHubServices(runtime2) {
   const client = (input) => octokit(runtime2.input(input, { required: true }));
@@ -29368,9 +30663,9 @@ function setOutput(name, value) {
 }
 function setFailed(message) {
   process.exitCode = ExitCode.Failure;
-  error(message);
+  error2(message);
 }
-function error(message, properties = {}) {
+function error2(message, properties = {}) {
   issueCommand("error", toCommandProperties(properties), message instanceof Error ? message.toString() : message);
 }
 function warning(message, properties = {}) {
@@ -29401,7 +30696,7 @@ var GitHubActionsRuntime = class {
     warning(message);
   }
   error(message) {
-    error(message);
+    error2(message);
   }
   startGroup(name) {
     startGroup(name);
@@ -29447,8 +30742,8 @@ var GitHubActionsRuntime = class {
 
 // src/index.ts
 var runtime = new GitHubActionsRuntime();
-run(gitHubServices(runtime)).catch((error2) => {
-  runtime.fail(error2 instanceof Error ? error2.message : String(error2));
+run(gitHubServices(runtime)).catch((error3) => {
+  runtime.fail(error3 instanceof Error ? error3.message : String(error3));
 });
 /*! Bundled license information:
 

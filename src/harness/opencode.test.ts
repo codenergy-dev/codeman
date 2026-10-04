@@ -75,3 +75,42 @@ test("continues the last session when resuming", () => {
     "Fix it.",
   ]);
 });
+
+test("with self-hosted inference, the only provider is the gateway's, and the token stays out of argv", () => {
+  const command = openCode.command({
+    executable: "/opt/codeman/opencode",
+    model: "qwen3-coder:30b",
+    apiKey: "run-token",
+    provider: { baseUrl: "https://pod1-8080.proxy.runpod.net/v1", contextLength: 65536 },
+    prompt: "Read .codeman/task.md",
+  });
+  assert.deepEqual(command.args.slice(0, 5), [
+    "run",
+    "--format",
+    "json",
+    "--model",
+    "codeman/qwen3-coder:30b",
+  ]);
+  assert.ok(!command.args.join(" ").includes("run-token"));
+  assert.equal(command.env.OPENROUTER_API_KEY, undefined);
+  const config = JSON.parse(command.env.OPENCODE_CONFIG_CONTENT ?? "") as {
+    enabled_providers: string[];
+    model: string;
+    provider: Record<
+      string,
+      { npm: string; options: Record<string, string>; models: Record<string, unknown> }
+    >;
+  };
+  assert.deepEqual(config.enabled_providers, ["codeman"]);
+  assert.equal(config.model, "codeman/qwen3-coder:30b");
+  assert.deepEqual(Object.keys(config.provider), ["codeman"]);
+  assert.equal(config.provider.codeman?.npm, "@ai-sdk/openai-compatible");
+  assert.deepEqual(config.provider.codeman?.options, {
+    baseURL: "https://pod1-8080.proxy.runpod.net/v1",
+    apiKey: "run-token",
+  });
+  assert.deepEqual(config.provider.codeman?.models["qwen3-coder:30b"], {
+    name: "qwen3-coder:30b",
+    limit: { context: 65536, output: 16384 },
+  });
+});

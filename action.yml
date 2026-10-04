@@ -3,7 +3,7 @@ description: Runs an AI agent on opted-in issues and pull requests, asking a hum
 author: codenergy
 inputs:
   step:
-    description: "Which job of the Codeman workflow this is: select, open-key, agent, apply or close-key."
+    description: "Which job of the Codeman workflow this is: select, open-key, agent, close-key, apply or release-pod."
     required: true
   github-token:
     description: "(select, apply) GitHub App installation token. (agent) The job's GITHUB_TOKEN, to download workflow results."
@@ -12,7 +12,7 @@ inputs:
   app-slug:
     description: "(select) Slug of the GitHub App, used to recognize Codeman's own comments."
   model:
-    description: "(select) OpenRouter model ID. Empty uses .codeman/settings.yml. Maintainers can override it per task with /codeman set."
+    description: "(select) Model ID: OpenRouter's, or the self-hosted engine's. Empty uses .codeman/settings.yml. Maintainers can override it per task with /codeman set."
   task-budget:
     description: "(select, open-key) Spending limit of each task, across all its runs, in USD. In select, empty uses .codeman/settings.yml or 2."
   monthly-budget:
@@ -25,13 +25,29 @@ inputs:
   task:
     description: "(open-key) Issue number of the selected task."
   management-key:
-    description: "(open-key, close-key) OpenRouter management key."
+    description: "(open-key, close-key) OpenRouter management key, for OpenRouter inference."
+  inference:
+    description: "(open-key, close-key, release-pod) The task's inference, as select outputs it. Empty is OpenRouter."
+  gpu-key:
+    description: "(open-key, close-key, release-pod) The GPU provider's account key, for self-hosted inference."
+  pod-image:
+    description: "(open-key) Codeman's pod image, by digest. Empty uses the image this version of Codeman pins."
+  serverless-key:
+    description: "(agent) Key of the Serverless endpoint, restricted to it, for self-hosted inference on Serverless. Only the gateway outside the sandbox holds it."
+  handle:
+    description: "(agent, close-key, release-pod) The run's handle, from open-key."
+  base-url:
+    description: "(agent) The OpenAI-compatible API of the run's pod, from open-key."
+  context-length:
+    description: "(agent) The model's context length, from open-key."
+  gateway-usage:
+    description: "(close-key) What the agent job's gateway measured, for self-hosted inference on Serverless."
   encryption-secret:
     description: "(open-key, agent) Secret that encrypts the task key between jobs. At least 32 characters."
   encrypted-key:
     description: "(agent) The task key, encrypted by open-key."
   key-hash:
-    description: "(close-key) Hash of the task key to disable."
+    description: "(close-key) Hash of the task key to disable, from older workflow files; newer ones pass handle."
   harness:
     description: "(agent) Agent harness to run."
     default: opencode
@@ -66,6 +82,10 @@ inputs:
     description: "(apply) tokens-per-second output of the close-key job."
   task-costs:
     description: "(apply) task-costs output of the close-key job."
+  pod:
+    description: "(apply) pod output of the close-key job."
+  pod-costs:
+    description: "(apply) pod-costs output of the close-key job."
   workdir:
     description: "Directory for Codeman's files. Defaults to RUNNER_TEMP/codeman."
 outputs:
@@ -85,6 +105,8 @@ outputs:
     description: "(select) Resolved spending limit of the task key, in USD."
   monthly-budget:
     description: "(select) Resolved monthly spending limit, in USD."
+  inference:
+    description: "(select) Where the task's runs get their model, as JSON, for the key jobs."
   status:
     description: "(open-key) opened, over-budget (monthly) or task-budget-spent."
   task-spent:
@@ -110,11 +132,27 @@ outputs:
   reason:
     description: "(open-key) Why no key was created."
   key-hash:
-    description: "(open-key) Hash of the task key."
+    description: "(open-key) The run's handle, under its older name: for OpenRouter, the hash of the task key."
+  handle:
+    description: "(open-key) What close-key needs to end the run: an OpenRouter key's hash, or a self-hosted run's JSON."
+  base-url:
+    description: "(open-key) The OpenAI-compatible API of the run's pod, for self-hosted inference."
+  context-length:
+    description: "(open-key) The model's context length, when known."
+  pod:
+    description: "(close-key) The pod that served the run, for self-hosted inference."
+  pod-costs:
+    description: "(close-key) What each of the task's pods was billed, in USD, as JSON."
+  kept-pod:
+    description: "(close-key) The pod kept for the task's next run, which release-pod terminates if none follows."
+  gateway-usage:
+    description: "(agent) What the agent job's gateway measured, for self-hosted inference on Serverless."
   encrypted-key:
     description: "(open-key) The task key, encrypted."
   chain:
     description: "(apply) Whether to start another run: true or false."
+  continues:
+    description: "(apply) Whether the task goes on to another agent run: true or false."
 runs:
   using: node24
   main: dist/index.js

@@ -91,3 +91,85 @@ test("output limits stay within bounds", () => {
   const parsed = parseSettings("max-summary-chars: 5000");
   assert.ok(!parsed.ok && parsed.error.includes("from 1 to 4000"));
 });
+
+test("OpenRouter is the default inference, and takes only OpenRouter model IDs", () => {
+  const resolved = resolveSettings({}, {}, { model: "deepseek/deepseek-v4.1-flash" });
+  assert.ok(resolved.ok && resolved.value.inference === "openrouter");
+  assert.ok(resolved.ok && resolved.value.engine === undefined);
+  const ollamaName = resolveSettings({}, {}, { model: "qwen3-coder:30b" });
+  assert.ok(!ollamaName.ok && ollamaName.error.includes("OpenRouter model ID"));
+});
+
+test("self-hosted pods need a GPU type, serve Ollama models, and keep the pod for the task", () => {
+  const file = parseSettings(
+    'inference: self-hosted\nmodel: qwen3-coder:30b\ngpu-type: "NVIDIA RTX A6000"',
+  );
+  assert.ok(file.ok);
+  const resolved = resolveSettings({}, {}, file.ok ? file.value : {});
+  assert.ok(resolved.ok);
+  if (!resolved.ok) return;
+  assert.equal(resolved.value["gpu-provider"], "runpod");
+  assert.equal(resolved.value["gpu-mode"], "pod");
+  assert.equal(resolved.value["gpu-type"], "NVIDIA RTX A6000");
+  assert.equal(resolved.value.engine, "ollama");
+  assert.equal(resolved.value["pod-reuse"], "task");
+
+  const noGpu = resolveSettings({}, {}, { inference: "self-hosted", model: "qwen3-coder:30b" });
+  assert.ok(!noGpu.ok && noGpu.error.includes("gpu-type"));
+  const wrongEngine = resolveSettings(
+    {},
+    {},
+    {
+      inference: "self-hosted",
+      model: "qwen3-coder:30b",
+      "gpu-type": "G",
+      engine: "vllm",
+    },
+  );
+  assert.ok(!wrongEngine.ok && wrongEngine.error.includes("the engine is `ollama`"));
+  const wrongModel = resolveSettings(
+    {},
+    {},
+    {
+      inference: "self-hosted",
+      model: "~org/model",
+      "gpu-type": "G1",
+    },
+  );
+  assert.ok(!wrongModel.ok && wrongModel.error.includes("ollama model name"));
+});
+
+test("self-hosted Serverless needs an endpoint and serves vLLM models", () => {
+  const resolved = resolveSettings(
+    {},
+    {},
+    {
+      inference: "self-hosted",
+      "gpu-mode": "serverless",
+      "serverless-endpoint": "abc123xyz",
+      model: "Qwen/Qwen3-Coder-30B-A3B-Instruct",
+    },
+  );
+  assert.ok(resolved.ok && resolved.value.engine === "vllm");
+  const noEndpoint = resolveSettings(
+    {},
+    {},
+    {
+      inference: "self-hosted",
+      "gpu-mode": "serverless",
+      model: "Qwen/Qwen3-Coder-30B-A3B-Instruct",
+    },
+  );
+  assert.ok(!noEndpoint.ok && noEndpoint.error.includes("serverless-endpoint"));
+});
+
+test("checks each inference setting on its own, and a task may set its GPU type", () => {
+  assert.equal(parseSetting("inference", "local").ok, false);
+  assert.equal(parseSetting("gpu-mode", "spot").ok, false);
+  assert.equal(parseSetting("pod-reuse", "run").ok, true);
+  assert.equal(parseSetting("gpu-type", "NVIDIA GeForce RTX 4090").ok, true);
+  assert.equal(parseSetting("gpu-type", "x; rm").ok, false);
+  assert.equal(parseSetting("serverless-endpoint", "abc-123").ok, false);
+  assert.ok(TASK_SETTINGS.has("gpu-type") && TASK_SETTINGS.has("model"));
+  assert.ok(!TASK_SETTINGS.has("inference"));
+});

@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { MIN_RUN_BUDGET, runLimit } from "../budget.ts";
 import type { Change } from "../collect.ts";
 import { type Messages, messages, type RunOutcome, taskLanguage } from "../i18n/index.ts";
+import { countRun, type PodSpend, parsePodCosts } from "../inference/spend.ts";
 import {
   type Cut,
   MARGIN,
@@ -38,7 +39,7 @@ import {
 import type { Runtime } from "../runtime/runtime.ts";
 import type { Services } from "../services.ts";
 import { addRow, parseCosts, refreshCosts, type SpendRow } from "../spend.ts";
-import { nextInRoute, STAGE_STATE, type Stage, stagesFrom } from "../stages.ts";
+import { nextInRoute, STAGE_STATE, type Stage, stageOfState, stagesFrom } from "../stages.ts";
 import type { State } from "../state.ts";
 import { decisionsUrl, renderDecisions, renderRun, renderStatus, reportUrl } from "../status.ts";
 import { commandsAfter, type TaskContext } from "../tasks.ts";
@@ -112,6 +113,9 @@ export interface JobResults {
   tokensPerSecond?: number | undefined;
   /** What each run of the task spent, by run ID, as `close-key` read it. */
   taskCosts?: Record<string, number> | undefined;
+  /** Self-hosted inference: the pod that served the run, and the billing of the task's pods. */
+  pod?: string | undefined;
+  podCosts?: Record<string, number> | undefined;
 }
 
 export function jobResults(runtime: Runtime): JobResults {
@@ -133,7 +137,18 @@ export function jobResults(runtime: Runtime): JobResults {
     maxInputTokens: amount("max-input-tokens"),
     tokensPerSecond: amount("tokens-per-second"),
     taskCosts: parseCosts(runtime.input("task-costs")),
+    pod: /^[\w-]{1,64}$/.test(runtime.input("pod")) ? runtime.input("pod") : undefined,
+    podCosts: parsePodCosts(runtime.input("pod-costs")),
   };
+}
+
+/**
+ * Whether the task goes on to another agent run: it is in a stage or routing, or ready, which
+ * the next run routes. A pod kept for the task is released otherwise (decision 12 of the
+ * self-hosted inference plan).
+ */
+export function goesOn(state: State | "new"): boolean {
+  return state === "ready" || state === "routing" || stageOfState(state) !== undefined;
 }
 
 /**
@@ -1042,13 +1057,18 @@ async function finish(
     pullRequestWritten?: boolean;
   },
 ): Promise<void> {
+  io.runtime.output("continues", String(goesOn(state)));
   const cost = runCosts(io, task);
   const spend = spendRow(io, task, cost.run);
   let record = view.record ?? task.record ?? undefined;
+  // Self-hosted runs add up from the task's pods, which providers bill.
+  const pods = record && selfHostedRun(io, task) ? podSpend(io, task, record) : undefined;
+  if (pods) cost.task = pods.spent;
   if (record && cost.task !== undefined) record = { ...record, spent: cost.task };
+  if (record && pods) record = { ...record, inference: { pods: pods.pods } };
   if (record && spend) record = { ...record, spending: addRow(record.spending, spend) };
-  // Earlier runs may have read their cost before OpenRouter counted it.
-  const costs = io.jobs.taskCosts;
+  // Earlier runs may have read their cost before OpenRouter, or a pod's billing, counted it.
+  const costs = pods?.costs ?? io.jobs.taskCosts;
   if (record?.spending && costs) {
     record = {
       ...record,
@@ -1163,6 +1183,7 @@ function runCosts(
   io: Io,
   task: TaskContext,
 ): { run?: number | undefined; task?: number | undefined } {
+  if (selfHostedRun(io, task)) return { run: io.jobs.runCost };
   const { taskSpent: before, runCost: run, taskCosts: costs } = io.jobs;
   if (costs) {
     const id = io.runtime.runIdOf(task.runUrl);
@@ -1171,6 +1192,33 @@ function runCosts(
   }
   if (before === undefined) return { task: task.record?.spent };
   return { run, task: before + (run ?? 0) };
+}
+
+/** Whether this run used self-hosted inference, and reached it. */
+function selfHostedRun(io: Io, task: TaskContext): boolean {
+  return task.settings.inference === "self-hosted" && io.jobs.keyStatus === "opened";
+}
+
+/**
+ * The task's spend after a self-hosted run: what it spent before, plus the run's estimate and
+ * what its pods' billing adds; and the costs of runs whose pod served them alone.
+ */
+function podSpend(
+  io: Io,
+  task: TaskContext,
+  record: TaskRecord,
+): { spent: number; pods: PodSpend[]; costs: Record<string, number> } {
+  const before = io.jobs.taskSpent ?? task.record?.spent ?? 0;
+  const counted = countRun(
+    record.inference?.pods,
+    {
+      runId: io.runtime.runIdOf(task.runUrl) ?? io.runtime.run.id,
+      cost: io.jobs.runCost ?? 0,
+      pod: io.jobs.pod,
+    },
+    io.jobs.podCosts,
+  );
+  return { spent: before + counted.added, pods: counted.pods, costs: counted.costs };
 }
 
 /** The spend table's row for a run that opened a key; older workflow files lack some inputs. */

@@ -10,7 +10,7 @@ on:
     # runs have no inputs.
     inputs:
       model:
-        description: OpenRouter model ID.
+        description: Model ID, OpenRouter's or the self-hosted engine's.
         type: string
       task-budget:
         description: Spending limit per task, in USD.
@@ -83,6 +83,7 @@ jobs:
       base-sha: ${{ steps.codeman.outputs.base-sha }}
       task-budget: ${{ steps.codeman.outputs.task-budget }}
       monthly-budget: ${{ steps.codeman.outputs.monthly-budget }}
+      inference: ${{ steps.codeman.outputs.inference }}
     steps:
       - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         id: app-token
@@ -114,14 +115,16 @@ jobs:
           path: ${{ runner.temp }}/codeman/task
           retention-days: 1
 
-  # Creates this run's OpenRouter key, limited to what remains of the task's budget. The only
-  # jobs with the management key are this one and close-key.
+  # Gives this run access to its model, limited to what remains of the task's budget: an
+  # OpenRouter key, or a token for a self-hosted model's gateway, which may start a pod. Only the
+  # key jobs (this one, close-key and release-pod) hold the management and GPU account keys.
   open-key:
     name: Open key
     needs: select
     if: needs.select.outputs.needs-agent == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # A new pod may take up to 25 minutes to serve its model.
+    timeout-minutes: 35
     outputs:
       status: ${{ steps.codeman.outputs.status }}
       reason: ${{ steps.codeman.outputs.reason }}
@@ -129,6 +132,9 @@ jobs:
       month-spent: ${{ steps.codeman.outputs.month-spent }}
       key-limit: ${{ steps.codeman.outputs.key-limit }}
       key-hash: ${{ steps.codeman.outputs.key-hash }}
+      handle: ${{ steps.codeman.outputs.handle }}
+      base-url: ${{ steps.codeman.outputs.base-url }}
+      context-length: ${{ steps.codeman.outputs.context-length }}
       encrypted-key: ${{ steps.codeman.outputs.encrypted-key }}
     steps:
       - uses: codenergy-dev/codeman@COMMIT_SHA
@@ -138,7 +144,9 @@ jobs:
           task: ${{ needs.select.outputs.task }}
           task-budget: ${{ needs.select.outputs.task-budget }}
           monthly-budget: ${{ needs.select.outputs.monthly-budget }}
+          inference: ${{ needs.select.outputs.inference }}
           management-key: ${{ secrets.CODEMAN_OPENROUTER_MANAGEMENT_KEY }}
+          gpu-key: ${{ secrets.CODEMAN_RUNPOD_API_KEY }}
           encryption-secret: ${{ secrets.CODEMAN_OPENROUTER_KEY_ENCRYPTION_SECRET }}
 
   # Runs the agent with read-only access. Its result is an artifact for the apply job, even when
@@ -153,6 +161,8 @@ jobs:
       contents: read
       # Downloads the results of workflows the agent asked for. The agent never sees the token.
       actions: read
+    outputs:
+      gateway-usage: ${{ steps.codeman.outputs.gateway-usage }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -170,11 +180,17 @@ jobs:
       # Only install tools: a step that runs repository code (npm ci, make, tests) runs code the
       # agent wrote outside its sandbox, where it can read this job's secrets.
       - uses: codenergy-dev/codeman@COMMIT_SHA
+        id: codeman
         with:
           step: agent
           github-token: ${{ github.token }}
           encrypted-key: ${{ needs.open-key.outputs.encrypted-key }}
           encryption-secret: ${{ secrets.CODEMAN_OPENROUTER_KEY_ENCRYPTION_SECRET }}
+          handle: ${{ needs.open-key.outputs.handle }}
+          base-url: ${{ needs.open-key.outputs.base-url }}
+          context-length: ${{ needs.open-key.outputs.context-length }}
+          # Self-hosted inference on Serverless: held by the gateway outside the sandbox.
+          serverless-key: ${{ secrets.CODEMAN_RUNPOD_SERVERLESS_KEY }}
           agent-minutes: 50
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
@@ -185,15 +201,15 @@ jobs:
           if-no-files-found: ignore
           retention-days: 1
 
-  # Disables the run's key, whatever happened, and reads what the run and each earlier run of the
-  # task spent. Disabled keys still count towards the task and monthly budgets. Apply waits for
-  # it to report the spend.
+  # Ends the run's access, whatever happened, and reads what the run and each earlier run of the
+  # task spent: it disables the OpenRouter key, or ends the run on its pod, which it keeps for the
+  # task's next run or terminates. Apply waits for it to report the spend.
   close-key:
     name: Close key
-    needs: [open-key, agent]
-    if: always() && needs.open-key.outputs.key-hash != ''
+    needs: [select, open-key, agent]
+    if: always() && (needs.open-key.outputs.handle != '' || needs.open-key.outputs.key-hash != '')
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     outputs:
       run-cost: ${{ steps.codeman.outputs.run-cost }}
       input-tokens: ${{ steps.codeman.outputs.input-tokens }}
@@ -202,13 +218,20 @@ jobs:
       max-input-tokens: ${{ steps.codeman.outputs.max-input-tokens }}
       tokens-per-second: ${{ steps.codeman.outputs.tokens-per-second }}
       task-costs: ${{ steps.codeman.outputs.task-costs }}
+      pod: ${{ steps.codeman.outputs.pod }}
+      pod-costs: ${{ steps.codeman.outputs.pod-costs }}
+      kept-pod: ${{ steps.codeman.outputs.kept-pod }}
     steps:
       - uses: codenergy-dev/codeman@COMMIT_SHA
         id: codeman
         with:
           step: close-key
+          handle: ${{ needs.open-key.outputs.handle }}
           key-hash: ${{ needs.open-key.outputs.key-hash }}
+          inference: ${{ needs.select.outputs.inference }}
+          gateway-usage: ${{ needs.agent.outputs.gateway-usage }}
           management-key: ${{ secrets.CODEMAN_OPENROUTER_MANAGEMENT_KEY }}
+          gpu-key: ${{ secrets.CODEMAN_RUNPOD_API_KEY }}
 
   # Validates the result and writes it to GitHub: commits, pull request, labels, status comment.
   # No LLM.
@@ -220,6 +243,7 @@ jobs:
     timeout-minutes: 10
     outputs:
       chain: ${{ steps.codeman.outputs.chain }}
+      continues: ${{ steps.codeman.outputs.continues }}
     steps:
       - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         id: app-token
@@ -269,6 +293,24 @@ jobs:
           max-input-tokens: ${{ needs.close-key.outputs.max-input-tokens }}
           tokens-per-second: ${{ needs.close-key.outputs.tokens-per-second }}
           task-costs: ${{ needs.close-key.outputs.task-costs }}
+          pod: ${{ needs.close-key.outputs.pod }}
+          pod-costs: ${{ needs.close-key.outputs.pod-costs }}
+
+  # Terminates the pod close-key kept for the task's next run, when the task does not go on to
+  # one now (or apply failed). A kept pod also terminates itself after 15 idle minutes.
+  release-pod:
+    name: Release pod
+    needs: [select, open-key, close-key, apply]
+    if: always() && needs.close-key.outputs.kept-pod != '' && needs.apply.outputs.continues != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: codenergy-dev/codeman@COMMIT_SHA
+        with:
+          step: release-pod
+          handle: ${{ needs.open-key.outputs.handle }}
+          inference: ${{ needs.select.outputs.inference }}
+          gpu-key: ${{ secrets.CODEMAN_RUNPOD_API_KEY }}
 
   # Starts another run when this one moved a task, so the next task (or the next step of this
   # one) does not wait for the schedule. That run stops early when nothing can move. No secrets.

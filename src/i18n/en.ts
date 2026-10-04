@@ -183,7 +183,8 @@ export const en: Messages = {
   replanHint: "Comment `/codeman replan <what to change>` to try again.",
   removeLabelHint: "Remove the `codeman:blocked` label to try again.",
 
-  noKey: "Codeman could not create the OpenRouter key for this task. See the run log.",
+  noKey:
+    "Codeman could not give this run access to its model (an OpenRouter key, or a GPU). See the run log.",
   taskBudgetSpent: (spent, budget, minimum) =>
     `The task has spent ${spent} of its ${budget} budget, and a run needs at least ${minimum}. A maintainer can raise it with \`/codeman set task-budget <usd>\`, then comment \`/codeman continue\`.`,
   monthlyBudgetReached: (used, budget, limit) =>
@@ -270,11 +271,16 @@ export const en: Messages = {
         return `\`set ${problem.name}\` needs one value.`;
       case "invalid-setting":
         return {
-          model: `\`${problem.name}\` must be an OpenRouter model ID, such as \`provider/model\`.`,
+          model: `\`${problem.name}\` must be a model ID, such as \`provider/model\` on OpenRouter or \`qwen3-coder:30b\` on Ollama.`,
           language: `\`${problem.name}\` must be \`auto\` or a language tag, such as \`pt-BR\`.`,
           number: `\`${problem.name}\` must be a positive number.`,
           integer: `\`${problem.name}\` must be a positive whole number.`,
+          choice: `\`${problem.name}\` must be one of ${(problem.values ?? []).map((value) => `\`${value}\``).join(", ")}.`,
+          "gpu-type": `\`${problem.name}\` must be a GPU type, such as \`NVIDIA RTX A6000\`.`,
+          endpoint: `\`${problem.name}\` must be an endpoint's ID, letters and digits.`,
         }[problem.type];
+      case "settings-rejected":
+        return `The task's settings were not applied: ${problem.error}`;
       case "text-too-long":
         return `The text must have at most ${problem.max} characters.`;
       case "no-decision":

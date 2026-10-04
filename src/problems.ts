@@ -1,4 +1,4 @@
-import type { SettingName } from "./settings.ts";
+import type { SettingKind, SettingName } from "./settings.ts";
 
 /** Why a `/codeman` command could not be applied. Rendered in the task's language. */
 export type CommandProblem =
@@ -14,8 +14,12 @@ export type CommandProblem =
   | {
       kind: "invalid-setting";
       name: SettingName;
-      type: "model" | "language" | "number" | "integer";
+      type: SettingKind;
+      /** For a setting that takes one of a few values. */
+      values?: readonly string[] | undefined;
     }
+  /** The task's own settings do not fit the repository's; `error` is in English. */
+  | { kind: "settings-rejected"; error: string }
   | { kind: "text-too-long"; max: number }
   | { kind: "no-decision"; id: number }
   | { kind: "no-option"; id: number; option: string };

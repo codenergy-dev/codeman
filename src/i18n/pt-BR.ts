@@ -193,7 +193,7 @@ export const ptBR: Messages = {
   removeLabelHint: "Remova a label `codeman:blocked` para tentar de novo.",
 
   noKey:
-    "O Codeman não conseguiu criar a chave do OpenRouter para esta tarefa. Veja o log da rodada.",
+    "O Codeman não conseguiu dar a esta rodada acesso ao modelo (uma chave do OpenRouter, ou uma GPU). Veja o log da rodada.",
   taskBudgetSpent: (spent, budget, minimum) =>
     `A tarefa gastou ${spent} do orçamento de ${budget}, e uma rodada precisa de pelo menos ${minimum}. Um mantenedor pode aumentá-lo com \`/codeman set task-budget <usd>\` e depois comentar \`/codeman continue\`.`,
   monthlyBudgetReached: (used, budget, limit) =>
@@ -280,11 +280,16 @@ export const ptBR: Messages = {
         return `\`set ${problem.name}\` precisa de um valor.`;
       case "invalid-setting":
         return {
-          model: `\`${problem.name}\` precisa ser o ID de um modelo do OpenRouter, como \`provedor/modelo\`.`,
+          model: `\`${problem.name}\` precisa ser o ID de um modelo, como \`provedor/modelo\` no OpenRouter ou \`qwen3-coder:30b\` no Ollama.`,
           language: `\`${problem.name}\` precisa ser \`auto\` ou a tag de um idioma, como \`pt-BR\`.`,
           number: `\`${problem.name}\` precisa ser um número positivo.`,
           integer: `\`${problem.name}\` precisa ser um número inteiro positivo.`,
+          choice: `\`${problem.name}\` precisa ser um destes valores: ${(problem.values ?? []).map((value) => `\`${value}\``).join(", ")}.`,
+          "gpu-type": `\`${problem.name}\` precisa ser um tipo de GPU, como \`NVIDIA RTX A6000\`.`,
+          endpoint: `\`${problem.name}\` precisa ser o ID de um endpoint, com letras e dígitos.`,
         }[problem.type];
+      case "settings-rejected":
+        return `As configurações da tarefa não foram aplicadas: ${problem.error}`;
       case "text-too-long":
         return `O texto pode ter no máximo ${problem.max} caracteres.`;
       case "no-decision":

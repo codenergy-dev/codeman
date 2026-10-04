@@ -2,8 +2,23 @@
 # Only `name: value` lines are accepted. Workflow inputs and `/codeman set` take precedence.
 # Reference: https://github.com/codenergy-dev/codeman/blob/main/docs/architecture.md#settings
 
-# OpenRouter model ID. Required here or as a workflow input.
+# Model ID, required here or as a workflow input: OpenRouter's, or, with self-hosted inference,
+# the engine's (Ollama's on pods, the Hugging Face ID the vLLM worker serves on Serverless).
 model: deepseek/deepseek-v4.1-flash
+
+# Where agent runs get their model: openrouter, or self-hosted on GPUs rented from Runpod.
+# See docs/installation.md for the secrets each needs.
+# inference: self-hosted
+# gpu-provider: runpod
+# A pod rented for the run (pod), or the workers of a Serverless endpoint you created
+# (serverless).
+# gpu-mode: pod
+# Pods: the GPU type, as Runpod names it; quote it. A task can change it with /codeman set.
+# gpu-type: "NVIDIA RTX A6000"
+# Pods: keep the pod for the task's next run (task), or one pod per run (run).
+# pod-reuse: task
+# Serverless: the endpoint's ID.
+# serverless-endpoint: abc123xyz
 
 # Spending limit per task and per calendar month for this repository, in USD.
 task-budget: 2

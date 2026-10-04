@@ -1,5 +1,6 @@
 import type { CommandProblem } from "./problems.ts";
 import {
+  CHOICES,
   isSettingName,
   parseSetting,
   type SettingName,
@@ -159,17 +160,28 @@ function parseDecide(args: string[], invalid: (problem: CommandProblem) => Comma
   return { kind: "decide", answers };
 }
 
-/** `set <name> <value>`, for the settings a task may override. `model <id>` is a shortcut. */
+/**
+ * `set <name> <value>`, for the settings a task may override. `model <id>` is a shortcut. A GPU
+ * type's name has spaces, so `gpu-type` takes the rest of the line.
+ */
 function parseSet(args: string[], invalid: (problem: CommandProblem) => Command): Command {
-  const [name = "", value, ...rest] = args;
+  const [name = "", ...values] = args;
   if (!isSettingName(name) || !TASK_SETTINGS.has(name)) {
     return invalid({ kind: "set-which", names: [...TASK_SETTINGS] });
   }
-  if (value === undefined || rest.length > 0) return invalid({ kind: "set-one-value", name });
+  const value = name === "gpu-type" && values.length > 0 ? values.join(" ") : values[0];
+  if (value === undefined || (name !== "gpu-type" && values.length > 1)) {
+    return invalid({ kind: "set-one-value", name });
+  }
   const parsed = parseSetting(name, value);
   return parsed.ok
     ? { kind: "set", name, value: parsed.value }
-    : invalid({ kind: "invalid-setting", name, type: settingKind(name) });
+    : invalid({
+        kind: "invalid-setting",
+        name,
+        type: settingKind(name),
+        ...(CHOICES[name] ? { values: CHOICES[name] } : {}),
+      });
 }
 
 function finishText(open: OpenText): Command {

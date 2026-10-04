@@ -19,21 +19,48 @@ const PACKAGES: Record<string, { name: string; integrity: string }> = {
   },
 };
 
+/** The provider ID OpenCode knows Codeman's self-hosted inference by. */
+export const SELF_HOSTED_PROVIDER = "codeman";
+
 /**
  * Configuration passed through `OPENCODE_CONFIG_CONTENT`, which overrides the repository's own
- * `opencode.json`. Every permission is explicit: nobody is there to answer an `ask`.
+ * `opencode.json`. Every permission is explicit: nobody is there to answer an `ask`. With
+ * `provider`, the only provider is an OpenAI-compatible one at Codeman's gateway, whose token
+ * this configuration holds; otherwise OpenRouter, whose key is in the environment.
  */
-export function openCodeConfig(model: string, instructions?: string): Record<string, unknown> {
+export function openCodeConfig(
+  model: string,
+  instructions?: string,
+  provider?: HarnessOptions["provider"] & { apiKey: string },
+): Record<string, unknown> {
+  const id = provider ? SELF_HOSTED_PROVIDER : "openrouter";
+  const limit = provider?.contextLength
+    ? {
+        limit: {
+          context: provider.contextLength,
+          output: Math.min(32_768, Math.floor(provider.contextLength / 4)),
+        },
+      }
+    : {};
   return {
     $schema: "https://opencode.ai/config.json",
     // Added to the repository's AGENTS.md, not used in its place.
     ...(instructions ? { instructions: [instructions] } : {}),
     autoupdate: false,
     share: "disabled",
-    enabled_providers: ["openrouter"],
-    model: `openrouter/${model}`,
+    enabled_providers: [id],
+    model: `${id}/${model}`,
     // Registers the model in case the model catalog does not list it yet.
-    provider: { openrouter: { models: { [model]: {} } } },
+    provider: provider
+      ? {
+          [id]: {
+            npm: "@ai-sdk/openai-compatible",
+            name: "Codeman",
+            options: { baseURL: provider.baseUrl, apiKey: provider.apiKey },
+            models: { [model]: { name: model, ...limit } },
+          },
+        }
+      : { openrouter: { models: { [model]: {} } } },
     permission: {
       read: "allow",
       edit: "allow",
@@ -85,10 +112,12 @@ export const openCode: Harness = {
     executable,
     model,
     apiKey,
+    provider,
     prompt,
     instructions,
     resume,
   }: HarnessOptions): HarnessCommand {
+    const config = openCodeConfig(model, instructions, provider && { ...provider, apiKey });
     return {
       file: executable,
       // `--continue` takes the last session that is not a subagent's.
@@ -97,13 +126,14 @@ export const openCode: Harness = {
         "--format",
         "json",
         "--model",
-        `openrouter/${model}`,
+        `${provider ? SELF_HOSTED_PROVIDER : "openrouter"}/${model}`,
         ...(resume ? ["--continue"] : []),
         prompt,
       ],
+      // Secrets only in the environment: any user can list arguments.
       env: {
-        OPENROUTER_API_KEY: apiKey,
-        OPENCODE_CONFIG_CONTENT: JSON.stringify(openCodeConfig(model, instructions)),
+        ...(provider ? {} : { OPENROUTER_API_KEY: apiKey }),
+        OPENCODE_CONFIG_CONTENT: JSON.stringify(config),
       },
     };
   },

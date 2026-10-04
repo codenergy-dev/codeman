@@ -2,9 +2,11 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { descriptionCommands } from "../commands.ts";
 import { type Messages, messages, taskLanguage } from "../i18n/index.ts";
+import { inferenceChoice } from "../inference/index.ts";
 import type { WorkflowConventions } from "../platform/conventions.ts";
 import type { CiRun, Comment, Review } from "../platform/types.ts";
 import { IGNORE_FILE, unprotected } from "../policy.ts";
+import type { CommandError } from "../problems.ts";
 import { applyCommands, type CommandSource, pendingDecisions, type TaskRecord } from "../record.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import type { Services } from "../services.ts";
@@ -236,9 +238,11 @@ export async function select(services: Services): Promise<void> {
   // Settings may also come from the description, which the agent reads without command lines.
   const description = descriptionCommands(task.body);
   // Problems in the description are reported in every run, until a maintainer fixes them.
-  const problems = [...description.commands, ...sources.map(({ command }) => command)].flatMap(
-    (command) =>
-      command.kind === "invalid" ? [{ text: command.text, problem: command.problem }] : [],
+  const problems: CommandError[] = [
+    ...description.commands,
+    ...sources.map(({ command }) => command),
+  ].flatMap((command) =>
+    command.kind === "invalid" ? [{ text: command.text, problem: command.problem }] : [],
   );
   const fromState = stateOf(task.labels);
   if (!fromState.ok) throw new Error(fromState.error);
@@ -248,11 +252,18 @@ export async function select(services: Services): Promise<void> {
   const branchSha = await repo.branchSha(branch);
   const baseSha = branchSha ?? (await repo.branchSha(defaultBranch));
   if (!baseSha) throw new Error(`Branch ${defaultBranch} not found.`);
-  const settings = resolveSettings(
-    taskSettings(maintainerComments, description.commands),
-    inputs,
-    fileSettings.value,
-  );
+  const own = taskSettings(maintainerComments, description.commands);
+  let settings = resolveSettings(own, inputs, fileSettings.value);
+  if (!settings.ok && (own.model !== undefined || own["gpu-type"] !== undefined)) {
+    // A task's model or GPU type that does not fit the repository's inference stops this task
+    // only: the run goes on without them, and says why.
+    const { model: _model, "gpu-type": _gpuType, ...rest } = own;
+    const fallback = resolveSettings(rest, inputs, fileSettings.value);
+    if (fallback.ok) {
+      problems.push({ problem: { kind: "settings-rejected", error: settings.error } });
+      settings = fallback;
+    }
+  }
   if (!settings.ok) throw new Error(settings.error);
   const model = settings.value.model;
 
@@ -333,6 +344,7 @@ export async function select(services: Services): Promise<void> {
   runtime.output("stage", stage ?? (action === "plan" || action === "route" ? action : ""));
   runtime.output("task-budget", String(settings.value["task-budget"]));
   runtime.output("monthly-budget", String(settings.value["monthly-budget"]));
+  runtime.output("inference", JSON.stringify(inferenceChoice(settings.value, record ?? null)));
   runtime.info(`Selected #${task.number} to ${action}, with model ${model}.`);
 }
 

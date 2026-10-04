@@ -1,5 +1,6 @@
 import { gunzipSync, gzipSync } from "node:zlib";
 import type { Command } from "./commands.ts";
+import type { PodSpend } from "./inference/spend.ts";
 import type { CommandError } from "./problems.ts";
 import type { Spending } from "./spend.ts";
 import type { Stage } from "./stages.ts";
@@ -106,6 +107,8 @@ export interface TaskRecord {
   webPages?: Record<string, WebPage> | undefined;
   /** Workflows a maintainer accepted since the last stage run, for the next one to know. */
   accepted?: { by: string; workflows: string[] } | undefined;
+  /** Self-hosted inference: the pods that served the task, whose billing makes up its spend. */
+  inference?: { pods: PodSpend[] } | undefined;
 }
 
 /**
