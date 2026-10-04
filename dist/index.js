@@ -20760,7 +20760,7 @@ var PodInference = class {
     const kept = await this.#sweep(run2.task, log);
     const token = randomBytes(32).toString("base64url");
     const handle = kept ? await this.#reuse(kept, run2, token, log) : await this.#create(run2, token, log);
-    const status2 = await this.#admin(handle, "GET", "/admin/status");
+    const status2 = await this.#admin(handle, "GET", "/admin/status").catch(() => ({}));
     return {
       handle: JSON.stringify(handle),
       credential: token,
@@ -20777,7 +20777,7 @@ var PodInference = class {
     if (handle.mode !== "pod") throw new Error("The handle is not a pod run's.");
     let usage;
     try {
-      usage = await this.#admin(handle, "POST", "/admin/end");
+      usage = await this.#admin(handle, "POST", "/admin/end") ?? void 0;
     } catch (error3) {
       log.warning(
         `Could not read the run's usage from its pod: ${error3 instanceof Error ? error3.message : error3}`
@@ -28063,6 +28063,18 @@ function readRules() {
 var MAX_OUTPUT_BYTES = 1024 * 1024;
 var FIX_MS = 2 * 6e4;
 async function agent(services) {
+  let reached = false;
+  try {
+    await agentJob(services, () => {
+      reached = true;
+    });
+  } catch (error3) {
+    if (!reached) services.runtime.output("gateway-usage", JSON.stringify(NOTHING_USED));
+    throw error3;
+  }
+}
+var NOTHING_USED = { requests: 0, inputTokens: 0, outputTokens: 0, cost: 0, start: 0, end: 0 };
+async function agentJob(services, reached) {
   const { runtime: runtime2, conventions } = services;
   const task = readTask(runtime2);
   const apiKey = decrypt(
@@ -28102,6 +28114,7 @@ async function agent(services) {
   }
   writeAsAgent(`${worktree}/${RULES_PATH}`, rules.text);
   const access2 = await modelAccess(runtime2, task, apiKey);
+  reached();
   let run2;
   let durationMs;
   try {

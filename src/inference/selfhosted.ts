@@ -122,7 +122,8 @@ export class PodInference implements InferenceProvider {
     const handle = kept
       ? await this.#reuse(kept, run, token, log)
       : await this.#create(run, token, log);
-    const status = (await this.#admin(handle, "GET", "/admin/status")) as {
+    // The context length is informational: a failure to read it does not undo the run.
+    const status = (await this.#admin(handle, "GET", "/admin/status").catch(() => ({}))) as {
       contextLength?: number;
     };
     return {
@@ -142,7 +143,8 @@ export class PodInference implements InferenceProvider {
     if (handle.mode !== "pod") throw new Error("The handle is not a pod run's.");
     let usage: GatewayUsage | undefined;
     try {
-      usage = (await this.#admin(handle, "POST", "/admin/end")) as GatewayUsage | undefined;
+      usage =
+        ((await this.#admin(handle, "POST", "/admin/end")) as GatewayUsage | null) ?? undefined;
     } catch (error) {
       log.warning(
         `Could not read the run's usage from its pod: ${error instanceof Error ? error.message : error}`,

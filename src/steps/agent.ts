@@ -45,6 +45,22 @@ const FIX_MS = 2 * 60_000;
  * changed. This job has a read-only token; the apply job validates and writes the result.
  */
 export async function agent(services: Services): Promise<void> {
+  let reached = false;
+  try {
+    await agentJob(services, () => {
+      reached = true;
+    });
+  } catch (error) {
+    // Before the agent could reach its model, the run used nothing; without a report, close-key
+    // would count a Serverless run's whole limit.
+    if (!reached) services.runtime.output("gateway-usage", JSON.stringify(NOTHING_USED));
+    throw error;
+  }
+}
+
+const NOTHING_USED = { requests: 0, inputTokens: 0, outputTokens: 0, cost: 0, start: 0, end: 0 };
+
+async function agentJob(services: Services, reached: () => void): Promise<void> {
   const { runtime, conventions } = services;
   const task = readTask(runtime);
   const apiKey = decrypt(
@@ -92,6 +108,7 @@ export async function agent(services: Services): Promise<void> {
   writeAsAgent(`${worktree}/${RULES_PATH}`, rules.text);
 
   const access = await modelAccess(runtime, task, apiKey);
+  reached();
   let run: Awaited<ReturnType<typeof runAsAgent>>;
   let durationMs: number;
   try {
