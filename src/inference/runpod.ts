@@ -58,10 +58,12 @@ export class Runpod implements GpuProvider {
   readonly serverless: ServerlessHost;
   readonly #apiKey: string;
   readonly #fetch: Fetch;
+  readonly #now: () => Date;
 
-  constructor(apiKey: string, fetchFn: Fetch = fetch) {
+  constructor(apiKey: string, fetchFn: Fetch = fetch, now: () => Date = () => new Date()) {
     this.#apiKey = apiKey;
     this.#fetch = fetchFn;
+    this.#now = now;
     this.pods = {
       price: (gpuType) => this.#podPrice(gpuType),
       create: (spec) => this.#createPod(spec),
@@ -78,12 +80,16 @@ export class Runpod implements GpuProvider {
     };
   }
 
-  /** `GET /v2/billing`, by month: the account's total since the month began (UTC). */
+  /**
+   * `GET /v2/billing`, by month: the account's total since the month began (UTC). The API takes
+   * `startTime` only with `endTime`; both fall on the month's boundaries.
+   */
   async monthSpent(now: Date): Promise<number> {
     const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-    const response = (await this.#request(
-      `/billing?bucketSize=month&startTime=${encodeURIComponent(timestamp(start))}`,
-    )) as { records?: { startTime?: string; totalAmount?: number }[] };
+    const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+    const response = (await this.#request(`/billing?bucketSize=month&${window(start, end)}`)) as {
+      records?: { startTime?: string; totalAmount?: number }[];
+    };
     // The window is snapped to whole months; only this month's bucket counts.
     return (response.records ?? [])
       .filter((record) => !record.startTime || Date.parse(record.startTime) >= start.getTime())
@@ -162,9 +168,14 @@ export class Runpod implements GpuProvider {
     const start = new Date(
       Date.UTC(since.getUTCFullYear(), since.getUTCMonth(), since.getUTCDate()),
     );
+    const now = this.#now();
+    // Up to the end of today, a day's boundary as the bucket size asks.
+    const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
     const response = (await this.#request(
-      `/billing/pods?bucketSize=day&startTime=${encodeURIComponent(timestamp(start))}`,
-    )) as { records?: { podId?: string; totalAmount?: number }[] };
+      `/billing/pods?bucketSize=day&${window(start, end)}`,
+    )) as {
+      records?: { podId?: string; totalAmount?: number }[];
+    };
     const wanted = new Set(ids);
     const billed: Record<string, number> = {};
     for (const record of response.records ?? []) {
@@ -250,6 +261,11 @@ function toPod(pod: RunpodPod): Pod {
 /** RFC 3339 in UTC, to the second, as Runpod's examples write it: `2026-10-01T00:00:00Z`. */
 function timestamp(date: Date): string {
   return `${date.toISOString().slice(0, 19)}Z`;
+}
+
+/** A billing query's window: Runpod refuses `startTime` without `endTime` (400). */
+function window(start: Date, end: Date): string {
+  return `startTime=${encodeURIComponent(timestamp(start))}&endTime=${encodeURIComponent(timestamp(end))}`;
 }
 
 /**

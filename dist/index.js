@@ -12883,15 +12883,15 @@ var require_request2 = __commonJS({
           signal = input[kSignal];
         }
         const origin = environmentSettingsObject.settingsObject.origin;
-        let window = "client";
+        let window2 = "client";
         if (request2.window?.constructor?.name === "EnvironmentSettingsObject" && sameOrigin(request2.window, origin)) {
-          window = request2.window;
+          window2 = request2.window;
         }
         if (init.window != null) {
-          throw new TypeError(`'window' option '${window}' must be null`);
+          throw new TypeError(`'window' option '${window2}' must be null`);
         }
         if ("window" in init) {
-          window = "no-window";
+          window2 = "no-window";
         }
         request2 = makeRequest({
           // URL request’s URL.
@@ -12906,7 +12906,7 @@ var require_request2 = __commonJS({
           // client This’s relevant settings object.
           client: environmentSettingsObject.settingsObject,
           // window window.
-          window,
+          window: window2,
           // priority request’s priority.
           priority: request2.priority,
           // origin request’s origin. The propagation of the origin is only significant for navigation requests
@@ -20139,9 +20139,11 @@ var Runpod = class {
   serverless;
   #apiKey;
   #fetch;
-  constructor(apiKey, fetchFn = fetch) {
+  #now;
+  constructor(apiKey, fetchFn = fetch, now = () => /* @__PURE__ */ new Date()) {
     this.#apiKey = apiKey;
     this.#fetch = fetchFn;
+    this.#now = now;
     this.pods = {
       price: (gpuType) => this.#podPrice(gpuType),
       create: (spec) => this.#createPod(spec),
@@ -20157,12 +20159,14 @@ var Runpod = class {
       openAiUrl: (id) => `https://api.runpod.ai/v2/${encodeURIComponent(id)}/openai/v1`
     };
   }
-  /** `GET /v2/billing`, by month: the account's total since the month began (UTC). */
+  /**
+   * `GET /v2/billing`, by month: the account's total since the month began (UTC). The API takes
+   * `startTime` only with `endTime`; both fall on the month's boundaries.
+   */
   async monthSpent(now) {
     const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-    const response = await this.#request(
-      `/billing?bucketSize=month&startTime=${encodeURIComponent(timestamp(start))}`
-    );
+    const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+    const response = await this.#request(`/billing?bucketSize=month&${window(start, end)}`);
     return (response.records ?? []).filter((record) => !record.startTime || Date.parse(record.startTime) >= start.getTime()).reduce((total, record) => total + amount(record.totalAmount), 0);
   }
   async #podPrice(gpuType) {
@@ -20227,8 +20231,10 @@ var Runpod = class {
     const start = new Date(
       Date.UTC(since.getUTCFullYear(), since.getUTCMonth(), since.getUTCDate())
     );
+    const now = this.#now();
+    const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
     const response = await this.#request(
-      `/billing/pods?bucketSize=day&startTime=${encodeURIComponent(timestamp(start))}`
+      `/billing/pods?bucketSize=day&${window(start, end)}`
     );
     const wanted = new Set(ids);
     const billed = {};
@@ -20301,6 +20307,9 @@ function toPod(pod) {
 }
 function timestamp(date) {
   return `${date.toISOString().slice(0, 19)}Z`;
+}
+function window(start, end) {
+  return `startTime=${encodeURIComponent(timestamp(start))}&endTime=${encodeURIComponent(timestamp(end))}`;
 }
 function describeProblem(body) {
   let problem;
@@ -30022,16 +30031,16 @@ async function select(services) {
   const route = choice.action === "implement" ? routing(task.labels, record, newRequests) : void 0;
   const action = route ? "route" : choice.action;
   runtime2.output("action", action);
-  const window = action === "implement" ? record?.route?.requests : void 0;
-  const windowReviews = window ? authorizedReviews(
+  const window2 = action === "implement" ? record?.route?.requests : void 0;
+  const windowReviews = window2 ? authorizedReviews(
     talk.reviews,
     reviewComments,
     talk.maintainers,
-    window.after.reviewId
-  ).filter((review) => review.id <= window.upTo.reviewId) : [];
-  const windowSources = window ? [
-    ...commandsAfter(maintainerComments, window.after.commentId).filter(
-      (source) => source.commentId <= window.upTo.commentId
+    window2.after.reviewId
+  ).filter((review) => review.id <= window2.upTo.reviewId) : [];
+  const windowSources = window2 ? [
+    ...commandsAfter(maintainerComments, window2.after.commentId).filter(
+      (source) => source.commentId <= window2.upTo.commentId
     ),
     ...reviewCommands(windowReviews)
   ] : [];

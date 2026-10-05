@@ -2,7 +2,7 @@
 status: blocked
 reason: "Step 8 runs on the Runpod test account, in a test repository, and its results are not recorded yet."
 created_at: 2026-10-02T18:25:00-03:00
-updated_at: 2026-10-05T14:00:00-03:00
+updated_at: 2026-10-05T15:00:00-03:00
 commit: d0637c8
 ---
 
@@ -207,6 +207,7 @@ Decisions 9 to 12 were answered on 2026-10-02 by the responsible person: the rec
    - OpenCode 1.18.32 ships `@ai-sdk/openai-compatible`, or installs it at run time inside the sandbox.
    - Checked locally on 2026-10-04, without a GPU: the pod image builds (Node 24.21.0, Ollama 0.35.1); the pod pulls `smollm2:135m`, restarts Ollama with its context length (8192) and serves it; the gateway refuses a wrong token, streams with usage, reports the run in OpenRouter's terms, and the pod stops itself at its run's deadline. Ollama's `prompt_tokens` already counts the cached prompt (435 tokens, 434 of them cached, as `prompt_eval_count` and `prompt_eval_cached_count` say), so input tokens match OpenRouter's. Throughput is measured on streamed requests only: a plain response arrives whole, and measured from its first byte it read 10,000 tokens per second.
    - First run on the test account (2026-10-05): `open-key` failed on `GET /v2/billing` with `400`, and the log said nothing more, since Codeman dropped Runpod's error body. Errors now carry the problem's title, detail and validation errors (RFC 9457; Runpod's requests carry no secret), and timestamps go to the second, as Runpod's examples write them (`2026-10-01T00:00:00Z`), which may have been the cause. The run's `gpu-type` was a display name (`PRO 6000 MIG 48GB`); the API takes the GPU's ID (`NVIDIA RTX PRO 6000 Blackwell Server Edition MIG 2g.48gb`), which the error and the installation steps now say.
+   - Second run (2026-10-05): the error said "startTime and endTime must be provided together", against the OpenAPI document, which gives each a default. Billing queries now send both, on the bucket's boundaries; the billing pages in `docs/web/runpod/` record it.
    - The vLLM worker's `usage`, plain and streamed, and whether `api.runpod.ai` drops a request whose cold start passes 100 seconds.
    - Whether 35 minutes for `open-key` covers a new pod's start, and how often Runpod has no capacity for the chosen GPU: such a failure now blocks the task, as a failed key does; retrying in a later run may suit it better.
 

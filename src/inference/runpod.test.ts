@@ -119,7 +119,7 @@ test("adds up the billing of the given pods since the day they started", async (
       ],
     },
   ]);
-  const billed = await new Runpod("rk", fetch).pods.billing(
+  const billed = await new Runpod("rk", fetch, () => new Date("2026-10-05T12:00:00Z")).pods.billing(
     ["a", "b", "c"],
     new Date("2026-10-03T15:30:00Z"),
   );
@@ -128,7 +128,7 @@ test("adds up the billing of the given pods since the day they started", async (
   near(billed.b, 0.5);
   assert.equal(
     calls[0]?.[0],
-    "https://api.runpod.io/v2/billing/pods?bucketSize=day&startTime=2026-10-03T00%3A00%3A00Z",
+    "https://api.runpod.io/v2/billing/pods?bucketSize=day&startTime=2026-10-03T00%3A00%3A00Z&endTime=2026-10-06T00%3A00%3A00Z",
   );
   assert.deepEqual(await new Runpod("rk", fetch).pods.billing([], new Date()), {});
 });
@@ -143,7 +143,7 @@ test("reads this month's spend of the whole account", async () => {
   assert.equal(await new Runpod("rk", fetch).monthSpent(new Date("2026-10-03T15:30:00Z")), 4.25);
   assert.equal(
     calls[0]?.[0],
-    "https://api.runpod.io/v2/billing?bucketSize=month&startTime=2026-10-01T00%3A00%3A00Z",
+    "https://api.runpod.io/v2/billing?bucketSize=month&startTime=2026-10-01T00%3A00%3A00Z&endTime=2026-11-01T00%3A00%3A00Z",
   );
 });
 

@@ -54,9 +54,11 @@ var Runpod = class {
   serverless;
   #apiKey;
   #fetch;
-  constructor(apiKey, fetchFn = fetch) {
+  #now;
+  constructor(apiKey, fetchFn = fetch, now = () => /* @__PURE__ */ new Date()) {
     this.#apiKey = apiKey;
     this.#fetch = fetchFn;
+    this.#now = now;
     this.pods = {
       price: (gpuType) => this.#podPrice(gpuType),
       create: (spec) => this.#createPod(spec),
@@ -72,12 +74,14 @@ var Runpod = class {
       openAiUrl: (id) => `https://api.runpod.ai/v2/${encodeURIComponent(id)}/openai/v1`
     };
   }
-  /** `GET /v2/billing`, by month: the account's total since the month began (UTC). */
+  /**
+   * `GET /v2/billing`, by month: the account's total since the month began (UTC). The API takes
+   * `startTime` only with `endTime`; both fall on the month's boundaries.
+   */
   async monthSpent(now) {
     const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-    const response = await this.#request(
-      `/billing?bucketSize=month&startTime=${encodeURIComponent(timestamp(start))}`
-    );
+    const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+    const response = await this.#request(`/billing?bucketSize=month&${window(start, end)}`);
     return (response.records ?? []).filter((record) => !record.startTime || Date.parse(record.startTime) >= start.getTime()).reduce((total, record) => total + amount(record.totalAmount), 0);
   }
   async #podPrice(gpuType) {
@@ -142,8 +146,10 @@ var Runpod = class {
     const start = new Date(
       Date.UTC(since.getUTCFullYear(), since.getUTCMonth(), since.getUTCDate())
     );
+    const now = this.#now();
+    const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
     const response = await this.#request(
-      `/billing/pods?bucketSize=day&startTime=${encodeURIComponent(timestamp(start))}`
+      `/billing/pods?bucketSize=day&${window(start, end)}`
     );
     const wanted = new Set(ids);
     const billed = {};
@@ -216,6 +222,9 @@ function toPod(pod) {
 }
 function timestamp(date) {
   return `${date.toISOString().slice(0, 19)}Z`;
+}
+function window(start, end) {
+  return `startTime=${encodeURIComponent(timestamp(start))}&endTime=${encodeURIComponent(timestamp(end))}`;
 }
 function describeProblem(body) {
   let problem;

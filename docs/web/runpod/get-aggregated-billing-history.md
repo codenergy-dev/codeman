@@ -17,3 +17,7 @@ What Codeman relies on, in its own words. The documentation states no license th
 ## Response
 
 `{"records": [...], "metadata": {"query", "recordCount", "totals"}}`. Each record, and `metadata.totals`, has `totalAmount`: the account's spend in USD across every billable resource, with pod, Serverless, storage, Public Endpoint and Cluster amounts apart (`podGpuAmount`, `serverlessGpuAmount` and others).
+
+## Observed
+
+On 2026-10-05 the API answered `400` ("startTime and endTime must be provided together") to a request with `startTime` alone, although the OpenAPI document gives each a default. Codeman sends both.

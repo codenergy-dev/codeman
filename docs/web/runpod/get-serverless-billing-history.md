@@ -17,3 +17,7 @@ What Codeman relies on, in its own words. The documentation states no license th
 ## Response
 
 `{"records": [...], "metadata": {...}}`: one record per endpoint per bucket, with `serverlessId` and `totalAmount`, `gpuAmount`, `cpuAmount` and `diskAmount`, in USD. Nothing finer than an hour, and nothing per request or per worker.
+
+## Observed
+
+On 2026-10-05 the API answered `400` ("startTime and endTime must be provided together") to a request with `startTime` alone, although the OpenAPI document gives each a default. Codeman sends both.

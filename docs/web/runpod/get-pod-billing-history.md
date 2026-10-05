@@ -21,3 +21,7 @@ What Codeman relies on, in its own words. The documentation states no license th
 ## Response
 
 `{"records": [...], "metadata": {...}}`. Without `podId`, one record per pod per bucket; each record has `podId`, `startTime`, `endTime`, and `totalAmount`, `gpuAmount`, `cpuAmount` and `diskAmount`, in USD. The records of terminated pods are included.
+
+## Observed
+
+On 2026-10-05 the API answered `400` ("startTime and endTime must be provided together") to a request with `startTime` alone, although the OpenAPI document gives each a default. Codeman sends both.
