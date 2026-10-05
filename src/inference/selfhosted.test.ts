@@ -93,7 +93,7 @@ test("close reads the run's usage, costs its time, and keeps the pod for the tas
   assert.equal(usage.requests, 2);
   assert.equal(usage.pod, "pod1");
   assert.equal(usage.keptPod, "pod1");
-  assert.deepEqual(usage.podCosts, { pod1: 0.3 });
+  assert.deepEqual(usage.podCosts, { pod1: 0.36 }, "its life so far, above its late billing");
   assert.ok(gpu.live.has("pod1"));
 
   await releasePod(gpu.pods, opened.handle, new FakeRuntime());
@@ -221,6 +221,38 @@ test("close-key reports the pod, its billing and whether it was kept", async () 
   await closeKey(fakeServices(new FakePlatform(), runtime, undefined, provider));
   assert.equal(runtime.outputs.pod, "pod1");
   assert.equal(runtime.outputs["kept-pod"], "pod1");
-  assert.equal(runtime.outputs["pod-costs"], '{"old":0.42}');
+  assert.equal(runtime.outputs["pod-costs"], '{"old":0.42,"pod1":0}');
   assert.equal(runtime.outputs["input-tokens"], "3000");
+});
+
+test("a kept pod's time between runs counts in its cost, before Runpod bills it", async () => {
+  const { make, advance } = setup();
+  const first = make();
+  const opened = await first.open({ task: "7", runId: "300", limit: 1.5 }, new FakeRuntime());
+  advance(10 * 60_000);
+  await first.close(opened.handle, new FakeRuntime());
+  advance(2 * 60_000);
+  const second = make();
+  const reused = await second.open({ task: "7", runId: "301", limit: 1.1 }, new FakeRuntime());
+  assert.equal(
+    (JSON.parse(reused.handle) as PodHandle).created,
+    Date.parse("2026-10-03T12:00:00Z"),
+  );
+  advance(5 * 60_000);
+  const usage = await second.close(reused.handle, new FakeRuntime());
+  assert.ok(Math.abs(usage.cost - 0.06) < 1e-9, "the run: 5 minutes");
+  assert.equal(usage.podCosts?.pod1, 0.204, "the pod: 17 minutes, 2 of them between runs");
+});
+
+test("the month counts the account's live pods beyond what they were billed", async () => {
+  const { gpu, make, advance } = setup();
+  gpu.month = 1;
+  const spec = { name: "n", image: "i", env: {}, port: 8080, gpuType: "GPU-A", diskGb: 1 };
+  await gpu.pods.create(spec);
+  await gpu.pods.create(spec);
+  advance(30 * 60_000);
+  gpu.billed.pod1 = 0.1;
+  gpu.billed.pod2 = 0.5;
+  // pod1: 30 minutes at US$ 0.72 per hour, US$ 0.36, of which 0.10 billed; pod2: billed above.
+  assert.ok(Math.abs((await make().monthSpent()) - 1.26) < 1e-9);
 });

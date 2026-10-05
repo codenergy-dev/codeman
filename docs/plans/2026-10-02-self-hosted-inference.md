@@ -2,7 +2,7 @@
 status: blocked
 reason: "Step 8 runs on the Runpod test account, in a test repository, and its results are not recorded yet."
 created_at: 2026-10-02T18:25:00-03:00
-updated_at: 2026-10-05T17:30:00-03:00
+updated_at: 2026-10-05T20:00:00-03:00
 commit: d0637c8
 ---
 
@@ -118,6 +118,8 @@ Decisions 1 to 8 were answered on 2026-10-02 by the responsible person: the reco
    Recommendation: (c). Billing may lag behind the pod's end, and the spend table already refreshes.
 
    **Answer:** (c). A run's row is refreshed only when its pod served that run alone; a kept pod's billing refreshes the task's total. Serverless costs are estimated per run (step 1 checks whether Runpod reports more).
+
+   **Change** (2026-10-05, asked by the responsible person after step 8 showed that Runpod's billing does not include a running pod for 40 minutes and more): a pod counts in the task's total for its whole life so far, its creation to the run's end at its price, or its billing when higher. A kept pod's time between runs is then counted by the next run's `close-key`, without waiting for billing.
 5. **The monthly budget.** Runpod cannot list terminated pods, and pod IDs do not say which repository they belong to. Options:
    - (a) The Runpod account's whole spend this month counts against the repository's monthly budget. Each repository, or each group of repositories sharing a budget, uses a Runpod account or team dedicated to Codeman.
    - (b) Each task's record keeps its pods; the repository's spend is the sum over its tasks' records.
@@ -125,6 +127,8 @@ Decisions 1 to 8 were answered on 2026-10-02 by the responsible person: the reco
    Recommendation: (a). It never counts less than was spent, and needs no state beyond what the provider keeps. A task's spend still comes from the pods its record lists.
 
    **Answer:** (a). It covers serverless spend too.
+
+   **Change** (2026-10-05, same reason): the month's spend adds, to the account's billing, what the account's live pods cost so far this month beyond what each was billed.
 6. **Runpod cloud.** Options:
    - (a) Secure Cloud only: Runpod's own data centers.
    - (b) A setting, defaulting to Secure Cloud, that allows Community Cloud.
@@ -213,7 +217,10 @@ Decisions 9 to 12 were answered on 2026-10-02 by the responsible person: the rec
      - Runpod's telemetry showed 0% of VRAM and 100% of CPU. The first is the MIG slice: the host's metrics do not cover it. The second is llama.cpp's 128 threads, sized from the host's 256, spinning while the GPU works; Ollama sets threads per model only, not by environment. Neither slowed the run; limiting the threads is left for later.
      - The run took 13 min 39 s of agent time, 994,300 input and 19,100 output tokens, a context length of 64,600 and 32 tokens per second. Codeman counted US$ 0.316; the account's balance went from US$ 15.00 to US$ 14.68. The rest is the pod's time between the run's end and its termination, which the next run's billing read adds to the task.
      - The plan had decisions, so `apply` said the task does not go on, and `release-pod` terminated the pod, as Runpod's log confirmed.
-   - Left for the next runs: a kept pod reused by the task's next run, a row refreshed from a pod's billing, the start time with and without a kept pod, a cancelled workflow, and Serverless.
+   - Full task (2026-10-05), from the answered decisions to `codeman:done`, with routing, code and review on one `NVIDIA RTX PRO 6000 Blackwell Server Edition` (96 GB), kept between runs: 58 to 69 tokens per second, against 32 on the MIG slice. The plan's row was refreshed from its pod's billing, from US$ 0.316 to US$ 0.325 (Runpod: US$ 0.323). Codeman counted US$ 1.897 for the task; Runpod billed US$ 1.968. Two findings, which changed decisions 4 and 5:
+     - The month's spend read US$ 0.32 at the code and review runs, while the kept pod had run for 40 minutes: Runpod's billing did not include it yet.
+     - So no run saw the kept pod's time between runs, nor after the last run: the US$ 0.07 that the task's total missed.
+   - Left: a cancelled workflow, and Serverless.
    - The vLLM worker's `usage`, plain and streamed, and whether `api.runpod.ai` drops a request whose cold start passes 100 seconds.
    - Whether 35 minutes for `open-key` covers a new pod's start, and how often Runpod has no capacity for the chosen GPU: such a failure now blocks the task, as a failed key does; retrying in a later run may suit it better.
 

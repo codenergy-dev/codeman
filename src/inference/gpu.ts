@@ -75,6 +75,32 @@ export interface ServerlessHost {
   openAiUrl(endpoint: string): string;
 }
 
+/**
+ * What the account spent this calendar month (UTC), in USD: its billing, plus what its live
+ * pods cost so far this month beyond what each was billed. Runpod's billing leaves out a running
+ * pod for 40 minutes and more, so a pod kept between runs would not count against the budget.
+ */
+export async function accountMonthSpent(gpu: GpuProvider, now: Date): Promise<number> {
+  const billed = await gpu.monthSpent(now);
+  if (!gpu.pods) return billed;
+  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  const live = (await gpu.pods.list({})).filter(
+    (pod) => pod.status !== "terminated" && pod.pricePerSecond !== undefined,
+  );
+  if (live.length === 0) return billed;
+  const podBilled = await gpu.pods.billing(
+    live.map((pod) => pod.id),
+    start,
+  );
+  let unbilled = 0;
+  for (const pod of live) {
+    const from = pod.createdAt > start ? pod.createdAt : start;
+    const estimate = podCost(from, now, pod.pricePerSecond ?? 0);
+    unbilled += Math.max(0, estimate - (podBilled[pod.id] ?? 0));
+  }
+  return billed + unbilled;
+}
+
 /** Codeman's own limits on a Serverless endpoint; see docs/installation.md. */
 export const MAX_IDLE_TIMEOUT_SECONDS = 60;
 

@@ -142,7 +142,7 @@ outputs:
   pod:
     description: "(close-key) The pod that served the run, for self-hosted inference."
   pod-costs:
-    description: "(close-key) What each of the task's pods was billed, in USD, as JSON."
+    description: "(close-key) What each of the task's pods cost so far, in USD, as JSON: its billing, or the run's pod's whole life at its rate when higher."
   kept-pod:
     description: "(close-key) The pod kept for the task's next run, which release-pod terminates if none follows."
   gateway-usage:

@@ -20713,6 +20713,26 @@ function runSettings(body) {
 var GATEWAY_PORT = 8080;
 
 // src/inference/gpu.ts
+async function accountMonthSpent(gpu, now) {
+  const billed = await gpu.monthSpent(now);
+  if (!gpu.pods) return billed;
+  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  const live = (await gpu.pods.list({})).filter(
+    (pod) => pod.status !== "terminated" && pod.pricePerSecond !== void 0
+  );
+  if (live.length === 0) return billed;
+  const podBilled = await gpu.pods.billing(
+    live.map((pod) => pod.id),
+    start
+  );
+  let unbilled = 0;
+  for (const pod of live) {
+    const from = pod.createdAt > start ? pod.createdAt : start;
+    const estimate = podCost(from, now, pod.pricePerSecond ?? 0);
+    unbilled += Math.max(0, estimate - (podBilled[pod.id] ?? 0));
+  }
+  return billed + unbilled;
+}
 var MAX_IDLE_TIMEOUT_SECONDS = 60;
 function endpointProblems(endpoint2) {
   const problems = [];
@@ -20795,7 +20815,7 @@ var PodInference = class {
     return this.#settings.taskSpent;
   }
   async monthSpent() {
-    return this.#options.gpu.monthSpent(this.#now());
+    return accountMonthSpent(this.#options.gpu, this.#now());
   }
   async open(run2, log) {
     const kept = await this.#sweep(run2.task, log);
@@ -20833,14 +20853,20 @@ var PodInference = class {
         `Kept pod ${handle.podId} for the task's next run, for ${KEPT_IDLE_MINUTES} minutes at most.`
       );
     }
-    const cost = podCost(new Date(handle.start), this.#now(), handle.pricePerSecond);
+    const now = this.#now();
+    const cost = podCost(new Date(handle.start), now, handle.pricePerSecond);
     const pods = [.../* @__PURE__ */ new Set([...this.#settings.pods, handle.podId])];
-    const podCosts = await this.#host.billing(pods, new Date(this.#now().getTime() - BILLING_DAYS * 864e5)).catch((error3) => {
+    const billed = await this.#host.billing(pods, new Date(now.getTime() - BILLING_DAYS * 864e5)).catch((error3) => {
       log.warning(
         `Could not read the pods' billing: ${error3 instanceof Error ? error3.message : error3}`
       );
       return void 0;
     });
+    const lifetime = handle.created === void 0 ? void 0 : podCost(new Date(handle.created), now, handle.pricePerSecond);
+    const podCosts = billed === void 0 && lifetime === void 0 ? void 0 : { ...billed };
+    if (podCosts && lifetime !== void 0) {
+      podCosts[handle.podId] = Number(Math.max(podCosts[handle.podId] ?? 0, lifetime).toFixed(6));
+    }
     return {
       cost,
       inputTokens: usage?.inputTokens,
@@ -20885,6 +20911,7 @@ var PodInference = class {
       nonce,
       url: this.#host.url(pod.id, GATEWAY_PORT),
       start: this.#now().getTime(),
+      created: pod.createdAt.getTime(),
       pricePerSecond,
       reuse: this.#settings.reuse
     };
@@ -20938,6 +20965,7 @@ var PodInference = class {
         url,
         // Billing starts with the pod, while it pulls the image and the model.
         start: pod.createdAt.getTime(),
+        created: pod.createdAt.getTime(),
         pricePerSecond: ready.pricePerSecond ?? pod.pricePerSecond ?? listed,
         reuse: this.#settings.reuse
       };
@@ -21010,7 +21038,7 @@ var ServerlessInference = class {
     return this.#settings.taskSpent;
   }
   async monthSpent() {
-    return this.#gpu.monthSpent(this.#now());
+    return accountMonthSpent(this.#gpu, this.#now());
   }
   /** Checks the endpoint (decision 10 of the plan) and prices its workers. */
   async open(run2, log) {

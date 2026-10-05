@@ -53,7 +53,7 @@ export interface RunUsage {
   taskCosts?: Record<string, number> | undefined;
   /** The pod that served the run, for a provider that bills pods. */
   pod?: string | undefined;
-  /** What each of the task's pods was billed so far, by pod ID. */
+  /** What each of the task's pods cost so far, by pod ID: billed, or estimated when higher. */
   podCosts?: Record<string, number> | undefined;
   /** The pod kept for the task's next run, which `release-pod` terminates if none follows. */
   keptPod?: string | undefined;

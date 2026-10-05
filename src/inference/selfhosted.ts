@@ -7,6 +7,7 @@ import type { RepositoryRef } from "../platform/types.ts";
 import type { Log } from "../runtime/runtime.ts";
 import type { InferenceEngine } from "./engine.ts";
 import {
+  accountMonthSpent,
   endpointProblems,
   type GpuProvider,
   type Pod,
@@ -56,6 +57,8 @@ export interface PodHandle {
   url: string;
   /** When the run's cost started: a new pod's creation, or a kept pod's new run. */
   start: number;
+  /** When the pod was created; its whole life counts in the task's spend. */
+  created?: number | undefined;
   pricePerSecond: number;
   reuse: "task" | "run";
 }
@@ -113,7 +116,7 @@ export class PodInference implements InferenceProvider {
   }
 
   async monthSpent(): Promise<number> {
-    return this.#options.gpu.monthSpent(this.#now());
+    return accountMonthSpent(this.#options.gpu, this.#now());
   }
 
   async open(run: RunRequest, log: Log): Promise<OpenedRun> {
@@ -159,16 +162,27 @@ export class PodInference implements InferenceProvider {
         `Kept pod ${handle.podId} for the task's next run, for ${KEPT_IDLE_MINUTES} minutes at most.`,
       );
     }
-    const cost = podCost(new Date(handle.start), this.#now(), handle.pricePerSecond);
+    const now = this.#now();
+    const cost = podCost(new Date(handle.start), now, handle.pricePerSecond);
     const pods = [...new Set([...this.#settings.pods, handle.podId])];
-    const podCosts = await this.#host
-      .billing(pods, new Date(this.#now().getTime() - BILLING_DAYS * 86_400_000))
+    const billed = await this.#host
+      .billing(pods, new Date(now.getTime() - BILLING_DAYS * 86_400_000))
       .catch((error: unknown) => {
         log.warning(
           `Could not read the pods' billing: ${error instanceof Error ? error.message : error}`,
         );
         return undefined;
       });
+    // Runpod bills a running pod late, so the pod also counts for its whole life so far,
+    // including a kept pod's time between runs; its billing wins once higher.
+    const lifetime =
+      handle.created === undefined
+        ? undefined
+        : podCost(new Date(handle.created), now, handle.pricePerSecond);
+    const podCosts = billed === undefined && lifetime === undefined ? undefined : { ...billed };
+    if (podCosts && lifetime !== undefined) {
+      podCosts[handle.podId] = Number(Math.max(podCosts[handle.podId] ?? 0, lifetime).toFixed(6));
+    }
     return {
       cost,
       inputTokens: usage?.inputTokens,
@@ -229,6 +243,7 @@ export class PodInference implements InferenceProvider {
       nonce,
       url: this.#host.url(pod.id, GATEWAY_PORT),
       start: this.#now().getTime(),
+      created: pod.createdAt.getTime(),
       pricePerSecond,
       reuse: this.#settings.reuse,
     };
@@ -283,6 +298,7 @@ export class PodInference implements InferenceProvider {
         url,
         // Billing starts with the pod, while it pulls the image and the model.
         start: pod.createdAt.getTime(),
+        created: pod.createdAt.getTime(),
         pricePerSecond: ready.pricePerSecond ?? pod.pricePerSecond ?? listed,
         reuse: this.#settings.reuse,
       };
@@ -401,7 +417,7 @@ export class ServerlessInference implements InferenceProvider {
   }
 
   async monthSpent(): Promise<number> {
-    return this.#gpu.monthSpent(this.#now());
+    return accountMonthSpent(this.#gpu, this.#now());
   }
 
   /** Checks the endpoint (decision 10 of the plan) and prices its workers. */
