@@ -13,7 +13,7 @@ model: deepseek/deepseek-v4.1-flash
 # A pod rented for the run (pod), or the workers of a Serverless endpoint you created
 # (serverless).
 # gpu-mode: pod
-# Pods: the GPU type, as Runpod names it; quote it. A task can change it with /codeman set.
+# Pods: the GPU type, by Runpod's GPU ID (not its display name); quote it. A task can change it with /codeman set.
 # gpu-type: "NVIDIA RTX A6000"
 # Pods: keep the pod for the task's next run (task), or one pod per run (run).
 # pod-reuse: task

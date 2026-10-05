@@ -276,7 +276,7 @@ Each value comes from the first of these that sets it:
 | `inference` | `openrouter` | `openrouter`, or `self-hosted`; see [self-hosted inference](#self-hosted-inference) |
 | `gpu-provider` | `runpod` | The GPU cloud of self-hosted inference |
 | `gpu-mode` | `pod` | `pod` or `serverless` |
-| `gpu-type` | none; required on pods | The pod's GPU type, as Runpod names it, such as `"NVIDIA RTX A6000"` (quoted in the file; `/codeman set gpu-type` takes the rest of its line) |
+| `gpu-type` | none; required on pods | The pod's GPU type, by Runpod's GPU ID (not its display name), such as `"NVIDIA RTX A6000"` (quoted in the file; `/codeman set gpu-type` takes the rest of its line) |
 | `engine` | `ollama` on pods, `vllm` on Serverless | What serves the model; each mode has one |
 | `serverless-endpoint` | none; required on Serverless | The endpoint's ID |
 | `pod-reuse` | `task` | `task`: a pod serves the task's next run too, while the task goes on; `run`: one pod per run |

@@ -128,7 +128,7 @@ test("adds up the billing of the given pods since the day they started", async (
   near(billed.b, 0.5);
   assert.equal(
     calls[0]?.[0],
-    "https://api.runpod.io/v2/billing/pods?bucketSize=day&startTime=2026-10-03T00%3A00%3A00.000Z",
+    "https://api.runpod.io/v2/billing/pods?bucketSize=day&startTime=2026-10-03T00%3A00%3A00Z",
   );
   assert.deepEqual(await new Runpod("rk", fetch).pods.billing([], new Date()), {});
 });
@@ -143,7 +143,7 @@ test("reads this month's spend of the whole account", async () => {
   assert.equal(await new Runpod("rk", fetch).monthSpent(new Date("2026-10-03T15:30:00Z")), 4.25);
   assert.equal(
     calls[0]?.[0],
-    "https://api.runpod.io/v2/billing?bucketSize=month&startTime=2026-10-01T00%3A00%3A00.000Z",
+    "https://api.runpod.io/v2/billing?bucketSize=month&startTime=2026-10-01T00%3A00%3A00Z",
   );
 });
 
@@ -156,6 +156,11 @@ test("prices a GPU type on Secure Cloud per second, and refuses one it does not 
   near(await runpod.pods.price("NVIDIA RTX A6000"), 0.0001);
   assert.equal(calls[0]?.[0], "https://api.runpod.io/v2/catalog/gpus/NVIDIA%20RTX%20A6000");
   await assert.rejects(runpod.pods.price("X"), /does not offer X on Secure Cloud/);
+  const { fetch: missing } = fakeFetch([new Response("{}", { status: 404 })]);
+  await assert.rejects(
+    new Runpod("rk", missing).pods.price("PRO 6000 MIG 48GB"),
+    /no GPU type "PRO 6000 MIG 48GB"\. `gpu-type` takes the GPU's ID/,
+  );
 });
 
 test("reads a Serverless endpoint's workers, and prices its dearest GPU type", async () => {
@@ -192,20 +197,23 @@ test("reads a Serverless endpoint's workers, and prices its dearest GPU type", a
   assert.equal(runpod.serverless.openAiUrl("ep1"), "https://api.runpod.ai/v2/ep1/openai/v1");
 });
 
-test("reports failures without echoing the response", async () => {
-  const { fetch } = fakeFetch([new Response('{"detail":"secret env"}', { status: 400 })]);
-  await assert.rejects(
-    new Runpod("rk", fetch).pods.create({
-      name: "n",
-      image: "i",
-      env: {},
-      port: 8080,
-      gpuType: "g",
-      diskGb: 1,
-    }),
-    (error: Error) => {
-      assert.equal(error.message, "Runpod POST /pods failed with 400.");
-      return true;
-    },
-  );
+test("reports what a failure's problem says, and nothing of another body", async () => {
+  const { fetch } = fakeFetch([
+    new Response(
+      JSON.stringify({
+        title: "Bad Request",
+        status: 400,
+        detail: "invalid query",
+        errors: ["bucketSize: must be one of hour, day"],
+      }),
+      { status: 400 },
+    ),
+    new Response("<html>gateway error</html>", { status: 502 }),
+  ]);
+  const runpod = new Runpod("rk", fetch);
+  await assert.rejects(runpod.monthSpent(new Date("2026-10-05T12:00:00Z")), {
+    message:
+      "Runpod GET /billing failed with 400: Bad Request — invalid query — bucketSize: must be one of hour, day",
+  });
+  await assert.rejects(runpod.pods.get("x"), { message: "Runpod GET /pods/x failed with 502." });
 });

@@ -76,12 +76,22 @@ var Runpod = class {
   async monthSpent(now) {
     const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
     const response = await this.#request(
-      `/billing?bucketSize=month&startTime=${encodeURIComponent(start.toISOString())}`
+      `/billing?bucketSize=month&startTime=${encodeURIComponent(timestamp(start))}`
     );
     return (response.records ?? []).filter((record) => !record.startTime || Date.parse(record.startTime) >= start.getTime()).reduce((total, record) => total + amount(record.totalAmount), 0);
   }
   async #podPrice(gpuType) {
-    const gpu = await this.#request(`/catalog/gpus/${encodeURIComponent(gpuType)}`);
+    const gpu = await this.#request(
+      `/catalog/gpus/${encodeURIComponent(gpuType)}`,
+      "GET",
+      void 0,
+      [404]
+    );
+    if (!gpu) {
+      throw new Error(
+        `Runpod has no GPU type "${gpuType}". \`gpu-type\` takes the GPU's ID, such as "NVIDIA RTX A6000", not its display name; see https://docs.runpod.io/references/gpu-types.`
+      );
+    }
     const hourly = gpu.price?.secure;
     if (gpu.secure === false || typeof hourly !== "number" || !(hourly > 0)) {
       throw new Error(`Runpod does not offer ${gpuType} on Secure Cloud.`);
@@ -133,7 +143,7 @@ var Runpod = class {
       Date.UTC(since.getUTCFullYear(), since.getUTCMonth(), since.getUTCDate())
     );
     const response = await this.#request(
-      `/billing/pods?bucketSize=day&startTime=${encodeURIComponent(start.toISOString())}`
+      `/billing/pods?bucketSize=day&startTime=${encodeURIComponent(timestamp(start))}`
     );
     const wanted = new Set(ids);
     const billed = {};
@@ -184,7 +194,10 @@ var Runpod = class {
     });
     if (absent.includes(response.status)) return void 0;
     if (!response.ok) {
-      throw new Error(`Runpod ${method} ${path.split("?")[0]} failed with ${response.status}.`);
+      const problem = describeProblem(await response.text().catch(() => ""));
+      throw new Error(
+        `Runpod ${method} ${path.split("?")[0]} failed with ${response.status}${problem ? `: ${problem}` : "."}`
+      );
     }
     return response.status === 204 ? void 0 : response.json();
   }
@@ -200,6 +213,25 @@ function toPod(pod) {
     createdAt: new Date(pod.createdAt),
     pricePerSecond: typeof pod.cost === "number" && pod.cost > 0 ? pod.cost / 3600 : void 0
   };
+}
+function timestamp(date) {
+  return `${date.toISOString().slice(0, 19)}Z`;
+}
+function describeProblem(body) {
+  let problem;
+  try {
+    problem = JSON.parse(body);
+  } catch {
+    return void 0;
+  }
+  if (typeof problem !== "object" || problem === null) return void 0;
+  const { title, detail, errors } = problem;
+  const parts = [title, detail, ...Array.isArray(errors) ? errors : []].filter(
+    (part) => typeof part === "string" && part.trim() !== ""
+  );
+  if (parts.length === 0) return void 0;
+  const text = parts.join(" \u2014 ").replace(/\s+/g, " ").trim();
+  return text.length > 500 ? `${text.slice(0, 499)}\u2026` : text;
 }
 function amount(value) {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;

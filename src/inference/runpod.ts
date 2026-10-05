@@ -82,7 +82,7 @@ export class Runpod implements GpuProvider {
   async monthSpent(now: Date): Promise<number> {
     const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
     const response = (await this.#request(
-      `/billing?bucketSize=month&startTime=${encodeURIComponent(start.toISOString())}`,
+      `/billing?bucketSize=month&startTime=${encodeURIComponent(timestamp(start))}`,
     )) as { records?: { startTime?: string; totalAmount?: number }[] };
     // The window is snapped to whole months; only this month's bucket counts.
     return (response.records ?? [])
@@ -91,7 +91,17 @@ export class Runpod implements GpuProvider {
   }
 
   async #podPrice(gpuType: string): Promise<number> {
-    const gpu = (await this.#request(`/catalog/gpus/${encodeURIComponent(gpuType)}`)) as RunpodGpu;
+    const gpu = (await this.#request(
+      `/catalog/gpus/${encodeURIComponent(gpuType)}`,
+      "GET",
+      undefined,
+      [404],
+    )) as RunpodGpu | undefined;
+    if (!gpu) {
+      throw new Error(
+        `Runpod has no GPU type "${gpuType}". \`gpu-type\` takes the GPU's ID, such as "NVIDIA RTX A6000", not its display name; see https://docs.runpod.io/references/gpu-types.`,
+      );
+    }
     const hourly = gpu.price?.secure;
     if (gpu.secure === false || typeof hourly !== "number" || !(hourly > 0)) {
       throw new Error(`Runpod does not offer ${gpuType} on Secure Cloud.`);
@@ -153,7 +163,7 @@ export class Runpod implements GpuProvider {
       Date.UTC(since.getUTCFullYear(), since.getUTCMonth(), since.getUTCDate()),
     );
     const response = (await this.#request(
-      `/billing/pods?bucketSize=day&startTime=${encodeURIComponent(start.toISOString())}`,
+      `/billing/pods?bucketSize=day&startTime=${encodeURIComponent(timestamp(start))}`,
     )) as { records?: { podId?: string; totalAmount?: number }[] };
     const wanted = new Set(ids);
     const billed: Record<string, number> = {};
@@ -215,8 +225,10 @@ export class Runpod implements GpuProvider {
     });
     if (absent.includes(response.status)) return undefined;
     if (!response.ok) {
-      // The body may echo request data, such as the pod's environment; report only the status.
-      throw new Error(`Runpod ${method} ${path.split("?")[0]} failed with ${response.status}.`);
+      const problem = describeProblem(await response.text().catch(() => ""));
+      throw new Error(
+        `Runpod ${method} ${path.split("?")[0]} failed with ${response.status}${problem ? `: ${problem}` : "."}`,
+      );
     }
     return response.status === 204 ? undefined : response.json();
   }
@@ -233,6 +245,33 @@ function toPod(pod: RunpodPod): Pod {
     createdAt: new Date(pod.createdAt),
     pricePerSecond: typeof pod.cost === "number" && pod.cost > 0 ? pod.cost / 3600 : undefined,
   };
+}
+
+/** RFC 3339 in UTC, to the second, as Runpod's examples write it: `2026-10-01T00:00:00Z`. */
+function timestamp(date: Date): string {
+  return `${date.toISOString().slice(0, 19)}Z`;
+}
+
+/**
+ * What an RFC 9457 error says: its title, detail and validation errors, on one line. Runpod's
+ * requests carry no secret (pods' environments hold only hashes and public values), and other
+ * bodies are left out.
+ */
+export function describeProblem(body: string): string | undefined {
+  let problem: unknown;
+  try {
+    problem = JSON.parse(body);
+  } catch {
+    return undefined;
+  }
+  if (typeof problem !== "object" || problem === null) return undefined;
+  const { title, detail, errors } = problem as Record<string, unknown>;
+  const parts = [title, detail, ...(Array.isArray(errors) ? errors : [])].filter(
+    (part): part is string => typeof part === "string" && part.trim() !== "",
+  );
+  if (parts.length === 0) return undefined;
+  const text = parts.join(" — ").replace(/\s+/g, " ").trim();
+  return text.length > 500 ? `${text.slice(0, 499)}…` : text;
 }
 
 function amount(value: unknown): number {

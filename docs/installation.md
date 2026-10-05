@@ -83,10 +83,10 @@ Instead of OpenRouter, Codeman can serve the model itself on GPUs rented from [R
    ```yaml
    inference: self-hosted
    model: qwen3-coder:30b        # an Ollama model name
-   gpu-type: "NVIDIA RTX A6000"  # as Runpod names it, quoted; on Secure Cloud
+   gpu-type: "NVIDIA RTX A6000"  # the GPU ID, quoted; on Secure Cloud
    ```
 
-   Choose a GPU with enough memory for the model at its full context length: Codeman loads it with the context length the model supports.
+   `gpu-type` is the GPU ID in [Runpod's list of GPU types](https://docs.runpod.io/references/gpu-types) (first column), not its display name: `NVIDIA RTX PRO 6000 Blackwell Server Edition MIG 2g.48gb`, not `PRO 6000 MIG 48GB`. Choose a GPU with enough memory for the model at its full context length: Codeman loads it with the context length the model supports.
 2. Codeman runs its own pod image, `ghcr.io/codenergy-dev/codeman-pod`, public and pinned by digest in the version you use (`POD_IMAGE` in `src/inference/ollama.ts`); there is nothing to set up. To run an image of your own, set `pod-image: <image>@sha256:<digest>` on the `open-key` step.
 
 ### Serverless
