@@ -1,8 +1,8 @@
 ---
 status: blocked
-reason: "Step 8 needs the Runpod test account, which the responsible person creates once the implementation is done; the pod image must be published and pinned first."
+reason: "Step 8 runs on the Runpod test account, in a test repository, and its results are not recorded yet."
 created_at: 2026-10-02T18:25:00-03:00
-updated_at: 2026-10-04T00:50:00-03:00
+updated_at: 2026-10-05T10:00:00-03:00
 commit: d0637c8
 ---
 
@@ -201,7 +201,7 @@ Decisions 9 to 12 were answered on 2026-10-02 by the responsible person: the rec
    - New secrets: `CODEMAN_RUNPOD_API_KEY` (the key jobs) and `CODEMAN_RUNPOD_SERVERLESS_KEY` (the agent job's step); `open-key` may run 35 minutes.
 8. On the test account (decision 8), first the checks of step 1 that need it: create, wait for, terminate and list a pod, read its billing, a pod's self-termination with `RUNPOD_API_KEY`, Ollama's counts against the tokens sent, a restricted key's reach, the vLLM worker's `usage`, and start times. Then run a full task on a small model with each mode, compare cost and figures with Runpod's billing, measure starts with and without a kept pod and on a warm and a cold endpoint, and confirm no pod is left after a cancelled workflow. Done when the results are recorded in this plan.
 
-   **Pending.** Before it: run [`.github/workflows/pod-image.yml`](../../.github/workflows/pod-image.yml) on `main`, make the `codeman-pod` package public (or give Runpod a registry credential), and pin its digest in `POD_IMAGE` ([`src/inference/ollama.ts`](../../src/inference/ollama.ts)). The implementation also left these to check here:
+   **Pending.** Ready since 2026-10-05: the test account exists, with US$ 15 of credits (US$ 10 and a US$ 5 bonus) and no auto-pay, and its key is an organization secret visible to one private test repository. The image was published from 4a910f2 by [`.github/workflows/pod-image.yml`](../../.github/workflows/pod-image.yml), made public, and pinned in `POD_IMAGE` ([`src/inference/ollama.ts`](../../src/inference/ollama.ts)) as `sha256:6a7617fc8772c43600349a971a424bc918982c6d38972e7d1802a1a607e76d27`, after checking that its tag, platform (`linux/amd64`) and `gateway.js` match the commit. The implementation also left these to check here:
    - Runpod accepts the pod's name, environment and container disk as Codeman sends them, and `RUNPOD_API_KEY` lets a pod terminate itself; if not, what happens when its container exits (stopped, or restarted).
    - The least privileged key that creates pods and reads billing; the installation steps ask for **All**.
    - OpenCode 1.18.32 ships `@ai-sdk/openai-compatible`, or installs it at run time inside the sandbox.

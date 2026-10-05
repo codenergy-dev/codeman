@@ -87,7 +87,7 @@ Instead of OpenRouter, Codeman can serve the model itself on GPUs rented from [R
    ```
 
    Choose a GPU with enough memory for the model at its full context length: Codeman loads it with the context length the model supports.
-2. Codeman runs its own pod image, pinned by digest in the version you use. Until that version pins one (`POD_IMAGE` in `src/inference/ollama.ts` is empty), build it with this repository's [pod image workflow](../.github/workflows/pod-image.yml), make the package public in GitHub's container registry (or add a registry credential in Runpod), and set `pod-image: ghcr.io/<owner>/codeman-pod@sha256:<digest>` on the `open-key` step.
+2. Codeman runs its own pod image, `ghcr.io/codenergy-dev/codeman-pod`, public and pinned by digest in the version you use (`POD_IMAGE` in `src/inference/ollama.ts`); there is nothing to set up. To run an image of your own, set `pod-image: <image>@sha256:<digest>` on the `open-key` step.
 
 ### Serverless
 
