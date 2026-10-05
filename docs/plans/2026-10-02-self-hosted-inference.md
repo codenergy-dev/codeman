@@ -2,7 +2,7 @@
 status: blocked
 reason: "Step 8 runs on the Runpod test account, in a test repository, and its results are not recorded yet."
 created_at: 2026-10-02T18:25:00-03:00
-updated_at: 2026-10-05T15:00:00-03:00
+updated_at: 2026-10-05T17:30:00-03:00
 commit: d0637c8
 ---
 
@@ -208,6 +208,12 @@ Decisions 9 to 12 were answered on 2026-10-02 by the responsible person: the rec
    - Checked locally on 2026-10-04, without a GPU: the pod image builds (Node 24.21.0, Ollama 0.35.1); the pod pulls `smollm2:135m`, restarts Ollama with its context length (8192) and serves it; the gateway refuses a wrong token, streams with usage, reports the run in OpenRouter's terms, and the pod stops itself at its run's deadline. Ollama's `prompt_tokens` already counts the cached prompt (435 tokens, 434 of them cached, as `prompt_eval_count` and `prompt_eval_cached_count` say), so input tokens match OpenRouter's. Throughput is measured on streamed requests only: a plain response arrives whole, and measured from its first byte it read 10,000 tokens per second.
    - First run on the test account (2026-10-05): `open-key` failed on `GET /v2/billing` with `400`, and the log said nothing more, since Codeman dropped Runpod's error body. Errors now carry the problem's title, detail and validation errors (RFC 9457; Runpod's requests carry no secret), and timestamps go to the second, as Runpod's examples write them (`2026-10-01T00:00:00Z`), which may have been the cause. The run's `gpu-type` was a display name (`PRO 6000 MIG 48GB`); the API takes the GPU's ID (`NVIDIA RTX PRO 6000 Blackwell Server Edition MIG 2g.48gb`), which the error and the installation steps now say.
    - Second run (2026-10-05): the error said "startTime and endTime must be provided together", against the OpenAPI document, which gives each a default. Billing queries now send both, on the bucket's boundaries; the billing pages in `docs/web/runpod/` record it.
+   - First full run on a pod (2026-10-05), planning a task of a private test repository with `qwen3.8:27b-mtp-q4_K_M` on `NVIDIA RTX PRO 6000 Blackwell Server Edition MIG 2g.48gb`:
+     - The model ran on the GPU: Ollama found it through CUDA (driver 13.2) and loaded all 66 layers there, with the context length the model supports (262,144). Prompts were processed at 1,200 to 1,500 tokens per second and generated at 17 to 41, helped by the model's own speculative decoding. The model's pull took 60 seconds, and the pod served it 1 min 40 s after the gateway started.
+     - Runpod's telemetry showed 0% of VRAM and 100% of CPU. The first is the MIG slice: the host's metrics do not cover it. The second is llama.cpp's 128 threads, sized from the host's 256, spinning while the GPU works; Ollama sets threads per model only, not by environment. Neither slowed the run; limiting the threads is left for later.
+     - The run took 13 min 39 s of agent time, 994,300 input and 19,100 output tokens, a context length of 64,600 and 32 tokens per second. Codeman counted US$ 0.316; the account's balance went from US$ 15.00 to US$ 14.68. The rest is the pod's time between the run's end and its termination, which the next run's billing read adds to the task.
+     - The plan had decisions, so `apply` said the task does not go on, and `release-pod` terminated the pod, as Runpod's log confirmed.
+   - Left for the next runs: a kept pod reused by the task's next run, a row refreshed from a pod's billing, the start time with and without a kept pod, a cancelled workflow, and Serverless.
    - The vLLM worker's `usage`, plain and streamed, and whether `api.runpod.ai` drops a request whose cold start passes 100 seconds.
    - Whether 35 minutes for `open-key` covers a new pod's start, and how often Runpod has no capacity for the chosen GPU: such a failure now blocks the task, as a failed key does; retrying in a later run may suit it better.
 
