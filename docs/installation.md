@@ -92,9 +92,13 @@ Instead of OpenRouter, Codeman can serve the model itself on GPUs rented from [R
 ### Serverless
 
 1. In Runpod's console, create a Serverless endpoint from the vLLM worker, pinned to a release (`runpod/worker-v1-vllm:<version>`), queue-based:
-   - **Active workers:** 0. **Max workers:** 1. **Idle timeout:** 60 seconds or less. **FlashBoot:** on.
+   - **Active workers:** 0. **Max workers:** 1. **FlashBoot:** on.
+   - **Idle timeout:** 300 seconds, the most Codeman accepts. The agent pauses between requests while its tools run, such as the repository's tests; a worker that stops in a pause makes the next request wait for a new start, which is billed too.
+   - **Model:** the same model as `MODEL_NAME`, so Runpod caches it ([cached models](https://docs.runpod.io/serverless/endpoints/model-caching)): workers start on hosts that already hold it, and its download is not billed. Without it, every start downloads the model again, and **Container disk** must hold it whole. A gated or private model also needs a Hugging Face token.
    - Data centers on Secure Cloud.
    - Environment: `MODEL_NAME` (the Hugging Face model), `MAX_MODEL_LEN`, `ENABLE_AUTO_TOOL_CHOICE=true` and the `TOOL_CALL_PARSER` that matches the model, which the agent's tool calls need.
+
+   A request that no worker serves within 5 minutes fails, and the agent sends it again, so a worker must start within that time: in Codeman's tests, Runpod's OpenAI-compatible route stopped waiting for a queued request after 5 minutes, and left it in the endpoint's queue. A cached model keeps starts within it; if requests keep failing, look at the endpoint's workers and logs in Runpod's console, and purge its queue.
 2. Create an API key with **Restricted** permissions and access to this endpoint only, and add it as the secret `CODEMAN_RUNPOD_SERVERLESS_KEY`. Only Codeman's step in the agent job receives it, outside the sandbox.
 3. In `.codeman/settings.yml`:
 

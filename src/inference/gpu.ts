@@ -102,7 +102,7 @@ export async function accountMonthSpent(gpu: GpuProvider, now: Date): Promise<nu
 }
 
 /** Codeman's own limits on a Serverless endpoint; see docs/installation.md. */
-export const MAX_IDLE_TIMEOUT_SECONDS = 60;
+export const MAX_IDLE_TIMEOUT_SECONDS = 300;
 
 /**
  * Why Codeman refuses a Serverless endpoint: it must start workers only on demand (no active

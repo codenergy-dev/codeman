@@ -129,7 +129,7 @@ With `inference: self-hosted`, a task's agents use a model that Codeman serves o
 
 ### Serverless
 
-- `open-key` checks the endpoint before each run: no active workers, at most one worker, a queue, an idle timeout of 60 seconds or less, and a vLLM worker that serves the task's model and calls tools (`ENABLE_AUTO_TOOL_CHOICE` and `TOOL_CALL_PARSER`). Runpod's API does not say whether an endpoint runs on Secure Cloud; the installation steps do.
+- `open-key` checks the endpoint before each run: no active workers, at most one worker, a queue, an idle timeout of 300 seconds or less, and a vLLM worker that serves the task's model and calls tools (`ENABLE_AUTO_TOOL_CHOICE` and `TOOL_CALL_PARSER`). Runpod's API does not say whether an endpoint runs on Secure Cloud; the installation steps do.
 - The agent job runs the gateway on the loopback, with the endpoint's key, and gives the agent a local URL and the run's token. When the agent ends, the gateway stops, and its usage becomes the job's `gateway-usage` output.
 - Runpod bills endpoints by the hour at the finest, so a run's cost is estimated: each request's span plus the idle timeout after it, merged, at the flex price of the endpoint's dearest GPU type. An agent job that fails before the agent reaches its model reports that nothing was used. Without a report, as after a cancelled job, the run counts its whole limit.
 

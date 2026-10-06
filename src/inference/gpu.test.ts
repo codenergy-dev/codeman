@@ -13,9 +13,9 @@ const fine: Endpoint = {
   env: {},
 };
 
-test("accepts an endpoint with flex workers only, one at most, and a short idle timeout", () => {
+test("accepts an endpoint with flex workers only, one at most, and an idle timeout of 5 minutes at most", () => {
   assert.deepEqual(endpointProblems(fine), []);
-  assert.deepEqual(endpointProblems({ ...fine, idleTimeoutSeconds: 60 }), []);
+  assert.deepEqual(endpointProblems({ ...fine, idleTimeoutSeconds: 300 }), []);
 });
 
 test("refuses an endpoint that bills when idle or may run several workers", () => {
@@ -24,13 +24,13 @@ test("refuses an endpoint that bills when idle or may run several workers", () =
     type: "LOAD_BALANCER",
     workersMin: 1,
     workersMax: 3,
-    idleTimeoutSeconds: 300,
+    idleTimeoutSeconds: 600,
   });
   assert.equal(problems.length, 4);
   assert.match(problems[0] ?? "", /queue-based/);
   assert.match(problems[1] ?? "", /active worker/);
   assert.match(problems[2] ?? "", /set max workers to 1/);
-  assert.match(problems[3] ?? "", /300 seconds/);
+  assert.match(problems[3] ?? "", /600 seconds; set it to 300 seconds or less/);
   assert.match(endpointProblems({ ...fine, workersMax: 0 })[0] ?? "", /7 days without requests/);
   assert.match(endpointProblems({ ...fine, idleTimeoutSeconds: undefined })[0] ?? "", /unknown/);
 });

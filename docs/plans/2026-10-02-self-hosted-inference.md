@@ -2,7 +2,7 @@
 status: blocked
 reason: "Step 8 runs on the Runpod test account, in a test repository, and its results are not recorded yet."
 created_at: 2026-10-02T18:25:00-03:00
-updated_at: 2026-10-05T20:00:00-03:00
+updated_at: 2026-10-06T15:45:35-03:00
 commit: d0637c8
 ---
 
@@ -169,6 +169,8 @@ Decisions 9 to 12 were answered on 2026-10-02 by the responsible person: the rec
     Recommendation: (a). The endpoint lives across tasks and costs nothing while idle, which is what makes FlashBoot starts likely; the key the agent job holds can reach that endpoint only. Codeman checks the endpoint's settings at `open` and refuses one that breaks the rules above.
 
     **Answer:** (a).
+
+    **Change** (2026-10-06, asked by the responsible person after step 8's first Serverless run): the idle timeout may be up to 300 seconds, not 60, and the installation steps recommend 300 and a cached model. An agent pauses longer than a minute between requests while its tools run, and a worker stopped in such a pause makes the next request wait for a cold start, which is billed too and took minutes.
 11. **Where the serverless key lives.** Options:
     - (a) In the gateway, which the agent job runs outside the sandbox. The agent gets a local URL and the run's token, valid for that run only and limited by its budget.
     - (b) The agent gets the restricted key, as it gets an OpenRouter key today.
@@ -220,8 +222,15 @@ Decisions 9 to 12 were answered on 2026-10-02 by the responsible person: the rec
    - Full task (2026-10-05), from the answered decisions to `codeman:done`, with routing, code and review on one `NVIDIA RTX PRO 6000 Blackwell Server Edition` (96 GB), kept between runs: 58 to 69 tokens per second, against 32 on the MIG slice. The plan's row was refreshed from its pod's billing, from US$ 0.316 to US$ 0.325 (Runpod: US$ 0.323). Codeman counted US$ 1.897 for the task; Runpod billed US$ 1.968. Two findings, which changed decisions 4 and 5:
      - The month's spend read US$ 0.32 at the code and review runs, while the kept pod had run for 40 minutes: Runpod's billing did not include it yet.
      - So no run saw the kept pod's time between runs, nor after the last run: the US$ 0.07 that the task's total missed.
-   - Left: a cancelled workflow, and Serverless.
-   - The vLLM worker's `usage`, plain and streamed, and whether `api.runpod.ai` drops a request whose cold start passes 100 seconds.
+   - First Serverless run (2026-10-06), planning a task of the test repository with `unsloth/Qwen3.8-27B-NVFP4` on `runpod/worker-v1-vllm:v2.28.0` and 2× RTX 5090 (tensor parallel, idle timeout 60 seconds or less, FlashBoot on, 50 GB of container disk, no cached model). The workflow was cancelled after 19 minutes without progress, and the endpoint's queue purged by hand:
+     - The worker took 22 minutes to serve: for 8 minutes it restarted in a loop, out of disk while downloading the model's 22.5 GB to `/runpod-volume/huggingface-cache`; once it had room, the download and vLLM's start (149 seconds, compilation included) took 4.5 more. FlashBoot did not help: nothing was cached to boot from.
+     - Served, it ran well: 90 to 150 tokens per second, and 73% of the prompt from vLLM's prefix cache.
+     - The agent then ran the repository's tests for 100 seconds without a request. The worker stopped at its idle timeout, 3 seconds after the next request arrived, which then waited for another cold start.
+     - That request, and each retry, ended after exactly 5 minutes with an empty answer (OpenCode recorded steps with no tokens and an unknown finish), and OpenCode sent it again. OpenCode 1.18.32 sets no limit on a whole request, and the gateway's headers and keep-alives keep its other two limits from firing; Runpod's synchronous requests wait 300 seconds at most ([operation reference](https://docs.runpod.io/serverless/endpoints/operation-reference), `/runsync`), so `api.runpod.ai`'s OpenAI-compatible route most likely gave up on the queued job. The jobs it gave up on stayed in the queue.
+     - Changed: decision 10's idle timeout, and the installation steps recommend Runpod's cached models ([cached models](../web/runpod/cached-models.md)), with which a worker starts on a host that holds the model and its download is not billed.
+     - Left: a request still fails when no worker serves within 5 minutes, and leaves its job in the queue. Calling the worker through Runpod's own queue (`/run` and `/stream`, with `/cancel` for jobs nobody waits for) would remove both, at the cost of translating the OpenAI-compatible API in the gateway; not done without review.
+   - Left: a cancelled workflow, and a full Serverless task.
+   - The vLLM worker's `usage`, plain and streamed.
    - Whether 35 minutes for `open-key` covers a new pod's start, and how often Runpod has no capacity for the chosen GPU: such a failure now blocks the task, as a failed key does; retrying in a later run may suit it better.
 
 9. Update [`docs/architecture.md`](../architecture.md) (budget, jobs, a section on self-hosted inference), [`docs/security.md`](../security.md) (where code goes, the new secrets, the public URL, the gateway outside the sandbox), [`docs/installation.md`](../installation.md) (the endpoint's settings, for serverless) and the README's "Getting started". Done when they describe every mode. **Done on 2026-10-04**, with [`docs/development.md`](../development.md) (the gateway's bundle and the pod image). The installation steps state what step 8 has yet to confirm only where it matters to a user: the pod image must be published and pinned first.

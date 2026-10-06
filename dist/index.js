@@ -20733,7 +20733,7 @@ async function accountMonthSpent(gpu, now) {
   }
   return billed + unbilled;
 }
-var MAX_IDLE_TIMEOUT_SECONDS = 60;
+var MAX_IDLE_TIMEOUT_SECONDS = 300;
 function endpointProblems(endpoint2) {
   const problems = [];
   if (endpoint2.type !== void 0 && endpoint2.type !== "QUEUE") {
