@@ -98,7 +98,7 @@ Instead of OpenRouter, Codeman can serve the model itself on GPUs rented from [R
    - Data centers on Secure Cloud.
    - Environment: `MODEL_NAME` (the Hugging Face model), `MAX_MODEL_LEN`, `ENABLE_AUTO_TOOL_CHOICE=true` and the `TOOL_CALL_PARSER` that matches the model, which the agent's tool calls need.
 
-   A request that no worker serves within 5 minutes fails, and the agent sends it again, so a worker must start within that time: in Codeman's tests, Runpod's OpenAI-compatible route stopped waiting for a queued request after 5 minutes, and left it in the endpoint's queue. A cached model keeps starts within it; if requests keep failing, look at the endpoint's workers and logs in Runpod's console, and purge its queue.
+   A request that no worker serves within 5 minutes fails, and the agent sends it again, so a worker must start within that time: in Codeman's tests, Runpod's OpenAI-compatible route stopped waiting for a queued request after 5 minutes, and left it in the endpoint's queue. A cached model saves the download, but vLLM's own start remains: 2.5 minutes for a 27B model on 2× RTX 5090, compilation included. If requests keep failing, look at the endpoint's workers and logs in Runpod's console, and purge its queue.
 2. Create an API key with **Restricted** permissions and access to this endpoint only, and add it as the secret `CODEMAN_RUNPOD_SERVERLESS_KEY`. Only Codeman's step in the agent job receives it, outside the sandbox.
 3. In `.codeman/settings.yml`:
 

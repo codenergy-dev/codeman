@@ -2,7 +2,7 @@
 status: blocked
 reason: "Step 8 runs on the Runpod test account, in a test repository, and its results are not recorded yet."
 created_at: 2026-10-02T18:25:00-03:00
-updated_at: 2026-10-06T15:45:35-03:00
+updated_at: 2026-10-06T16:30:00-03:00
 commit: d0637c8
 ---
 
@@ -223,7 +223,8 @@ Decisions 9 to 12 were answered on 2026-10-02 by the responsible person: the rec
      - The month's spend read US$ 0.32 at the code and review runs, while the kept pod had run for 40 minutes: Runpod's billing did not include it yet.
      - So no run saw the kept pod's time between runs, nor after the last run: the US$ 0.07 that the task's total missed.
    - First Serverless run (2026-10-06), planning a task of the test repository with `unsloth/Qwen3.8-27B-NVFP4` on `runpod/worker-v1-vllm:v2.28.0` and 2× RTX 5090 (tensor parallel, idle timeout 60 seconds or less, FlashBoot on, 50 GB of container disk, no cached model). The workflow was cancelled after 19 minutes without progress, and the endpoint's queue purged by hand:
-     - The worker took 22 minutes to serve: for 8 minutes it restarted in a loop, out of disk while downloading the model's 22.5 GB to `/runpod-volume/huggingface-cache`; once it had room, the download and vLLM's start (149 seconds, compilation included) took 4.5 more. FlashBoot did not help: nothing was cached to boot from.
+     - A run before it was cancelled: its worker restarted in a loop, out of disk while downloading the model's 22.5 GB to `/runpod-volume/huggingface-cache`, until the container disk went up to 50 GB.
+     - In this run, the worker served its first request 4 min 31 s after vLLM started (the time Runpod took to schedule the worker and start its container is not in its log): 63 seconds to start vLLM's processes, 30 seconds to download the model, 7 to load it, 149 to prepare the engine (62 of them compiling, 28 capturing CUDA graphs and about 15 tuning kernels), and 22 to start the server and the worker's checks. The download is a small part; most is vLLM's start, whose caches stay on the worker's container disk and are lost with it. FlashBoot did not help.
      - Served, it ran well: 90 to 150 tokens per second, and 73% of the prompt from vLLM's prefix cache.
      - The agent then ran the repository's tests for 100 seconds without a request. The worker stopped at its idle timeout, 3 seconds after the next request arrived, which then waited for another cold start.
      - That request, and each retry, ended after exactly 5 minutes with an empty answer (OpenCode recorded steps with no tokens and an unknown finish), and OpenCode sent it again. OpenCode 1.18.32 sets no limit on a whole request, and the gateway's headers and keep-alives keep its other two limits from firing; Runpod's synchronous requests wait 300 seconds at most ([operation reference](https://docs.runpod.io/serverless/endpoints/operation-reference), `/runsync`), so `api.runpod.ai`'s OpenAI-compatible route most likely gave up on the queued job. The jobs it gave up on stayed in the queue.
