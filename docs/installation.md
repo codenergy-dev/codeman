@@ -68,7 +68,7 @@ The agent job needs a Linux runner (x64 or arm64).
 
 ## Self-hosted inference on Runpod
 
-Instead of OpenRouter, Codeman can serve the model itself on GPUs rented from [Runpod](https://www.runpod.io): on a pod it creates for the task (`gpu-mode: pod`), or on the workers of a Serverless endpoint you create (`gpu-mode: serverless`). See [architecture](architecture.md#self-hosted-inference) for how it works and what it costs, and [security](security.md) for the secrets. OpenRouter's management key is not needed then; the encryption secret still is.
+Instead of OpenRouter, Codeman can serve the model itself on GPUs rented from [Runpod](https://www.runpod.io): on a pod it creates for the task (`gpu-mode: pod`), or on the workers of a Serverless endpoint you create (`gpu-mode: serverless`). See [architecture](architecture.md#self-hosted-inference) for how it works, what it costs and [which to choose](architecture.md#choosing), and [security](security.md) for the secrets. OpenRouter's management key is not needed then; the encryption secret still is.
 
 ### The account
 

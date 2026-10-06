@@ -99,7 +99,15 @@ With `inference: self-hosted`, a task's agents use a model that Codeman serves o
 | Mode (`gpu-mode`) | GPU | Engine | Billed | Start |
 | --- | --- | --- | --- | --- |
 | `pod` (default) | A pod Codeman creates, with the task's `gpu-type`, on Secure Cloud | Ollama, in Codeman's pod image | Every second the pod exists, from its creation | Minutes, unless the task's pod was kept |
-| `serverless` | The workers of an endpoint a maintainer created ([installation](installation.md#self-hosted-inference-on-runpod)) | Runpod's vLLM worker | Every second a worker runs, its idle timeout included | Seconds when the endpoint ran recently |
+| `serverless` | The workers of an endpoint a maintainer created ([installation](installation.md#self-hosted-inference-on-runpod)) | Runpod's vLLM worker | Every second a worker runs, its start and idle timeout included | Minutes, while vLLM prepares the model, unless a worker is still up |
+
+### Choosing
+
+What Codeman's tests on Runpod showed (step 8 of the plan):
+
+- **OpenRouter** bills tokens only: nothing for starts or for the time the agent spends running tools. For a task at a time, it gives the most for the money and time, with the strongest models.
+- **A pod** bills its whole life, used or not, but not per token: long contexts and many requests cost the same. It pays off when a smaller model does the work and the task's runs follow each other, since the task keeps its pod between runs. A pod serves one task: another task gets a pod of its own, and a repository runs one run at a time, so tasks do not share a pod's cost.
+- **Serverless** bills each worker's start (minutes, compilation included), its requests and the idle timeout after its last one, at the flex price. It cost the most: US$ 1.96 for three runs of a task, against US$ 1.90 for a four-run task on a pod, though twice as fast on its GPUs. It pays off only when its worker stays busy, such as one endpoint serving several repositories at once (a worker takes several requests at once), so that starts and idle time are shared; never for a single task. Each repository's runs count the worker time they used, so time shared between them is counted by each.
 
 ### Layers
 
