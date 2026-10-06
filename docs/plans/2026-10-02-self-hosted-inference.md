@@ -1,8 +1,8 @@
 ---
 status: blocked
-reason: "Step 8 runs on the Runpod test account, in a test repository, and its results are not recorded yet."
+reason: "Step 8: a workflow cancelled while its pod serves, and a pod's self-termination, are left to test on the Runpod test account."
 created_at: 2026-10-02T18:25:00-03:00
-updated_at: 2026-10-06T17:30:00-03:00
+updated_at: 2026-10-06T20:00:00-03:00
 commit: d0637c8
 ---
 
@@ -233,9 +233,10 @@ Decisions 9 to 12 were answered on 2026-10-02 by the responsible person: the rec
      - Changed: decision 10's idle timeout, and the installation steps recommend Runpod's cached models ([cached models](../web/runpod/cached-models.md)), with which a worker starts on a host that holds the model and its download is not billed.
      - A request still failed when no worker served within 5 minutes, and left its job in the queue.
    - Second Serverless run (2026-10-06), with an idle timeout of 300 seconds: Runpod started the worker on another host, where it restarted in a loop for minutes without serving. Each start failed at `cudaGetDeviceCount()` with CUDA's error 804 ("forward compatibility was attempted on non supported HW"): the host's driver is older than the CUDA the image needs (its `NVIDIA_REQUIRE_CUDA` says `cuda>=13.0`), and consumer GPUs cannot run a newer CUDA on an older driver. The endpoint's CUDA version filter keeps workers off such hosts, and the installation steps now set it. OpenCode's request was cut every 5 minutes again, and 4 or 5 jobs piled up in the queue. So the gateway now goes through Runpod's job queue and cancels the jobs nobody waits for (decision 9's change).
-   - Left: a cancelled workflow, and a full Serverless task.
-   - The vLLM worker's `usage`, plain and streamed.
-   - Whether 35 minutes for `open-key` covers a new pod's start, and how often Runpod has no capacity for the chosen GPU: such a failure now blocks the task, as a failed key does; retrying in a later run may suit it better.
+   - Serverless task (2026-10-06), through the job queue, with the CUDA filter set: plan, routing and design ran without a stall, in 22 min 23 s of agent time, with 4.0 million input and 86,300 output tokens, contexts up to 113,200 tokens and 127 to 145 tokens per second, twice the pods' speed. The vLLM worker's streamed `usage` gave every count. Codeman counted US$ 1.961, and refused the next run until the task's budget is raised, as it should at US$ 2. The responsible person stopped there: Serverless works as planned, and costs more than a pod for an agent's work (the pods' four-run task cost US$ 1.897), since each run also bills the idle timeout after its last request and the workers' starts. The month's spend read US$ 4.43 at the first two runs: Runpod bills endpoints by the hour at the finest, so a Serverless run reaches the month's spend late; the task's total does not depend on it.
+   - Confirmed by these runs: Runpod accepts the pods as Codeman creates them; OpenCode 1.18.32 reaches the gateway through `@ai-sdk/openai-compatible`; a pod serves its model within 2 minutes, well within `open-key`'s 35.
+   - Left: a workflow cancelled while its pod serves, and a pod's self-termination with `RUNPOD_API_KEY`, the guard when no job terminates it.
+   - Not checked, and left as they are: the least privileged key for pods (the installation steps ask for **All**); how often Runpod has no capacity for the chosen GPU, which now blocks the task as a failed key does; the vLLM worker's `usage` in a plain response, which OpenCode does not ask for.
 
 9. Update [`docs/architecture.md`](../architecture.md) (budget, jobs, a section on self-hosted inference), [`docs/security.md`](../security.md) (where code goes, the new secrets, the public URL, the gateway outside the sandbox), [`docs/installation.md`](../installation.md) (the endpoint's settings, for serverless) and the README's "Getting started". Done when they describe every mode. **Done on 2026-10-04**, with [`docs/development.md`](../development.md) (the gateway's bundle and the pod image). The installation steps state what step 8 has yet to confirm only where it matters to a user: the pod image must be published and pinned first.
 10. Rebuild `dist/`, run `npm run check`. Done when it passes. **Done on 2026-10-04**: 310 tests pass. A review of the whole change added two commits: the gateway reaches the engine with `node:http` and the pod pulls its model as a stream, since `fetch` gives up on a response that has not started within five minutes; and an agent job that fails before reaching its model reports nothing used.
