@@ -194,7 +194,7 @@ test("reads a Serverless endpoint's workers, and prices its dearest GPU type", a
     env: { MODEL_NAME: "org/model" },
   });
   near(await runpod.serverless.price("ep1"), 0.00068);
-  assert.equal(runpod.serverless.openAiUrl("ep1"), "https://api.runpod.ai/v2/ep1/openai/v1");
+  assert.equal(runpod.serverless.queueUrl("ep1"), "https://api.runpod.ai/v2/ep1");
 });
 
 test("reports what a failure's problem says, and nothing of another body", async () => {

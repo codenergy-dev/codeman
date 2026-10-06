@@ -71,8 +71,8 @@ export interface ServerlessHost {
   endpoint(id: string): Promise<Endpoint>;
   /** What one worker of the endpoint costs, in USD per second: its dearest GPU type. */
   price(endpoint: string): Promise<number>;
-  /** The OpenAI-compatible API of the endpoint's workers. */
-  openAiUrl(endpoint: string): string;
+  /** The endpoint's job queue, which the agent job's gateway sends requests through. */
+  queueUrl(endpoint: string): string;
 }
 
 /**

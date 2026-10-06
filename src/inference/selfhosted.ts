@@ -368,7 +368,7 @@ export function parseHandle(text: string): PodHandle | ServerlessHandle {
 export interface ServerlessHandle {
   mode: "serverless";
   endpoint: string;
-  /** The endpoint's OpenAI-compatible API. */
+  /** The endpoint's job queue. */
   url: string;
   pricePerSecond: number;
   idleSeconds: number;
@@ -434,7 +434,7 @@ export class ServerlessInference implements InferenceProvider {
     const handle: ServerlessHandle = {
       mode: "serverless",
       endpoint: id,
-      url: this.#host.openAiUrl(id),
+      url: this.#host.queueUrl(id),
       pricePerSecond: await this.#host.price(id),
       idleSeconds: endpoint.idleTimeoutSeconds ?? 0,
       limit: run.limit,

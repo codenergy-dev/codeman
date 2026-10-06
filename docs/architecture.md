@@ -106,7 +106,7 @@ With `inference: self-hosted`, a task's agents use a model that Codeman serves o
 | Interface | Covers | Implementations |
 | --- | --- | --- |
 | `InferenceProvider` ([`src/inference/provider.ts`](../src/inference/provider.ts)) | What the key jobs use: the task's and the month's spend, opening a run with a limit (a handle, a credential, an API) and closing it (its usage). | OpenRouter; pods and Serverless ([`selfhosted.ts`](../src/inference/selfhosted.ts)) |
-| `GpuProvider` ([`gpu.ts`](../src/inference/gpu.ts)) | Pods (price, create, get, list, terminate, URL, billing) and Serverless endpoints (settings, price, OpenAI URL), and the account's month. | Runpod's REST API v2 ([`runpod.ts`](../src/inference/runpod.ts)) |
+| `GpuProvider` ([`gpu.ts`](../src/inference/gpu.ts)) | Pods (price, create, get, list, terminate, URL, billing) and Serverless endpoints (settings, price, job queue URL), and the account's month. | Runpod's REST API v2 ([`runpod.ts`](../src/inference/runpod.ts)) |
 | `InferenceEngine` ([`engine.ts`](../src/inference/engine.ts)) | Model names and usage from responses. | Ollama, vLLM |
 | Gateway ([`src/gateway/`](../src/gateway/)) | In front of the engine: the run's token, forwarding, a record per request, the budget limit, and usage in OpenRouter's terms. | One program, in the pod or in the agent job |
 
@@ -131,6 +131,7 @@ With `inference: self-hosted`, a task's agents use a model that Codeman serves o
 
 - `open-key` checks the endpoint before each run: no active workers, at most one worker, a queue, an idle timeout of 300 seconds or less, and a vLLM worker that serves the task's model and calls tools (`ENABLE_AUTO_TOOL_CHOICE` and `TOOL_CALL_PARSER`). Runpod's API does not say whether an endpoint runs on Secure Cloud; the installation steps do.
 - The agent job runs the gateway on the loopback, with the endpoint's key, and gives the agent a local URL and the run's token. When the agent ends, the gateway stops, and its usage becomes the job's `gateway-usage` output.
+- The gateway sends each request through the endpoint's job queue ([`src/gateway/queue.ts`](../src/gateway/queue.ts); [operation reference](web/runpod/operation-reference.md)): it queues a job (`/run`) and reads its output (`/stream`) until the job ends. A job waits as long as no worker serves it, while the gateway keeps a streamed request alive; Runpod's OpenAI-compatible route gave up after 5 minutes. A job nobody waits for anymore, because the agent gave up on its request or the run ended, is cancelled (`/cancel`), so it neither runs later nor piles up in the queue. A job lives an hour at most.
 - Runpod bills endpoints by the hour at the finest, so a run's cost is estimated: each request's span plus the idle timeout after it, merged, at the flex price of the endpoint's dearest GPU type. An agent job that fails before the agent reaches its model reports that nothing was used. Without a report, as after a cancelled job, the run counts its whole limit.
 
 ### Spend

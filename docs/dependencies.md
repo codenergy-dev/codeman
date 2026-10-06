@@ -50,7 +50,7 @@ Codeman calls these APIs with `fetch` or through the packages above. Their docum
 | OpenRouter API | Task keys (list, create, get, disable) and analytics (tokens, requests, throughput, largest prompt) | [`docs/web/openrouter/`](web/openrouter/) |
 | npm registry | Downloading the harness's pinned package and checking its integrity | [`docs/web/npm/`](web/npm/) |
 | OpenCode | The harness's configuration, permissions, providers and `run` command | [`docs/web/opencode/`](web/opencode/) |
-| Runpod REST API v2 | Self-hosted inference: pods (create, get, list, terminate), Serverless endpoints (get), GPU prices, and billing (account, pods) | [`docs/web/runpod/`](web/runpod/) |
+| Runpod REST API v2 | Self-hosted inference: pods (create, get, list, terminate), Serverless endpoints (get; and the job queue: run, stream, cancel), GPU prices, and billing (account, pods) | [`docs/web/runpod/`](web/runpod/) |
 | Ollama | The engine in Codeman's pod image: pulling a model, its context length, and its OpenAI-compatible API | [`docs/web/ollama/`](web/ollama/) |
 
 ## Agent harness: OpenCode
@@ -93,7 +93,7 @@ Audited on 2026-10-03 for the [self-hosted inference plan](plans/2026-10-02-self
 
 ### Runpod's vLLM worker
 
-- **What and why:** Runpod's official Serverless worker, [runpod-workers/worker-vllm](https://github.com/runpod-workers/worker-vllm), running vLLM, with an OpenAI-compatible route ([OpenAI API compatibility](web/runpod/openai-api-compatibility.md)). MIT, maintained by Runpod, released weekly (v2.28.0 on 2026-09-28).
+- **What and why:** Runpod's official Serverless worker, [runpod-workers/worker-vllm](https://github.com/runpod-workers/worker-vllm), running vLLM. Codeman sends it OpenAI-compatible requests as jobs, `{"openai_route": ..., "openai_input": ...}`, the shape Runpod's own OpenAI-compatible route sends ([`src/handler.py`](https://github.com/runpod-workers/worker-vllm/blob/v2.28.0/src/handler.py) at v2.28.0); a streamed request's output is vLLM's own events. MIT, maintained by Runpod, released weekly (v2.28.0 on 2026-09-28).
 - **How:** a maintainer chooses it, pinned to a release image (`runpod/worker-v1-vllm:<version>`), when creating the endpoint in Runpod's console. Codeman never runs it and does not install it; it checks the endpoint's settings when a run opens.
 
 ### Codeman's pod image

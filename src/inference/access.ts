@@ -1,5 +1,6 @@
 import type { Server } from "node:http";
 import { Gateway, sha256 } from "../gateway/gateway.ts";
+import { RunpodQueue } from "../gateway/queue.ts";
 import type { GatewayUsage } from "../gateway/usage.ts";
 import type { InferenceEngine } from "./engine.ts";
 import { parseHandle } from "./selfhosted.ts";
@@ -28,6 +29,8 @@ export interface AccessInputs {
   serverlessKey?: string | undefined;
   engine?: InferenceEngine | undefined;
   now?: () => number;
+  /** For tests: how often to ask Runpod for a job's output. */
+  pollMs?: number;
   log?: (message: string) => void;
 }
 
@@ -55,9 +58,14 @@ export async function agentAccess(inputs: AccessInputs): Promise<AgentAccess> {
   if (!inputs.serverlessKey) throw new Error("The Serverless endpoint's key is missing.");
   if (!inputs.engine) throw new Error("The Serverless engine is missing.");
   const now = inputs.now ?? Date.now;
+  // Runpod is the only Serverless provider; its queue waits for a worker as long as it takes.
+  const queue = new RunpodQueue(handle.url, inputs.serverlessKey, {
+    pollMs: inputs.pollMs,
+    log: inputs.log,
+  });
   const gateway = new Gateway({
     upstream: handle.url,
-    upstreamHeaders: { Authorization: `Bearer ${inputs.serverlessKey}` },
+    send: queue.send,
     engine: inputs.engine,
     now,
     log: inputs.log,
@@ -81,6 +89,8 @@ export async function agentAccess(inputs: AccessInputs): Promise<AgentAccess> {
     finish: async () => {
       const usage = gateway.endRun();
       await close(server);
+      // A job the agent left behind would run later, at the account's cost.
+      await queue.settle();
       return usage;
     },
   };

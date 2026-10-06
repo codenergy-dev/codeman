@@ -48,11 +48,32 @@ export interface RunSettings {
   start: number;
 }
 
+/** A request on its way to the engine: an OpenAI-compatible route, such as `/v1/models`. */
+export interface UpstreamRequest {
+  method: string;
+  path: string;
+  body: string | undefined;
+  /** Aborted when the agent stops waiting. */
+  signal: AbortSignal;
+}
+
+/** The engine's answer; the gateway waits for it, and keeps a stream alive meanwhile. */
+export interface UpstreamResponse {
+  status: number;
+  contentType: string | undefined;
+  body: AsyncIterable<Uint8Array | string>;
+}
+
+/** How the gateway reaches the engine, when not by plain HTTP. */
+export type Upstream = (request: UpstreamRequest) => Promise<UpstreamResponse>;
+
 export interface GatewayOptions {
   /** The engine's OpenAI-compatible API, such as `http://127.0.0.1:11434/v1`. */
   upstream: string;
   /** Headers for the engine, such as a Serverless key. Never shown to the agent. */
   upstreamHeaders?: Record<string, string>;
+  /** Reaches the engine instead of HTTP to `upstream`, such as through a provider's job queue. */
+  send?: Upstream;
   engine: InferenceEngine;
   /** SHA-256, in hex, of the token that may manage runs over HTTP; none disables those routes. */
   adminSha256?: string | undefined;
@@ -226,21 +247,22 @@ export class Gateway {
       : undefined;
 
     try {
-      const upstream = await forward(`${this.#options.upstream}${path.slice("/v1".length)}`, {
+      const send = this.#options.send ?? this.#http;
+      const upstream = await send({
         method: request.method ?? "GET",
-        headers: {
-          ...(body === undefined ? {} : { "Content-Type": "application/json" }),
-          ...this.#options.upstreamHeaders,
-        },
+        path,
         body,
         signal: abort.signal,
       });
-      const contentType = header(upstream.headers["content-type"]) ?? "application/json";
-      const status = upstream.statusCode ?? 502;
+      const contentType = upstream.contentType ?? "application/json";
+      const status = upstream.status;
+      const decoder = new TextDecoder();
+      const decode = (chunk: Uint8Array | string) =>
+        typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
       if (status < 200 || status >= 300) {
         let text = "";
-        for await (const chunk of upstream as AsyncIterable<Buffer>) {
-          if (text.length < 4000) text += chunk.toString("utf8");
+        for await (const chunk of upstream.body) {
+          if (text.length < 4000) text += decode(chunk);
         }
         text = text.slice(0, 4000);
         record.end = this.#now();
@@ -258,11 +280,10 @@ export class Gateway {
       if (!response.headersSent) {
         response.writeHead(status, { "Content-Type": contentType, "Cache-Control": "no-cache" });
       }
-      const decoder = new TextDecoder();
       let text = "";
-      for await (const chunk of upstream as AsyncIterable<Buffer>) {
+      for await (const chunk of upstream.body) {
         record.firstByte ??= this.#now();
-        const part = decoder.decode(chunk, { stream: true });
+        const part = decode(chunk);
         if (stream) reader.feed(part);
         else text += part;
         response.write(chunk);
@@ -287,6 +308,24 @@ export class Gateway {
       this.lastActivity = this.#now();
     }
   }
+
+  /** The engine at `upstream`, over HTTP. */
+  readonly #http: Upstream = async (request) => {
+    const response = await forward(`${this.#options.upstream}${request.path.slice("/v1".length)}`, {
+      method: request.method,
+      headers: {
+        ...(request.body === undefined ? {} : { "Content-Type": "application/json" }),
+        ...this.#options.upstreamHeaders,
+      },
+      body: request.body,
+      signal: request.signal,
+    });
+    return {
+      status: response.statusCode ?? 502,
+      contentType: header(response.headers["content-type"]),
+      body: response as AsyncIterable<Buffer>,
+    };
+  };
 
   #log(message: string): void {
     this.#options.log?.(message);

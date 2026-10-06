@@ -53,7 +53,7 @@ test("a run checks the endpoint and prices its workers; the agent gets only a to
   assert.deepEqual(handle, {
     mode: "serverless",
     endpoint: "ep1",
-    url: "https://serverless.test/ep1/openai/v1",
+    url: "https://serverless.test/ep1",
     pricePerSecond: 0.0003,
     idleSeconds: 5,
     limit: 1.6,
@@ -114,20 +114,39 @@ after(() => {
   for (const server of servers) server.close();
 });
 
-/** The endpoint's OpenAI-compatible API: answers every request, and keeps what it was sent. */
-async function endpointApi(): Promise<{ url: string; requests: IncomingMessage["headers"][] }> {
+/**
+ * The endpoint's job queue: each job completes with a chat answer, unless `hold` keeps it queued
+ * until cancelled. Keeps the headers of each job's submission, and the jobs cancelled.
+ */
+async function endpointApi(hold = false) {
   const requests: IncomingMessage["headers"][] = [];
+  const cancelled: string[] = [];
+  let jobs = 0;
   const server = createServer(async (request, response) => {
     for await (const _ of request);
-    requests.push(request.headers);
+    const path = request.url ?? "";
+    let body: unknown;
+    if (path === "/run") {
+      requests.push(request.headers);
+      body = { id: `job${++jobs}`, status: "IN_QUEUE" };
+    } else if (path.startsWith("/cancel/")) {
+      cancelled.push(path.slice("/cancel/".length));
+      body = { status: "CANCELLED" };
+    } else if (cancelled.includes(path.slice("/stream/".length))) {
+      body = { status: "CANCELLED", stream: [] };
+    } else if (hold) {
+      body = { status: "IN_QUEUE", stream: [] };
+    } else {
+      const answer = { choices: [], usage: { prompt_tokens: 10, completion_tokens: 2 } };
+      body = { status: "COMPLETED", stream: [{ output: answer }] };
+    }
     response.writeHead(200, { "Content-Type": "application/json" });
-    response.end(
-      JSON.stringify({ choices: [], usage: { prompt_tokens: 10, completion_tokens: 2 } }),
-    );
+    response.end(JSON.stringify(body));
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   servers.push(server);
-  return { url: `http://127.0.0.1:${(server.address() as AddressInfo).port}/openai/v1`, requests };
+  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  return { url, requests, cancelled };
 }
 
 test("the agent job's gateway holds the endpoint's key; the agent sees a local URL and its token", async () => {
@@ -147,6 +166,7 @@ test("the agent job's gateway holds the endpoint's key; the agent sees a local U
     handle: JSON.stringify(handle),
     serverlessKey: "rpa_endpoint_key",
     engine: vllm,
+    pollMs: 1,
   });
   const { finish, ...seen } = access;
   assert.ok(!JSON.stringify(seen).includes("rpa_endpoint_key"));
@@ -189,6 +209,7 @@ test("the agent job's gateway stops serving once the run's estimated cost reache
     serverlessKey: "k",
     engine: vllm,
     now: () => now,
+    pollMs: 1,
   });
   const call = () =>
     fetch(`${access.baseUrl}/chat/completions`, {
@@ -207,6 +228,45 @@ test("the agent job's gateway stops serving once the run's estimated cost reache
   assert.equal(await call(), 402);
   assert.equal(api.requests.length, 2);
   await access.finish();
+});
+
+test("the agent job's gateway cancels the jobs the agent left waiting when the run ends", async () => {
+  const api = await endpointApi(true);
+  const access = await agentAccess({
+    mode: "serverless",
+    credential: "t",
+    handle: JSON.stringify({
+      mode: "serverless",
+      endpoint: "ep1",
+      url: api.url,
+      pricePerSecond: 0.0003,
+      idleSeconds: 5,
+      limit: 1,
+    }),
+    serverlessKey: "k",
+    engine: vllm,
+    pollMs: 1,
+  });
+  // A request waits in the queue; the agent gives up on it, then the run ends with another.
+  const gaveUp = new AbortController();
+  const first = fetch(`${access.baseUrl}/chat/completions`, {
+    method: "POST",
+    headers: { Authorization: "Bearer t" },
+    body: JSON.stringify({ stream: true }),
+    signal: gaveUp.signal,
+  }).catch(() => undefined);
+  const second = fetch(`${access.baseUrl}/chat/completions`, {
+    method: "POST",
+    headers: { Authorization: "Bearer t" },
+    body: JSON.stringify({ stream: true }),
+  }).catch(() => undefined);
+  while (api.requests.length < 2) await new Promise((resolve) => setTimeout(resolve, 5));
+  gaveUp.abort();
+  await first;
+  while (api.cancelled.length < 1) await new Promise((resolve) => setTimeout(resolve, 5));
+  await access.finish();
+  await second;
+  assert.deepEqual(api.cancelled.sort(), ["job1", "job2"]);
 });
 
 test("OpenRouter and pods need nothing from the agent job but their credential", async () => {

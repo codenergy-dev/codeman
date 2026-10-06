@@ -71,7 +71,7 @@ var Runpod = class {
     this.serverless = {
       endpoint: (id) => this.#endpoint(id),
       price: (id) => this.#serverlessPrice(id),
-      openAiUrl: (id) => `https://api.runpod.ai/v2/${encodeURIComponent(id)}/openai/v1`
+      queueUrl: (id) => `https://api.runpod.ai/v2/${encodeURIComponent(id)}`
     };
   }
   /**
@@ -484,21 +484,21 @@ var Gateway = class {
       Math.max(1, Math.floor((this.#options.keepAliveMs ?? KEEP_ALIVE_MS) / 2))
     ) : void 0;
     try {
-      const upstream = await forward(`${this.#options.upstream}${path.slice("/v1".length)}`, {
+      const send2 = this.#options.send ?? this.#http;
+      const upstream = await send2({
         method: request.method ?? "GET",
-        headers: {
-          ...body === void 0 ? {} : { "Content-Type": "application/json" },
-          ...this.#options.upstreamHeaders
-        },
+        path,
         body,
         signal: abort.signal
       });
-      const contentType = header(upstream.headers["content-type"]) ?? "application/json";
-      const status = upstream.statusCode ?? 502;
+      const contentType = upstream.contentType ?? "application/json";
+      const status = upstream.status;
+      const decoder = new TextDecoder();
+      const decode = (chunk) => typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
       if (status < 200 || status >= 300) {
         let text2 = "";
-        for await (const chunk of upstream) {
-          if (text2.length < 4e3) text2 += chunk.toString("utf8");
+        for await (const chunk of upstream.body) {
+          if (text2.length < 4e3) text2 += decode(chunk);
         }
         text2 = text2.slice(0, 4e3);
         record.end = this.#now();
@@ -517,11 +517,10 @@ var Gateway = class {
       if (!response.headersSent) {
         response.writeHead(status, { "Content-Type": contentType, "Cache-Control": "no-cache" });
       }
-      const decoder = new TextDecoder();
       let text = "";
-      for await (const chunk of upstream) {
+      for await (const chunk of upstream.body) {
         record.firstByte ??= this.#now();
-        const part = decoder.decode(chunk, { stream: true });
+        const part = decode(chunk);
         if (stream) reader.feed(part);
         else text += part;
         response.write(chunk);
@@ -548,6 +547,23 @@ var Gateway = class {
       this.lastActivity = this.#now();
     }
   }
+  /** The engine at `upstream`, over HTTP. */
+  #http = async (request) => {
+    const response = await forward(`${this.#options.upstream}${request.path.slice("/v1".length)}`, {
+      method: request.method,
+      headers: {
+        ...request.body === void 0 ? {} : { "Content-Type": "application/json" },
+        ...this.#options.upstreamHeaders
+      },
+      body: request.body,
+      signal: request.signal
+    });
+    return {
+      status: response.statusCode ?? 502,
+      contentType: header(response.headers["content-type"]),
+      body: response
+    };
+  };
   #log(message) {
     this.#options.log?.(message);
   }

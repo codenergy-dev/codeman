@@ -12570,11 +12570,11 @@ var require_response = __commonJS({
       };
     }
     function makeNetworkError(reason) {
-      const isError = isErrorLike(reason);
+      const isError2 = isErrorLike(reason);
       return makeResponse({
         type: "error",
         status: 0,
-        error: isError ? reason : new Error(reason ? String(reason) : reason),
+        error: isError2 ? reason : new Error(reason ? String(reason) : reason),
         aborted: reason && reason.name === "AbortError"
       });
     }
@@ -20156,7 +20156,7 @@ var Runpod = class {
     this.serverless = {
       endpoint: (id) => this.#endpoint(id),
       price: (id) => this.#serverlessPrice(id),
-      openAiUrl: (id) => `https://api.runpod.ai/v2/${encodeURIComponent(id)}/openai/v1`
+      queueUrl: (id) => `https://api.runpod.ai/v2/${encodeURIComponent(id)}`
     };
   }
   /**
@@ -20572,21 +20572,21 @@ var Gateway = class {
       Math.max(1, Math.floor((this.#options.keepAliveMs ?? KEEP_ALIVE_MS) / 2))
     ) : void 0;
     try {
-      const upstream = await forward(`${this.#options.upstream}${path.slice("/v1".length)}`, {
+      const send2 = this.#options.send ?? this.#http;
+      const upstream = await send2({
         method: request2.method ?? "GET",
-        headers: {
-          ...body === void 0 ? {} : { "Content-Type": "application/json" },
-          ...this.#options.upstreamHeaders
-        },
+        path,
         body,
         signal: abort.signal
       });
-      const contentType = header(upstream.headers["content-type"]) ?? "application/json";
-      const status2 = upstream.statusCode ?? 502;
+      const contentType = upstream.contentType ?? "application/json";
+      const status2 = upstream.status;
+      const decoder = new TextDecoder();
+      const decode = (chunk) => typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
       if (status2 < 200 || status2 >= 300) {
         let text2 = "";
-        for await (const chunk of upstream) {
-          if (text2.length < 4e3) text2 += chunk.toString("utf8");
+        for await (const chunk of upstream.body) {
+          if (text2.length < 4e3) text2 += decode(chunk);
         }
         text2 = text2.slice(0, 4e3);
         record.end = this.#now();
@@ -20605,11 +20605,10 @@ var Gateway = class {
       if (!response.headersSent) {
         response.writeHead(status2, { "Content-Type": contentType, "Cache-Control": "no-cache" });
       }
-      const decoder = new TextDecoder();
       let text = "";
-      for await (const chunk of upstream) {
+      for await (const chunk of upstream.body) {
         record.firstByte ??= this.#now();
-        const part = decoder.decode(chunk, { stream: true });
+        const part = decode(chunk);
         if (stream) reader.feed(part);
         else text += part;
         response.write(chunk);
@@ -20636,6 +20635,23 @@ var Gateway = class {
       this.lastActivity = this.#now();
     }
   }
+  /** The engine at `upstream`, over HTTP. */
+  #http = async (request2) => {
+    const response = await forward(`${this.#options.upstream}${request2.path.slice("/v1".length)}`, {
+      method: request2.method,
+      headers: {
+        ...request2.body === void 0 ? {} : { "Content-Type": "application/json" },
+        ...this.#options.upstreamHeaders
+      },
+      body: request2.body,
+      signal: request2.signal
+    });
+    return {
+      status: response.statusCode ?? 502,
+      contentType: header(response.headers["content-type"]),
+      body: response
+    };
+  };
   #log(message) {
     this.#options.log?.(message);
   }
@@ -21054,7 +21070,7 @@ var ServerlessInference = class {
     const handle = {
       mode: "serverless",
       endpoint: id,
-      url: this.#host.openAiUrl(id),
+      url: this.#host.queueUrl(id),
       pricePerSecond: await this.#host.price(id),
       idleSeconds: endpoint2.idleTimeoutSeconds ?? 0,
       limit: run2.limit,
@@ -26230,6 +26246,177 @@ var openCode = {
 // src/harness/index.ts
 var harnesses = { [openCode.name]: openCode };
 
+// src/gateway/queue.ts
+var POLL_MS = 500;
+var MAX_POLL_FAILURES = 5;
+var POLICY = { executionTimeout: 30 * 6e4, ttl: 60 * 6e4 };
+var FINAL = /* @__PURE__ */ new Set(["COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT"]);
+var RunpodQueue = class {
+  #base;
+  #key;
+  #fetch;
+  #pollMs;
+  #log;
+  /** Jobs submitted and not over yet. */
+  #active = /* @__PURE__ */ new Set();
+  #cancels = /* @__PURE__ */ new Set();
+  /** `base` is the endpoint's API, `https://api.runpod.ai/v2/<endpoint-id>`. */
+  constructor(base, key, options = {}) {
+    this.#base = base;
+    this.#key = key;
+    this.#fetch = options.fetch ?? fetch;
+    this.#pollMs = options.pollMs ?? POLL_MS;
+    this.#log = options.log ?? (() => {
+    });
+  }
+  /** Cancels the jobs not over yet, as when the run ends, and waits for every cancellation. */
+  async settle() {
+    for (const id of this.#active) this.#cancel(id);
+    await Promise.all([...this.#cancels]);
+  }
+  send = async (request2) => {
+    const input = request2.body === void 0 ? { openai_route: request2.path } : { openai_route: request2.path, openai_input: JSON.parse(request2.body) };
+    const submitted = await this.#call("POST", "/run", request2.signal, { input, policy: POLICY });
+    if (!submitted.ok) return failed(submitted.status, await submitted.text());
+    const id = (await submitted.json()).id;
+    if (typeof id !== "string") return failed(502, "Runpod did not return the job's ID.");
+    this.#active.add(id);
+    try {
+      let page = await this.#poll(id, request2.signal);
+      let outputs = (page.stream ?? []).map((chunk) => chunk.output);
+      while (outputs.length === 0 && !this.#ended(id, page)) {
+        await sleep3(this.#pollMs, request2.signal);
+        page = await this.#poll(id, request2.signal);
+        outputs = (page.stream ?? []).map((chunk) => chunk.output);
+      }
+      const first = outputs[0];
+      if (first === void 0) return failed(502, jobFailure(id, page));
+      if (isError(first)) {
+        if (!this.#ended(id, page)) this.#cancel(id);
+        return failed(502, JSON.stringify(first));
+      }
+      return {
+        status: 200,
+        contentType: typeof first === "string" ? "text/event-stream" : "application/json",
+        body: this.#body(id, request2.signal, outputs, page)
+      };
+    } catch (error3) {
+      this.#cancel(id);
+      throw error3;
+    }
+  };
+  /** Whether the job is over, as `page` says; it then leaves the active jobs. */
+  #ended(id, page) {
+    const ended = FINAL.has(page.status ?? "");
+    if (ended) this.#active.delete(id);
+    return ended;
+  }
+  /** The job's outputs, read until it ends; a job left unfinished is cancelled. */
+  async *#body(id, signal, first, firstPage) {
+    try {
+      let outputs = first;
+      let page = firstPage;
+      for (; ; ) {
+        for (const output of outputs) {
+          if (isError(output)) throw new Error(`The worker failed: ${JSON.stringify(output)}`);
+          yield typeof output === "string" ? output : JSON.stringify(output);
+        }
+        if (this.#ended(id, page)) {
+          if (page.status !== "COMPLETED") throw new Error(jobFailure(id, page));
+          return;
+        }
+        await sleep3(this.#pollMs, signal);
+        page = await this.#poll(id, signal);
+        outputs = (page.stream ?? []).map((chunk) => chunk.output);
+      }
+    } finally {
+      this.#cancel(id);
+    }
+  }
+  /** The job's new output; a few failures in a row are tolerated. */
+  async #poll(id, signal) {
+    for (let failures = 1; ; failures++) {
+      let problem;
+      try {
+        const response = await this.#call("GET", `/stream/${encodeURIComponent(id)}`, signal);
+        if (response.ok) return await response.json();
+        problem = `${response.status}: ${(await response.text()).slice(0, 500)}`;
+        if (response.status === 404) failures = MAX_POLL_FAILURES;
+      } catch (error3) {
+        if (signal.aborted) throw error3;
+        problem = error3 instanceof Error ? error3.message : String(error3);
+      }
+      if (failures >= MAX_POLL_FAILURES) throw new Error(`Runpod GET /stream failed: ${problem}`);
+      await sleep3(this.#pollMs, signal);
+    }
+  }
+  /**
+   * Cancels a job nobody waits for, unless it is over: Runpod drops it from the queue, or stops
+   * it. Once only.
+   */
+  #cancel(id) {
+    if (!this.#active.delete(id)) return;
+    const cancel = this.#call(
+      "POST",
+      `/cancel/${encodeURIComponent(id)}`,
+      AbortSignal.timeout(1e4)
+    ).then(async (response) => {
+      if (!response.ok) {
+        this.#log(`Runpod did not cancel job ${id}: ${response.status}.`);
+      }
+      await response.body?.cancel();
+    }).catch((error3) => {
+      this.#log(
+        `Runpod did not cancel job ${id}: ${error3 instanceof Error ? error3.message : String(error3)}`
+      );
+    }).finally(() => {
+      this.#cancels.delete(cancel);
+    });
+    this.#cancels.add(cancel);
+  }
+  #call(method, path, signal, body) {
+    return this.#fetch(`${this.#base}${path}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${this.#key}`,
+        ...body === void 0 ? {} : { "Content-Type": "application/json" }
+      },
+      body: body === void 0 ? void 0 : JSON.stringify(body),
+      signal
+    });
+  }
+};
+function isError(output) {
+  return typeof output === "object" && output !== null && "error" in output;
+}
+function jobFailure(id, page) {
+  const why = page.error === void 0 ? "" : `: ${String(page.error).slice(0, 500)}`;
+  return page.status === "COMPLETED" ? `Runpod job ${id} completed without output.` : `Runpod job ${id} ended ${page.status ?? "without a status"}${why}.`;
+}
+function failed(status2, text) {
+  return {
+    status: status2,
+    contentType: "application/json",
+    body: (async function* () {
+      yield JSON.stringify({ error: { message: text.slice(0, 4e3), type: "upstream_error" } });
+    })()
+  };
+}
+function sleep3(ms, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) return reject(signal.reason);
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 // src/inference/access.ts
 async function agentAccess(inputs) {
   const done = async () => void 0;
@@ -26248,9 +26435,13 @@ async function agentAccess(inputs) {
   if (!inputs.serverlessKey) throw new Error("The Serverless endpoint's key is missing.");
   if (!inputs.engine) throw new Error("The Serverless engine is missing.");
   const now = inputs.now ?? Date.now;
+  const queue = new RunpodQueue(handle.url, inputs.serverlessKey, {
+    pollMs: inputs.pollMs,
+    log: inputs.log
+  });
   const gateway = new Gateway({
     upstream: handle.url,
-    upstreamHeaders: { Authorization: `Bearer ${inputs.serverlessKey}` },
+    send: queue.send,
     engine: inputs.engine,
     now,
     log: inputs.log
@@ -26274,6 +26465,7 @@ async function agentAccess(inputs) {
     finish: async () => {
       const usage = gateway.endRun();
       await close(server);
+      await queue.settle();
       return usage;
     }
   };

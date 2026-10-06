@@ -89,7 +89,7 @@ export class FakeGpu implements GpuProvider {
         return { ...endpoint };
       },
       price: async () => this.endpointPrice,
-      openAiUrl: (id) => `https://serverless.test/${id}/openai/v1`,
+      queueUrl: (id) => `https://serverless.test/${id}`,
     };
   }
 

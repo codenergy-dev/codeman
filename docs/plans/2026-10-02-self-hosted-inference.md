@@ -2,7 +2,7 @@
 status: blocked
 reason: "Step 8 runs on the Runpod test account, in a test repository, and its results are not recorded yet."
 created_at: 2026-10-02T18:25:00-03:00
-updated_at: 2026-10-06T16:30:00-03:00
+updated_at: 2026-10-06T17:30:00-03:00
 commit: d0637c8
 ---
 
@@ -162,6 +162,8 @@ Decisions 9 to 12 were answered on 2026-10-02 by the responsible person: the rec
    Recommendation: (a). It is maintained by Runpod, tuned for FlashBoot, and serves the OpenAI-compatible route already. (b) means maintaining a worker and its handler. The price is two engines from the start, and model names that differ between modes.
 
    **Answer:** (a).
+
+   **Change** (2026-10-06, asked by the responsible person after step 8's Serverless runs): the agent job's gateway reaches the worker through Runpod's job queue (`/run`, then `/stream` until the job ends), not its OpenAI-compatible route, and cancels (`/cancel`) the job of a request nobody waits for anymore. The route gave up on a request whose job waited for a worker more than 5 minutes, and left the job in the queue; the agent's retries piled up there. The worker takes the same request through the queue (`openai_route` and `openai_input`), and streams vLLM's own events.
 10. **Who creates the serverless endpoint.** Options:
     - (a) A maintainer creates it in Runpod's console (Secure Cloud, flex workers only, at most one worker, a short idle timeout), with a key restricted to it; Codeman gets the endpoint's ID in `serverless-endpoint` and the key as a secret.
     - (b) Codeman creates and updates endpoints through Runpod's API, with the account key.
@@ -229,7 +231,8 @@ Decisions 9 to 12 were answered on 2026-10-02 by the responsible person: the rec
      - The agent then ran the repository's tests for 100 seconds without a request. The worker stopped at its idle timeout, 3 seconds after the next request arrived, which then waited for another cold start.
      - That request, and each retry, ended after exactly 5 minutes with an empty answer (OpenCode recorded steps with no tokens and an unknown finish), and OpenCode sent it again. OpenCode 1.18.32 sets no limit on a whole request, and the gateway's headers and keep-alives keep its other two limits from firing; Runpod's synchronous requests wait 300 seconds at most ([operation reference](https://docs.runpod.io/serverless/endpoints/operation-reference), `/runsync`), so `api.runpod.ai`'s OpenAI-compatible route most likely gave up on the queued job. The jobs it gave up on stayed in the queue.
      - Changed: decision 10's idle timeout, and the installation steps recommend Runpod's cached models ([cached models](../web/runpod/cached-models.md)), with which a worker starts on a host that holds the model and its download is not billed.
-     - Left: a request still fails when no worker serves within 5 minutes, and leaves its job in the queue. Calling the worker through Runpod's own queue (`/run` and `/stream`, with `/cancel` for jobs nobody waits for) would remove both, at the cost of translating the OpenAI-compatible API in the gateway; not done without review.
+     - A request still failed when no worker served within 5 minutes, and left its job in the queue.
+   - Second Serverless run (2026-10-06), with an idle timeout of 300 seconds: Runpod started the worker on another host, where it restarted in a loop for minutes without serving. Each start failed at `cudaGetDeviceCount()` with CUDA's error 804 ("forward compatibility was attempted on non supported HW"): the host's driver is older than the CUDA the image needs (its `NVIDIA_REQUIRE_CUDA` says `cuda>=13.0`), and consumer GPUs cannot run a newer CUDA on an older driver. The endpoint's CUDA version filter keeps workers off such hosts, and the installation steps now set it. OpenCode's request was cut every 5 minutes again, and 4 or 5 jobs piled up in the queue. So the gateway now goes through Runpod's job queue and cancels the jobs nobody waits for (decision 9's change).
    - Left: a cancelled workflow, and a full Serverless task.
    - The vLLM worker's `usage`, plain and streamed.
    - Whether 35 minutes for `open-key` covers a new pod's start, and how often Runpod has no capacity for the chosen GPU: such a failure now blocks the task, as a failed key does; retrying in a later run may suit it better.

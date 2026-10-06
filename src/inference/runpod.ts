@@ -76,7 +76,7 @@ export class Runpod implements GpuProvider {
     this.serverless = {
       endpoint: (id) => this.#endpoint(id),
       price: (id) => this.#serverlessPrice(id),
-      openAiUrl: (id) => `https://api.runpod.ai/v2/${encodeURIComponent(id)}/openai/v1`,
+      queueUrl: (id) => `https://api.runpod.ai/v2/${encodeURIComponent(id)}`,
     };
   }
 
