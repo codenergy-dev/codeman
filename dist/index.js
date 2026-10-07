@@ -20438,7 +20438,7 @@ function amount(value) {
 }
 
 // src/inference/selfhosted.ts
-import { createHmac, randomBytes } from "node:crypto";
+import { createHmac, randomBytes as randomBytes2 } from "node:crypto";
 
 // src/gateway/gateway.ts
 import { createHash, timingSafeEqual } from "node:crypto";
@@ -21059,6 +21059,40 @@ function runSettings(body) {
 // src/gateway/pod.ts
 var GATEWAY_PORT = 8080;
 
+// src/store/layout.ts
+var LAYOUT = {
+  organization: (owner) => `organizations/${documentId(owner.toLowerCase())}`,
+  /** A run of a task's agent: one per task a workflow run's attempt picked for an agent. */
+  runs: (owner) => `${LAYOUT.organization(owner)}/runs`,
+  run: (owner, run2) => `${LAYOUT.runs(owner)}/${documentId(run2)}`,
+  /** What the jobs did, one document each, named after its run and what happened. */
+  events: (owner) => `${LAYOUT.organization(owner)}/events`,
+  event: (owner, event) => `${LAYOUT.events(owner)}/${documentId(event)}`,
+  /**
+   * The pod registry: a pod Codeman created, named by the nonce of its admin token, which the
+   * task that creates it draws first; with the leases of the tasks that use or keep it.
+   */
+  pods: (owner) => `${LAYOUT.organization(owner)}/pods`,
+  pod: (owner, nonce) => `${LAYOUT.pods(owner)}/${documentId(nonce)}`
+};
+function ledgerRunId(workflowRun, attempt, task) {
+  return `${workflowRun}-${attempt}-${task}`;
+}
+function ledgerMonth(date) {
+  return date.toISOString().slice(0, 7);
+}
+function isLedgerRunId(text) {
+  return /^\d+-\d+-\d+$/.test(text);
+}
+function repositoryName(repository) {
+  return `${repository.owner}/${repository.name}`.toLowerCase();
+}
+function documentId(text) {
+  if (text === "") throw new Error("A document ID may not be empty.");
+  const escaped = text.replaceAll("%", "%25").replaceAll("/", "%2F");
+  return escaped === "." || escaped === ".." || /^__.*__$/.test(escaped) ? `%${escaped}` : escaped;
+}
+
 // src/inference/gpu.ts
 var MAX_IDLE_TIMEOUT_SECONDS = 300;
 function endpointProblems(endpoint2) {
@@ -21111,22 +21145,274 @@ function sleep2(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// src/inference/provider.ts
+var OpenFailure = class extends Error {
+  pods;
+  constructor(cause, pods) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+    this.pods = pods;
+  }
+};
+
+// src/inference/registry.ts
+import { randomBytes } from "node:crypto";
+var CREATE_LEASE_MS = 5 * 6e4;
+var ATTEMPTS = 20;
+var PodRegistry = class {
+  #store;
+  #owner;
+  #now;
+  constructor(store, owner, now = () => /* @__PURE__ */ new Date()) {
+    this.#store = store;
+    this.#owner = owner;
+    this.#now = now;
+  }
+  /**
+   * Finds the pod of `description`'s settings for the task `holder` of workflow run `run`: joins
+   * the oldest serving one with a run lease; waits for another task's unexpired creation lease;
+   * or takes the creation lease, with a run lease. A creation lease that expired ends, so the
+   * task takes it over.
+   */
+  claim(description, holder, run2) {
+    return this.#store.transaction(
+      async (tx) => {
+        const now = this.#now();
+        const pods = (await tx.query(LAYOUT.pods(this.#owner), {
+          where: [
+            { field: "settings", op: "==", value: description.settings },
+            { field: "live", op: "==", value: true }
+          ]
+        })).map(registered).sort(byAge);
+        const lease = {
+          holder,
+          run: run2,
+          kind: "run",
+          until: new Date(now.getTime() + RESERVATION_MS)
+        };
+        for (const stale of pods) {
+          if (stale.status !== "creating" || (stale.creatingUntil ?? now) > now) continue;
+          tx.write({
+            op: "set",
+            path: this.#path(stale.nonce),
+            fields: ended(now, "its creation lease expired"),
+            merge: true
+          });
+        }
+        const serving = pods.find((pod2) => pod2.status === "serving");
+        if (serving) {
+          const seats = serving.seats.includes(holder) ? serving.seats : [...serving.seats, holder];
+          const leases = [...serving.leases.filter((one) => one.holder !== holder), lease];
+          tx.write({
+            op: "set",
+            path: this.#path(serving.nonce),
+            fields: { leases: leases.map(leaseFields), seats },
+            merge: true
+          });
+          return {
+            kind: "join",
+            pod: { ...serving, leases, seats },
+            seat: seats.indexOf(holder) + 1
+          };
+        }
+        const creating = pods.find(
+          (pod2) => pod2.status === "creating" && (pod2.creatingUntil ?? now) > now
+        );
+        if (creating) return { kind: "wait", pod: creating };
+        const pod = {
+          nonce: randomBytes(16).toString("hex"),
+          settings: description.settings,
+          status: "creating",
+          live: true,
+          pod: void 0,
+          createdAt: void 0,
+          pricePerSecond: void 0,
+          creatingUntil: new Date(now.getTime() + CREATE_LEASE_MS),
+          leases: [lease],
+          seats: [holder]
+        };
+        tx.write({
+          op: "create",
+          path: this.#path(pod.nonce),
+          fields: {
+            ...description,
+            status: pod.status,
+            live: true,
+            claimedAt: now,
+            claimedBy: holder,
+            creatingUntil: pod.creatingUntil ?? null,
+            leases: pod.leases.map(leaseFields),
+            seats: pod.seats
+          }
+        });
+        return { kind: "create", pod, seat: 1 };
+      },
+      { attempts: ATTEMPTS }
+    );
+  }
+  /**
+   * The creator's pod exists: it serves its settings' tasks from now on. Undefined when the
+   * creation lease ended meanwhile, and another task took it: the creator's pod is then extra.
+   */
+  register(nonce, created) {
+    return this.#store.transaction(
+      async (tx) => {
+        const document = await tx.get(this.#path(nonce));
+        const pod = document && registered(document);
+        if (!pod?.live || pod.status !== "creating") return void 0;
+        tx.write({
+          op: "set",
+          path: this.#path(nonce),
+          fields: { status: "serving", ...created, creatingUntil: null },
+          merge: true
+        });
+        return { ...pod, status: "serving", ...created, creatingUntil: void 0 };
+      },
+      { attempts: ATTEMPTS }
+    );
+  }
+  /**
+   * The task leaves the pod: its lease becomes a keep lease until `keepUntil`, or ends; with
+   * `onlyKeep`, only a keep lease ends, never a run's. With `abandon`, no task joins the pod any
+   * more. When no unexpired lease remains, the pod ends, and the caller terminates it.
+   */
+  async leave(nonce, holder, options = {}) {
+    const { pod, change } = await this.change(nonce, (current, now) => {
+      const mine = current.leases.find((one) => one.holder === holder);
+      let leases = current.leases;
+      if (!options.onlyKeep || mine?.kind === "keep") {
+        leases = leases.filter((one) => one.holder !== holder);
+        if (options.keepUntil) {
+          leases.push({ holder, run: mine?.run ?? "", kind: "keep", until: options.keepUntil });
+        }
+      }
+      if (current.status !== "creating" && heldBy(leases, now).length === 0) {
+        return { leases, end: "no run uses it and no task keeps it" };
+      }
+      return {
+        leases,
+        ...options.abandon && current.status === "serving" ? { status: "abandoned" } : {}
+      };
+    });
+    return {
+      ended: change?.end !== void 0,
+      holders: pod?.live ? heldBy(pod.leases, this.#now()) : [],
+      pod
+    };
+  }
+  /** Ends the pod, such as one that did not serve its model: no task holds it any more. */
+  async end(nonce, reason) {
+    await this.change(nonce, () => ({ end: reason }));
+  }
+  /** The organization's pods that the registry holds, oldest first. */
+  async live() {
+    const documents = await this.#store.query(LAYOUT.pods(this.#owner), {
+      where: [{ field: "live", op: "==", value: true }]
+    });
+    return documents.map(registered).sort(byAge);
+  }
+  /**
+   * Changes a live pod as `decide` says, in a transaction that reads it again: nothing when it
+   * returns undefined, or when the pod is no longer live. Returns the pod as it is now.
+   */
+  change(nonce, decide) {
+    return this.#store.transaction(
+      async (tx) => {
+        const document = await tx.get(this.#path(nonce));
+        const pod = document && registered(document);
+        if (!pod?.live) return { pod, change: void 0 };
+        const now = this.#now();
+        const change = decide(pod, now);
+        if (!change) return { pod, change };
+        const leases = change.leases ?? pod.leases;
+        const status2 = change.end ? "ended" : change.status ?? pod.status;
+        tx.write({
+          op: "set",
+          path: this.#path(nonce),
+          fields: {
+            leases: leases.map(leaseFields),
+            ...change.end ? ended(now, change.end) : { status: status2 }
+          },
+          merge: true
+        });
+        return { pod: { ...pod, leases, status: status2, live: !change.end }, change };
+      },
+      { attempts: ATTEMPTS }
+    );
+  }
+  #path(nonce) {
+    return LAYOUT.pod(this.#owner, nonce);
+  }
+};
+function heldBy(leases, now) {
+  return [...new Set(leases.filter((one) => one.until > now).map((one) => one.holder))];
+}
+function ended(now, reason) {
+  return { status: "ended", live: false, endedAt: now, reason, creatingUntil: null };
+}
+function leaseFields(lease) {
+  return { holder: lease.holder, run: lease.run, kind: lease.kind, until: lease.until };
+}
+function byAge(a, b) {
+  const time = (pod) => pod.createdAt?.getTime() ?? Number.POSITIVE_INFINITY;
+  return time(a) - time(b) || (a.nonce < b.nonce ? -1 : a.nonce > b.nonce ? 1 : 0);
+}
+function registered(document) {
+  const { fields } = document;
+  const text = (value) => typeof value === "string" && value !== "" ? value : void 0;
+  const date = (value) => value instanceof Date ? value : void 0;
+  const statuses = ["creating", "serving", "abandoned", "ended"];
+  const status2 = text(fields.status) ?? "ended";
+  const leases = (Array.isArray(fields.leases) ? fields.leases : []).flatMap((value) => {
+    const lease = value;
+    const holder = text(lease?.holder);
+    const until = date(lease?.until);
+    if (!holder || !until) return [];
+    return [
+      { holder, run: text(lease?.run) ?? "", kind: lease?.kind === "keep" ? "keep" : "run", until }
+    ];
+  });
+  const price = fields.pricePerSecond;
+  return {
+    nonce: document.path.slice(document.path.lastIndexOf("/") + 1),
+    settings: text(fields.settings) ?? "",
+    status: statuses.includes(status2) ? status2 : "ended",
+    live: fields.live === true,
+    pod: text(fields.pod),
+    createdAt: date(fields.createdAt),
+    pricePerSecond: typeof price === "number" && price > 0 ? price : void 0,
+    creatingUntil: date(fields.creatingUntil),
+    leases,
+    seats: (Array.isArray(fields.seats) ? fields.seats : []).filter(
+      (seat) => typeof seat === "string"
+    )
+  };
+}
+
 // src/inference/selfhosted.ts
 var START_MINUTES = 25;
 var KEPT_IDLE_MINUTES = 15;
 var RUN_IDLE_MINUTES = 30;
-var SHARE_STAGGER_MS = 2e4;
+var CLAIM_POLL_MS = 1e4;
+var CLAIMS = Math.ceil(CREATE_LEASE_MS / CLAIM_POLL_MS) + 10;
 var DISK_GB = 80;
 var BILLING_DAYS = 30;
-function podOwner(repository) {
-  return { CODEMAN_REPOSITORY: `${repository.owner}/${repository.name}` };
+function leaseHolder(repository, task) {
+  return `${repositoryName(repository)}#${task}`;
+}
+function servesOneRun(image) {
+  return SINGLE_RUN_IMAGES.has(image);
+}
+function podSettingsKey(settings, holder) {
+  const { model, gpuType, image, reuse } = settings;
+  const parts = [model, gpuType, image, reuse, ...servesOneRun(image) ? [holder] : []];
+  return sha256(parts.join("\n")).slice(0, 16);
+}
+function ofOrganization(pod, owner) {
+  const organization = pod.env.CODEMAN_ORGANIZATION ?? pod.env.CODEMAN_REPOSITORY?.split("/")[0];
+  return organization !== void 0 && organization.toLowerCase() === owner.toLowerCase();
 }
 function adminToken(accountKey, nonce) {
   return createHmac("sha256", accountKey).update(`codeman-gateway-admin:${nonce}`).digest("base64url");
-}
-function podGroup(runId, settings) {
-  const { model, gpuType, image, reuse } = settings;
-  return `${runId}.${sha256([model, gpuType, image, reuse].join("\n")).slice(0, 16)}`;
 }
 async function callGateway(fetchFn, accountKey, target, method, path, body) {
   const response = await fetchFn(`${target.url}${path}`, {
@@ -21146,6 +21432,7 @@ var PodInference = class {
   #settings;
   #options;
   #host;
+  #registry;
   /** What this provider did with pods since `open` or `close` last reported it. */
   #events = [];
   constructor(settings, options) {
@@ -21153,7 +21440,8 @@ var PodInference = class {
     this.name = `${options.gpu.name} pods`;
     this.#settings = settings;
     this.#options = options;
-    this.#host = recorded(options.gpu.pods, (event) => this.#events.push(event));
+    this.#host = options.gpu.pods;
+    this.#registry = new PodRegistry(options.store, options.repository.owner, () => this.#now());
   }
   /** The pod events so far, which the caller reports. */
   #takeEvents() {
@@ -21165,16 +21453,15 @@ var PodInference = class {
     return this.#options.now?.() ?? /* @__PURE__ */ new Date();
   }
   async open(run2, log) {
-    const token = randomBytes(32).toString("base64url");
+    const token = randomBytes2(32).toString("base64url");
+    const holder = leaseHolder(this.#options.repository, run2.task);
+    const settings = podSettingsKey(this.#settings, holder);
     let handle;
-    if (this.#settings.share && !SINGLE_RUN_IMAGES.has(this.#settings.image)) {
-      handle = await this.#openShared(run2, token, log);
-    } else {
-      if (this.#settings.share) {
-        log.info("The pod image serves one run at a time: this task gets a pod of its own.");
-      }
-      const kept = await this.#sweep(run2, log);
-      handle = kept ? await this.#reuse(kept, run2, token, log) : await this.#create(run2, token, log);
+    try {
+      await this.#sweep(holder, settings, log);
+      handle = await this.#claim(run2, holder, settings, token, log);
+    } catch (error3) {
+      throw new OpenFailure(error3, this.#takeEvents());
     }
     const status2 = await this.#admin(handle, "GET", "/admin/status").catch(
       () => ({})
@@ -21192,32 +21479,46 @@ var PodInference = class {
     };
   }
   /**
-   * Ends the run on the pod, reads what it used, and keeps the pod for the task's next run or
-   * terminates it. The run's cost is the pod's time since the run started, at its price.
+   * Ends the run on the pod and reads what it used, then keeps the pod for the next runs on its
+   * settings (a keep lease) or leaves it; a pod that no run uses and no task keeps is terminated.
+   * A run alone on its pod costs the pod's time since it started; a run on a shared pod, its
+   * share, and the task counts what the gateway gave it of the pod: Runpod bills the pod whole.
    */
   async close(text, log) {
     const handle = parseHandle(text);
     if (handle.mode !== "pod") throw new Error("The handle is not a pod run's.");
-    if (handle.shared) return this.#closeShared(handle, handle.shared, log);
-    let usage;
+    const { shared } = handle;
+    let ended2;
     try {
-      usage = await this.#admin(handle, "POST", "/admin/end") ?? void 0;
+      ended2 = await this.#admin(
+        handle,
+        "POST",
+        "/admin/end",
+        shared ? { tokenSha256: shared.tokenSha256, keep: handle.reuse === "task" } : void 0
+      ) ?? void 0;
     } catch (error3) {
       log.warning(
         `Could not read the run's usage from its pod: ${error3 instanceof Error ? error3.message : error3}`
       );
     }
-    const keep = handle.reuse === "task" && usage !== void 0;
-    if (!keep) {
-      await this.#host.terminate(handle.podId);
-      log.info(`Terminated pod ${handle.podId}.`);
-    } else {
-      log.info(
-        `Kept pod ${handle.podId} for the task's next run, for ${KEPT_IDLE_MINUTES} minutes at most.`
-      );
-    }
+    const keep = handle.reuse === "task" && ended2 !== void 0;
+    await this.#leave(handle, keep, ended2 === void 0, log);
     const now = this.#now();
-    const cost = podCost(new Date(handle.start), now, handle.pricePerSecond);
+    const usage = { ...tokens(ended2), pod: handle.podId, keptPod: keep ? handle.podId : void 0 };
+    if (shared) {
+      const share = ended2?.share;
+      const billed2 = await this.#billing(this.#settings.pods, now, log);
+      const podCosts2 = { ...billed2 };
+      if (share) podCosts2[handle.podId] = Number(share.taskCost.toFixed(6));
+      return {
+        ...usage,
+        // Without the gateway's figure, the run counts the pod's whole time since it started.
+        cost: ended2?.cost ?? podCost(new Date(handle.start), now, handle.pricePerSecond),
+        podCosts: podCosts2,
+        podShared: true,
+        pods: this.#takeEvents()
+      };
+    }
     const billed = await this.#billing([...this.#settings.pods, handle.podId], now, log);
     const lifetime = handle.created === void 0 ? void 0 : podCost(new Date(handle.created), now, handle.pricePerSecond);
     const podCosts = billed === void 0 && lifetime === void 0 ? void 0 : { ...billed };
@@ -21225,58 +21526,46 @@ var PodInference = class {
       podCosts[handle.podId] = Number(Math.max(podCosts[handle.podId] ?? 0, lifetime).toFixed(6));
     }
     return {
-      ...tokens(usage),
-      cost,
-      pod: handle.podId,
+      ...usage,
+      cost: podCost(new Date(handle.start), now, handle.pricePerSecond),
       podCosts,
-      keptPod: keep ? handle.podId : void 0,
       pods: this.#takeEvents()
     };
   }
   /**
-   * Ends the run on a pod that serves several tasks. The run's cost is its share of the pod's
-   * time, and the task's count of the pod is the gateway's (its runs and the kept time it was
-   * given): Runpod bills the pod as a whole. A pod that no task keeps and no run uses is
-   * terminated; the gateway answers one job at a time, so only the last to leave does it.
+   * Replaces the run's lease with a keep lease, or drops it, and terminates the pod when no other
+   * lease holds it. A pod whose gateway did not answer takes no other task. When the registry
+   * cannot be reached, the pod stays: it terminates itself once no run uses it.
    */
-  async #closeShared(handle, shared, log) {
-    let ended;
+  async #leave(handle, keep, unreachable, log) {
+    let left;
     try {
-      ended = await this.#admin(handle, "POST", "/admin/end", {
-        tokenSha256: shared.tokenSha256,
-        keep: handle.reuse === "task"
-      }) ?? void 0;
+      left = await this.#registry.leave(handle.nonce, handle.holder, {
+        keepUntil: keep ? new Date(this.#now().getTime() + KEPT_IDLE_MINUTES * 6e4) : void 0,
+        abandon: unreachable
+      });
     } catch (error3) {
       log.warning(
-        `Could not read the run's usage from its pod: ${error3 instanceof Error ? error3.message : error3}`
+        `Could not leave pod ${handle.podId} in the pod registry (${error3 instanceof Error ? error3.message : error3}); it terminates itself once no run uses it, after ${KEPT_IDLE_MINUTES} idle minutes.`
       );
+      return;
     }
-    const share = ended?.share;
-    const keep = handle.reuse === "task" && ended !== void 0;
-    if (keep) {
-      log.info(
-        `Kept pod ${handle.podId} for the next runs of its tasks, for ${KEPT_IDLE_MINUTES} minutes at most.`
+    if (left.ended) {
+      this.#events.push(
+        await terminatePod(this.#host, handle.podId, left.pod?.pod ? left.pod : void 0, {
+          reason: "no run uses it and no task keeps it",
+          life: lifeOf(handle, this.#options.gpu.name, this.#now()),
+          log
+        })
       );
-    } else if (!share || share.active.length === 0 && share.keepers.length === 0) {
-      await this.#host.terminate(handle.podId);
-      log.info(`Terminated pod ${handle.podId}.`);
+    } else if (keep) {
+      const next = handle.shared ? "the next runs on its settings" : "the task's next run";
+      log.info(`Kept pod ${handle.podId} for ${next}, for ${KEPT_IDLE_MINUTES} minutes at most.`);
+    } else if (left.holders.length > 0) {
+      log.info(`Left pod ${handle.podId} to ${tasksOn(left.holders)}.`);
     } else {
-      log.info(`Left pod ${handle.podId} to ${tasksOn(share)}.`);
+      log.info(`Pod ${handle.podId} had already left the pod registry.`);
     }
-    const now = this.#now();
-    const cost = ended?.cost ?? podCost(new Date(handle.start), now, handle.pricePerSecond);
-    const billed = await this.#billing(this.#settings.pods, now, log);
-    const podCosts = { ...billed };
-    if (share) podCosts[handle.podId] = Number(share.taskCost.toFixed(6));
-    return {
-      ...tokens(ended),
-      cost,
-      pod: handle.podId,
-      podCosts,
-      podShared: true,
-      keptPod: keep ? handle.podId : void 0,
-      pods: this.#takeEvents()
-    };
   }
   /** What Runpod billed for these pods; undefined when it could not be read. */
   async #billing(pods, now, log) {
@@ -21288,204 +21577,251 @@ var PodInference = class {
     });
   }
   /**
-   * Terminates this repository's pods that serve nobody: no other run of the repository is
-   * active while open-key runs, so a pod that is still starting or serving lost its run, unless
-   * it is another task's of this run, or one that this run's tasks share, whose own jobs open
-   * and close it at the same time. Other tasks' kept pods stay until their idle limit, and so
-   * do kept shared pods, which serve any of their tasks. Returns the task's kept pod, if it fits
-   * and the run does not share pods.
+   * Terminates the organization's pods that nothing holds (step 3 of the pod registry plan), and
+   * drops this task's keep leases on pods of other settings. Pods are listed before the registry
+   * is read, and a task writes a pod's document before it creates the pod, so a pod being created
+   * is always held. A pod without the organization's environment is never touched.
    */
-  async #sweep(run2, log) {
-    let kept;
-    const others = new Set(this.#settings.others ?? []);
-    const ofRun = (group) => group?.startsWith(`${run2.runId}.`) === true;
-    for (const pod of await this.#host.list(podOwner(this.#options.repository))) {
-      if (others.has(pod.env.CODEMAN_TASK ?? "") || ofRun(pod.env.CODEMAN_GROUP)) continue;
-      const nonce = pod.env.CODEMAN_NONCE ?? "";
-      const handle = { podId: pod.id, nonce, url: this.#host.url(pod.id, GATEWAY_PORT) };
-      const status2 = await this.#admin(handle, "GET", "/admin/status").catch(() => void 0);
-      if (ofRun(status2?.group)) continue;
-      const idle = status2?.ready === true && status2.serving === false && this.#now().getTime() - (status2.lastActivity ?? 0) < KEPT_IDLE_MINUTES * 6e4;
-      const shared = pod.env.CODEMAN_GROUP !== void 0;
-      const fits = !this.#settings.share && !shared && pod.env.CODEMAN_TASK === run2.task && this.#fits(pod);
-      if (idle && fits && !kept) {
-        kept = { pod, nonce };
-      } else if (!idle || pod.env.CODEMAN_TASK === run2.task && !shared) {
-        const why = !idle ? "it serves no run of this repository" : "the task's settings changed";
-        log.info(`Terminating pod ${pod.id} (task #${pod.env.CODEMAN_TASK ?? "?"}): ${why}.`);
-        await this.#host.terminate(pod.id);
+  async #sweep(holder, settings, log) {
+    const owner = this.#options.repository.owner;
+    const listed = (await this.#host.list({})).filter((pod) => ofOrganization(pod, owner));
+    const statuses = /* @__PURE__ */ new Map();
+    for (const pod of listed) statuses.set(pod.id, pod.status);
+    const held = /* @__PURE__ */ new Map();
+    const terminated = /* @__PURE__ */ new Set();
+    for (const record of await this.#registry.live()) {
+      if (record.pod && !statuses.has(record.pod)) {
+        statuses.set(record.pod, (await this.#host.get(record.pod))?.status ?? "missing");
+      }
+      const decide = (pod2, now) => sweepChange(pod2, {
+        now,
+        holder,
+        settings,
+        status: pod2.pod ? statuses.get(pod2.pod) : void 0
+      });
+      const changed = decide(record, this.#now()) ? await this.#registry.change(record.nonce, decide) : { pod: record, change: void 0 };
+      const { pod, change } = changed;
+      if (pod?.live) held.set(pod.nonce, pod);
+      if (!pod || !change?.end) continue;
+      const status2 = pod.pod ? statuses.get(pod.pod) : void 0;
+      if (pod.pod && status2 !== "missing" && status2 !== "terminated") {
+        terminated.add(pod.pod);
+        this.#events.push(
+          await terminatePod(this.#host, pod.pod, pod, {
+            reason: change.end,
+            log,
+            provider: this.#options.gpu.name,
+            now: this.#now()
+          })
+        );
+      } else if (pod.pod) {
+        log.info(`Pod ${pod.pod} left the pod registry: it no longer exists.`);
       }
     }
-    return kept;
-  }
-  /** Whether a pod serves the run's settings. */
-  #fits(pod) {
-    return pod.env.CODEMAN_MODEL === this.#settings.model && pod.gpuType === this.#settings.gpuType && pod.image === this.#settings.image;
+    for (const pod of listed) {
+      if (terminated.has(pod.id) || pod.status === "terminated") continue;
+      const record = held.get(pod.env.CODEMAN_NONCE ?? "");
+      if (record && (record.pod === pod.id || record.status === "creating" && !record.pod)) {
+        continue;
+      }
+      this.#events.push(
+        await terminatePod(this.#host, pod.id, void 0, {
+          reason: "it carries Codeman's environment, and the pod registry does not hold it",
+          log,
+          life: pod.pricePerSecond ? {
+            record: pod.env.CODEMAN_NONCE || pod.id,
+            provider: this.#options.gpu.name,
+            from: pod.createdAt.getTime(),
+            to: this.#now().getTime(),
+            pricePerSecond: pod.pricePerSecond
+          } : void 0
+        })
+      );
+    }
   }
   /**
-   * Gives the run a pod that the run's tasks with the same settings share: one another task of
-   * the run created or claimed, or else a kept shared pod that fits, or else a new one. Legs
-   * start at once, so a task after the first waits a little before it creates one.
+   * Gives the run the pod of its settings: joins the one serving them, or creates it, or waits
+   * while another task creates it. A pod the task cannot join takes no other task, and the task
+   * claims again, which creates another.
    */
-  async #openShared(run2, token, log) {
-    const group = podGroup(run2.runId, this.#settings);
-    await this.#sweep(run2, log);
-    const tasks = [run2.task, ...this.#settings.others ?? []].map(Number).sort((a, b) => a - b);
-    const position = tasks.indexOf(Number(run2.task));
-    const gone = /* @__PURE__ */ new Set();
-    for (let look = 0; ; look++) {
-      const found = await this.#findShared(group, gone);
-      if (found) {
-        try {
-          return await this.#attach(found, run2, token, group, false, log);
-        } catch (error3) {
-          log.warning(
-            `Could not share pod ${found.id}: ${error3 instanceof Error ? error3.message : error3}`
+  async #claim(run2, holder, settings, token, log) {
+    const { model, gpuType, image, reuse } = this.#settings;
+    const description = {
+      settings,
+      model,
+      gpuType,
+      image,
+      reuse,
+      provider: this.#options.gpu.name
+    };
+    let waiting = false;
+    for (let claims = 0; claims < CLAIMS; claims++) {
+      const claim = await this.#registry.claim(description, holder, run2.runId);
+      if (claim.kind === "wait") {
+        if (!waiting)
+          log.info("Another task is creating the pod for these settings; waiting for it.");
+        waiting = true;
+        await this.#wait(CLAIM_POLL_MS);
+        continue;
+      }
+      if (claim.kind === "create") {
+        const handle = await this.#create(claim.pod, run2, holder, token, log);
+        if (handle) return handle;
+        continue;
+      }
+      try {
+        return await this.#attach(claim.pod, run2, token, holder, claim.seat, false, log);
+      } catch (error3) {
+        log.warning(
+          `Could not join pod ${claim.pod.pod}: ${error3 instanceof Error ? error3.message : error3}`
+        );
+        const left = await this.#registry.leave(claim.pod.nonce, holder, { abandon: true });
+        if (left.ended && claim.pod.pod) {
+          this.#events.push(
+            await terminatePod(this.#host, claim.pod.pod, claim.pod, {
+              reason: "no run uses it and no task keeps it",
+              log,
+              provider: this.#options.gpu.name,
+              now: this.#now()
+            })
           );
-          gone.add(found.id);
-          continue;
         }
       }
-      if (look > 0 || position <= 0) break;
-      await this.#wait(position * SHARE_STAGGER_MS);
     }
-    const { pod, listed } = await this.#launch(run2, log, group);
-    const [first] = sortByAge(
-      await this.#host.list({ ...podOwner(this.#options.repository), CODEMAN_GROUP: group })
-    ).filter((one) => live(one) && !gone.has(one.id));
-    if (first && first.id !== pod.id) {
-      await this.#host.terminate(pod.id);
-      log.info(`Terminated pod ${pod.id}: another task of this run created pod ${first.id} first.`);
-      return this.#attach(first, run2, token, group, false, log);
+    throw new Error(
+      `Found no pod for ${model} on ${gpuType} to join or create after ${CLAIMS} tries.`
+    );
+  }
+  /**
+   * Creates the pod the task holds the creation lease of, and starts the run on it once it
+   * serves the model. Undefined when another task took the lease meanwhile: the pod is then
+   * terminated, and the task claims again.
+   */
+  async #create(record, run2, holder, token, log) {
+    let launched;
+    try {
+      launched = await this.#launch(record, log);
+    } catch (error3) {
+      await this.#registry.end(record.nonce, "the provider did not create it");
+      throw error3;
+    }
+    const { pod, listed } = launched;
+    const registered2 = await this.#registry.register(record.nonce, {
+      pod: pod.id,
+      createdAt: pod.createdAt,
+      pricePerSecond: pod.pricePerSecond ?? listed
+    });
+    const life = {
+      record: record.nonce,
+      provider: this.#options.gpu.name,
+      from: pod.createdAt.getTime(),
+      pricePerSecond: pod.pricePerSecond ?? listed
+    };
+    if (!registered2) {
+      this.#events.push(
+        await terminatePod(this.#host, pod.id, void 0, {
+          reason: "another task created the pod for these settings first",
+          log,
+          life: { ...life, to: this.#now().getTime() }
+        })
+      );
+      return void 0;
     }
     try {
-      return await this.#attach(pod, run2, token, group, true, log);
+      return await this.#attach(registered2, run2, token, holder, 1, true, log);
     } catch (error3) {
-      await this.#host.terminate(pod.id);
-      log.warning(
-        `Terminated pod ${pod.id}, which did not serve ${this.#settings.model}; it cost about ${usd(podCost(pod.createdAt, this.#now(), listed))}.`
+      await this.#registry.end(record.nonce, `it did not serve ${this.#settings.model}`);
+      this.#events.push(
+        await terminatePod(this.#host, pod.id, void 0, {
+          reason: `it did not serve ${this.#settings.model}; it cost about ${usd(podCost(pod.createdAt, this.#now(), listed))}`,
+          log,
+          life: { ...life, to: this.#now().getTime() },
+          warning: true
+        })
       );
       throw error3;
     }
   }
   /**
-   * The pod of the run's group, created or claimed by another of its tasks; else the oldest kept
-   * shared pod that fits, whose gateway serves several runs.
+   * Starts the run on a pod of the registry, once it serves the model. A run that waited for the
+   * pod's start shares it: its cost starts with the pod; one that joins a pod already serving
+   * starts then. A pod whose image is not known to serve one run at a time must serve several.
    */
-  async #findShared(group, gone) {
-    const pods = sortByAge(await this.#host.list(podOwner(this.#options.repository))).filter(
-      (pod) => pod.env.CODEMAN_GROUP !== void 0 && this.#fits(pod) && live(pod) && !gone.has(pod.id)
-    );
-    let kept;
-    for (const pod of pods) {
-      if (pod.env.CODEMAN_GROUP === group) return pod;
-      const status2 = await this.#status(this.#target(pod)).catch(() => void 0);
-      if (status2?.group === group) return pod;
-      const idle = (status2?.version ?? 1) >= GATEWAY_VERSION && status2?.ready === true && status2.serving === false && this.#now().getTime() - (status2.lastActivity ?? 0) < KEPT_IDLE_MINUTES * 6e4;
-      if (idle) kept ??= pod;
-    }
-    return kept;
-  }
-  /**
-   * Starts the run on a shared pod, once it serves the model. A run that waited for the pod's
-   * start shares it: its cost starts with the pod. A gateway that serves one run at a time, from
-   * an older image, serves this task alone if it created the pod; any other task gets its own.
-   */
-  async #attach(pod, run2, token, group, own, log) {
-    const target = this.#target(pod);
-    let status2;
+  async #attach(record, run2, token, holder, seat, own, log) {
+    const { model, image } = this.#settings;
+    const podId = record.pod;
+    if (!podId) throw new Error("The pod registry holds no pod ID for these settings.");
+    const target = { url: this.#host.url(podId, GATEWAY_PORT), nonce: record.nonce };
+    const created = record.createdAt?.getTime() ?? this.#now().getTime();
     let checks = 0;
     let startedBefore = false;
     const running = await waitUntilReady(
       this.#host,
-      pod.id,
+      podId,
       async () => {
-        status2 = await this.#status(target);
-        if (checks++ === 0) startedBefore = status2.ready === true;
-        return status2.ready === true || status2.version === void 0;
+        const response = await (this.#options.fetch ?? fetch)(`${target.url}/health`);
+        const ready = response.ok && (await response.json()).ready === true;
+        if (checks++ === 0) startedBefore = ready;
+        return ready;
       },
       {
-        timeoutMs: Math.max(
-          0,
-          pod.createdAt.getTime() + START_MINUTES * 6e4 - this.#now().getTime()
-        ),
+        timeoutMs: Math.max(0, created + START_MINUTES * 6e4 - this.#now().getTime()),
         wait: this.#options.wait
       }
     );
-    if ((status2?.version ?? 1) < GATEWAY_VERSION) {
-      log.info(`Pod ${pod.id}'s gateway serves one run at a time, from an older image.`);
-      if (own)
-        return this.#serve(pod, await this.#host.price(this.#settings.gpuType), run2, token, log);
-      log.info("This task gets a pod of its own.");
-      return this.#create(run2, token, log);
+    const shared = !servesOneRun(image);
+    if (shared) {
+      const status2 = await this.#admin(target, "GET", "/admin/status");
+      if ((status2.version ?? 1) < GATEWAY_VERSION) {
+        throw new Error(
+          `Pod ${podId}'s gateway serves one run at a time: list its image in SINGLE_RUN_IMAGES (src/inference/ollama.ts) to give each task a pod of its own on it.`
+        );
+      }
     }
     const handle = {
       mode: "pod",
-      podId: pod.id,
-      nonce: target.nonce,
+      podId,
+      nonce: record.nonce,
       url: target.url,
-      start: startedBefore && !own ? this.#now().getTime() : pod.createdAt.getTime(),
-      created: pod.createdAt.getTime(),
-      pricePerSecond: running.pricePerSecond ?? pod.pricePerSecond ?? await this.#host.price(this.#settings.gpuType),
+      start: startedBefore && !own ? this.#now().getTime() : created,
+      created,
+      pricePerSecond: running.pricePerSecond ?? record.pricePerSecond ?? await this.#host.price(this.#settings.gpuType),
       reuse: this.#settings.reuse,
-      shared: { task: run2.task, tokenSha256: sha256(token) }
+      holder,
+      ...shared ? { shared: { task: String(seat), tokenSha256: sha256(token) } } : {}
     };
-    await this.#startRun(handle, run2, token, group);
-    const how = own ? `Pod ${pod.id} serves ${this.#settings.model} after ${((this.#now().getTime() - handle.start) / 6e4).toFixed(1)} minutes` : startedBefore ? `Sharing pod ${pod.id}, already serving ${this.#settings.model}` : `Sharing pod ${pod.id}, from its start`;
-    log.info(
-      `${how}, with the run's other tasks on the same settings, for up to ${usd(run2.limit)}.`
-    );
+    await this.#admin(handle, "POST", "/admin/run", {
+      tokenSha256: sha256(token),
+      limit: run2.limit,
+      start: handle.start,
+      pricePerSecond: handle.pricePerSecond,
+      ...handle.shared ? { task: handle.shared.task } : {}
+    });
+    const how = own ? `Pod ${podId} serves ${model} after ${((this.#now().getTime() - handle.start) / 6e4).toFixed(1)} minutes` : !shared ? `Reusing pod ${podId}, kept from the task's last run` : startedBefore ? `Sharing pod ${podId}, already serving ${model}` : `Sharing pod ${podId}, from its start`;
+    const among = shared ? ", with the organization's tasks on the same settings" : "";
+    log.info(`${how}${among}, for up to ${usd(run2.limit)}.`);
     return handle;
-  }
-  #target(pod) {
-    return { url: this.#host.url(pod.id, GATEWAY_PORT), nonce: pod.env.CODEMAN_NONCE ?? "" };
-  }
-  async #status(target) {
-    return await this.#admin(target, "GET", "/admin/status");
   }
   #wait(ms) {
     return (this.#options.wait ?? ((delay) => new Promise((done) => setTimeout(done, delay))))(ms);
   }
-  async #reuse(kept, run2, token, log) {
-    const { pod, nonce } = kept;
-    const pricePerSecond = pod.pricePerSecond ?? await this.#host.price(this.#settings.gpuType);
-    const handle = {
-      mode: "pod",
-      podId: pod.id,
-      nonce,
-      url: this.#host.url(pod.id, GATEWAY_PORT),
-      start: this.#now().getTime(),
-      created: pod.createdAt.getTime(),
-      pricePerSecond,
-      reuse: this.#settings.reuse
-    };
-    await this.#startRun(handle, run2, token);
-    log.info(`Reusing pod ${pod.id}, kept from the task's last run, for up to ${usd(run2.limit)}.`);
-    return handle;
-  }
-  async #create(run2, token, log) {
-    const { pod, listed } = await this.#launch(run2, log);
-    return this.#serve(pod, listed, run2, token, log);
-  }
-  /** Creates a pod for the run, or for its group of tasks that share one. */
-  async #launch(run2, log, group) {
+  /** Creates the pod of a creation lease, named by its nonce, with its settings in its environment. */
+  async #launch(record, log) {
     const { model, gpuType, image, engine } = this.#settings;
     if (!image) throw new Error("No pod image is pinned; see docs/installation.md.");
     const listed = await this.#host.price(gpuType);
-    const nonce = randomBytes(16).toString("hex");
+    const owner = this.#options.repository.owner.toLowerCase();
     const now = this.#now();
     const pod = await this.#host.create({
-      name: `codeman-${this.#options.repository.name}-${run2.task}-${run2.runId}`.slice(0, 100),
+      name: `codeman-${owner}-${record.settings}`.slice(0, 100),
       image,
       env: {
-        ...podOwner(this.#options.repository),
-        CODEMAN_TASK: run2.task,
-        CODEMAN_RUN: run2.runId,
-        ...group ? { CODEMAN_GROUP: group } : {},
-        CODEMAN_NONCE: nonce,
+        CODEMAN_ORGANIZATION: owner,
+        CODEMAN_POD_SETTINGS: record.settings,
+        CODEMAN_NONCE: record.nonce,
         CODEMAN_MODEL: model,
         CODEMAN_ENGINE: engine.name,
-        CODEMAN_ADMIN_SHA256: sha256(adminToken(this.#options.accountKey, nonce)),
+        CODEMAN_ADMIN_SHA256: sha256(adminToken(this.#options.accountKey, record.nonce)),
         CODEMAN_START_BY: new Date(now.getTime() + START_MINUTES * 6e4).toISOString(),
         CODEMAN_KEPT_IDLE_MINUTES: String(KEPT_IDLE_MINUTES),
         CODEMAN_RUN_IDLE_MINUTES: String(RUN_IDLE_MINUTES)
@@ -21494,75 +21830,59 @@ var PodInference = class {
       gpuType,
       diskGb: DISK_GB
     });
-    const shared = group ? ", for the run's tasks on the same settings" : "";
+    this.#events.push({ pod: pod.id, event: "created" });
     log.info(
-      `Created pod ${pod.id} with ${gpuType}, at ${usd(listed * 3600)} per hour${shared}; waiting for ${model}.`
+      `Created pod ${pod.id} with ${gpuType}, at ${usd(listed * 3600)} per hour; waiting for ${model}.`
     );
     return { pod, listed };
-  }
-  /** Waits for a new pod to serve the model, and starts the run on it alone. */
-  async #serve(pod, listed, run2, token, log) {
-    const { model } = this.#settings;
-    const nonce = pod.env.CODEMAN_NONCE ?? "";
-    const url = this.#host.url(pod.id, GATEWAY_PORT);
-    try {
-      const ready = await waitUntilReady(
-        this.#host,
-        pod.id,
-        async () => {
-          const response = await (this.#options.fetch ?? fetch)(`${url}/health`);
-          return response.ok && (await response.json()).ready === true;
-        },
-        { timeoutMs: START_MINUTES * 6e4, wait: this.#options.wait }
-      );
-      const handle = {
-        mode: "pod",
-        podId: pod.id,
-        nonce,
-        url,
-        // Billing starts with the pod, while it pulls the image and the model.
-        start: pod.createdAt.getTime(),
-        created: pod.createdAt.getTime(),
-        pricePerSecond: ready.pricePerSecond ?? pod.pricePerSecond ?? listed,
-        reuse: this.#settings.reuse
-      };
-      await this.#startRun(handle, run2, token);
-      const minutes = (this.#now().getTime() - handle.start) / 6e4;
-      log.info(`Pod ${pod.id} serves ${model} after ${minutes.toFixed(1)} minutes.`);
-      return handle;
-    } catch (error3) {
-      await this.#host.terminate(pod.id);
-      log.warning(
-        `Terminated pod ${pod.id}, which did not serve ${model}; it cost about ${usd(podCost(pod.createdAt, this.#now(), listed))}.`
-      );
-      throw error3;
-    }
-  }
-  async #startRun(handle, run2, token, group) {
-    await this.#admin(handle, "POST", "/admin/run", {
-      tokenSha256: sha256(token),
-      limit: run2.limit,
-      start: handle.start,
-      pricePerSecond: handle.pricePerSecond,
-      ...handle.shared ? { task: handle.shared.task, group } : {}
-    });
   }
   #admin(target, method, path, body) {
     const { fetch: fetchFn = fetch, accountKey } = this.#options;
     return callGateway(fetchFn, accountKey, target, method, path, body);
   }
 };
-function tasksOn(share) {
-  const tasks = [.../* @__PURE__ */ new Set([...share.active, ...share.keepers])].map((task) => `#${task}`);
-  return `the tasks that still use or keep it (${tasks.join(", ")})`;
+function sweepChange(pod, context3) {
+  const { now, status: status2 } = context3;
+  if (pod.status === "creating") {
+    return (pod.creatingUntil ?? now) > now ? void 0 : { end: "its creation lease expired" };
+  }
+  if (status2 === "missing" || status2 === "terminated") return { end: "it no longer exists" };
+  if (status2 === "stopped" || status2 === "failed") return { end: `it ${status2}` };
+  const leases = pod.settings === context3.settings ? pod.leases : pod.leases.filter((one) => one.holder !== context3.holder || one.kind !== "keep");
+  const dropped = leases.length < pod.leases.length;
+  if (heldBy(leases, now).length === 0) {
+    return {
+      leases,
+      end: dropped ? "the task that kept it runs on other settings now" : "its leases all expired"
+    };
+  }
+  return dropped ? { leases } : void 0;
 }
-function live(pod) {
-  return pod.status === "starting" || pod.status === "running";
+async function terminatePod(host, id, record, options) {
+  await host.terminate(id);
+  const message = `Terminated pod ${id}: ${options.reason}.`;
+  if (options.warning) options.log.warning(message);
+  else options.log.info(message);
+  const life = options.life ?? (record?.createdAt && record.pricePerSecond && options.provider && options.now ? {
+    record: record.nonce,
+    provider: options.provider,
+    from: record.createdAt.getTime(),
+    to: options.now.getTime(),
+    pricePerSecond: record.pricePerSecond
+  } : void 0);
+  return { pod: id, event: "terminated", reason: options.reason, ...life ? { life } : {} };
 }
-function sortByAge(pods) {
-  return [...pods].sort(
-    (a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id)
-  );
+function lifeOf(handle, provider, now) {
+  return {
+    record: handle.nonce,
+    provider,
+    from: handle.created ?? handle.start,
+    to: now.getTime(),
+    pricePerSecond: handle.pricePerSecond
+  };
+}
+function tasksOn(holders) {
+  return `the tasks that still use or keep it (${holders.join(", ")})`;
 }
 function tokens(usage) {
   return {
@@ -21573,45 +21893,37 @@ function tokens(usage) {
     tokensPerSecond: usage?.tokensPerSecond
   };
 }
-async function releasePod(host, text, log, gateway) {
+async function releasePod(host, registry, text, log, options) {
   const handle = parseHandle(text);
   if (handle.mode !== "pod") return [];
+  const { gateway } = options;
   if (handle.shared && gateway) {
-    const status2 = await callGateway(
+    await callGateway(
       gateway.fetch ?? fetch,
       gateway.accountKey,
       handle,
       "POST",
       "/admin/release",
-      { task: handle.shared.task }
+      {
+        task: handle.shared.task
+      }
     ).catch(() => void 0);
-    const share = { active: status2?.active ?? [], keepers: status2?.keepers ?? [] };
-    if (status2 && share.active.length + share.keepers.length > 0) {
-      log.info(`Released pod ${handle.podId} for this task; it stays for ${tasksOn(share)}.`);
-      return [];
-    }
   }
-  await host.terminate(handle.podId);
-  log.info(`Terminated pod ${handle.podId}: the task does not go on to another run now.`);
-  return [{ pod: handle.podId, event: "terminated" }];
-}
-function recorded(host, record) {
-  return {
-    price: (gpuType) => host.price(gpuType),
-    create: async (spec) => {
-      const pod = await host.create(spec);
-      record({ pod: pod.id, event: "created" });
-      return pod;
-    },
-    get: (id) => host.get(id),
-    list: (env) => host.list(env),
-    terminate: async (id) => {
-      await host.terminate(id);
-      record({ pod: id, event: "terminated" });
-    },
-    url: (id, port) => host.url(id, port),
-    billing: (ids, since) => host.billing(ids, since)
-  };
+  const left = await registry.leave(handle.nonce, handle.holder, { onlyKeep: true });
+  if (!left.ended) {
+    log.info(
+      left.holders.length > 0 ? `Released pod ${handle.podId} for this task; it stays for ${tasksOn(left.holders)}.` : `Pod ${handle.podId} had already left the pod registry.`
+    );
+    return [];
+  }
+  const now = options.now?.() ?? /* @__PURE__ */ new Date();
+  return [
+    await terminatePod(host, handle.podId, void 0, {
+      reason: "the task does not go on to another run now, and no other task uses or keeps it",
+      log,
+      life: lifeOf(handle, options.provider, now)
+    })
+  ];
 }
 function parseHandle(text) {
   const handle = JSON.parse(text);
@@ -21659,7 +21971,7 @@ var ServerlessInference = class {
     return {
       handle: JSON.stringify(handle),
       // The agent's token for the agent job's gateway, which holds the endpoint's key.
-      credential: randomBytes(32).toString("base64url"),
+      credential: randomBytes2(32).toString("base64url"),
       contextLength: handle.contextLength
     };
   }
@@ -21707,8 +22019,7 @@ function inferenceChoice(settings, record, options = {}) {
   const budgeted = {
     ...options.profile ? { profile: options.profile } : {},
     providers: [.../* @__PURE__ */ new Set([providerName(settings), ...options.providers ?? []])],
-    recorded: { spent: record?.spent ?? 0 },
-    ...options.others?.length ? { others: [...options.others] } : {}
+    recorded: { spent: record?.spent ?? 0 }
   };
   if (settings.inference !== "self-hosted") return { inference: "openrouter", ...budgeted };
   const common = {
@@ -21723,8 +22034,7 @@ function inferenceChoice(settings, record, options = {}) {
     ...common,
     mode: "pod",
     gpuType: settings["gpu-type"] ?? "",
-    podReuse: settings["pod-reuse"] === "run" ? "run" : "task",
-    ...settings["parallel-tasks"] > 1 ? { sharePods: true } : {}
+    podReuse: settings["pod-reuse"] === "run" ? "run" : "task"
   };
 }
 function providerName(settings) {
@@ -21739,10 +22049,10 @@ function parseInferenceChoice(text) {
   }
   const choice = JSON.parse(text);
   const amount2 = (value) => typeof value === "number" && Number.isFinite(value);
-  const budgeted = Array.isArray(choice.providers) && choice.providers.every((name) => typeof name === "string" && name !== "") && amount2(choice.recorded?.spent) && (choice.profile === void 0 || typeof choice.profile === "string") && (choice.others === void 0 || Array.isArray(choice.others) && choice.others.every((task) => typeof task === "string" && /^\d+$/.test(task)));
+  const budgeted = Array.isArray(choice.providers) && choice.providers.every((name) => typeof name === "string" && name !== "") && amount2(choice.recorded?.spent) && (choice.profile === void 0 || typeof choice.profile === "string");
   if (!budgeted) throw new Error("The inference input is not a valid choice.");
   if (choice.inference === "openrouter") return choice;
-  const valid = choice.inference === "self-hosted" && typeof choice.model === "string" && ENGINES[choice.engine] !== void 0 && Array.isArray(choice.pods) && (choice.mode === "pod" ? typeof choice.gpuType === "string" && (choice.sharePods === void 0 || typeof choice.sharePods === "boolean") : choice.mode === "serverless");
+  const valid = choice.inference === "self-hosted" && typeof choice.model === "string" && ENGINES[choice.engine] !== void 0 && Array.isArray(choice.pods) && (choice.mode === "pod" ? typeof choice.gpuType === "string" : choice.mode === "serverless");
   if (!valid) throw new Error("The inference input is not a valid choice.");
   return choice;
 }
@@ -21756,7 +22066,7 @@ function gpuProvider(name, key) {
   if (name === "runpod") return new Runpod(key);
   throw new Error(`Unknown GPU provider "${name}".`);
 }
-function inferenceProvider(runtime2) {
+function inferenceProvider(runtime2, store) {
   const choice = parseInferenceChoice(runtime2.input("inference"));
   if (choice.inference === "openrouter") {
     return openRouterProvider(runtime2, runtime2.input("management-key", { required: true }));
@@ -21764,7 +22074,8 @@ function inferenceProvider(runtime2) {
   return selfHosted(choice, runtime2.repository, {
     accountKey: runtime2.input("gpu-key", { required: true }),
     image: runtime2.input("pod-image") || POD_IMAGE,
-    usage: runtime2.input("gateway-usage")
+    usage: runtime2.input("gateway-usage"),
+    store
   });
 }
 function openRouterProvider(runtime2, managementKey) {
@@ -21806,22 +22117,16 @@ function selfHosted(choice, repository, inputs) {
   const gpu = inputs.gpu ?? gpuProvider(choice.gpuProvider, inputs.accountKey);
   const engine = ENGINES[choice.engine];
   if (!engine) throw new Error(`Unknown engine "${choice.engine}".`);
-  const common = {
-    model: choice.model,
-    engine,
-    pods: choice.pods,
-    others: choice.others ?? []
-  };
+  const common = { model: choice.model, engine, pods: choice.pods };
   if (choice.mode === "pod") {
     return new PodInference(
       {
         ...common,
         gpuType: choice.gpuType,
         image: inputs.image,
-        reuse: choice.podReuse,
-        share: choice.sharePods === true
+        reuse: choice.podReuse
       },
-      { repository, gpu, accountKey: inputs.accountKey }
+      { repository, gpu, accountKey: inputs.accountKey, store: inputs.store() }
     );
   }
   return new ServerlessInference(
@@ -21838,34 +22143,6 @@ function selfHosted(choice, repository, inputs) {
 
 // src/ledger.ts
 import { setTimeout as sleep3 } from "node:timers/promises";
-
-// src/store/layout.ts
-var LAYOUT = {
-  organization: (owner) => `organizations/${documentId(owner.toLowerCase())}`,
-  /** A run of a task's agent: one per task a workflow run's attempt picked for an agent. */
-  runs: (owner) => `${LAYOUT.organization(owner)}/runs`,
-  run: (owner, run2) => `${LAYOUT.runs(owner)}/${documentId(run2)}`,
-  /** What the jobs did, one document each, named after its run and what happened. */
-  events: (owner) => `${LAYOUT.organization(owner)}/events`,
-  event: (owner, event) => `${LAYOUT.events(owner)}/${documentId(event)}`
-};
-function ledgerRunId(workflowRun, attempt, task) {
-  return `${workflowRun}-${attempt}-${task}`;
-}
-function ledgerMonth(date) {
-  return date.toISOString().slice(0, 7);
-}
-function isLedgerRunId(text) {
-  return /^\d+-\d+-\d+$/.test(text);
-}
-function repositoryName(repository) {
-  return `${repository.owner}/${repository.name}`.toLowerCase();
-}
-function documentId(text) {
-  if (text === "") throw new Error("A document ID may not be empty.");
-  const escaped = text.replaceAll("%", "%25").replaceAll("/", "%2F");
-  return escaped === "." || escaped === ".." || /^__.*__$/.test(escaped) ? `%${escaped}` : escaped;
-}
 
 // src/text.ts
 function oneLine(text) {
@@ -21948,6 +22225,8 @@ var Ledger = class {
   #now;
   #wait;
   #writes = [];
+  /** The pods the job terminated, with their lives: `flush` records their time no task counted. */
+  #lives = [];
   constructor(store, source, options = {}) {
     this.#store = store;
     this.#source = source;
@@ -21997,14 +22276,17 @@ var Ledger = class {
       async () => ledgerRuns(await taskQuery(this.#store, owner, this.#repository(), taskOf(run2)))
     );
   }
-  /** The organization's runs this month, of every repository. */
+  /**
+   * The organization's runs this month, of every repository, and its pods' time that no task
+   * counted.
+   */
   async monthRuns(log) {
     const { owner } = this.#source.runtime.repository;
-    return this.#retry(
-      log,
-      "read Codeman's ledger",
-      async () => ledgerRuns(await monthQuery(this.#store, owner, ledgerMonth(this.#now())))
-    );
+    const month = ledgerMonth(this.#now());
+    return this.#retry(log, "read Codeman's ledger", async () => [
+      ...ledgerRuns(await monthQuery(this.#store, owner, month)),
+      ...untrackedRuns(await untrackedQuery(this.#store, owner, month))
+    ]);
   }
   /**
    * Replaces the costs of a task's `runs` with what the providers say now: OpenRouter's keys,
@@ -22028,8 +22310,8 @@ var Ledger = class {
     for (const [workflowRun, figure] of Object.entries(figures.costs ?? {})) {
       const same = next.filter((run3) => run3.workflowRun === workflowRun);
       const [run2] = same;
-      const ended = run2 !== void 0 && (run2.status === "closed" || run2.status === "expired" || expired(run2, now));
-      if (same.length !== 1 || !run2 || run2.provider !== "openrouter" || !ended) continue;
+      const ended2 = run2 !== void 0 && (run2.status === "closed" || run2.status === "expired" || expired(run2, now));
+      if (same.length !== 1 || !run2 || run2.provider !== "openrouter" || !ended2) continue;
       const cost = Math.max(0, figure - (run2.spentBefore ?? 0));
       if (run2.cost !== void 0 && Math.abs(run2.cost - cost) < 1e-4) continue;
       change(run2, expired(run2, now) ? { cost, status: "expired" } : { cost });
@@ -22060,14 +22342,15 @@ var Ledger = class {
     const now = this.#now();
     return this.#store.transaction(
       async (tx) => {
-        const [task, month] = await Promise.all([
+        const organization = budgets.organizationBudget !== void 0;
+        const [task, month, untracked] = await Promise.all([
           taskQuery(tx, owner, repository, budgets.task).then(ledgerRuns),
-          monthQuery(
-            tx,
-            owner,
-            ledgerMonth(now),
-            budgets.organizationBudget === void 0 ? repository : void 0
-          ).then(ledgerRuns)
+          monthQuery(tx, owner, ledgerMonth(now), organization ? void 0 : repository).then(
+            ledgerRuns
+          ),
+          // Pods' time no task counted belongs to the organization's month alone (decision 4 of
+          // the pod registry plan).
+          organization ? untrackedQuery(tx, owner, ledgerMonth(now)).then(untrackedRuns) : Promise.resolve([])
         ]);
         const own = task.find((other) => other.id === run2);
         const before = own && own.status !== "open" ? runAmount(own) : 0;
@@ -22084,7 +22367,7 @@ var Ledger = class {
           task: spent,
           month: spentBy(ours) + before,
           reserved: { amount: spentBy(open3), runs: open3.length },
-          organization: budgets.organizationBudget === void 0 ? void 0 : reconciledMonth(monthRuns, budgets.billed, now) + before
+          organization: budgets.organizationBudget === void 0 ? void 0 : reconciledMonth([...monthRuns, ...untracked], budgets.billed, now) + before
         };
         const { limit } = reservation;
         if (limit === void 0) return { ...reservation, outcome: "task-budget-spent" };
@@ -22123,9 +22406,10 @@ var Ledger = class {
    * `open-key` could not open the run it reserved: it spent nothing that the budgets can tell,
    * and its reservation ends.
    */
-  fail(run2, reason) {
+  fail(run2, reason, pods) {
     this.#update(run2, { status: "failed", failedAt: this.#now(), cost: 0, reason });
     this.#event(run2, "key-failed", { reason });
+    this.#pods(run2, pods);
   }
   /** `open-key` refused the run: `status` is its output, `reason` why. */
   refuse(run2, status2, reason) {
@@ -22179,6 +22463,49 @@ var Ledger = class {
     }
     this.#writes = [];
     log.info(`Recorded ${writes.length} document(s) in Codeman's ledger.`);
+    const lives = this.#lives;
+    this.#lives = [];
+    for (const { pod, life } of lives) await this.#untracked(pod, life, log);
+  }
+  /**
+   * Records on a terminated pod's document its time that no task counted (decision 4 of the pod
+   * registry plan): its life at its price, less what the ledger's runs on it count, as the
+   * budgets count them. It counts in the organization's month of the pod's end. Runs after the
+   * job's own runs are written, so they count.
+   */
+  async #untracked(pod, life, log) {
+    const { owner } = this.#source.runtime.repository;
+    await this.#retry(log, "write to Codeman's ledger", async () => {
+      const runs = ledgerRuns(
+        await this.#store.query(LAYOUT.runs(owner), {
+          where: [{ field: "pod", op: "==", value: pod }]
+        })
+      );
+      const lifeCost = Math.max(0, life.to - life.from) / 1e3 * life.pricePerSecond;
+      const counted2 = spentBy(runs);
+      const untracked = Math.max(0, lifeCost - counted2);
+      await this.#store.write([
+        {
+          op: "set",
+          path: LAYOUT.pod(owner, life.record),
+          fields: {
+            pod,
+            provider: life.provider,
+            createdAt: new Date(life.from),
+            pricePerSecond: life.pricePerSecond,
+            terminatedAt: new Date(life.to),
+            month: ledgerMonth(new Date(life.to)),
+            lifeCost: round(lifeCost),
+            counted: round(counted2),
+            untracked: round(untracked)
+          },
+          merge: true
+        }
+      ]);
+      log.info(
+        `Pod ${pod} cost about ${usd(lifeCost)}, of which its tasks count ${usd(counted2)}; the organization's month counts the other ${usd(untracked)}.`
+      );
+    });
   }
   #repository() {
     return repositoryName(this.#source.runtime.repository);
@@ -22212,7 +22539,10 @@ var Ledger = class {
     });
   }
   #pods(run2, events) {
-    for (const { pod, event } of events ?? []) this.#event(run2, `pod-${event}`, { pod }, pod);
+    for (const { pod, event, reason, life } of events ?? []) {
+      this.#event(run2, `pod-${event}`, { pod, ...reason ? { reason } : {} }, pod);
+      if (event === "terminated" && life) this.#lives.push({ pod, life });
+    }
   }
   async #retry(log, what, call) {
     for (let attempt = 0; ; attempt++) {
@@ -22295,6 +22625,38 @@ function ledgerRuns(documents) {
     ];
   });
   return runs.sort((a, b) => a.start.getTime() - b.start.getTime() || (a.id < b.id ? -1 : 1));
+}
+function untrackedQuery(store, owner, month) {
+  return store.query(LAYOUT.pods(owner), {
+    where: [{ field: "month", op: "==", value: month }]
+  });
+}
+function untrackedRuns(documents) {
+  return documents.flatMap((document) => {
+    const { fields } = document;
+    const { pod, provider, untracked, createdAt, terminatedAt } = fields;
+    if (typeof pod !== "string" || typeof provider !== "string") return [];
+    if (typeof untracked !== "number" || !Number.isFinite(untracked) || untracked <= 0) return [];
+    if (!(createdAt instanceof Date) || !(terminatedAt instanceof Date)) return [];
+    return [
+      {
+        id: `pod-${document.path.slice(document.path.lastIndexOf("/") + 1)}`,
+        repository: "",
+        task: 0,
+        workflowRun: "",
+        status: "closed",
+        provider,
+        cost: untracked,
+        pod,
+        start: createdAt,
+        expiresAt: terminatedAt,
+        closedAt: terminatedAt
+      }
+    ];
+  });
+}
+function round(amount2) {
+  return Number(amount2.toFixed(6));
 }
 
 // src/platform/github/ci.ts
@@ -22530,8 +22892,8 @@ function register(state, name, method, options) {
     if (!state.registry[name]) {
       return method(options);
     }
-    return state.registry[name].reduce((method2, registered) => {
-      return registered.hook.bind(null, method2, options);
+    return state.registry[name].reduce((method2, registered2) => {
+      return registered2.hook.bind(null, method2, options);
     }, method)();
   });
 }
@@ -22576,8 +22938,8 @@ function removeHook(state, name, method) {
   if (!state.registry[name]) {
     return;
   }
-  const index = state.registry[name].map((registered) => {
-    return registered.orig;
+  const index = state.registry[name].map((registered2) => {
+    return registered2.orig;
   }).indexOf(method);
   if (index === -1) {
     return;
@@ -27134,13 +27496,13 @@ function copyAgentFile(source, target, maxBytes) {
 }
 
 // src/crypto.ts
-import { createCipheriv, createDecipheriv, hkdfSync, randomBytes as randomBytes2 } from "node:crypto";
+import { createCipheriv, createDecipheriv, hkdfSync, randomBytes as randomBytes3 } from "node:crypto";
 var VERSION7 = "v1";
 var INFO = "codeman/openrouter-task-key";
 var MIN_SECRET_LENGTH = 32;
 function encrypt(plaintext, secret) {
-  const salt = randomBytes2(16);
-  const iv = randomBytes2(12);
+  const salt = randomBytes3(16);
+  const iv = randomBytes3(12);
   const cipher = createCipheriv("aes-256-gcm", deriveKey(secret, salt), iv);
   const data = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
   return [VERSION7, salt, iv, cipher.getAuthTag(), data].map((part) => typeof part === "string" ? part : part.toString("base64url")).join(".");
@@ -27382,9 +27744,9 @@ var RunpodQueue = class {
   };
   /** Whether the job is over, as `page` says; it then leaves the active jobs. */
   #ended(id, page) {
-    const ended = FINAL.has(page.status ?? "");
-    if (ended) this.#active.delete(id);
-    return ended;
+    const ended2 = FINAL.has(page.status ?? "");
+    if (ended2) this.#active.delete(id);
+    return ended2;
   }
   /** The job's outputs, read until it ends; a job left unfinished is cancelled. */
   async *#body(id, signal, first, firstPage) {
@@ -28367,7 +28729,7 @@ function isObject(value) {
 }
 
 // src/prompt.ts
-import { randomBytes as randomBytes3 } from "node:crypto";
+import { randomBytes as randomBytes4 } from "node:crypto";
 
 // src/i18n/en.ts
 var OUTCOMES = {
@@ -28401,14 +28763,14 @@ var en = {
   of: (part, whole) => `${part} of ${whole}`,
   stage: (stage) => STAGES2[stage],
   runTitle: ({ action, stage, revised, outcome }) => {
-    const ended = outcome ? OUTCOMES[outcome] : "";
+    const ended2 = outcome ? OUTCOMES[outcome] : "";
     switch (action) {
       case "plan":
-        return outcome === "done" ? revised ? "Plan: revised" : "Plan: written" : `Plan: ${ended}`;
+        return outcome === "done" ? revised ? "Plan: revised" : "Plan: written" : `Plan: ${ended2}`;
       case "route":
-        return outcome === "done" ? "Next stages chosen" : `Routing: ${ended}`;
+        return outcome === "done" ? "Next stages chosen" : `Routing: ${ended2}`;
       case "implement":
-        return `${capitalize(STAGES2[stage ?? "code"])} stage${ended ? `: ${ended}` : ""}`;
+        return `${capitalize(STAGES2[stage ?? "code"])} stage${ended2 ? `: ${ended2}` : ""}`;
       case "record":
         return "Answers recorded";
       case "accept":
@@ -28655,14 +29017,14 @@ var ptBR = {
   of: (part, whole) => `${part} de ${whole}`,
   stage: (stage) => STAGES3[stage],
   runTitle: ({ action, stage, revised, outcome }) => {
-    const ended = outcome ? OUTCOMES2[outcome] : "";
+    const ended2 = outcome ? OUTCOMES2[outcome] : "";
     switch (action) {
       case "plan":
-        return outcome === "done" ? revised ? "Plano: revisado" : "Plano: escrito" : `Plano: ${outcome === "failed" ? "falhou" : ended}`;
+        return outcome === "done" ? revised ? "Plano: revisado" : "Plano: escrito" : `Plano: ${outcome === "failed" ? "falhou" : ended2}`;
       case "route":
-        return outcome === "done" ? "Pr\xF3ximas etapas escolhidas" : `Roteamento: ${outcome === "failed" ? "falhou" : ended}`;
+        return outcome === "done" ? "Pr\xF3ximas etapas escolhidas" : `Roteamento: ${outcome === "failed" ? "falhou" : ended2}`;
       case "implement":
-        return `${capitalize2(OF_STAGE(stage ?? "code"))}${ended ? `: ${ended}` : ""}`;
+        return `${capitalize2(OF_STAGE(stage ?? "code"))}${ended2 ? `: ${ended2}` : ""}`;
       case "record":
         return "Respostas registradas";
       case "accept":
@@ -28886,8 +29248,8 @@ function messages(tag) {
   const lower = (tag ?? "en").toLowerCase();
   return CATALOGS[lower] ?? CATALOGS[lower.split("-")[0] ?? ""] ?? en;
 }
-function taskLanguage(setting2, recorded2) {
-  return setting2 !== "auto" ? setting2 : recorded2 ?? "en";
+function taskLanguage(setting2, recorded) {
+  return setting2 !== "auto" ? setting2 : recorded ?? "en";
 }
 function languageName(tag) {
   try {
@@ -29371,7 +29733,7 @@ ${problems.map((problem2) => `- ${problem2}`).join("\n")}
 Rewrite ${OUTPUT_FILE} so that it follows the shape and the limits in ${TASK_FILE}. Keep its content, shortened where it is too long. Change no other file.`;
 }
 function quoter() {
-  const nonce = randomBytes3(6).toString("hex");
+  const nonce = randomBytes4(6).toString("hex");
   return (label, text) => [`<<<${label} ${nonce}`, text.trim() || "(empty)", `>>>${label} ${nonce}`].join("\n");
 }
 function issueSection(task, quote) {
@@ -31616,7 +31978,11 @@ async function open(services, ledger, run2) {
   try {
     opened = await inference().open({ task, runId: runtime2.run.id, limit }, runtime2);
   } catch (error3) {
-    ledger.fail(run2, oneLine(error3 instanceof Error ? error3.message : String(error3)));
+    ledger.fail(
+      run2,
+      oneLine(error3 instanceof Error ? error3.message : String(error3)),
+      error3 instanceof OpenFailure ? error3.pods : void 0
+    );
     await ledger.flush(runtime2).catch((flushError) => {
       runtime2.warning(
         `Could not end the run's reservation, which counts its limit until it expires: ${flushError instanceof Error ? flushError.message : flushError}`
@@ -31687,7 +32053,11 @@ async function release(services) {
   const gpu = gpuProvider(choice.gpuProvider, accountKey);
   if (!gpu.pods) throw new Error(`${gpu.name} has no pods.`);
   const handle = runtime2.input("handle", { required: true });
-  const pods = await releasePod(gpu.pods, handle, runtime2, { accountKey });
+  const registry = new PodRegistry(services.store(), runtime2.repository.owner);
+  const pods = await releasePod(gpu.pods, registry, handle, runtime2, {
+    provider: gpu.name,
+    gateway: { accountKey }
+  });
   const ledger = services.ledger("release-pod");
   ledger.release(ledgerRun(runtime2), pods);
   await ledger.flush(runtime2);
@@ -31975,7 +32345,7 @@ async function select(services) {
   for (const choice of choices) picked.push(await prepare(choice));
   for (const one of picked) await one.start();
   const runOf = (one) => ledgerRunId(runtime2.run.id, runtime2.run.attempt, one.number);
-  const outputs = picked.map((one) => taskOutputs(one, picked, runOf(one)));
+  const outputs = picked.map((one) => taskOutputs(one, runOf(one)));
   runtime2.output("tasks", JSON.stringify(outputs));
   const [first] = outputs;
   const [firstPicked] = picked;
@@ -31998,12 +32368,10 @@ async function select(services) {
   }
   await ledger.flush(runtime2);
 }
-function taskOutputs(task, all, run2) {
-  const others = all.filter((other) => other.needsAgent && other !== task).map((other) => String(other.number));
+function taskOutputs(task, run2) {
   const choice = inferenceChoice(task.settings, task.record, {
     profile: task.profile,
-    providers: task.providers,
-    ...task.needsAgent ? { others } : {}
+    providers: task.providers
   });
   return {
     task: String(task.number),
@@ -32474,7 +32842,7 @@ function gitHubServices(runtime2) {
     return store;
   };
   const inference = () => {
-    provider ??= inferenceProvider(runtime2);
+    provider ??= inferenceProvider(runtime2, theStore);
     return provider;
   };
   return {

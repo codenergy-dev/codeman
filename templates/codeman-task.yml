@@ -57,10 +57,11 @@ permissions: {}
 
 jobs:
   # Gives this run access to its model, limited to what remains of the task's budget: an
-  # OpenRouter key, or a token for a self-hosted model's gateway, which may start a pod, or share
-  # one with the run's other tasks on the same pod settings (parallel-tasks above 1). Only the
-  # key jobs (this one, close-key and release-pod) hold the management and GPU account keys. The
-  # budgets come from Codeman's ledger, where this job reserves the run's limit; with an
+  # OpenRouter key, or a token for a self-hosted model's gateway, on a pod the organization's
+  # tasks with the same pod settings share, which it finds or creates in Codeman's pod registry;
+  # it first terminates the organization's pods that nothing holds. Only the key jobs (this one,
+  # close-key and release-pod) hold the management and GPU account keys. The budgets come from
+  # Codeman's ledger, where this job reserves the run's limit; with an
   # organization-monthly-budget, it also reads each GPU account's billing. An unset secret is
   # empty.
   open-key:
@@ -157,9 +158,9 @@ jobs:
           retention-days: 1
 
   # Ends the run's access, whatever happened, and reads what the run spent: it disables the
-  # OpenRouter key, or ends the run on its pod, which it keeps for the task's next run or
-  # terminates (a pod the run's tasks share stays while another uses it). Then records it in
-  # Codeman's ledger, and reports the task's spend from there; apply waits for it.
+  # OpenRouter key, or ends the run on its pod, which it keeps for the next run on its settings
+  # or leaves, terminating it when no other task uses or keeps it. Then records it in Codeman's
+  # ledger, and reports the task's spend from there; apply waits for it.
   close-key:
     name: Close key
     needs: [open-key, agent]
@@ -272,9 +273,9 @@ jobs:
           path: ${{ runner.temp }}/codeman/chain
           retention-days: 1
 
-  # Terminates the pod close-key kept for the task's next run, when the task does not go on to
-  # one now (or apply failed), unless another task of the run shares it and uses or keeps it. A
-  # kept pod also terminates itself after 15 idle minutes.
+  # Ends the task's keep lease on the pod close-key kept, when the task does not go on to another
+  # run now (or apply failed), and terminates the pod when no other task, of any repository,
+  # uses or keeps it. A kept pod also terminates itself after 15 idle minutes.
   release-pod:
     name: Release pod
     needs: [open-key, close-key, apply]
@@ -282,7 +283,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
-      # Records the pod's end in Codeman's store.
+      # Releases the pod in Codeman's pod registry, and records its end.
       id-token: write
     steps:
       - uses: codenergy-dev/codeman@COMMIT_SHA

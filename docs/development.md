@@ -30,12 +30,12 @@ npm run check   # lint, type check, test and build
 - `dist/`: the bundled action. Committed, because GitHub runs actions straight from the repository. CI fails when it does not match the source, so run `npm run build` before committing.
 - `templates/`: files that target repositories copy.
 - `firebase/firestore.rules`: the backend's security rules, which deny every client; [installation](installation.md#4-set-up-the-backend) publishes them.
-- `docker/pod/`: Codeman's pod image. [`.github/workflows/pod-image.yml`](../.github/workflows/pod-image.yml) publishes it when it or `dist/gateway.js` changes on `main`; pin the published digest in `src/inference/ollama.ts` in a commit of its own. Images whose gateway serves one run at a time stay listed in `SINGLE_RUN_IMAGES` there, so tasks do not try to share their pods.
+- `docker/pod/`: Codeman's pod image. [`.github/workflows/pod-image.yml`](../.github/workflows/pod-image.yml) publishes it when it or `dist/gateway.js` changes on `main`; pin the published digest in `src/inference/ollama.ts` in a commit of its own. Images whose gateway serves one run at a time stay listed in `SINGLE_RUN_IMAGES` there, so each task gets a pod of its own on them; any other image must serve several runs.
 - `docs/web/`: the documentation of the third-party services Codeman uses, one page per file under `docs/web/<third-party>/`, and in `docs/web/tools/` how each kind of page is fetched. The format is in `AGENTS.md` ("Third-party documentation"). Pages are copies only where their license allows; the others hold what Codeman relies on, in our own words.
 
 ## Firestore's emulator
 
-`src/store/emulator.test.ts` runs the store's contract tests (`src/store/contract.ts`) on Firestore's emulator, the same tests the store in memory passes, checks that two runs that reserve their limits in the ledger at once never pass the monthly budget together, and checks that the security rules deny every client. It uses, in this order:
+`src/store/emulator.test.ts` runs the store's contract tests (`src/store/contract.ts`) on Firestore's emulator, the same tests the store in memory passes, checks that two runs that reserve their limits in the ledger at once never pass the monthly budget together, that two tasks that claim a pod's settings in the pod registry at once get one creator, and that the security rules deny every client. It uses, in this order:
 
 1. The emulator that `FIRESTORE_EMULATOR_HOST` names (`host:port`), already running. The rules' test still needs the next one.
 2. The newest `cloud-firestore-emulator-v*.jar` in Firebase's cache, `~/.cache/firebase/emulators/`, which the Firebase CLI downloads (`firebase setup:emulators:firestore`); the test starts it with `java -jar` (Java 21) on a free port of the loopback, and stops it at the end.

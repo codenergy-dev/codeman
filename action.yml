@@ -164,9 +164,9 @@ outputs:
   pod:
     description: "(close-key) The pod that served the run, for self-hosted inference."
   pod-shared:
-    description: "(close-key) true when the run's pod serves several tasks of the run: the ledger counts the task's share of it, as the pod's gateway measured it, not the pod's billing."
+    description: "(close-key) true when the run's pod serves several tasks: the ledger counts the task's share of it, as the pod's gateway measured it, not the pod's billing."
   kept-pod:
-    description: "(close-key) The pod kept for the task's next run, which release-pod terminates if none follows; a pod several tasks share stays while another uses or keeps it."
+    description: "(close-key) The pod the task keeps for the next run on its settings; release-pod ends the task's keep lease if the task does not go on, and terminates the pod when no other task uses or keeps it."
   gateway-usage:
     description: "(agent) What the agent job's gateway measured, for self-hosted inference on Serverless."
   encrypted-key:
