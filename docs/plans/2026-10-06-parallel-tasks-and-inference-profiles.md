@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-10-06T20:43:40-03:00
-updated_at: 2026-10-06T22:44:26-03:00
+updated_at: 2026-10-06T23:04:07-03:00
 commit: 3f6983b
 ---
 
@@ -66,6 +66,8 @@ A repository can run several tasks at once on the same self-hosted GPU, so a pod
    ```
 
    **Answer:** (a).
+
+   With shared settings (decision 7), `inference-profiles` is one value like any other: the first layer that sets it gives the whole list, so a repository's file that has one replaces the organization's, and one without it keeps the organization's.
 5. **Which profile a run uses.** Options:
    - (a) The first profile whose conditions all hold, in the file's order; the top-level settings when none does.
    - (b) The most specific profile: the one with the most conditions that hold.
@@ -108,16 +110,31 @@ The responsible person answered every decision on 2026-10-06 with its recommenda
 
    **Done on 2026-10-06.** As planned. The layer order is: task commands, a manual run's inputs, `.codeman/settings.yml`, the `settings` input, Codeman's defaults. An empty input is no layer, so older workflow files work unchanged. Errors in the input name it as ``the `settings` input (organization variable CODEMAN_SETTINGS)``, and stop the run like a malformed file. `select` logs a line per layer with the values that come from it (`Settings from .codeman/settings.yml: model=..., max-runs=9.`); values are short scalars. The language of a refusal panel, read before a task is picked, also falls back to the organization's. Docs: architecture (Settings, Jobs), installation (Shared settings, credentials table), security (Secrets), the README, the template and `action.yml`.
 3. The settings format (decision 4): the parser's subset, with errors that name the line, and the profiles' fields and conditions. Done when `settings` tests cover valid and invalid profiles, and today's flat files read the same.
+
+   **Done on 2026-10-06.** The parser is [`src/yaml.ts`](../../src/yaml.ts), in house: block mappings, block lists (also at their key's indentation), lists of plain or quoted scalars in brackets, `#` comments; tabs, `{...}`, anchors, tags, multi-line values and nested lists are errors that name the line. Flat files read as before; one change in what is accepted: a plain value may now hold spaces between words (`gpu-type: NVIDIA RTX A6000`), as YAML reads it, so the plan's example works unquoted. [`src/settings.ts`](../../src/settings.ts) checks the profiles: a `name` (letters, digits, `.`, `_`, `-`; unique), `when` with `stages` (non-empty, of `plan`, `route` and the stages) and `parallel-tasks` (a positive whole number), and only `PROFILE_SETTINGS` (the inference settings and `model`); any other setting is an error that lists the allowed ones. `inference-profiles: []` is an empty list, which lets a repository remove the organization's. Choices made:
+   - The top-level `parallel-tasks` setting is left to part 3: profiles only parse the `when.parallel-tasks` condition, which holds when the run has at least that many tasks. Until part 3, a run has one task, so a profile with `parallel-tasks: 2` or more never applies; part 3 passes the run's number of tasks where `select` passes 1 (`RunConditions.tasks`).
+   - Every profile is checked over the top-level settings in every run, whichever stage runs, so a mistake shows on the first run; errors name the profile.
 4. Profiles (decisions 5 and 6): each run's profile, passed to the jobs as `select`'s `inference` output is today; the task's and month's spend across providers; a profile's provider whose secret is missing reported as a problem. Done when tests cover a profile per stage, a fallback, a task's override and a task that used two providers.
+
+   **Done on 2026-10-06.** What differs from decision 6: the record keeps the task's total (`spent`), but a run on OpenRouter replaces it with the sum of the task's OpenRouter keys, which would drop what self-hosted runs spent. So the record also keeps what self-hosted runs added (`inference.spent`, optional; a record without it that has pods counts its whole `spent` as self-hosted, as before profiles), and the task's total is the OpenRouter keys' sum plus that part (only the record's total when no profile names OpenRouter). What was built:
+   - `resolveRun` resolves a run's settings: the layers, then the first profile whose conditions hold for the run's stage (`plan`, `route`, or the stage of `implement`), then the task's own `model` and `gpu-type`. Runs without an agent (`record`, `accept`) use the top-level settings. A task's value that does not fit the profile's inference is reported as before (`settings-rejected`), and the run goes on without it.
+   - Choice: a profile also replaces a manual run's inputs (only `model` among them is a profile's setting), since the plan names only the task's commands as winning over profiles; inputs are top-level values for one run, and a manual `model` that won over every profile would break the profiles on self-hosted inference, since `next-run` carries it over.
+   - `select`'s `inference` output carries the profile, every provider the top level and the profiles name (`providers`), and the record's total and self-hosted part (`recorded`, which replaces `taskSpent`). The task context's `settings` are the run's, so the agent, `apply`'s spend row (model and provider) and the panel follow the profile with no change of their own.
+   - `open-key` reads the budgets through `InferenceBudget` ([`src/inference/budget.ts`](../../src/inference/budget.ts)): the month of each named provider (OpenRouter's keys, the Runpod account), logged per provider and added up against `monthly-budget`. The template already passes both secrets to `open-key` (empty when unset), so it needed no change beyond its comment.
+   - A named provider whose secret is empty: `open-key` opens nothing, with status `missing-credentials` and a reason that names the secret; `apply` blocks the task, with the reason in its errors, as a key job that failed does today (a configuration a maintainer must fix, not a budget to wait for).
 5. Parallel tasks (decision 1): `select` picks up to `parallel-tasks` tasks, and the jobs run as a matrix, each task's `apply` writing only its own task. Done when tests cover two tasks moving in one run, one failing, and `next-run`.
 6. A shared GPU (decisions 2 and 3): the gateway's runs at once, its cost split, a pod kept while any of its tasks goes on, and the Serverless gateway shared by the agent jobs of a run. Done when gateway and inference tests cover two runs at once, a split, and a run that ends before the other.
 7. Docs: [`docs/architecture.md`](../architecture.md) (Runs, Jobs, Settings, Self-hosted inference), [`docs/installation.md`](../installation.md) (an organization's settings) and [`docs/security.md`](../security.md) (what the variable may hold). Done when they describe each part.
 
    Part 1 (shared settings) is described as of 2026-10-06.
+
+   Part 2 (inference profiles) is described as of 2026-10-06: architecture (Settings with its Inference profiles subsection, Jobs, Budget, Self-hosted inference's Choosing and Spend), installation (Inference profiles, the credentials table), the README, `action.yml` and both templates. `docs/security.md` needed no change: the key jobs hold the same secrets as before.
 8. On the test account, with the responsible person's approval of the cost: two tasks on one pod. Done when the results are recorded here.
 9. Rebuild `dist/` and run `npm run check` after each part. Done when it passes.
 
    Part 1: passed on 2026-10-06.
+
+   Part 2: passed on 2026-10-06.
 
 ## End-to-end test
 
@@ -132,6 +149,35 @@ No GPU and no cost beyond a planning run on OpenRouter. On a test organization w
 5. Close it, open a third issue whose description has the line `/codeman set task-budget 3`, and start a manual run with `max-runs` set to 4. Check the lines of the task's commands (`task-budget=3`) and of the workflow's inputs (`max-runs=4`), and that the organization's line keeps only `model`.
 6. Change the variable to a malformed line, such as `secret: x`, and run. Check that `select` fails with ``the `settings` input (organization variable CODEMAN_SETTINGS), line 1: unknown setting `secret`.`` and that no other job ran.
 7. Restore the variable, or delete it and put `model` back in the file; check that a run without the variable behaves as before.
+
+Results: to be recorded here.
+
+### Part 2: inference profiles
+
+Costs a planning run on OpenRouter and a code run on a Runpod pod (a few minutes of an RTX A6000, under US$ 1), within the test account's budgets. On the test repository, with its workflow updated to this version and both `CODEMAN_OPENROUTER_MANAGEMENT_KEY` and `CODEMAN_RUNPOD_API_KEY` set:
+
+1. In `.codeman/settings.yml`, keep an OpenRouter `model` at the top level, and add:
+
+   ```yaml
+   inference-profiles:
+     - name: planner
+       when:
+         stages: [plan, route]
+       model: <another OpenRouter model ID>
+     - name: small-pod
+       when:
+         stages: [code]
+       inference: self-hosted
+       gpu-type: NVIDIA RTX A6000
+       model: qwen3-coder:30b
+   ```
+
+2. Open an issue as a maintainer with a small, clear change (no decisions to answer), label it `codeman`, and start a manual run. Check that the `select` step logs ``Settings from .codeman/settings.yml: model=..., inference-profiles=[planner, small-pod].`` and ``Inference profile `planner` applies to this run.``, that `open-key` logs ``The run uses the inference profile `planner`.`` and ``Usage this month (openrouter US$ ..., runpod US$ ...): US$ ... of US$ ...``, with the sum of both, and that the plan's row in the panel's spend table shows the planner's model and `OpenRouter`.
+3. Let the runs chain to routing (`planner` again) and to the code stage. Check that the code run's `select` logs ``Inference profile `small-pod` applies to this run.``, that `open-key` starts a pod and its task spend is what OpenRouter's keys spent so far, and that the code row shows `qwen3-coder:30b` and `Runpod (pod)`.
+4. When a later run on OpenRouter ends (review, which no profile names, uses the top-level model), check that the panel's task total is OpenRouter's rows plus the pod's, not OpenRouter's alone, and that the record's `inference.spent` (decode the panel's record) is the pod's part.
+5. Close the issue. Open another whose description has `/codeman set model qwen3-coder:480b`, and start a run: the planning run reports that the task's settings were not applied (`planner` is on OpenRouter) and plans with the planner's model. Remove the line before the code stage, or close the issue, to avoid a larger GPU.
+6. Break the file: add `task-budget: 5` inside `small-pod`, and start a run. Check that `select` fails with ``.codeman/settings.yml, line N: a profile cannot set `task-budget`; ...`` and that no other job ran. Then remove `gpu-type` from `small-pod` instead, and check the error ``Inference profile `small-pod`: Self-hosted inference on pods needs `gpu-type` ...``, even for a planning run.
+7. Restore the file, and remove the `CODEMAN_RUNPOD_API_KEY` secret (or rename it). Open an issue and run: check that `open-key` logs an error naming `CODEMAN_RUNPOD_API_KEY` and opens nothing, even though planning uses OpenRouter, and that the task is `codeman:blocked` with that error in its run comment. Restore the secret.
 
 Results: to be recorded here.
 
