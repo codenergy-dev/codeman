@@ -1,7 +1,7 @@
 ---
-status: in progress
+status: completed
 created_at: 2026-10-06T20:43:40-03:00
-updated_at: 2026-10-06T21:00:00-03:00
+updated_at: 2026-10-06T22:18:46-03:00
 commit: 3f6983b
 ---
 
@@ -54,10 +54,20 @@ The responsible person answered every decision on 2026-10-06 with its recommenda
 
 ## Steps
 
-1. The record keeps each row's inference (`openrouter`, `pod` or `serverless`), from the run's choice of inference (`select`'s `inference` output), set by `apply`. A row without it, recorded before, shows "—". Done when `record` and `apply` tests cover a new row, an old one and a task whose rows differ.
-2. The table: the new column after the model, the month column's new name and the notes, in English and Portuguese. Done when `spend` and `status` tests cover each inference, an old row and a mixed table.
-3. Docs: [`docs/architecture.md`](../architecture.md) (Budget and Spend: the column, the notes, and that the month is an estimate on Runpod). Done when they describe the table as it is.
-4. Rebuild `dist/` and run `npm run check`. Done when it passes.
+1. The record keeps each row's inference (`openrouter`, `pod` or `serverless`), from the run's choice of inference (`select`'s `inference` output), set by `apply`. A row without it, recorded before, shows "—". Done when `record` and `apply` tests cover a new row, an old one and a task whose rows differ. **Done on 2026-10-06**: `SpendRow.inference` in [`src/spend.ts`](../../src/spend.ts), optional, so older records read as they are. `apply` takes it from the task's settings that `select` hands over, with `inferenceChoice` and `agentMode`, as the agent job does; that is the choice `select` outputs as `inference`, so `apply` needs no new input and older workflow files keep working.
+2. The table: the new column after the model, the month column's new name and the notes, in English and Portuguese. Done when `spend` and `status` tests cover each inference, an old row and a mixed table. **Done on 2026-10-06**: the column is "Provider" / "Provedor". The notes come from `spendNotes`, in a fixed order (OpenRouter, pod, Serverless), each a paragraph between the table and the line with what the task spent.
+3. Docs: [`docs/architecture.md`](../architecture.md) (Budget and Spend: the column, the notes, and that the month is an estimate on Runpod). Done when they describe the table as it is. **Done on 2026-10-06**.
+4. Rebuild `dist/` and run `npm run check`. Done when it passes. **Done on 2026-10-06**.
+
+## End-to-end test
+
+On a repository with Codeman installed from this commit:
+
+1. **OpenRouter.** Run a task to its first stage. The status comment's spend table has a "Provider" column that reads `OpenRouter` in each row and a "Month (estimated)" column, and under the table the OpenRouter note alone. Each run comment's table has the same column and the same note.
+2. **Runpod pod.** With `inference: self-hosted` and the default `gpu-mode`, run a task. Its rows read `Runpod (pod)`, and the note under the table says the month is an estimate over the whole Runpod account. Run comments have that note too.
+3. **Runpod Serverless.** With `gpu-mode: serverless`, run a task. Its rows read `Runpod (Serverless)`, and the note says the run's cost is an estimate and the month counts Serverless runs an hour or more late.
+4. **Older rows.** Let a task whose earlier runs predate this change run its agent once more. Its older rows read "—" in the provider column and add no note; the new run's row reads its provider, and its note appears under the table.
+5. **Portuguese.** On a task in Portuguese, the column reads "Provedor", the month "Mês (estimado)", and the notes are in Portuguese.
 
 ## Out of scope
 
