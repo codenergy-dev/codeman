@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-10-06T20:43:40-03:00
-updated_at: 2026-10-06T23:04:07-03:00
+updated_at: 2026-10-06T23:26:25-03:00
 commit: 3f6983b
 ---
 
@@ -123,18 +123,31 @@ The responsible person answered every decision on 2026-10-06 with its recommenda
    - `open-key` reads the budgets through `InferenceBudget` ([`src/inference/budget.ts`](../../src/inference/budget.ts)): the month of each named provider (OpenRouter's keys, the Runpod account), logged per provider and added up against `monthly-budget`. The template already passes both secrets to `open-key` (empty when unset), so it needed no change beyond its comment.
    - A named provider whose secret is empty: `open-key` opens nothing, with status `missing-credentials` and a reason that names the secret; `apply` blocks the task, with the reason in its errors, as a key job that failed does today (a configuration a maintainer must fix, not a budget to wait for).
 5. Parallel tasks (decision 1): `select` picks up to `parallel-tasks` tasks, and the jobs run as a matrix, each task's `apply` writing only its own task. Done when tests cover two tasks moving in one run, one failing, and `next-run`.
+
+   **Done on 2026-10-06.** What adds to the plan, since GitHub keeps one value per output of a matrix job, not one per leg ([reuse workflows](../web/github/reuse-workflows.md#using-outputs-from-a-reusable-workflow)), and a job of a matrix cannot wait for a single leg of another:
+   - **A second workflow file.** A task's jobs (`open-key`, `agent`, `close-key`, `apply`, `release-pod`) moved to a reusable workflow, [`templates/codeman-task.yml`](../../templates/codeman-task.yml), installed as `.github/workflows/codeman-task.yml`, which `codeman.yml`'s `task` job calls once per task with a matrix (`include` from `select`'s new `tasks` output, `fail-fast: false`, no `max-parallel`: the matrix has at most `parallel-tasks` legs). Each task gets its own chain of jobs, which pass outputs (the encrypted key, the handle, the spend) as before; nothing per task goes through artifacts but the context and the result, as before. The call passes the five secrets by name, each job references only the ones it did (a template test checks it), the workflow's top level has `permissions: {}`, and the call grants at most the `agent` job's `contents: read` and `actions: read`. No security boundary moved. Users copy both files; the agent job's setup steps now go in `codeman-task.yml`. The second file is probed for `.codemanignore` like the first.
+   - **Per-task files.** `select` writes each task's context to `task/<number>.json` in the one `codeman-task` artifact; `agent` and `apply` read theirs by the new `task` input. The agent cannot read the others' (the runner's home is closed to it). The agent's result is `codeman-result-<number>`.
+   - **`next-run`.** The call's outputs keep the last successful leg's value, and a leg whose agent failed fails, though its task moved (a lone task's failed agent chains today). So each `apply` whose task moved writes a mark (`chain/<number>`) that its job uploads as the artifact `codeman-chain-<number>`, and `next-run`, after every leg (`always()`), lists the run's artifacts (`gh api .../runs/<id>/artifacts`, with its `actions: write` token) and starts a run when one is there. It now starts a runner whenever `select` picked a task, for a few seconds.
+   - **Choices.** `parallel-tasks` is a top-level setting from 1 to 10 (default 1), not a task's: one run's matrix, each leg with its own key, agent and pod, so ten bounds what a mistake opens at once. Profiles' `when.parallel-tasks` counts the run's tasks that run an agent (recording answers and accepting workflows do not), since it is about inference sharing. `select` resolves every picked task before it marks any as started, so a task whose settings stop the run leaves the others as they were. `select`'s outputs of one task stay, as the first task's, with `task.json`, so workflow files from before keep working with `parallel-tasks: 1`.
+   - **Monthly budget.** Each task's `open-key` reads the month before the others spend, so `select` gives each, in its `inference` output, `reserved`: what the agent tasks picked before it may spend at most, the rest of each one's task budget from its record (a record's total never exceeds what `open-key` then reads, so it keeps enough). `open-key` refuses when the month's spend, `reserved` and its limit pass the budget. The first task reserves nothing, so a month with room for one still runs the oldest; a task refused goes back as any over the budget, and the next run tries again if another task moved. Rejected: every task reserving for all the others (two tasks with room for one would both wait), and capping in `select`, which holds no provider credentials.
+   - **Pods.** `open-key` terminates the repository's pods that serve no run, since no other run is active; with several tasks, another task's pod in this run is starting or serving. So `select` names the run's other agent tasks (`others`, in `inference`), whose pods the sweep leaves alone. Each task keeps its own pod, kept and released as before. On Serverless, each task's agent job runs its own gateway; two tasks on the endpoint's worker each count its time, as two repositories do.
+   - Tests: `flow.test.ts` (two tasks planned in one run with the profile for two, one whose agent failed blocked and the other planned, both marked; a run with an answer recorded and a task the month refused, which marks only the first; a lone refused task, no mark), `templates.test.ts` (inputs, secrets per job, permissions, artifacts), and unit tests of `chooseTasks`, the setting, the choice's fields, `open-key`'s reserve and the pod sweep.
 6. A shared GPU (decisions 2 and 3): the gateway's runs at once, its cost split, a pod kept while any of its tasks goes on, and the Serverless gateway shared by the agent jobs of a run. Done when gateway and inference tests cover two runs at once, a split, and a run that ends before the other.
 7. Docs: [`docs/architecture.md`](../architecture.md) (Runs, Jobs, Settings, Self-hosted inference), [`docs/installation.md`](../installation.md) (an organization's settings) and [`docs/security.md`](../security.md) (what the variable may hold). Done when they describe each part.
 
    Part 1 (shared settings) is described as of 2026-10-06.
 
    Part 2 (inference profiles) is described as of 2026-10-06: architecture (Settings with its Inference profiles subsection, Jobs, Budget, Self-hosted inference's Choosing and Spend), installation (Inference profiles, the credentials table), the README, `action.yml` and both templates. `docs/security.md` needed no change: the key jobs hold the same secrets as before.
+
+   Part 3, parallel tasks (step 5), is described as of 2026-10-06: architecture (Runs, Jobs, Budget, Choosing, Pods, Serverless, Settings, Inference profiles), installation (both workflow files, updating, `parallel-tasks`), security (the second file, its secrets and permissions), `action.yml` and the templates. The shared GPU (step 6) is not yet.
 8. On the test account, with the responsible person's approval of the cost: two tasks on one pod. Done when the results are recorded here.
 9. Rebuild `dist/` and run `npm run check` after each part. Done when it passes.
 
    Part 1: passed on 2026-10-06.
 
    Part 2: passed on 2026-10-06.
+
+   Part 3, parallel tasks (step 5): passed on 2026-10-06.
 
 ## End-to-end test
 
@@ -178,6 +191,21 @@ Costs a planning run on OpenRouter and a code run on a Runpod pod (a few minutes
 5. Close the issue. Open another whose description has `/codeman set model qwen3-coder:480b`, and start a run: the planning run reports that the task's settings were not applied (`planner` is on OpenRouter) and plans with the planner's model. Remove the line before the code stage, or close the issue, to avoid a larger GPU.
 6. Break the file: add `task-budget: 5` inside `small-pod`, and start a run. Check that `select` fails with ``.codeman/settings.yml, line N: a profile cannot set `task-budget`; ...`` and that no other job ran. Then remove `gpu-type` from `small-pod` instead, and check the error ``Inference profile `small-pod`: Self-hosted inference on pods needs `gpu-type` ...``, even for a planning run.
 7. Restore the file, and remove the `CODEMAN_RUNPOD_API_KEY` secret (or rename it). Open an issue and run: check that `open-key` logs an error naming `CODEMAN_RUNPOD_API_KEY` and opens nothing, even though planning uses OpenRouter, and that the task is `codeman:blocked` with that error in its run comment. Restore the secret.
+
+Results: to be recorded here.
+
+### Part 3: parallel tasks
+
+Costs a few planning runs on OpenRouter. On the test repository, with both workflow files of this version (`codeman.yml` and `codeman-task.yml`, every `COMMIT_SHA` replaced) and the profiles of part 2 removed:
+
+1. Set `parallel-tasks: 2` in `.codeman/settings.yml`, with an OpenRouter `model`, `task-budget: 1` and `monthly-budget: 5`.
+2. Open three issues as a maintainer, each with a small, clear change, label them `codeman`, and start a manual run. Check that `select` logs ``Picked 2 tasks, of up to 2: #A (plan), #B (plan).`` with the two oldest, that the run shows two legs, `#A` and `#B`, each with its own `Open key`, `Agent (plan)`, `Close key` and `Apply` jobs running at once, and that the third issue has no label yet. Check that the second leg's `open-key` logs ``Kept for the tasks this run picked before this one: up to US$ 1.00.``, and that each OpenRouter key is named after its own issue.
+3. Check that each issue got its own plan, branch and run comment, that neither panel mentions the other task, and that `next-run` logs no "No task moved" and starts the next run, which picks the third issue and the next step of the first two that can move.
+4. One failing: in a run that plans two tasks, cancel one leg's agent job (or let it fail, for example with `agent-minutes: 1` on a bigger task). Check that the other leg goes on to apply, that the failed task gets its run comment and `codeman:blocked` as a single task's failure does, and that `next-run` still starts a run.
+5. The monthly cap: lower `monthly-budget` so that the month's spend so far plus 1.5 task budgets fits, but not 2 (with `task-budget: 1`, about the spend plus 1.5), open two new issues and run. Check that the first leg opens its key and the second logs ``The monthly budget is reached: ..., up to US$ 1.00 is kept for the run's other tasks, ...`` and goes back to its previous state; then that the next run, with the first task's spend recorded, tries the second again. Restore the budget.
+6. Set `parallel-tasks: 1` and check that a run behaves as before: one leg, `next-run` as before. Then, with `parallel-tasks: 2`, comment an answer on an issue awaiting a decision while a new issue is open: the run records the answer and plans the new issue at once.
+
+The shared GPU's steps (step 6) follow here once that part is done.
 
 Results: to be recorded here.
 
