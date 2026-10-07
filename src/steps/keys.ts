@@ -1,16 +1,36 @@
 import { MIN_RUN_BUDGET, runLimit, usd } from "../budget.ts";
 import { encrypt } from "../crypto.ts";
 import { gpuProvider, parseInferenceChoice } from "../inference/index.ts";
+import type { PodEvent } from "../inference/provider.ts";
 import { releasePod } from "../inference/selfhosted.ts";
+import { ledgerRun } from "../ledger.ts";
 import type { Services } from "../services.ts";
 import { positiveNumber } from "./common.ts";
 
 /**
  * Gives the run its access to a model, limited to what remains of the task's budget, unless that
  * is too little or the repository's monthly budget would be exceeded, across every provider the
- * settings name. With `closeKey`, the only job that holds the providers' management credentials.
+ * settings name, and records which in the ledger. With `closeKey`, the only job that holds the
+ * providers' management credentials.
  */
-export async function openKey({ runtime, inference, budget: budgets }: Services): Promise<void> {
+export async function openKey(services: Services): Promise<void> {
+  const { runtime } = services;
+  const run = ledgerRun(runtime);
+  // The backend first: a run the ledger cannot record opens nothing.
+  const ledger = services.ledger("open-key");
+  await ledger.check(runtime);
+  const outcome = await open(services);
+  if (outcome.status === "opened") ledger.open(run, outcome.limit, outcome.pods);
+  else ledger.refuse(run, outcome.status, outcome.reason);
+  await ledger.flush(runtime);
+}
+
+/** What `open` did: opened the run with a limit, or refused it, and why. */
+type Opened =
+  | { status: "opened"; limit: number; pods: PodEvent[] | undefined }
+  | { status: "missing-credentials" | "task-budget-spent" | "over-budget"; reason: string };
+
+async function open({ runtime, inference, budget: budgets }: Services): Promise<Opened> {
   const secret = runtime.input("encryption-secret", { required: true });
   const task = runtime.input("task", { required: true });
   const taskBudget = positiveNumber(runtime, "task-budget");
@@ -26,7 +46,7 @@ export async function openKey({ runtime, inference, budget: budgets }: Services)
     runtime.error(reason);
     runtime.output("status", "missing-credentials");
     runtime.output("reason", reason);
-    return;
+    return { status: "missing-credentials", reason };
   }
   const spent = await budget.taskSpent(task);
   const months = await budget.monthSpent();
@@ -42,22 +62,18 @@ export async function openKey({ runtime, inference, budget: budgets }: Services)
 
   const limit = runLimit(taskBudget, spent);
   if (limit === undefined) {
+    const reason = `The task has spent ${usd(spent)} of its ${usd(taskBudget)} budget, and a run needs at least ${usd(MIN_RUN_BUDGET)}. A maintainer can raise it with \`/codeman set task-budget <usd>\`.`;
     runtime.output("status", "task-budget-spent");
-    runtime.output(
-      "reason",
-      `The task has spent ${usd(spent)} of its ${usd(taskBudget)} budget, and a run needs at least ${usd(MIN_RUN_BUDGET)}. A maintainer can raise it with \`/codeman set task-budget <usd>\`.`,
-    );
-    return;
+    runtime.output("reason", reason);
+    return { status: "task-budget-spent", reason };
   }
   // The run's tasks open their keys at once: each counts what those picked before it may spend.
   if (used + reserved + limit > monthlyBudget) {
     const others = reserved > 0 ? `, up to ${usd(reserved)} is kept for the run's other tasks` : "";
+    const reason = `The monthly budget is reached: ${usd(used)} used of ${usd(monthlyBudget)}${others}, and this run may use up to ${usd(limit)}.`;
     runtime.output("status", "over-budget");
-    runtime.output(
-      "reason",
-      `The monthly budget is reached: ${usd(used)} used of ${usd(monthlyBudget)}${others}, and this run may use up to ${usd(limit)}.`,
-    );
-    return;
+    runtime.output("reason", reason);
+    return { status: "over-budget", reason };
   }
 
   const run = await inference().open({ task, runId: runtime.run.id, limit }, runtime);
@@ -70,13 +86,16 @@ export async function openKey({ runtime, inference, budget: budgets }: Services)
   runtime.output("encrypted-key", encrypt(run.credential, secret));
   if (run.baseUrl) runtime.output("base-url", run.baseUrl);
   if (run.contextLength) runtime.output("context-length", String(run.contextLength));
+  return { status: "opened", limit, pods: run.pods };
 }
 
 /**
  * Ends the run's access to the model, whatever happened, then reads what it spent and used, and
- * what each run of the task spent, so apply can refresh the costs that earlier runs read too soon.
+ * what each run of the task spent, so apply can refresh the costs that earlier runs read too soon;
+ * then records it in the ledger.
  */
-export async function closeKey({ runtime, inference }: Services): Promise<void> {
+export async function closeKey(services: Services): Promise<void> {
+  const { runtime, inference } = services;
   const handle = runtime.input("handle") || runtime.input("key-hash", { required: true });
   const usage = await inference().close(handle, runtime);
 
@@ -106,6 +125,11 @@ export async function closeKey({ runtime, inference }: Services): Promise<void> 
   if (usage.podCosts) runtime.output("pod-costs", JSON.stringify(usage.podCosts));
   if (usage.podShared) runtime.output("pod-shared", "true");
   if (usage.keptPod) runtime.output("kept-pod", usage.keptPod);
+
+  // Last: the run's access is ended and its usage reported whatever the ledger does.
+  const ledger = services.ledger("close-key");
+  ledger.close(ledgerRun(runtime), usage, runtime.input("agent-job-result"));
+  await ledger.flush(runtime);
 }
 
 /**
@@ -113,7 +137,8 @@ export async function closeKey({ runtime, inference }: Services): Promise<void> 
  * does not go on to one now; a pod the run's tasks share stays while another task uses or keeps
  * it. A kept pod that this job does not reach terminates itself after its idle limit.
  */
-export async function release({ runtime }: Services): Promise<void> {
+export async function release(services: Services): Promise<void> {
+  const { runtime } = services;
   const choice = parseInferenceChoice(runtime.input("inference"));
   if (choice.inference !== "self-hosted" || choice.mode !== "pod") {
     runtime.info("Nothing to release: the run had no pod.");
@@ -122,5 +147,9 @@ export async function release({ runtime }: Services): Promise<void> {
   const accountKey = runtime.input("gpu-key", { required: true });
   const gpu = gpuProvider(choice.gpuProvider, accountKey);
   if (!gpu.pods) throw new Error(`${gpu.name} has no pods.`);
-  await releasePod(gpu.pods, runtime.input("handle", { required: true }), runtime, { accountKey });
+  const handle = runtime.input("handle", { required: true });
+  const pods = await releasePod(gpu.pods, handle, runtime, { accountKey });
+  const ledger = services.ledger("release-pod");
+  ledger.release(ledgerRun(runtime), pods);
+  await ledger.flush(runtime);
 }

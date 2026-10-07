@@ -75,7 +75,7 @@ test("the run calls the task's workflow with each of select's task outputs, from
   );
 });
 
-test("each job keeps the secrets and permissions it had before parallel tasks", () => {
+test("each job keeps the secrets it had before parallel tasks, and the agent job its permissions", () => {
   const declared = entries(task, ["on", "workflow_call", "secrets"]);
   const passed = entries(caller, ["jobs", "task", "secrets"]);
   assert.deepEqual([...passed.keys()].sort(), [...declared.keys()].sort());
@@ -100,18 +100,63 @@ test("each job keeps the secrets and permissions it had before parallel tasks", 
   assert.deepEqual(secretsOf(caller, "forward-review"), []);
   assert.deepEqual(secretsOf(caller, "next-run"), []);
 
-  // No token permissions but the agent job's, which the call grants at most.
+  // No token permissions but the agent job's, and the store's OIDC token, which the call grants
+  // at most.
   assert.match(task, /^permissions: \{\}$/m);
   const read = new Map([
     ["contents", "read"],
     ["actions", "read"],
   ]);
-  assert.deepEqual(entries(caller, ["jobs", "task", "permissions"]), read);
+  assert.deepEqual(
+    entries(caller, ["jobs", "task", "permissions"]),
+    new Map([...read, ["id-token", "write"]]),
+  );
   assert.deepEqual(entries(task, ["jobs", "agent", "permissions"]), read);
-  for (const job of ["open-key", "close-key", "apply", "release-pod"]) {
-    assert.ok(!entries(task, ["jobs", job]).has("permissions"), job);
+  assert.ok(!entries(task, ["jobs", "apply"]).has("permissions"));
+});
+
+test("only the jobs that use Codeman's store get an OIDC token and the backend's settings", () => {
+  const oidc = new Map([["id-token", "write"]]);
+  const backend = new Map([
+    ["firebase-project", `\${{ vars.CODEMAN_FIREBASE_PROJECT }}`],
+    ["workload-identity-provider", `\${{ vars.CODEMAN_WORKLOAD_IDENTITY_PROVIDER }}`],
+    ["service-account", `\${{ vars.CODEMAN_SERVICE_ACCOUNT }}`],
+  ]);
+  const settingsOf = (text: string, job: string) => {
+    const lines = block(text, ["jobs", job]).join("\n");
+    return new Map([...backend].filter(([name]) => new RegExp(`^\\s+${name}:`, "m").test(lines)));
+  };
+  const using: [string, string][] = [
+    [caller, "select"],
+    [task, "open-key"],
+    [task, "close-key"],
+    [task, "release-pod"],
+  ];
+  for (const [text, job] of using) {
+    assert.deepEqual(entries(text, ["jobs", job, "permissions"]), oidc, job);
+    const lines = block(text, ["jobs", job]);
+    for (const [name, value] of backend) {
+      assert.ok(lines.includes(`          ${name}: ${value}`), `${job} passes ${name}`);
+    }
   }
-  assert.ok(!entries(caller, ["jobs", "select"]).has("permissions"));
+  for (const job of ["agent", "apply"]) {
+    assert.ok(!block(task, ["jobs", job]).join("\n").includes("id-token"), job);
+    assert.deepEqual(settingsOf(task, job), new Map(), job);
+  }
+  for (const job of ["forward-review", "next-run"]) {
+    assert.ok(!block(caller, ["jobs", job]).join("\n").includes("id-token"), job);
+  }
+  // The run's document in the ledger reaches the jobs that add to it.
+  for (const job of ["open-key", "close-key", "release-pod"]) {
+    assert.ok(
+      block(task, ["jobs", job]).includes(`          ledger-run: \${{ inputs.ledger-run }}`),
+    );
+  }
+  assert.ok(
+    block(task, ["jobs", "close-key"]).includes(
+      `          agent-job-result: \${{ needs.agent.result }}`,
+    ),
+  );
 });
 
 test("each task's jobs read its own context and result, and mark it for next-run", () => {

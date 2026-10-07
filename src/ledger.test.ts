@@ -1,0 +1,259 @@
+import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { after, test } from "node:test";
+import { Ledger, type PickedRun } from "./ledger.ts";
+import { closeKey, openKey } from "./steps/keys.ts";
+import { select } from "./steps/select.ts";
+import { MemoryStore } from "./store/memory.ts";
+import type { Fields, Store, Write } from "./store/store.ts";
+import { FakeInference } from "./testing/fake-inference.ts";
+import { FakePlatform, fakeServices } from "./testing/fake-platform.ts";
+import { FakeRuntime } from "./testing/fake-runtime.ts";
+
+const workdir = mkdtempSync(join(tmpdir(), "codeman-ledger-"));
+after(() => rmSync(workdir, { recursive: true, force: true }));
+
+const picked: PickedRun = {
+  action: "implement",
+  stage: "code",
+  agent: true,
+  model: "qwen3-coder:30b",
+  provider: "runpod",
+  mode: "pod",
+  profile: "small-pod",
+};
+
+function ledger(store: Store, job: string, options: { attempt?: number; at?: string } = {}) {
+  const runtime = new FakeRuntime({
+    repository: { owner: "Codenergy", name: "Codeman" },
+    runId: "300",
+    attempt: options.attempt ?? 1,
+  });
+  const at = new Date(options.at ?? "2026-10-07T12:00:00Z");
+  return {
+    runtime,
+    ledger: new Ledger(store, { runtime, job }, { now: () => at, wait: async () => undefined }),
+  };
+}
+
+/** Every document of the organization's runs and events, by path. */
+async function documents(store: Store, owner = "codenergy"): Promise<Record<string, Fields>> {
+  const found = [
+    ...(await store.query(`organizations/${owner}/runs`)),
+    ...(await store.query(`organizations/${owner}/events`)),
+  ];
+  return Object.fromEntries(found.map((document) => [document.path, document.fields]));
+}
+
+test("a run's document grows with each job, and each job says what it did", async () => {
+  const store = new MemoryStore();
+  const pick = ledger(store, "select");
+  pick.ledger.pick("300-1-7", picked);
+  pick.ledger.pick("300-1-8", { ...picked, action: "record", stage: "", agent: false });
+  await pick.ledger.flush(pick.runtime);
+  const open = ledger(store, "open-key", { at: "2026-10-07T12:01:00Z" });
+  open.ledger.open("300-1-7", 1.75, [{ pod: "pod1", event: "created" }]);
+  await open.ledger.flush(open.runtime);
+  const close = ledger(store, "close-key", { at: "2026-10-07T12:31:00Z" });
+  close.ledger.close(
+    "300-1-7",
+    { cost: 0.36, inputTokens: 3000, outputTokens: 120, requests: 2, pod: "pod1", pods: [] },
+    "failure",
+  );
+  await close.ledger.flush(close.runtime);
+  assert.deepEqual(close.runtime.logged("info"), ["Recorded 3 document(s) in Codeman's ledger."]);
+
+  const event = (run: string, type: string, job: string, at: string, fields: Fields) => ({
+    type,
+    repository: "codenergy/codeman",
+    task: Number(run.split("-")[2]),
+    run,
+    workflowRun: "300",
+    attempt: 1,
+    job,
+    at: new Date(at),
+    ...fields,
+  });
+  assert.deepEqual(await documents(store), {
+    "organizations/codenergy/runs/300-1-7": {
+      repository: "codenergy/codeman",
+      task: 7,
+      workflowRun: "300",
+      attempt: 1,
+      month: "2026-10",
+      status: "closed",
+      pickedAt: new Date("2026-10-07T12:00:00Z"),
+      stage: "code",
+      model: "qwen3-coder:30b",
+      provider: "runpod",
+      mode: "pod",
+      profile: "small-pod",
+      openedAt: new Date("2026-10-07T12:01:00Z"),
+      limit: 1.75,
+      closedAt: new Date("2026-10-07T12:31:00Z"),
+      cost: 0.36,
+      inputTokens: 3000,
+      outputTokens: 120,
+      requests: 2,
+      pod: "pod1",
+    },
+    "organizations/codenergy/events/300-1-7-task-picked": event(
+      "300-1-7",
+      "task-picked",
+      "select",
+      "2026-10-07T12:00:00Z",
+      { action: "implement", stage: "code" },
+    ),
+    "organizations/codenergy/events/300-1-8-task-picked": event(
+      "300-1-8",
+      "task-picked",
+      "select",
+      "2026-10-07T12:00:00Z",
+      { action: "record", stage: "" },
+    ),
+    "organizations/codenergy/events/300-1-7-key-opened": event(
+      "300-1-7",
+      "key-opened",
+      "open-key",
+      "2026-10-07T12:01:00Z",
+      { limit: 1.75 },
+    ),
+    "organizations/codenergy/events/300-1-7-pod-created-pod1": event(
+      "300-1-7",
+      "pod-created",
+      "open-key",
+      "2026-10-07T12:01:00Z",
+      { pod: "pod1" },
+    ),
+    "organizations/codenergy/events/300-1-7-run-stopped": event(
+      "300-1-7",
+      "run-stopped",
+      "close-key",
+      "2026-10-07T12:31:00Z",
+      { result: "failure" },
+    ),
+    "organizations/codenergy/events/300-1-7-run-closed": event(
+      "300-1-7",
+      "run-closed",
+      "close-key",
+      "2026-10-07T12:31:00Z",
+      { cost: 0.36 },
+    ),
+  });
+});
+
+test("a refused run says why, in its document and its event", async () => {
+  const store = new MemoryStore();
+  const { ledger: open, runtime } = ledger(store, "open-key");
+  open.refuse("300-1-7", "over-budget", "The monthly budget is reached.");
+  await open.flush(runtime);
+  const run = await store.get("organizations/codenergy/runs/300-1-7");
+  assert.deepEqual(run?.fields, {
+    status: "refused",
+    refusedAt: new Date("2026-10-07T12:00:00Z"),
+    refusal: "over-budget",
+    reason: "The monthly budget is reached.",
+  });
+  const refused = await store.get("organizations/codenergy/events/300-1-7-key-refused");
+  assert.equal(refused?.fields.status, "over-budget");
+});
+
+test("a write that fails is tried again, and one that still fails fails the job, saying why", async () => {
+  const store = new MemoryStore();
+  let failures = 2;
+  const flaky: Store = {
+    get: (path) => store.get(path),
+    query: (path, query) => store.query(path, query),
+    transaction: (work, options) => store.transaction(work, options),
+    write: async (writes: readonly Write[]) => {
+      if (failures-- > 0) throw new Error("Firestore commit failed with 503 UNAVAILABLE.");
+      await store.write(writes);
+    },
+  };
+  const waits: number[] = [];
+  const runtime = new FakeRuntime({ repository: { owner: "o", name: "r" } });
+  const flakyLedger = new Ledger(
+    flaky,
+    { runtime, job: "close-key" },
+    {
+      wait: async (ms) => {
+        waits.push(ms);
+      },
+    },
+  );
+  flakyLedger.close("1-1-7", { cost: 0.1 }, "success");
+  await flakyLedger.flush(runtime);
+  assert.deepEqual(waits, [1000, 3000]);
+  assert.deepEqual(runtime.logged("warning"), [
+    "Could not write to Codeman's ledger (Firestore commit failed with 503 UNAVAILABLE.); trying again in 1 s.",
+    "Could not write to Codeman's ledger (Firestore commit failed with 503 UNAVAILABLE.); trying again in 3 s.",
+  ]);
+  assert.equal((await store.get("organizations/o/runs/1-1-7"))?.fields.cost, 0.1);
+
+  failures = 10;
+  const again = new Ledger(flaky, { runtime, job: "close-key" }, { wait: async () => undefined });
+  again.close("1-1-7", { cost: 0.2 }, "success");
+  await assert.rejects(
+    again.flush(runtime),
+    /^Error: Could not write to Codeman's ledger after 4 attempts: Firestore commit failed with 503/,
+  );
+});
+
+test("a task's run from select to close-key, and a re-run of its key jobs, write the same documents", async () => {
+  const store = new MemoryStore();
+  const platform = new FakePlatform({ ".codeman/settings.yml": "model: a/b\n" });
+  platform.maintainers.add("alice");
+  platform.openIssue("alice", "Add a cache", "Cache responses.");
+  const selected = new FakeRuntime({ inputs: { workdir }, runId: "300" });
+  await select(fakeServices(platform, selected, undefined, undefined, undefined, store));
+  const [task] = JSON.parse(selected.outputs.tasks ?? "") as Record<string, string>[];
+  assert.equal(task?.["ledger-run"], "300-1-1");
+
+  const keyJobs = async (attempt: number) => {
+    const inference = new FakeInference({ usage: { cost: 0.05, inputTokens: 900 } });
+    const open = new FakeRuntime({
+      inputs: {
+        "encryption-secret": "s".repeat(32),
+        task: "1",
+        "task-budget": "2",
+        "monthly-budget": "20",
+        "ledger-run": task?.["ledger-run"] ?? "",
+      },
+      runId: "300",
+      attempt,
+    });
+    await openKey(fakeServices(platform, open, undefined, inference, undefined, store));
+    const close = new FakeRuntime({
+      inputs: { handle: "handle-300", "ledger-run": task?.["ledger-run"] ?? "" },
+      runId: "300",
+      attempt,
+    });
+    await closeKey(fakeServices(platform, close, undefined, inference, undefined, store));
+  };
+  await keyJobs(1);
+  const first = await documents(store, "o");
+  assert.deepEqual(Object.keys(first).sort(), [
+    "organizations/o/events/300-1-1-key-opened",
+    "organizations/o/events/300-1-1-run-closed",
+    "organizations/o/events/300-1-1-task-picked",
+    "organizations/o/runs/300-1-1",
+  ]);
+  const run = first["organizations/o/runs/300-1-1"];
+  assert.equal(run?.status, "closed");
+  assert.equal(run?.stage, "plan");
+  assert.equal(run?.model, "a/b");
+  assert.equal(run?.provider, "openrouter");
+  assert.equal(run?.limit, 2);
+  assert.equal(run?.cost, 0.05);
+  assert.equal(run?.inputTokens, 900);
+  assert.equal(run?.outputTokens, undefined, "unknown figures are left out");
+
+  // A re-run of the key jobs is the workflow run's next attempt, of the same run.
+  await keyJobs(2);
+  const second = await documents(store, "o");
+  assert.deepEqual(Object.keys(second).sort(), Object.keys(first).sort());
+  assert.equal(second["organizations/o/runs/300-1-1"]?.attempt, 1, "the attempt that picked it");
+  assert.equal(second["organizations/o/events/300-1-1-key-opened"]?.attempt, 2);
+});

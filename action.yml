@@ -13,6 +13,14 @@ inputs:
     description: "(select) Slug of the GitHub App, used to recognize Codeman's own comments."
   settings:
     description: "(select) Settings shared by several repositories, such as an organization's variable, in the format of .codeman/settings.yml. Defaults that the repository's file overrides, value by value. Empty means none. Plain text: never secrets."
+  firebase-project:
+    description: "(select, open-key, close-key, release-pod) The Firebase project of Codeman's backend, whose Firestore database records each run. Required; the templates pass the CODEMAN_FIREBASE_PROJECT variable."
+  workload-identity-provider:
+    description: "(select, open-key, close-key, release-pod) The Workload Identity provider that admits the job's OIDC token, as projects/<number>/locations/global/workloadIdentityPools/<pool>/providers/<provider>. Required; the templates pass the CODEMAN_WORKLOAD_IDENTITY_PROVIDER variable. The job needs the id-token: write permission."
+  service-account:
+    description: "(select, open-key, close-key, release-pod) The email of the service account the job acts as in the backend's project. Required; the templates pass the CODEMAN_SERVICE_ACCOUNT variable."
+  ledger-run:
+    description: "(open-key, close-key, release-pod) The run's ID in Codeman's ledger, from select's tasks."
   model:
     description: "(select) Model ID: OpenRouter's, or the self-hosted engine's. Empty uses .codeman/settings.yml. Maintainers can override it per task with /codeman set."
   task-budget:
@@ -63,7 +71,7 @@ inputs:
   key-reason:
     description: "(apply) Reason output of the open-key job."
   agent-job-result:
-    description: "(apply) Result of the agent job."
+    description: "(close-key, apply) Result of the agent job."
   task-spent:
     description: "(apply) task-spent output of the open-key job."
   run-cost:
@@ -94,7 +102,7 @@ inputs:
     description: "Directory for Codeman's files. Defaults to RUNNER_TEMP/codeman."
 outputs:
   tasks:
-    description: "(select) The tasks this run works on, up to parallel-tasks, as a JSON list: for each, its task, action, needs-agent, stage, base-sha, task-budget, monthly-budget and inference, as the outputs of those names describe them. Empty when there is nothing to do."
+    description: "(select) The tasks this run works on, up to parallel-tasks, as a JSON list: for each, its task, action, needs-agent, stage, base-sha, task-budget, monthly-budget and inference, as the outputs of those names describe them, and ledger-run, the run's ID in Codeman's ledger (empty without an agent). Empty when there is nothing to do."
   action:
     description: "(select) What this run does for its first task: plan, route, implement, record, accept; none when there is nothing to do."
   needs-agent:

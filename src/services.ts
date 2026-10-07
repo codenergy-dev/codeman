@@ -1,12 +1,14 @@
 import type { InferenceBudget } from "./inference/budget.ts";
 import type { InferenceProvider } from "./inference/provider.ts";
+import type { Ledger } from "./ledger.ts";
 import type { Conventions } from "./platform/conventions.ts";
 import type { CiResults, Platform } from "./platform/platform.ts";
 import type { Runtime } from "./runtime/runtime.ts";
+import type { Store } from "./store/store.ts";
 
 /**
- * What a step works with: the runtime it runs in, the platform it works on, and the inference
- * provider its agent runs use. `src/main.ts` builds them; tests pass fakes.
+ * What a step works with: the runtime it runs in, the platform it works on, the inference
+ * provider its agent runs use, and Codeman's store. `src/main.ts` builds them; tests pass fakes.
  */
 export interface Services {
   runtime: Runtime;
@@ -22,4 +24,11 @@ export interface Services {
   inference(): InferenceProvider;
   /** The task's and the month's spend across every provider the settings name. */
   budget(): InferenceBudget;
+  /**
+   * Codeman's store, with the job's identity. Throws, saying what to set, when the backend's
+   * settings are missing.
+   */
+  store(): Store;
+  /** The ledger of the step's job, on the store; `job` names the step. */
+  ledger(job: string): Ledger;
 }

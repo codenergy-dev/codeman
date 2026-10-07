@@ -1,5 +1,6 @@
 import * as core from "@actions/core";
 import type { RepositoryRef } from "../platform/types.ts";
+import { oneLine } from "../text.ts";
 import type { Runtime } from "./runtime.ts";
 
 /** A step of a GitHub Actions workflow: inputs and outputs of the action, its logs and summary. */
@@ -44,6 +45,17 @@ export class GitHubActionsRuntime implements Runtime {
     core.setSecret(secret);
   }
 
+  /** GitHub's OIDC token, which `getIDToken` masks. The job needs `id-token: write`. */
+  async idToken(audience: string): Promise<string> {
+    try {
+      return await core.getIDToken(audience);
+    } catch (error) {
+      throw new Error(
+        `The job could not get GitHub's OIDC token: give it the \`id-token: write\` permission, as the templates do. ${error instanceof Error ? oneLine(error.message) : ""}`.trim(),
+      );
+    }
+  }
+
   fail(message: string): void {
     core.setFailed(message);
   }
@@ -58,11 +70,16 @@ export class GitHubActionsRuntime implements Runtime {
     return process.env.RUNNER_TEMP ?? "/tmp";
   }
 
-  get run(): { id: string; url: string } {
+  get run(): { id: string; attempt: number; url: string } {
     const server = process.env.GITHUB_SERVER_URL ?? "https://github.com";
     const id = String(Number.parseInt(process.env.GITHUB_RUN_ID ?? "", 10));
+    const attempt = Number.parseInt(process.env.GITHUB_RUN_ATTEMPT ?? "", 10);
     const { owner, name } = this.repository;
-    return { id, url: `${server}/${owner}/${name}/actions/runs/${id}` };
+    return {
+      id,
+      attempt: attempt > 0 ? attempt : 1,
+      url: `${server}/${owner}/${name}/actions/runs/${id}`,
+    };
   }
 
   runIdOf(url: string): string | undefined {

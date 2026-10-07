@@ -11,7 +11,9 @@ export class FakeRuntime implements Runtime {
   readonly summaries: { heading: string; text: string; items: readonly string[] }[] = [];
   readonly tempDir: string;
   readonly repository: RepositoryRef;
-  readonly run: { id: string; url: string };
+  readonly run: { id: string; attempt: number; url: string };
+  /** The OIDC tokens the step asked for, by audience. */
+  readonly idTokens: string[] = [];
   readonly #workspace: string | undefined;
 
   constructor(
@@ -21,6 +23,7 @@ export class FakeRuntime implements Runtime {
       workspace?: string;
       repository?: RepositoryRef;
       runId?: string;
+      attempt?: number;
     } = {},
   ) {
     this.inputs = { ...options.inputs };
@@ -28,7 +31,7 @@ export class FakeRuntime implements Runtime {
     this.#workspace = options.workspace;
     this.repository = options.repository ?? { owner: "o", name: "r" };
     const id = options.runId ?? "1";
-    this.run = { id, url: `https://ci.test/runs/${id}` };
+    this.run = { id, attempt: options.attempt ?? 1, url: `https://ci.test/runs/${id}` };
   }
 
   input(name: string, options?: { required?: boolean }): string {
@@ -60,6 +63,13 @@ export class FakeRuntime implements Runtime {
 
   async summary(heading: string, text: string, items: readonly string[]): Promise<void> {
     this.summaries.push({ heading, text, items });
+  }
+
+  async idToken(audience: string): Promise<string> {
+    this.idTokens.push(audience);
+    const token = `oidc-token-${this.idTokens.length}`;
+    this.mask(token);
+    return token;
   }
 
   mask(secret: string): void {

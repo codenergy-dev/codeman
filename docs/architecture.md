@@ -50,15 +50,17 @@ Jobs that do not apply to a task are skipped: a task that only records answers g
 
 | Job | Does | Credentials |
 | --- | --- | --- |
-| `select` | Reads the settings and `.codemanignore` from the default branch, and the organization's settings from its `settings` input, picks the tasks and each one's action (`plan`, `route`, `implement` with its stage, `record`, `accept`; `none` when nothing can move) and [inference profile](#inference-profiles), sets `codeman:planning`, `codeman:routing` or the stage's label, and writes each task's context as an artifact. | App token: issues write; contents, pull requests and actions read |
-| `open-key` | Checks the task and monthly budgets, across every provider the settings name, and gives the run access to its model: an OpenRouter key, or a token for a self-hosted model's gateway, which may start a pod, or share one with the run's other tasks. | The OpenRouter management key and the GPU account key, each when the settings or a profile name its provider; encryption secret |
+| `select` | Reads the settings and `.codemanignore` from the default branch, and the organization's settings from its `settings` input, picks the tasks and each one's action (`plan`, `route`, `implement` with its stage, `record`, `accept`; `none` when nothing can move) and [inference profile](#inference-profiles), sets `codeman:planning`, `codeman:routing` or the stage's label, and writes each task's context as an artifact. | App token: issues write; contents, pull requests and actions read; OIDC token, for the [backend](#backend) |
+| `open-key` | Checks the task and monthly budgets, across every provider the settings name, and gives the run access to its model: an OpenRouter key, or a token for a self-hosted model's gateway, which may start a pod, or share one with the run's other tasks. | The OpenRouter management key and the GPU account key, each when the settings or a profile name its provider; encryption secret; OIDC token |
 | `agent` | Runs the harness on a copy of the checkout and uploads what it changed as an artifact, even when the agent fails or runs out of time. For a Serverless run, also runs the gateway, outside the sandbox. | `GITHUB_TOKEN` with contents and actions read (for workflow results; the agent never sees it), the run's key or token; for Serverless, the endpoint's key, which only Codeman's step holds |
-| `close-key` | Ends the run's access (disables the key, or ends the run on its gateway) and reads what it and each earlier run of the task spent. Keeps a pod for the task's next run or terminates it; a shared pod stays while another task uses or keeps it. Runs whatever happened before. | OpenRouter management key or GPU account key |
+| `close-key` | Ends the run's access (disables the key, or ends the run on its gateway) and reads what it and each earlier run of the task spent. Keeps a pod for the task's next run or terminates it; a shared pod stays while another task uses or keeps it. Runs whatever happened before. | OpenRouter management key or GPU account key; OIDC token |
 | `apply` | Validates the agent's result and writes it to its own task: commits, pull request, labels, run and status comments, spend. When the action is `record`, it applies the maintainers' answers instead; when it is `accept`, it moves the accepted workflows. Says whether the task goes on to another agent run (`continues`), and, when the task moved, uploads an artifact that says so (`codeman-chain-<number>`). | App token: contents, issues and pull requests write; for `accept` only, a second token with contents and workflows write |
-| `release-pod` | Terminates the pod `close-key` kept, when the task does not go on to another run now, or `apply` failed; a shared pod, only once no other task uses or keeps it. | GPU account key |
+| `release-pod` | Terminates the pod `close-key` kept, when the task does not go on to another run now, or `apply` failed; a shared pod, only once no other task uses or keeps it. | GPU account key; OIDC token |
 | `next-run` | Starts another run when this one moved a task: when the run has a `codeman-chain-` artifact, which only an `apply` that succeeded uploads. | `GITHUB_TOKEN` with `actions: write`, which also lists the run's artifacts |
 
 Only `agent` runs an LLM. The jobs that write to GitHub never run one, and they treat everything the agent produced as untrusted.
+
+`select`, `open-key`, `close-key` and `release-pod` also record what they did in Codeman's ledger, through the [backend](#backend), after their GitHub writes. `agent` never reaches the backend.
 
 ## Agent sandbox
 
@@ -171,6 +173,43 @@ With `parallel-tasks` above 1, the run's tasks on pods whose settings are the sa
 - **The spend table.** Its rows name `Runpod (pod)` or `Runpod (Serverless)`, and the notes under it say how their figures are measured: a pod run's cost is its pod's time at its price, refreshed from billing; a Serverless run's is an estimate; and the month is the whole account's billing, so it counts every repository on the account, and a Serverless run only an hour or more after it ran. Codeman does not estimate the Serverless runs Runpod has not billed yet, since such an estimate could count some twice.
 - `select` passes the task's spend (its total, and its self-hosted part) and pods to the key jobs (`inference` output), with the rest of its choice: the run's profile, and every provider the settings name.
 - A task whose runs use several providers, through [inference profiles](#inference-profiles) or a change of `inference`, adds them up: its OpenRouter keys, and what the record says its self-hosted runs added. A record from before profiles kept no such part; when it has pods, its whole total counts as self-hosted.
+
+## Backend
+
+Codeman keeps its operation in Cloud Firestore, in a Firebase project of its own: what its jobs need to share across runs and repositories, and atomically, which GitHub cannot give them. Tasks' state stays on GitHub (labels, comments, the task record), where maintainers read and change it. The choices were made in the [backend plan](plans/2026-10-07-firestore-backend.md), which records its decisions; the [ledger budgets](plans/2026-10-07-budgets-from-the-ledger.md), [pod registry](plans/2026-10-07-pod-registry.md) and [Serverless split](plans/2026-10-07-serverless-cost-split.md) plans build on it.
+
+- **Required.** Every repository needs the backend's three variables ([installation](installation.md#4-set-up-the-backend)). A step without them fails, naming them; `select` fails first, before it marks any task, and so does a backend it cannot read.
+- **Access.** A job asks GitHub for its OIDC token (`id-token: write`), exchanges it at Google's Security Token Service for a federated token, and with it gets an access token of the backend's service account from IAM Credentials, for Firestore only (scope `datastore`), for an hour ([`src/store/google.ts`](../src/store/google.ts)). The Workload Identity provider's attribute condition admits only tokens of the organization's repositories, from Codeman's workflow on their default branch. No key is stored anywhere, and the tokens are masked. Only `select`, `open-key`, `close-key` and `release-pod` ask for an OIDC token; `agent` never does, so neither the agent nor a Serverless gateway can reach Firestore.
+- **Client.** Firestore's REST API v1, called with `fetch` ([`src/store/firestore.ts`](../src/store/firestore.ts)); no Google package. The project's `(default)` database, in Native mode, Standard edition.
+- **Rules.** [`firebase/firestore.rules`](../firebase/firestore.rules) denies every client: only the service account, which IAM authorizes and the rules do not apply to, reaches the data.
+- **Cost.** Firestore's free quota is 50,000 document reads and 20,000 writes a day; a run writes about six documents, plus one per pod it creates, joins or terminates ([usage and limits](web/firebase/usage-and-limits.md)).
+
+### The store
+
+[`src/store/store.ts`](../src/store/store.ts) is the interface the steps use: reads (`get`, and `query` with equality and range filters, order and limit), writes applied all at once with preconditions (a document exists, is missing, or is at a version), and transactions. A transaction's reads see one state, and its writes apply only if nothing it read, queries included, changed before it committed; otherwise it runs again, up to five times. Firestore's Standard edition locks what a transaction reads until it ends, so two transactions that read the same documents wait for each other, and one runs again ([serializability](web/firebase/transaction-serializability-and-isolation.md)).
+
+Tests use the store in memory ([`src/store/memory.ts`](../src/store/memory.ts)), which passes the same contract tests as Firestore's emulator ([`src/store/contract.ts`](../src/store/contract.ts); [development](development.md)).
+
+### Data layout
+
+Everything belongs to an organization, the repositories' owner (a user account is its own organization), so one project can serve several. Owners and repositories are lowercase, as GitHub compares them ([`src/store/layout.ts`](../src/store/layout.ts)).
+
+| Path | One document per | Fields |
+| --- | --- | --- |
+| `organizations/{owner}/runs/{run}` | Run of a task's agent | `repository` (`owner/name`), `task`, `workflowRun`, `attempt`, `month` (`2026-10`), `status` (`picked`, `open`, `refused`, `closed`), `pickedAt`, `stage`, `model`, `provider` (`openrouter` or `runpod`), `mode` (`openrouter`, `pod` or `serverless`), `profile`; then `openedAt` and `limit`, or `refusedAt`, `refusal` and `reason`; then `closedAt`, `cost`, `inputTokens`, `outputTokens`, `requests`, `maxInputTokens`, `tokensPerSecond` and `pod`, when known |
+| `organizations/{owner}/events/{run}-{type}[-{subject}]` | Thing a job did | `type`, `repository`, `task`, `run`, `workflowRun`, `attempt` (the job's), `job`, `at`, and the type's own fields |
+
+- A run's ID is `{workflow run}-{attempt}-{task}`: the workflow run, the attempt in which `select` picked the task, and the task. Workflow runs' IDs grow with time, so runs sort in the order they started. `select` gives it to the task's jobs (its `ledger-run` output). A re-run of failed jobs keeps the attempt that picked the task, and so writes the same run; a re-run of the whole workflow picks again, as a new run.
+- Event types: `task-picked` (`action`, `stage`; for every task `select` picks, also those without an agent), `key-opened` (`limit`), `key-refused` (`status`, `reason`), `pod-created`, `pod-joined` and `pod-terminated` (`pod`, also the subject), `run-stopped` (`result`: the agent job's, when it did not succeed) and `run-closed` (`cost`).
+- The queries the budgets need, an organization's or a repository's runs of a month and a task's runs, filter on equality only, which Firestore's automatic single-field indexes serve.
+
+### The ledger
+
+[`src/ledger.ts`](../src/ledger.ts) writes the runs and their events. Each job adds its own fields to the run's document and its events: `select` when it picks the task, `open-key` when it opens or refuses the run, `close-key` with what the run used, and `release-pod` when it terminates a kept pod. A job writes them at its end, after its GitHub writes, in one commit; `close-key` and `release-pod` first end the run's access and terminate pods, whatever the ledger does.
+
+- Writes are idempotent: fields are merged into the run's document, and an event replaces the one of the same ID. A re-run job writes the same documents again.
+- A write that fails is tried again three times, over 13 seconds; then the job fails. A failed `select` runs no task's jobs; a failed `open-key` runs no agent, and its run is closed as any other.
+- Nothing reads the ledger yet: the budgets still come from the providers ([budget](#budget)).
 
 ## Planning
 
@@ -399,7 +438,7 @@ The steps reach the platform and the runtime only through interfaces. GitHub and
 | `Platform` ([`src/platform/platform.ts`](../src/platform/platform.ts)) | Tasks and their state labels, comments on issues and on change requests, change requests and their reviews, who is a maintainer, the account Codeman writes as, files and commits, links and references. | [`src/platform/github/platform.ts`](../src/platform/github/platform.ts): the REST and GraphQL APIs, through the App's token. |
 | `CiResults` | Runs of CI on a commit, their jobs, logs and artifacts. | [`src/platform/github/ci.ts`](../src/platform/github/ci.ts): GitHub Actions. |
 | `Conventions` ([`src/platform/conventions.ts`](../src/platform/conventions.ts)) | The Markdown dialect (mentions and references to break), the comment size limit, where CI configuration lives, the rules that protect it, and what the agent is told about writing and reviewing it. | [`src/platform/github/conventions.ts`](../src/platform/github/conventions.ts). |
-| `Runtime` ([`src/runtime/runtime.ts`](../src/runtime/runtime.ts)) | Inputs and outputs of a step, logs, the run's summary, secret masking, the workspace, the run's ID and link, and the repository. | [`src/runtime/github-actions.ts`](../src/runtime/github-actions.ts). |
+| `Runtime` ([`src/runtime/runtime.ts`](../src/runtime/runtime.ts)) | Inputs and outputs of a step, logs, the run's summary, secret masking, the workspace, the run's ID, attempt and link, the repository, and the job's OIDC token. | [`src/runtime/github-actions.ts`](../src/runtime/github-actions.ts). |
 
 Every adapter must guarantee:
 

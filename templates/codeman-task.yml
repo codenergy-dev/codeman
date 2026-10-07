@@ -31,6 +31,10 @@ on:
       inference:
         type: string
         required: true
+      # The run's document in Codeman's ledger; empty for a task without an agent.
+      ledger-run:
+        type: string
+        required: false
     # The secrets these jobs use, each in the jobs that used it before parallel tasks. Unset
     # ones are empty, and the step that needs one says so.
     secrets:
@@ -60,6 +64,9 @@ jobs:
     runs-on: ubuntu-latest
     # A new pod may take up to 25 minutes to serve its model.
     timeout-minutes: 35
+    permissions:
+      # Records the run in Codeman's store, as the backend's service account.
+      id-token: write
     outputs:
       status: ${{ steps.codeman.outputs.status }}
       reason: ${{ steps.codeman.outputs.reason }}
@@ -80,12 +87,17 @@ jobs:
           task-budget: ${{ inputs.task-budget }}
           monthly-budget: ${{ inputs.monthly-budget }}
           inference: ${{ inputs.inference }}
+          ledger-run: ${{ inputs.ledger-run }}
+          firebase-project: ${{ vars.CODEMAN_FIREBASE_PROJECT }}
+          workload-identity-provider: ${{ vars.CODEMAN_WORKLOAD_IDENTITY_PROVIDER }}
+          service-account: ${{ vars.CODEMAN_SERVICE_ACCOUNT }}
           management-key: ${{ secrets.CODEMAN_OPENROUTER_MANAGEMENT_KEY }}
           gpu-key: ${{ secrets.CODEMAN_RUNPOD_API_KEY }}
           encryption-secret: ${{ secrets.CODEMAN_OPENROUTER_KEY_ENCRYPTION_SECRET }}
 
   # Runs the agent with read-only access. Its result is an artifact for the apply job, even when
-  # the agent fails or runs out of time, so unfinished work is kept.
+  # the agent fails or runs out of time, so unfinished work is kept. It never gets an OIDC token:
+  # neither the agent nor a Serverless gateway may reach Codeman's store.
   agent:
     name: Agent (${{ inputs.stage }})
     needs: open-key
@@ -147,6 +159,9 @@ jobs:
     if: always() && (needs.open-key.outputs.handle != '' || needs.open-key.outputs.key-hash != '')
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      # Records the run's cost in Codeman's store.
+      id-token: write
     outputs:
       run-cost: ${{ steps.codeman.outputs.run-cost }}
       input-tokens: ${{ steps.codeman.outputs.input-tokens }}
@@ -168,6 +183,11 @@ jobs:
           key-hash: ${{ needs.open-key.outputs.key-hash }}
           inference: ${{ inputs.inference }}
           gateway-usage: ${{ needs.agent.outputs.gateway-usage }}
+          agent-job-result: ${{ needs.agent.result }}
+          ledger-run: ${{ inputs.ledger-run }}
+          firebase-project: ${{ vars.CODEMAN_FIREBASE_PROJECT }}
+          workload-identity-provider: ${{ vars.CODEMAN_WORKLOAD_IDENTITY_PROVIDER }}
+          service-account: ${{ vars.CODEMAN_SERVICE_ACCOUNT }}
           management-key: ${{ secrets.CODEMAN_OPENROUTER_MANAGEMENT_KEY }}
           gpu-key: ${{ secrets.CODEMAN_RUNPOD_API_KEY }}
 
@@ -253,11 +273,18 @@ jobs:
     if: always() && needs.close-key.outputs.kept-pod != '' && needs.apply.outputs.continues != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      # Records the pod's end in Codeman's store.
+      id-token: write
     steps:
       - uses: codenergy-dev/codeman@COMMIT_SHA
         with:
           step: release-pod
           handle: ${{ needs.open-key.outputs.handle }}
           inference: ${{ inputs.inference }}
+          ledger-run: ${{ inputs.ledger-run }}
+          firebase-project: ${{ vars.CODEMAN_FIREBASE_PROJECT }}
+          workload-identity-provider: ${{ vars.CODEMAN_WORKLOAD_IDENTITY_PROVIDER }}
+          service-account: ${{ vars.CODEMAN_SERVICE_ACCOUNT }}
           gpu-key: ${{ secrets.CODEMAN_RUNPOD_API_KEY }}
 

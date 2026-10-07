@@ -1,5 +1,6 @@
 import { inferenceBudget, inferenceProvider } from "./inference/index.ts";
 import type { InferenceProvider } from "./inference/provider.ts";
+import { Ledger } from "./ledger.ts";
 import { GitHubActionsResults } from "./platform/github/ci.ts";
 import { GITHUB } from "./platform/github/conventions.ts";
 import { GitHubPlatform, octokit } from "./platform/github/platform.ts";
@@ -9,6 +10,8 @@ import { agent } from "./steps/agent.ts";
 import { apply } from "./steps/apply.ts";
 import { closeKey, openKey, release } from "./steps/keys.ts";
 import { select } from "./steps/select.ts";
+import { backendStore } from "./store/backend.ts";
+import type { Store } from "./store/store.ts";
 
 /** Each job of the Codeman workflow runs one step. See docs/architecture.md. */
 const STEPS: Record<string, (services: Services) => Promise<void>> = {
@@ -21,13 +24,19 @@ const STEPS: Record<string, (services: Services) => Promise<void>> = {
 };
 
 /**
- * Codeman on GitHub: the App's tokens for the platform, the job's token for CI results, and the
- * inference provider with the key jobs' credentials.
+ * Codeman on GitHub: the App's tokens for the platform, the job's token for CI results, the
+ * inference provider with the key jobs' credentials, and the store with the job's OIDC token.
  */
 export function gitHubServices(runtime: Runtime): Services {
   const client = (input: string) => octokit(runtime.input(input, { required: true }));
   // One provider per job, so the budgets and the run share what it read.
   let provider: InferenceProvider | undefined;
+  // One store per job, so its token serves every request.
+  let store: Store | undefined;
+  const theStore = () => {
+    store ??= backendStore(runtime);
+    return store;
+  };
   const inference = () => {
     provider ??= inferenceProvider(runtime);
     return provider;
@@ -44,6 +53,8 @@ export function gitHubServices(runtime: Runtime): Services {
     ci: () => new GitHubActionsResults(client("github-token"), runtime.repository),
     inference,
     budget: () => inferenceBudget(runtime, inference),
+    store: theStore,
+    ledger: (job) => new Ledger(theStore(), { runtime, job }),
   };
 }
 

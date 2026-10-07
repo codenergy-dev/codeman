@@ -26,14 +26,23 @@ export interface Runtime extends Log {
    * on purpose; this is a second line of defense, which some runtimes do not have.
    */
   mask(secret: string): void;
+  /**
+   * The job's OpenID Connect token from the runtime, for `audience`, which proves to another
+   * service which repository and workflow the job runs for. Masked. Throws when the job may not
+   * have one.
+   */
+  idToken(audience: string): Promise<string>;
   /** Marks the step as failed; the step goes on. */
   fail(message: string): void;
   /** The checkout of the repository, for the agent step. Throws when there is none. */
   workspace(): string;
   /** A directory for temporary files that the step's later commands can read. */
   readonly tempDir: string;
-  /** This run: its ID, which is digits, and a link to it. */
-  readonly run: { id: string; url: string };
+  /**
+   * This run: its ID, which is digits; its attempt, 1 and then one more for each re-run of its
+   * jobs; and a link to it.
+   */
+  readonly run: { id: string; attempt: number; url: string };
   /** The ID of a run of this runtime from its link, as `run` gives them. */
   runIdOf(url: string): string | undefined;
   /** The repository the run works on. */

@@ -75,6 +75,7 @@ test("a run creates a pod that serves the model, and gives the agent a token for
   assert.equal(handle.start, Date.parse("2026-10-03T12:00:00Z"), "billing starts with the pod");
   assert.equal(opened.baseUrl, "https://pod1-8080.pods.test/v1");
   assert.equal(opened.contextLength, 65536);
+  assert.deepEqual(opened.pods, [{ pod: "pod1", event: "created" }]);
   const run = gateways.state("pod1").run;
   assert.equal(run?.tokenSha256, sha256(opened.credential));
   assert.equal(run?.limit, 1.5);
@@ -96,8 +97,11 @@ test("close reads the run's usage, costs its time, and keeps the pod for the tas
   assert.equal(usage.keptPod, "pod1");
   assert.deepEqual(usage.podCosts, { pod1: 0.36 }, "its life so far, above its late billing");
   assert.ok(gpu.live.has("pod1"));
+  assert.deepEqual(usage.pods, []);
 
-  await releasePod(gpu.pods, opened.handle, new FakeRuntime());
+  assert.deepEqual(await releasePod(gpu.pods, opened.handle, new FakeRuntime()), [
+    { pod: "pod1", event: "terminated" },
+  ]);
   assert.deepEqual(gpu.terminated, ["pod1"]);
 });
 
@@ -110,6 +114,7 @@ test("the task's next run reuses its kept pod, with a new token and its own star
   advance(2 * 60_000);
   const second = await make().open({ task: "7", runId: "301", limit: 1.1 }, new FakeRuntime());
   assert.equal(gpu.created.length, 1, "no new pod");
+  assert.deepEqual(second.pods, [{ pod: "pod1", event: "joined" }]);
   const handle = JSON.parse(second.handle) as PodHandle;
   assert.equal(handle.podId, "pod1");
   assert.equal(handle.start, Date.parse("2026-10-03T12:12:00Z"));
@@ -128,6 +133,10 @@ test("a model change replaces the task's kept pod", async () => {
   );
   assert.deepEqual(gpu.terminated, ["pod1"]);
   assert.equal((JSON.parse(other.handle) as PodHandle).podId, "pod2");
+  assert.deepEqual(other.pods, [
+    { pod: "pod1", event: "terminated" },
+    { pod: "pod2", event: "created" },
+  ]);
 });
 
 test("with one pod per run, close terminates it", async () => {
@@ -137,6 +146,7 @@ test("with one pod per run, close terminates it", async () => {
   const usage = await provider.close(opened.handle, new FakeRuntime());
   assert.equal(usage.keptPod, undefined);
   assert.deepEqual(gpu.terminated, ["pod1"]);
+  assert.deepEqual(usage.pods, [{ pod: "pod1", event: "terminated" }]);
 });
 
 test("a close whose pod does not answer still costs the run's time and terminates the pod", async () => {
@@ -231,6 +241,7 @@ test("a run that would pass the month's budget creates no pod", async () => {
       task: "7",
       "task-budget": "2",
       "monthly-budget": "20",
+      "ledger-run": "300-1-7",
     },
   });
   await openKey(fakeServices(new FakePlatform(), runtime, undefined, make()));
@@ -245,7 +256,7 @@ test("close-key reports the pod, its billing and whether it was kept", async () 
   const provider = make();
   const opened = await provider.open({ task: "7", runId: "300", limit: 1 }, new FakeRuntime());
   gpu.billed.old = 0.42;
-  const runtime = new FakeRuntime({ inputs: { handle: opened.handle } });
+  const runtime = new FakeRuntime({ inputs: { handle: opened.handle, "ledger-run": "300-1-7" } });
   await closeKey(fakeServices(new FakePlatform(), runtime, undefined, provider));
   assert.equal(runtime.outputs.pod, "pod1");
   assert.equal(runtime.outputs["kept-pod"], "pod1");
@@ -354,7 +365,9 @@ test("two tasks of a run share one pod: the first creates it, the other attaches
 
   // Ten minutes on the pod, US$ 0.12, of which each run pays half; then task 8 alone.
   advance(10 * 60_000);
-  const runtime = new FakeRuntime({ inputs: { handle: a.opened.handle } });
+  const runtime = new FakeRuntime({
+    inputs: { handle: a.opened.handle, "ledger-run": "300-1-7" },
+  });
   await closeKey(fakeServices(new FakePlatform(), runtime, undefined, seven.provider));
   assert.equal(runtime.outputs["run-cost"], "0.0600");
   assert.equal(runtime.outputs["pod-shared"], "true");

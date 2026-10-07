@@ -76,6 +76,10 @@ jobs:
       )
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      # GitHub's OIDC token, which Codeman exchanges for access to its store (Firestore) as the
+      # backend's service account. It writes nothing on GitHub.
+      id-token: write
     outputs:
       # The first task's action, or none.
       action: ${{ steps.codeman.outputs.action }}
@@ -105,6 +109,10 @@ jobs:
           # .codeman/settings.yml; the repository's file overrides them. Unset is none. The
           # variable is plain text, shown in the logs: never put secrets in it.
           settings: ${{ vars.CODEMAN_SETTINGS }}
+          # Codeman's backend, where it records each run: required. Variables, not secrets.
+          firebase-project: ${{ vars.CODEMAN_FIREBASE_PROJECT }}
+          workload-identity-provider: ${{ vars.CODEMAN_WORKLOAD_IDENTITY_PROVIDER }}
+          service-account: ${{ vars.CODEMAN_SERVICE_ACCOUNT }}
           model: ${{ inputs.model }}
           task-budget: ${{ inputs.task-budget }}
           monthly-budget: ${{ inputs.monthly-budget }}
@@ -127,10 +135,12 @@ jobs:
       matrix:
         include: ${{ fromJSON(needs.select.outputs.tasks) }}
     uses: ./.github/workflows/codeman-task.yml
-    # The most any of its jobs asks for: the agent job's. Each job asks for its own.
+    # The most any of its jobs asks for: the agent job's, and the OIDC token of the jobs that use
+    # Codeman's store, which the agent job never gets. Each job asks for its own.
     permissions:
       contents: read
       actions: read
+      id-token: write
     with:
       task: ${{ matrix.task }}
       action: ${{ matrix.action }}
@@ -140,6 +150,7 @@ jobs:
       task-budget: ${{ matrix.task-budget }}
       monthly-budget: ${{ matrix.monthly-budget }}
       inference: ${{ matrix.inference }}
+      ledger-run: ${{ matrix.ledger-run }}
     # Each job of codeman-task.yml uses only the secrets it used here before.
     secrets:
       CODEMAN_GITHUB_APP_PRIVATE_KEY: ${{ secrets.CODEMAN_GITHUB_APP_PRIVATE_KEY }}

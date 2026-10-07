@@ -2,7 +2,7 @@
 
 Every dependency is audited before it is added (see `AGENTS.md`). This page records what is used, why, and the result of the last audit. Update it whenever a dependency is added, removed or upgraded.
 
-Last audit: 2026-09-23; self-hosted inference: 2026-10-03. `npm audit` reported no known vulnerabilities.
+Last audit: 2026-09-23; self-hosted inference: 2026-10-03; backend: 2026-10-07. `npm audit` reported no known vulnerabilities.
 
 ## Runtime
 
@@ -52,6 +52,9 @@ Codeman calls these APIs with `fetch` or through the packages above. Their docum
 | OpenCode | The harness's configuration, permissions, providers and `run` command | [`docs/web/opencode/`](web/opencode/) |
 | Runpod REST API v2 | Self-hosted inference: pods (create, get, list, terminate), Serverless endpoints (get; and the job queue: run, stream, cancel), GPU prices, and billing (account, pods) | [`docs/web/runpod/`](web/runpod/) |
 | Ollama | The engine in Codeman's pod image: pulling a model, its context length, and its OpenAI-compatible API | [`docs/web/ollama/`](web/ollama/) |
+| Cloud Firestore REST API v1 | The backend: documents read (`batchGet`, `runQuery`), written (`commit`) and in transactions (`beginTransaction`, `rollback`); its emulator, in tests; security rules, quotas and billing | [`docs/web/google-cloud/`](web/google-cloud/), [`docs/web/firebase/`](web/firebase/) |
+| Google's Security Token Service and IAM Credentials | The backend's access: the job's OIDC token exchanged for a federated token (`token`), then for the service account's (`generateAccessToken`), through Workload Identity Federation | [`docs/web/google-cloud/`](web/google-cloud/) |
+| GitHub Actions' OIDC provider | Each backend job's OIDC token, through `getIDToken` of `@actions/core` | [`docs/web/github/`](web/github/) |
 
 ## Agent harness: OpenCode
 
@@ -101,3 +104,20 @@ Audited on 2026-10-03 for the [self-hosted inference plan](plans/2026-10-02-self
 - Built by [`.github/workflows/pod-image.yml`](../.github/workflows/pod-image.yml) from [`docker/pod/Dockerfile`](../docker/pod/Dockerfile) when either changes, or `dist/gateway.js`: Ollama's image, the `node` binary of `node:24.21.0-bookworm-slim` (pinned by digest, `sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6`), and the gateway, `dist/gateway.js`, bundled from [`src/gateway/`](../src/gateway/) with Node's modules only. CI checks that `dist/` matches the source, so the image needs no npm install.
 - Published to GitHub's container registry as `ghcr.io/<owner>/codeman-pod`, and referenced by digest in [`src/inference/ollama.ts`](../src/inference/ollama.ts) by a reviewed commit, never by tag.
 - The workflow uses only `actions/checkout` (pinned) and the runner's `docker`, with `packages: write` and `contents: read`.
+
+## Backend
+
+Audited on 2026-10-07 for the [backend plan](plans/2026-10-07-firestore-backend.md). No npm package is added (decision 2): Firestore's REST API, STS and IAM Credentials are called with `fetch`, and GitHub's OIDC token comes from `@actions/core`, already a dependency. `firebase-admin` and `@google-cloud/firestore` were not adopted: each brings a large tree (gRPC, Google's auth library) for the few calls Codeman makes.
+
+### Cloud Firestore, in a Firebase project
+
+- **What:** Google's managed document database, with transactions and a free daily quota, reached over HTTPS ([usage and limits](web/firebase/usage-and-limits.md)). Codeman uses the project's `(default)` database, Standard edition, in Native mode.
+- **Why:** what jobs share across runs and repositories, atomically: the ledger now, budget reservations, pod leases and endpoints' intervals next. GitHub cannot hold it, and the responsible person wants no Codeman service to host.
+- **Data:** Codeman's records of runs (repository and task numbers, stages, models, limits, costs, tokens, pods) and events. No secret, no code, no issue text.
+- **Credentials:** none stored. Jobs act as a service account through Workload Identity Federation ([deployment pipelines](web/google-cloud/configure-workload-identity-federation-with-deployment-pipelines.md)); the service account has only Cloud Datastore User (`roles/datastore.user`, [IAM roles](web/firebase/identity-and-access-management-iam.md)), and its tokens last an hour, scoped to Firestore. The security rules deny every client ([rules](web/firebase/get-started-with-cloud-firestore-security-rules.md)).
+- **Spending:** none within the free quota of 50,000 reads and 20,000 writes a day, which applies to one database per project ([billing](web/firebase/understand-cloud-firestore-billing.md)); a project without a billing account cannot go beyond it.
+- **Terms:** Google Cloud's and Firebase's terms; Google's documentation is CC BY 4.0, so the pages in `docs/web/` are copies.
+
+### Firestore's emulator
+
+Only for Codeman's tests, on a developer's machine: the contract tests run against it when it is there ([development](development.md)). It is Google's `cloud-firestore-emulator` jar, which the Firebase CLI downloads into `~/.cache/firebase/emulators/`, and runs on Java 21. Codeman neither installs nor downloads it, and CI does not run it.

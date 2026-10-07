@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { descriptionCommands } from "../commands.ts";
 import { type Messages, messages, taskLanguage } from "../i18n/index.ts";
-import { inferenceChoice } from "../inference/index.ts";
+import { agentMode, choiceProvider, inferenceChoice } from "../inference/index.ts";
 import type { WorkflowConventions } from "../platform/conventions.ts";
 import type { CiRun, Comment, Review } from "../platform/types.ts";
 import { IGNORE_FILE, unprotected } from "../policy.ts";
@@ -27,6 +27,7 @@ import {
 import { STAGE_STATE, type Stage, stageOfState } from "../stages.ts";
 import { type State, stateOf } from "../state.ts";
 import { decisionsUrl, renderRefused, renderStatus, reportUrl } from "../status.ts";
+import { ledgerRunId } from "../store/layout.ts";
 import {
   type Action,
   acceptRequest,
@@ -56,10 +57,14 @@ import { taskFile } from "./common.ts";
 
 /**
  * Picks the tasks this run works on, up to `parallel-tasks`, and writes each one's context for
- * its jobs. Runs no LLM, so it may hold a token that writes to issues.
+ * its jobs, and each run in the ledger. Runs no LLM, so it may hold a token that writes to
+ * issues.
  */
 export async function select(services: Services): Promise<void> {
   const { runtime, conventions } = services;
+  // The backend first: a run that cannot record its runs marks no task (decision 4).
+  const ledger = services.ledger("select");
+  await ledger.check(runtime);
   const repo = services.platform();
   const ci = services.ci();
   const bot = repo.self();
@@ -392,17 +397,35 @@ export async function select(services: Services): Promise<void> {
   const picked: Picked[] = [];
   for (const choice of choices) picked.push(await prepare(choice));
   for (const one of picked) await one.start();
-  const outputs = picked.map((one, index) => taskOutputs(one, picked.slice(0, index), picked));
+  const runOf = (one: Picked) => ledgerRunId(runtime.run.id, runtime.run.attempt, one.number);
+  const outputs = picked.map((one, index) =>
+    taskOutputs(one, picked.slice(0, index), picked, runOf(one)),
+  );
   // The jobs of each task, a leg of the run's matrix, take its outputs from this list.
   runtime.output("tasks", JSON.stringify(outputs));
   // The first task's, as one output each, and its context as `task.json`, for workflow files
   // from before parallel tasks.
   const [first] = outputs;
   const [firstPicked] = picked;
-  if (!first || !firstPicked) return;
-  for (const [name, value] of Object.entries(first)) runtime.output(name, value);
-  runtime.output("model", firstPicked.model);
-  writeFileSync(taskFile(runtime), JSON.stringify(firstPicked.context, null, 2));
+  if (first && firstPicked) {
+    for (const [name, value] of Object.entries(first)) runtime.output(name, value);
+    runtime.output("model", firstPicked.model);
+    writeFileSync(taskFile(runtime), JSON.stringify(firstPicked.context, null, 2));
+  }
+  // After GitHub's writes: a ledger that fails fails the job, and its tasks run nothing.
+  for (const one of picked) {
+    const choice = inferenceChoice(one.settings, null);
+    ledger.pick(runOf(one), {
+      action: one.action,
+      stage: one.stage,
+      agent: one.needsAgent,
+      model: one.model,
+      provider: choiceProvider(choice),
+      mode: agentMode(choice),
+      profile: one.profile,
+    });
+  }
+  await ledger.flush(runtime);
 }
 
 /** A task `select` picked, as its jobs need it. */
@@ -433,6 +456,7 @@ function taskOutputs(
   task: Picked,
   before: readonly Picked[],
   all: readonly Picked[],
+  run: string,
 ): Record<string, string> {
   const agents = (list: readonly Picked[]) => list.filter((other) => other.needsAgent);
   const reserved = agents(before).reduce(
@@ -456,6 +480,8 @@ function taskOutputs(
     "task-budget": String(task.settings["task-budget"]),
     "monthly-budget": String(task.settings["monthly-budget"]),
     inference: JSON.stringify(choice),
+    // The run's document in the ledger, which the key jobs add to; none without an agent.
+    "ledger-run": task.needsAgent ? run : "",
   };
 }
 

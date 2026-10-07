@@ -15,6 +15,7 @@ function openInputs(extra: Record<string, string> = {}): Record<string, string> 
     task: "7",
     "task-budget": "2",
     "monthly-budget": "20",
+    "ledger-run": "300-1-7",
     ...extra,
   };
 }
@@ -126,7 +127,7 @@ test("closes the run by its handle, and reports what it used", async () => {
       taskCosts: { "100": 0.1, "300": 0.0312 },
     },
   });
-  const runtime = new FakeRuntime({ inputs: { handle: "h" } });
+  const runtime = new FakeRuntime({ inputs: { handle: "h", "ledger-run": "300-1-7" } });
   await closeKey(fakeServices(new FakePlatform(), runtime, undefined, inference));
   assert.deepEqual(inference.closed, ["h"]);
   assert.deepEqual(runtime.outputs, {
@@ -140,10 +141,13 @@ test("closes the run by its handle, and reports what it used", async () => {
   });
 });
 
-test("an older workflow file passes the handle as key-hash; unknown figures are left out", async () => {
+test("an older workflow file passes the handle as key-hash: the run closes, then the ledger asks for the templates", async () => {
   const inference = new FakeInference({ usage: { cost: 0 } });
   const runtime = new FakeRuntime({ inputs: { "key-hash": "old" } });
-  await closeKey(fakeServices(new FakePlatform(), runtime, undefined, inference));
+  await assert.rejects(
+    closeKey(fakeServices(new FakePlatform(), runtime, undefined, inference)),
+    /Input ledger-run must be the run's ID in the ledger, from select; copy the workflow templates again/,
+  );
   assert.deepEqual(inference.closed, ["old"]);
-  assert.deepEqual(runtime.outputs, { "run-cost": "0.0000" });
+  assert.deepEqual(runtime.outputs, { "run-cost": "0.0000" }, "unknown figures are left out");
 });

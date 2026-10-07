@@ -28,7 +28,7 @@ Only maintainers (people with write access to the repository) can steer Codeman,
 
 ## Getting started
 
-You need a GitHub App for Codeman, an [OpenRouter](https://openrouter.ai) account, their credentials in your repository or organization, and a workflow. [docs/installation.md](docs/installation.md) walks through each one.
+You need a GitHub App for Codeman, an [OpenRouter](https://openrouter.ai) account, their credentials in your repository or organization, a free [Firebase](https://firebase.google.com) project where Codeman records its runs, and a workflow. [docs/installation.md](docs/installation.md) walks through each one.
 
 Codeman is model-agnostic: it reaches models through OpenRouter, and each task gets its own key with a spending limit, inside a monthly budget per repository. You choose the model and the budgets in `.codeman/settings.yml`, over defaults an organization can [share](docs/installation.md#shared-settings) with its repositories, and the paths the agent may not change in `.codemanignore`.
 

@@ -35,6 +35,17 @@ export interface OpenedRun {
   baseUrl?: string | undefined;
   /** The model's context length, when the provider knows it. */
   contextLength?: number | undefined;
+  /** What the provider did with pods to open the run, for the ledger. */
+  pods?: PodEvent[] | undefined;
+}
+
+/**
+ * Something a provider did with a pod: created one, gave a run one it had not created (another
+ * task's, or the task's kept pod), or terminated one.
+ */
+export interface PodEvent {
+  pod: string;
+  event: "created" | "joined" | "terminated";
 }
 
 /** What a run used, in OpenRouter's terms. Unknown figures are left out. */
@@ -62,4 +73,6 @@ export interface RunUsage {
   podShared?: boolean | undefined;
   /** The pod kept for the task's next run, which `release-pod` terminates if none follows. */
   keptPod?: string | undefined;
+  /** What the provider did with pods to close the run, for the ledger. */
+  pods?: PodEvent[] | undefined;
 }

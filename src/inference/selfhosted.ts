@@ -17,7 +17,7 @@ import {
   waitUntilReady,
 } from "./gpu.ts";
 import { SINGLE_RUN_IMAGES } from "./ollama.ts";
-import type { InferenceProvider, OpenedRun, RunRequest, RunUsage } from "./provider.ts";
+import type { InferenceProvider, OpenedRun, PodEvent, RunRequest, RunUsage } from "./provider.ts";
 
 /** How long a new pod has to pull its image and model and serve it. */
 export const START_MINUTES = 25;
@@ -161,13 +161,22 @@ export class PodInference implements InferenceProvider {
   readonly #settings: PodSettings;
   readonly #options: SelfHostedOptions;
   readonly #host: PodHost;
+  /** What this provider did with pods since `open` or `close` last reported it. */
+  #events: PodEvent[] = [];
 
   constructor(settings: PodSettings, options: SelfHostedOptions) {
     if (!options.gpu.pods) throw new Error(`${options.gpu.name} has no pods.`);
     this.name = `${options.gpu.name} pods`;
     this.#settings = settings;
     this.#options = options;
-    this.#host = options.gpu.pods;
+    this.#host = recorded(options.gpu.pods, (event) => this.#events.push(event));
+  }
+
+  /** The pod events so far, which the caller reports. */
+  #takeEvents(): PodEvent[] {
+    const events = this.#events;
+    this.#events = [];
+    return events;
   }
 
   #now(): Date {
@@ -200,11 +209,16 @@ export class PodInference implements InferenceProvider {
     const status = (await this.#admin(handle, "GET", "/admin/status").catch(
       () => ({}),
     )) as GatewayStatus;
+    const pods = this.#takeEvents();
+    if (!pods.some(({ pod, event }) => pod === handle.podId && event === "created")) {
+      pods.push({ pod: handle.podId, event: "joined" });
+    }
     return {
       handle: JSON.stringify(handle),
       credential: token,
       baseUrl: `${handle.url}/v1`,
       contextLength: status.contextLength,
+      pods,
     };
   }
 
@@ -253,6 +267,7 @@ export class PodInference implements InferenceProvider {
       pod: handle.podId,
       podCosts,
       keptPod: keep ? handle.podId : undefined,
+      pods: this.#takeEvents(),
     };
   }
 
@@ -304,6 +319,7 @@ export class PodInference implements InferenceProvider {
       podCosts,
       podShared: true,
       keptPod: keep ? handle.podId : undefined,
+      pods: this.#takeEvents(),
     };
   }
 
@@ -684,9 +700,9 @@ export async function releasePod(
   text: string,
   log: Log,
   gateway?: { accountKey: string; fetch?: typeof fetch },
-): Promise<void> {
+): Promise<PodEvent[]> {
   const handle = parseHandle(text);
-  if (handle.mode !== "pod") return;
+  if (handle.mode !== "pod") return [];
   if (handle.shared && gateway) {
     const status = (await callGateway(
       gateway.fetch ?? fetch,
@@ -699,11 +715,32 @@ export async function releasePod(
     const share = { active: status?.active ?? [], keepers: status?.keepers ?? [] };
     if (status && share.active.length + share.keepers.length > 0) {
       log.info(`Released pod ${handle.podId} for this task; it stays for ${tasksOn(share)}.`);
-      return;
+      return [];
     }
   }
   await host.terminate(handle.podId);
   log.info(`Terminated pod ${handle.podId}: the task does not go on to another run now.`);
+  return [{ pod: handle.podId, event: "terminated" }];
+}
+
+/** The pod host, telling `record` of each pod it creates or terminates. */
+function recorded(host: PodHost, record: (event: PodEvent) => void): PodHost {
+  return {
+    price: (gpuType) => host.price(gpuType),
+    create: async (spec) => {
+      const pod = await host.create(spec);
+      record({ pod: pod.id, event: "created" });
+      return pod;
+    },
+    get: (id) => host.get(id),
+    list: (env) => host.list(env),
+    terminate: async (id) => {
+      await host.terminate(id);
+      record({ pod: id, event: "terminated" });
+    },
+    url: (id, port) => host.url(id, port),
+    billing: (ids, since) => host.billing(ids, since),
+  };
 }
 
 export function parseHandle(text: string): PodHandle | ServerlessHandle {
