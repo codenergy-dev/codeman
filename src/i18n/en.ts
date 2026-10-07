@@ -134,6 +134,7 @@ export const en: Messages = {
     "Run",
     "Stage",
     "Model",
+    "Provider",
     "Time",
     "Input tokens",
     "Output tokens",
@@ -142,8 +143,18 @@ export const en: Messages = {
     "Cost",
     "Key limit",
     "Task budget",
-    "Monthly budget",
+    "Month (estimated)",
   ],
+  provider: (mode) =>
+    ({ openrouter: "OpenRouter", pod: "Runpod (pod)", serverless: "Runpod (Serverless)" })[mode],
+  spendNote: (mode) =>
+    ({
+      openrouter:
+        "**OpenRouter**: a run's cost is what its key used, exact, and later runs refresh it. The month is what the repository's keys used this month.",
+      pod: "**Runpod (pod)**: a run's cost is its pod's time at the pod's price, refreshed later from Runpod's billing. The month is an estimate: the whole Runpod account's billing, every repository on it included, plus what its running pods cost beyond it.",
+      serverless:
+        "**Runpod (Serverless)**: a run's cost is an estimate of the time Runpod bills its workers. The month is the whole Runpod account's billing, which counts a Serverless run an hour or more late.",
+    })[mode],
   earlierRuns: (runs) => `Earlier runs (${runs})`,
   totalRow: (runs) => `Total (${runs} ${runs === 1 ? "run" : "runs"})`,
   runsWithoutRow: "Runs without a row",

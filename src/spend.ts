@@ -1,4 +1,5 @@
 import type { Messages } from "./i18n/index.ts";
+import type { AgentMode } from "./inference/index.ts";
 import type { Stage } from "./stages.ts";
 
 /** What one agent run spent, and the limits that applied to it. */
@@ -8,6 +9,8 @@ export interface SpendRow {
   at: string;
   stage: Stage | "plan" | "route";
   model: string;
+  /** Where the run's model was served; rows recorded before it was kept have none. */
+  inference?: AgentMode | undefined;
   /** Undefined when the run's cost could not be read. */
   cost?: number | undefined;
   keyLimit?: number | undefined;
@@ -168,13 +171,13 @@ export function spendTable(
   const known = (value: number | undefined) => (value ? value : undefined);
   const lines = [
     `| ${t.tableHeader.join(" | ")} |`,
-    "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+    "| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
   ];
   if (earlier?.runs) {
     // Records from before time, tokens, context and throughput were kept folded fewer sums.
     const folded = complete(earlier);
     lines.push(
-      `| ${t.earlierRuns(earlier.runs)} | | | ${dash(earlier.durationMs, duration)} | ${dash(earlier.inputTokens, t.tokens)} | ${dash(earlier.outputTokens, t.tokens)} | ${dash(known(folded.maxInputTokens), t.tokens)} | ${dash(meanThroughput(folded), t.rate)} | ${t.cost(earlier.cost ?? 0)} | | | |`,
+      `| ${t.earlierRuns(earlier.runs)} | | | | ${dash(earlier.durationMs, duration)} | ${dash(earlier.inputTokens, t.tokens)} | ${dash(earlier.outputTokens, t.tokens)} | ${dash(known(folded.maxInputTokens), t.tokens)} | ${dash(meanThroughput(folded), t.rate)} | ${t.cost(earlier.cost ?? 0)} | | | |`,
     );
   }
   for (const row of rows) {
@@ -189,6 +192,7 @@ export function spendTable(
         `[${when}](${row.runUrl})`,
         t.stage(row.stage),
         `\`${row.model.replace(/[`|\s]/g, "")}\``,
+        row.inference ? t.provider(row.inference) : "—",
         dash(row.durationMs, duration),
         dash(row.inputTokens, t.tokens),
         dash(row.outputTokens, t.tokens),
@@ -207,14 +211,27 @@ export function spendTable(
   const sums = spendTotals(spending);
   const missing = total !== undefined && total - sums.cost >= 0.001 ? total - sums.cost : 0;
   if (missing > 0) {
-    lines.push(`| ${t.runsWithoutRow} | | | | | | | | ${t.cost(missing)} | | | |`);
+    lines.push(`| ${t.runsWithoutRow} | | | | | | | | | ${t.cost(missing)} | | | |`);
   }
   if (options.totals && sums.runs > 0) {
     lines.push(
-      `| **${t.totalRow(sums.runs)}** | | | ${dash(known(sums.durationMs), duration)} | ${dash(known(sums.inputTokens), t.tokens)} | ${dash(known(sums.outputTokens), t.tokens)} | ${dash(known(sums.maxInputTokens), t.tokens)} | ${dash(meanThroughput(sums), t.rate)} | **${t.cost(sums.cost + missing)}** | | | |`,
+      `| **${t.totalRow(sums.runs)}** | | | | ${dash(known(sums.durationMs), duration)} | ${dash(known(sums.inputTokens), t.tokens)} | ${dash(known(sums.outputTokens), t.tokens)} | ${dash(known(sums.maxInputTokens), t.tokens)} | ${dash(meanThroughput(sums), t.rate)} | **${t.cost(sums.cost + missing)}** | | | |`,
     );
   }
   return lines;
+}
+
+/** The order of the notes under the table. */
+const MODES: readonly AgentMode[] = ["openrouter", "pod", "serverless"];
+
+/**
+ * How the cost and the month are measured for each inference the table's rows used, since
+ * some figures are estimates. Folded rows and rows recorded before the inference was kept add no
+ * note.
+ */
+export function spendNotes(t: Messages, spending: Spending | undefined): string[] {
+  const used = new Set((spending?.rows ?? []).map((row) => row.inference));
+  return MODES.filter((mode) => used.has(mode)).map((mode) => t.spendNote(mode));
 }
 
 /**

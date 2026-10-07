@@ -206,8 +206,9 @@ test("plans, records answers, and works through the stages on a platform unlike 
   const decisionsComments = () =>
     platform.botComments(issue).filter((body) => body.includes("codeman:decisions"));
   assert.equal(decisionsComments().length, 1);
-  const rows = record(platform, issue)?.spending?.rows.length;
-  assert.equal(rows, 4, "plan, route, design and code");
+  const rows = record(platform, issue)?.spending?.rows;
+  assert.equal(rows?.length, 4, "plan, route, design and code");
+  assert.ok(rows?.every((row) => row.inference === "openrouter"));
   platform.say(issue, "alice", "/codeman replan Expire the counters.");
   runtime = await selectStep(platform);
   assert.deepEqual([runtime.outputs.action, runtime.outputs.stage], ["plan", "plan"]);
@@ -541,4 +542,60 @@ test("self-hosted inference: select hands the task's pods to the key jobs, and a
     [0.3, 0.1],
     "a pod that served two runs refreshes neither",
   );
+  assert.deepEqual(
+    updated?.spending?.rows.map((row) => row.inference),
+    ["pod", "pod"],
+  );
+});
+
+test("each row keeps its run's inference, and rows recorded before it show a dash", async () => {
+  const platform = new FakePlatform({ ".codeman/settings.yml": "model: a/b\n" });
+  const { issue } = await plannedTask(platform);
+  // The plan's row, as a record written before rows kept their inference holds it too.
+  const panel = platform.comments.get(issue)?.find((comment) => isStatusComment(comment.body));
+  const before = record(platform, issue);
+  const planRow = before?.spending?.rows[0];
+  assert.ok(panel && before && planRow);
+  assert.equal(planRow.inference, "openrouter");
+  const { inference: _, ...oldRow } = planRow;
+  panel.body = panel.body.replace(
+    /<!-- codeman:status [A-Za-z0-9_-]* -->/,
+    encodeStatus({ ...before, spending: { rows: [oldRow, planRow] } }),
+  );
+
+  // The task moves to Serverless before it is routed.
+  const main = await platform.branchSha("main");
+  assert.ok(main);
+  await platform.commit({
+    branch: "main",
+    baseSha: main,
+    createBranch: false,
+    changes: [
+      {
+        path: ".codeman/settings.yml",
+        content: Buffer.from(
+          "inference: self-hosted\ngpu-mode: serverless\nserverless-endpoint: abc123\nmodel: Qwen/Qwen3-Coder-30B-A3B-Instruct\n",
+        ),
+      },
+    ],
+    message: "Use Serverless",
+  });
+  const selected = await selectStep(platform);
+  assert.equal(JSON.parse(selected.outputs.inference ?? "").mode, "serverless");
+  routeResult(["code"]);
+  await applyStep(platform);
+  assert.deepEqual(
+    record(platform, issue)?.spending?.rows.map((row) => row.inference),
+    [undefined, "openrouter", "serverless"],
+  );
+  const shown = platform.botComments(issue).find((body) => body.includes("codeman:status")) ?? "";
+  assert.match(shown, /\| Month \(estimated\) \|/);
+  for (const provider of ["—", "OpenRouter", "Runpod \\(Serverless\\)"]) {
+    assert.match(shown, new RegExp(`\\| \`[^\`]*\` \\| ${provider} \\|`));
+  }
+  assert.match(shown, /\n\*\*OpenRouter\*\*: [^\n]*\n\n\*\*Runpod \(Serverless\)\*\*: /);
+  const run = platform.botComments(issue).at(-1) ?? "";
+  assert.match(run, /\| Runpod \(Serverless\) \|/);
+  assert.match(run, /\*\*Runpod \(Serverless\)\*\*: /);
+  assert.ok(!run.includes("**OpenRouter**"), "a run comment has its own row's note");
 });

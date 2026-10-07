@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { MIN_RUN_BUDGET, runLimit } from "../budget.ts";
 import type { Change } from "../collect.ts";
 import { type Messages, messages, type RunOutcome, taskLanguage } from "../i18n/index.ts";
+import { agentMode, inferenceChoice } from "../inference/index.ts";
 import { countRun, type PodSpend, parsePodCosts } from "../inference/spend.ts";
 import {
   type Cut,
@@ -1232,6 +1233,8 @@ function spendRow(io: Io, task: TaskContext, cost: number | undefined): SpendRow
     at: new Date().toISOString(),
     stage: task.action === "implement" ? (task.stage ?? "code") : task.action,
     model: task.model,
+    // The choice select made, from the same settings it passes to the key jobs.
+    inference: agentMode(inferenceChoice(task.settings, null)),
     cost,
     keyLimit: io.jobs.keyLimit,
     taskBudget: task.settings["task-budget"],

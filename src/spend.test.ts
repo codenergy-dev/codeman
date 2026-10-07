@@ -9,6 +9,7 @@ import {
   parseCosts,
   refreshCosts,
   type SpendRow,
+  spendNotes,
   spendTable,
   spendTotals,
 } from "./spend.ts";
@@ -21,6 +22,7 @@ const row = (cost: number | undefined, run = 1): SpendRow => ({
   at: "2026-09-28T19:40:12.345Z",
   stage: "code",
   model: "deepseek/deepseek-v4.1-flash",
+  inference: "openrouter",
   cost,
   keyLimit: 1.5,
   taskBudget: 2,
@@ -34,19 +36,19 @@ const row = (cost: number | undefined, run = 1): SpendRow => ({
   tokensPerSecond: 52.34,
 });
 
-test("a row shows the run, its stage, model, time, tokens, context, throughput, cost and limits", () => {
+test("a row shows the run, its stage, model, provider, time, tokens, context, throughput, cost and limits", () => {
   const lines = spendTable(en, { rows: [row(0.0123)] });
   assert.equal(
     lines[0],
-    "| Run | Stage | Model | Time | Input tokens | Output tokens | Context | Tok/s | Cost | Key limit | Task budget | Monthly budget |",
+    "| Run | Stage | Model | Provider | Time | Input tokens | Output tokens | Context | Tok/s | Cost | Key limit | Task budget | Month (estimated) |",
   );
   assert.equal(
     lines[2],
-    "| [2026-09-28 19:40 UTC](https://github.com/o/r/actions/runs/1) | code | `deepseek/deepseek-v4.1-flash` | 1 min 10 s | 45.7K | 950 | 9.8K | 52.3 | US$ 0.012 | US$ 1.50 | US$ 2.00 | US$ 3.10 of US$ 20.00 |",
+    "| [2026-09-28 19:40 UTC](https://github.com/o/r/actions/runs/1) | code | `deepseek/deepseek-v4.1-flash` | OpenRouter | 1 min 10 s | 45.7K | 950 | 9.8K | 52.3 | US$ 0.012 | US$ 1.50 | US$ 2.00 | US$ 3.10 of US$ 20.00 |",
   );
   assert.equal(
     spendTable(ptBR, { rows: [row(0.0123)] })[2],
-    "| [28/09/2026 19:40 UTC](https://github.com/o/r/actions/runs/1) | código | `deepseek/deepseek-v4.1-flash` | 1 min 10 s | 45,7\u00a0mil | 950 | 9,8\u00a0mil | 52,3 | US$ 0,012 | US$ 1,50 | US$ 2,00 | US$ 3,10 de US$ 20,00 |",
+    "| [28/09/2026 19:40 UTC](https://github.com/o/r/actions/runs/1) | código | `deepseek/deepseek-v4.1-flash` | OpenRouter | 1 min 10 s | 45,7\u00a0mil | 950 | 9,8\u00a0mil | 52,3 | US$ 0,012 | US$ 1,50 | US$ 2,00 | US$ 3,10 de US$ 20,00 |",
   );
 });
 
@@ -69,7 +71,41 @@ test("unknown values show a dash, and the model cannot break the table", () => {
   });
   assert.equal(
     line,
-    "| [2026-09-28 19:40 UTC](https://github.com/o/r/actions/runs/1) | code | `abcd` | — | — | — | — | — | — | — | US$ 2.00 | US$ 20.00 |",
+    "| [2026-09-28 19:40 UTC](https://github.com/o/r/actions/runs/1) | code | `abcd` | OpenRouter | — | — | — | — | — | — | — | US$ 2.00 | US$ 20.00 |",
+  );
+});
+
+test("each row names its provider, and a row recorded before it was kept shows a dash", () => {
+  const cell = (entry: SpendRow, t = en) => spendTable(t, { rows: [entry] })[2]?.split(" | ")[3];
+  assert.equal(cell(row(0.1)), "OpenRouter");
+  assert.equal(cell({ ...row(0.1), inference: "pod" }), "Runpod (pod)");
+  assert.equal(cell({ ...row(0.1), inference: "serverless" }), "Runpod (Serverless)");
+  assert.equal(cell({ ...row(0.1), inference: "serverless" }, ptBR), "Runpod (Serverless)");
+  assert.equal(cell({ ...row(0.1), inference: undefined }), "—");
+  assert.equal(
+    spendTable(ptBR, { rows: [row(0.1)] })[0],
+    "| Rodada | Etapa | Modelo | Provedor | Tempo | Tokens de entrada | Tokens de saída | Contexto | Tok/s | Custo | Limite da chave | Orçamento da tarefa | Mês (estimado) |",
+  );
+});
+
+test("the notes say how each inference of the rows is measured, once each and in a fixed order", () => {
+  const old = { ...row(0.1), inference: undefined };
+  const serverless = { ...row(0.1), inference: "serverless" as const };
+  const pod = { ...row(0.1), inference: "pod" as const };
+  const notes = spendNotes(en, { rows: [serverless, old, row(0.1), serverless, pod] });
+  assert.equal(notes.length, 3);
+  assert.match(notes[0] ?? "", /^\*\*OpenRouter\*\*: a run's cost is what its key used, exact/);
+  assert.match(
+    notes[1] ?? "",
+    /^\*\*Runpod \(pod\)\*\*: .* The month is an estimate: the whole Runpod account's billing/,
+  );
+  assert.match(notes[2] ?? "", /^\*\*Runpod \(Serverless\)\*\*: a run's cost is an estimate/);
+  assert.match(notes[2] ?? "", /an hour or more late\.$/);
+  assert.deepEqual(spendNotes(en, { rows: [old], earlier: { runs: 2, cost: 0.1 } }), []);
+  assert.deepEqual(spendNotes(en, undefined), []);
+  assert.match(
+    spendNotes(ptBR, { rows: [pod] })[0] ?? "",
+    /^\*\*Runpod \(pod\)\*\*: .* O mês é uma estimativa/,
   );
 });
 
@@ -86,7 +122,7 @@ test("the oldest rows fold into one past the limit, with their sums", () => {
   assert.ok(Math.abs((spending.earlier?.cost ?? 0) - 0.3) < 1e-9);
   assert.equal(
     spendTable(en, spending)[2],
-    "| Earlier runs (2) | | | 2 min 20 s | 91.4K | 1.9K | 9.8K | 52.3 | US$ 0.300 | | | |",
+    "| Earlier runs (2) | | | | 2 min 20 s | 91.4K | 1.9K | 9.8K | 52.3 | US$ 0.300 | | | |",
   );
   const totals = spendTotals(spending);
   assert.equal(totals.runs, 4);
@@ -97,7 +133,7 @@ test("the oldest rows fold into one past the limit, with their sums", () => {
 test("older folded rows show a dash where they have no time or tokens", () => {
   assert.equal(
     spendTable(en, { rows: [], earlier: { runs: 3, cost: 0.2 } })[2],
-    "| Earlier runs (3) | | | — | — | — | — | — | US$ 0.200 | | | |",
+    "| Earlier runs (3) | | | | — | — | — | — | — | US$ 0.200 | | | |",
   );
 });
 
@@ -106,7 +142,7 @@ test("a last row shows what runs without a row spent", () => {
   assert.equal(spendTable(en, spending, 0.1).length, 3, "nothing missing");
   assert.equal(
     spendTable(en, spending, 0.35).at(-1),
-    "| Runs without a row | | | | | | | | US$ 0.250 | | | |",
+    "| Runs without a row | | | | | | | | | US$ 0.250 | | | |",
   );
 });
 
@@ -116,16 +152,16 @@ test("a totals row sums each column, keeps the largest context and weighs throug
     { ...row(0.2, 2), requests: 30, maxInputTokens: 20_000, tokensPerSecond: 20 },
   );
   const lines = spendTable(en, spending, 0.5, { totals: true });
-  assert.equal(lines.at(-2), "| Runs without a row | | | | | | | | US$ 0.200 | | | |");
+  assert.equal(lines.at(-2), "| Runs without a row | | | | | | | | | US$ 0.200 | | | |");
   // (52.34 × 10 + 20 × 30) ÷ 40 = 28.085
   assert.equal(
     lines.at(-1),
-    "| **Total (2 runs)** | | | 2 min 20 s | 91.4K | 1.9K | 20K | 28.1 | **US$ 0.500** | | | |",
+    "| **Total (2 runs)** | | | | 2 min 20 s | 91.4K | 1.9K | 20K | 28.1 | **US$ 0.500** | | | |",
   );
   assert.equal(spendTable(en, spending, 0.5).length, lines.length - 1, "only when asked");
   assert.equal(
     spendTable(ptBR, { rows: [row(0.1)] }, undefined, { totals: true }).at(-1),
-    "| **Total (1 rodada)** | | | 1 min 10 s | 45,7\u00a0mil | 950 | 9,8\u00a0mil | 52,3 | **US$ 0,100** | | | |",
+    "| **Total (1 rodada)** | | | | 1 min 10 s | 45,7\u00a0mil | 950 | 9,8\u00a0mil | 52,3 | **US$ 0,100** | | | |",
   );
 });
 
@@ -136,7 +172,7 @@ test("the totals row counts folded rows, and shows a dash for what no run record
   };
   assert.equal(
     spendTable(en, spending, undefined, { totals: true }).at(-1),
-    "| **Total (4 runs)** | | | 1 min 10 s | 45.7K | 950 | 9.8K | — | **US$ 0.300** | | | |",
+    "| **Total (4 runs)** | | | | 1 min 10 s | 45.7K | 950 | 9.8K | — | **US$ 0.300** | | | |",
   );
   assert.equal(spendTable(en, undefined, undefined, { totals: true }).length, 2, "no runs, no row");
 });

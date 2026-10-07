@@ -1,3 +1,4 @@
+import type { AgentMode } from "../inference/index.ts";
 import type { DropReason } from "../policy.ts";
 import type { CommandProblem } from "../problems.ts";
 import type { Stage } from "../stages.ts";
@@ -105,7 +106,12 @@ export interface Messages {
     string,
     string,
     string,
+    string,
   ];
+  /** The provider column: the provider and, on Runpod, the mode. */
+  provider(mode: AgentMode): string;
+  /** A note under the table: how a run's cost and the month are measured with `mode`. */
+  spendNote(mode: AgentMode): string;
   earlierRuns(runs: number): string;
   /** The label of the row that totals every run of the task. */
   totalRow(runs: number): string;

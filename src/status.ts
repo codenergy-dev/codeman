@@ -1,7 +1,7 @@
 import type { Messages } from "./i18n/index.ts";
 import type { Conventions, MarkdownDialect } from "./platform/conventions.ts";
 import { type Decision, encodeStatus, pendingDecisions, type TaskRecord } from "./record.ts";
-import { type SpendRow, spendTable } from "./spend.ts";
+import { type Spending, type SpendRow, spendNotes, spendTable } from "./spend.ts";
 import type { State } from "./state.ts";
 import { inlineText, safeInline, safeMarkdown } from "./text.ts";
 import { OLD_PAGE_DAYS, oldPages } from "./webdocs.ts";
@@ -76,6 +76,7 @@ export function renderStatus(view: StatusView): string {
       "",
       ...spendTable(t, record?.spending, view.cost?.task, { totals: true }),
       "",
+      ...notes(t, record?.spending),
     );
     // The totals row has the task's spend, but not the budget it is spent from.
     if (view.cost?.task !== undefined) {
@@ -247,7 +248,8 @@ export function renderRun(view: RunView): string {
   }
   lines.push(`**${t.nextStepLabel}:** ${t.nextStep(view.state)}`, "");
   if (view.spend) {
-    lines.push(`#### ${t.costHeading}`, "", ...spendTable(t, { rows: [view.spend] }), "");
+    const spending = { rows: [view.spend] };
+    lines.push(`#### ${t.costHeading}`, "", ...spendTable(t, spending), "", ...notes(t, spending));
   }
   const spent =
     view.cost?.task === undefined
@@ -278,6 +280,11 @@ function oldDocsSection(
   }
   if (sorted.length > MAX_OLD_PAGES) lines.push("", t.morePages(sorted.length - MAX_OLD_PAGES));
   return [...lines, ""];
+}
+
+/** The notes under a spend table, each a paragraph. */
+function notes(t: Messages, spending: Spending | undefined): string[] {
+  return spendNotes(t, spending).flatMap((note) => [note, ""]);
 }
 
 function spentText(t: Messages, cost: Cost): string {

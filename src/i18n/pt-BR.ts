@@ -142,6 +142,7 @@ export const ptBR: Messages = {
     "Rodada",
     "Etapa",
     "Modelo",
+    "Provedor",
     "Tempo",
     "Tokens de entrada",
     "Tokens de saída",
@@ -150,8 +151,18 @@ export const ptBR: Messages = {
     "Custo",
     "Limite da chave",
     "Orçamento da tarefa",
-    "Orçamento mensal",
+    "Mês (estimado)",
   ],
+  provider: (mode) =>
+    ({ openrouter: "OpenRouter", pod: "Runpod (pod)", serverless: "Runpod (Serverless)" })[mode],
+  spendNote: (mode) =>
+    ({
+      openrouter:
+        "**OpenRouter**: o custo de uma rodada é o que a sua chave usou, exato, e as rodadas seguintes o atualizam. O mês é o que as chaves do repositório usaram neste mês.",
+      pod: "**Runpod (pod)**: o custo de uma rodada é o tempo do seu pod ao preço dele, atualizado depois pela cobrança da Runpod. O mês é uma estimativa: a cobrança de toda a conta da Runpod, com todos os repositórios dela, mais o que os pods em execução custaram além dela.",
+      serverless:
+        "**Runpod (Serverless)**: o custo de uma rodada é uma estimativa do tempo que a Runpod cobra pelos seus workers. O mês é a cobrança de toda a conta da Runpod, que conta uma rodada Serverless com uma hora ou mais de atraso.",
+    })[mode],
   earlierRuns: (runs) => `Rodadas anteriores (${runs})`,
   totalRow: (runs) => `Total (${runs} ${runs === 1 ? "rodada" : "rodadas"})`,
   runsWithoutRow: "Rodadas sem linha",

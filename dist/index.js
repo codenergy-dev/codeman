@@ -27037,6 +27037,7 @@ var en = {
     "Run",
     "Stage",
     "Model",
+    "Provider",
     "Time",
     "Input tokens",
     "Output tokens",
@@ -27045,8 +27046,14 @@ var en = {
     "Cost",
     "Key limit",
     "Task budget",
-    "Monthly budget"
+    "Month (estimated)"
   ],
+  provider: (mode) => ({ openrouter: "OpenRouter", pod: "Runpod (pod)", serverless: "Runpod (Serverless)" })[mode],
+  spendNote: (mode) => ({
+    openrouter: "**OpenRouter**: a run's cost is what its key used, exact, and later runs refresh it. The month is what the repository's keys used this month.",
+    pod: "**Runpod (pod)**: a run's cost is its pod's time at the pod's price, refreshed later from Runpod's billing. The month is an estimate: the whole Runpod account's billing, every repository on it included, plus what its running pods cost beyond it.",
+    serverless: "**Runpod (Serverless)**: a run's cost is an estimate of the time Runpod bills its workers. The month is the whole Runpod account's billing, which counts a Serverless run an hour or more late."
+  })[mode],
   earlierRuns: (runs) => `Earlier runs (${runs})`,
   totalRow: (runs) => `Total (${runs} ${runs === 1 ? "run" : "runs"})`,
   runsWithoutRow: "Runs without a row",
@@ -27281,6 +27288,7 @@ var ptBR = {
     "Rodada",
     "Etapa",
     "Modelo",
+    "Provedor",
     "Tempo",
     "Tokens de entrada",
     "Tokens de sa\xEDda",
@@ -27289,8 +27297,14 @@ var ptBR = {
     "Custo",
     "Limite da chave",
     "Or\xE7amento da tarefa",
-    "Or\xE7amento mensal"
+    "M\xEAs (estimado)"
   ],
+  provider: (mode) => ({ openrouter: "OpenRouter", pod: "Runpod (pod)", serverless: "Runpod (Serverless)" })[mode],
+  spendNote: (mode) => ({
+    openrouter: "**OpenRouter**: o custo de uma rodada \xE9 o que a sua chave usou, exato, e as rodadas seguintes o atualizam. O m\xEAs \xE9 o que as chaves do reposit\xF3rio usaram neste m\xEAs.",
+    pod: "**Runpod (pod)**: o custo de uma rodada \xE9 o tempo do seu pod ao pre\xE7o dele, atualizado depois pela cobran\xE7a da Runpod. O m\xEAs \xE9 uma estimativa: a cobran\xE7a de toda a conta da Runpod, com todos os reposit\xF3rios dela, mais o que os pods em execu\xE7\xE3o custaram al\xE9m dela.",
+    serverless: "**Runpod (Serverless)**: o custo de uma rodada \xE9 uma estimativa do tempo que a Runpod cobra pelos seus workers. O m\xEAs \xE9 a cobran\xE7a de toda a conta da Runpod, que conta uma rodada Serverless com uma hora ou mais de atraso."
+  })[mode],
   earlierRuns: (runs) => `Rodadas anteriores (${runs})`,
   totalRow: (runs) => `Total (${runs} ${runs === 1 ? "rodada" : "rodadas"})`,
   runsWithoutRow: "Rodadas sem linha",
@@ -28636,12 +28650,12 @@ function spendTable(t, spending, total, options = {}) {
   const known = (value) => value ? value : void 0;
   const lines = [
     `| ${t.tableHeader.join(" | ")} |`,
-    "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |"
+    "| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |"
   ];
   if (earlier?.runs) {
     const folded = complete(earlier);
     lines.push(
-      `| ${t.earlierRuns(earlier.runs)} | | | ${dash(earlier.durationMs, duration)} | ${dash(earlier.inputTokens, t.tokens)} | ${dash(earlier.outputTokens, t.tokens)} | ${dash(known(folded.maxInputTokens), t.tokens)} | ${dash(meanThroughput(folded), t.rate)} | ${t.cost(earlier.cost ?? 0)} | | | |`
+      `| ${t.earlierRuns(earlier.runs)} | | | | ${dash(earlier.durationMs, duration)} | ${dash(earlier.inputTokens, t.tokens)} | ${dash(earlier.outputTokens, t.tokens)} | ${dash(known(folded.maxInputTokens), t.tokens)} | ${dash(meanThroughput(folded), t.rate)} | ${t.cost(earlier.cost ?? 0)} | | | |`
     );
   }
   for (const row of rows) {
@@ -28653,6 +28667,7 @@ function spendTable(t, spending, total, options = {}) {
         `[${when}](${row.runUrl})`,
         t.stage(row.stage),
         `\`${row.model.replace(/[`|\s]/g, "")}\``,
+        row.inference ? t.provider(row.inference) : "\u2014",
         dash(row.durationMs, duration),
         dash(row.inputTokens, t.tokens),
         dash(row.outputTokens, t.tokens),
@@ -28669,14 +28684,19 @@ function spendTable(t, spending, total, options = {}) {
   const sums = spendTotals(spending);
   const missing = total !== void 0 && total - sums.cost >= 1e-3 ? total - sums.cost : 0;
   if (missing > 0) {
-    lines.push(`| ${t.runsWithoutRow} | | | | | | | | ${t.cost(missing)} | | | |`);
+    lines.push(`| ${t.runsWithoutRow} | | | | | | | | | ${t.cost(missing)} | | | |`);
   }
   if (options.totals && sums.runs > 0) {
     lines.push(
-      `| **${t.totalRow(sums.runs)}** | | | ${dash(known(sums.durationMs), duration)} | ${dash(known(sums.inputTokens), t.tokens)} | ${dash(known(sums.outputTokens), t.tokens)} | ${dash(known(sums.maxInputTokens), t.tokens)} | ${dash(meanThroughput(sums), t.rate)} | **${t.cost(sums.cost + missing)}** | | | |`
+      `| **${t.totalRow(sums.runs)}** | | | | ${dash(known(sums.durationMs), duration)} | ${dash(known(sums.inputTokens), t.tokens)} | ${dash(known(sums.outputTokens), t.tokens)} | ${dash(known(sums.maxInputTokens), t.tokens)} | ${dash(meanThroughput(sums), t.rate)} | **${t.cost(sums.cost + missing)}** | | | |`
     );
   }
   return lines;
+}
+var MODES = ["openrouter", "pod", "serverless"];
+function spendNotes(t, spending) {
+  const used = new Set((spending?.rows ?? []).map((row) => row.inference));
+  return MODES.filter((mode) => used.has(mode)).map((mode) => t.spendNote(mode));
 }
 function duration(ms) {
   const seconds = Math.max(0, Math.round(ms / 1e3));
@@ -28719,7 +28739,8 @@ function renderStatus(view) {
       `#### ${t.spending}`,
       "",
       ...spendTable(t, record?.spending, view.cost?.task, { totals: true }),
-      ""
+      "",
+      ...notes(t, record?.spending)
     );
     if (view.cost?.task !== void 0) {
       rest.push(`${spentText(t, { ...view.cost, run: void 0 })}.`, "");
@@ -28818,7 +28839,8 @@ function renderRun(view) {
   }
   lines.push(`**${t.nextStepLabel}:** ${t.nextStep(view.state)}`, "");
   if (view.spend) {
-    lines.push(`#### ${t.costHeading}`, "", ...spendTable(t, { rows: [view.spend] }), "");
+    const spending = { rows: [view.spend] };
+    lines.push(`#### ${t.costHeading}`, "", ...spendTable(t, spending), "", ...notes(t, spending));
   }
   const spent = view.cost?.task === void 0 ? void 0 : spentText(t, view.spend ? { ...view.cost, run: void 0 } : view.cost);
   lines.push(t.runFooter(modelName(view.model), spent, view.runUrl));
@@ -28836,6 +28858,9 @@ function oldDocsSection(t, md, record, now) {
   }
   if (sorted.length > MAX_OLD_PAGES) lines.push("", t.morePages(sorted.length - MAX_OLD_PAGES));
   return [...lines, ""];
+}
+function notes(t, spending) {
+  return spendNotes(t, spending).flatMap((note) => [note, ""]);
 }
 function spentText(t, cost) {
   return t.spent({
@@ -29445,9 +29470,9 @@ ${summary2}`, 4e3) }
     return status2 === "skipped" ? handOver("skipped", reason ?? "", record, void 0, t.skipped(reason ?? "")) : handOver("done", summary2, record);
   }
   return reviewPassed(record, summary2);
-  async function handOver(outcome, report, base, message, notes = report) {
+  async function handOver(outcome, report, base, message, notes2 = report) {
     const next = nextInRoute(base.route, stage) ?? "review";
-    const text = truncate(notes, 2e3);
+    const text = truncate(notes2, 2e3);
     const updated = {
       ...base,
       stage: next,
@@ -30006,6 +30031,8 @@ function spendRow(io, task, cost) {
     at: (/* @__PURE__ */ new Date()).toISOString(),
     stage: task.action === "implement" ? task.stage ?? "code" : task.action,
     model: task.model,
+    // The choice select made, from the same settings it passes to the key jobs.
+    inference: agentMode(inferenceChoice(task.settings, null)),
     cost,
     keyLimit: io.jobs.keyLimit,
     taskBudget: task.settings["task-budget"],

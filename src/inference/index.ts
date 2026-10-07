@@ -72,8 +72,11 @@ export function parseInferenceChoice(text: string): InferenceChoice {
   return choice;
 }
 
+/** Where a run's model is served: OpenRouter, a pod, or a Serverless endpoint. */
+export type AgentMode = "openrouter" | "pod" | "serverless";
+
 /** The agent's way to its model: the harness's own provider, a pod's gateway, or its own. */
-export function agentMode(choice: InferenceChoice): "openrouter" | "pod" | "serverless" {
+export function agentMode(choice: InferenceChoice): AgentMode {
   return choice.inference === "openrouter" ? "openrouter" : choice.mode;
 }
 

@@ -119,6 +119,35 @@ test("compresses the record, and still reads uncompressed ones", () => {
   assert.equal(decodeStatus(`<!-- codeman:status ${bomb} -->`), undefined);
 });
 
+test("spend rows keep their inference, and rows recorded before it still read", () => {
+  const row = {
+    runUrl: "https://github.com/o/r/actions/runs/1",
+    at: "2026-10-06T19:40:00.000Z",
+    stage: "code" as const,
+    model: "a/b",
+    cost: 0.1,
+    taskBudget: 2,
+    monthlyBudget: 20,
+  };
+  const rows = [
+    row,
+    { ...row, inference: "openrouter" as const },
+    { ...row, inference: "serverless" as const },
+  ];
+  const mixed = { ...record, spending: { rows } };
+  assert.deepEqual(
+    decodeStatus(encodeStatus(mixed))?.spending?.rows.map((entry) => entry.inference),
+    [undefined, "openrouter", "serverless"],
+  );
+  // A record written before rows kept their inference, as JSON without the field.
+  const v1 = Buffer.from(
+    JSON.stringify({ version: 1, record: { ...record, spending: { rows: [row] } } }),
+  ).toString("base64url");
+  const old = decodeStatus(`<!-- codeman:status ${v1} -->`)?.spending?.rows[0];
+  assert.deepEqual(old, row);
+  assert.ok(old && !("inference" in old));
+});
+
 test("text in a record cannot break out of the status block", () => {
   const tricky = { ...record, summary: "--> <!-- codeman:status evil -->" };
   const block = encodeStatus(tricky);
