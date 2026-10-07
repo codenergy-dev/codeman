@@ -1,7 +1,7 @@
 ---
-status: in progress
+status: completed
 created_at: 2026-10-07T14:56:15-03:00
-updated_at: 2026-10-07T15:36:20-03:00
+updated_at: 2026-10-07T15:38:24-03:00
 commit: a8594ea
 ---
 
@@ -93,7 +93,7 @@ The responsible person approved each recommendation on 2026-10-07.
    - Each job writes at its end, in one commit: `select` after it marks its tasks, `close-key` and `release-pod` after they end the run's access and terminate pods. A run's fields are merged, and events replace the document of their ID, so a re-run writes the same documents. A write is tried four times, 1, 3 and 9 seconds apart, then fails the job.
    - Tests on the in-memory store, `ledger.test.ts`: a run's documents through every job, a refusal, retries and a failure, and a task from `select` to `close-key` whose key jobs run again in the next attempt, writing the same documents.
 7. Docs: [installation](../installation.md) (create the Firebase project, Firestore in Native mode and its location, the rules, the Workload Identity pool and provider with its attribute condition, the service account and its role, the variables), [architecture](../architecture.md) (a Backend section), [security](../security.md), [dependencies](../dependencies.md) (no new package), [development](../development.md) (the emulator). Done when a reader can set it up from the docs alone. **Done on 2026-10-07**: installation's new part 4 sets the backend up step by step, with `gcloud` commands for the parts the Firebase console does not cover (APIs, service account, pool, provider and binding), and the variables; the workflow became part 5. Architecture has a Backend section (the store, the data layout, the ledger), and the jobs' credentials; security, a row for the OIDC token and the backend's tokens, and a checklist item; dependencies, the external services and an audit of Firestore; development, the emulator; the README mentions the Firebase project.
-8. Rebuild `dist/` and run `npm run check`. Done when it passes.
+8. Rebuild `dist/` and run `npm run check`. Done when it passes. **Done on 2026-10-07**: 424 tests, 422 pass and 2 skipped (the sandbox's, Linux runners only). The 10 emulator tests ran, on the emulator of Firebase's cache started by the test, and again on one named by `FIRESTORE_EMULATOR_HOST`; on CI they are skipped. `dist/gateway.js` is unchanged, so the pod image needs no rebuild.
 
 ## End-to-end test
 
