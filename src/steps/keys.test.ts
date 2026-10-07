@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { decrypt } from "../crypto.ts";
+import { OpenFailure } from "../inference/provider.ts";
 import { MemoryStore } from "../store/memory.ts";
 import { FakeAccounts, FakeInference } from "../testing/fake-inference.ts";
 import { FakePlatform, fakeServices } from "../testing/fake-platform.ts";
@@ -224,6 +225,20 @@ test("a run whose provider fails to open ends its reservation, at no cost", asyn
     ["failed", 0, "Runpod POST /pods failed with 500."],
   );
   assert.ok(await store.get("organizations/o/events/300-1-7-key-failed"));
+});
+
+test("a failed open records what its provider did with pods, with the reasons it terminated them", async () => {
+  const store = new MemoryStore();
+  await seedRuns(store, { "300-1-7": {} });
+  const inference = new FakeInference();
+  inference.failure = new OpenFailure(new Error("Pod pod1 was not ready within 25 minutes."), [
+    { pod: "pod1", event: "created" },
+    { pod: "pod1", event: "terminated", reason: "it did not serve m" },
+  ]);
+  await assert.rejects(open(store, { inference }), /not ready within 25 minutes/);
+  assert.ok(await store.get("organizations/o/events/300-1-7-pod-created-pod1"));
+  const terminated = await store.get("organizations/o/events/300-1-7-pod-terminated-pod1");
+  assert.equal(terminated?.fields.reason, "it did not serve m");
 });
 
 test("a task that started before the ledger carries what its record counted", async () => {

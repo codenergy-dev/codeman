@@ -307,9 +307,10 @@ export class Ledger {
    * `open-key` could not open the run it reserved: it spent nothing that the budgets can tell,
    * and its reservation ends.
    */
-  fail(run: string, reason: string): void {
+  fail(run: string, reason: string, pods?: readonly PodEvent[] | undefined): void {
     this.#update(run, { status: "failed", failedAt: this.#now(), cost: 0, reason });
     this.#event(run, "key-failed", { reason });
+    this.#pods(run, pods);
   }
 
   /** `open-key` refused the run: `status` is its output, `reason` why. */
@@ -406,7 +407,9 @@ export class Ledger {
   }
 
   #pods(run: string, events: readonly PodEvent[] | undefined): void {
-    for (const { pod, event } of events ?? []) this.#event(run, `pod-${event}`, { pod }, pod);
+    for (const { pod, event, reason } of events ?? []) {
+      this.#event(run, `pod-${event}`, { pod, ...(reason ? { reason } : {}) }, pod);
+    }
   }
 
   async #retry<T>(log: Log, what: string, call: () => Promise<T>): Promise<T> {

@@ -43,6 +43,34 @@ export interface OpenedRun {
 export interface PodEvent {
   pod: string;
   event: "created" | "joined" | "terminated";
+  /** Why it terminated the pod. */
+  reason?: string | undefined;
+  /** A terminated pod's life, when known, whose time no task counted the ledger records. */
+  life?: PodLife | undefined;
+}
+
+/** A pod's life, from its creation to its termination, in milliseconds since the epoch. */
+export interface PodLife {
+  /** The pod's document in the registry: the nonce of its admin token. */
+  record: string;
+  /** The GPU provider. */
+  provider: string;
+  from: number;
+  to: number;
+  pricePerSecond: number;
+}
+
+/**
+ * An open that failed, with what the provider did with pods before, such as a pod it created
+ * that never served the model, so the ledger still records them.
+ */
+export class OpenFailure extends Error {
+  readonly pods: PodEvent[];
+
+  constructor(cause: unknown, pods: PodEvent[]) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+    this.pods = pods;
+  }
 }
 
 /** What a run used, in OpenRouter's terms. Unknown figures are left out. */

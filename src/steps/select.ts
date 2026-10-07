@@ -398,7 +398,7 @@ export async function select(services: Services): Promise<void> {
   for (const choice of choices) picked.push(await prepare(choice));
   for (const one of picked) await one.start();
   const runOf = (one: Picked) => ledgerRunId(runtime.run.id, runtime.run.attempt, one.number);
-  const outputs = picked.map((one) => taskOutputs(one, picked, runOf(one)));
+  const outputs = picked.map((one) => taskOutputs(one, runOf(one)));
   // The jobs of each task, a leg of the run's matrix, take its outputs from this list.
   runtime.output("tasks", JSON.stringify(outputs));
   // The first task's, as one output each, and its context as `task.json`, for workflow files
@@ -447,14 +447,10 @@ interface Picked {
  * A task's outputs, which its jobs read from the `tasks` list. The run's tasks open their keys at
  * once; Codeman's ledger keeps them within the budgets together.
  */
-function taskOutputs(task: Picked, all: readonly Picked[], run: string): Record<string, string> {
-  const others = all
-    .filter((other) => other.needsAgent && other !== task)
-    .map((other) => String(other.number));
+function taskOutputs(task: Picked, run: string): Record<string, string> {
   const choice = inferenceChoice(task.settings, task.record, {
     profile: task.profile,
     providers: task.providers,
-    ...(task.needsAgent ? { others } : {}),
   });
   return {
     task: String(task.number),

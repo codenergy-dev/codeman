@@ -2,6 +2,7 @@ import type { RepositoryRef } from "../platform/types.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import type { Settings } from "../settings.ts";
 import { positiveNumber } from "../steps/common.ts";
+import type { Store } from "../store/store.ts";
 import type { ProviderAccounts } from "./budget.ts";
 import { ENGINES } from "./engines.ts";
 import type { GpuProvider } from "./gpu.ts";
@@ -23,13 +24,10 @@ export type InferenceChoice = (
       mode: "pod";
       gpuType: string;
       podReuse: "task" | "run";
-      /** With `parallel-tasks` above 1: the run's tasks on the same pod settings share a pod. */
-      sharePods?: boolean | undefined;
     })
   | (SelfHostedChoice & { mode: "serverless"; endpoint: string })
 ) &
-  Budgeted &
-  Parallel;
+  Budgeted;
 
 interface SelfHostedChoice {
   inference: "self-hosted";
@@ -56,12 +54,6 @@ interface Budgeted {
   recorded: { spent: number };
 }
 
-/** The run's other tasks, when it works on several at once. */
-interface Parallel {
-  /** The other tasks that run an agent, by number: their own jobs manage their pods. */
-  others?: string[] | undefined;
-}
-
 /** The task's choice of inference, from its resolved settings and its record. */
 export function inferenceChoice(
   settings: Settings,
@@ -72,14 +64,12 @@ export function inferenceChoice(
   options: {
     profile?: string | undefined;
     providers?: readonly string[];
-    others?: readonly string[] | undefined;
   } = {},
 ): InferenceChoice {
-  const budgeted: Budgeted & Parallel = {
+  const budgeted: Budgeted = {
     ...(options.profile ? { profile: options.profile } : {}),
     providers: [...new Set([providerName(settings), ...(options.providers ?? [])])],
     recorded: { spent: record?.spent ?? 0 },
-    ...(options.others?.length ? { others: [...options.others] } : {}),
   };
   if (settings.inference !== "self-hosted") return { inference: "openrouter", ...budgeted };
   const common = {
@@ -97,7 +87,6 @@ export function inferenceChoice(
         mode: "pod",
         gpuType: settings["gpu-type"] ?? "",
         podReuse: settings["pod-reuse"] === "run" ? "run" : "task",
-        ...(settings["parallel-tasks"] > 1 ? { sharePods: true } : {}),
       };
 }
 
@@ -122,10 +111,7 @@ export function parseInferenceChoice(text: string): InferenceChoice {
     Array.isArray(choice.providers) &&
     choice.providers.every((name) => typeof name === "string" && name !== "") &&
     amount(choice.recorded?.spent) &&
-    (choice.profile === undefined || typeof choice.profile === "string") &&
-    (choice.others === undefined ||
-      (Array.isArray(choice.others) &&
-        choice.others.every((task) => typeof task === "string" && /^\d+$/.test(task))));
+    (choice.profile === undefined || typeof choice.profile === "string");
   if (!budgeted) throw new Error("The inference input is not a valid choice.");
   if (choice.inference === "openrouter") return choice;
   const valid =
@@ -133,10 +119,7 @@ export function parseInferenceChoice(text: string): InferenceChoice {
     typeof choice.model === "string" &&
     ENGINES[choice.engine] !== undefined &&
     Array.isArray(choice.pods) &&
-    (choice.mode === "pod"
-      ? typeof choice.gpuType === "string" &&
-        (choice.sharePods === undefined || typeof choice.sharePods === "boolean")
-      : choice.mode === "serverless");
+    (choice.mode === "pod" ? typeof choice.gpuType === "string" : choice.mode === "serverless");
   if (!valid) throw new Error("The inference input is not a valid choice.");
   return choice;
 }
@@ -158,8 +141,11 @@ export function gpuProvider(name: string, key: string): GpuProvider {
   throw new Error(`Unknown GPU provider "${name}".`);
 }
 
-/** The inference provider a key job uses, with the credentials of its inputs. */
-export function inferenceProvider(runtime: Runtime): InferenceProvider {
+/**
+ * The inference provider a key job uses, with the credentials of its inputs; pods use the pod
+ * registry in Codeman's store.
+ */
+export function inferenceProvider(runtime: Runtime, store: () => Store): InferenceProvider {
   const choice = parseInferenceChoice(runtime.input("inference"));
   if (choice.inference === "openrouter") {
     return openRouterProvider(runtime, runtime.input("management-key", { required: true }));
@@ -168,6 +154,7 @@ export function inferenceProvider(runtime: Runtime): InferenceProvider {
     accountKey: runtime.input("gpu-key", { required: true }),
     image: runtime.input("pod-image") || POD_IMAGE,
     usage: runtime.input("gateway-usage"),
+    store,
   });
 }
 
@@ -215,17 +202,18 @@ export function providerAccounts(runtime: Runtime): ProviderAccounts {
 export function selfHosted(
   choice: Exclude<InferenceChoice, { inference: "openrouter" }>,
   repository: RepositoryRef,
-  inputs: { accountKey: string; image: string; usage: string; gpu?: GpuProvider },
+  inputs: {
+    accountKey: string;
+    image: string;
+    usage: string;
+    store: () => Store;
+    gpu?: GpuProvider;
+  },
 ): InferenceProvider {
   const gpu = inputs.gpu ?? gpuProvider(choice.gpuProvider, inputs.accountKey);
   const engine = ENGINES[choice.engine];
   if (!engine) throw new Error(`Unknown engine "${choice.engine}".`);
-  const common = {
-    model: choice.model,
-    engine,
-    pods: choice.pods,
-    others: choice.others ?? [],
-  };
+  const common = { model: choice.model, engine, pods: choice.pods };
   if (choice.mode === "pod") {
     return new PodInference(
       {
@@ -233,9 +221,8 @@ export function selfHosted(
         gpuType: choice.gpuType,
         image: inputs.image,
         reuse: choice.podReuse,
-        share: choice.sharePods === true,
       },
-      { repository, gpu, accountKey: inputs.accountKey },
+      { repository, gpu, accountKey: inputs.accountKey, store: inputs.store() },
     );
   }
   return new ServerlessInference(

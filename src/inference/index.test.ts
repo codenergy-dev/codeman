@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { resolveSettings, type Settings } from "../settings.ts";
+import { MemoryStore } from "../store/memory.ts";
 import { FakeRuntime } from "../testing/fake-runtime.ts";
 import { agentMode, inferenceChoice, inferenceProvider, parseInferenceChoice } from "./index.ts";
 
@@ -68,21 +69,9 @@ test("hands the key jobs the task's choice of inference, with its spend and pods
   assert.deepEqual(parseInferenceChoice(JSON.stringify(pod)), pod);
 });
 
-test("with several tasks, a choice names the run's others", () => {
-  const choice = inferenceChoice(settings({ model: "a/b" }), null, { others: ["4", "9"] });
-  assert.deepEqual(choice, {
-    inference: "openrouter",
-    providers: ["openrouter"],
-    recorded: { spent: 0 },
-    others: ["4", "9"],
-  });
-  assert.deepEqual(parseInferenceChoice(JSON.stringify(choice)), choice);
-  // One task: none, as before parallel tasks.
-  assert.deepEqual(
-    inferenceChoice(settings({ model: "a/b" }), null, { others: [] }),
-    inferenceChoice(settings({ model: "a/b" }), null),
-  );
-  for (const bad of [{ recorded: {} }, { others: ["../x"] }, { others: [4] }]) {
+test("a choice must be whole", () => {
+  const choice = inferenceChoice(settings({ model: "a/b" }), null);
+  for (const bad of [{ recorded: {} }, { providers: [""] }, { profile: 4 }]) {
     assert.throws(
       () => parseInferenceChoice(JSON.stringify({ ...choice, ...bad })),
       /not a valid/,
@@ -91,7 +80,7 @@ test("with several tasks, a choice names the run's others", () => {
   }
 });
 
-test("with several tasks at once, pods are shared, and the billing of shared pods is not read", () => {
+test("the billing of shared pods is not read as the task's", () => {
   const shared = {
     spent: 0.75,
     inference: {
@@ -104,17 +93,8 @@ test("with several tasks at once, pods are shared, and the billing of shared pod
   const pod = { inference: "self-hosted" as const, model: "qwen3-coder:30b", "gpu-type": "GPU A" };
   const choice = inferenceChoice(settings({ ...pod, "parallel-tasks": 2 }), shared);
   assert.equal(choice.inference === "self-hosted" && choice.pods.join(), "p1");
-  assert.equal(
-    choice.inference === "self-hosted" && choice.mode === "pod" && choice.sharePods,
-    true,
-  );
   assert.deepEqual(parseInferenceChoice(JSON.stringify(choice)), choice);
-  const alone = inferenceChoice(settings(pod), shared);
-  assert.ok(!("sharePods" in alone), "one task at a time: as before");
-  assert.throws(
-    () => parseInferenceChoice(JSON.stringify({ ...choice, sharePods: "yes" })),
-    /not a valid/,
-  );
+  assert.deepEqual(choice, inferenceChoice(settings(pod), shared), "whatever parallel-tasks says");
 });
 
 test("an empty choice, from older workflow files, is OpenRouter; anything else must be whole", () => {
@@ -131,13 +111,14 @@ test("an empty choice, from older workflow files, is OpenRouter; anything else m
 
 test("builds the provider the choice names, with only the credentials it needs", () => {
   const openrouter = new FakeRuntime({ inputs: { "management-key": "mk" } });
-  assert.equal(inferenceProvider(openrouter).name, "openrouter");
+  const store = () => new MemoryStore();
+  assert.equal(inferenceProvider(openrouter, store).name, "openrouter");
   const choice = inferenceChoice(
     settings({ inference: "self-hosted", model: "qwen3-coder:30b", "gpu-type": "GPU A" }),
     null,
   );
   const pod = new FakeRuntime({ inputs: { inference: JSON.stringify(choice), "gpu-key": "rk" } });
-  assert.equal(inferenceProvider(pod).name, "runpod pods");
+  assert.equal(inferenceProvider(pod, store).name, "runpod pods");
   const missing = new FakeRuntime({ inputs: { inference: JSON.stringify(choice) } });
-  assert.throws(() => inferenceProvider(missing), /gpu-key/);
+  assert.throws(() => inferenceProvider(missing, store), /gpu-key/);
 });

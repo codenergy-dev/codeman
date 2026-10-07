@@ -26,7 +26,7 @@ const pod = {
   name: "codeman-r-7-300",
   status: "PROVISIONING",
   image: "ghcr.io/x/pod@sha256:1",
-  env: { CODEMAN_REPOSITORY: "o/r", CODEMAN_TASK: "7" },
+  env: { CODEMAN_ORGANIZATION: "o", CODEMAN_POD_SETTINGS: "s" },
   gpu: { id: "NVIDIA RTX A6000", count: 1 },
   cost: 0.72,
   createdAt: "2026-10-03T12:00:00Z",
@@ -37,7 +37,7 @@ test("creates a pod on Secure Cloud with one GPU and one HTTP port", async () =>
   const created = await new Runpod("rk", fetch).pods.create({
     name: "codeman-r-7-300",
     image: "ghcr.io/x/pod@sha256:1",
-    env: { CODEMAN_TASK: "7" },
+    env: { CODEMAN_POD_SETTINGS: "s" },
     port: 8080,
     gpuType: "NVIDIA RTX A6000",
     diskGb: 60,
@@ -51,7 +51,7 @@ test("creates a pod on Secure Cloud with one GPU and one HTTP port", async () =>
     image: "ghcr.io/x/pod@sha256:1",
     gpu: { id: "NVIDIA RTX A6000", count: 1 },
     cloud: "SECURE",
-    env: { CODEMAN_TASK: "7" },
+    env: { CODEMAN_POD_SETTINGS: "s" },
     ports: ["8080/http"],
     disk: 60,
   });
@@ -73,7 +73,7 @@ test("reads a pod's status, and a missing pod as none", async () => {
 });
 
 test("lists the account's pods across pages, keeping those with the given environment", async () => {
-  const other = { ...pod, id: "other", env: { CODEMAN_REPOSITORY: "o/other" } };
+  const other = { ...pod, id: "other", env: { CODEMAN_ORGANIZATION: "x" } };
   const { fetch, calls } = fakeFetch([
     { pods: [pod, other], pagination: { nextCursor: "c2", hasNextPage: true } },
     {
@@ -81,7 +81,7 @@ test("lists the account's pods across pages, keeping those with the given enviro
       pagination: { nextCursor: null, hasNextPage: false },
     },
   ]);
-  const pods = await new Runpod("rk", fetch).pods.list({ CODEMAN_REPOSITORY: "o/r" });
+  const pods = await new Runpod("rk", fetch).pods.list({ CODEMAN_ORGANIZATION: "o" });
   assert.deepEqual(
     pods.map((found) => found.id),
     ["abc123"],
@@ -89,6 +89,17 @@ test("lists the account's pods across pages, keeping those with the given enviro
   assert.deepEqual(
     calls.map(([url]) => url),
     ["https://api.runpod.io/v2/pods", "https://api.runpod.io/v2/pods?cursor=c2"],
+  );
+});
+
+test("lists every pod of the account for an empty environment", async () => {
+  const { fetch } = fakeFetch([
+    { pods: [pod, { ...pod, id: "p2", env: null }], pagination: { hasNextPage: false } },
+  ]);
+  const pods = await new Runpod("rk", fetch).pods.list({});
+  assert.deepEqual(
+    pods.map((found) => found.id),
+    ["abc123", "p2"],
   );
 });
 

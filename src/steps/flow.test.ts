@@ -632,8 +632,6 @@ test("a shared pod: apply marks it in the record, and its billing no longer reac
   const issue = platform.openIssue("alice", "Add a cache", "Cache responses.");
   let selected = new FakeRuntime({ inputs: { workdir }, runId: "1" });
   await select(fakeServices(platform, selected));
-  const [first] = JSON.parse(selected.outputs.tasks ?? "") as { inference: string }[];
-  assert.equal((JSON.parse(first?.inference ?? "") as { sharePods?: boolean }).sharePods, true);
   const task = readTask(selected);
   agentResult({ [task.planPath]: "# Plan\n" }, { summary: "Plan.", language: "en", decisions: [] });
   const runtime = new FakeRuntime({
@@ -949,13 +947,10 @@ test("parallel tasks: one run plans two, each in its own jobs, and one that fail
     [selected.outputs.task, selected.outputs.action, selected.outputs.inference],
     ["1", "plan", tasks[0]?.inference],
   );
-  // Two agents at once: the profile for two tasks applies to both, and each leaves the other's
-  // pods alone. The ledger keeps them within the month together.
+  // Two agents at once: the profile for two tasks applies to both. The ledger keeps them within
+  // the month together.
   const [one, two] = tasks.map((task) => JSON.parse(task.inference ?? ""));
-  assert.deepEqual(
-    [one.profile, one.others, two.profile, two.others],
-    ["crowded", ["2"], "crowded", ["1"]],
-  );
+  assert.deepEqual([one.profile, two.profile], ["crowded", "crowded"]);
   assert.deepEqual(stateLabels(platform, first), ["codeman:planning"]);
   assert.deepEqual(stateLabels(platform, second), ["codeman:planning"]);
   assert.deepEqual(stateLabels(platform, third), [], "the third waits for the next run");
@@ -1042,9 +1037,6 @@ test("parallel tasks: next-run starts another run only when some task moved", as
       ["2", "plan", "true"],
     ],
   );
-  // Only one agent: it leaves no other task.
-  const choice = JSON.parse(tasks[1]?.inference ?? "");
-  assert.equal(choice.others, undefined);
   await applyLeg(platform, "1", { "key-job-result": "skipped", "agent-job-result": "skipped" });
   await applyLeg(platform, "2", {
     "key-job-result": "success",

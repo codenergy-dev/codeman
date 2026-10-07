@@ -38,7 +38,7 @@ export function gitHubServices(runtime: Runtime): Services {
     return store;
   };
   const inference = () => {
-    provider ??= inferenceProvider(runtime);
+    provider ??= inferenceProvider(runtime, theStore);
     return provider;
   };
   return {

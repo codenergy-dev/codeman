@@ -14,7 +14,8 @@ import {
   isGpuProvider,
   parseInferenceChoice,
 } from "../inference/index.ts";
-import type { OpenedRun, PodEvent } from "../inference/provider.ts";
+import { type OpenedRun, OpenFailure, type PodEvent } from "../inference/provider.ts";
+import { PodRegistry } from "../inference/registry.ts";
 import { releasePod } from "../inference/selfhosted.ts";
 import { type Ledger, ledgerRun } from "../ledger.ts";
 import type { Services } from "../services.ts";
@@ -161,7 +162,11 @@ async function open(services: Services, ledger: Ledger, run: string): Promise<Op
     opened = await inference().open({ task, runId: runtime.run.id, limit }, runtime);
   } catch (error) {
     // The reservation ends; a reservation that cannot be ended counts until it expires.
-    ledger.fail(run, oneLine(error instanceof Error ? error.message : String(error)));
+    ledger.fail(
+      run,
+      oneLine(error instanceof Error ? error.message : String(error)),
+      error instanceof OpenFailure ? error.pods : undefined,
+    );
     await ledger.flush(runtime).catch((flushError: unknown) => {
       runtime.warning(
         `Could not end the run's reservation, which counts its limit until it expires: ${flushError instanceof Error ? flushError.message : flushError}`,
@@ -234,9 +239,9 @@ export async function closeKey(services: Services): Promise<void> {
 }
 
 /**
- * Terminates the pod that `closeKey` kept for the task's next run, once `apply` says the task
- * does not go on to one now; a pod the run's tasks share stays while another task uses or keeps
- * it. A kept pod that this job does not reach terminates itself after its idle limit.
+ * Releases the task's keep lease on the pod that `closeKey` kept, once `apply` says the task does
+ * not go on to another run now, and terminates the pod when no other task uses or keeps it. A
+ * kept pod that this job does not reach terminates itself after its idle limit.
  */
 export async function release(services: Services): Promise<void> {
   const { runtime } = services;
@@ -249,7 +254,11 @@ export async function release(services: Services): Promise<void> {
   const gpu = gpuProvider(choice.gpuProvider, accountKey);
   if (!gpu.pods) throw new Error(`${gpu.name} has no pods.`);
   const handle = runtime.input("handle", { required: true });
-  const pods = await releasePod(gpu.pods, handle, runtime, { accountKey });
+  const registry = new PodRegistry(services.store(), runtime.repository.owner);
+  const pods = await releasePod(gpu.pods, registry, handle, runtime, {
+    provider: gpu.name,
+    gateway: { accountKey },
+  });
   const ledger = services.ledger("release-pod");
   ledger.release(ledgerRun(runtime), pods);
   await ledger.flush(runtime);
