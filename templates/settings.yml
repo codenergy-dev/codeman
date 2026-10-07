@@ -1,5 +1,6 @@
 # Codeman settings for a target repository. Copy it to .codeman/settings.yml.
-# Only `name: value` lines are accepted. Workflow inputs and `/codeman set` take precedence.
+# Only `name: value` lines and the list of inference profiles below are accepted.
+# Workflow inputs and `/codeman set` take precedence.
 # Reference: https://github.com/codenergy-dev/codeman/blob/main/docs/architecture.md#settings
 
 # Model ID, required here or as a workflow input: OpenRouter's, or, with self-hosted inference,
@@ -19,6 +20,18 @@ model: deepseek/deepseek-v4.1-flash
 # pod-reuse: task
 # Serverless: the endpoint's ID.
 # serverless-endpoint: abc123xyz
+
+# Inference profiles: other inference settings for some runs. The first profile whose conditions
+# all hold applies; the settings above apply when none does. A profile sets only `model` and the
+# inference settings above. Conditions: `stages` (plan, route, web, design, code, test, review).
+# The month counts every provider named here, so the workflow needs each one's secret.
+# inference-profiles:
+#   - name: small-pod
+#     when:
+#       stages: [code, test]
+#     inference: self-hosted
+#     gpu-type: "NVIDIA RTX A6000"
+#     model: qwen3-coder:30b
 
 # Spending limit per task and per calendar month for this repository, in USD.
 task-budget: 2

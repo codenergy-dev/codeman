@@ -4,7 +4,7 @@ import { MIN_RUN_BUDGET, runLimit } from "../budget.ts";
 import type { Change } from "../collect.ts";
 import { type Messages, messages, type RunOutcome, taskLanguage } from "../i18n/index.ts";
 import { agentMode, inferenceChoice } from "../inference/index.ts";
-import { countRun, type PodSpend, parsePodCosts } from "../inference/spend.ts";
+import { countRun, type PodSpend, parsePodCosts, selfHostedSpent } from "../inference/spend.ts";
 import {
   type Cut,
   MARGIN,
@@ -99,8 +99,10 @@ interface Io {
 export interface JobResults {
   /** The result of the key job: `success`, `failure`, `skipped` or `cancelled`. */
   keyJob: string;
-  /** Its status output: `opened`, `over-budget` or `task-budget-spent`. */
+  /** Its status output: `opened`, `over-budget`, `task-budget-spent` or `missing-credentials`. */
   keyStatus: string;
+  /** Its reason output, in English, when it opened nothing. */
+  keyReason: string;
   /** The result of the agent job. */
   agentJob: string;
   taskSpent?: number | undefined;
@@ -127,6 +129,7 @@ export function jobResults(runtime: Runtime): JobResults {
   return {
     keyJob: runtime.input("key-job-result"),
     keyStatus: runtime.input("key-status"),
+    keyReason: runtime.input("key-reason"),
     agentJob: runtime.input("agent-job-result"),
     taskSpent: amount("task-spent"),
     monthSpent: amount("month-spent"),
@@ -180,6 +183,15 @@ async function keyFailed(task: TaskContext, io: Io): Promise<boolean> {
     await finish(io, task, "blocked", {
       outcome: "blocked",
       message: t.taskBudgetSpent(t.money(spent), t.money(budget), t.money(MIN_RUN_BUDGET)),
+    });
+    return true;
+  }
+  if (status === "missing-credentials") {
+    // The repository's configuration, which a maintainer fixes before the task can go on.
+    await finish(io, task, "blocked", {
+      outcome: "blocked",
+      message: `${t.missingCredentials} ${retryHint(t, task)}`,
+      errors: io.jobs.keyReason ? [oneLine(io.jobs.keyReason)] : [],
     });
     return true;
   }
@@ -1066,7 +1078,9 @@ async function finish(
   const pods = record && selfHostedRun(io, task) ? podSpend(io, task, record) : undefined;
   if (pods) cost.task = pods.spent;
   if (record && cost.task !== undefined) record = { ...record, spent: cost.task };
-  if (record && pods) record = { ...record, inference: { pods: pods.pods } };
+  if (record && pods) {
+    record = { ...record, inference: { pods: pods.pods, spent: pods.selfHosted } };
+  }
   if (record && spend) record = { ...record, spending: addRow(record.spending, spend) };
   // Earlier runs may have read their cost before OpenRouter, or a pod's billing, counted it.
   const costs = pods?.costs ?? io.jobs.taskCosts;
@@ -1177,8 +1191,9 @@ async function finish(
 
 /**
  * What this run and the whole task have spent, in USD, as far as known: `close-key` reports what
- * each run of the task spent, read last; older workflow files have only `open-key`'s task spend
- * before the run and `close-key`'s run cost.
+ * each run of the task spent on OpenRouter, read last, to which the record's self-hosted part
+ * adds; older workflow files have only `open-key`'s task spend before the run and `close-key`'s
+ * run cost.
  */
 function runCosts(
   io: Io,
@@ -1189,7 +1204,10 @@ function runCosts(
   if (costs) {
     const id = io.runtime.runIdOf(task.runUrl);
     const total = Object.values(costs).reduce((sum, value) => sum + value, 0);
-    return { run: (id === undefined ? undefined : costs[id]) ?? run, task: total };
+    return {
+      run: (id === undefined ? undefined : costs[id]) ?? run,
+      task: total + selfHostedSpent(task.record),
+    };
   }
   if (before === undefined) return { task: task.record?.spent };
   return { run, task: before + (run ?? 0) };
@@ -1202,13 +1220,14 @@ function selfHostedRun(io: Io, task: TaskContext): boolean {
 
 /**
  * The task's spend after a self-hosted run: what it spent before, plus the run's estimate and
- * what its pods' billing adds; and the costs of runs whose pod served them alone.
+ * what its pods' billing adds; that part of it alone; and the costs of runs whose pod served
+ * them alone.
  */
 function podSpend(
   io: Io,
   task: TaskContext,
   record: TaskRecord,
-): { spent: number; pods: PodSpend[]; costs: Record<string, number> } {
+): { spent: number; selfHosted: number; pods: PodSpend[]; costs: Record<string, number> } {
   const before = io.jobs.taskSpent ?? task.record?.spent ?? 0;
   const counted = countRun(
     record.inference?.pods,
@@ -1219,7 +1238,12 @@ function podSpend(
     },
     io.jobs.podCosts,
   );
-  return { spent: before + counted.added, pods: counted.pods, costs: counted.costs };
+  return {
+    spent: before + counted.added,
+    selfHosted: selfHostedSpent(record) + counted.added,
+    pods: counted.pods,
+    costs: counted.costs,
+  };
 }
 
 /** The spend table's row for a run that opened a key; older workflow files lack some inputs. */

@@ -1,3 +1,4 @@
+import type { InferenceBudget } from "./inference/budget.ts";
 import type { InferenceProvider } from "./inference/provider.ts";
 import type { Conventions } from "./platform/conventions.ts";
 import type { CiResults, Platform } from "./platform/platform.ts";
@@ -19,4 +20,6 @@ export interface Services {
   ci(): CiResults;
   /** Where agent runs get their model, with the key jobs' credentials. */
   inference(): InferenceProvider;
+  /** The task's and the month's spend across every provider the settings name. */
+  budget(): InferenceBudget;
 }

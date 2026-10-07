@@ -10,6 +10,24 @@ export interface PodSpend {
   counted: number;
 }
 
+/**
+ * What a task's self-hosted runs added to its total, from its record. The rest of the total is
+ * OpenRouter's, which its keys tell. A record from before profiles kept no such part: one with
+ * pods spent all of its total on self-hosted inference.
+ */
+export function selfHostedSpent(
+  record:
+    | {
+        spent?: number | undefined;
+        inference?: { spent?: number | undefined } | undefined;
+      }
+    | null
+    | undefined,
+): number {
+  if (!record?.inference) return 0;
+  return record.inference.spent ?? record.spent ?? 0;
+}
+
 /** Pods the record keeps; older ones no longer refresh. */
 export const MAX_PODS = 20;
 

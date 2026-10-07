@@ -205,6 +205,8 @@ export const ptBR: Messages = {
 
   noKey:
     "O Codeman não conseguiu dar a esta rodada acesso ao modelo (uma chave do OpenRouter, ou uma GPU). Veja o log da rodada.",
+  missingCredentials:
+    "O Codeman não conseguiu dar a esta rodada acesso ao modelo: o workflow não passa o segredo de um provedor que as configurações de inferência citam.",
   taskBudgetSpent: (spent, budget, minimum) =>
     `A tarefa gastou ${spent} do orçamento de ${budget}, e uma rodada precisa de pelo menos ${minimum}. Um mantenedor pode aumentá-lo com \`/codeman set task-budget <usd>\` e depois comentar \`/codeman continue\`.`,
   monthlyBudgetReached: (used, budget, limit) =>

@@ -121,7 +121,9 @@ jobs:
 
   # Gives this run access to its model, limited to what remains of the task's budget: an
   # OpenRouter key, or a token for a self-hosted model's gateway, which may start a pod. Only the
-  # key jobs (this one, close-key and release-pod) hold the management and GPU account keys.
+  # key jobs (this one, close-key and release-pod) hold the management and GPU account keys. The
+  # month counts every provider the settings and their inference profiles name, so this job
+  # needs each one's secret; an unset secret is empty.
   open-key:
     name: Open key
     needs: select

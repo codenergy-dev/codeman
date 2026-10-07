@@ -15,7 +15,8 @@ import {
   type PartialSettings,
   parseSetting,
   parseSettings,
-  resolveSettings,
+  type RunConditions,
+  resolveRun,
   SETTINGS_FILE,
   SHARED_SETTINGS,
   settingSources,
@@ -261,21 +262,30 @@ export async function select(services: Services): Promise<void> {
   if (!baseSha) throw new Error(`Branch ${defaultBranch} not found.`);
   let own = taskSettings(maintainerComments, description.commands);
   const below = [inputs, fileSettings.value, shared.value];
-  let settings = resolveSettings(own, ...below);
-  if (!settings.ok && (own.model !== undefined || own["gpu-type"] !== undefined)) {
-    // A task's model or GPU type that does not fit the repository's inference stops this task
-    // only: the run goes on without them, and says why.
+  // The profile depends on what the agent works on. A run works on one task until parallel
+  // tasks exist.
+  const agentWork = action === "plan" || action === "route" ? action : stage;
+  const runConditions: RunConditions | undefined = agentWork
+    ? { stage: agentWork, tasks: 1 }
+    : undefined;
+  let resolved = resolveRun([own, ...below], runConditions);
+  if (!resolved.ok && (own.model !== undefined || own["gpu-type"] !== undefined)) {
+    // A task's model or GPU type that does not fit the run's inference stops this task only:
+    // the run goes on without them, and says why.
     const { model: _model, "gpu-type": _gpuType, ...rest } = own;
-    const fallback = resolveSettings(rest, ...below);
+    const fallback = resolveRun([rest, ...below], runConditions);
     if (fallback.ok) {
-      problems.push({ problem: { kind: "settings-rejected", error: settings.error } });
-      settings = fallback;
+      problems.push({ problem: { kind: "settings-rejected", error: resolved.error } });
+      resolved = fallback;
       own = rest;
     }
   }
-  if (!settings.ok) throw new Error(settings.error);
+  if (!resolved.ok) throw new Error(resolved.error);
   for (const line of settingSources([own, ...below])) runtime.info(line);
-  const model = settings.value.model;
+  const { profile, providers } = resolved.value;
+  const settings = resolved.value.settings;
+  if (profile) runtime.info(`Inference profile \`${profile}\` applies to this run.`);
+  const model = settings.model;
 
   const context: TaskContext = {
     version: 1,
@@ -308,7 +318,7 @@ export async function select(services: Services): Promise<void> {
     problems,
     fromState: fromState.state,
     model,
-    settings: settings.value,
+    settings,
     ignore,
     defaultBranch,
     branch,
@@ -324,7 +334,7 @@ export async function select(services: Services): Promise<void> {
 
   const needsAgent = action === "plan" || action === "route" || action === "implement";
   if (needsAgent) {
-    const t = messages(taskLanguage(settings.value.language, record?.language));
+    const t = messages(taskLanguage(settings.language, record?.language));
     const state = stage ? STAGE_STATE[stage] : route ? "routing" : "planning";
     await repo.setState(task.number, task.labels, state);
     context.statusCommentId = await repo.upsertComment(
@@ -338,7 +348,7 @@ export async function select(services: Services): Promise<void> {
         model,
         runUrl: context.runUrl,
         message: startMessage(t, context),
-        cost: { task: record?.spent, budget: settings.value["task-budget"] },
+        cost: { task: record?.spent, budget: settings["task-budget"] },
         reportUrl: reportUrl(record, (id) => repo.commentUrl(task.url, id)),
         decisionsUrl: decisionsUrl(record, (id) => repo.commentUrl(task.url, id)),
       }),
@@ -352,9 +362,12 @@ export async function select(services: Services): Promise<void> {
   runtime.output("base-sha", baseSha);
   runtime.output("needs-agent", String(needsAgent));
   runtime.output("stage", stage ?? (action === "plan" || action === "route" ? action : ""));
-  runtime.output("task-budget", String(settings.value["task-budget"]));
-  runtime.output("monthly-budget", String(settings.value["monthly-budget"]));
-  runtime.output("inference", JSON.stringify(inferenceChoice(settings.value, record ?? null)));
+  runtime.output("task-budget", String(settings["task-budget"]));
+  runtime.output("monthly-budget", String(settings["monthly-budget"]));
+  runtime.output(
+    "inference",
+    JSON.stringify(inferenceChoice(settings, record ?? null, { profile, providers })),
+  );
   runtime.info(`Selected #${task.number} to ${action}, with model ${model}.`);
 }
 

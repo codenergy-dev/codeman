@@ -1,3 +1,4 @@
+import type { InferenceBudget } from "../inference/budget.ts";
 import type { InferenceProvider, OpenedRun, RunRequest, RunUsage } from "../inference/provider.ts";
 import type { Log } from "../runtime/runtime.ts";
 
@@ -33,4 +34,13 @@ export class FakeInference implements InferenceProvider {
     this.closed.push(handle);
     return this.usage;
   }
+}
+
+/** The budgets of a fake provider alone, as for a task that uses one provider. */
+export function fakeBudget(inference: InferenceProvider): InferenceBudget {
+  return {
+    missing: [],
+    taskSpent: (task) => inference.taskSpent(task),
+    monthSpent: async () => [{ provider: inference.name, spent: await inference.monthSpent() }],
+  };
 }

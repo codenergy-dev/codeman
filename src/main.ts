@@ -1,4 +1,5 @@
-import { inferenceProvider } from "./inference/index.ts";
+import { inferenceBudget, inferenceProvider } from "./inference/index.ts";
+import type { InferenceProvider } from "./inference/provider.ts";
 import { GitHubActionsResults } from "./platform/github/ci.ts";
 import { GITHUB } from "./platform/github/conventions.ts";
 import { GitHubPlatform, octokit } from "./platform/github/platform.ts";
@@ -25,6 +26,12 @@ const STEPS: Record<string, (services: Services) => Promise<void>> = {
  */
 export function gitHubServices(runtime: Runtime): Services {
   const client = (input: string) => octokit(runtime.input(input, { required: true }));
+  // One provider per job, so the budgets and the run share what it read.
+  let provider: InferenceProvider | undefined;
+  const inference = () => {
+    provider ??= inferenceProvider(runtime);
+    return provider;
+  };
   return {
     runtime,
     conventions: GITHUB,
@@ -35,7 +42,8 @@ export function gitHubServices(runtime: Runtime): Services {
         { appSlug: runtime.input("app-slug") || undefined },
       ),
     ci: () => new GitHubActionsResults(client("github-token"), runtime.repository),
-    inference: () => inferenceProvider(runtime),
+    inference,
+    budget: () => inferenceBudget(runtime, inference),
   };
 }
 

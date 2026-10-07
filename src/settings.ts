@@ -1,5 +1,7 @@
 import { ENGINES, MODE_ENGINE } from "./inference/engines.ts";
 import type { Parsed } from "./output.ts";
+import { STAGES } from "./stages.ts";
+import { parseYaml, type YamlEntry, type YamlNode } from "./yaml.ts";
 
 export const SETTINGS_FILE = ".codeman/settings.yml";
 /** Settings shared by an organization's repositories; Codeman's template fills the input. */
@@ -224,75 +226,298 @@ export function parseSetting(name: SettingName, text: string): Parsed<string | n
   return { ok: true, value };
 }
 
-/**
- * Reads `.codeman/settings.yml`, or settings in its format from `source`, which errors name.
- * Only a flat subset of YAML is accepted: `name: value` lines, blank lines and `#` comments,
- * with values optionally in quotes. Anything else is an error, so the file never means
- * something different from what it looks like.
- */
-export function parseSettings(text: string, source = SETTINGS_FILE): Parsed<PartialSettings> {
-  const settings: Record<string, string | number> = {};
-  for (const [index, raw] of text.split(/\r?\n/).entries()) {
-    const where = `${source}, line ${index + 1}`;
-    const line = raw.trimEnd();
-    if (line.trim() === "" || line.trim().startsWith("#")) continue;
-    const match = /^([a-z-]+):(?:\s+(.*))?$/.exec(line);
-    if (!match?.[1]) return { ok: false, error: `${where}: expected \`name: value\`.` };
-    const name = match[1];
-    if (!isSettingName(name)) return { ok: false, error: `${where}: unknown setting \`${name}\`.` };
-    if (name in settings) return { ok: false, error: `${where}: \`${name}\` appears twice.` };
-    const value = scalar(match[2] ?? "");
-    if (value === undefined)
-      return { ok: false, error: `${where}: the value of \`${name}\` is not a plain value.` };
-    const parsed = parseSetting(name, value);
-    if (!parsed.ok) return { ok: false, error: `${where}: ${parsed.error}` };
-    settings[name] = parsed.value;
-  }
-  return { ok: true, value: settings as PartialSettings };
+/** Settings an inference profile may change: where the model is served, and which model. */
+export const PROFILE_SETTINGS: readonly SettingName[] = [
+  "inference",
+  "gpu-provider",
+  "gpu-mode",
+  "gpu-type",
+  "engine",
+  "serverless-endpoint",
+  "pod-reuse",
+  "model",
+];
+
+/** What a profile's `stages` condition names: planning, routing, and each stage. */
+export const PROFILE_STAGES = ["plan", "route", ...STAGES] as const;
+export type ProfileStage = (typeof PROFILE_STAGES)[number];
+
+/** The inference settings for some runs: the first profile whose conditions all hold applies. */
+export interface InferenceProfile {
+  name: string;
+  /** Conditions that must all hold; a profile without any always applies. */
+  when: {
+    stages?: ProfileStage[] | undefined;
+    /** The run works on at least this many tasks at once. */
+    "parallel-tasks"?: number | undefined;
+  };
+  /** The settings it changes, of `PROFILE_SETTINGS`. */
+  settings: PartialSettings;
 }
 
-/** A plain or quoted scalar with an optional trailing comment; undefined for anything else. */
-function scalar(text: string): string | undefined {
-  const quoted = /^(["'])([^"'\\]*)\1\s*(?:#.*)?$/.exec(text);
-  if (quoted) return quoted[2];
-  const plain = text.replace(/\s+#.*$/, "").trim();
-  return /^[A-Za-z0-9._~/:-]*$/.test(plain) ? plain : undefined;
+/** What one layer of settings sets: values, and the whole list of profiles. */
+export type SettingsLayer = PartialSettings & {
+  "inference-profiles"?: readonly InferenceProfile[] | undefined;
+};
+
+const PROFILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+
+/**
+ * Reads `.codeman/settings.yml`, or settings in its format from `source`, which errors name.
+ * The format is a strict subset of YAML (`src/yaml.ts`): `name: value` lines, and the list of
+ * `inference-profiles`. Anything else is an error, so the file never means something different
+ * from what it looks like.
+ */
+export function parseSettings(text: string, source = SETTINGS_FILE): Parsed<SettingsLayer> {
+  const tree = parseYaml(text);
+  if (!tree.ok) return { ok: false, error: `${source}, line ${tree.line}: ${tree.error}` };
+  const settings: Record<string, unknown> = {};
+  for (const entry of tree.value.entries) {
+    const parsed =
+      entry.key === "inference-profiles" ? profiles(entry.value) : setting(entry, "setting");
+    if (!parsed.ok) return { ok: false, error: `${source}, line ${parsed.line}: ${parsed.error}` };
+    settings[entry.key] = parsed.value;
+  }
+  return { ok: true, value: settings as SettingsLayer };
+}
+
+/** A parse result whose error names the line it is on. */
+type Read<T> = { ok: true; value: T } | { ok: false; line: number; error: string };
+
+function setting(entry: YamlEntry, what: "setting" | "profile"): Read<string | number> {
+  const { key: name, line, value } = entry;
+  if (!isSettingName(name)) return { ok: false, line, error: `unknown setting \`${name}\`.` };
+  if (what === "profile" && !PROFILE_SETTINGS.includes(name)) {
+    return {
+      ok: false,
+      line,
+      error: `a profile cannot set \`${name}\`; it sets only ${PROFILE_SETTINGS.map((n) => `\`${n}\``).join(", ")}.`,
+    };
+  }
+  if (value.kind !== "scalar") {
+    return { ok: false, line, error: `the value of \`${name}\` is not a plain value.` };
+  }
+  const parsed = parseSetting(name, value.text);
+  return parsed.ok ? parsed : { ok: false, line, error: parsed.error };
+}
+
+/** `inference-profiles`: a list of profiles, or `[]` for none. */
+function profiles(node: YamlNode): Read<InferenceProfile[]> {
+  if (node.kind !== "list" || node.items.some((item) => item.kind !== "map")) {
+    return {
+      ok: false,
+      line: node.kind === "list" ? (node.items[0]?.line ?? node.line) : node.line,
+      error: "`inference-profiles` must be a list of profiles, each a block of settings.",
+    };
+  }
+  const list: InferenceProfile[] = [];
+  for (const item of node.items) {
+    const parsed = profile(item);
+    if (!parsed.ok) return parsed;
+    if (list.some((other) => other.name === parsed.value.name)) {
+      return {
+        ok: false,
+        line: item.line,
+        error: `two profiles are named \`${parsed.value.name}\`.`,
+      };
+    }
+    list.push(parsed.value);
+  }
+  return { ok: true, value: list };
+}
+
+function profile(node: YamlNode): Read<InferenceProfile> {
+  if (node.kind !== "map") return { ok: false, line: node.line, error: "expected a profile." };
+  const result: InferenceProfile = { name: "", when: {}, settings: {} };
+  for (const entry of node.entries) {
+    const { key, line, value } = entry;
+    if (key === "name") {
+      if (value.kind !== "scalar" || !PROFILE_NAME.test(value.text)) {
+        return {
+          ok: false,
+          line,
+          error:
+            "a profile's `name` must be letters, digits, `.`, `_` or `-`, such as `small-pod`.",
+        };
+      }
+      result.name = value.text;
+    } else if (key === "when") {
+      const when = conditions(entry);
+      if (!when.ok) return when;
+      result.when = when.value;
+    } else {
+      const parsed = setting(entry, "profile");
+      if (!parsed.ok) return parsed;
+      Object.assign(result.settings, { [key]: parsed.value });
+    }
+  }
+  if (!result.name) return { ok: false, line: node.line, error: "a profile needs a `name`." };
+  return { ok: true, value: result };
+}
+
+function conditions(entry: YamlEntry): Read<InferenceProfile["when"]> {
+  const { line, value } = entry;
+  if (value.kind !== "map") {
+    return { ok: false, line, error: "`when` must be a block of conditions." };
+  }
+  const when: InferenceProfile["when"] = {};
+  for (const { key, line, value: condition } of value.entries) {
+    if (key === "stages") {
+      const names = condition.kind === "list" ? condition.items : [];
+      const stages = names.flatMap((item) => (item.kind === "scalar" ? [item.text] : []));
+      const valid = stages.length === names.length && stages.every(isProfileStage);
+      if (names.length === 0 || !valid) {
+        return {
+          ok: false,
+          line,
+          error: `\`stages\` must list some of ${PROFILE_STAGES.map((stage) => `\`${stage}\``).join(", ")}, such as \`[plan, route]\`.`,
+        };
+      }
+      when.stages = stages as ProfileStage[];
+    } else if (key === "parallel-tasks") {
+      const count =
+        condition.kind === "scalar" && condition.text !== "" ? Number(condition.text) : Number.NaN;
+      if (!Number.isInteger(count) || count < 1) {
+        return {
+          ok: false,
+          line,
+          error: "`parallel-tasks` must be a positive whole number: the fewest tasks of the run.",
+        };
+      }
+      when["parallel-tasks"] = count;
+    } else {
+      return {
+        ok: false,
+        line,
+        error: `unknown condition \`${key}\`; a profile's conditions are \`stages\` and \`parallel-tasks\`.`,
+      };
+    }
+  }
+  return { ok: true, value: when };
+}
+
+function isProfileStage(value: string): value is ProfileStage {
+  return (PROFILE_STAGES as readonly string[]).includes(value);
+}
+
+/** What a run's profile depends on: its stage, and how many tasks it works on at once. */
+export interface RunConditions {
+  stage: ProfileStage;
+  tasks: number;
+}
+
+/** The settings of one run, and where its inference comes from. */
+export interface RunSettings {
+  settings: Settings;
+  /** The profile that applies; undefined when none does, and the top-level settings do. */
+  profile?: string | undefined;
+  /**
+   * The provider of the top-level settings and of each profile, whose months add up against
+   * the monthly budget: `openrouter`, or the GPU provider of self-hosted inference.
+   */
+  providers: string[];
 }
 
 /**
  * Resolves each setting from the first layer that sets it, then Codeman's defaults. The layers
  * are, in order: the task's commands, the workflow inputs, the repository's settings file and
- * the organization's (`LAYER_SOURCES`).
+ * the organization's (`LAYER_SOURCES`). The list of profiles is one value: the first layer that
+ * has one gives it whole. Then, for a run, the first profile whose conditions hold replaces the
+ * top-level values it sets, except those the task's own commands (the first layer) set.
+ *
+ * The top-level settings and every profile must fit together on their own, without the task's
+ * commands, so that a mistake shows on the first run and not when a stage reaches it.
  */
-export function resolveSettings(...layers: PartialSettings[]): Parsed<Settings> {
-  const merged: PartialSettings = { ...DEFAULTS };
-  for (const layer of [...layers].reverse()) {
-    for (const [name, value] of Object.entries(layer)) {
-      if (value !== undefined) Object.assign(merged, { [name]: value });
-    }
-  }
-  if (merged.model === undefined) {
+export function resolveRun(
+  layers: readonly SettingsLayer[],
+  run?: RunConditions,
+): Parsed<RunSettings> {
+  const [own = {}] = layers;
+  const merged = merge(layers);
+  const { "inference-profiles": profiles = [], ...values } = merged;
+  if (values.model === undefined) {
     return {
       ok: false,
       error: `No model is configured. Set \`model\` in ${SETTINGS_FILE} or in the workflow's inputs.`,
     };
   }
-  const settings = merged as Settings;
+  const forTask = pick(own, PROFILE_SETTINGS);
+  // The top level as the layers below the task's commands set it; where none does, as the
+  // task's commands do.
+  const below = merge(layers.slice(1), {});
+  const top: PartialSettings = { ...values };
+  for (const name of PROFILE_SETTINGS) {
+    if (below[name] !== undefined) Object.assign(top, { [name]: below[name] });
+  }
+  const topError = inferenceError(top as Settings);
+  if (topError) return { ok: false, error: topError };
+  for (const profile of profiles) {
+    const error = inferenceError({ ...top, ...profile.settings } as Settings);
+    if (error) return { ok: false, error: `Inference profile \`${profile.name}\`: ${error}` };
+  }
+
+  const chosen = run ? profiles.find((profile) => applies(profile, run)) : undefined;
+  const settings = { ...top, ...chosen?.settings, ...forTask } as Settings;
   const error = inferenceError(settings);
-  if (error) return { ok: false, error };
+  if (error) {
+    return { ok: false, error: chosen ? `Inference profile \`${chosen.name}\`: ${error}` : error };
+  }
   if (settings.inference === "self-hosted") {
     settings.engine ??= MODE_ENGINE[settings["gpu-mode"] as keyof typeof MODE_ENGINE];
   }
-  return { ok: true, value: settings };
+  const providers = [top, ...profiles.map((profile) => ({ ...top, ...profile.settings }))].map(
+    (layer) => (layer.inference === "self-hosted" ? (layer["gpu-provider"] ?? "") : "openrouter"),
+  );
+  return {
+    ok: true,
+    value: { settings, profile: chosen?.name, providers: [...new Set(providers)] },
+  };
+}
+
+/** The top-level settings, as `resolveRun` resolves them when no profile applies. */
+export function resolveSettings(...layers: SettingsLayer[]): Parsed<Settings> {
+  const resolved = resolveRun(layers);
+  return resolved.ok ? { ok: true, value: resolved.value.settings } : resolved;
+}
+
+/** Whether all of a profile's conditions hold for a run. */
+export function applies(profile: InferenceProfile, run: RunConditions): boolean {
+  const { stages, "parallel-tasks": tasks } = profile.when;
+  return (!stages || stages.includes(run.stage)) && (tasks === undefined || run.tasks >= tasks);
+}
+
+function merge(
+  layers: readonly SettingsLayer[],
+  defaults: PartialSettings = DEFAULTS,
+): SettingsLayer {
+  const merged: SettingsLayer = { ...defaults };
+  for (const layer of [...layers].reverse()) {
+    for (const [name, value] of Object.entries(layer)) {
+      if (value !== undefined) Object.assign(merged, { [name]: value });
+    }
+  }
+  return merged;
+}
+
+function pick(layer: PartialSettings, names: readonly SettingName[]): PartialSettings {
+  return Object.fromEntries(
+    Object.entries(layer).filter(
+      ([name, value]) => value !== undefined && (names as readonly string[]).includes(name),
+    ),
+  );
 }
 
 /**
  * For the run's log: a line per layer of `resolveSettings` that a resolved value comes from,
- * with those values. Values are short and hold no secrets; settings never do. The values no
- * line names are Codeman's defaults.
+ * with those values. Values are short and hold no secrets; settings never do. A list of
+ * profiles shows their names. The values no line names are Codeman's defaults.
  */
-export function settingSources(layers: readonly PartialSettings[]): string[] {
+export function settingSources(layers: readonly SettingsLayer[]): string[] {
   const named = new Set<string>();
+  const show = (value: unknown) =>
+    Array.isArray(value)
+      ? `[${value.map((profile: InferenceProfile) => profile.name).join(", ")}]`
+      : String(value);
   return layers.flatMap((layer, index) => {
     const values = Object.entries(layer).filter(
       ([name, value]) => value !== undefined && !named.has(name),
@@ -300,7 +525,7 @@ export function settingSources(layers: readonly PartialSettings[]): string[] {
     if (values.length === 0) return [];
     for (const [name] of values) named.add(name);
     const source = LAYER_SOURCES[index] ?? `layer ${index + 1}`;
-    return [`Settings from ${source}: ${values.map(([n, v]) => `${n}=${v}`).join(", ")}.`];
+    return [`Settings from ${source}: ${values.map(([n, v]) => `${n}=${show(v)}`).join(", ")}.`];
   });
 }
 

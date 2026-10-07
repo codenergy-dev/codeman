@@ -27,11 +27,11 @@ inputs:
   task:
     description: "(open-key) Issue number of the selected task."
   management-key:
-    description: "(open-key, close-key) OpenRouter management key, for OpenRouter inference."
+    description: "(open-key, close-key) OpenRouter management key, for OpenRouter inference. open-key also needs it when an inference profile names OpenRouter, to count its month."
   inference:
-    description: "(open-key, close-key, release-pod) The task's inference, as select outputs it. Empty is OpenRouter."
+    description: "(open-key, close-key, release-pod) The run's inference, as select outputs it: its profile, and every provider the settings name. Empty is OpenRouter."
   gpu-key:
-    description: "(open-key, close-key, release-pod) The GPU provider's account key, for self-hosted inference."
+    description: "(open-key, close-key, release-pod) The GPU provider's account key, for self-hosted inference. open-key also needs it when an inference profile names the provider, to count its month."
   pod-image:
     description: "(open-key) Codeman's pod image, by digest. Empty uses the image this version of Codeman pins."
   serverless-key:
@@ -108,9 +108,9 @@ outputs:
   monthly-budget:
     description: "(select) Resolved monthly spending limit, in USD."
   inference:
-    description: "(select) Where the task's runs get their model, as JSON, for the key jobs."
+    description: "(select) Where the run gets its model, as JSON, for the key jobs: the inference profile that applies, the task's spend from its record, and every provider the settings name."
   status:
-    description: "(open-key) opened, over-budget (monthly) or task-budget-spent."
+    description: "(open-key) opened, over-budget (monthly), task-budget-spent, or missing-credentials (a provider the settings name has no secret)."
   task-spent:
     description: "(open-key) What the task spent before this run, in USD."
   run-cost:
@@ -118,7 +118,7 @@ outputs:
   key-limit:
     description: "(open-key) The limit of this run's key, in USD."
   month-spent:
-    description: "(open-key) What the repository spent this month before this run, in USD."
+    description: "(open-key) What the repository spent this month before this run, in USD, across every provider the settings name."
   input-tokens:
     description: "(close-key) Input tokens of this run's key, from OpenRouter's analytics."
   output-tokens:

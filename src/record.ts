@@ -107,8 +107,12 @@ export interface TaskRecord {
   webPages?: Record<string, WebPage> | undefined;
   /** Workflows a maintainer accepted since the last stage run, for the next one to know. */
   accepted?: { by: string; workflows: string[] } | undefined;
-  /** Self-hosted inference: the pods that served the task, whose billing makes up its spend. */
-  inference?: { pods: PodSpend[] } | undefined;
+  /**
+   * Self-hosted inference: the pods that served the task, whose billing makes up its spend, and
+   * what its self-hosted runs added to `spent` in all; the rest is OpenRouter's, which its keys
+   * tell. Records from before inference profiles lack `spent`; see `selfHostedSpent`.
+   */
+  inference?: { pods: PodSpend[]; spent?: number | undefined } | undefined;
 }
 
 /**

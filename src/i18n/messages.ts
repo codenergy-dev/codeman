@@ -145,6 +145,8 @@ export interface Messages {
 
   // Keys and budget.
   noKey: string;
+  /** A provider the settings name has no secret in the workflow; the reason follows. */
+  missingCredentials: string;
   taskBudgetSpent(spent: string, budget: string, minimum: string): string;
   monthlyBudgetReached(used: string, budget: string, limit: string): string;
   tryLater(reason: string): string;

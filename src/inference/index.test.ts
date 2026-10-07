@@ -14,7 +14,11 @@ const record = { spent: 0.75, inference: { pods: [{ id: "p1", runs: ["1"], count
 
 test("hands the key jobs the task's choice of inference, with its spend and pods", () => {
   const openrouter = inferenceChoice(settings({ model: "a/b" }), record);
-  assert.deepEqual(openrouter, { inference: "openrouter" });
+  assert.deepEqual(openrouter, {
+    inference: "openrouter",
+    providers: ["openrouter"],
+    recorded: { spent: 0.75, selfHosted: 0.75 },
+  });
   assert.equal(agentMode(openrouter), "openrouter");
 
   const pod = inferenceChoice(
@@ -31,8 +35,9 @@ test("hands the key jobs the task's choice of inference, with its spend and pods
     gpuProvider: "runpod",
     engine: "ollama",
     model: "qwen3-coder:30b",
-    taskSpent: 0.75,
     pods: ["p1"],
+    providers: ["runpod"],
+    recorded: { spent: 0.75, selfHosted: 0.75 },
     mode: "pod",
     gpuType: "GPU A",
     podReuse: "run",
@@ -54,8 +59,9 @@ test("hands the key jobs the task's choice of inference, with its spend and pods
     gpuProvider: "runpod",
     engine: "vllm",
     model: "org/model",
-    taskSpent: 0,
     pods: [],
+    providers: ["runpod"],
+    recorded: { spent: 0, selfHosted: 0 },
     mode: "serverless",
     endpoint: "ep1",
   });
@@ -63,7 +69,11 @@ test("hands the key jobs the task's choice of inference, with its spend and pods
 });
 
 test("an empty choice, from older workflow files, is OpenRouter; anything else must be whole", () => {
-  assert.deepEqual(parseInferenceChoice(""), { inference: "openrouter" });
+  assert.deepEqual(parseInferenceChoice(""), {
+    inference: "openrouter",
+    providers: ["openrouter"],
+    recorded: { spent: 0, selfHosted: 0 },
+  });
   assert.throws(
     () => parseInferenceChoice('{"inference":"self-hosted","model":"m"}'),
     /not a valid/,

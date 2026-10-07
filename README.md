@@ -40,7 +40,7 @@ model: qwen3-coder:30b
 gpu-type: "NVIDIA RTX A6000"
 ```
 
-Codeman then starts a GPU for the task, serves the model with Ollama behind its own gateway, and stops the GPU when the task no longer needs it. A Serverless endpoint works too. See [self-hosted inference](docs/installation.md#self-hosted-inference-on-runpod).
+Codeman then starts a GPU for the task, serves the model with Ollama behind its own gateway, and stops the GPU when the task no longer needs it. A Serverless endpoint works too. See [self-hosted inference](docs/installation.md#self-hosted-inference-on-runpod). [Inference profiles](docs/installation.md#inference-profiles) mix both in one task, such as OpenRouter to plan and a GPU to write the code, under the same budgets.
 
 The workflow runs once a day, when you start it manually, when a maintainer comments a `/codeman` command, and when a review on one of Codeman's pull requests asks for changes:
 

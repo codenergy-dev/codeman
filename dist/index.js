@@ -19759,6 +19759,31 @@ function readTask(runtime2) {
   return task;
 }
 
+// src/inference/budget.ts
+var ProviderBudget = class {
+  missing;
+  #recorded;
+  #accounts;
+  constructor(recorded, accounts, missing = []) {
+    this.#recorded = recorded;
+    this.#accounts = accounts;
+    this.missing = missing;
+  }
+  async taskSpent(task) {
+    const openRouter = this.#accounts.find((account) => account.name === "openrouter");
+    if (!openRouter || !("provider" in openRouter)) return this.#recorded.spent;
+    return await openRouter.provider.taskSpent(task) + this.#recorded.selfHosted;
+  }
+  async monthSpent() {
+    return Promise.all(
+      this.#accounts.map(async (account) => ({
+        provider: account.name,
+        spent: await ("provider" in account ? account.provider.monthSpent() : account.month())
+      }))
+    );
+  }
+};
+
 // src/inference/engine.ts
 function openAiUsage(body, cachedApart = false) {
   if (typeof body !== "object" || body === null) return void 0;
@@ -19821,6 +19846,78 @@ function vllmContextLength(env) {
 // src/inference/engines.ts
 var ENGINES = { ollama, vllm };
 var MODE_ENGINE = { pod: "ollama", serverless: "vllm" };
+
+// src/inference/gpu.ts
+async function accountMonthSpent(gpu, now) {
+  const billed = await gpu.monthSpent(now);
+  if (!gpu.pods) return billed;
+  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  const live = (await gpu.pods.list({})).filter(
+    (pod) => pod.status !== "terminated" && pod.pricePerSecond !== void 0
+  );
+  if (live.length === 0) return billed;
+  const podBilled = await gpu.pods.billing(
+    live.map((pod) => pod.id),
+    start
+  );
+  let unbilled2 = 0;
+  for (const pod of live) {
+    const from = pod.createdAt > start ? pod.createdAt : start;
+    const estimate = podCost(from, now, pod.pricePerSecond ?? 0);
+    unbilled2 += Math.max(0, estimate - (podBilled[pod.id] ?? 0));
+  }
+  return billed + unbilled2;
+}
+var MAX_IDLE_TIMEOUT_SECONDS = 300;
+function endpointProblems(endpoint2) {
+  const problems = [];
+  if (endpoint2.type !== void 0 && endpoint2.type !== "QUEUE") {
+    problems.push(`it is a ${endpoint2.type} endpoint; the vLLM worker needs a queue-based one`);
+  }
+  if (endpoint2.workersMin !== 0) {
+    problems.push(
+      `it keeps ${endpoint2.workersMin} active worker(s), billed all the time; set active workers to 0`
+    );
+  }
+  if (endpoint2.workersMax === 0) {
+    problems.push(
+      "its max workers is 0, as the provider sets it after 7 days without requests; set it to 1"
+    );
+  } else if (endpoint2.workersMax !== 1) {
+    problems.push(`it may run ${endpoint2.workersMax} workers at once; set max workers to 1`);
+  }
+  const idle = endpoint2.idleTimeoutSeconds;
+  if (idle === void 0 || idle > MAX_IDLE_TIMEOUT_SECONDS) {
+    problems.push(
+      `its idle timeout is ${idle === void 0 ? "unknown" : `${idle} seconds`}; set it to ${MAX_IDLE_TIMEOUT_SECONDS} seconds or less`
+    );
+  }
+  return problems;
+}
+function podCost(start, end, pricePerSecond) {
+  return Math.max(0, end.getTime() - start.getTime()) / 1e3 * pricePerSecond;
+}
+async function waitUntilReady(host, id, ready, options) {
+  const wait = options.wait ?? sleep;
+  const interval = options.intervalMs ?? 1e4;
+  for (let waited = 0; ; waited += interval) {
+    const pod = await host.get(id);
+    if (!pod) throw new Error(`Pod ${id} no longer exists.`);
+    if (pod.status === "failed" || pod.status === "stopped" || pod.status === "terminated") {
+      throw new Error(`Pod ${id} is ${pod.status}.`);
+    }
+    if (pod.status === "running" && await ready().catch(() => false)) return pod;
+    if (waited >= options.timeoutMs) {
+      throw new Error(
+        `Pod ${id} was not ready within ${Math.round(options.timeoutMs / 6e4)} minutes.`
+      );
+    }
+    await wait(interval);
+  }
+}
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 // src/budget.ts
 var MIN_RUN_BUDGET = 0.1;
@@ -20051,7 +20148,7 @@ var OpenRouterProvider = class {
     };
   }
 };
-async function runCost(router, hash, used, wait = sleep) {
+async function runCost(router, hash, used, wait = sleep2) {
   let cost = await router.keyUsage(hash);
   for (let attempt = 0; attempt < (used ? 12 : 6); attempt++) {
     await wait(5e3);
@@ -20080,7 +20177,7 @@ async function taskCosts(router, hash, repository, log) {
   }
 }
 var KEY_LIFETIME_MS = 48 * 36e5;
-async function runTokens(router, hash, spent, log, wait = sleep) {
+async function runTokens(router, hash, spent, log, wait = sleep2) {
   try {
     for (let attempt = 0; ; attempt++) {
       const now = /* @__PURE__ */ new Date();
@@ -20100,7 +20197,7 @@ async function runTokens(router, hash, spent, log, wait = sleep) {
     return void 0;
   }
 }
-async function runStats(router, hash, generated, log, wait = sleep) {
+async function runStats(router, hash, generated, log, wait = sleep2) {
   try {
     for (let attempt = 0; ; attempt++) {
       const now = /* @__PURE__ */ new Date();
@@ -20119,7 +20216,7 @@ async function runStats(router, hash, generated, log, wait = sleep) {
     return void 0;
   }
 }
-function sleep(ms) {
+function sleep2(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
@@ -20792,78 +20889,6 @@ function runSettings(body) {
 // src/gateway/pod.ts
 var GATEWAY_PORT = 8080;
 
-// src/inference/gpu.ts
-async function accountMonthSpent(gpu, now) {
-  const billed = await gpu.monthSpent(now);
-  if (!gpu.pods) return billed;
-  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-  const live = (await gpu.pods.list({})).filter(
-    (pod) => pod.status !== "terminated" && pod.pricePerSecond !== void 0
-  );
-  if (live.length === 0) return billed;
-  const podBilled = await gpu.pods.billing(
-    live.map((pod) => pod.id),
-    start
-  );
-  let unbilled2 = 0;
-  for (const pod of live) {
-    const from = pod.createdAt > start ? pod.createdAt : start;
-    const estimate = podCost(from, now, pod.pricePerSecond ?? 0);
-    unbilled2 += Math.max(0, estimate - (podBilled[pod.id] ?? 0));
-  }
-  return billed + unbilled2;
-}
-var MAX_IDLE_TIMEOUT_SECONDS = 300;
-function endpointProblems(endpoint2) {
-  const problems = [];
-  if (endpoint2.type !== void 0 && endpoint2.type !== "QUEUE") {
-    problems.push(`it is a ${endpoint2.type} endpoint; the vLLM worker needs a queue-based one`);
-  }
-  if (endpoint2.workersMin !== 0) {
-    problems.push(
-      `it keeps ${endpoint2.workersMin} active worker(s), billed all the time; set active workers to 0`
-    );
-  }
-  if (endpoint2.workersMax === 0) {
-    problems.push(
-      "its max workers is 0, as the provider sets it after 7 days without requests; set it to 1"
-    );
-  } else if (endpoint2.workersMax !== 1) {
-    problems.push(`it may run ${endpoint2.workersMax} workers at once; set max workers to 1`);
-  }
-  const idle = endpoint2.idleTimeoutSeconds;
-  if (idle === void 0 || idle > MAX_IDLE_TIMEOUT_SECONDS) {
-    problems.push(
-      `its idle timeout is ${idle === void 0 ? "unknown" : `${idle} seconds`}; set it to ${MAX_IDLE_TIMEOUT_SECONDS} seconds or less`
-    );
-  }
-  return problems;
-}
-function podCost(start, end, pricePerSecond) {
-  return Math.max(0, end.getTime() - start.getTime()) / 1e3 * pricePerSecond;
-}
-async function waitUntilReady(host, id, ready, options) {
-  const wait = options.wait ?? sleep2;
-  const interval = options.intervalMs ?? 1e4;
-  for (let waited = 0; ; waited += interval) {
-    const pod = await host.get(id);
-    if (!pod) throw new Error(`Pod ${id} no longer exists.`);
-    if (pod.status === "failed" || pod.status === "stopped" || pod.status === "terminated") {
-      throw new Error(`Pod ${id} is ${pod.status}.`);
-    }
-    if (pod.status === "running" && await ready().catch(() => false)) return pod;
-    if (waited >= options.timeoutMs) {
-      throw new Error(
-        `Pod ${id} was not ready within ${Math.round(options.timeoutMs / 6e4)} minutes.`
-      );
-    }
-    await wait(interval);
-  }
-}
-function sleep2(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 // src/inference/selfhosted.ts
 var START_MINUTES = 25;
 var KEPT_IDLE_MINUTES = 15;
@@ -21189,16 +21214,68 @@ function parseUsage(text) {
   return usage;
 }
 
+// src/inference/spend.ts
+function selfHostedSpent(record) {
+  if (!record?.inference) return 0;
+  return record.inference.spent ?? record.spent ?? 0;
+}
+var MAX_PODS = 20;
+function countRun(pods, run2, billed = {}) {
+  const next = (pods ?? []).map((pod) => ({ ...pod, runs: [...pod.runs] }));
+  let added = run2.cost;
+  if (run2.pod) {
+    let pod = next.find((candidate) => candidate.id === run2.pod);
+    if (!pod) {
+      pod = { id: run2.pod, runs: [], counted: 0 };
+      next.push(pod);
+    }
+    if (!pod.runs.includes(run2.runId)) pod.runs.push(run2.runId);
+    pod.counted += run2.cost;
+  }
+  const costs = {};
+  for (const pod of next) {
+    const amount2 = billed[pod.id];
+    if (amount2 !== void 0 && amount2 > pod.counted) {
+      added += amount2 - pod.counted;
+      pod.counted = amount2;
+    }
+    const [only] = pod.runs;
+    if (amount2 !== void 0 && only !== void 0 && pod.runs.length === 1) {
+      costs[only] = Number(pod.counted.toFixed(4));
+    }
+  }
+  return { pods: next.slice(-MAX_PODS), added, costs };
+}
+function parsePodCosts(text) {
+  let value;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return void 0;
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return void 0;
+  const entries = Object.entries(value);
+  const valid = entries.every(
+    ([id, cost]) => /^[\w-]{1,64}$/.test(id) && typeof cost === "number" && Number.isFinite(cost) && cost >= 0
+  );
+  return valid ? Object.fromEntries(entries) : void 0;
+}
+
 // src/inference/index.ts
-function inferenceChoice(settings, record) {
-  if (settings.inference !== "self-hosted") return { inference: "openrouter" };
+function inferenceChoice(settings, record, options = {}) {
+  const budgeted = {
+    ...options.profile ? { profile: options.profile } : {},
+    providers: [.../* @__PURE__ */ new Set([providerName(settings), ...options.providers ?? []])],
+    recorded: { spent: record?.spent ?? 0, selfHosted: selfHostedSpent(record) }
+  };
+  if (settings.inference !== "self-hosted") return { inference: "openrouter", ...budgeted };
   const common = {
     inference: "self-hosted",
     gpuProvider: settings["gpu-provider"],
     engine: settings.engine ?? "",
     model: settings.model,
-    taskSpent: record?.spent ?? 0,
-    pods: record?.inference?.pods.map((pod) => pod.id) ?? []
+    pods: record?.inference?.pods.map((pod) => pod.id) ?? [],
+    ...budgeted
   };
   return settings["gpu-mode"] === "serverless" ? { ...common, mode: "serverless", endpoint: settings["serverless-endpoint"] ?? "" } : {
     ...common,
@@ -21207,13 +21284,27 @@ function inferenceChoice(settings, record) {
     podReuse: settings["pod-reuse"] === "run" ? "run" : "task"
   };
 }
+function providerName(settings) {
+  return settings.inference === "self-hosted" ? settings["gpu-provider"] : "openrouter";
+}
+function choiceProvider(choice) {
+  return choice.inference === "self-hosted" ? choice.gpuProvider : "openrouter";
+}
 function parseInferenceChoice(text) {
-  if (text.trim() === "") return { inference: "openrouter" };
+  if (text.trim() === "") {
+    return { inference: "openrouter", providers: ["openrouter"], recorded: zero() };
+  }
   const choice = JSON.parse(text);
+  const amount2 = (value) => typeof value === "number" && Number.isFinite(value);
+  const budgeted = Array.isArray(choice.providers) && choice.providers.every((name) => typeof name === "string" && name !== "") && amount2(choice.recorded?.spent) && amount2(choice.recorded?.selfHosted) && (choice.profile === void 0 || typeof choice.profile === "string");
+  if (!budgeted) throw new Error("The inference input is not a valid choice.");
   if (choice.inference === "openrouter") return choice;
-  const valid = choice.inference === "self-hosted" && typeof choice.model === "string" && ENGINES[choice.engine] !== void 0 && Number.isFinite(choice.taskSpent) && Array.isArray(choice.pods) && (choice.mode === "pod" ? typeof choice.gpuType === "string" : choice.mode === "serverless");
+  const valid = choice.inference === "self-hosted" && typeof choice.model === "string" && ENGINES[choice.engine] !== void 0 && Array.isArray(choice.pods) && (choice.mode === "pod" ? typeof choice.gpuType === "string" : choice.mode === "serverless");
   if (!valid) throw new Error("The inference input is not a valid choice.");
   return choice;
+}
+function zero() {
+  return { spent: 0, selfHosted: 0 };
 }
 function agentMode(choice) {
   return choice.inference === "openrouter" ? "openrouter" : choice.mode;
@@ -21225,11 +21316,7 @@ function gpuProvider(name, key) {
 function inferenceProvider(runtime2) {
   const choice = parseInferenceChoice(runtime2.input("inference"));
   if (choice.inference === "openrouter") {
-    return new OpenRouterProvider(
-      new OpenRouter(runtime2.input("management-key", { required: true })),
-      runtime2.repository,
-      () => positiveNumber(runtime2, "key-expiry-hours")
-    );
+    return openRouterProvider(runtime2, runtime2.input("management-key", { required: true }));
   }
   return selfHosted(choice, runtime2.repository, {
     accountKey: runtime2.input("gpu-key", { required: true }),
@@ -21237,11 +21324,51 @@ function inferenceProvider(runtime2) {
     usage: runtime2.input("gateway-usage")
   });
 }
+function openRouterProvider(runtime2, managementKey) {
+  return new OpenRouterProvider(
+    new OpenRouter(managementKey),
+    runtime2.repository,
+    () => positiveNumber(runtime2, "key-expiry-hours")
+  );
+}
+var CREDENTIALS = {
+  openrouter: { input: "management-key", secret: "CODEMAN_OPENROUTER_MANAGEMENT_KEY" },
+  runpod: { input: "gpu-key", secret: "CODEMAN_RUNPOD_API_KEY" }
+};
+function inferenceBudget(runtime2, run2) {
+  const choice = parseInferenceChoice(runtime2.input("inference"));
+  const own = choiceProvider(choice);
+  const accounts = [];
+  const missing = [];
+  for (const name of /* @__PURE__ */ new Set([own, ...choice.providers])) {
+    const credential = CREDENTIALS[name];
+    if (!credential) throw new Error(`Unknown inference provider "${name}".`);
+    const key = runtime2.input(credential.input);
+    if (key === "") {
+      missing.push(credential.secret);
+      continue;
+    }
+    if (name === own) {
+      accounts.push({ name, provider: run2() });
+    } else if (name === "openrouter") {
+      accounts.push({ name, provider: openRouterProvider(runtime2, key) });
+    } else {
+      const gpu = gpuProvider(name, key);
+      accounts.push({ name, month: () => accountMonthSpent(gpu, /* @__PURE__ */ new Date()) });
+    }
+  }
+  return new ProviderBudget(choice.recorded, accounts, missing);
+}
 function selfHosted(choice, repository, inputs) {
   const gpu = inputs.gpu ?? gpuProvider(choice.gpuProvider, inputs.accountKey);
   const engine = ENGINES[choice.engine];
   if (!engine) throw new Error(`Unknown engine "${choice.engine}".`);
-  const common = { model: choice.model, engine, taskSpent: choice.taskSpent, pods: choice.pods };
+  const common = {
+    model: choice.model,
+    engine,
+    taskSpent: choice.recorded.spent,
+    pods: choice.pods
+  };
   if (choice.mode === "pod") {
     return new PodInference(
       { ...common, gpuType: choice.gpuType, image: inputs.image, reuse: choice.podReuse },
@@ -26633,6 +26760,177 @@ function close(server) {
   });
 }
 
+// src/stages.ts
+var STAGES = ["web", "design", "code", "test", "review"];
+var STAGE_STATE = {
+  web: "researching",
+  design: "designing",
+  code: "coding",
+  test: "testing",
+  review: "reviewing"
+};
+function stageOfState(state) {
+  if (state === "in-progress") return "code";
+  return STAGES.find((stage) => STAGE_STATE[stage] === state);
+}
+function nextStage(stage) {
+  return STAGES[STAGES.indexOf(stage) + 1];
+}
+function nextInRoute(route, stage) {
+  if (!route) return nextStage(stage);
+  const index = STAGES.indexOf(stage);
+  return route.stages.map((step) => step.stage).find((next) => STAGES.indexOf(next) > index);
+}
+function stagesFrom(first) {
+  return STAGES.slice(STAGES.indexOf(first));
+}
+
+// src/yaml.ts
+var YamlError = class extends Error {
+  line;
+  constructor(line, message) {
+    super(message);
+    this.line = line;
+  }
+};
+var KEY = /^([a-z][a-z0-9-]*):(?:\s+(.*))?$/;
+var ITEM = /^-(?:\s|$)/;
+function parseYaml(text) {
+  const lines = [];
+  for (const [index, raw] of text.split(/\r?\n/).entries()) {
+    const line = raw.trimEnd();
+    const content = line.trimStart();
+    if (content === "" || content.startsWith("#")) continue;
+    const indentation = line.slice(0, line.length - content.length);
+    if (indentation.includes("	")) {
+      return { ok: false, line: index + 1, error: "indent with spaces, not tabs." };
+    }
+    lines.push({ number: index + 1, indent: indentation.length, text: content });
+  }
+  try {
+    const reader = new Reader(lines);
+    const value = reader.mapping(0);
+    const rest = reader.peek();
+    if (rest) throw new YamlError(rest.number, "unexpected indentation.");
+    return { ok: true, value };
+  } catch (error3) {
+    if (error3 instanceof YamlError) return { ok: false, line: error3.line, error: error3.message };
+    throw error3;
+  }
+}
+var Reader = class {
+  #lines;
+  #next = 0;
+  constructor(lines) {
+    this.#lines = lines;
+  }
+  peek() {
+    return this.#lines[this.#next];
+  }
+  /** The `key: value` lines at `indent`, and what is nested under them. */
+  mapping(indent) {
+    const map = { kind: "map", line: this.peek()?.number ?? 1, entries: [] };
+    for (let line = this.peek(); line && line.indent >= indent; line = this.peek()) {
+      if (line.indent > indent) throw new YamlError(line.number, "unexpected indentation.");
+      const match = KEY.exec(line.text);
+      if (!match?.[1] || ITEM.test(line.text)) {
+        throw new YamlError(line.number, "expected `name: value`.");
+      }
+      const key = match[1];
+      if (map.entries.some((entry) => entry.key === key)) {
+        throw new YamlError(line.number, `\`${key}\` appears twice.`);
+      }
+      this.#next++;
+      map.entries.push({ key, line: line.number, value: this.#value(key, line, match[2] ?? "") });
+    }
+    return map;
+  }
+  /** A key's value: on its line, or the block nested under it. */
+  #value(key, line, text) {
+    if (text === "" || text.startsWith("#")) {
+      const child = this.peek();
+      if (child && child.indent > line.indent) {
+        return ITEM.test(child.text) ? this.#list(child.indent) : this.mapping(child.indent);
+      }
+      if (child && child.indent === line.indent && ITEM.test(child.text)) {
+        return this.#list(child.indent);
+      }
+      return { kind: "scalar", line: line.number, text: "" };
+    }
+    if (text.startsWith("[")) return flowList(key, line.number, text);
+    const value = scalar(text);
+    if (value === void 0) {
+      throw new YamlError(line.number, `the value of \`${key}\` is not a plain value.`);
+    }
+    return { kind: "scalar", line: line.number, text: value };
+  }
+  /** The `- item` lines at `indent`. An item is a scalar or a mapping that starts on its line. */
+  #list(indent) {
+    const list = { kind: "list", line: this.peek()?.number ?? 1, items: [] };
+    for (let line = this.peek(); line && line.indent >= indent; line = this.peek()) {
+      if (line.indent > indent) throw new YamlError(line.number, "unexpected indentation.");
+      if (!ITEM.test(line.text)) break;
+      const after = line.text.slice(1);
+      const content = after.trimStart();
+      if (content === "" || content.startsWith("#")) {
+        throw new YamlError(line.number, "expected a value after `-`, on the same line.");
+      }
+      if (ITEM.test(content) || content.startsWith("[")) {
+        throw new YamlError(line.number, "a list item cannot be a list.");
+      }
+      if (KEY.test(content)) {
+        line.indent += 1 + after.length - content.length;
+        line.text = content;
+        list.items.push(this.mapping(line.indent));
+        continue;
+      }
+      this.#next++;
+      const value = scalar(content);
+      if (value === void 0)
+        throw new YamlError(line.number, "a list item is not a plain value.");
+      list.items.push({ kind: "scalar", line: line.number, text: value });
+    }
+    return list;
+  }
+};
+function flowList(key, line, text) {
+  const items = [];
+  let rest = text.slice(1).trimStart();
+  if (rest.startsWith("]")) {
+    rest = rest.slice(1);
+  } else {
+    for (; ; ) {
+      const match = /^(?:"([^"\\]*)"|'([^'\\]*)'|([^,[\]{}"'#]*?))\s*([,\]])\s*/.exec(rest);
+      const plain = match?.[3];
+      const value = plain === void 0 ? match?.[1] ?? match?.[2] : plainScalar(plain);
+      if (!match || value === void 0 || plain !== void 0 && plain === "") {
+        throw new YamlError(line, `an item of \`${key}\` is not a plain value.`);
+      }
+      items.push({ kind: "scalar", line, text: value });
+      rest = rest.slice(match[0].length);
+      if (match[4] === "]") break;
+    }
+  }
+  if (!/^\s*(?:#.*)?$/.test(rest)) {
+    throw new YamlError(line, `expected only a comment after the list of \`${key}\`.`);
+  }
+  return { kind: "list", line, items };
+}
+function scalar(text) {
+  const quoted = /^(["'])([^"'\\]*)\1\s*(?:#.*)?$/.exec(text);
+  if (quoted) return quoted[2];
+  return plainScalar(text.replace(/\s+#.*$/, "").trim());
+}
+var WORD = /^[A-Za-z0-9._~/:-]*$/;
+function plainScalar(text) {
+  const words = text.split(/ +/);
+  if (!words.every((word) => WORD.test(word))) return void 0;
+  if (words.length > 1 && (words[0] === "-" || words.some((word) => word.endsWith(":")))) {
+    return void 0;
+  }
+  return text;
+}
+
 // src/settings.ts
 var SETTINGS_FILE = ".codeman/settings.yml";
 var SHARED_SETTINGS = "the `settings` input (organization variable CODEMAN_SETTINGS)";
@@ -26766,55 +27064,199 @@ function parseSetting(name, text) {
   }
   return { ok: true, value };
 }
+var PROFILE_SETTINGS = [
+  "inference",
+  "gpu-provider",
+  "gpu-mode",
+  "gpu-type",
+  "engine",
+  "serverless-endpoint",
+  "pod-reuse",
+  "model"
+];
+var PROFILE_STAGES = ["plan", "route", ...STAGES];
+var PROFILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 function parseSettings(text, source = SETTINGS_FILE) {
+  const tree = parseYaml(text);
+  if (!tree.ok) return { ok: false, error: `${source}, line ${tree.line}: ${tree.error}` };
   const settings = {};
-  for (const [index, raw] of text.split(/\r?\n/).entries()) {
-    const where = `${source}, line ${index + 1}`;
-    const line = raw.trimEnd();
-    if (line.trim() === "" || line.trim().startsWith("#")) continue;
-    const match = /^([a-z-]+):(?:\s+(.*))?$/.exec(line);
-    if (!match?.[1]) return { ok: false, error: `${where}: expected \`name: value\`.` };
-    const name = match[1];
-    if (!isSettingName(name)) return { ok: false, error: `${where}: unknown setting \`${name}\`.` };
-    if (name in settings) return { ok: false, error: `${where}: \`${name}\` appears twice.` };
-    const value = scalar(match[2] ?? "");
-    if (value === void 0)
-      return { ok: false, error: `${where}: the value of \`${name}\` is not a plain value.` };
-    const parsed = parseSetting(name, value);
-    if (!parsed.ok) return { ok: false, error: `${where}: ${parsed.error}` };
-    settings[name] = parsed.value;
+  for (const entry of tree.value.entries) {
+    const parsed = entry.key === "inference-profiles" ? profiles(entry.value) : setting(entry, "setting");
+    if (!parsed.ok) return { ok: false, error: `${source}, line ${parsed.line}: ${parsed.error}` };
+    settings[entry.key] = parsed.value;
   }
   return { ok: true, value: settings };
 }
-function scalar(text) {
-  const quoted = /^(["'])([^"'\\]*)\1\s*(?:#.*)?$/.exec(text);
-  if (quoted) return quoted[2];
-  const plain = text.replace(/\s+#.*$/, "").trim();
-  return /^[A-Za-z0-9._~/:-]*$/.test(plain) ? plain : void 0;
+function setting(entry, what) {
+  const { key: name, line, value } = entry;
+  if (!isSettingName(name)) return { ok: false, line, error: `unknown setting \`${name}\`.` };
+  if (what === "profile" && !PROFILE_SETTINGS.includes(name)) {
+    return {
+      ok: false,
+      line,
+      error: `a profile cannot set \`${name}\`; it sets only ${PROFILE_SETTINGS.map((n) => `\`${n}\``).join(", ")}.`
+    };
+  }
+  if (value.kind !== "scalar") {
+    return { ok: false, line, error: `the value of \`${name}\` is not a plain value.` };
+  }
+  const parsed = parseSetting(name, value.text);
+  return parsed.ok ? parsed : { ok: false, line, error: parsed.error };
 }
-function resolveSettings(...layers) {
-  const merged = { ...DEFAULTS2 };
-  for (const layer of [...layers].reverse()) {
-    for (const [name, value] of Object.entries(layer)) {
-      if (value !== void 0) Object.assign(merged, { [name]: value });
+function profiles(node) {
+  if (node.kind !== "list" || node.items.some((item) => item.kind !== "map")) {
+    return {
+      ok: false,
+      line: node.kind === "list" ? node.items[0]?.line ?? node.line : node.line,
+      error: "`inference-profiles` must be a list of profiles, each a block of settings."
+    };
+  }
+  const list = [];
+  for (const item of node.items) {
+    const parsed = profile(item);
+    if (!parsed.ok) return parsed;
+    if (list.some((other) => other.name === parsed.value.name)) {
+      return {
+        ok: false,
+        line: item.line,
+        error: `two profiles are named \`${parsed.value.name}\`.`
+      };
+    }
+    list.push(parsed.value);
+  }
+  return { ok: true, value: list };
+}
+function profile(node) {
+  if (node.kind !== "map") return { ok: false, line: node.line, error: "expected a profile." };
+  const result = { name: "", when: {}, settings: {} };
+  for (const entry of node.entries) {
+    const { key, line, value } = entry;
+    if (key === "name") {
+      if (value.kind !== "scalar" || !PROFILE_NAME.test(value.text)) {
+        return {
+          ok: false,
+          line,
+          error: "a profile's `name` must be letters, digits, `.`, `_` or `-`, such as `small-pod`."
+        };
+      }
+      result.name = value.text;
+    } else if (key === "when") {
+      const when = conditions(entry);
+      if (!when.ok) return when;
+      result.when = when.value;
+    } else {
+      const parsed = setting(entry, "profile");
+      if (!parsed.ok) return parsed;
+      Object.assign(result.settings, { [key]: parsed.value });
     }
   }
-  if (merged.model === void 0) {
+  if (!result.name) return { ok: false, line: node.line, error: "a profile needs a `name`." };
+  return { ok: true, value: result };
+}
+function conditions(entry) {
+  const { line, value } = entry;
+  if (value.kind !== "map") {
+    return { ok: false, line, error: "`when` must be a block of conditions." };
+  }
+  const when = {};
+  for (const { key, line: line2, value: condition } of value.entries) {
+    if (key === "stages") {
+      const names = condition.kind === "list" ? condition.items : [];
+      const stages = names.flatMap((item) => item.kind === "scalar" ? [item.text] : []);
+      const valid = stages.length === names.length && stages.every(isProfileStage);
+      if (names.length === 0 || !valid) {
+        return {
+          ok: false,
+          line: line2,
+          error: `\`stages\` must list some of ${PROFILE_STAGES.map((stage) => `\`${stage}\``).join(", ")}, such as \`[plan, route]\`.`
+        };
+      }
+      when.stages = stages;
+    } else if (key === "parallel-tasks") {
+      const count3 = condition.kind === "scalar" && condition.text !== "" ? Number(condition.text) : Number.NaN;
+      if (!Number.isInteger(count3) || count3 < 1) {
+        return {
+          ok: false,
+          line: line2,
+          error: "`parallel-tasks` must be a positive whole number: the fewest tasks of the run."
+        };
+      }
+      when["parallel-tasks"] = count3;
+    } else {
+      return {
+        ok: false,
+        line: line2,
+        error: `unknown condition \`${key}\`; a profile's conditions are \`stages\` and \`parallel-tasks\`.`
+      };
+    }
+  }
+  return { ok: true, value: when };
+}
+function isProfileStage(value) {
+  return PROFILE_STAGES.includes(value);
+}
+function resolveRun(layers, run2) {
+  const [own = {}] = layers;
+  const merged = merge3(layers);
+  const { "inference-profiles": profiles2 = [], ...values } = merged;
+  if (values.model === void 0) {
     return {
       ok: false,
       error: `No model is configured. Set \`model\` in ${SETTINGS_FILE} or in the workflow's inputs.`
     };
   }
-  const settings = merged;
+  const forTask = pick(own, PROFILE_SETTINGS);
+  const below = merge3(layers.slice(1), {});
+  const top = { ...values };
+  for (const name of PROFILE_SETTINGS) {
+    if (below[name] !== void 0) Object.assign(top, { [name]: below[name] });
+  }
+  const topError = inferenceError(top);
+  if (topError) return { ok: false, error: topError };
+  for (const profile2 of profiles2) {
+    const error4 = inferenceError({ ...top, ...profile2.settings });
+    if (error4) return { ok: false, error: `Inference profile \`${profile2.name}\`: ${error4}` };
+  }
+  const chosen = run2 ? profiles2.find((profile2) => applies(profile2, run2)) : void 0;
+  const settings = { ...top, ...chosen?.settings, ...forTask };
   const error3 = inferenceError(settings);
-  if (error3) return { ok: false, error: error3 };
+  if (error3) {
+    return { ok: false, error: chosen ? `Inference profile \`${chosen.name}\`: ${error3}` : error3 };
+  }
   if (settings.inference === "self-hosted") {
     settings.engine ??= MODE_ENGINE[settings["gpu-mode"]];
   }
-  return { ok: true, value: settings };
+  const providers = [top, ...profiles2.map((profile2) => ({ ...top, ...profile2.settings }))].map(
+    (layer) => layer.inference === "self-hosted" ? layer["gpu-provider"] ?? "" : "openrouter"
+  );
+  return {
+    ok: true,
+    value: { settings, profile: chosen?.name, providers: [...new Set(providers)] }
+  };
+}
+function applies(profile2, run2) {
+  const { stages, "parallel-tasks": tasks } = profile2.when;
+  return (!stages || stages.includes(run2.stage)) && (tasks === void 0 || run2.tasks >= tasks);
+}
+function merge3(layers, defaults2 = DEFAULTS2) {
+  const merged = { ...defaults2 };
+  for (const layer of [...layers].reverse()) {
+    for (const [name, value] of Object.entries(layer)) {
+      if (value !== void 0) Object.assign(merged, { [name]: value });
+    }
+  }
+  return merged;
+}
+function pick(layer, names) {
+  return Object.fromEntries(
+    Object.entries(layer).filter(
+      ([name, value]) => value !== void 0 && names.includes(name)
+    )
+  );
 }
 function settingSources(layers) {
   const named = /* @__PURE__ */ new Set();
+  const show = (value) => Array.isArray(value) ? `[${value.map((profile2) => profile2.name).join(", ")}]` : String(value);
   return layers.flatMap((layer, index) => {
     const values = Object.entries(layer).filter(
       ([name, value]) => value !== void 0 && !named.has(name)
@@ -26822,7 +27264,7 @@ function settingSources(layers) {
     if (values.length === 0) return [];
     for (const [name] of values) named.add(name);
     const source = LAYER_SOURCES[index] ?? `layer ${index + 1}`;
-    return [`Settings from ${source}: ${values.map(([n, v]) => `${n}=${v}`).join(", ")}.`];
+    return [`Settings from ${source}: ${values.map(([n, v]) => `${n}=${show(v)}`).join(", ")}.`];
   });
 }
 function inferenceError(settings) {
@@ -26845,31 +27287,6 @@ function inferenceError(settings) {
     return `\`model\` must be a ${engine} model name, such as \`${model.example}\`, not \`${settings.model}\`.`;
   }
   return void 0;
-}
-
-// src/stages.ts
-var STAGES = ["web", "design", "code", "test", "review"];
-var STAGE_STATE = {
-  web: "researching",
-  design: "designing",
-  code: "coding",
-  test: "testing",
-  review: "reviewing"
-};
-function stageOfState(state) {
-  if (state === "in-progress") return "code";
-  return STAGES.find((stage) => STAGE_STATE[stage] === state);
-}
-function nextStage(stage) {
-  return STAGES[STAGES.indexOf(stage) + 1];
-}
-function nextInRoute(route, stage) {
-  if (!route) return nextStage(stage);
-  const index = STAGES.indexOf(stage);
-  return route.stages.map((step) => step.stage).find((next) => STAGES.indexOf(next) > index);
-}
-function stagesFrom(first) {
-  return STAGES.slice(STAGES.indexOf(first));
 }
 
 // src/output.ts
@@ -27260,6 +27677,7 @@ Tests: ${test ?? "(no report)"}`,
   replanHint: "Comment `/codeman replan <what to change>` to try again.",
   removeLabelHint: "Remove the `codeman:blocked` label to try again.",
   noKey: "Codeman could not give this run access to its model (an OpenRouter key, or a GPU). See the run log.",
+  missingCredentials: "Codeman could not give this run access to its model: the workflow does not pass the secret of a provider the inference settings name.",
   taskBudgetSpent: (spent, budget, minimum) => `The task has spent ${spent} of its ${budget} budget, and a run needs at least ${minimum}. A maintainer can raise it with \`/codeman set task-budget <usd>\`, then comment \`/codeman continue\`.`,
   monthlyBudgetReached: (used, budget, limit) => `The monthly budget is reached: ${used} used of ${budget}, and this run may use up to ${limit}.`,
   tryLater: (reason) => `${reason} Codeman will try again in a later run.`,
@@ -27511,6 +27929,7 @@ Testes: ${test ?? "(sem relat\xF3rio)"}`,
   replanHint: "Comente `/codeman replan <o que mudar>` para tentar de novo.",
   removeLabelHint: "Remova a label `codeman:blocked` para tentar de novo.",
   noKey: "O Codeman n\xE3o conseguiu dar a esta rodada acesso ao modelo (uma chave do OpenRouter, ou uma GPU). Veja o log da rodada.",
+  missingCredentials: "O Codeman n\xE3o conseguiu dar a esta rodada acesso ao modelo: o workflow n\xE3o passa o segredo de um provedor que as configura\xE7\xF5es de infer\xEAncia citam.",
   taskBudgetSpent: (spent, budget, minimum) => `A tarefa gastou ${spent} do or\xE7amento de ${budget}, e uma rodada precisa de pelo menos ${minimum}. Um mantenedor pode aument\xE1-lo com \`/codeman set task-budget <usd>\` e depois comentar \`/codeman continue\`.`,
   monthlyBudgetReached: (used, budget, limit) => `O or\xE7amento mensal foi atingido: ${used} usados de ${budget}, e esta rodada pode usar at\xE9 ${limit}.`,
   tryLater: (reason) => `${reason} O Codeman tenta de novo numa pr\xF3xima rodada.`,
@@ -27613,8 +28032,8 @@ function messages(tag) {
   const lower = (tag ?? "en").toLowerCase();
   return CATALOGS[lower] ?? CATALOGS[lower.split("-")[0] ?? ""] ?? en;
 }
-function taskLanguage(setting, recorded) {
-  return setting !== "auto" ? setting : recorded ?? "en";
+function taskLanguage(setting2, recorded) {
+  return setting2 !== "auto" ? setting2 : recorded ?? "en";
 }
 function languageName(tag) {
   try {
@@ -28683,49 +29102,6 @@ function repositoryRules(workspace) {
 import { existsSync as existsSync3, lstatSync as lstatSync3, readFileSync as readFileSync5 } from "node:fs";
 import { join as join7 } from "node:path";
 
-// src/inference/spend.ts
-var MAX_PODS = 20;
-function countRun(pods, run2, billed = {}) {
-  const next = (pods ?? []).map((pod) => ({ ...pod, runs: [...pod.runs] }));
-  let added = run2.cost;
-  if (run2.pod) {
-    let pod = next.find((candidate) => candidate.id === run2.pod);
-    if (!pod) {
-      pod = { id: run2.pod, runs: [], counted: 0 };
-      next.push(pod);
-    }
-    if (!pod.runs.includes(run2.runId)) pod.runs.push(run2.runId);
-    pod.counted += run2.cost;
-  }
-  const costs = {};
-  for (const pod of next) {
-    const amount2 = billed[pod.id];
-    if (amount2 !== void 0 && amount2 > pod.counted) {
-      added += amount2 - pod.counted;
-      pod.counted = amount2;
-    }
-    const [only] = pod.runs;
-    if (amount2 !== void 0 && only !== void 0 && pod.runs.length === 1) {
-      costs[only] = Number(pod.counted.toFixed(4));
-    }
-  }
-  return { pods: next.slice(-MAX_PODS), added, costs };
-}
-function parsePodCosts(text) {
-  let value;
-  try {
-    value = JSON.parse(text);
-  } catch {
-    return void 0;
-  }
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return void 0;
-  const entries = Object.entries(value);
-  const valid = entries.every(
-    ([id, cost]) => /^[\w-]{1,64}$/.test(id) && typeof cost === "number" && Number.isFinite(cost) && cost >= 0
-  );
-  return valid ? Object.fromEntries(entries) : void 0;
-}
-
 // src/pull.ts
 function pullRequestTitle(issueTitle) {
   return oneLine(issueTitle).trim().slice(0, 256) || "Codeman task";
@@ -29375,6 +29751,7 @@ function jobResults(runtime2) {
   return {
     keyJob: runtime2.input("key-job-result"),
     keyStatus: runtime2.input("key-status"),
+    keyReason: runtime2.input("key-reason"),
     agentJob: runtime2.input("agent-job-result"),
     taskSpent: amount2("task-spent"),
     monthSpent: amount2("month-spent"),
@@ -29412,6 +29789,14 @@ async function keyFailed(task, io) {
     await finish(io, task, "blocked", {
       outcome: "blocked",
       message: t.taskBudgetSpent(t.money(spent), t.money(budget), t.money(MIN_RUN_BUDGET))
+    });
+    return true;
+  }
+  if (status2 === "missing-credentials") {
+    await finish(io, task, "blocked", {
+      outcome: "blocked",
+      message: `${t.missingCredentials} ${retryHint(t, task)}`,
+      errors: io.jobs.keyReason ? [oneLine(io.jobs.keyReason)] : []
     });
     return true;
   }
@@ -30086,7 +30471,9 @@ async function finish(io, task, state, view) {
   const pods = record && selfHostedRun(io, task) ? podSpend(io, task, record) : void 0;
   if (pods) cost.task = pods.spent;
   if (record && cost.task !== void 0) record = { ...record, spent: cost.task };
-  if (record && pods) record = { ...record, inference: { pods: pods.pods } };
+  if (record && pods) {
+    record = { ...record, inference: { pods: pods.pods, spent: pods.selfHosted } };
+  }
   if (record && spend) record = { ...record, spending: addRow(record.spending, spend) };
   const costs = pods?.costs ?? io.jobs.taskCosts;
   if (record?.spending && costs) {
@@ -30187,7 +30574,10 @@ function runCosts(io, task) {
   if (costs) {
     const id = io.runtime.runIdOf(task.runUrl);
     const total = Object.values(costs).reduce((sum, value) => sum + value, 0);
-    return { run: (id === void 0 ? void 0 : costs[id]) ?? run2, task: total };
+    return {
+      run: (id === void 0 ? void 0 : costs[id]) ?? run2,
+      task: total + selfHostedSpent(task.record)
+    };
   }
   if (before === void 0) return { task: task.record?.spent };
   return { run: run2, task: before + (run2 ?? 0) };
@@ -30206,7 +30596,12 @@ function podSpend(io, task, record) {
     },
     io.jobs.podCosts
   );
-  return { spent: before + counted.added, pods: counted.pods, costs: counted.costs };
+  return {
+    spent: before + counted.added,
+    selfHosted: selfHostedSpent(record) + counted.added,
+    pods: counted.pods,
+    costs: counted.costs
+  };
 }
 function spendRow(io, task, cost) {
   if (io.jobs.keyStatus !== "opened") return void 0;
@@ -30250,18 +30645,30 @@ function readJson(file) {
 }
 
 // src/steps/keys.ts
-async function openKey({ runtime: runtime2, inference }) {
-  const provider = inference();
+async function openKey({ runtime: runtime2, inference, budget: budgets }) {
   const secret = runtime2.input("encryption-secret", { required: true });
   const task = runtime2.input("task", { required: true });
   const taskBudget = positiveNumber(runtime2, "task-budget");
   const monthlyBudget = positiveNumber(runtime2, "monthly-budget");
-  const spent = await provider.taskSpent(task);
-  const used = await provider.monthSpent();
+  const { profile: profile2 } = parseInferenceChoice(runtime2.input("inference"));
+  if (profile2) runtime2.info(`The run uses the inference profile \`${profile2}\`.`);
+  const budget = budgets();
+  if (budget.missing.length > 0) {
+    const secrets = budget.missing.map((name) => `\`${name}\``).join(", ");
+    const reason = `The inference settings name a provider whose secret the workflow does not pass: ${secrets}. Add it to the repository's or the organization's secrets, or remove the profiles that name its provider.`;
+    runtime2.error(reason);
+    runtime2.output("status", "missing-credentials");
+    runtime2.output("reason", reason);
+    return;
+  }
+  const spent = await budget.taskSpent(task);
+  const months = await budget.monthSpent();
+  const used = months.reduce((sum, month) => sum + month.spent, 0);
   runtime2.output("task-spent", spent.toFixed(4));
   runtime2.output("month-spent", used.toFixed(4));
   runtime2.info(`This task has spent ${usd(spent)} of ${usd(taskBudget)}.`);
-  runtime2.info(`Usage this month (${provider.name}): ${usd(used)} of ${usd(monthlyBudget)}.`);
+  const parts = months.map((month) => `${month.provider} ${usd(month.spent)}`).join(", ");
+  runtime2.info(`Usage this month (${parts}): ${usd(used)} of ${usd(monthlyBudget)}.`);
   const limit = runLimit(taskBudget, spent);
   if (limit === void 0) {
     runtime2.output("status", "task-budget-spent");
@@ -30279,7 +30686,7 @@ async function openKey({ runtime: runtime2, inference }) {
     );
     return;
   }
-  const run2 = await provider.open({ task, runId: runtime2.run.id, limit }, runtime2);
+  const run2 = await inference().open({ task, runId: runtime2.run.id, limit }, runtime2);
   runtime2.mask(run2.credential);
   runtime2.output("status", "opened");
   runtime2.output("key-limit", limit.toFixed(2));
@@ -30498,19 +30905,24 @@ async function select(services) {
   if (!baseSha) throw new Error(`Branch ${defaultBranch} not found.`);
   let own = taskSettings(maintainerComments, description.commands);
   const below = [inputs, fileSettings.value, shared.value];
-  let settings = resolveSettings(own, ...below);
-  if (!settings.ok && (own.model !== void 0 || own["gpu-type"] !== void 0)) {
+  const agentWork = action === "plan" || action === "route" ? action : stage;
+  const runConditions = agentWork ? { stage: agentWork, tasks: 1 } : void 0;
+  let resolved = resolveRun([own, ...below], runConditions);
+  if (!resolved.ok && (own.model !== void 0 || own["gpu-type"] !== void 0)) {
     const { model: _model, "gpu-type": _gpuType, ...rest } = own;
-    const fallback = resolveSettings(rest, ...below);
+    const fallback = resolveRun([rest, ...below], runConditions);
     if (fallback.ok) {
-      problems.push({ problem: { kind: "settings-rejected", error: settings.error } });
-      settings = fallback;
+      problems.push({ problem: { kind: "settings-rejected", error: resolved.error } });
+      resolved = fallback;
       own = rest;
     }
   }
-  if (!settings.ok) throw new Error(settings.error);
+  if (!resolved.ok) throw new Error(resolved.error);
   for (const line of settingSources([own, ...below])) runtime2.info(line);
-  const model = settings.value.model;
+  const { profile: profile2, providers } = resolved.value;
+  const settings = resolved.value.settings;
+  if (profile2) runtime2.info(`Inference profile \`${profile2}\` applies to this run.`);
+  const model = settings.model;
   const context3 = {
     version: 1,
     action,
@@ -30539,7 +30951,7 @@ async function select(services) {
     problems,
     fromState: fromState.state,
     model,
-    settings: settings.value,
+    settings,
     ignore,
     defaultBranch,
     branch,
@@ -30554,7 +30966,7 @@ async function select(services) {
   };
   const needsAgent = action === "plan" || action === "route" || action === "implement";
   if (needsAgent) {
-    const t = messages(taskLanguage(settings.value.language, record?.language));
+    const t = messages(taskLanguage(settings.language, record?.language));
     const state = stage ? STAGE_STATE[stage] : route ? "routing" : "planning";
     await repo.setState(task.number, task.labels, state);
     context3.statusCommentId = await repo.upsertComment(
@@ -30568,7 +30980,7 @@ async function select(services) {
         model,
         runUrl: context3.runUrl,
         message: startMessage(t, context3),
-        cost: { task: record?.spent, budget: settings.value["task-budget"] },
+        cost: { task: record?.spent, budget: settings["task-budget"] },
         reportUrl: reportUrl(record, (id) => repo.commentUrl(task.url, id)),
         decisionsUrl: decisionsUrl(record, (id) => repo.commentUrl(task.url, id))
       })
@@ -30581,9 +30993,12 @@ async function select(services) {
   runtime2.output("base-sha", baseSha);
   runtime2.output("needs-agent", String(needsAgent));
   runtime2.output("stage", stage ?? (action === "plan" || action === "route" ? action : ""));
-  runtime2.output("task-budget", String(settings.value["task-budget"]));
-  runtime2.output("monthly-budget", String(settings.value["monthly-budget"]));
-  runtime2.output("inference", JSON.stringify(inferenceChoice(settings.value, record ?? null)));
+  runtime2.output("task-budget", String(settings["task-budget"]));
+  runtime2.output("monthly-budget", String(settings["monthly-budget"]));
+  runtime2.output(
+    "inference",
+    JSON.stringify(inferenceChoice(settings, record ?? null, { profile: profile2, providers }))
+  );
   runtime2.info(`Selected #${task.number} to ${action}, with model ${model}.`);
 }
 function routing(labels, record, requests) {
@@ -30664,6 +31079,11 @@ var STEPS = {
 };
 function gitHubServices(runtime2) {
   const client = (input) => octokit(runtime2.input(input, { required: true }));
+  let provider;
+  const inference = () => {
+    provider ??= inferenceProvider(runtime2);
+    return provider;
+  };
   return {
     runtime: runtime2,
     conventions: GITHUB,
@@ -30673,7 +31093,8 @@ function gitHubServices(runtime2) {
       { appSlug: runtime2.input("app-slug") || void 0 }
     ),
     ci: () => new GitHubActionsResults(client("github-token"), runtime2.repository),
-    inference: () => inferenceProvider(runtime2)
+    inference,
+    budget: () => inferenceBudget(runtime2, inference)
   };
 }
 async function run(services) {

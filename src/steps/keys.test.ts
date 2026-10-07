@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { decrypt } from "../crypto.ts";
+import { ProviderBudget } from "../inference/budget.ts";
 import { FakeInference } from "../testing/fake-inference.ts";
 import { FakePlatform, fakeServices } from "../testing/fake-platform.ts";
 import { FakeRuntime } from "../testing/fake-runtime.ts";
@@ -46,6 +47,43 @@ test("opens nothing when the task's budget is spent or the month's would be pass
   assert.equal(runtime.outputs.status, "over-budget");
   assert.match(runtime.outputs.reason ?? "", /US\$ 19\.00 used of US\$ 20\.00/);
   assert.equal(spent.opened.length + month.opened.length, 0);
+});
+
+test("the month adds up every provider the settings name, against the one budget", async () => {
+  const inference = new FakeInference({ spent: 0.25, month: 12 });
+  const budget = new ProviderBudget({ spent: 0.75, selfHosted: 0.5 }, [
+    { name: "openrouter", provider: inference },
+    { name: "runpod", month: async () => 7.5 },
+  ]);
+  const runtime = new FakeRuntime({ inputs: openInputs(), runId: "300" });
+  await openKey(fakeServices(new FakePlatform(), runtime, undefined, inference, budget));
+  assert.equal(runtime.outputs.status, "over-budget", "12 + 7.5 + the run's 1.25 pass 20");
+  assert.equal(runtime.outputs["task-spent"], "0.7500");
+  assert.equal(runtime.outputs["month-spent"], "19.5000");
+  assert.ok(
+    runtime
+      .logged("info")
+      .includes(
+        "Usage this month (openrouter US$ 12.00, runpod US$ 7.50): US$ 19.50 of US$ 20.00.",
+      ),
+  );
+  assert.equal(inference.opened.length, 0);
+});
+
+test("a provider the settings name without its secret opens nothing, and says which", async () => {
+  const inference = new FakeInference();
+  const budget = new ProviderBudget({ spent: 0, selfHosted: 0 }, [], ["CODEMAN_RUNPOD_API_KEY"]);
+  const runtime = new FakeRuntime({
+    inputs: openInputs({
+      inference:
+        '{"inference":"openrouter","profile":"plan-or","providers":["openrouter","runpod"],"recorded":{"spent":0,"selfHosted":0}}',
+    }),
+  });
+  await openKey(fakeServices(new FakePlatform(), runtime, undefined, inference, budget));
+  assert.equal(runtime.outputs.status, "missing-credentials");
+  assert.match(runtime.outputs.reason ?? "", /`CODEMAN_RUNPOD_API_KEY`/);
+  assert.ok(runtime.logged("info").includes("The run uses the inference profile `plan-or`."));
+  assert.equal(inference.opened.length, 0);
 });
 
 test("closes the run by its handle, and reports what it used", async () => {

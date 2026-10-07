@@ -196,6 +196,8 @@ export const en: Messages = {
 
   noKey:
     "Codeman could not give this run access to its model (an OpenRouter key, or a GPU). See the run log.",
+  missingCredentials:
+    "Codeman could not give this run access to its model: the workflow does not pass the secret of a provider the inference settings name.",
   taskBudgetSpent: (spent, budget, minimum) =>
     `The task has spent ${spent} of its ${budget} budget, and a run needs at least ${minimum}. A maintainer can raise it with \`/codeman set task-budget <usd>\`, then comment \`/codeman continue\`.`,
   monthlyBudgetReached: (used, budget, limit) =>

@@ -40,9 +40,9 @@ Add these under **Settings → Secrets and variables → Actions**, either in th
 | --- | --- | --- |
 | Variable | `CODEMAN_GITHUB_APP_CLIENT_ID` | The App's Client ID |
 | Secret | `CODEMAN_GITHUB_APP_PRIVATE_KEY` | The full contents of the private key file |
-| Secret | `CODEMAN_OPENROUTER_MANAGEMENT_KEY` | The OpenRouter management key |
+| Secret | `CODEMAN_OPENROUTER_MANAGEMENT_KEY` | The OpenRouter management key; not needed when neither the settings nor an [inference profile](#inference-profiles) use OpenRouter |
 | Secret | `CODEMAN_OPENROUTER_KEY_ENCRYPTION_SECRET` | A random value of at least 32 characters |
-| Secret | `CODEMAN_RUNPOD_API_KEY` | Self-hosted inference only: the Runpod account's API key |
+| Secret | `CODEMAN_RUNPOD_API_KEY` | Self-hosted inference only, in the settings or a profile: the Runpod account's API key |
 | Secret | `CODEMAN_RUNPOD_SERVERLESS_KEY` | Self-hosted inference on Serverless only: a key restricted to the endpoint |
 | Variable | `CODEMAN_SETTINGS` | Optional, in the organization: settings its repositories share; see [shared settings](#shared-settings) |
 
@@ -91,7 +91,7 @@ These are defaults: a value in a repository's `.codeman/settings.yml` overrides 
 
 ## Self-hosted inference on Runpod
 
-Instead of OpenRouter, Codeman can serve the model itself on GPUs rented from [Runpod](https://www.runpod.io): on a pod it creates for the task (`gpu-mode: pod`), or on the workers of a Serverless endpoint you create (`gpu-mode: serverless`). See [architecture](architecture.md#self-hosted-inference) for how it works, what it costs and [which to choose](architecture.md#choosing), and [security](security.md) for the secrets. OpenRouter's management key is not needed then; the encryption secret still is.
+Instead of OpenRouter, Codeman can serve the model itself on GPUs rented from [Runpod](https://www.runpod.io): on a pod it creates for the task (`gpu-mode: pod`), or on the workers of a Serverless endpoint you create (`gpu-mode: serverless`). See [architecture](architecture.md#self-hosted-inference) for how it works, what it costs and [which to choose](architecture.md#choosing), and [security](security.md) for the secrets. OpenRouter's management key is not needed then, unless an [inference profile](#inference-profiles) uses OpenRouter; the encryption secret still is.
 
 ### The account
 
@@ -134,6 +134,32 @@ Instead of OpenRouter, Codeman can serve the model itself on GPUs rented from [R
    ```
 
 Codeman checks the endpoint before each run and reports what to change. After 7 days without requests, Runpod sets its max workers to 0; set it back to 1, or runs fail after 25 minutes without a worker.
+
+## Inference profiles
+
+A repository can use different inference for different runs, such as OpenRouter's strongest model to plan and route, and a pod for the stages that write and test code. Add a list of profiles to `.codeman/settings.yml` (or to the organization's [shared settings](#shared-settings)); the top-level settings apply where no profile does:
+
+```yaml
+model: anthropic/claude-sonnet-4.5     # the default: OpenRouter
+inference-profiles:
+  - name: small-pod
+    when:
+      stages: [code, test]
+    inference: self-hosted
+    gpu-type: NVIDIA RTX A6000
+    model: qwen3-coder:30b
+  - name: cheap-review
+    when:
+      stages: [review]
+    model: deepseek/deepseek-v4.1-flash
+```
+
+1. Give each profile a `name`, and under `when` the `stages` it is for: `plan`, `route`, `web`, `design`, `code`, `test` or `review`. A profile without `when` applies to every run, so put it last. (`parallel-tasks` is for when a run works on several tasks at once, which is not available yet.)
+2. Put in each profile only what changes: `model` and the inference settings (`inference`, `gpu-provider`, `gpu-mode`, `gpu-type`, `engine`, `serverless-endpoint`, `pod-reuse`). Everything else, budgets included, stays at the top level and applies to every run.
+3. Order them: the first profile whose conditions hold applies.
+4. Add the secrets of every provider the settings and profiles name, even one only some stages use: the monthly budget adds up each provider's month, so a run on OpenRouter reads the Runpod account's too. Without one, runs stop, and the task's panel names the missing secret.
+
+Each profile must work over the top-level settings: a profile on pods needs a `gpu-type`, here or at the top level. A mistake stops the next run, with an error that names the line or the profile. The `select` job's log names the profile of each run, and the spend table shows each run's model and provider. A task's `/codeman set model` wins over any profile, in the runs whose inference it fits. A repository whose file has `inference-profiles` replaces the organization's list whole; `inference-profiles: []` removes it. See [settings](architecture.md#inference-profiles).
 
 ## Try it
 

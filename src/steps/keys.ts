@@ -7,22 +7,35 @@ import { positiveNumber } from "./common.ts";
 
 /**
  * Gives the run its access to a model, limited to what remains of the task's budget, unless that
- * is too little or the repository's monthly budget would be exceeded. With `closeKey`, the only
- * job that holds the inference provider's management credentials.
+ * is too little or the repository's monthly budget would be exceeded, across every provider the
+ * settings name. With `closeKey`, the only job that holds the providers' management credentials.
  */
-export async function openKey({ runtime, inference }: Services): Promise<void> {
-  const provider = inference();
+export async function openKey({ runtime, inference, budget: budgets }: Services): Promise<void> {
   const secret = runtime.input("encryption-secret", { required: true });
   const task = runtime.input("task", { required: true });
   const taskBudget = positiveNumber(runtime, "task-budget");
   const monthlyBudget = positiveNumber(runtime, "monthly-budget");
+  const { profile } = parseInferenceChoice(runtime.input("inference"));
+  if (profile) runtime.info(`The run uses the inference profile \`${profile}\`.`);
 
-  const spent = await provider.taskSpent(task);
-  const used = await provider.monthSpent();
+  // Every provider the settings name counts in the month, so each needs its credentials.
+  const budget = budgets();
+  if (budget.missing.length > 0) {
+    const secrets = budget.missing.map((name) => `\`${name}\``).join(", ");
+    const reason = `The inference settings name a provider whose secret the workflow does not pass: ${secrets}. Add it to the repository's or the organization's secrets, or remove the profiles that name its provider.`;
+    runtime.error(reason);
+    runtime.output("status", "missing-credentials");
+    runtime.output("reason", reason);
+    return;
+  }
+  const spent = await budget.taskSpent(task);
+  const months = await budget.monthSpent();
+  const used = months.reduce((sum, month) => sum + month.spent, 0);
   runtime.output("task-spent", spent.toFixed(4));
   runtime.output("month-spent", used.toFixed(4));
   runtime.info(`This task has spent ${usd(spent)} of ${usd(taskBudget)}.`);
-  runtime.info(`Usage this month (${provider.name}): ${usd(used)} of ${usd(monthlyBudget)}.`);
+  const parts = months.map((month) => `${month.provider} ${usd(month.spent)}`).join(", ");
+  runtime.info(`Usage this month (${parts}): ${usd(used)} of ${usd(monthlyBudget)}.`);
 
   const limit = runLimit(taskBudget, spent);
   if (limit === undefined) {
@@ -42,7 +55,7 @@ export async function openKey({ runtime, inference }: Services): Promise<void> {
     return;
   }
 
-  const run = await provider.open({ task, runId: runtime.run.id, limit }, runtime);
+  const run = await inference().open({ task, runId: runtime.run.id, limit }, runtime);
   runtime.mask(run.credential);
   runtime.output("status", "opened");
   runtime.output("key-limit", limit.toFixed(2));

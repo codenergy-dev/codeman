@@ -48,8 +48,8 @@ Jobs that do not apply to a run are skipped: a run that only records answers goe
 
 | Job | Does | Credentials |
 | --- | --- | --- |
-| `select` | Reads the settings and `.codemanignore` from the default branch, and the organization's settings from its `settings` input, picks the task and the action (`plan`, `route`, `implement` with its stage, `record`, `accept` or `none`), sets `codeman:planning`, `codeman:routing` or the stage's label, and writes the task context (`task.json`) as an artifact. | App token: issues write; contents, pull requests and actions read |
-| `open-key` | Checks the task and monthly budgets and gives the run access to its model: an OpenRouter key, or a token for a self-hosted model's gateway, which may start a pod. | OpenRouter management key or GPU account key, encryption secret |
+| `select` | Reads the settings and `.codemanignore` from the default branch, and the organization's settings from its `settings` input, picks the task and the action (`plan`, `route`, `implement` with its stage, `record`, `accept` or `none`) and the run's [inference profile](#inference-profiles), sets `codeman:planning`, `codeman:routing` or the stage's label, and writes the task context (`task.json`) as an artifact. | App token: issues write; contents, pull requests and actions read |
+| `open-key` | Checks the task and monthly budgets, across every provider the settings name, and gives the run access to its model: an OpenRouter key, or a token for a self-hosted model's gateway, which may start a pod. | The OpenRouter management key and the GPU account key, each when the settings or a profile name its provider; encryption secret |
 | `agent` | Runs the harness on a copy of the checkout and uploads what it changed as an artifact, even when the agent fails or runs out of time. For a Serverless run, also runs the gateway, outside the sandbox. | `GITHUB_TOKEN` with contents and actions read (for workflow results; the agent never sees it), the run's key or token; for Serverless, the endpoint's key, which only Codeman's step holds |
 | `close-key` | Ends the run's access (disables the key, or ends the run on its gateway) and reads what it and each earlier run of the task spent. Keeps a pod for the task's next run or terminates it. Runs whatever happened before. | OpenRouter management key or GPU account key |
 | `apply` | Validates the agent's result and writes it: commits, pull request, labels, run and status comments, spend. When the action is `record`, it applies the maintainers' answers instead; when it is `accept`, it moves the accepted workflows. Says whether the task goes on to another agent run (`continues`). | App token: contents, issues and pull requests write; for `accept` only, a second token with contents and workflows write |
@@ -79,7 +79,10 @@ Every agent run gets Codeman's working rules: the `##` sections of Codeman's own
 
 ## Budget
 
-This section describes OpenRouter, the default. With self-hosted inference, the budgets mean the same, but spend is counted from GPU time; see [self-hosted inference](#self-hosted-inference).
+This section describes OpenRouter, the default. With self-hosted inference, the budgets mean the same, but spend is counted from GPU time; see [self-hosted inference](#self-hosted-inference). With [inference profiles](#inference-profiles), a task's runs may use both, and the budgets add them up:
+
+- **Task.** The task's total is what its OpenRouter keys spent plus what its self-hosted runs added, which the record keeps apart (`inference.spent`), since OpenRouter's part is read again from its keys at each run. When no profile names OpenRouter, the record's total.
+- **Month.** `open-key` adds up the month of each provider that the top-level settings or a profile name, whether or not the run uses it: OpenRouter's keys of the repository, and the Runpod account's billing. The run's log shows each. So `open-key` needs the secret of each such provider; when one is missing, it opens nothing, and the task becomes `codeman:blocked` with an error that names the secret.
 
 - The task budget (default US$ 2) covers the whole task, from the first plan to the last fix, across all its runs.
 - Each run gets its own OpenRouter key, expiring after 24 hours. Keys are named `codeman/<owner>/<repo>/<issue>/<run>` and are disabled, not deleted, so their usage still counts.
@@ -87,7 +90,7 @@ This section describes OpenRouter, the default. With self-hosted inference, the 
 - `open-key` also adds up this month's usage (`usage_monthly`) of every key with the repository's prefix. If the run's limit would take it past the monthly budget (default US$ 20), no key is created and the task goes back to its previous state until the next month.
 - After the agent, `close-key` disables the key and reads its final usage, waiting briefly while OpenRouter still counts the last requests. The key's usage may still read zero when the analytics already has the run's tokens; then it waits up to about a minute more. It also lists the task's keys and reports what each run spent, by run ID (the end of the key's name). `apply` takes the task's total from that list, refreshes the cost of each row in the spend table, so a run that read its cost too soon gets it right on the next run, shows what the task spent at the end of the pull request's description, and keeps the task's total in the task record.
 - The status comment has a spend table, with one row per run that used the agent: when, stage, model, provider, how long the agent ran, input and output tokens, context length, tokens per second, cost, the key's limit, the task budget, and the month: what had been spent this month before the run, of the monthly budget. The provider is where the run's model was served: `OpenRouter`, `Runpod (pod)` or `Runpod (Serverless)`; rows recorded before the record kept it show "—". Each run comment shows its own row.
-- Under the table, a note for each provider in its rows says how a run's cost and the month are measured, since only OpenRouter's are exact (see [Spend](#spend) for Runpod); a run comment has its own row's note. For the same reason, the month's column is named "Month (estimated)", while the `monthly-budget` setting it is spent against keeps its name. The record keeps the last 30 rows; older ones fold into one, with their sums, and their costs are no longer refreshed. A run with several rows (a re-run of the whole workflow) keeps them as they are. The task's total comes from OpenRouter, so when the rows add up to less (a run whose `apply` failed has no row), a row shows the difference.
+- Under the table, a note for each provider in its rows says how a run's cost and the month are measured, since only OpenRouter's are exact (see [Spend](#spend) for Runpod); a run comment has its own row's note. For the same reason, the month's column is named "Month (estimated)", while the `monthly-budget` setting it is spent against keeps its name. The record keeps the last 30 rows; older ones fold into one, with their sums, and their costs are no longer refreshed. A run with several rows (a re-run of the whole workflow) keeps them as they are. The task's total comes from OpenRouter, with what self-hosted runs added, so when the rows add up to less (a run whose `apply` failed has no row), a row shows the difference.
 - A last row totals every run of the task: agent time, tokens and cost are summed, so its cost is the task's total; the context length is the largest of the task, and tokens per second the mean over every request (each run's mean weighted by its requests). Limits and budgets are left empty. Under the table goes what the task spent of its budget.
 - The agent job measures the agent's time outside the sandbox. `close-key` reads the key's tokens from OpenRouter's analytics (`POST /api/v1/analytics/query`, filtered by the key's hash), as OpenRouter counts them: input includes cached prompt tokens, and output is the completion tokens. Analytics and billing may count a request at different times, so it asks again for up to about a minute; a run whose tokens are not there by then shows "—".
 - From the same analytics, `close-key` reads the run's requests, their mean throughput (`avg_throughput`: completion tokens per second) and its context length: the input tokens of its largest request (`tokens_prompt` by `generation_id`, largest first), cached tokens included. These come from OpenRouter, never from the harness, whose counts differ. Analytics keeps throughput and single requests for 31 days, longer than any key lives.
@@ -109,6 +112,8 @@ What Codeman's tests on Runpod showed (step 8 of the plan):
 - **OpenRouter** bills tokens only: nothing for starts or for the time the agent spends running tools. For a task at a time, it gives the most for the money and time, with the strongest models.
 - **A pod** bills its whole life, used or not, but not per token: long contexts and many requests cost the same. It pays off when a smaller model does the work and the task's runs follow each other, since the task keeps its pod between runs. A pod serves one task: another task gets a pod of its own, and a repository runs one run at a time, so tasks do not share a pod's cost.
 - **Serverless** bills each worker's start (minutes, compilation included), its requests and the idle timeout after its last one, at the flex price. It cost the most: US$ 1.96 for three runs of a task, against US$ 1.90 for a four-run task on a pod, though twice as fast on its GPUs. It pays off only when its worker stays busy, such as one endpoint serving several repositories at once (a worker takes several requests at once), so that starts and idle time are shared; never for a single task. Each repository's runs count the worker time they used, so time shared between them is counted by each.
+
+[Inference profiles](#inference-profiles) combine them in one task, such as OpenRouter for planning and a pod for the stages whose runs follow each other.
 
 ### Layers
 
@@ -150,8 +155,8 @@ What Codeman's tests on Runpod showed (step 8 of the plan):
 - **Month.** The Runpod account's whole spend this month counts against `monthly-budget`, since Runpod cannot list terminated pods and pods do not say which repository they belong to: its billing (`GET /v2/billing`), plus what its live pods cost so far this month (their time at their rate) beyond what each was billed, since Runpod's billing leaves out a running pod for 40 minutes and more. Use an account dedicated to Codeman, for one repository or a group that shares the budget.
 - **Task.** Providers bill pods, not tasks, so the task's record lists its pods (the last 20), with what its total counts for each. A run adds its cost; then each pod's cost, read by `close-key`, adds what it is above what was counted. A pod's cost is its billing or, for the run's own pod, its whole life so far at its rate, when higher: that includes a kept pod's time between runs, which Runpod bills late. The spend table shows that time in its row for what the task spent outside its runs. A run whose pod served it alone gets the pod's cost as its own, once billed. Serverless runs add their estimate. The minutes between a task's last run and its pod's termination show only in the account's billing, and so in the month's spend.
 - **The spend table.** Its rows name `Runpod (pod)` or `Runpod (Serverless)`, and the notes under it say how their figures are measured: a pod run's cost is its pod's time at its price, refreshed from billing; a Serverless run's is an estimate; and the month is the whole account's billing, so it counts every repository on the account, and a Serverless run only an hour or more after it ran. Codeman does not estimate the Serverless runs Runpod has not billed yet, since such an estimate could count some twice.
-- `select` passes the task's spend and pods to the key jobs (`inference` output), with the rest of its choice.
-- A task that changes `inference` counts each provider's spend apart: the task budget counts OpenRouter's keys with OpenRouter, and the record's total with self-hosted inference. Mixing providers within a task is not supported.
+- `select` passes the task's spend (its total, and its self-hosted part) and pods to the key jobs (`inference` output), with the rest of its choice: the run's profile, and every provider the settings name.
+- A task whose runs use several providers, through [inference profiles](#inference-profiles) or a change of `inference`, adds them up: its OpenRouter keys, and what the record says its self-hosted runs added. A record from before profiles kept no such part; when it has pods, its whole total counts as self-hosted.
 
 ## Planning
 
@@ -292,16 +297,38 @@ When `select` picks a task, its log has a line per layer, naming the values that
 | `inference` | `openrouter` | `openrouter`, or `self-hosted`; see [self-hosted inference](#self-hosted-inference) |
 | `gpu-provider` | `runpod` | The GPU cloud of self-hosted inference |
 | `gpu-mode` | `pod` | `pod` or `serverless` |
-| `gpu-type` | none; required on pods | The pod's GPU type, by Runpod's GPU ID (not its display name), such as `"NVIDIA RTX A6000"` (quoted in the file; `/codeman set gpu-type` takes the rest of its line) |
+| `gpu-type` | none; required on pods | The pod's GPU type, by Runpod's GPU ID (not its display name), such as `"NVIDIA RTX A6000"` (quoted or not in the file; `/codeman set gpu-type` takes the rest of its line) |
 | `engine` | `ollama` on pods, `vllm` on Serverless | What serves the model; each mode has one |
 | `serverless-endpoint` | none; required on Serverless | The endpoint's ID |
 | `pod-reuse` | `task` | `task`: a pod serves the task's next run too, while the task goes on; `run`: one pod per run |
+| `inference-profiles` | none | Other inference settings for some runs; see [inference profiles](#inference-profiles) |
 
-The inference settings are checked together once resolved: a model that does not fit the engine, or a mode without its GPU type or endpoint, stops the run with an error. A task's own `model` or `gpu-type` that does not fit is reported as a problem instead, and the run goes on without it.
+The inference settings are checked together once resolved, the top level's and each profile's: a model that does not fit the engine, or a mode without its GPU type or endpoint, stops the run with an error. A task's own `model` or `gpu-type` that does not fit is reported as a problem instead, and the run goes on without it.
 
 The `max-*-chars` and count limits are what the agent is told; see [agent output](#agent-output) for the margin.
 
-The settings file accepts only `name: value` lines, comments and blank lines; see [`templates/settings.yml`](../templates/settings.yml). Anything else stops the run with an error, so the file never means something other than what it looks like. The organization's settings follow the same rules, and their errors name the `settings` input instead of the file.
+The settings file is a strict subset of YAML, read without a dependency ([`src/yaml.ts`](../src/yaml.ts)): `name: value` lines, block mappings and lists (indented with spaces) for the profiles, lists of values in brackets (`[code, test]`), plain or quoted values, comments and blank lines; see [`templates/settings.yml`](../templates/settings.yml). Anything else, such as `{...}`, anchors, tags or multi-line values, stops the run with an error that names its line, so the file never means something other than what it looks like. The organization's settings follow the same rules, and their errors name the `settings` input instead of the file.
+
+### Inference profiles
+
+`inference-profiles` is a list of profiles, each with a `name`, optional conditions under `when`, and the settings it changes: only `model` and the inference settings (`inference`, `gpu-provider`, `gpu-mode`, `gpu-type`, `engine`, `serverless-endpoint`, `pod-reuse`). Budgets and limits stay at the top level. The choice was made in the [inference profiles plan](plans/2026-10-06-parallel-tasks-and-inference-profiles.md) (decisions 4 to 6).
+
+```yaml
+model: deepseek/deepseek-v4.1-flash      # when no profile applies
+inference-profiles:
+  - name: small-pod
+    when:
+      stages: [code, test]
+    inference: self-hosted
+    gpu-type: NVIDIA RTX A6000
+    model: qwen3-coder:30b
+```
+
+- **Conditions.** `stages` lists what the agent works on: `plan`, `route`, or a stage (`web`, `design`, `code`, `test`, `review`). `parallel-tasks: N` holds when the run works on at least N tasks; a run works on one task until [parallel tasks](plans/2026-10-06-parallel-tasks-and-inference-profiles.md) exist, so such a profile does not apply yet. A profile without conditions always applies.
+- **Which applies.** `select` takes the first profile, in the list's order, whose conditions all hold for the run, and its values replace the top-level ones; with none, the top-level settings apply. Runs without an agent (recording answers, accepting workflows) use the top-level settings. The run's log names the profile, and the spend table's model and provider columns show what each run used.
+- **Layers.** The list is one value: the first layer that has one gives it whole, so a repository's file with `inference-profiles` replaces the organization's list, and `inference-profiles: []` removes it. A profile's values replace those of every layer below the task's commands, a manual run's inputs included: a manual run's `model` applies only to runs whose profile sets none. A task's `/codeman set` (`model`, `gpu-type`) wins over any profile; where it does not fit the run's inference, it is reported as a problem, and the run goes on without it.
+- **Checks.** The top-level settings, and each profile over them, must fit together on their own, whichever stage runs: a mistake stops the first run, with an error that names the profile.
+- **Budgets.** The task and the month count every provider the profiles name; see [budget](#budget).
 
 ## Commands
 
