@@ -1,7 +1,7 @@
 ---
-status: pending
+status: in progress
 created_at: 2026-10-07T14:56:15-03:00
-updated_at: 2026-10-07T14:56:15-03:00
+updated_at: 2026-10-07T15:14:47-03:00
 commit: a8594ea
 ---
 
@@ -61,7 +61,11 @@ The responsible person approved each recommendation on 2026-10-07.
 
 ## Steps
 
-1. Third-party docs in `docs/web/` ([third-party documentation](../../AGENTS.md#third-party-documentation)): Firestore's REST API (documents, `commit`, `beginTransaction`, `runQuery`, preconditions), the emulator, security rules, quotas and pricing; Google's STS token exchange, IAM Credentials' `generateAccessToken`, and Workload Identity Federation with GitHub; GitHub's OIDC (permission `id-token`, the token's claims, reusable workflows' claims). Done when each page the code relies on is recorded.
+1. Third-party docs in `docs/web/` ([third-party documentation](../../AGENTS.md#third-party-documentation)): Firestore's REST API (documents, `commit`, `beginTransaction`, `runQuery`, preconditions), the emulator, security rules, quotas and pricing; Google's STS token exchange, IAM Credentials' `generateAccessToken`, and Workload Identity Federation with GitHub; GitHub's OIDC (permission `id-token`, the token's claims, reusable workflows' claims). Done when each page the code relies on is recorded. **Done on 2026-10-07**: two tools, [Google Cloud](../web/tools/google-cloud.md) and [Firebase](../web/tools/firebase.md): both sites serve each page's Markdown at its URL plus `.md.txt`, and license their content CC BY 4.0 in the HTML page's footer, so pages are full copies.
+   - [`docs/web/google-cloud/`](../web/google-cloud/): Firestore's REST resource for documents and its methods `batchGet`, `commit`, `beginTransaction`, `rollback` and `runQuery`, with `Precondition`, `Write`, `StructuredQuery`, `TransactionOptions` and `Value`; STS's `token`, IAM Credentials' `generateAccessToken`, Workload Identity Federation with deployment pipelines (GitHub included), and the provider resource, which says the default audience.
+   - [`docs/web/firebase/`](../web/firebase/): the REST API's guide, the emulator, security rules, Firestore's IAM roles, usage and limits, billing, and transaction serializability.
+   - [`docs/web/github/`](../web/github/): OpenID Connect, its reference (claims, `id-token: write`, reusable workflows), its setup for Google Cloud, and with reusable workflows.
+   - Not recorded: Firestore's `get` method; reads use `batchGet`, since the emulator never answers a `get` inside a transaction (step 3).
 2. A store interface (`src/store/`), with an in-memory implementation for unit tests and shared contract tests. The contract tests also run against the emulator when it is available (started with `java -jar` from Firebase's cache, or `FIRESTORE_EMULATOR_HOST`), and are skipped otherwise. Done when both implementations pass the same tests: reads, conditional writes, queries, and transactions that conflict.
 3. The Firestore REST client and the authentication (OIDC, STS, impersonation), with tests on a fake `fetch`. Tokens are never logged. Done when tests cover a token exchange, a refusal, a transaction retried after a conflict, and the emulator path (no authentication).
 4. The data layout: collections, document IDs and fields, keyed by organization and repository so that one project serves several, documented in [`docs/architecture.md`](../architecture.md). Security rules deny every client access: only the service account, through IAM, reaches the data. Done when the layout is documented and the rules file is in the repository.
