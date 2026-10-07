@@ -184,6 +184,33 @@ test("open terminates the repository's pods that lost their run or their usefuln
   assert.ok(gpu.live.has("pod3") && gpu.live.has("pod5"));
 });
 
+test("open leaves the pods of the run's other tasks to their own jobs", async () => {
+  const { gpu, gateways, make, advance } = setup({ others: ["8"] });
+  const spec = { image: settings.image, port: 8080, gpuType: "GPU-A", diskGb: 1, name: "n" };
+  for (const [task, nonce] of [
+    ["8", "a"],
+    ["9", "b"],
+  ]) {
+    await gpu.pods.create({
+      ...spec,
+      env: {
+        ...podOwner(repository),
+        CODEMAN_TASK: task as string,
+        CODEMAN_NONCE: nonce as string,
+        CODEMAN_MODEL: settings.model,
+        CODEMAN_ADMIN_SHA256: sha256(adminToken("account-key", nonce as string)),
+      },
+    });
+  }
+  // Both serve a run: task 8's in this run, task 9's lost.
+  gateways.state("pod1").serving = true;
+  gateways.state("pod2").serving = true;
+  advance(1_000);
+  await make().open({ task: "7", runId: "300", limit: 1 }, new FakeRuntime());
+  assert.deepEqual(gpu.terminated, ["pod2"]);
+  assert.ok(gpu.live.has("pod1"));
+});
+
 test("a pod that never serves the model is terminated, and the run does not open", async () => {
   const { gpu, gateways, make } = setup();
   gateways.state("pod1").ready = false;

@@ -288,8 +288,8 @@ export function replanRequests(sources: readonly CommandSource[]): string[] {
 }
 
 /**
- * Picks the one task this run works on. Accepting workflows and recording answers need no LLM,
- * so they go first;
+ * Picks the next task a run works on. Accepting workflows and recording answers need no LLM, so
+ * they go first;
  * then the oldest task that needs a plan: a new one, one left in `planning` by an interrupted
  * run, or one whose maintainers asked for a new plan; then the oldest task to implement:
  * resumed or in progress before ready. A resumed task without a finished plan plans again.
@@ -319,6 +319,25 @@ export function chooseTask(
     ) ?? sorted.find((task) => task.state === "ready" && !task.pending);
   if (implement) return { number: implement.number, action: "implement" };
   return undefined;
+}
+
+/**
+ * Picks up to `count` tasks for one run, each as `chooseTask` would pick it from the tasks left,
+ * so they come in its order. One run picks them all, so no two runs work on the same task.
+ */
+export function chooseTasks(
+  candidates: readonly Candidate[],
+  count: number,
+): { number: number; action: Action }[] {
+  const chosen: { number: number; action: Action }[] = [];
+  let left = [...candidates];
+  while (chosen.length < count) {
+    const choice = chooseTask(left);
+    if (!choice) break;
+    chosen.push(choice);
+    left = left.filter((candidate) => candidate.number !== choice.number);
+  }
+  return chosen;
 }
 
 /** Everything the later jobs need about the selected task. Written by `select`, a trusted job. */

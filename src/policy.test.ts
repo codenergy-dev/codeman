@@ -88,6 +88,7 @@ test("warns about each proposed rule that the repository dropped", () => {
   const rules = DEFAULT_IGNORE.replace("AGENTS.md\n", "").replace("/.github/**", "/.github/*.md");
   assert.deepEqual(unprotected(rules, GITHUB.workflows), [
     ".github/workflows/codeman.yml",
+    ".github/workflows/codeman-task.yml",
     "AGENTS.md",
   ]);
 });

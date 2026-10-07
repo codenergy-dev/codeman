@@ -1,0 +1,258 @@
+# The jobs of one task of a Codeman run: codeman.yml calls this workflow once per task it
+# picked, at once. Copy it to .github/workflows/codeman-task.yml, next to codeman.yml.
+# Setup: https://github.com/codenergy-dev/codeman/blob/main/docs/installation.md
+name: Codeman task
+
+on:
+  workflow_call:
+    # The task's outputs of codeman.yml's select job.
+    inputs:
+      task:
+        type: string
+        required: true
+      action:
+        type: string
+        required: true
+      needs-agent:
+        type: string
+        required: true
+      stage:
+        type: string
+        required: false
+      base-sha:
+        type: string
+        required: true
+      task-budget:
+        type: string
+        required: true
+      monthly-budget:
+        type: string
+        required: true
+      inference:
+        type: string
+        required: true
+    # The secrets these jobs use, each in the jobs that used it before parallel tasks. Unset
+    # ones are empty, and the step that needs one says so.
+    secrets:
+      CODEMAN_GITHUB_APP_PRIVATE_KEY:
+        required: false
+      CODEMAN_OPENROUTER_MANAGEMENT_KEY:
+        required: false
+      CODEMAN_OPENROUTER_KEY_ENCRYPTION_SECRET:
+        required: false
+      CODEMAN_RUNPOD_API_KEY:
+        required: false
+      CODEMAN_RUNPOD_SERVERLESS_KEY:
+        required: false
+
+permissions: {}
+
+jobs:
+  # Gives this run access to its model, limited to what remains of the task's budget: an
+  # OpenRouter key, or a token for a self-hosted model's gateway, which may start a pod. Only the
+  # key jobs (this one, close-key and release-pod) hold the management and GPU account keys. The
+  # month counts every provider the settings and their inference profiles name, so this job
+  # needs each one's secret; an unset secret is empty.
+  open-key:
+    name: Open key
+    if: inputs.needs-agent == 'true'
+    runs-on: ubuntu-latest
+    # A new pod may take up to 25 minutes to serve its model.
+    timeout-minutes: 35
+    outputs:
+      status: ${{ steps.codeman.outputs.status }}
+      reason: ${{ steps.codeman.outputs.reason }}
+      task-spent: ${{ steps.codeman.outputs.task-spent }}
+      month-spent: ${{ steps.codeman.outputs.month-spent }}
+      key-limit: ${{ steps.codeman.outputs.key-limit }}
+      key-hash: ${{ steps.codeman.outputs.key-hash }}
+      handle: ${{ steps.codeman.outputs.handle }}
+      base-url: ${{ steps.codeman.outputs.base-url }}
+      context-length: ${{ steps.codeman.outputs.context-length }}
+      encrypted-key: ${{ steps.codeman.outputs.encrypted-key }}
+    steps:
+      - uses: codenergy-dev/codeman@COMMIT_SHA
+        id: codeman
+        with:
+          step: open-key
+          task: ${{ inputs.task }}
+          task-budget: ${{ inputs.task-budget }}
+          monthly-budget: ${{ inputs.monthly-budget }}
+          inference: ${{ inputs.inference }}
+          management-key: ${{ secrets.CODEMAN_OPENROUTER_MANAGEMENT_KEY }}
+          gpu-key: ${{ secrets.CODEMAN_RUNPOD_API_KEY }}
+          encryption-secret: ${{ secrets.CODEMAN_OPENROUTER_KEY_ENCRYPTION_SECRET }}
+
+  # Runs the agent with read-only access. Its result is an artifact for the apply job, even when
+  # the agent fails or runs out of time, so unfinished work is kept.
+  agent:
+    name: Agent (${{ inputs.stage }})
+    needs: open-key
+    if: needs.open-key.outputs.status == 'opened'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      # Downloads the results of workflows the agent asked for. The agent never sees the token.
+      actions: read
+    outputs:
+      gateway-usage: ${{ steps.codeman.outputs.gateway-usage }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.base-sha }}
+          # All history, so the test and review stages can compare with the default branch
+          # and merge it.
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: codeman-task
+          path: ${{ runner.temp }}/codeman/task
+      # Set up the tools your project needs here, for example actions/setup-node. The agent gets
+      # this job's PATH, except entries in the runner's home, and none of its other variables.
+      # Only install tools: a step that runs repository code (npm ci, make, tests) runs code the
+      # agent wrote outside its sandbox, where it can read this job's secrets.
+      - uses: codenergy-dev/codeman@COMMIT_SHA
+        id: codeman
+        with:
+          step: agent
+          task: ${{ inputs.task }}
+          github-token: ${{ github.token }}
+          encrypted-key: ${{ needs.open-key.outputs.encrypted-key }}
+          encryption-secret: ${{ secrets.CODEMAN_OPENROUTER_KEY_ENCRYPTION_SECRET }}
+          handle: ${{ needs.open-key.outputs.handle }}
+          base-url: ${{ needs.open-key.outputs.base-url }}
+          context-length: ${{ needs.open-key.outputs.context-length }}
+          # Self-hosted inference on Serverless: held by the gateway outside the sandbox.
+          serverless-key: ${{ secrets.CODEMAN_RUNPOD_SERVERLESS_KEY }}
+          agent-minutes: 50
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: codeman-result-${{ inputs.task }}
+          path: ${{ runner.temp }}/codeman/result
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 1
+
+  # Ends the run's access, whatever happened, and reads what the run and each earlier run of the
+  # task spent: it disables the OpenRouter key, or ends the run on its pod, which it keeps for the
+  # task's next run or terminates. Apply waits for it to report the spend.
+  close-key:
+    name: Close key
+    needs: [open-key, agent]
+    if: always() && (needs.open-key.outputs.handle != '' || needs.open-key.outputs.key-hash != '')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      run-cost: ${{ steps.codeman.outputs.run-cost }}
+      input-tokens: ${{ steps.codeman.outputs.input-tokens }}
+      output-tokens: ${{ steps.codeman.outputs.output-tokens }}
+      requests: ${{ steps.codeman.outputs.requests }}
+      max-input-tokens: ${{ steps.codeman.outputs.max-input-tokens }}
+      tokens-per-second: ${{ steps.codeman.outputs.tokens-per-second }}
+      task-costs: ${{ steps.codeman.outputs.task-costs }}
+      pod: ${{ steps.codeman.outputs.pod }}
+      pod-costs: ${{ steps.codeman.outputs.pod-costs }}
+      kept-pod: ${{ steps.codeman.outputs.kept-pod }}
+    steps:
+      - uses: codenergy-dev/codeman@COMMIT_SHA
+        id: codeman
+        with:
+          step: close-key
+          handle: ${{ needs.open-key.outputs.handle }}
+          key-hash: ${{ needs.open-key.outputs.key-hash }}
+          inference: ${{ inputs.inference }}
+          gateway-usage: ${{ needs.agent.outputs.gateway-usage }}
+          management-key: ${{ secrets.CODEMAN_OPENROUTER_MANAGEMENT_KEY }}
+          gpu-key: ${{ secrets.CODEMAN_RUNPOD_API_KEY }}
+
+  # Validates the result and writes it to GitHub: commits, pull request, labels, status comment.
+  # No LLM.
+  apply:
+    name: Apply
+    needs: [open-key, agent, close-key]
+    # always(): a run that only records answers has no key or agent.
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      chain: ${{ steps.codeman.outputs.chain }}
+      continues: ${{ steps.codeman.outputs.continues }}
+    steps:
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app-token
+        with:
+          client-id: ${{ vars.CODEMAN_GITHUB_APP_CLIENT_ID }}
+          private-key: ${{ secrets.CODEMAN_GITHUB_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-issues: write
+          permission-pull-requests: write
+      # Only when a maintainer accepted staged workflows: a token that may write them.
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: workflow-token
+        if: inputs.action == 'accept'
+        with:
+          client-id: ${{ vars.CODEMAN_GITHUB_APP_CLIENT_ID }}
+          private-key: ${{ secrets.CODEMAN_GITHUB_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-workflows: write
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: codeman-task
+          path: ${{ runner.temp }}/codeman/task
+      # A failed agent may still have left a result; apply decides what to keep.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: needs.agent.result == 'success' || needs.agent.result == 'failure'
+        continue-on-error: true
+        with:
+          name: codeman-result-${{ inputs.task }}
+          path: ${{ runner.temp }}/codeman/result
+      - uses: codenergy-dev/codeman@COMMIT_SHA
+        id: codeman
+        with:
+          step: apply
+          task: ${{ inputs.task }}
+          github-token: ${{ steps.app-token.outputs.token }}
+          workflow-token: ${{ steps.workflow-token.outputs.token }}
+          key-job-result: ${{ needs.open-key.result }}
+          key-status: ${{ needs.open-key.outputs.status }}
+          key-reason: ${{ needs.open-key.outputs.reason }}
+          agent-job-result: ${{ needs.agent.result }}
+          task-spent: ${{ needs.open-key.outputs.task-spent }}
+          run-cost: ${{ needs.close-key.outputs.run-cost }}
+          key-limit: ${{ needs.open-key.outputs.key-limit }}
+          month-spent: ${{ needs.open-key.outputs.month-spent }}
+          input-tokens: ${{ needs.close-key.outputs.input-tokens }}
+          output-tokens: ${{ needs.close-key.outputs.output-tokens }}
+          requests: ${{ needs.close-key.outputs.requests }}
+          max-input-tokens: ${{ needs.close-key.outputs.max-input-tokens }}
+          tokens-per-second: ${{ needs.close-key.outputs.tokens-per-second }}
+          task-costs: ${{ needs.close-key.outputs.task-costs }}
+          pod: ${{ needs.close-key.outputs.pod }}
+          pod-costs: ${{ needs.close-key.outputs.pod-costs }}
+      # Tells next-run that the task moved.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: steps.codeman.outputs.chain == 'true'
+        with:
+          name: codeman-chain-${{ inputs.task }}
+          path: ${{ runner.temp }}/codeman/chain
+          retention-days: 1
+
+  # Terminates the pod close-key kept for the task's next run, when the task does not go on to
+  # one now (or apply failed). A kept pod also terminates itself after 15 idle minutes.
+  release-pod:
+    name: Release pod
+    needs: [open-key, close-key, apply]
+    if: always() && needs.close-key.outputs.kept-pod != '' && needs.apply.outputs.continues != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: codenergy-dev/codeman@COMMIT_SHA
+        with:
+          step: release-pod
+          handle: ${{ needs.open-key.outputs.handle }}
+          inference: ${{ inputs.inference }}
+          gpu-key: ${{ secrets.CODEMAN_RUNPOD_API_KEY }}
+

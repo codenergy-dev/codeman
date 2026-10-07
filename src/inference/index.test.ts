@@ -68,6 +68,33 @@ test("hands the key jobs the task's choice of inference, with its spend and pods
   assert.deepEqual(parseInferenceChoice(JSON.stringify(pod)), pod);
 });
 
+test("with several tasks, a choice names the run's others and what the month keeps for them", () => {
+  const choice = inferenceChoice(settings({ model: "a/b" }), null, {
+    reserved: 1.5,
+    others: ["4", "9"],
+  });
+  assert.deepEqual(choice, {
+    inference: "openrouter",
+    providers: ["openrouter"],
+    recorded: { spent: 0, selfHosted: 0 },
+    reserved: 1.5,
+    others: ["4", "9"],
+  });
+  assert.deepEqual(parseInferenceChoice(JSON.stringify(choice)), choice);
+  // One task: neither, as before parallel tasks.
+  assert.deepEqual(
+    inferenceChoice(settings({ model: "a/b" }), null, { reserved: 0, others: [] }),
+    inferenceChoice(settings({ model: "a/b" }), null),
+  );
+  for (const bad of [{ reserved: -1 }, { reserved: "1" }, { others: ["../x"] }, { others: [4] }]) {
+    assert.throws(
+      () => parseInferenceChoice(JSON.stringify({ ...choice, ...bad })),
+      /not a valid/,
+      JSON.stringify(bad),
+    );
+  }
+});
+
 test("an empty choice, from older workflow files, is OpenRouter; anything else must be whole", () => {
   assert.deepEqual(parseInferenceChoice(""), {
     inference: "openrouter",

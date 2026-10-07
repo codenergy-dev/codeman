@@ -22,7 +22,8 @@ export type InferenceChoice = (
   | (SelfHostedChoice & { mode: "pod"; gpuType: string; podReuse: "task" | "run" })
   | (SelfHostedChoice & { mode: "serverless"; endpoint: string })
 ) &
-  Budgeted;
+  Budgeted &
+  Parallel;
 
 interface SelfHostedChoice {
   inference: "self-hosted";
@@ -41,6 +42,18 @@ interface Budgeted {
   providers: string[];
   /** What the task spent so far, from its record: in all, and on self-hosted inference. */
   recorded: { spent: number; selfHosted: number };
+  /**
+   * What the run's tasks picked before this one may spend at most, which the month keeps for
+   * them: their keys open at once, and each reads the month before the others spend. Absent
+   * with one task.
+   */
+  reserved?: number | undefined;
+}
+
+/** The run's other tasks, when it works on several at once. */
+interface Parallel {
+  /** The other tasks that run an agent, by number: their own jobs manage their pods. */
+  others?: string[] | undefined;
 }
 
 /** The task's choice of inference, from its resolved settings and its record. */
@@ -50,12 +63,19 @@ export function inferenceChoice(
     spent?: number | undefined;
     inference?: { pods: PodSpend[]; spent?: number | undefined } | undefined;
   } | null,
-  options: { profile?: string | undefined; providers?: readonly string[] } = {},
+  options: {
+    profile?: string | undefined;
+    providers?: readonly string[];
+    reserved?: number | undefined;
+    others?: readonly string[] | undefined;
+  } = {},
 ): InferenceChoice {
-  const budgeted: Budgeted = {
+  const budgeted: Budgeted & Parallel = {
     ...(options.profile ? { profile: options.profile } : {}),
     providers: [...new Set([providerName(settings), ...(options.providers ?? [])])],
     recorded: { spent: record?.spent ?? 0, selfHosted: selfHostedSpent(record) },
+    ...(options.reserved ? { reserved: options.reserved } : {}),
+    ...(options.others?.length ? { others: [...options.others] } : {}),
   };
   if (settings.inference !== "self-hosted") return { inference: "openrouter", ...budgeted };
   const common = {
@@ -98,7 +118,11 @@ export function parseInferenceChoice(text: string): InferenceChoice {
     choice.providers.every((name) => typeof name === "string" && name !== "") &&
     amount(choice.recorded?.spent) &&
     amount(choice.recorded?.selfHosted) &&
-    (choice.profile === undefined || typeof choice.profile === "string");
+    (choice.profile === undefined || typeof choice.profile === "string") &&
+    (choice.reserved === undefined || (amount(choice.reserved) && choice.reserved >= 0)) &&
+    (choice.others === undefined ||
+      (Array.isArray(choice.others) &&
+        choice.others.every((task) => typeof task === "string" && /^\d+$/.test(task))));
   if (!budgeted) throw new Error("The inference input is not a valid choice.");
   if (choice.inference === "openrouter") return choice;
   const valid =
@@ -196,6 +220,7 @@ export function selfHosted(
     engine,
     taskSpent: choice.recorded.spent,
     pods: choice.pods,
+    others: choice.others ?? [],
   };
   if (choice.mode === "pod") {
     return new PodInference(

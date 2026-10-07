@@ -45,6 +45,8 @@ export interface Settings {
   "serverless-endpoint"?: string | undefined;
   /** `task`: a pod serves the task's next run too, while the task goes on; `run`: one run. */
   "pod-reuse": string;
+  /** How many tasks one run works on at once, each in its own jobs. */
+  "parallel-tasks": number;
 }
 
 export type SettingName = keyof Settings;
@@ -68,11 +70,12 @@ export const DEFAULTS: Omit<Settings, "model"> = {
   "gpu-provider": "runpod",
   "gpu-mode": "pod",
   "pod-reuse": "task",
+  "parallel-tasks": 1,
 };
 
 /**
- * Bounds of the output limits. They keep what the agent writes within a comment of 65,536
- * characters, GitHub's limit.
+ * Bounds of some settings. The output limits keep what the agent writes within a comment of
+ * 65,536 characters, GitHub's limit.
  */
 export const LIMIT_BOUNDS: Readonly<Partial<Record<SettingName, { min: number; max: number }>>> = {
   "max-decisions": { min: 1, max: 10 },
@@ -81,6 +84,8 @@ export const LIMIT_BOUNDS: Readonly<Partial<Record<SettingName, { min: number; m
   "max-question-chars": { min: 1, max: 1500 },
   "max-label-chars": { min: 1, max: 300 },
   "max-summary-chars": { min: 1, max: 4000 },
+  // Each task runs its own jobs, and may hold its own key or pod, at once.
+  "parallel-tasks": { min: 1, max: 10 },
 };
 
 /** Settings a maintainer can change for one task with `/codeman set`. */
@@ -122,6 +127,7 @@ const NAMES: readonly SettingName[] = [
   "engine",
   "serverless-endpoint",
   "pod-reuse",
+  "parallel-tasks",
 ];
 
 /** OpenRouter model IDs, such as `deepseek/deepseek-v4.1-flash` or `~deepseek/deepseek-flash-latest`. */

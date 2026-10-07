@@ -19751,11 +19751,20 @@ function positiveNumber(runtime2, name) {
 function workdir(runtime2) {
   return runtime2.input("workdir") || join(runtime2.tempDir, "codeman");
 }
-var taskFile = (runtime2) => join(workdir(runtime2), "task", "task.json");
+function taskFile(runtime2, task) {
+  return join(workdir(runtime2), "task", task === void 0 ? "task.json" : `${task}.json`);
+}
 var resultDir = (runtime2) => join(workdir(runtime2), "result");
+var chainDir = (runtime2) => join(workdir(runtime2), "chain");
 function readTask(runtime2) {
-  const task = JSON.parse(readFileSync(taskFile(runtime2), "utf8"));
+  const input = runtime2.input("task");
+  if (input !== "" && !/^\d+$/.test(input)) throw new Error("Input task must be an issue number.");
+  const number3 = input === "" ? void 0 : Number(input);
+  const task = JSON.parse(readFileSync(taskFile(runtime2, number3), "utf8"));
   if (task.version !== 1) throw new Error("The task file has an unknown version.");
+  if (number3 !== void 0 && task.number !== number3) {
+    throw new Error(`The task file of #${number3} holds #${task.number}.`);
+  }
   return task;
 }
 
@@ -20986,12 +20995,15 @@ var PodInference = class {
   }
   /**
    * Terminates this repository's pods that serve nobody: no other run of the repository is
-   * active while open-key runs, so a pod that is still starting or serving lost its run. Other
+   * active while open-key runs, so a pod that is still starting or serving lost its run, unless
+   * it is another task's of this run, whose own jobs open and close it at the same time. Other
    * tasks' kept pods stay until their idle limit. Returns the task's kept pod, if it fits.
    */
   async #sweep(task, log) {
     let kept;
+    const others = new Set(this.#settings.others ?? []);
     for (const pod of await this.#host.list(podOwner(this.#options.repository))) {
+      if (others.has(pod.env.CODEMAN_TASK ?? "")) continue;
       const nonce = pod.env.CODEMAN_NONCE ?? "";
       const handle = { podId: pod.id, nonce, url: this.#host.url(pod.id, GATEWAY_PORT) };
       const status2 = await this.#admin(handle, "GET", "/admin/status").catch(() => void 0);
@@ -21266,7 +21278,9 @@ function inferenceChoice(settings, record, options = {}) {
   const budgeted = {
     ...options.profile ? { profile: options.profile } : {},
     providers: [.../* @__PURE__ */ new Set([providerName(settings), ...options.providers ?? []])],
-    recorded: { spent: record?.spent ?? 0, selfHosted: selfHostedSpent(record) }
+    recorded: { spent: record?.spent ?? 0, selfHosted: selfHostedSpent(record) },
+    ...options.reserved ? { reserved: options.reserved } : {},
+    ...options.others?.length ? { others: [...options.others] } : {}
   };
   if (settings.inference !== "self-hosted") return { inference: "openrouter", ...budgeted };
   const common = {
@@ -21296,7 +21310,7 @@ function parseInferenceChoice(text) {
   }
   const choice = JSON.parse(text);
   const amount2 = (value) => typeof value === "number" && Number.isFinite(value);
-  const budgeted = Array.isArray(choice.providers) && choice.providers.every((name) => typeof name === "string" && name !== "") && amount2(choice.recorded?.spent) && amount2(choice.recorded?.selfHosted) && (choice.profile === void 0 || typeof choice.profile === "string");
+  const budgeted = Array.isArray(choice.providers) && choice.providers.every((name) => typeof name === "string" && name !== "") && amount2(choice.recorded?.spent) && amount2(choice.recorded?.selfHosted) && (choice.profile === void 0 || typeof choice.profile === "string") && (choice.reserved === void 0 || amount2(choice.reserved) && choice.reserved >= 0) && (choice.others === void 0 || Array.isArray(choice.others) && choice.others.every((task) => typeof task === "string" && /^\d+$/.test(task)));
   if (!budgeted) throw new Error("The inference input is not a valid choice.");
   if (choice.inference === "openrouter") return choice;
   const valid = choice.inference === "self-hosted" && typeof choice.model === "string" && ENGINES[choice.engine] !== void 0 && Array.isArray(choice.pods) && (choice.mode === "pod" ? typeof choice.gpuType === "string" : choice.mode === "serverless");
@@ -21367,7 +21381,8 @@ function selfHosted(choice, repository, inputs) {
     model: choice.model,
     engine,
     taskSpent: choice.recorded.spent,
-    pods: choice.pods
+    pods: choice.pods,
+    others: choice.others ?? []
   };
   if (choice.mode === "pod") {
     return new PodInference(
@@ -21464,7 +21479,7 @@ var GITHUB = {
     file: /^\.github\/workflows\/[A-Za-z0-9._-]+\.ya?ml$/,
     fileDescription: "files directly under .github/workflows/",
     protect: "# Workflows and repository automation.\n/.github/**\n",
-    probes: [".github/workflows/codeman.yml"],
+    probes: [".github/workflows/codeman.yml", ".github/workflows/codeman-task.yml"],
     agentRules: (branch) => `- Workflow files you write under \`${WORKFLOWS_DIR}\` are not committed there: Codeman stages them under \`.codeman/workflows/\` until a maintainer reads and accepts them, because a workflow runs with the repository's secrets. Deleting a workflow is left to a maintainer.
 - If the task needs work this runner cannot do (another operating system, a device, a secret), write a workflow for it that runs on pushes to \`${branch}\`, with \`paths\` filters so it does not run on unrelated pushes (include the workflow file itself, so it runs when a maintainer accepts it), and report \`awaiting-workflow\`. While the workflow waits for a maintainer, the task goes on to the next stages and review; you get its results once it has run. Codeman gives you its results in a later run. A workflow that needs secrets must use a GitHub Environment. Never wait for a workflow that deploys, publishes or releases: run from the task branch, it would ship work nobody reviewed. Such a workflow is part of the change, and runs after the merge.`,
     reviewCheck: `If \`.codeman/workflows/\` has files, they are workflows the agent wrote, staged until a maintainer accepts them into \`${WORKFLOWS_DIR}\`, where they would run with the repository's secrets. Review each as a workflow: its triggers (never \`pull_request_target\` with a checkout of the branch), the least \`permissions\` it needs, secrets only through a GitHub Environment, actions pinned to a full commit SHA, and, for a workflow that runs on pushes to the task branch, \`paths\` filters and no deploy. What must change goes in \`changes\`, like any other finding.`
@@ -26956,7 +26971,8 @@ var DEFAULTS2 = {
   inference: "openrouter",
   "gpu-provider": "runpod",
   "gpu-mode": "pod",
-  "pod-reuse": "task"
+  "pod-reuse": "task",
+  "parallel-tasks": 1
 };
 var LIMIT_BOUNDS = {
   "max-decisions": { min: 1, max: 10 },
@@ -26964,7 +26980,9 @@ var LIMIT_BOUNDS = {
   "max-title-chars": { min: 1, max: 200 },
   "max-question-chars": { min: 1, max: 1500 },
   "max-label-chars": { min: 1, max: 300 },
-  "max-summary-chars": { min: 1, max: 4e3 }
+  "max-summary-chars": { min: 1, max: 4e3 },
+  // Each task runs its own jobs, and may hold its own key or pod, at once.
+  "parallel-tasks": { min: 1, max: 10 }
 };
 var TASK_SETTINGS = /* @__PURE__ */ new Set([
   "model",
@@ -27000,7 +27018,8 @@ var NAMES = [
   "gpu-type",
   "engine",
   "serverless-endpoint",
-  "pod-reuse"
+  "pod-reuse",
+  "parallel-tasks"
 ];
 var MODEL_ID = /^~?[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._:-]*$/i;
 function isModelId(text) {
@@ -29099,7 +29118,7 @@ function repositoryRules(workspace) {
 }
 
 // src/steps/apply.ts
-import { existsSync as existsSync3, lstatSync as lstatSync3, readFileSync as readFileSync5 } from "node:fs";
+import { existsSync as existsSync3, lstatSync as lstatSync3, mkdirSync as mkdirSync5, readFileSync as readFileSync5, writeFileSync as writeFileSync5 } from "node:fs";
 import { join as join7 } from "node:path";
 
 // src/pull.ts
@@ -29701,6 +29720,17 @@ function chooseTask(candidates) {
   if (implement) return { number: implement.number, action: "implement" };
   return void 0;
 }
+function chooseTasks(candidates, count3) {
+  const chosen = [];
+  let left = [...candidates];
+  while (chosen.length < count3) {
+    const choice = chooseTask(left);
+    if (!choice) break;
+    chosen.push(choice);
+    left = left.filter((candidate) => candidate.number !== choice.number);
+  }
+  return chosen;
+}
 var MAX_HISTORY = 2e4;
 function runHistory(comments, bot, max = MAX_HISTORY) {
   const runs = comments.filter((comment) => comment.author?.login === bot && isRunComment(comment.body)).sort((a, b) => b.id - a.id);
@@ -29742,6 +29772,11 @@ async function apply(services) {
   else if (task.action === "route") await applyRoute(task, io);
   else await applyPlan(task, io);
   runtime2.output("chain", String(chain));
+  if (chain) {
+    mkdirSync5(chainDir(runtime2), { recursive: true });
+    writeFileSync5(join7(chainDir(runtime2), String(task.number)), `${task.number}
+`);
+  }
 }
 function jobResults(runtime2) {
   const amount2 = (name) => {
@@ -30650,7 +30685,7 @@ async function openKey({ runtime: runtime2, inference, budget: budgets }) {
   const task = runtime2.input("task", { required: true });
   const taskBudget = positiveNumber(runtime2, "task-budget");
   const monthlyBudget = positiveNumber(runtime2, "monthly-budget");
-  const { profile: profile2 } = parseInferenceChoice(runtime2.input("inference"));
+  const { profile: profile2, reserved = 0 } = parseInferenceChoice(runtime2.input("inference"));
   if (profile2) runtime2.info(`The run uses the inference profile \`${profile2}\`.`);
   const budget = budgets();
   if (budget.missing.length > 0) {
@@ -30669,6 +30704,9 @@ async function openKey({ runtime: runtime2, inference, budget: budgets }) {
   runtime2.info(`This task has spent ${usd(spent)} of ${usd(taskBudget)}.`);
   const parts = months.map((month) => `${month.provider} ${usd(month.spent)}`).join(", ");
   runtime2.info(`Usage this month (${parts}): ${usd(used)} of ${usd(monthlyBudget)}.`);
+  if (reserved > 0) {
+    runtime2.info(`Kept for the tasks this run picked before this one: up to ${usd(reserved)}.`);
+  }
   const limit = runLimit(taskBudget, spent);
   if (limit === void 0) {
     runtime2.output("status", "task-budget-spent");
@@ -30678,11 +30716,12 @@ async function openKey({ runtime: runtime2, inference, budget: budgets }) {
     );
     return;
   }
-  if (used + limit > monthlyBudget) {
+  if (used + reserved + limit > monthlyBudget) {
+    const others = reserved > 0 ? `, up to ${usd(reserved)} is kept for the run's other tasks` : "";
     runtime2.output("status", "over-budget");
     runtime2.output(
       "reason",
-      `The monthly budget is reached: ${usd(used)} used of ${usd(monthlyBudget)}, and this run may use up to ${usd(limit)}.`
+      `The monthly budget is reached: ${usd(used)} used of ${usd(monthlyBudget)}${others}, and this run may use up to ${usd(limit)}.`
     );
     return;
   }
@@ -30737,7 +30776,7 @@ async function release({ runtime: runtime2 }) {
 }
 
 // src/steps/select.ts
-import { mkdirSync as mkdirSync5, writeFileSync as writeFileSync5 } from "node:fs";
+import { mkdirSync as mkdirSync6, writeFileSync as writeFileSync6 } from "node:fs";
 import { dirname } from "node:path";
 async function select(services) {
   const { runtime: runtime2, conventions } = services;
@@ -30753,7 +30792,7 @@ async function select(services) {
   if (!fileSettings.ok) throw new Error(fileSettings.error);
   const ignore = await repo.readFile(defaultBranch, IGNORE_FILE) ?? null;
   await warnUnprotected(runtime2, conventions.workflows, ignore);
-  const tasks = (await repo.listOptedIn()).map(toTask).filter((task2) => task2.kind === "issue");
+  const tasks = (await repo.listOptedIn()).map(toTask).filter((task) => task.kind === "issue");
   runtime2.info(`Found ${tasks.length} open issue(s) labeled "codeman".`);
   const permissions = /* @__PURE__ */ new Map();
   const maintainersAmong = async (logins) => {
@@ -30771,73 +30810,73 @@ async function select(services) {
         const comments = await repo.listComments(number3);
         const status2 = findStatus(comments, bot);
         const pullRequest = status2?.record?.pullRequest;
-        const reviews2 = pullRequest ? await repo.listReviews(pullRequest) : [];
+        const reviews = pullRequest ? await repo.listReviews(pullRequest) : [];
         if (pullRequest) comments.push(...await repo.listChangeRequestComments(pullRequest));
-        const maintainers = await maintainersAmong(commenters([...comments, ...reviews2]));
-        return { comments, reviews: reviews2, status: status2, maintainers };
+        const maintainers = await maintainersAmong(commenters([...comments, ...reviews]));
+        return { comments, reviews, status: status2, maintainers };
       })();
       conversations.set(number3, loaded);
     }
     return loaded;
   };
-  const newCommands = (talk2, reviews2) => {
-    const record2 = talk2.status?.record;
-    if (!record2) return [];
+  const newCommands = (talk, reviews) => {
+    const record = talk.status?.record;
+    if (!record) return [];
     return [
       ...commandsAfter(
-        authorizedComments(talk2.comments, talk2.maintainers),
-        record2.processedCommentId
+        authorizedComments(talk.comments, talk.maintainers),
+        record.processedCommentId
       ),
-      ...reviewCommands(reviews2)
+      ...reviewCommands(reviews)
     ];
   };
   const authors = await maintainersAmong([
-    ...new Set(tasks.flatMap((task2) => task2.author ? [task2.author] : []))
+    ...new Set(tasks.flatMap((task) => task.author ? [task.author] : []))
   ]);
-  const refuse = async (task2) => {
-    const talk2 = await conversation(task2.number);
-    const record2 = talk2.status?.record;
-    const language = taskSettings(authorizedComments(talk2.comments, talk2.maintainers)).language ?? fileSettings.value.language ?? shared.value.language ?? "auto";
-    const body = renderRefused(messages(taskLanguage(language, record2?.language)), record2);
-    if (talk2.status?.body !== body) {
-      await repo.upsertComment(task2.number, talk2.status?.id ?? null, body);
+  const refuse = async (task) => {
+    const talk = await conversation(task.number);
+    const record = talk.status?.record;
+    const language = taskSettings(authorizedComments(talk.comments, talk.maintainers)).language ?? fileSettings.value.language ?? shared.value.language ?? "auto";
+    const body = renderRefused(messages(taskLanguage(language, record?.language)), record);
+    if (talk.status?.body !== body) {
+      await repo.upsertComment(task.number, talk.status?.id ?? null, body);
     }
   };
   const workflowRuns = /* @__PURE__ */ new Map();
   const candidates = [];
-  for (const task2 of tasks) {
-    const line = `#${task2.number} ${oneLine(task2.title)}`;
-    if (!openedByMaintainer(task2, authors)) {
+  for (const task of tasks) {
+    const line = `#${task.number} ${oneLine(task.title)}`;
+    if (!openedByMaintainer(task, authors)) {
       runtime2.warning(`${line}: not opened by a maintainer, so it is not a task. Left alone.`);
-      await refuse(task2);
+      await refuse(task);
       continue;
     }
-    const result = stateOf(task2.labels);
+    const result = stateOf(task.labels);
     if (!result.ok) {
       runtime2.warning(`${line}: ${result.error}`);
       continue;
     }
-    const candidate = { number: task2.number, state: result.state };
+    const candidate = { number: task.number, state: result.state };
     if (result.state !== "new" && result.state !== "planning") {
-      const talk2 = await conversation(task2.number);
-      const record2 = talk2.status?.record;
-      if (record2) {
-        const reviews2 = authorizedReviews(
-          talk2.reviews,
+      const talk = await conversation(task.number);
+      const record = talk.status?.record;
+      if (record) {
+        const reviews = authorizedReviews(
+          talk.reviews,
           [],
-          talk2.maintainers,
-          record2.processedReviewId ?? 0
+          talk.maintainers,
+          record.processedReviewId ?? 0
         );
-        candidate.pending = pendingWork(newCommands(talk2, reviews2), result.state);
-        candidate.planned = pendingDecisions(record2).length === 0;
+        candidate.pending = pendingWork(newCommands(talk, reviews), result.state);
+        candidate.planned = pendingDecisions(record).length === 0;
         candidate.accept = acceptRequest(
-          authorizedComments(talk2.comments, talk2.maintainers),
-          record2.acceptedCommentId ?? 0
+          authorizedComments(talk.comments, talk.maintainers),
+          record.acceptedCommentId ?? 0
         ) !== void 0;
-        if (result.state === "awaiting-workflow" && record2.awaiting?.length) {
-          const head = await repo.branchSha(record2.branch);
-          const runs = head ? finishedRuns(await ci.runsForCommit(head), record2.awaiting) : void 0;
-          if (runs) workflowRuns.set(task2.number, runs);
+        if (result.state === "awaiting-workflow" && record.awaiting?.length) {
+          const head = await repo.branchSha(record.branch);
+          const runs = head ? finishedRuns(await ci.runsForCommit(head), record.awaiting) : void 0;
+          if (runs) workflowRuns.set(task.number, runs);
           candidate.workflowsDone = runs !== void 0;
         }
       }
@@ -30845,161 +30884,213 @@ async function select(services) {
     candidates.push(candidate);
     runtime2.info(`${line} [${result.state}]${candidate.pending ? ` (${candidate.pending})` : ""}`);
   }
-  const choice = chooseTask(candidates);
-  if (!choice) {
+  const parallel = firstSet([inputs, fileSettings.value, shared.value], "parallel-tasks");
+  const choices = chooseTasks(candidates, parallel ?? DEFAULTS2["parallel-tasks"]);
+  if (choices.length === 0) {
     runtime2.output("action", "none");
     runtime2.info("Nothing to do.");
     return;
   }
-  const task = tasks.find((candidate) => candidate.number === choice.number);
-  if (!task) throw new Error(`Task #${choice.number} disappeared.`);
-  const pending = candidates.find((candidate) => candidate.number === task.number)?.pending;
-  const talk = await conversation(task.number);
-  const record = talk.status?.record;
-  const maintainerComments = authorizedComments(talk.comments, talk.maintainers).sort(
-    (a, b) => a.id - b.id
-  );
-  const reviewComments = record?.pullRequest ? await repo.listReviewComments(record.pullRequest) : [];
-  const reviews = authorizedReviews(
-    talk.reviews,
-    reviewComments,
-    talk.maintainers,
-    record?.processedReviewId ?? 0
-  );
-  const sources = newCommands(talk, reviews);
-  const replan = choice.action === "plan" ? replanRequests(sources) : [];
-  const settled = choice.action === "plan" && record ? applyCommands(record, sources).record.decisions.filter((decision) => decision.answer) : [];
-  const resume = pending === "resume";
-  const newRequests = choice.action === "implement" ? resumeRequests(sources) : [];
-  const route = choice.action === "implement" ? routing(task.labels, record, newRequests) : void 0;
-  const action = route ? "route" : choice.action;
-  runtime2.output("action", action);
-  const window2 = action === "implement" ? record?.route?.requests : void 0;
-  const windowReviews = window2 ? authorizedReviews(
-    talk.reviews,
-    reviewComments,
-    talk.maintainers,
-    window2.after.reviewId
-  ).filter((review) => review.id <= window2.upTo.reviewId) : [];
-  const windowSources = window2 ? [
-    ...commandsAfter(maintainerComments, window2.after.commentId).filter(
-      (source) => source.commentId <= window2.upTo.commentId
-    ),
-    ...reviewCommands(windowReviews)
-  ] : [];
-  const requests = [...resumeRequests(windowSources), ...newRequests];
-  const stage = action !== "implement" ? void 0 : record?.stage ?? stageOfState(fromStateOf(task.labels)) ?? firstStage(task.labels);
-  const description = descriptionCommands(task.body);
-  const problems = [
-    ...description.commands,
-    ...sources.map(({ command }) => command)
-  ].flatMap(
-    (command) => command.kind === "invalid" ? [{ text: command.text, problem: command.problem }] : []
-  );
-  const fromState = stateOf(task.labels);
-  if (!fromState.ok) throw new Error(fromState.error);
-  const slug = slugify(task.title);
-  const branch = record?.branch ?? `codeman/${task.number}-${slug}`;
-  const branchSha = await repo.branchSha(branch);
-  const baseSha = branchSha ?? await repo.branchSha(defaultBranch);
-  if (!baseSha) throw new Error(`Branch ${defaultBranch} not found.`);
-  let own = taskSettings(maintainerComments, description.commands);
-  const below = [inputs, fileSettings.value, shared.value];
-  const agentWork = action === "plan" || action === "route" ? action : stage;
-  const runConditions = agentWork ? { stage: agentWork, tasks: 1 } : void 0;
-  let resolved = resolveRun([own, ...below], runConditions);
-  if (!resolved.ok && (own.model !== void 0 || own["gpu-type"] !== void 0)) {
-    const { model: _model, "gpu-type": _gpuType, ...rest } = own;
-    const fallback = resolveRun([rest, ...below], runConditions);
-    if (fallback.ok) {
-      problems.push({ problem: { kind: "settings-rejected", error: resolved.error } });
-      resolved = fallback;
-      own = rest;
-    }
+  const agents = choices.filter((choice) => runsAgent(choice.action)).length;
+  if (choices.length > 1) {
+    const list = choices.map((choice) => `#${choice.number} (${choice.action})`).join(", ");
+    runtime2.info(`Picked ${choices.length} tasks, of up to ${parallel}: ${list}.`);
   }
-  if (!resolved.ok) throw new Error(resolved.error);
-  for (const line of settingSources([own, ...below])) runtime2.info(line);
-  const { profile: profile2, providers } = resolved.value;
-  const settings = resolved.value.settings;
-  if (profile2) runtime2.info(`Inference profile \`${profile2}\` applies to this run.`);
-  const model = settings.model;
-  const context3 = {
-    version: 1,
-    action,
-    owner: repo.repository.owner,
-    repo: repo.repository.name,
-    number: task.number,
-    title: task.title,
-    body: description.text,
-    url: task.url,
-    comments: maintainerComments,
-    reviews: [...windowReviews, ...reviews],
-    requests,
-    resume,
-    accept: choice.action === "accept" ? acceptRequest(maintainerComments, record?.acceptedCommentId ?? 0) : void 0,
-    workflowRuns: action === "implement" ? workflowRuns.get(task.number) : void 0,
-    history: action === "implement" || route ? runHistory(talk.comments, bot) : void 0,
-    stage,
-    route,
-    processed: {
-      commentId: Math.max(
-        record?.processedCommentId ?? 0,
-        ...maintainerComments.map((comment) => comment.id)
-      ),
-      reviewId: Math.max(record?.processedReviewId ?? 0, ...reviews.map((review) => review.id))
-    },
-    problems,
-    fromState: fromState.state,
-    model,
-    settings,
-    ignore,
-    defaultBranch,
-    branch,
-    branchExists: branchSha !== void 0,
-    baseSha,
-    planPath: record?.planPath ?? `docs/plans/${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}-${slug}.md`,
-    record: record ?? null,
-    replan,
-    settled,
-    statusCommentId: talk.status?.id ?? null,
-    runUrl: runtime2.run.url
-  };
-  const needsAgent = action === "plan" || action === "route" || action === "implement";
-  if (needsAgent) {
-    const t = messages(taskLanguage(settings.language, record?.language));
-    const state = stage ? STAGE_STATE[stage] : route ? "routing" : "planning";
-    await repo.setState(task.number, task.labels, state);
-    context3.statusCommentId = await repo.upsertComment(
-      task.number,
-      context3.statusCommentId,
-      renderStatus({
-        t,
-        conventions,
-        state,
-        record,
-        model,
-        runUrl: context3.runUrl,
-        message: startMessage(t, context3),
-        cost: { task: record?.spent, budget: settings["task-budget"] },
-        reportUrl: reportUrl(record, (id) => repo.commentUrl(task.url, id)),
-        decisionsUrl: decisionsUrl(record, (id) => repo.commentUrl(task.url, id))
-      })
+  const prepare = async (choice) => {
+    const task = tasks.find((candidate) => candidate.number === choice.number);
+    if (!task) throw new Error(`Task #${choice.number} disappeared.`);
+    const pending = candidates.find((candidate) => candidate.number === task.number)?.pending;
+    const talk = await conversation(task.number);
+    const record = talk.status?.record;
+    const maintainerComments = authorizedComments(talk.comments, talk.maintainers).sort(
+      (a, b) => a.id - b.id
     );
-  }
-  mkdirSync5(dirname(taskFile(runtime2)), { recursive: true });
-  writeFileSync5(taskFile(runtime2), JSON.stringify(context3, null, 2));
-  runtime2.output("task", String(task.number));
-  runtime2.output("model", model);
-  runtime2.output("base-sha", baseSha);
-  runtime2.output("needs-agent", String(needsAgent));
-  runtime2.output("stage", stage ?? (action === "plan" || action === "route" ? action : ""));
-  runtime2.output("task-budget", String(settings["task-budget"]));
-  runtime2.output("monthly-budget", String(settings["monthly-budget"]));
-  runtime2.output(
-    "inference",
-    JSON.stringify(inferenceChoice(settings, record ?? null, { profile: profile2, providers }))
+    const reviewComments = record?.pullRequest ? await repo.listReviewComments(record.pullRequest) : [];
+    const reviews = authorizedReviews(
+      talk.reviews,
+      reviewComments,
+      talk.maintainers,
+      record?.processedReviewId ?? 0
+    );
+    const sources = newCommands(talk, reviews);
+    const replan = choice.action === "plan" ? replanRequests(sources) : [];
+    const settled = choice.action === "plan" && record ? applyCommands(record, sources).record.decisions.filter((decision) => decision.answer) : [];
+    const resume = pending === "resume";
+    const newRequests = choice.action === "implement" ? resumeRequests(sources) : [];
+    const route = choice.action === "implement" ? routing(task.labels, record, newRequests) : void 0;
+    const action = route ? "route" : choice.action;
+    const window2 = action === "implement" ? record?.route?.requests : void 0;
+    const windowReviews = window2 ? authorizedReviews(
+      talk.reviews,
+      reviewComments,
+      talk.maintainers,
+      window2.after.reviewId
+    ).filter((review) => review.id <= window2.upTo.reviewId) : [];
+    const windowSources = window2 ? [
+      ...commandsAfter(maintainerComments, window2.after.commentId).filter(
+        (source) => source.commentId <= window2.upTo.commentId
+      ),
+      ...reviewCommands(windowReviews)
+    ] : [];
+    const requests = [...resumeRequests(windowSources), ...newRequests];
+    const stage = action !== "implement" ? void 0 : record?.stage ?? stageOfState(fromStateOf(task.labels)) ?? firstStage(task.labels);
+    const description = descriptionCommands(task.body);
+    const problems = [
+      ...description.commands,
+      ...sources.map(({ command }) => command)
+    ].flatMap(
+      (command) => command.kind === "invalid" ? [{ text: command.text, problem: command.problem }] : []
+    );
+    const fromState = stateOf(task.labels);
+    if (!fromState.ok) throw new Error(fromState.error);
+    const slug = slugify(task.title);
+    const branch = record?.branch ?? `codeman/${task.number}-${slug}`;
+    const branchSha = await repo.branchSha(branch);
+    const baseSha = branchSha ?? await repo.branchSha(defaultBranch);
+    if (!baseSha) throw new Error(`Branch ${defaultBranch} not found.`);
+    let own = taskSettings(maintainerComments, description.commands);
+    const below = [inputs, fileSettings.value, shared.value];
+    const agentWork = action === "plan" || action === "route" ? action : stage;
+    const runConditions = agentWork ? { stage: agentWork, tasks: agents } : void 0;
+    let resolved = resolveRun([own, ...below], runConditions);
+    if (!resolved.ok && (own.model !== void 0 || own["gpu-type"] !== void 0)) {
+      const { model: _model, "gpu-type": _gpuType, ...rest } = own;
+      const fallback = resolveRun([rest, ...below], runConditions);
+      if (fallback.ok) {
+        problems.push({ problem: { kind: "settings-rejected", error: resolved.error } });
+        resolved = fallback;
+        own = rest;
+      }
+    }
+    if (!resolved.ok) throw new Error(resolved.error);
+    for (const line of settingSources([own, ...below])) runtime2.info(line);
+    const { profile: profile2, providers } = resolved.value;
+    const settings = resolved.value.settings;
+    if (profile2) runtime2.info(`Inference profile \`${profile2}\` applies to this run.`);
+    const model = settings.model;
+    const context3 = {
+      version: 1,
+      action,
+      owner: repo.repository.owner,
+      repo: repo.repository.name,
+      number: task.number,
+      title: task.title,
+      body: description.text,
+      url: task.url,
+      comments: maintainerComments,
+      reviews: [...windowReviews, ...reviews],
+      requests,
+      resume,
+      accept: choice.action === "accept" ? acceptRequest(maintainerComments, record?.acceptedCommentId ?? 0) : void 0,
+      workflowRuns: action === "implement" ? workflowRuns.get(task.number) : void 0,
+      history: action === "implement" || route ? runHistory(talk.comments, bot) : void 0,
+      stage,
+      route,
+      processed: {
+        commentId: Math.max(
+          record?.processedCommentId ?? 0,
+          ...maintainerComments.map((comment) => comment.id)
+        ),
+        reviewId: Math.max(record?.processedReviewId ?? 0, ...reviews.map((review) => review.id))
+      },
+      problems,
+      fromState: fromState.state,
+      model,
+      settings,
+      ignore,
+      defaultBranch,
+      branch,
+      branchExists: branchSha !== void 0,
+      baseSha,
+      planPath: record?.planPath ?? `docs/plans/${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}-${slug}.md`,
+      record: record ?? null,
+      replan,
+      settled,
+      statusCommentId: talk.status?.id ?? null,
+      runUrl: runtime2.run.url
+    };
+    const needsAgent = action === "plan" || action === "route" || action === "implement";
+    const start = async () => {
+      if (needsAgent) {
+        const t = messages(taskLanguage(settings.language, record?.language));
+        const state = stage ? STAGE_STATE[stage] : route ? "routing" : "planning";
+        await repo.setState(task.number, task.labels, state);
+        context3.statusCommentId = await repo.upsertComment(
+          task.number,
+          context3.statusCommentId,
+          renderStatus({
+            t,
+            conventions,
+            state,
+            record,
+            model,
+            runUrl: context3.runUrl,
+            message: startMessage(t, context3),
+            cost: { task: record?.spent, budget: settings["task-budget"] },
+            reportUrl: reportUrl(record, (id) => repo.commentUrl(task.url, id)),
+            decisionsUrl: decisionsUrl(record, (id) => repo.commentUrl(task.url, id))
+          })
+        );
+      }
+      mkdirSync6(dirname(taskFile(runtime2, task.number)), { recursive: true });
+      writeFileSync6(taskFile(runtime2, task.number), JSON.stringify(context3, null, 2));
+    };
+    runtime2.info(`Selected #${task.number} to ${action}, with model ${model}.`);
+    return {
+      number: task.number,
+      action,
+      needsAgent,
+      stage: stage ?? (action === "plan" || action === "route" ? action : ""),
+      baseSha,
+      model,
+      settings,
+      record: record ?? null,
+      profile: profile2,
+      providers,
+      context: context3,
+      start
+    };
+  };
+  const picked = [];
+  for (const choice of choices) picked.push(await prepare(choice));
+  for (const one of picked) await one.start();
+  const outputs = picked.map((one, index) => taskOutputs(one, picked.slice(0, index), picked));
+  runtime2.output("tasks", JSON.stringify(outputs));
+  const [first] = outputs;
+  const [firstPicked] = picked;
+  if (!first || !firstPicked) return;
+  for (const [name, value] of Object.entries(first)) runtime2.output(name, value);
+  runtime2.output("model", firstPicked.model);
+  writeFileSync6(taskFile(runtime2), JSON.stringify(firstPicked.context, null, 2));
+}
+function taskOutputs(task, before, all) {
+  const agents = (list) => list.filter((other) => other.needsAgent);
+  const reserved = agents(before).reduce(
+    (sum, other) => sum + Math.max(0, other.settings["task-budget"] - (other.record?.spent ?? 0)),
+    0
   );
-  runtime2.info(`Selected #${task.number} to ${action}, with model ${model}.`);
+  const others = agents(all).filter((other) => other !== task).map((other) => String(other.number));
+  const choice = inferenceChoice(task.settings, task.record, {
+    profile: task.profile,
+    providers: task.providers,
+    ...task.needsAgent ? { reserved: Number(reserved.toFixed(4)), others } : {}
+  });
+  return {
+    task: String(task.number),
+    action: task.action,
+    "needs-agent": String(task.needsAgent),
+    stage: task.stage,
+    "base-sha": task.baseSha,
+    "task-budget": String(task.settings["task-budget"]),
+    "monthly-budget": String(task.settings["monthly-budget"]),
+    inference: JSON.stringify(choice)
+  };
+}
+function runsAgent(action) {
+  return action !== "record" && action !== "accept";
+}
+function firstSet(layers, name) {
+  return layers.find((layer) => layer[name] !== void 0)?.[name];
 }
 function routing(labels, record, requests) {
   const state = fromStateOf(labels);

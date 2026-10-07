@@ -49,6 +49,34 @@ test("opens nothing when the task's budget is spent or the month's would be pass
   assert.equal(spent.opened.length + month.opened.length, 0);
 });
 
+test("with several tasks, the month keeps what those picked before may spend", async () => {
+  const choice = (reserved: number) =>
+    JSON.stringify({
+      inference: "openrouter",
+      providers: ["openrouter"],
+      recorded: { spent: 0, selfHosted: 0 },
+      reserved,
+      others: ["3"],
+    });
+  // 15 used, and this run's 2: room for 3, not for 3.5.
+  const fits = new FakeInference({ month: 15 });
+  const opened = await open(fits, openInputs({ inference: choice(3) }));
+  assert.equal(opened.outputs.status, "opened");
+  assert.ok(
+    opened
+      .logged("info")
+      .includes("Kept for the tasks this run picked before this one: up to US$ 3.00."),
+  );
+  const full = new FakeInference({ month: 15 });
+  const refused = await open(full, openInputs({ inference: choice(3.5) }));
+  assert.equal(refused.outputs.status, "over-budget");
+  assert.equal(
+    refused.outputs.reason,
+    "The monthly budget is reached: US$ 15.00 used of US$ 20.00, up to US$ 3.50 is kept for the run's other tasks, and this run may use up to US$ 2.00.",
+  );
+  assert.equal(full.opened.length, 0);
+});
+
 test("the month adds up every provider the settings name, against the one budget", async () => {
   const inference = new FakeInference({ spent: 0.25, month: 12 });
   const budget = new ProviderBudget({ spent: 0.75, selfHosted: 0.5 }, [

@@ -23,7 +23,8 @@ model: deepseek/deepseek-v4.1-flash
 
 # Inference profiles: other inference settings for some runs. The first profile whose conditions
 # all hold applies; the settings above apply when none does. A profile sets only `model` and the
-# inference settings above. Conditions: `stages` (plan, route, web, design, code, test, review).
+# inference settings above. Conditions: `stages` (plan, route, web, design, code, test, review),
+# and `parallel-tasks` (at least that many of the run's tasks run an agent).
 # The month counts every provider named here, so the workflow needs each one's secret.
 # inference-profiles:
 #   - name: small-pod
@@ -39,6 +40,10 @@ monthly-budget: 20
 
 # Consecutive implementation runs before a task is blocked.
 max-runs: 3
+
+# Tasks one run works on at once, from 1 to 10, each with its own key, agent and pod.
+# Above 1, the workflow needs codeman-task.yml next to codeman.yml.
+parallel-tasks: 1
 
 # Limits on what one run may change.
 max-files: 300

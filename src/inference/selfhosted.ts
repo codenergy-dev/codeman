@@ -38,6 +38,8 @@ export interface SelfHostedSettings {
   taskSpent: number;
   /** The pods the task's record lists, whose billing refreshes its spend. */
   pods: readonly string[];
+  /** The run's other tasks that run an agent at the same time: their jobs manage their pods. */
+  others?: readonly string[] | undefined;
 }
 
 export interface PodSettings extends SelfHostedSettings {
@@ -198,12 +200,15 @@ export class PodInference implements InferenceProvider {
 
   /**
    * Terminates this repository's pods that serve nobody: no other run of the repository is
-   * active while open-key runs, so a pod that is still starting or serving lost its run. Other
+   * active while open-key runs, so a pod that is still starting or serving lost its run, unless
+   * it is another task's of this run, whose own jobs open and close it at the same time. Other
    * tasks' kept pods stay until their idle limit. Returns the task's kept pod, if it fits.
    */
   async #sweep(task: string, log: Log): Promise<{ pod: Pod; nonce: string } | undefined> {
     let kept: { pod: Pod; nonce: string } | undefined;
+    const others = new Set(this.#settings.others ?? []);
     for (const pod of await this.#host.list(podOwner(this.#options.repository))) {
+      if (others.has(pod.env.CODEMAN_TASK ?? "")) continue;
       const nonce = pod.env.CODEMAN_NONCE ?? "";
       const handle = { podId: pod.id, nonce, url: this.#host.url(pod.id, GATEWAY_PORT) };
       const status = (await this.#admin(handle, "GET", "/admin/status").catch(() => undefined)) as

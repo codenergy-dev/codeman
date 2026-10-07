@@ -143,6 +143,19 @@ test("output limits stay within bounds", () => {
   assert.ok(!parsed.ok && parsed.error.includes("from 1 to 4000"));
 });
 
+test("a run takes one task by default, and up to ten at once", () => {
+  const resolved = resolveSettings({ model: "a/b" });
+  assert.ok(resolved.ok && resolved.value["parallel-tasks"] === 1);
+  assert.deepEqual(parseSettings("parallel-tasks: 3"), {
+    ok: true,
+    value: { "parallel-tasks": 3 },
+  });
+  for (const text of ["0", "11", "1.5", "two"]) {
+    assert.equal(parseSetting("parallel-tasks", text).ok, false, text);
+  }
+  assert.ok(!TASK_SETTINGS.has("parallel-tasks"), "one run's, not a task's");
+});
+
 test("OpenRouter is the default inference, and takes only OpenRouter model IDs", () => {
   const resolved = resolveSettings({}, {}, { model: "deepseek/deepseek-v4.1-flash" });
   assert.ok(resolved.ok && resolved.value.inference === "openrouter");

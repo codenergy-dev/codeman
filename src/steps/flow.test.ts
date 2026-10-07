@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, test } from "node:test";
@@ -821,4 +821,184 @@ test("profiles: a task's model wins where it fits, and is reported where it does
     readTask(fallback).problems.map((error) => error.problem.kind),
     ["settings-rejected"],
   );
+});
+
+/** Runs one task's apply job, as a leg of the run's matrix does: with its `task` input. */
+async function applyLeg(
+  platform: FakePlatform,
+  task: string,
+  inputs: Record<string, string>,
+): Promise<FakeRuntime> {
+  const runtime = new FakeRuntime({ inputs: { workdir, task, ...inputs } });
+  await apply(fakeServices(platform, runtime));
+  return runtime;
+}
+
+const opened = { "key-job-result": "success", "key-status": "opened" };
+
+/** The tasks whose apply marked them as moved, for next-run, since the last `clearMarks`. */
+function marks(): string[] {
+  const dir = join(workdir, "chain");
+  return existsSync(dir) ? readdirSync(dir).sort() : [];
+}
+
+function clearMarks(): void {
+  rmSync(join(workdir, "chain"), { recursive: true, force: true });
+}
+
+test("parallel tasks: one run plans two, each in its own jobs, and one that fails leaves the other", async () => {
+  clearMarks();
+  const platform = new FakePlatform({
+    ".codeman/settings.yml": [
+      "model: a/b",
+      "parallel-tasks: 2",
+      "task-budget: 3",
+      "inference-profiles:",
+      "  - name: crowded",
+      "    when:",
+      "      parallel-tasks: 2",
+      "    model: c/d",
+    ].join("\n"),
+  });
+  platform.maintainers.add("alice");
+  const first = platform.openIssue("alice", "Add rate limiting", "Limit requests.");
+  const second = platform.openIssue("alice", "Add a cache", "Cache responses.");
+  const third = platform.openIssue("alice", "Add logging", "Log requests.");
+
+  const selected = await selectStep(platform);
+  const tasks = JSON.parse(selected.outputs.tasks ?? "") as Record<string, string>[];
+  assert.deepEqual(
+    tasks.map((task) => [task.task, task.action, task["needs-agent"], task.stage]),
+    [
+      ["1", "plan", "true", "plan"],
+      ["2", "plan", "true", "plan"],
+    ],
+  );
+  assert.ok(selected.logged("info").includes("Picked 2 tasks, of up to 2: #1 (plan), #2 (plan)."));
+  // The first task's outputs, one each, for workflow files from before parallel tasks.
+  assert.deepEqual(
+    [selected.outputs.task, selected.outputs.action, selected.outputs.inference],
+    ["1", "plan", tasks[0]?.inference],
+  );
+  // Two agents at once: the profile for two tasks applies to both. The second keeps, of the
+  // month, what the first may spend; each leaves the other's pods alone.
+  const [one, two] = tasks.map((task) => JSON.parse(task.inference ?? ""));
+  assert.deepEqual(
+    [one.profile, one.reserved, one.others, two.profile, two.reserved, two.others],
+    ["crowded", undefined, ["2"], "crowded", 3, ["1"]],
+  );
+  assert.deepEqual(stateLabels(platform, first), ["codeman:planning"]);
+  assert.deepEqual(stateLabels(platform, second), ["codeman:planning"]);
+  assert.deepEqual(stateLabels(platform, third), [], "the third waits for the next run");
+
+  // Each leg reads its own task's context.
+  const context = (task: string) => readTask(new FakeRuntime({ inputs: { workdir, task } }));
+  assert.deepEqual(
+    [context("1").number, context("2").number, context("2").model],
+    [first, second, "c/d"],
+  );
+  assert.equal(readTask(selected).number, first, "task.json is the first task's");
+  assert.throws(() => context("3"), /ENOENT/);
+  assert.throws(() => context("../task"), /issue number/);
+
+  // The first task's agent fails; the second plans. Each apply writes only its own task.
+  const failed = await applyLeg(platform, "1", { ...opened, "agent-job-result": "failure" });
+  agentResult({ [context("2").planPath]: "# Plan\n" }, { summary: "Caches.", decisions: [] });
+  const planned = await applyLeg(platform, "2", { ...opened, "agent-job-result": "success" });
+  assert.deepEqual(stateLabels(platform, first), ["codeman:blocked"]);
+  assert.deepEqual(stateLabels(platform, second), ["codeman:ready"]);
+  assert.equal(platform.file(context("2").branch, context("2").planPath), "# Plan\n");
+  assert.equal(platform.file(context("1").branch, context("1").planPath), undefined);
+  assert.ok(!platform.botComments(first).some((body) => body.includes("Caches.")));
+
+  // Both moved, the failed one too, as a single task's run does: next-run starts another.
+  assert.deepEqual([failed.outputs.chain, planned.outputs.chain], ["true", "true"]);
+  assert.deepEqual(marks(), ["1", "2"]);
+
+  // The next run picks the third task, and the second goes on to routing.
+  clearMarks();
+  const next = await selectStep(platform);
+  assert.deepEqual(
+    (JSON.parse(next.outputs.tasks ?? "") as Record<string, string>[]).map((task) => [
+      task.task,
+      task.action,
+    ]),
+    [
+      ["3", "plan"],
+      ["2", "route"],
+    ],
+  );
+});
+
+test("parallel tasks: next-run starts another run only when some task moved", async () => {
+  clearMarks();
+  const platform = new FakePlatform({
+    ".codeman/settings.yml": "model: a/b\nparallel-tasks: 3\n",
+  });
+  platform.maintainers.add("alice");
+  const asked = platform.openIssue("alice", "Add rate limiting", "Limit requests.");
+  const selected = await selectStep(platform);
+  assert.equal(JSON.parse(selected.outputs.tasks ?? "").length, 1, "one task to pick");
+  assert.equal(JSON.parse(selected.outputs.inference ?? "").reserved, undefined);
+  agentResult(
+    { [readTask(selected).planPath]: "# Plan\n" },
+    {
+      summary: "Adds a limiter.",
+      decisions: [
+        {
+          id: 1,
+          title: "Storage",
+          question: "Where do counters live?",
+          options: [
+            { key: "a", label: "Memory" },
+            { key: "b", label: "Redis" },
+          ],
+          recommendation: "a",
+        },
+      ],
+    },
+  );
+  await applyLeg(platform, "1", { ...opened, "agent-job-result": "success" });
+  assert.deepEqual(stateLabels(platform, asked), ["codeman:awaiting-decision"]);
+
+  // An answer to record, which runs no agent, and a new task, which the month refuses.
+  platform.say(asked, "alice", "/codeman decide 1 b");
+  const refused = platform.openIssue("alice", "Add a cache", "Cache responses.");
+  clearMarks();
+  const run = await selectStep(platform);
+  const tasks = JSON.parse(run.outputs.tasks ?? "") as Record<string, string>[];
+  assert.deepEqual(
+    tasks.map((task) => [task.task, task.action, task["needs-agent"]]),
+    [
+      ["1", "record", "false"],
+      ["2", "plan", "true"],
+    ],
+  );
+  // Only one agent: the record keeps nothing of the month, and leaves no other task.
+  const choice = JSON.parse(tasks[1]?.inference ?? "");
+  assert.deepEqual([choice.reserved, choice.others], [undefined, undefined]);
+  await applyLeg(platform, "1", { "key-job-result": "skipped", "agent-job-result": "skipped" });
+  await applyLeg(platform, "2", {
+    "key-job-result": "success",
+    "key-status": "over-budget",
+    "key-reason": "The monthly budget is reached.",
+    "agent-job-result": "skipped",
+  });
+  assert.deepEqual(stateLabels(platform, asked), ["codeman:ready"]);
+  assert.deepEqual(stateLabels(platform, refused), [], "back to where it was");
+  assert.deepEqual(marks(), ["1"], "the answers moved a task");
+
+  // A run whose only task the month refuses moved nothing: no mark, so no other run.
+  clearMarks();
+  const alone = new FakePlatform({ ".codeman/settings.yml": "model: a/b\nparallel-tasks: 2\n" });
+  alone.maintainers.add("alice");
+  alone.openIssue("alice", "Add a cache", "Cache responses.");
+  await selectStep(alone);
+  const over = await applyLeg(alone, "1", {
+    "key-job-result": "success",
+    "key-status": "over-budget",
+    "agent-job-result": "skipped",
+  });
+  assert.equal(over.outputs.chain, undefined);
+  assert.deepEqual(marks(), []);
 });

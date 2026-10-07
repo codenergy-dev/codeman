@@ -56,9 +56,9 @@ It encrypts each task key, or self-hosted run token, while it travels from the j
 
 ## 4. Add the workflow and settings
 
-1. Copy [`templates/codeman.yml`](../templates/codeman.yml) to `.github/workflows/codeman.yml` in the target repository.
-2. Replace every `COMMIT_SHA` with a full commit SHA of this repository. Pin a SHA, not a branch or tag, so the code that runs cannot change without a review.
-3. If the agent needs tools that the runner image lacks, set them up in the `agent` job, where the template marks the place (for example `actions/setup-node`). Tools installed inside the runner's home, such as Rust through `rustup`, are out of the agent's reach; install them system-wide instead. Add only steps that install tools: a step that runs repository code, such as `npm ci`, runs code the agent wrote outside its sandbox, where it can read the job's secrets. See [security](security.md#3-steps-added-to-the-agent-job-run-outside-the-sandbox).
+1. Copy [`templates/codeman.yml`](../templates/codeman.yml) to `.github/workflows/codeman.yml` in the target repository, and [`templates/codeman-task.yml`](../templates/codeman-task.yml), which runs each task's jobs, to `.github/workflows/codeman-task.yml`.
+2. Replace every `COMMIT_SHA` in both with a full commit SHA of this repository. Pin a SHA, not a branch or tag, so the code that runs cannot change without a review.
+3. If the agent needs tools that the runner image lacks, set them up in the `agent` job of `codeman-task.yml`, where the template marks the place (for example `actions/setup-node`). Tools installed inside the runner's home, such as Rust through `rustup`, are out of the agent's reach; install them system-wide instead. Add only steps that install tools: a step that runs repository code, such as `npm ci`, runs code the agent wrote outside its sandbox, where it can read the job's secrets. See [security](security.md#3-steps-added-to-the-agent-job-run-outside-the-sandbox).
 4. Copy [`templates/settings.yml`](../templates/settings.yml) to `.codeman/settings.yml` and choose the model, unless the organization's [shared settings](#shared-settings) choose it. See [settings](architecture.md#settings) for every value.
 5. Optionally, add a `.codemanignore` with the paths the agent may not change; see [change policy](architecture.md#change-policy). Without one, Codeman uses its own rules and proposes them in its first pull request. Those rules keep the agent out of `.github/`, including workflows; see [on-demand workflows](architecture.md#on-demand-workflows) to allow them.
 6. Create a `codeman` label in the target repository.
@@ -66,6 +66,10 @@ It encrypts each task key, or self-hosted run token, while it travels from the j
 Codeman reads `.codeman/settings.yml` and `.codemanignore` from the default branch. A manual run (**Actions → Codeman → Run workflow**) can override the model and the budgets for that run.
 
 The agent job needs a Linux runner (x64 or arm64).
+
+To update a workflow copied before `codeman-task.yml` existed, copy both templates again and move any steps you added to the `agent` job into `codeman-task.yml`. The older file still runs one task per run with this version of Codeman, but `parallel-tasks` above 1 needs both files: with only the older one, each run would mark several tasks as started and work on the first.
+
+A run works on one task by default. `parallel-tasks: 2` (up to 10) in `.codeman/settings.yml` lets a run work on that many at once, each with its own key, agent and pod; the run ends when its slowest task does. On OpenRouter, it only finishes tasks sooner: each pays for its own tokens. The monthly budget holds across them: see [budget](architecture.md#budget).
 
 ### Shared settings
 

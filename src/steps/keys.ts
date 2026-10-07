@@ -15,7 +15,7 @@ export async function openKey({ runtime, inference, budget: budgets }: Services)
   const task = runtime.input("task", { required: true });
   const taskBudget = positiveNumber(runtime, "task-budget");
   const monthlyBudget = positiveNumber(runtime, "monthly-budget");
-  const { profile } = parseInferenceChoice(runtime.input("inference"));
+  const { profile, reserved = 0 } = parseInferenceChoice(runtime.input("inference"));
   if (profile) runtime.info(`The run uses the inference profile \`${profile}\`.`);
 
   // Every provider the settings name counts in the month, so each needs its credentials.
@@ -36,6 +36,9 @@ export async function openKey({ runtime, inference, budget: budgets }: Services)
   runtime.info(`This task has spent ${usd(spent)} of ${usd(taskBudget)}.`);
   const parts = months.map((month) => `${month.provider} ${usd(month.spent)}`).join(", ");
   runtime.info(`Usage this month (${parts}): ${usd(used)} of ${usd(monthlyBudget)}.`);
+  if (reserved > 0) {
+    runtime.info(`Kept for the tasks this run picked before this one: up to ${usd(reserved)}.`);
+  }
 
   const limit = runLimit(taskBudget, spent);
   if (limit === undefined) {
@@ -46,11 +49,13 @@ export async function openKey({ runtime, inference, budget: budgets }: Services)
     );
     return;
   }
-  if (used + limit > monthlyBudget) {
+  // The run's tasks open their keys at once: each counts what those picked before it may spend.
+  if (used + reserved + limit > monthlyBudget) {
+    const others = reserved > 0 ? `, up to ${usd(reserved)} is kept for the run's other tasks` : "";
     runtime.output("status", "over-budget");
     runtime.output(
       "reason",
-      `The monthly budget is reached: ${usd(used)} used of ${usd(monthlyBudget)}, and this run may use up to ${usd(limit)}.`,
+      `The monthly budget is reached: ${usd(used)} used of ${usd(monthlyBudget)}${others}, and this run may use up to ${usd(limit)}.`,
     );
     return;
   }

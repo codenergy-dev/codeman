@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { MIN_RUN_BUDGET, runLimit } from "../budget.ts";
 import type { Change } from "../collect.ts";
@@ -56,7 +56,7 @@ import {
   webPages,
 } from "../webdocs.ts";
 import { MAX_OUTPUT_BYTES } from "./agent.ts";
-import { readTask, resultDir } from "./common.ts";
+import { chainDir, readTask, resultDir } from "./common.ts";
 
 /**
  * Validates what the earlier jobs produced and writes it to the platform. Runs no LLM. Everything it
@@ -81,6 +81,12 @@ export async function apply(services: Services): Promise<void> {
   else if (task.action === "route") await applyRoute(task, io);
   else await applyPlan(task, io);
   runtime.output("chain", String(chain));
+  if (chain) {
+    // A run's tasks are legs of a matrix, whose outputs keep one leg's value: next-run looks
+    // for this mark of each task that moved instead.
+    mkdirSync(chainDir(runtime), { recursive: true });
+    writeFileSync(join(chainDir(runtime), String(task.number)), `${task.number}\n`);
+  }
 }
 
 /** What apply works with. */

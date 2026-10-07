@@ -6,7 +6,7 @@ Codeman runs an AI agent that reads text and runs shell commands. Read everythin
 
 ## Secrets
 
-The workflow is [`templates/codeman.yml`](../templates/codeman.yml); the jobs are described in [architecture](architecture.md#jobs).
+The workflow is [`templates/codeman.yml`](../templates/codeman.yml), which runs each task's jobs (`open-key`, `agent`, `close-key`, `apply`, `release-pod`) in [`templates/codeman-task.yml`](../templates/codeman-task.yml); the jobs are described in [architecture](architecture.md#jobs). `codeman.yml` passes that workflow its secrets by name, and grants it at most the `agent` job's permissions; each of its jobs references only the secrets the table below names, and asks for its own permissions.
 
 | Secret | Used by | Safe | Why | Gap | Mitigation |
 | --- | --- | --- | --- | --- | --- |
@@ -58,7 +58,7 @@ How to protect:
 
 Only Codeman's step runs the agent as the unprivileged `codeman-agent` user. Any other step in the `agent` job runs as the runner's user, which has `sudo` and can read the job's secrets from the runner's memory: the encryption secret and the job's `GITHUB_TOKEN`. The job checks out the task branch, so a step that runs repository code (`npm ci`, `make`, a test script) runs code the agent wrote.
 
-How to protect: in the `agent` job, add only steps that install tools, such as `actions/setup-node`. Leave installing dependencies and running scripts to the agent, inside the sandbox.
+How to protect: in the `agent` job (in `codeman-task.yml`), add only steps that install tools, such as `actions/setup-node`. Leave installing dependencies and running scripts to the agent, inside the sandbox.
 
 ### 4. The agent can send its task key out
 
@@ -123,5 +123,5 @@ Planned improvements, most valuable first. Each will get its own plan.
 1. **Restrict the agent's network** to an allowlist (OpenRouter or the run's gateway, package registries), with `iptables` rules that match the agent's user. This reduces risks 2 and 4.
 2. **Test the sandbox against a hostile agent.** A CI job on a GitHub-hosted runner replaces the harness with a script that tries to read secrets: other users' `/proc/*/environ`, the runner's home, `sudo`, `docker`, the runner's credentials and cloud metadata endpoints. The build fails if any attempt succeeds. This keeps the [secrets](#secrets) table true as Codeman and the runner images change.
 3. **Warn about secrets exposed to task branches.** `select` warns when a workflow that runs on `push` or `pull_request` for `codeman/*` references `secrets.*` outside an Environment. This reduces risk 1.
-4. **Warn about extra steps in the agent job.** `select` reads the workflow and warns when the `agent` job has `run` steps, or actions other than known setup actions. This reduces risk 3.
+4. **Warn about extra steps in the agent job.** `select` reads the workflows and warns when the `agent` job has `run` steps, or actions other than known setup actions. This reduces risk 3.
 5. **Have the review stage look for exfiltration:** new network calls, reads of environment variables, and changes to scripts that CI runs. This reduces risk 1, and does not replace a human review.

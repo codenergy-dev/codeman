@@ -25,7 +25,7 @@ inputs:
     description: "(open-key) Hours until a task key expires."
     default: "24"
   task:
-    description: "(open-key) Issue number of the selected task."
+    description: "(open-key, agent, apply) Issue number of the job's task, one of select's tasks. agent and apply read its context; empty, as from older workflow files, reads the only one they had."
   management-key:
     description: "(open-key, close-key) OpenRouter management key, for OpenRouter inference. open-key also needs it when an inference profile names OpenRouter, to count its month."
   inference:
@@ -91,24 +91,26 @@ inputs:
   workdir:
     description: "Directory for Codeman's files. Defaults to RUNNER_TEMP/codeman."
 outputs:
+  tasks:
+    description: "(select) The tasks this run works on, up to parallel-tasks, as a JSON list: for each, its task, action, needs-agent, stage, base-sha, task-budget, monthly-budget and inference, as the outputs of those names describe them. Empty when there is nothing to do."
   action:
-    description: "(select) What this run does: plan, route, implement, record, accept or none."
+    description: "(select) What this run does for its first task: plan, route, implement, record, accept; none when there is nothing to do."
   needs-agent:
-    description: "(select) Whether this run needs a key and the agent: true or false."
+    description: "(select) Whether the first task needs a key and the agent: true or false."
   stage:
-    description: "(select) What the agent works on: plan, route, design, code, test or review."
+    description: "(select) What the agent works on: plan, route, design, code, test or review. The first task's."
   task:
-    description: "(select) Issue number of the selected task."
+    description: "(select) Issue number of the first task."
   model:
-    description: "(select) Model for the selected task."
+    description: "(select) Model for the first task."
   base-sha:
-    description: "(select) Commit the agent starts from."
+    description: "(select) Commit the agent starts from. The first task's."
   task-budget:
-    description: "(select) Resolved spending limit of the task key, in USD."
+    description: "(select) Resolved spending limit of the task key, in USD. The first task's."
   monthly-budget:
     description: "(select) Resolved monthly spending limit, in USD."
   inference:
-    description: "(select) Where the run gets its model, as JSON, for the key jobs: the inference profile that applies, the task's spend from its record, and every provider the settings name."
+    description: "(select) Where the run gets its model, as JSON, for the key jobs: the inference profile that applies, the task's spend from its record, every provider the settings name and, with several tasks, the run's other tasks and what the month keeps for those picked before. The first task's."
   status:
     description: "(open-key) opened, over-budget (monthly), task-budget-spent, or missing-credentials (a provider the settings name has no secret)."
   task-spent:
@@ -152,7 +154,7 @@ outputs:
   encrypted-key:
     description: "(open-key) The task key, encrypted."
   chain:
-    description: "(apply) Whether to start another run: true or false."
+    description: "(apply) Whether to start another run: true or false. When true, apply also writes a mark of its task under the workdir's chain/ directory, for the workflow to upload."
   continues:
     description: "(apply) Whether the task goes on to another agent run: true or false."
 runs:

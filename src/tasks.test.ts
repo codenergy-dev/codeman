@@ -11,6 +11,7 @@ import {
   authorizedComments,
   authorizedReviews,
   chooseTask,
+  chooseTasks,
   commandsAfter,
   commenters,
   findStatus,
@@ -189,6 +190,24 @@ test("implements after planning, work in progress first", () => {
     number: 1,
     action: "implement",
   });
+});
+
+test("a run with several tasks picks them in the same order, each once", () => {
+  const candidates = [
+    { number: 1, state: "ready" as const },
+    { number: 4, state: "in-progress" as const },
+    { number: 6, state: "new" as const },
+    { number: 7, state: "awaiting-decision" as const, pending: "record" as const },
+    { number: 8, state: "blocked" as const },
+  ];
+  assert.deepEqual(chooseTasks(candidates, 3), [
+    { number: 7, action: "record" },
+    { number: 6, action: "plan" },
+    { number: 4, action: "implement" },
+  ]);
+  assert.deepEqual(chooseTasks(candidates, 1), [chooseTask(candidates)]);
+  assert.equal(chooseTasks(candidates, 10).length, 4, "the blocked task waits");
+  assert.deepEqual(chooseTasks([{ number: 8, state: "blocked" }], 2), []);
 });
 
 test("only the App's own comment counts as the status comment", () => {

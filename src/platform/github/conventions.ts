@@ -14,7 +14,7 @@ export const GITHUB: Conventions = {
     file: /^\.github\/workflows\/[A-Za-z0-9._-]+\.ya?ml$/,
     fileDescription: "files directly under .github/workflows/",
     protect: "# Workflows and repository automation.\n/.github/**\n",
-    probes: [".github/workflows/codeman.yml"],
+    probes: [".github/workflows/codeman.yml", ".github/workflows/codeman-task.yml"],
     agentRules: (branch) =>
       `- Workflow files you write under \`${WORKFLOWS_DIR}\` are not committed there: Codeman stages them under \`.codeman/workflows/\` until a maintainer reads and accepts them, because a workflow runs with the repository's secrets. Deleting a workflow is left to a maintainer.
 - If the task needs work this runner cannot do (another operating system, a device, a secret), write a workflow for it that runs on pushes to \`${branch}\`, with \`paths\` filters so it does not run on unrelated pushes (include the workflow file itself, so it runs when a maintainer accepts it), and report \`awaiting-workflow\`. While the workflow waits for a maintainer, the task goes on to the next stages and review; you get its results once it has run. Codeman gives you its results in a later run. A workflow that needs secrets must use a GitHub Environment. Never wait for a workflow that deploys, publishes or releases: run from the task branch, it would ship work nobody reviewed. Such a workflow is part of the change, and runs after the merge.`,
