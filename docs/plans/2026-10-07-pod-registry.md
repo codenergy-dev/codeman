@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-10-07T14:56:15-03:00
-updated_at: 2026-10-07T16:37:05-03:00
+updated_at: 2026-10-07T16:39:19-03:00
 commit: a8594ea
 ---
 
@@ -79,6 +79,7 @@ Refined on 2026-10-07 against the backend and the ledger as built ([backend plan
 4. **Untracked time** (decision 4). When a Codeman job terminates a pod, it records on the pod's document, for the organization: its life at its price (creation to termination), what the ledger's runs on it counted (`spentBy`, as the budgets count them), and the difference as `untracked`, with the `month` of its end. The organization's month (with `organization-monthly-budget`) adds each pod's untracked time of the month, spread over its life and reconciled with Runpod's hourly billing like the runs; repositories' months and tasks never count it. Done when tests cover a shared pod's leftover time in the organization's month and not in the repository's.
    - **Choice: everything no task counted.** The difference includes a task's kept time after its last close, which no task counts either, as well as the time with no run and no keeper; it errs on the side of the budgets.
    - **Choice: pods that terminate themselves** have no known end: their time counts through Runpod's billing, as before.
+   - **Done on 2026-10-07**: a terminated pod's event carries its life (`PodLife`: its document, provider, creation, termination and price), from the handle, the registry or the provider's listing. `Ledger.flush`, after the job's writes, queries the runs on the pod (`pod`, an equality filter) and merges `pod`, `provider`, `createdAt`, `pricePerSecond`, `terminatedAt`, `month`, `lifeCost`, `counted` and `untracked` into the pod's document, and logs them. `monthRuns` and `reserve` (with an organization's budget) read the month's pods (`month`) as runs of no repository (`untrackedRuns`), which `reconciledMonth` spreads over the pod's life. Test in `ledger.test.ts`: a shared pod of two repositories terminated by `release-pod`, whose US$ 0.09 left over counts in the organization's month and not in the repository's.
 5. **Docs**: [architecture](../architecture.md) (Runs, Jobs, Choosing, Pods, Shared pods, Spend, Budget, Backend's data layout and ledger), [installation](../installation.md) (`parallel-tasks`, Pods, the change), [security](../security.md), [development](../development.md), `action.yml` and the task template's comments. Rebuild `dist/` and run `npm run check`. Done when they pass and `dist/gateway.js` is unchanged.
 
 ## End-to-end test

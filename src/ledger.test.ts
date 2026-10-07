@@ -11,6 +11,7 @@ import type { Fields, Store, Write } from "./store/store.ts";
 import { FakeInference } from "./testing/fake-inference.ts";
 import { FakePlatform, fakeServices } from "./testing/fake-platform.ts";
 import { FakeRuntime } from "./testing/fake-runtime.ts";
+import { seedRuns } from "./testing/ledger-runs.ts";
 
 const workdir = mkdtempSync(join(tmpdir(), "codeman-ledger-"));
 after(() => rmSync(workdir, { recursive: true, force: true }));
@@ -160,6 +161,67 @@ test("a run's document grows with each job, and each job says what it did", asyn
       { cost: 0.36 },
     ),
   });
+});
+
+test("a terminated pod's time that no task counted counts in the organization's month, not a repository's", async () => {
+  const store = new MemoryStore();
+  const on = { provider: "runpod", mode: "pod", status: "closed", pod: "pod1" };
+  await seedRuns(
+    store,
+    {
+      "290-1-7": { ...on, repository: "codenergy/codeman", cost: 0.05, podCost: 0.06 },
+      "290-1-8": { ...on, repository: "codenergy/codeman", cost: 0.15, podCost: 0.18 },
+      "295-1-3": { ...on, repository: "codenergy/other", cost: 0.03, podCost: 0.03 },
+      "300-1-9": { provider: "runpod", mode: "pod", repository: "codenergy/codeman" },
+    },
+    "codenergy",
+    new Date("2026-10-07T12:00:00Z"),
+  );
+  const release = ledger(store, "release-pod", { at: "2026-10-07T12:30:00Z" });
+  // Half an hour at US$ 0.72 per hour: US$ 0.36, of which the tasks counted US$ 0.27.
+  release.ledger.release("290-1-8", [
+    {
+      pod: "pod1",
+      event: "terminated",
+      reason: "no run uses it and no task keeps it",
+      life: {
+        record: "n1",
+        provider: "runpod",
+        from: Date.parse("2026-10-07T12:00:00Z"),
+        to: Date.parse("2026-10-07T12:30:00Z"),
+        pricePerSecond: 0.0002,
+      },
+    },
+  ]);
+  await release.ledger.flush(release.runtime);
+  const pod = (await store.get("organizations/codenergy/pods/n1"))?.fields;
+  assert.deepEqual(
+    [pod?.pod, pod?.provider, pod?.month, pod?.lifeCost, pod?.counted, pod?.untracked],
+    ["pod1", "runpod", "2026-10", 0.36, 0.27, 0.09],
+  );
+  assert.equal(
+    (await store.get("organizations/codenergy/events/290-1-8-pod-terminated-pod1"))?.fields.reason,
+    "no run uses it and no task keeps it",
+  );
+  assert.match(
+    release.runtime.logged("info").join("\n"),
+    /the organization's month counts the other US\$ 0\.09/,
+  );
+
+  const open = ledger(store, "open-key", { at: "2026-10-07T13:00:00Z" });
+  const budgets = { task: 9, taskBudget: 1, monthlyBudget: 20, recorded: 0, billed: new Map() };
+  const repository = await open.ledger.reserve("300-1-9", budgets);
+  assert.ok(Math.abs(repository.month - 0.24) < 1e-9, `${repository.month}`);
+  const organization = await open.ledger.reserve("300-1-9", {
+    ...budgets,
+    organizationBudget: 100,
+  });
+  assert.ok(
+    Math.abs((organization.organization ?? 0) - 0.36) < 1e-9,
+    `${organization.organization}`,
+  );
+  assert.ok(Math.abs(organization.month - 0.24) < 1e-9);
+  assert.ok((await open.ledger.monthRuns(open.runtime)).some((run) => run.id === "pod-n1"));
 });
 
 test("a refused run says why, in its document and its event", async () => {

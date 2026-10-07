@@ -27,8 +27,9 @@ const HOUR_MS = 3_600_000;
 /** A run of Codeman's ledger, as the budgets read it (docs/architecture.md#the-ledger). */
 export interface LedgerRun {
   id: string;
-  /** `owner/name`, lowercase. */
+  /** `owner/name`, lowercase; empty for a pod's time no task counted, the organization's. */
   repository: string;
+  /** The task's issue; 0 for a pod's time no task counted. */
   task: number;
   workflowRun: string;
   /** `picked`, `open`, `refused`, `failed`, `closed` or `expired`. */

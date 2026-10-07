@@ -9,8 +9,9 @@ import {
   runAmount,
   runLimit,
   spentBy,
+  usd,
 } from "./budget.ts";
-import type { PodEvent, RunUsage } from "./inference/provider.ts";
+import type { PodEvent, PodLife, RunUsage } from "./inference/provider.ts";
 import type { Log, Runtime } from "./runtime/runtime.ts";
 import { isLedgerRunId, LAYOUT, ledgerMonth, repositoryName } from "./store/layout.ts";
 import type { Fields, Store, StoredDocument, StoreReader, Write } from "./store/store.ts";
@@ -108,6 +109,8 @@ export class Ledger {
   readonly #now: () => Date;
   readonly #wait: (ms: number) => Promise<void>;
   #writes: Write[] = [];
+  /** The pods the job terminated, with their lives: `flush` records their time no task counted. */
+  #lives: { pod: string; life: PodLife }[] = [];
 
   constructor(
     store: Store,
@@ -162,12 +165,17 @@ export class Ledger {
     );
   }
 
-  /** The organization's runs this month, of every repository. */
+  /**
+   * The organization's runs this month, of every repository, and its pods' time that no task
+   * counted.
+   */
   async monthRuns(log: Log): Promise<LedgerRun[]> {
     const { owner } = this.#source.runtime.repository;
-    return this.#retry(log, "read Codeman's ledger", async () =>
-      ledgerRuns(await monthQuery(this.#store, owner, ledgerMonth(this.#now()))),
-    );
+    const month = ledgerMonth(this.#now());
+    return this.#retry(log, "read Codeman's ledger", async () => [
+      ...ledgerRuns(await monthQuery(this.#store, owner, month)),
+      ...untrackedRuns(await untrackedQuery(this.#store, owner, month)),
+    ]);
   }
 
   /**
@@ -227,14 +235,17 @@ export class Ledger {
     const now = this.#now();
     return this.#store.transaction(
       async (tx) => {
-        const [task, month] = await Promise.all([
+        const organization = budgets.organizationBudget !== undefined;
+        const [task, month, untracked] = await Promise.all([
           taskQuery(tx, owner, repository, budgets.task).then(ledgerRuns),
-          monthQuery(
-            tx,
-            owner,
-            ledgerMonth(now),
-            budgets.organizationBudget === undefined ? repository : undefined,
-          ).then(ledgerRuns),
+          monthQuery(tx, owner, ledgerMonth(now), organization ? undefined : repository).then(
+            ledgerRuns,
+          ),
+          // Pods' time no task counted belongs to the organization's month alone (decision 4 of
+          // the pod registry plan).
+          organization
+            ? untrackedQuery(tx, owner, ledgerMonth(now)).then(untrackedRuns)
+            : Promise.resolve([]),
         ]);
         const own = task.find((other) => other.id === run);
         // What an earlier attempt of this run spent, when it closed; a reservation replaces the
@@ -260,7 +271,7 @@ export class Ledger {
           organization:
             budgets.organizationBudget === undefined
               ? undefined
-              : reconciledMonth(monthRuns, budgets.billed, now) + before,
+              : reconciledMonth([...monthRuns, ...untracked], budgets.billed, now) + before,
         };
         const { limit } = reservation;
         if (limit === undefined) return { ...reservation, outcome: "task-budget-spent" };
@@ -370,6 +381,50 @@ export class Ledger {
     }
     this.#writes = [];
     log.info(`Recorded ${writes.length} document(s) in Codeman's ledger.`);
+    const lives = this.#lives;
+    this.#lives = [];
+    for (const { pod, life } of lives) await this.#untracked(pod, life, log);
+  }
+
+  /**
+   * Records on a terminated pod's document its time that no task counted (decision 4 of the pod
+   * registry plan): its life at its price, less what the ledger's runs on it count, as the
+   * budgets count them. It counts in the organization's month of the pod's end. Runs after the
+   * job's own runs are written, so they count.
+   */
+  async #untracked(pod: string, life: PodLife, log: Log): Promise<void> {
+    const { owner } = this.#source.runtime.repository;
+    await this.#retry(log, "write to Codeman's ledger", async () => {
+      const runs = ledgerRuns(
+        await this.#store.query(LAYOUT.runs(owner), {
+          where: [{ field: "pod", op: "==", value: pod }],
+        }),
+      );
+      const lifeCost = (Math.max(0, life.to - life.from) / 1000) * life.pricePerSecond;
+      const counted = spentBy(runs);
+      const untracked = Math.max(0, lifeCost - counted);
+      await this.#store.write([
+        {
+          op: "set",
+          path: LAYOUT.pod(owner, life.record),
+          fields: {
+            pod,
+            provider: life.provider,
+            createdAt: new Date(life.from),
+            pricePerSecond: life.pricePerSecond,
+            terminatedAt: new Date(life.to),
+            month: ledgerMonth(new Date(life.to)),
+            lifeCost: round(lifeCost),
+            counted: round(counted),
+            untracked: round(untracked),
+          },
+          merge: true,
+        },
+      ]);
+      log.info(
+        `Pod ${pod} cost about ${usd(lifeCost)}, of which its tasks count ${usd(counted)}; the organization's month counts the other ${usd(untracked)}.`,
+      );
+    });
   }
 
   #repository(): string {
@@ -407,8 +462,9 @@ export class Ledger {
   }
 
   #pods(run: string, events: readonly PodEvent[] | undefined): void {
-    for (const { pod, event, reason } of events ?? []) {
+    for (const { pod, event, reason, life } of events ?? []) {
       this.#event(run, `pod-${event}`, { pod, ...(reason ? { reason } : {}) }, pod);
+      if (event === "terminated" && life) this.#lives.push({ pod, life });
     }
   }
 
@@ -519,4 +575,49 @@ export function ledgerRuns(documents: readonly StoredDocument[]): LedgerRun[] {
     ];
   });
   return runs.sort((a, b) => a.start.getTime() - b.start.getTime() || (a.id < b.id ? -1 : 1));
+}
+
+/** The organization's pods that ended in a month, with their time no task counted. */
+function untrackedQuery(
+  store: StoreReader,
+  owner: string,
+  month: string,
+): Promise<StoredDocument[]> {
+  return store.query(LAYOUT.pods(owner), {
+    where: [{ field: "month", op: "==", value: month }],
+  });
+}
+
+/**
+ * Pods' time no task counted, as runs of no repository or task that the organization's month
+ * counts: each spreads over its pod's life.
+ */
+export function untrackedRuns(documents: readonly StoredDocument[]): LedgerRun[] {
+  return documents.flatMap((document): LedgerRun[] => {
+    const { fields } = document;
+    const { pod, provider, untracked, createdAt, terminatedAt } = fields;
+    if (typeof pod !== "string" || typeof provider !== "string") return [];
+    if (typeof untracked !== "number" || !Number.isFinite(untracked) || untracked <= 0) return [];
+    if (!(createdAt instanceof Date) || !(terminatedAt instanceof Date)) return [];
+    return [
+      {
+        id: `pod-${document.path.slice(document.path.lastIndexOf("/") + 1)}`,
+        repository: "",
+        task: 0,
+        workflowRun: "",
+        status: "closed",
+        provider,
+        cost: untracked,
+        pod,
+        start: createdAt,
+        expiresAt: terminatedAt,
+        closedAt: terminatedAt,
+      },
+    ];
+  });
+}
+
+/** Rounds an amount in USD as the ledger keeps it. */
+function round(amount: number): number {
+  return Number(amount.toFixed(6));
 }
