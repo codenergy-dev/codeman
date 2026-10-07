@@ -287,6 +287,33 @@ function meterCost(meter, start, records, now, samples = []) {
   const ms = meter.kind === "time" ? Math.max(0, now - start) : busyMs(records, meter.idleMs, now, samples);
   return ms / 1e3 * meter.pricePerSecond;
 }
+function podShares(runs, kept, now, pricePerSecond) {
+  const until = (end) => Math.min(end ?? now, now);
+  const points = /* @__PURE__ */ new Set();
+  for (const run of runs) points.add(Math.min(run.start, now)).add(until(run.end));
+  for (const span of kept) points.add(Math.min(span.from, now)).add(until(span.to));
+  const times = [...points].sort((a, b) => a - b);
+  const shares = { runs: /* @__PURE__ */ new Map(), kept: /* @__PURE__ */ new Map() };
+  for (let i = 1; i < times.length; i++) {
+    const from = times[i - 1];
+    const to = times[i];
+    const seconds = (to - from) / 1e3;
+    const on = runs.filter((run) => run.start <= from && until(run.end) >= to);
+    for (const run of on) {
+      const share = seconds * run.pricePerSecond / on.length;
+      shares.runs.set(run.id, (shares.runs.get(run.id) ?? 0) + share);
+    }
+    if (on.length > 0) continue;
+    const keepers = new Set(
+      kept.filter((span) => span.from <= from && until(span.to) >= to).map((span) => span.task)
+    );
+    for (const task of keepers) {
+      const share = seconds * pricePerSecond / keepers.size;
+      shares.kept.set(task, (shares.kept.get(task) ?? 0) + share);
+    }
+  }
+  return shares;
+}
 function summarize(records, meter, start, now, samples = []) {
   let inputTokens = 0;
   let outputTokens = 0;
@@ -345,6 +372,8 @@ var EventReader = class {
 
 // src/gateway/gateway.ts
 var ROUTES = /* @__PURE__ */ new Set(["POST /v1/chat/completions", "POST /v1/completions", "GET /v1/models"]);
+var TASK = /^\d{1,12}$/;
+var GROUP = /^[\w.-]{1,100}$/;
 var MAX_BODY_BYTES = 32 * 1024 * 1024;
 var KEEP_ALIVE_MS = 2e4;
 function sha256(text) {
@@ -358,17 +387,17 @@ function matches(token, hash) {
 }
 var RunStopped = class extends Error {
 };
+var GATEWAY_VERSION = 2;
 var Gateway = class {
   #options;
   #now;
-  #run;
-  #records = [];
-  /** The run's worker samples, in order. */
-  #samples = [];
-  /** Since when samples have seen no worker starting or running while a request waited. */
-  #noWorkerSince;
-  /** The requests being forwarded, to abort when the run stops. */
-  #open = /* @__PURE__ */ new Set();
+  /** Every run, in the order they started. */
+  #runs = [];
+  /** When each task kept the pod between its runs. */
+  #kept = [];
+  #nextId = 1;
+  /** The group of runs that share the pod, as the last run that named one gave it. */
+  group;
   /** The last time a request arrived or a run started or ended. */
   lastActivity;
   ready = false;
@@ -378,83 +407,199 @@ var Gateway = class {
     this.#now = options.now ?? Date.now;
     this.lastActivity = this.#now();
   }
-  /** Starts a run, whose token replaces any earlier one. */
-  startRun(run) {
-    this.#run = { ...run, active: true };
-    this.#records = [];
-    this.#samples = [];
-    this.#noWorkerSince = void 0;
-    this.lastActivity = this.#now();
+  /**
+   * Starts a run. A run of a task replaces that task's earlier one; a run that names no task
+   * replaces every run, as when the gateway served one at a time.
+   */
+  startRun(settings) {
+    const now = this.#now();
+    const task = settings.task ?? "";
+    for (const run of this.#runs) {
+      if (run.active && (task === "" || run.task === task)) this.#end(run, now);
+    }
+    this.release(task);
+    this.#runs.push({
+      ...settings,
+      id: this.#nextId++,
+      task,
+      active: true,
+      records: [],
+      samples: [],
+      lastActivity: now,
+      open: /* @__PURE__ */ new Set()
+    });
+    if (settings.group) this.group = settings.group;
+    this.lastActivity = now;
   }
   /**
-   * Records what the provider said of the run's workers, for its busy meter. A request that
-   * waits `noWorkerMs` while every sample sees no worker starting or running stops the run;
+   * Records what the provider said of the workers, for each run's busy meter. A request that
+   * waits `noWorkerMs` while every sample sees no worker starting or running stops its run;
    * unknown samples neither prove a worker nor its absence.
    */
   observe(sample) {
-    if (!this.serving) return;
-    this.#samples.push(sample);
-    const limit = this.#options.noWorkerMs;
-    const waiting = this.#records.some((record) => record.end === void 0);
-    if (limit === void 0 || sample.workers === void 0) return;
-    if (!waiting || sample.workers !== "none") {
-      this.#noWorkerSince = void 0;
-      return;
-    }
-    this.#noWorkerSince ??= sample.at;
-    if (sample.at - this.#noWorkerSince >= limit) {
-      const minutes = Math.round(limit / 6e4);
-      this.#stop(
-        `No worker of the endpoint started or ran for ${minutes} minutes while a request waited, as when it has no GPU.`
-      );
+    for (const run of this.#runs.filter((one) => one.active)) {
+      run.samples.push(sample);
+      const limit = this.#options.noWorkerMs;
+      const waiting = run.records.some((record) => record.end === void 0);
+      if (limit === void 0 || sample.workers === void 0) continue;
+      if (!waiting || sample.workers !== "none") {
+        run.noWorkerSince = void 0;
+        continue;
+      }
+      run.noWorkerSince ??= sample.at;
+      if (sample.at - run.noWorkerSince >= limit) {
+        const minutes = Math.round(limit / 6e4);
+        this.#stop(
+          run,
+          `No worker of the endpoint started or ran for ${minutes} minutes while a request waited, as when it has no GPU.`
+        );
+      }
     }
   }
-  /** Stops serving the run: its waiting requests fail with `reason`, and so do new ones. */
-  #stop(reason) {
-    const run = this.#run;
-    if (!run?.active) return;
-    run.active = false;
+  /** Stops serving a run: its waiting requests fail with `reason`, and so do new ones. */
+  #stop(run, reason) {
+    if (!run.active) return;
+    this.#end(run, this.#now());
     run.stopped = reason;
-    this.lastActivity = this.#now();
     this.#log(reason);
-    for (const abort of this.#open) abort.abort(new RunStopped(reason));
+    for (const abort of run.open) abort.abort(new RunStopped(reason));
     this.#options.onStop?.(reason);
   }
-  /** Ends the run: its token stops working. Returns what it used. */
-  endRun() {
-    const usage = this.usage();
-    if (this.#run) this.#run.active = false;
-    this.lastActivity = this.#now();
-    return usage;
+  #end(run, now) {
+    run.active = false;
+    run.end ??= now;
+    this.lastActivity = now;
   }
-  /** What the current or last run used so far. */
-  usage() {
-    const run = this.#run;
-    return run ? summarize(this.#records, run.meter, run.start, this.#now(), this.#samples) : void 0;
+  /**
+   * Ends a run, by its token's hash, or the last one: its token stops working. With `keep`, its
+   * task keeps the pod for its next run, and is given the pod's time while no run uses it.
+   * Returns what the run used.
+   */
+  endRun(options = {}) {
+    const run = this.#find(options.tokenSha256);
+    if (!run) return void 0;
+    const now = this.#now();
+    this.#end(run, now);
+    if (options.keep && run.task && !this.#keepers().includes(run.task)) {
+      this.#kept.push({ task: run.task, from: now });
+    }
+    const usage = this.usage(run.tokenSha256);
+    return run.task ? { ...usage, share: this.#share(run.task, now) } : usage;
+  }
+  /** The task no longer keeps the pod: it does not go on to another run now. */
+  release(task) {
+    const now = this.#now();
+    for (const span of this.#kept) if (span.task === task && span.to === void 0) span.to = now;
+  }
+  /** What a run, by its token's hash, or the last one, used so far. */
+  usage(tokenSha256) {
+    const run = this.#find(tokenSha256);
+    if (!run) return void 0;
+    const now = run.end ?? this.#now();
+    return {
+      ...summarize(run.records, run.meter, run.start, now, run.samples),
+      cost: this.#cost(run)
+    };
+  }
+  #find(tokenSha256) {
+    if (tokenSha256 === void 0) return this.#runs.at(-1);
+    return this.#runs.findLast((run) => run.tokenSha256 === tokenSha256);
   }
   /** Whether a run is being served. */
   get serving() {
-    return this.#run?.active === true;
+    return this.#runs.some((run) => run.active);
   }
-  /** When the current run's budget is spent, for a meter that knows in advance. */
+  /** The runs being served, for the pod's limits. */
+  get runs() {
+    return this.#runs.filter((run) => run.active).map((run) => ({ deadline: this.#deadline(run), lastActivity: run.lastActivity }));
+  }
+  /** When the first of the runs' budgets is spent, for a meter that knows in advance. */
   get deadline() {
-    const run = this.#run;
-    if (!run?.active || run.meter.kind !== "time") return void 0;
-    return run.start + Math.floor(run.limit / run.meter.pricePerSecond * 1e3);
+    const deadlines = this.runs.flatMap(
+      (run) => run.deadline === void 0 ? [] : [run.deadline]
+    );
+    return deadlines.length > 0 ? Math.min(...deadlines) : void 0;
   }
-  /** Whether the current run may still spend. */
-  #withinBudget() {
-    const run = this.#run;
-    if (!run) return false;
-    return meterCost(run.meter, run.start, this.#records, this.#now(), this.#samples) < run.limit;
+  /**
+   * When a pod's run would spend its budget, were it alone from now on: other runs only make it
+   * later, so the pod checks again.
+   */
+  #deadline(run) {
+    if (!run.active || run.meter.kind !== "time") return void 0;
+    const now = this.#now();
+    return now + Math.floor((run.limit - this.#cost(run)) / run.meter.pricePerSecond * 1e3);
+  }
+  /**
+   * Stops the runs whose budget is spent or whose agent made no request for `runIdleMs`, while
+   * others go on; when none would, the pod terminates instead.
+   */
+  expireRuns(runIdleMs) {
+    const now = this.#now();
+    for (const run of this.#runs.filter((one) => one.active)) {
+      if (!this.#withinBudget(run)) this.#stop(run, "This run's budget is spent.");
+      else if (now - run.lastActivity >= runIdleMs) {
+        this.#stop(run, "This run made no request for too long.");
+      }
+    }
+  }
+  /** What a run cost so far: its share of the pod's time, or its workers' busy time. */
+  #cost(run) {
+    const now = this.#now();
+    if (run.meter.kind === "busy") {
+      return meterCost(run.meter, run.start, run.records, run.end ?? now, run.samples);
+    }
+    return this.#shares(now).runs.get(run.id) ?? 0;
+  }
+  /** The pod's split among its runs and the tasks that keep it. */
+  #shares(now) {
+    const spans = [];
+    for (const run of this.#runs) {
+      if (run.meter.kind !== "time") continue;
+      spans.push({
+        id: run.id,
+        start: run.start,
+        end: run.end,
+        pricePerSecond: run.meter.pricePerSecond
+      });
+    }
+    return podShares(spans, this.#kept, now, spans.at(-1)?.pricePerSecond ?? 0);
+  }
+  #share(task, now) {
+    const shares = this.#shares(now);
+    let taskCost = shares.kept.get(task) ?? 0;
+    for (const run of this.#runs) {
+      if (run.task === task) taskCost += shares.runs.get(run.id) ?? 0;
+    }
+    const tasks = (runs) => [
+      ...new Set(runs.map((run) => run.task).filter((one) => one !== ""))
+    ];
+    return {
+      taskCost,
+      tasks: tasks(this.#runs),
+      active: tasks(this.#runs.filter((run) => run.active)),
+      keepers: this.#keepers()
+    };
+  }
+  #keepers() {
+    return [...new Set(this.#kept.filter((span) => span.to === void 0).map((s) => s.task))];
+  }
+  /** Whether a run may still spend. */
+  #withinBudget(run) {
+    return this.#cost(run) < run.limit;
   }
   status() {
+    const active = this.#runs.filter((run) => run.active);
     return {
+      version: GATEWAY_VERSION,
       ready: this.ready,
       contextLength: this.contextLength,
       serving: this.serving,
       deadline: this.deadline,
-      lastActivity: this.lastActivity
+      lastActivity: this.lastActivity,
+      group: this.group,
+      tasks: [...new Set(this.#runs.map((run) => run.task).filter((task) => task !== ""))],
+      active: [...new Set(active.map((run) => run.task).filter((task) => task !== ""))],
+      keepers: this.#keepers()
     };
   }
   /** Listens on `host` (the loopback by default) and a free port unless one is given. */
@@ -477,16 +622,16 @@ var Gateway = class {
     if (path.startsWith("/admin/") || path === "/usage")
       return this.#admin(route, request, response);
     if (!ROUTES.has(route)) return send(response, 404, error("Not found."));
-    const holder = matches(bearer(request), this.#run?.tokenSha256);
-    const stopped = this.#run?.stopped;
-    if (holder && stopped) return send(response, 503, error(stopped, "run_stopped"));
-    if (!this.serving || !holder) return send(response, 401, error("Invalid token."));
-    this.lastActivity = this.#now();
-    if (!this.#withinBudget()) {
+    const token = bearer(request);
+    const run = this.#runs.findLast((one) => matches(token, one.tokenSha256));
+    if (run?.stopped) return send(response, 503, error(run.stopped, "run_stopped"));
+    if (!run?.active) return send(response, 401, error("Invalid token."));
+    this.lastActivity = run.lastActivity = this.#now();
+    if (!this.#withinBudget(run)) {
       return send(response, 402, error("This run's budget is spent.", "budget_exceeded"));
     }
     if (!this.ready) return send(response, 503, error("The model is not loaded yet."));
-    await this.#forward(request, response, path);
+    await this.#forward(run, request, response, path);
   }
   async #admin(route, request, response) {
     if (!matches(bearer(request), this.#options.adminSha256)) {
@@ -501,10 +646,22 @@ var Gateway = class {
       this.startRun(run);
       return send(response, 200, this.status());
     }
-    if (route === "POST /admin/end") return send(response, 200, this.endRun() ?? null);
+    if (route === "POST /admin/end") {
+      const body = parseJson(await readBody(request, 64 * 1024)) ?? {};
+      const tokenSha256 = typeof body.tokenSha256 === "string" ? body.tokenSha256 : void 0;
+      return send(response, 200, this.endRun({ tokenSha256, keep: body.keep === true }) ?? null);
+    }
+    if (route === "POST /admin/release") {
+      const body = parseJson(await readBody(request, 64 * 1024)) ?? {};
+      if (typeof body.task !== "string" || !TASK.test(body.task)) {
+        return send(response, 400, error("Invalid task."));
+      }
+      this.release(body.task);
+      return send(response, 200, this.status());
+    }
     return send(response, 404, error("Not found."));
   }
-  async #forward(request, response, path) {
+  async #forward(run, request, response, path) {
     let body;
     let stream = false;
     if (request.method === "POST") {
@@ -521,9 +678,9 @@ var Gateway = class {
       body = JSON.stringify(payload);
     }
     const record = { start: this.#now(), streamed: stream };
-    this.#records.push(record);
+    run.records.push(record);
     const abort = new AbortController();
-    this.#open.add(abort);
+    run.open.add(abort);
     response.on("close", () => {
       if (!response.writableFinished) abort.abort();
     });
@@ -606,9 +763,9 @@ var Gateway = class {
 
 `);
     } finally {
-      this.#open.delete(abort);
+      run.open.delete(abort);
       clearInterval(keepAlive);
-      this.lastActivity = this.#now();
+      this.lastActivity = run.lastActivity = this.#now();
     }
   }
   /** The engine at `upstream`, over HTTP. */
@@ -683,12 +840,15 @@ function parseJson(text) {
 }
 function runSettings(body) {
   if (typeof body !== "object" || body === null) return void 0;
-  const { tokenSha256, limit, start, pricePerSecond, idleSeconds } = body;
+  const { tokenSha256, limit, start, pricePerSecond, idleSeconds, task, group } = body;
   const positive = (value) => typeof value === "number" && Number.isFinite(value) && value > 0;
   if (typeof tokenSha256 !== "string" || !/^[0-9a-f]{64}$/.test(tokenSha256)) return void 0;
   if (!positive(limit) || !positive(start) || !positive(pricePerSecond)) return void 0;
+  if (task !== void 0 && (typeof task !== "string" || !TASK.test(task))) return void 0;
+  if (group !== void 0 && (typeof group !== "string" || !GROUP.test(group))) return void 0;
+  const named = { ...task ? { task } : {}, ...group ? { group } : {} };
   if (idleSeconds === void 0) {
-    return { tokenSha256, limit, start, meter: { kind: "time", pricePerSecond } };
+    return { tokenSha256, limit, start, meter: { kind: "time", pricePerSecond }, ...named };
   }
   if (typeof idleSeconds !== "number" || !Number.isFinite(idleSeconds) || idleSeconds < 0) {
     return void 0;
@@ -697,7 +857,8 @@ function runSettings(body) {
     tokenSha256,
     limit,
     start,
-    meter: { kind: "busy", pricePerSecond, idleMs: idleSeconds * 1e3 }
+    meter: { kind: "busy", pricePerSecond, idleMs: idleSeconds * 1e3 },
+    ...named
   };
 }
 
@@ -707,10 +868,13 @@ function expiry(state, policy, now) {
   if (!state.ready) {
     return now >= policy.startBy ? "the model was not served in time" : void 0;
   }
-  if (state.serving) {
-    if (state.deadline !== void 0 && now >= state.deadline) return "the run's budget is spent";
-    if (now - state.lastActivity >= policy.runIdleMs) return "the run made no request for too long";
-    return void 0;
+  const runs = state.runs ?? (state.serving ? [{ deadline: state.deadline, lastActivity: state.lastActivity }] : []);
+  if (runs.length > 0) {
+    const spent = (run) => run.deadline !== void 0 && now >= run.deadline;
+    const silent = (run) => now - run.lastActivity >= policy.runIdleMs;
+    if (!runs.every((run) => spent(run) || silent(run))) return void 0;
+    if (runs.length > 1) return "every run on it spent its budget or made no request for too long";
+    return runs.every(spent) ? "the run's budget is spent" : "the run made no request for too long";
   }
   return now - state.lastActivity >= policy.keptIdleMs ? "no run came to use it" : void 0;
 }
@@ -817,6 +981,7 @@ async function main() {
   setInterval(() => {
     const reason = expiry(gateway, settings.policy, Date.now());
     if (reason) void terminate(reason);
+    else gateway.expireRuns(settings.policy.runIdleMs);
   }, 15e3).unref();
   try {
     gateway.contextLength = await prepareOllama(

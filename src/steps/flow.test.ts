@@ -608,6 +608,49 @@ test("self-hosted inference: select hands the task's pods to the key jobs, and a
   );
 });
 
+test("a shared pod: apply marks it in the record, and its billing no longer reaches the key jobs", async () => {
+  const platform = new FakePlatform({
+    ".codeman/settings.yml":
+      'inference: self-hosted\nmodel: qwen3-coder:30b\ngpu-type: "GPU A"\nparallel-tasks: 2\n',
+  });
+  platform.maintainers.add("alice");
+  const issue = platform.openIssue("alice", "Add a cache", "Cache responses.");
+  let selected = new FakeRuntime({ inputs: { workdir }, runId: "1" });
+  await select(fakeServices(platform, selected));
+  const [first] = JSON.parse(selected.outputs.tasks ?? "") as { inference: string }[];
+  assert.equal((JSON.parse(first?.inference ?? "") as { sharePods?: boolean }).sharePods, true);
+  const task = readTask(selected);
+  agentResult({ [task.planPath]: "# Plan\n" }, { summary: "Plan.", language: "en", decisions: [] });
+  const runtime = new FakeRuntime({
+    inputs: {
+      workdir,
+      task: String(issue),
+      "key-job-result": "success",
+      "key-status": "opened",
+      "agent-job-result": "success",
+      "task-spent": "0",
+      "run-cost": "0.0600",
+      pod: "pod1",
+      "pod-costs": '{"pod1":0.06}',
+      "pod-shared": "true",
+    },
+    runId: "1",
+  });
+  await apply(fakeServices(platform, runtime));
+  assert.deepEqual(record(platform, issue)?.inference, {
+    pods: [{ id: "pod1", runs: ["1"], counted: 0.06, shared: true }],
+    spent: 0.06,
+  });
+  selected = new FakeRuntime({ inputs: { workdir }, runId: "2" });
+  await select(fakeServices(platform, selected));
+  const choice = JSON.parse(selected.outputs.inference ?? "") as {
+    pods: string[];
+    recorded: { spent: number };
+  };
+  assert.deepEqual(choice.pods, [], "the gateway's share counts it, not Runpod's bill");
+  assert.equal(choice.recorded.spent, 0.06);
+});
+
 test("each row keeps its run's inference, and rows recorded before it show a dash", async () => {
   const platform = new FakePlatform({ ".codeman/settings.yml": "model: a/b\n" });
   const { issue } = await plannedTask(platform);

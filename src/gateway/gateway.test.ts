@@ -342,3 +342,138 @@ test("reads a run from the admin route only with every field in range", () => {
   );
   assert.equal(runSettings(null), undefined);
 });
+
+/** A pod's run of a task, at US$ 0.72 per hour. */
+const taskRun = (token: string, task: string, start: number, limit = 1) => ({
+  ...run(token, limit),
+  start,
+  task,
+});
+
+test("serves several runs at once, each to its own token, and ending one leaves the others", async () => {
+  const upstream = await engine(() => ({ chunks: [JSON.stringify(completion)] }));
+  const { instance, url } = await gateway({ upstream: upstream.url });
+  instance.startRun(taskRun("a", "7", Date.now()));
+  instance.startRun(taskRun("b", "8", Date.now()));
+  assert.equal((await call(url, "a")).status, 200);
+  assert.equal((await call(url, "b")).status, 200);
+  assert.equal((await call(url, "b")).status, 200);
+  assert.equal(instance.usage(sha256("a"))?.requests, 1, "each run counts its own requests");
+  assert.equal(instance.usage(sha256("b"))?.requests, 2);
+  instance.endRun({ tokenSha256: sha256("a") });
+  assert.equal((await call(url, "a")).status, 401);
+  assert.equal((await call(url, "b")).status, 200);
+  assert.ok(instance.serving);
+  // A task's new run replaces its own last one only.
+  instance.startRun(taskRun("c", "8", Date.now()));
+  assert.equal((await call(url, "b")).status, 401);
+  assert.equal((await call(url, "c")).status, 200);
+  assert.deepEqual(instance.status().active, ["8"]);
+});
+
+test("splits each second of the pod among the runs on it, so a run that ends first pays less", async () => {
+  let now = 1_000_000;
+  const { instance } = await gateway({ upstream: "unused", now: () => now });
+  instance.startRun(taskRun("a", "7", now));
+  instance.startRun(taskRun("b", "8", now));
+  now += 60_000;
+  // A minute shared by two: 30 seconds each, US$ 0.006.
+  const first = instance.endRun({ tokenSha256: sha256("a") });
+  assert.ok(Math.abs((first?.cost ?? 0) - 0.006) < 1e-12);
+  now += 60_000;
+  const second = instance.endRun({ tokenSha256: sha256("b") });
+  assert.ok(
+    Math.abs((second?.cost ?? 0) - 0.018) < 1e-12,
+    "half the first minute, the second whole",
+  );
+  assert.deepEqual(second?.share?.tasks, ["7", "8"]);
+  assert.deepEqual(second?.share?.active, []);
+  // Together, the pod's two minutes.
+  assert.ok(Math.abs((first?.cost ?? 0) + (second?.cost ?? 0) - 0.024) < 1e-12);
+  assert.ok(
+    Math.abs((instance.usage(sha256("a"))?.cost ?? 0) - 0.006) < 1e-12,
+    "an ended run's cost no longer grows",
+  );
+});
+
+test("the pod's time between runs goes to the tasks that keep it, until each one's next run or release", async () => {
+  let now = 1_000_000;
+  const { instance } = await gateway({ upstream: "unused", now: () => now });
+  instance.startRun(taskRun("a", "7", now));
+  instance.startRun(taskRun("b", "8", now));
+  now += 100_000;
+  instance.endRun({ tokenSha256: sha256("a"), keep: true });
+  // Task 8's run still uses the pod: task 7 keeps it for nothing meanwhile.
+  now += 100_000;
+  const b = instance.endRun({ tokenSha256: sha256("b"), keep: true });
+  assert.deepEqual(b?.share?.keepers, ["7", "8"]);
+  assert.ok(Math.abs((b?.share?.taskCost ?? 0) - 0.03) < 1e-12, "50 seconds, then 100");
+  now += 100_000;
+  instance.release("8");
+  assert.deepEqual(instance.status().keepers, ["7"]);
+  now += 100_000;
+  instance.startRun(taskRun("c", "7", now));
+  now += 100_000;
+  const c = instance.endRun({ tokenSha256: sha256("c") });
+  assert.ok(Math.abs((c?.cost ?? 0) - 0.02) < 1e-12, "its run alone");
+  // Task 7: 50 seconds of its first run, 50 kept with task 8, 100 kept alone, and its new run.
+  assert.ok(Math.abs((c?.share?.taskCost ?? 0) - 0.06) < 1e-12);
+  assert.deepEqual(c?.share?.keepers, [], "a run that does not keep the pod gives it up");
+});
+
+test("a run's budget is its share; a spent run stops alone while the others go on", async () => {
+  const upstream = await engine(() => ({ chunks: [JSON.stringify(completion)] }));
+  let now = 1_000_000;
+  const { instance, url } = await gateway({ upstream: upstream.url, now: () => now });
+  // US$ 0.01 lasts 50 seconds alone, 100 when shared.
+  instance.startRun(taskRun("a", "7", now, 0.01));
+  instance.startRun(taskRun("b", "8", now));
+  assert.equal(instance.runs[0]?.deadline, now + 50_000, "as if alone from now");
+  now += 60_000;
+  assert.equal((await call(url, "a")).status, 200);
+  assert.equal(instance.runs[0]?.deadline, now + 20_000, "US$ 0.004 left, 20 seconds alone");
+  now += 40_000;
+  assert.equal((await call(url, "a")).status, 402);
+  instance.expireRuns(30 * 60_000);
+  assert.deepEqual(instance.status().active, ["8"]);
+  assert.equal((await call(url, "a")).status, 503);
+  assert.equal((await call(url, "b")).status, 200);
+  assert.ok(Math.abs((instance.usage(sha256("a"))?.cost ?? 0) - 0.01) < 1e-12);
+});
+
+test("the admin routes start, end and release the runs of tasks, and report the pod's runs", async () => {
+  let now = 1_000_000;
+  const { url } = await gateway({ upstream: "unused", now: () => now });
+  const admin = async (path: string, body?: unknown) => {
+    const response = await fetch(`${url}${path}`, {
+      method: body === undefined ? "GET" : "POST",
+      headers: { Authorization: "Bearer admin" },
+      body: body === undefined ? null : JSON.stringify(body),
+    });
+    return { status: response.status, body: (await response.json()) as Record<string, unknown> };
+  };
+  const start = { limit: 1, start: now, pricePerSecond: 0.0002, group: "300.ab12" };
+  await admin("/admin/run", { ...start, tokenSha256: sha256("a"), task: "7" });
+  await admin("/admin/run", { ...start, tokenSha256: sha256("b"), task: "8" });
+  assert.equal(
+    (await admin("/admin/run", { ...start, tokenSha256: sha256("c"), task: "x" })).status,
+    400,
+  );
+  const status = (await admin("/admin/status")).body;
+  assert.equal(status.version, 2);
+  assert.equal(status.group, "300.ab12");
+  assert.deepEqual(status.active, ["7", "8"]);
+  now += 10_000;
+  const ended = (await admin("/admin/end", { tokenSha256: sha256("a"), keep: true })).body;
+  assert.ok(Math.abs((ended.cost as number) - 0.001) < 1e-12);
+  assert.deepEqual(ended.share, {
+    taskCost: ended.cost,
+    tasks: ["7", "8"],
+    active: ["8"],
+    keepers: ["7"],
+  });
+  const released = (await admin("/admin/release", { task: "7" })).body;
+  assert.deepEqual(released.keepers, []);
+  assert.deepEqual(released.active, ["8"]);
+  assert.equal((await admin("/admin/release", { task: "../7" })).status, 400);
+});

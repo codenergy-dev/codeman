@@ -1,16 +1,17 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { after, test } from "node:test";
 import { sha256 } from "../gateway/gateway.ts";
 import { closeKey, openKey } from "../steps/keys.ts";
 import { FakeGateways, FakeGpu } from "../testing/fake-gpu.ts";
 import { FakePlatform, fakeServices } from "../testing/fake-platform.ts";
 import { FakeRuntime } from "../testing/fake-runtime.ts";
-import { ollama } from "./ollama.ts";
+import { ollama, POD_IMAGE, SINGLE_RUN_IMAGES } from "./ollama.ts";
 import {
   adminToken,
   type PodHandle,
   PodInference,
   type PodSettings,
+  podGroup,
   podOwner,
   releasePod,
 } from "./selfhosted.ts";
@@ -282,4 +283,208 @@ test("the month counts the account's live pods beyond what they were billed", as
   gpu.billed.pod2 = 0.5;
   // pod1: 30 minutes at US$ 0.72 per hour, US$ 0.36, of which 0.10 billed; pod2: billed above.
   assert.ok(Math.abs((await make().monthSpent()) - 1.26) < 1e-9);
+});
+
+/** Runs of a workflow run whose tasks share pods, served by Codeman's own gateway. */
+function setupShared(options: { real?: boolean } = {}) {
+  let now = new Date("2026-10-03T12:00:00Z");
+  const gpu = new FakeGpu({ now: () => now });
+  const gateways = new FakeGateways(gpu, { real: options.real ?? true });
+  after(() => gateways.close());
+  const advance = (ms: number) => {
+    now = new Date(now.getTime() + ms);
+  };
+  let wait: (ms: number) => Promise<void> = noWait;
+  const leg = (task: string, others: string[], more: Partial<PodSettings> = {}) => {
+    const provider = new PodInference(
+      { ...settings, share: true, others, ...more },
+      {
+        repository,
+        gpu,
+        accountKey: "account-key",
+        now: () => now,
+        fetch: gateways.fetch,
+        wait: (ms) => wait(ms),
+      },
+    );
+    return {
+      provider,
+      open: async (runId: string, limit = 1) => {
+        const runtime = new FakeRuntime();
+        const opened = await provider.open({ task, runId, limit }, runtime);
+        return { opened, handle: JSON.parse(opened.handle) as PodHandle, runtime };
+      },
+    };
+  };
+  const release = (handle: string) =>
+    releasePod(gpu.pods, handle, new FakeRuntime(), {
+      accountKey: "account-key",
+      fetch: gateways.fetch,
+    });
+  return {
+    gpu,
+    gateways,
+    leg,
+    advance,
+    release,
+    setWait: (next: (ms: number) => Promise<void>) => {
+      wait = next;
+    },
+  };
+}
+
+const near = (actual: number | undefined, expected: number) =>
+  assert.ok(Math.abs((actual ?? Number.NaN) - expected) < 1e-9, `${actual} is not ${expected}`);
+
+test("two tasks of a run share one pod: the first creates it, the other attaches, and each pays its share", async () => {
+  const { gpu, gateways, leg, advance, release } = setupShared();
+  const seven = leg("7", ["8"]);
+  const eight = leg("8", ["7"]);
+  const a = await seven.open("300");
+  const b = await eight.open("300");
+  assert.equal(gpu.created.length, 1);
+  assert.equal(gpu.created[0]?.env.CODEMAN_GROUP, podGroup("300", settings));
+  assert.equal(a.handle.podId, "pod1");
+  assert.equal(b.handle.podId, "pod1");
+  assert.deepEqual(a.handle.shared?.task, "7");
+  assert.equal(b.handle.shared?.tokenSha256, sha256(b.opened.credential));
+  assert.notEqual(a.opened.credential, b.opened.credential);
+  assert.match(b.runtime.logged("info").join("\n"), /Sharing pod pod1, already serving/);
+  assert.deepEqual(gateways.gateway("pod1")?.status().active, ["7", "8"]);
+
+  // Ten minutes on the pod, US$ 0.12, of which each run pays half; then task 8 alone.
+  advance(10 * 60_000);
+  const runtime = new FakeRuntime({ inputs: { handle: a.opened.handle } });
+  await closeKey(fakeServices(new FakePlatform(), runtime, undefined, seven.provider));
+  assert.equal(runtime.outputs["run-cost"], "0.0600");
+  assert.equal(runtime.outputs["pod-shared"], "true");
+  assert.equal(runtime.outputs["pod-costs"], '{"pod1":0.06}');
+  assert.equal(runtime.outputs["kept-pod"], "pod1");
+  advance(10 * 60_000);
+  const second = await eight.provider.close(b.opened.handle, new FakeRuntime());
+  near(second.cost, 0.18);
+  assert.deepEqual(second.podCosts, { pod1: 0.18 }, "the shares add up to the pod's 20 minutes");
+  assert.ok(gpu.live.has("pod1"), "both tasks keep it");
+
+  // Task 7 does not go on: the pod stays for task 8, until it does not either.
+  await release(a.opened.handle);
+  assert.ok(gpu.live.has("pod1"));
+  await release(b.opened.handle);
+  assert.deepEqual(gpu.terminated, ["pod1"]);
+});
+
+test("a task that waited for the shared pod's start shares it, and two pods created at once end as one", async () => {
+  const { gpu, gateways, leg, advance, setWait } = setupShared();
+  const group = podGroup("300", settings);
+  // Task 7's leg creates its pod a second before task 8's, after task 8 looked.
+  const create = gpu.pods.create;
+  gpu.pods.create = async (spec) => {
+    const nonce = "n7";
+    const rival = await create({
+      ...spec,
+      env: {
+        ...spec.env,
+        CODEMAN_TASK: "7",
+        CODEMAN_NONCE: nonce,
+        CODEMAN_ADMIN_SHA256: sha256(adminToken("account-key", nonce)),
+      },
+    });
+    gateways.state(rival.id).ready = false;
+    gpu.pods.create = create;
+    advance(1_000);
+    return create(spec);
+  };
+  setWait(async () => {
+    gateways.state("pod1").ready = true;
+    advance(60_000);
+  });
+  const b = await leg("8", ["7"]).open("300");
+  assert.deepEqual(
+    gpu.created.map((spec) => spec.env.CODEMAN_GROUP),
+    [group, group],
+  );
+  assert.deepEqual(gpu.terminated, ["pod2"], "the later pod");
+  assert.equal(b.handle.podId, "pod1");
+  // It looked, waited its turn (a minute here), and created; it then waited for pod 1's start.
+  assert.equal(b.handle.start, Date.parse("2026-10-03T12:01:00Z"), "its share starts with the pod");
+  assert.equal(gpu.live.get("pod1")?.createdAt.getTime(), b.handle.start);
+  assert.match(b.runtime.logged("info").join("\n"), /created pod pod1 first/);
+});
+
+test("the next run's tasks share the pod they kept, and the time between runs goes to its keepers", async () => {
+  const { gpu, leg, advance } = setupShared();
+  const first = [await leg("7", ["8"]).open("300"), await leg("8", ["7"]).open("300")];
+  advance(10 * 60_000);
+  for (const [index, run] of first.entries()) {
+    await leg(index === 0 ? "7" : "8", []).provider.close(run.opened.handle, new FakeRuntime());
+  }
+  // Both keep the pod for ten minutes, then the next run takes them both on.
+  advance(10 * 60_000);
+  const seven = leg("7", ["8"]);
+  const a = await seven.open("301");
+  const b = await leg("8", ["7"]).open("301");
+  assert.equal(gpu.created.length, 1, "no new pod");
+  assert.equal(a.handle.podId, "pod1");
+  assert.equal(b.handle.podId, "pod1");
+  assert.equal(a.handle.start, Date.parse("2026-10-03T12:20:00Z"));
+  assert.match(a.runtime.logged("info").join("\n"), /Sharing pod pod1, already serving/);
+  advance(10 * 60_000);
+  const usage = await seven.provider.close(a.opened.handle, new FakeRuntime());
+  near(usage.cost, 0.06);
+  // Task 7: half of each run's ten minutes, and half of the ten kept between them.
+  near(usage.podCosts?.pod1, 0.18);
+});
+
+test("with one pod per run, the last task to leave a shared pod terminates it", async () => {
+  const { gpu, leg } = setupShared();
+  const seven = leg("7", ["8"], { reuse: "run" });
+  const eight = leg("8", ["7"], { reuse: "run" });
+  const a = await seven.open("300");
+  const b = await eight.open("300");
+  const runtime = new FakeRuntime();
+  const left = await seven.provider.close(a.opened.handle, runtime);
+  assert.equal(left.keptPod, undefined);
+  assert.match(
+    runtime.logged("info")[0] ?? "",
+    /Left pod pod1 to the tasks that still use or keep it \(#8\)/,
+  );
+  assert.deepEqual(gpu.terminated, []);
+  await eight.provider.close(b.opened.handle, new FakeRuntime());
+  assert.deepEqual(gpu.terminated, ["pod1"]);
+});
+
+test("a gateway that serves one run at a time gives each task of the run a pod of its own", async () => {
+  const { gpu, leg } = setupShared({ real: false });
+  const a = await leg("7", ["8"]).open("300");
+  const b = await leg("8", ["7"]).open("300");
+  assert.equal(a.handle.podId, "pod1");
+  assert.equal(a.handle.shared, undefined, "the pod it created serves its task alone");
+  assert.equal(b.handle.podId, "pod2");
+  assert.equal(b.handle.shared, undefined);
+  assert.equal(gpu.created[1]?.env.CODEMAN_GROUP, undefined);
+  assert.match(b.runtime.logged("info").join("\n"), /serves one run at a time.*\n.*pod of its own/);
+});
+
+test("the image pinned before shared pods gives each task a pod of its own at once", async () => {
+  const [old] = [...SINGLE_RUN_IMAGES];
+  assert.ok(old && old !== "", "an image is listed");
+  assert.ok(!SINGLE_RUN_IMAGES.has(POD_IMAGE) || old === POD_IMAGE);
+  const { gpu, leg } = setupShared();
+  const a = await leg("7", ["8"], { image: old }).open("300");
+  const b = await leg("8", ["7"], { image: old }).open("300");
+  assert.deepEqual([a.handle.podId, b.handle.podId], ["pod1", "pod2"]);
+  assert.equal(gpu.created[0]?.env.CODEMAN_GROUP, undefined);
+  assert.match(a.runtime.logged("info")[0] ?? "", /serves one run at a time/);
+});
+
+test("a task that cannot reach its run's shared pod creates another for the run", async () => {
+  const { gpu, gateways, leg, advance } = setupShared();
+  await leg("7", ["8"]).open("300");
+  // Task 8's job starts late, and the pod no longer answers.
+  advance(30 * 60_000);
+  gateways.state("pod1").reachable = false;
+  const b = await leg("8", ["7"]).open("300");
+  assert.equal(b.handle.podId, "pod2");
+  assert.equal(gpu.created[1]?.env.CODEMAN_GROUP, podGroup("300", settings));
+  assert.match(b.runtime.logged("warning")[0] ?? "", /Could not share pod pod1/);
 });

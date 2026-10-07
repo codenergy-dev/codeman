@@ -7,7 +7,7 @@ export const GATEWAY_PORT = 8080;
 export interface PodPolicy {
   /** The model must be served by then, in milliseconds since the epoch. */
   startBy: number;
-  /** A kept pod, between runs of its task, waits this long for the next run. */
+  /** A kept pod, between runs of its tasks, waits this long for the next run. */
   keptIdleMs: number;
   /** A run without requests for this long has lost its agent. */
   runIdleMs: number;
@@ -20,17 +20,28 @@ export interface PodState {
   /** When the current run's budget is spent. */
   deadline: number | undefined;
   lastActivity: number;
+  /** Each run being served, when the gateway serves several; else the one `serving` tells. */
+  runs?: readonly { deadline: number | undefined; lastActivity: number }[];
 }
 
-/** Why the pod should terminate itself now, or undefined while it is useful. */
+/**
+ * Why the pod should terminate itself now, or undefined while it is useful: while every run on
+ * it has spent its budget or lost its agent. The gateway stops such a run alone while others go
+ * on.
+ */
 export function expiry(state: PodState, policy: PodPolicy, now: number): string | undefined {
   if (!state.ready) {
     return now >= policy.startBy ? "the model was not served in time" : undefined;
   }
-  if (state.serving) {
-    if (state.deadline !== undefined && now >= state.deadline) return "the run's budget is spent";
-    if (now - state.lastActivity >= policy.runIdleMs) return "the run made no request for too long";
-    return undefined;
+  const runs =
+    state.runs ??
+    (state.serving ? [{ deadline: state.deadline, lastActivity: state.lastActivity }] : []);
+  if (runs.length > 0) {
+    const spent = (run: (typeof runs)[number]) => run.deadline !== undefined && now >= run.deadline;
+    const silent = (run: (typeof runs)[number]) => now - run.lastActivity >= policy.runIdleMs;
+    if (!runs.every((run) => spent(run) || silent(run))) return undefined;
+    if (runs.length > 1) return "every run on it spent its budget or made no request for too long";
+    return runs.every(spent) ? "the run's budget is spent" : "the run made no request for too long";
   }
   return now - state.lastActivity >= policy.keptIdleMs ? "no run came to use it" : undefined;
 }

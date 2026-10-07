@@ -21,6 +21,22 @@ test("a run's pod terminates at the run's deadline, or when its agent goes silen
   assert.match(expiry(silent, policy, 4_000_000 + 1_800_000) ?? "", /no request/);
 });
 
+test("a pod with several runs terminates only once every run is spent or silent", () => {
+  const state = {
+    ready: true,
+    serving: true,
+    deadline: 5_000_000,
+    lastActivity: 4_000_000,
+    runs: [
+      { deadline: 5_000_000, lastActivity: 4_000_000 },
+      { deadline: 9_000_000, lastActivity: 4_500_000 },
+    ],
+  };
+  assert.equal(expiry(state, policy, 5_000_000), undefined, "the second run goes on");
+  assert.match(expiry(state, policy, 4_500_000 + 1_800_000) ?? "", /every run on it/);
+  assert.match(expiry({ ...state, runs: [] }, policy, 4_000_000 + 900_000) ?? "", /no run came/);
+});
+
 test("a kept pod waits for its task's next run up to its idle limit", () => {
   const kept = { ready: true, serving: false, deadline: undefined, lastActivity: 2_000_000 };
   assert.equal(expiry(kept, policy, 2_899_999), undefined);

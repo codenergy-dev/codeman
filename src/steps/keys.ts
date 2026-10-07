@@ -104,13 +104,14 @@ export async function closeKey({ runtime, inference }: Services): Promise<void> 
   if (usage.taskCosts) runtime.output("task-costs", JSON.stringify(usage.taskCosts));
   if (usage.pod) runtime.output("pod", usage.pod);
   if (usage.podCosts) runtime.output("pod-costs", JSON.stringify(usage.podCosts));
+  if (usage.podShared) runtime.output("pod-shared", "true");
   if (usage.keptPod) runtime.output("kept-pod", usage.keptPod);
 }
 
 /**
  * Terminates the pod that `closeKey` kept for the task's next run, once `apply` says the task
- * does not go on to one now. A kept pod that this job does not reach terminates itself after its
- * idle limit.
+ * does not go on to one now; a pod the run's tasks share stays while another task uses or keeps
+ * it. A kept pod that this job does not reach terminates itself after its idle limit.
  */
 export async function release({ runtime }: Services): Promise<void> {
   const choice = parseInferenceChoice(runtime.input("inference"));
@@ -118,7 +119,8 @@ export async function release({ runtime }: Services): Promise<void> {
     runtime.info("Nothing to release: the run had no pod.");
     return;
   }
-  const gpu = gpuProvider(choice.gpuProvider, runtime.input("gpu-key", { required: true }));
+  const accountKey = runtime.input("gpu-key", { required: true });
+  const gpu = gpuProvider(choice.gpuProvider, accountKey);
   if (!gpu.pods) throw new Error(`${gpu.name} has no pods.`);
-  await releasePod(gpu.pods, runtime.input("handle", { required: true }), runtime);
+  await releasePod(gpu.pods, runtime.input("handle", { required: true }), runtime, { accountKey });
 }

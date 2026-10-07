@@ -9,6 +9,14 @@ import { type InferenceEngine, openAiUsage } from "./engine.ts";
 export const POD_IMAGE =
   "ghcr.io/codenergy-dev/codeman-pod@sha256:6a7617fc8772c43600349a971a424bc918982c6d38972e7d1802a1a607e76d27";
 
+/**
+ * Pod images whose gateway serves one run at a time, as before parallel tasks: Codeman gives each
+ * task a pod of its own on them, instead of sharing one. Keep each image pinned before.
+ */
+export const SINGLE_RUN_IMAGES: ReadonlySet<string> = new Set([
+  "ghcr.io/codenergy-dev/codeman-pod@sha256:6a7617fc8772c43600349a971a424bc918982c6d38972e7d1802a1a607e76d27",
+]);
+
 /** Where Ollama listens inside the pod: its loopback, behind the gateway. */
 export const OLLAMA_URL = "http://127.0.0.1:11434";
 

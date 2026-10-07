@@ -110,6 +110,60 @@ export function meterCost(
   return (ms / 1000) * meter.pricePerSecond;
 }
 
+/** A run's time on a pod, in milliseconds since the epoch; no end while it goes on. */
+export interface PodRunSpan {
+  id: number;
+  start: number;
+  end?: number | undefined;
+  pricePerSecond: number;
+}
+
+/** A task that keeps the pod between its runs, from `from` until `to` (or now). */
+export interface KeptSpan {
+  task: string;
+  from: number;
+  to?: number | undefined;
+}
+
+/**
+ * What each run and each keeping task owes for a pod up to `now`, in USD (decision 3 of the
+ * parallel tasks plan): each second is split evenly among the runs on the pod in that second,
+ * and a second without a run among the tasks that keep the pod then, at `pricePerSecond`. A
+ * second that nobody uses or keeps goes to no one.
+ */
+export function podShares(
+  runs: readonly PodRunSpan[],
+  kept: readonly KeptSpan[],
+  now: number,
+  pricePerSecond: number,
+): { runs: Map<number, number>; kept: Map<string, number> } {
+  const until = (end: number | undefined) => Math.min(end ?? now, now);
+  const points = new Set<number>();
+  for (const run of runs) points.add(Math.min(run.start, now)).add(until(run.end));
+  for (const span of kept) points.add(Math.min(span.from, now)).add(until(span.to));
+  const times = [...points].sort((a, b) => a - b);
+  const shares = { runs: new Map<number, number>(), kept: new Map<string, number>() };
+  for (let i = 1; i < times.length; i++) {
+    const from = times[i - 1] as number;
+    const to = times[i] as number;
+    const seconds = (to - from) / 1000;
+    const on = runs.filter((run) => run.start <= from && until(run.end) >= to);
+    for (const run of on) {
+      const share = (seconds * run.pricePerSecond) / on.length;
+      shares.runs.set(run.id, (shares.runs.get(run.id) ?? 0) + share);
+    }
+    if (on.length > 0) continue;
+    const keepers = new Set(
+      kept.filter((span) => span.from <= from && until(span.to) >= to).map((span) => span.task),
+    );
+    for (const task of keepers) {
+      const share = (seconds * pricePerSecond) / keepers.size;
+      shares.kept.set(task, (shares.kept.get(task) ?? 0) + share);
+    }
+  }
+  return shares;
+}
+
 /** Sums a run's requests as OpenRouter reports a key's. */
 export function summarize(
   records: readonly RequestRecord[],

@@ -40,6 +40,8 @@ async function main(): Promise<void> {
   setInterval(() => {
     const reason = expiry(gateway, settings.policy, Date.now());
     if (reason) void terminate(reason);
+    // Some runs go on: those spent or silent stop alone, and stop costing the others.
+    else gateway.expireRuns(settings.policy.runIdleMs);
   }, 15_000).unref();
 
   try {

@@ -19,7 +19,13 @@ import { vllmContextLength, vllmProblems } from "./vllm.ts";
  */
 export type InferenceChoice = (
   | { inference: "openrouter" }
-  | (SelfHostedChoice & { mode: "pod"; gpuType: string; podReuse: "task" | "run" })
+  | (SelfHostedChoice & {
+      mode: "pod";
+      gpuType: string;
+      podReuse: "task" | "run";
+      /** With `parallel-tasks` above 1: the run's tasks on the same pod settings share a pod. */
+      sharePods?: boolean | undefined;
+    })
   | (SelfHostedChoice & { mode: "serverless"; endpoint: string })
 ) &
   Budgeted &
@@ -30,7 +36,7 @@ interface SelfHostedChoice {
   gpuProvider: string;
   engine: string;
   model: string;
-  /** The pods its record lists. */
+  /** The pods its record lists whose billing is the task's alone, not those shared. */
   pods: string[];
 }
 
@@ -83,7 +89,7 @@ export function inferenceChoice(
     gpuProvider: settings["gpu-provider"],
     engine: settings.engine ?? "",
     model: settings.model,
-    pods: record?.inference?.pods.map((pod) => pod.id) ?? [],
+    pods: record?.inference?.pods.filter((pod) => !pod.shared).map((pod) => pod.id) ?? [],
     ...budgeted,
   };
   return settings["gpu-mode"] === "serverless"
@@ -93,6 +99,7 @@ export function inferenceChoice(
         mode: "pod",
         gpuType: settings["gpu-type"] ?? "",
         podReuse: settings["pod-reuse"] === "run" ? "run" : "task",
+        ...(settings["parallel-tasks"] > 1 ? { sharePods: true } : {}),
       };
 }
 
@@ -130,7 +137,10 @@ export function parseInferenceChoice(text: string): InferenceChoice {
     typeof choice.model === "string" &&
     ENGINES[choice.engine] !== undefined &&
     Array.isArray(choice.pods) &&
-    (choice.mode === "pod" ? typeof choice.gpuType === "string" : choice.mode === "serverless");
+    (choice.mode === "pod"
+      ? typeof choice.gpuType === "string" &&
+        (choice.sharePods === undefined || typeof choice.sharePods === "boolean")
+      : choice.mode === "serverless");
   if (!valid) throw new Error("The inference input is not a valid choice.");
   return choice;
 }
@@ -224,7 +234,13 @@ export function selfHosted(
   };
   if (choice.mode === "pod") {
     return new PodInference(
-      { ...common, gpuType: choice.gpuType, image: inputs.image, reuse: choice.podReuse },
+      {
+        ...common,
+        gpuType: choice.gpuType,
+        image: inputs.image,
+        reuse: choice.podReuse,
+        share: choice.sharePods === true,
+      },
       { repository, gpu, accountKey: inputs.accountKey },
     );
   }

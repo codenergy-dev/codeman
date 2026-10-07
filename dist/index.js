@@ -19811,6 +19811,9 @@ function count(value) {
 
 // src/inference/ollama.ts
 var POD_IMAGE = "ghcr.io/codenergy-dev/codeman-pod@sha256:6a7617fc8772c43600349a971a424bc918982c6d38972e7d1802a1a607e76d27";
+var SINGLE_RUN_IMAGES = /* @__PURE__ */ new Set([
+  "ghcr.io/codenergy-dev/codeman-pod@sha256:6a7617fc8772c43600349a971a424bc918982c6d38972e7d1802a1a607e76d27"
+]);
 var MODEL = /^[a-z0-9][a-z0-9._-]*(\/[a-z0-9][a-z0-9._-]*){0,2}(:[a-z0-9][a-z0-9._-]*)?$/i;
 var ollama = {
   name: "ollama",
@@ -19861,16 +19864,16 @@ async function accountMonthSpent(gpu, now) {
   const billed = await gpu.monthSpent(now);
   if (!gpu.pods) return billed;
   const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-  const live = (await gpu.pods.list({})).filter(
+  const live2 = (await gpu.pods.list({})).filter(
     (pod) => pod.status !== "terminated" && pod.pricePerSecond !== void 0
   );
-  if (live.length === 0) return billed;
+  if (live2.length === 0) return billed;
   const podBilled = await gpu.pods.billing(
-    live.map((pod) => pod.id),
+    live2.map((pod) => pod.id),
     start
   );
   let unbilled2 = 0;
-  for (const pod of live) {
+  for (const pod of live2) {
     const from = pod.createdAt > start ? pod.createdAt : start;
     const estimate = podCost(from, now, pod.pricePerSecond ?? 0);
     unbilled2 += Math.max(0, estimate - (podBilled[pod.id] ?? 0));
@@ -20139,17 +20142,17 @@ var OpenRouterProvider = class {
     await router.disableKey(hash);
     log.info("Disabled the key.");
     let cost = await runCost(router, hash, false);
-    const tokens = await runTokens(router, hash, cost > 0, log);
-    if (cost === 0 && tokens && tokens.input + tokens.output > 0) {
+    const tokens2 = await runTokens(router, hash, cost > 0, log);
+    if (cost === 0 && tokens2 && tokens2.input + tokens2.output > 0) {
       log.info("OpenRouter has tokens for this run's key but no cost yet; reading it again.");
       cost = await runCost(router, hash, true);
       if (cost === 0) log.warning("OpenRouter has no cost for this run's key yet.");
     }
-    const stats = await runStats(router, hash, tokens !== void 0 && tokens.output > 0, log);
+    const stats = await runStats(router, hash, tokens2 !== void 0 && tokens2.output > 0, log);
     return {
       cost,
-      inputTokens: tokens?.input,
-      outputTokens: tokens?.output,
+      inputTokens: tokens2?.input,
+      outputTokens: tokens2?.output,
       requests: stats?.requests,
       maxInputTokens: stats?.maxInputTokens,
       tokensPerSecond: stats?.tokensPerSecond,
@@ -20190,9 +20193,9 @@ async function runTokens(router, hash, spent, log, wait = sleep2) {
   try {
     for (let attempt = 0; ; attempt++) {
       const now = /* @__PURE__ */ new Date();
-      const tokens = await router.keyTokens(hash, new Date(now.getTime() - KEY_LIFETIME_MS), now);
-      const counted = tokens !== void 0 && tokens.input + tokens.output > 0;
-      if (counted || !spent) return tokens ?? (spent ? void 0 : { input: 0, output: 0 });
+      const tokens2 = await router.keyTokens(hash, new Date(now.getTime() - KEY_LIFETIME_MS), now);
+      const counted = tokens2 !== void 0 && tokens2.input + tokens2.output > 0;
+      if (counted || !spent) return tokens2 ?? (spent ? void 0 : { input: 0, output: 0 });
       if (attempt === 6) {
         log.warning("OpenRouter's analytics has no tokens for this run's key yet.");
         return void 0;
@@ -20481,6 +20484,33 @@ function meterCost(meter, start, records, now, samples = []) {
   const ms = meter.kind === "time" ? Math.max(0, now - start) : busyMs(records, meter.idleMs, now, samples);
   return ms / 1e3 * meter.pricePerSecond;
 }
+function podShares(runs, kept, now, pricePerSecond) {
+  const until = (end) => Math.min(end ?? now, now);
+  const points = /* @__PURE__ */ new Set();
+  for (const run2 of runs) points.add(Math.min(run2.start, now)).add(until(run2.end));
+  for (const span of kept) points.add(Math.min(span.from, now)).add(until(span.to));
+  const times = [...points].sort((a, b) => a - b);
+  const shares = { runs: /* @__PURE__ */ new Map(), kept: /* @__PURE__ */ new Map() };
+  for (let i = 1; i < times.length; i++) {
+    const from = times[i - 1];
+    const to = times[i];
+    const seconds = (to - from) / 1e3;
+    const on = runs.filter((run2) => run2.start <= from && until(run2.end) >= to);
+    for (const run2 of on) {
+      const share = seconds * run2.pricePerSecond / on.length;
+      shares.runs.set(run2.id, (shares.runs.get(run2.id) ?? 0) + share);
+    }
+    if (on.length > 0) continue;
+    const keepers = new Set(
+      kept.filter((span) => span.from <= from && until(span.to) >= to).map((span) => span.task)
+    );
+    for (const task of keepers) {
+      const share = seconds * pricePerSecond / keepers.size;
+      shares.kept.set(task, (shares.kept.get(task) ?? 0) + share);
+    }
+  }
+  return shares;
+}
 function summarize(records, meter, start, now, samples = []) {
   let inputTokens = 0;
   let outputTokens = 0;
@@ -20539,6 +20569,8 @@ var EventReader = class {
 
 // src/gateway/gateway.ts
 var ROUTES = /* @__PURE__ */ new Set(["POST /v1/chat/completions", "POST /v1/completions", "GET /v1/models"]);
+var TASK = /^\d{1,12}$/;
+var GROUP = /^[\w.-]{1,100}$/;
 var MAX_BODY_BYTES = 32 * 1024 * 1024;
 var KEEP_ALIVE_MS = 2e4;
 function sha256(text) {
@@ -20552,17 +20584,17 @@ function matches(token, hash) {
 }
 var RunStopped = class extends Error {
 };
+var GATEWAY_VERSION = 2;
 var Gateway = class {
   #options;
   #now;
-  #run;
-  #records = [];
-  /** The run's worker samples, in order. */
-  #samples = [];
-  /** Since when samples have seen no worker starting or running while a request waited. */
-  #noWorkerSince;
-  /** The requests being forwarded, to abort when the run stops. */
-  #open = /* @__PURE__ */ new Set();
+  /** Every run, in the order they started. */
+  #runs = [];
+  /** When each task kept the pod between its runs. */
+  #kept = [];
+  #nextId = 1;
+  /** The group of runs that share the pod, as the last run that named one gave it. */
+  group;
   /** The last time a request arrived or a run started or ended. */
   lastActivity;
   ready = false;
@@ -20572,83 +20604,199 @@ var Gateway = class {
     this.#now = options.now ?? Date.now;
     this.lastActivity = this.#now();
   }
-  /** Starts a run, whose token replaces any earlier one. */
-  startRun(run2) {
-    this.#run = { ...run2, active: true };
-    this.#records = [];
-    this.#samples = [];
-    this.#noWorkerSince = void 0;
-    this.lastActivity = this.#now();
+  /**
+   * Starts a run. A run of a task replaces that task's earlier one; a run that names no task
+   * replaces every run, as when the gateway served one at a time.
+   */
+  startRun(settings) {
+    const now = this.#now();
+    const task = settings.task ?? "";
+    for (const run2 of this.#runs) {
+      if (run2.active && (task === "" || run2.task === task)) this.#end(run2, now);
+    }
+    this.release(task);
+    this.#runs.push({
+      ...settings,
+      id: this.#nextId++,
+      task,
+      active: true,
+      records: [],
+      samples: [],
+      lastActivity: now,
+      open: /* @__PURE__ */ new Set()
+    });
+    if (settings.group) this.group = settings.group;
+    this.lastActivity = now;
   }
   /**
-   * Records what the provider said of the run's workers, for its busy meter. A request that
-   * waits `noWorkerMs` while every sample sees no worker starting or running stops the run;
+   * Records what the provider said of the workers, for each run's busy meter. A request that
+   * waits `noWorkerMs` while every sample sees no worker starting or running stops its run;
    * unknown samples neither prove a worker nor its absence.
    */
   observe(sample) {
-    if (!this.serving) return;
-    this.#samples.push(sample);
-    const limit = this.#options.noWorkerMs;
-    const waiting = this.#records.some((record) => record.end === void 0);
-    if (limit === void 0 || sample.workers === void 0) return;
-    if (!waiting || sample.workers !== "none") {
-      this.#noWorkerSince = void 0;
-      return;
-    }
-    this.#noWorkerSince ??= sample.at;
-    if (sample.at - this.#noWorkerSince >= limit) {
-      const minutes = Math.round(limit / 6e4);
-      this.#stop(
-        `No worker of the endpoint started or ran for ${minutes} minutes while a request waited, as when it has no GPU.`
-      );
+    for (const run2 of this.#runs.filter((one) => one.active)) {
+      run2.samples.push(sample);
+      const limit = this.#options.noWorkerMs;
+      const waiting = run2.records.some((record) => record.end === void 0);
+      if (limit === void 0 || sample.workers === void 0) continue;
+      if (!waiting || sample.workers !== "none") {
+        run2.noWorkerSince = void 0;
+        continue;
+      }
+      run2.noWorkerSince ??= sample.at;
+      if (sample.at - run2.noWorkerSince >= limit) {
+        const minutes = Math.round(limit / 6e4);
+        this.#stop(
+          run2,
+          `No worker of the endpoint started or ran for ${minutes} minutes while a request waited, as when it has no GPU.`
+        );
+      }
     }
   }
-  /** Stops serving the run: its waiting requests fail with `reason`, and so do new ones. */
-  #stop(reason) {
-    const run2 = this.#run;
-    if (!run2?.active) return;
-    run2.active = false;
+  /** Stops serving a run: its waiting requests fail with `reason`, and so do new ones. */
+  #stop(run2, reason) {
+    if (!run2.active) return;
+    this.#end(run2, this.#now());
     run2.stopped = reason;
-    this.lastActivity = this.#now();
     this.#log(reason);
-    for (const abort of this.#open) abort.abort(new RunStopped(reason));
+    for (const abort of run2.open) abort.abort(new RunStopped(reason));
     this.#options.onStop?.(reason);
   }
-  /** Ends the run: its token stops working. Returns what it used. */
-  endRun() {
-    const usage = this.usage();
-    if (this.#run) this.#run.active = false;
-    this.lastActivity = this.#now();
-    return usage;
+  #end(run2, now) {
+    run2.active = false;
+    run2.end ??= now;
+    this.lastActivity = now;
   }
-  /** What the current or last run used so far. */
-  usage() {
-    const run2 = this.#run;
-    return run2 ? summarize(this.#records, run2.meter, run2.start, this.#now(), this.#samples) : void 0;
+  /**
+   * Ends a run, by its token's hash, or the last one: its token stops working. With `keep`, its
+   * task keeps the pod for its next run, and is given the pod's time while no run uses it.
+   * Returns what the run used.
+   */
+  endRun(options = {}) {
+    const run2 = this.#find(options.tokenSha256);
+    if (!run2) return void 0;
+    const now = this.#now();
+    this.#end(run2, now);
+    if (options.keep && run2.task && !this.#keepers().includes(run2.task)) {
+      this.#kept.push({ task: run2.task, from: now });
+    }
+    const usage = this.usage(run2.tokenSha256);
+    return run2.task ? { ...usage, share: this.#share(run2.task, now) } : usage;
+  }
+  /** The task no longer keeps the pod: it does not go on to another run now. */
+  release(task) {
+    const now = this.#now();
+    for (const span of this.#kept) if (span.task === task && span.to === void 0) span.to = now;
+  }
+  /** What a run, by its token's hash, or the last one, used so far. */
+  usage(tokenSha256) {
+    const run2 = this.#find(tokenSha256);
+    if (!run2) return void 0;
+    const now = run2.end ?? this.#now();
+    return {
+      ...summarize(run2.records, run2.meter, run2.start, now, run2.samples),
+      cost: this.#cost(run2)
+    };
+  }
+  #find(tokenSha256) {
+    if (tokenSha256 === void 0) return this.#runs.at(-1);
+    return this.#runs.findLast((run2) => run2.tokenSha256 === tokenSha256);
   }
   /** Whether a run is being served. */
   get serving() {
-    return this.#run?.active === true;
+    return this.#runs.some((run2) => run2.active);
   }
-  /** When the current run's budget is spent, for a meter that knows in advance. */
+  /** The runs being served, for the pod's limits. */
+  get runs() {
+    return this.#runs.filter((run2) => run2.active).map((run2) => ({ deadline: this.#deadline(run2), lastActivity: run2.lastActivity }));
+  }
+  /** When the first of the runs' budgets is spent, for a meter that knows in advance. */
   get deadline() {
-    const run2 = this.#run;
-    if (!run2?.active || run2.meter.kind !== "time") return void 0;
-    return run2.start + Math.floor(run2.limit / run2.meter.pricePerSecond * 1e3);
+    const deadlines = this.runs.flatMap(
+      (run2) => run2.deadline === void 0 ? [] : [run2.deadline]
+    );
+    return deadlines.length > 0 ? Math.min(...deadlines) : void 0;
   }
-  /** Whether the current run may still spend. */
-  #withinBudget() {
-    const run2 = this.#run;
-    if (!run2) return false;
-    return meterCost(run2.meter, run2.start, this.#records, this.#now(), this.#samples) < run2.limit;
+  /**
+   * When a pod's run would spend its budget, were it alone from now on: other runs only make it
+   * later, so the pod checks again.
+   */
+  #deadline(run2) {
+    if (!run2.active || run2.meter.kind !== "time") return void 0;
+    const now = this.#now();
+    return now + Math.floor((run2.limit - this.#cost(run2)) / run2.meter.pricePerSecond * 1e3);
+  }
+  /**
+   * Stops the runs whose budget is spent or whose agent made no request for `runIdleMs`, while
+   * others go on; when none would, the pod terminates instead.
+   */
+  expireRuns(runIdleMs) {
+    const now = this.#now();
+    for (const run2 of this.#runs.filter((one) => one.active)) {
+      if (!this.#withinBudget(run2)) this.#stop(run2, "This run's budget is spent.");
+      else if (now - run2.lastActivity >= runIdleMs) {
+        this.#stop(run2, "This run made no request for too long.");
+      }
+    }
+  }
+  /** What a run cost so far: its share of the pod's time, or its workers' busy time. */
+  #cost(run2) {
+    const now = this.#now();
+    if (run2.meter.kind === "busy") {
+      return meterCost(run2.meter, run2.start, run2.records, run2.end ?? now, run2.samples);
+    }
+    return this.#shares(now).runs.get(run2.id) ?? 0;
+  }
+  /** The pod's split among its runs and the tasks that keep it. */
+  #shares(now) {
+    const spans = [];
+    for (const run2 of this.#runs) {
+      if (run2.meter.kind !== "time") continue;
+      spans.push({
+        id: run2.id,
+        start: run2.start,
+        end: run2.end,
+        pricePerSecond: run2.meter.pricePerSecond
+      });
+    }
+    return podShares(spans, this.#kept, now, spans.at(-1)?.pricePerSecond ?? 0);
+  }
+  #share(task, now) {
+    const shares = this.#shares(now);
+    let taskCost = shares.kept.get(task) ?? 0;
+    for (const run2 of this.#runs) {
+      if (run2.task === task) taskCost += shares.runs.get(run2.id) ?? 0;
+    }
+    const tasks = (runs) => [
+      ...new Set(runs.map((run2) => run2.task).filter((one) => one !== ""))
+    ];
+    return {
+      taskCost,
+      tasks: tasks(this.#runs),
+      active: tasks(this.#runs.filter((run2) => run2.active)),
+      keepers: this.#keepers()
+    };
+  }
+  #keepers() {
+    return [...new Set(this.#kept.filter((span) => span.to === void 0).map((s) => s.task))];
+  }
+  /** Whether a run may still spend. */
+  #withinBudget(run2) {
+    return this.#cost(run2) < run2.limit;
   }
   status() {
+    const active = this.#runs.filter((run2) => run2.active);
     return {
+      version: GATEWAY_VERSION,
       ready: this.ready,
       contextLength: this.contextLength,
       serving: this.serving,
       deadline: this.deadline,
-      lastActivity: this.lastActivity
+      lastActivity: this.lastActivity,
+      group: this.group,
+      tasks: [...new Set(this.#runs.map((run2) => run2.task).filter((task) => task !== ""))],
+      active: [...new Set(active.map((run2) => run2.task).filter((task) => task !== ""))],
+      keepers: this.#keepers()
     };
   }
   /** Listens on `host` (the loopback by default) and a free port unless one is given. */
@@ -20671,16 +20819,16 @@ var Gateway = class {
     if (path.startsWith("/admin/") || path === "/usage")
       return this.#admin(route, request2, response);
     if (!ROUTES.has(route)) return send(response, 404, error("Not found."));
-    const holder = matches(bearer(request2), this.#run?.tokenSha256);
-    const stopped = this.#run?.stopped;
-    if (holder && stopped) return send(response, 503, error(stopped, "run_stopped"));
-    if (!this.serving || !holder) return send(response, 401, error("Invalid token."));
-    this.lastActivity = this.#now();
-    if (!this.#withinBudget()) {
+    const token = bearer(request2);
+    const run2 = this.#runs.findLast((one) => matches(token, one.tokenSha256));
+    if (run2?.stopped) return send(response, 503, error(run2.stopped, "run_stopped"));
+    if (!run2?.active) return send(response, 401, error("Invalid token."));
+    this.lastActivity = run2.lastActivity = this.#now();
+    if (!this.#withinBudget(run2)) {
       return send(response, 402, error("This run's budget is spent.", "budget_exceeded"));
     }
     if (!this.ready) return send(response, 503, error("The model is not loaded yet."));
-    await this.#forward(request2, response, path);
+    await this.#forward(run2, request2, response, path);
   }
   async #admin(route, request2, response) {
     if (!matches(bearer(request2), this.#options.adminSha256)) {
@@ -20695,10 +20843,22 @@ var Gateway = class {
       this.startRun(run2);
       return send(response, 200, this.status());
     }
-    if (route === "POST /admin/end") return send(response, 200, this.endRun() ?? null);
+    if (route === "POST /admin/end") {
+      const body = parseJson(await readBody(request2, 64 * 1024)) ?? {};
+      const tokenSha256 = typeof body.tokenSha256 === "string" ? body.tokenSha256 : void 0;
+      return send(response, 200, this.endRun({ tokenSha256, keep: body.keep === true }) ?? null);
+    }
+    if (route === "POST /admin/release") {
+      const body = parseJson(await readBody(request2, 64 * 1024)) ?? {};
+      if (typeof body.task !== "string" || !TASK.test(body.task)) {
+        return send(response, 400, error("Invalid task."));
+      }
+      this.release(body.task);
+      return send(response, 200, this.status());
+    }
     return send(response, 404, error("Not found."));
   }
-  async #forward(request2, response, path) {
+  async #forward(run2, request2, response, path) {
     let body;
     let stream = false;
     if (request2.method === "POST") {
@@ -20715,9 +20875,9 @@ var Gateway = class {
       body = JSON.stringify(payload);
     }
     const record = { start: this.#now(), streamed: stream };
-    this.#records.push(record);
+    run2.records.push(record);
     const abort = new AbortController();
-    this.#open.add(abort);
+    run2.open.add(abort);
     response.on("close", () => {
       if (!response.writableFinished) abort.abort();
     });
@@ -20800,9 +20960,9 @@ var Gateway = class {
 
 `);
     } finally {
-      this.#open.delete(abort);
+      run2.open.delete(abort);
       clearInterval(keepAlive);
-      this.lastActivity = this.#now();
+      this.lastActivity = run2.lastActivity = this.#now();
     }
   }
   /** The engine at `upstream`, over HTTP. */
@@ -20877,12 +21037,15 @@ function parseJson(text) {
 }
 function runSettings(body) {
   if (typeof body !== "object" || body === null) return void 0;
-  const { tokenSha256, limit, start, pricePerSecond, idleSeconds } = body;
+  const { tokenSha256, limit, start, pricePerSecond, idleSeconds, task, group } = body;
   const positive = (value) => typeof value === "number" && Number.isFinite(value) && value > 0;
   if (typeof tokenSha256 !== "string" || !/^[0-9a-f]{64}$/.test(tokenSha256)) return void 0;
   if (!positive(limit) || !positive(start) || !positive(pricePerSecond)) return void 0;
+  if (task !== void 0 && (typeof task !== "string" || !TASK.test(task))) return void 0;
+  if (group !== void 0 && (typeof group !== "string" || !GROUP.test(group))) return void 0;
+  const named = { ...task ? { task } : {}, ...group ? { group } : {} };
   if (idleSeconds === void 0) {
-    return { tokenSha256, limit, start, meter: { kind: "time", pricePerSecond } };
+    return { tokenSha256, limit, start, meter: { kind: "time", pricePerSecond }, ...named };
   }
   if (typeof idleSeconds !== "number" || !Number.isFinite(idleSeconds) || idleSeconds < 0) {
     return void 0;
@@ -20891,7 +21054,8 @@ function runSettings(body) {
     tokenSha256,
     limit,
     start,
-    meter: { kind: "busy", pricePerSecond, idleMs: idleSeconds * 1e3 }
+    meter: { kind: "busy", pricePerSecond, idleMs: idleSeconds * 1e3 },
+    ...named
   };
 }
 
@@ -20902,6 +21066,7 @@ var GATEWAY_PORT = 8080;
 var START_MINUTES = 25;
 var KEPT_IDLE_MINUTES = 15;
 var RUN_IDLE_MINUTES = 30;
+var SHARE_STAGGER_MS = 2e4;
 var DISK_GB = 80;
 var BILLING_DAYS = 30;
 function podOwner(repository) {
@@ -20909,6 +21074,23 @@ function podOwner(repository) {
 }
 function adminToken(accountKey, nonce) {
   return createHmac("sha256", accountKey).update(`codeman-gateway-admin:${nonce}`).digest("base64url");
+}
+function podGroup(runId, settings) {
+  const { model, gpuType, image, reuse } = settings;
+  return `${runId}.${sha256([model, gpuType, image, reuse].join("\n")).slice(0, 16)}`;
+}
+async function callGateway(fetchFn, accountKey, target, method, path, body) {
+  const response = await fetchFn(`${target.url}${path}`, {
+    method,
+    headers: {
+      Authorization: `Bearer ${adminToken(accountKey, target.nonce)}`,
+      ...body === void 0 && method === "GET" ? {} : { "Content-Type": "application/json" }
+    },
+    body: method === "GET" ? null : JSON.stringify(body ?? {}),
+    signal: AbortSignal.timeout(3e4)
+  });
+  if (!response.ok) throw new Error(`The pod's gateway answered ${path} with ${response.status}.`);
+  return response.json();
 }
 var PodInference = class {
   name;
@@ -20932,10 +21114,20 @@ var PodInference = class {
     return accountMonthSpent(this.#options.gpu, this.#now());
   }
   async open(run2, log) {
-    const kept = await this.#sweep(run2.task, log);
     const token = randomBytes(32).toString("base64url");
-    const handle = kept ? await this.#reuse(kept, run2, token, log) : await this.#create(run2, token, log);
-    const status2 = await this.#admin(handle, "GET", "/admin/status").catch(() => ({}));
+    let handle;
+    if (this.#settings.share && !SINGLE_RUN_IMAGES.has(this.#settings.image)) {
+      handle = await this.#openShared(run2, token, log);
+    } else {
+      if (this.#settings.share) {
+        log.info("The pod image serves one run at a time: this task gets a pod of its own.");
+      }
+      const kept = await this.#sweep(run2, log);
+      handle = kept ? await this.#reuse(kept, run2, token, log) : await this.#create(run2, token, log);
+    }
+    const status2 = await this.#admin(handle, "GET", "/admin/status").catch(
+      () => ({})
+    );
     return {
       handle: JSON.stringify(handle),
       credential: token,
@@ -20950,6 +21142,7 @@ var PodInference = class {
   async close(text, log) {
     const handle = parseHandle(text);
     if (handle.mode !== "pod") throw new Error("The handle is not a pod run's.");
+    if (handle.shared) return this.#closeShared(handle, handle.shared, log);
     let usage;
     try {
       usage = await this.#admin(handle, "POST", "/admin/end") ?? void 0;
@@ -20969,55 +21162,231 @@ var PodInference = class {
     }
     const now = this.#now();
     const cost = podCost(new Date(handle.start), now, handle.pricePerSecond);
-    const pods = [.../* @__PURE__ */ new Set([...this.#settings.pods, handle.podId])];
-    const billed = await this.#host.billing(pods, new Date(now.getTime() - BILLING_DAYS * 864e5)).catch((error3) => {
-      log.warning(
-        `Could not read the pods' billing: ${error3 instanceof Error ? error3.message : error3}`
-      );
-      return void 0;
-    });
+    const billed = await this.#billing([...this.#settings.pods, handle.podId], now, log);
     const lifetime = handle.created === void 0 ? void 0 : podCost(new Date(handle.created), now, handle.pricePerSecond);
     const podCosts = billed === void 0 && lifetime === void 0 ? void 0 : { ...billed };
     if (podCosts && lifetime !== void 0) {
       podCosts[handle.podId] = Number(Math.max(podCosts[handle.podId] ?? 0, lifetime).toFixed(6));
     }
     return {
+      ...tokens(usage),
       cost,
-      inputTokens: usage?.inputTokens,
-      outputTokens: usage?.outputTokens,
-      requests: usage?.requests,
-      maxInputTokens: usage?.maxInputTokens,
-      tokensPerSecond: usage?.tokensPerSecond,
       pod: handle.podId,
       podCosts,
       keptPod: keep ? handle.podId : void 0
     };
   }
   /**
+   * Ends the run on a pod that serves several tasks. The run's cost is its share of the pod's
+   * time, and the task's count of the pod is the gateway's (its runs and the kept time it was
+   * given): Runpod bills the pod as a whole. A pod that no task keeps and no run uses is
+   * terminated; the gateway answers one job at a time, so only the last to leave does it.
+   */
+  async #closeShared(handle, shared, log) {
+    let ended;
+    try {
+      ended = await this.#admin(handle, "POST", "/admin/end", {
+        tokenSha256: shared.tokenSha256,
+        keep: handle.reuse === "task"
+      }) ?? void 0;
+    } catch (error3) {
+      log.warning(
+        `Could not read the run's usage from its pod: ${error3 instanceof Error ? error3.message : error3}`
+      );
+    }
+    const share = ended?.share;
+    const keep = handle.reuse === "task" && ended !== void 0;
+    if (keep) {
+      log.info(
+        `Kept pod ${handle.podId} for the next runs of its tasks, for ${KEPT_IDLE_MINUTES} minutes at most.`
+      );
+    } else if (!share || share.active.length === 0 && share.keepers.length === 0) {
+      await this.#host.terminate(handle.podId);
+      log.info(`Terminated pod ${handle.podId}.`);
+    } else {
+      log.info(`Left pod ${handle.podId} to ${tasksOn(share)}.`);
+    }
+    const now = this.#now();
+    const cost = ended?.cost ?? podCost(new Date(handle.start), now, handle.pricePerSecond);
+    const billed = await this.#billing(this.#settings.pods, now, log);
+    const podCosts = { ...billed };
+    if (share) podCosts[handle.podId] = Number(share.taskCost.toFixed(6));
+    return {
+      ...tokens(ended),
+      cost,
+      pod: handle.podId,
+      podCosts,
+      podShared: true,
+      keptPod: keep ? handle.podId : void 0
+    };
+  }
+  /** What Runpod billed for these pods; undefined when it could not be read. */
+  async #billing(pods, now, log) {
+    return this.#host.billing([...new Set(pods)], new Date(now.getTime() - BILLING_DAYS * 864e5)).catch((error3) => {
+      log.warning(
+        `Could not read the pods' billing: ${error3 instanceof Error ? error3.message : error3}`
+      );
+      return void 0;
+    });
+  }
+  /**
    * Terminates this repository's pods that serve nobody: no other run of the repository is
    * active while open-key runs, so a pod that is still starting or serving lost its run, unless
-   * it is another task's of this run, whose own jobs open and close it at the same time. Other
-   * tasks' kept pods stay until their idle limit. Returns the task's kept pod, if it fits.
+   * it is another task's of this run, or one that this run's tasks share, whose own jobs open
+   * and close it at the same time. Other tasks' kept pods stay until their idle limit, and so
+   * do kept shared pods, which serve any of their tasks. Returns the task's kept pod, if it fits
+   * and the run does not share pods.
    */
-  async #sweep(task, log) {
+  async #sweep(run2, log) {
     let kept;
     const others = new Set(this.#settings.others ?? []);
+    const ofRun = (group) => group?.startsWith(`${run2.runId}.`) === true;
     for (const pod of await this.#host.list(podOwner(this.#options.repository))) {
-      if (others.has(pod.env.CODEMAN_TASK ?? "")) continue;
+      if (others.has(pod.env.CODEMAN_TASK ?? "") || ofRun(pod.env.CODEMAN_GROUP)) continue;
       const nonce = pod.env.CODEMAN_NONCE ?? "";
       const handle = { podId: pod.id, nonce, url: this.#host.url(pod.id, GATEWAY_PORT) };
       const status2 = await this.#admin(handle, "GET", "/admin/status").catch(() => void 0);
+      if (ofRun(status2?.group)) continue;
       const idle = status2?.ready === true && status2.serving === false && this.#now().getTime() - (status2.lastActivity ?? 0) < KEPT_IDLE_MINUTES * 6e4;
-      const fits = pod.env.CODEMAN_TASK === task && pod.env.CODEMAN_MODEL === this.#settings.model && pod.gpuType === this.#settings.gpuType && pod.image === this.#settings.image;
+      const shared = pod.env.CODEMAN_GROUP !== void 0;
+      const fits = !this.#settings.share && !shared && pod.env.CODEMAN_TASK === run2.task && this.#fits(pod);
       if (idle && fits && !kept) {
         kept = { pod, nonce };
-      } else if (!idle || pod.env.CODEMAN_TASK === task) {
+      } else if (!idle || pod.env.CODEMAN_TASK === run2.task && !shared) {
         const why = !idle ? "it serves no run of this repository" : "the task's settings changed";
         log.info(`Terminating pod ${pod.id} (task #${pod.env.CODEMAN_TASK ?? "?"}): ${why}.`);
         await this.#host.terminate(pod.id);
       }
     }
     return kept;
+  }
+  /** Whether a pod serves the run's settings. */
+  #fits(pod) {
+    return pod.env.CODEMAN_MODEL === this.#settings.model && pod.gpuType === this.#settings.gpuType && pod.image === this.#settings.image;
+  }
+  /**
+   * Gives the run a pod that the run's tasks with the same settings share: one another task of
+   * the run created or claimed, or else a kept shared pod that fits, or else a new one. Legs
+   * start at once, so a task after the first waits a little before it creates one.
+   */
+  async #openShared(run2, token, log) {
+    const group = podGroup(run2.runId, this.#settings);
+    await this.#sweep(run2, log);
+    const tasks = [run2.task, ...this.#settings.others ?? []].map(Number).sort((a, b) => a - b);
+    const position = tasks.indexOf(Number(run2.task));
+    const gone = /* @__PURE__ */ new Set();
+    for (let look = 0; ; look++) {
+      const found = await this.#findShared(group, gone);
+      if (found) {
+        try {
+          return await this.#attach(found, run2, token, group, false, log);
+        } catch (error3) {
+          log.warning(
+            `Could not share pod ${found.id}: ${error3 instanceof Error ? error3.message : error3}`
+          );
+          gone.add(found.id);
+          continue;
+        }
+      }
+      if (look > 0 || position <= 0) break;
+      await this.#wait(position * SHARE_STAGGER_MS);
+    }
+    const { pod, listed } = await this.#launch(run2, log, group);
+    const [first] = sortByAge(
+      await this.#host.list({ ...podOwner(this.#options.repository), CODEMAN_GROUP: group })
+    ).filter((one) => live(one) && !gone.has(one.id));
+    if (first && first.id !== pod.id) {
+      await this.#host.terminate(pod.id);
+      log.info(`Terminated pod ${pod.id}: another task of this run created pod ${first.id} first.`);
+      return this.#attach(first, run2, token, group, false, log);
+    }
+    try {
+      return await this.#attach(pod, run2, token, group, true, log);
+    } catch (error3) {
+      await this.#host.terminate(pod.id);
+      log.warning(
+        `Terminated pod ${pod.id}, which did not serve ${this.#settings.model}; it cost about ${usd(podCost(pod.createdAt, this.#now(), listed))}.`
+      );
+      throw error3;
+    }
+  }
+  /**
+   * The pod of the run's group, created or claimed by another of its tasks; else the oldest kept
+   * shared pod that fits, whose gateway serves several runs.
+   */
+  async #findShared(group, gone) {
+    const pods = sortByAge(await this.#host.list(podOwner(this.#options.repository))).filter(
+      (pod) => pod.env.CODEMAN_GROUP !== void 0 && this.#fits(pod) && live(pod) && !gone.has(pod.id)
+    );
+    let kept;
+    for (const pod of pods) {
+      if (pod.env.CODEMAN_GROUP === group) return pod;
+      const status2 = await this.#status(this.#target(pod)).catch(() => void 0);
+      if (status2?.group === group) return pod;
+      const idle = (status2?.version ?? 1) >= GATEWAY_VERSION && status2?.ready === true && status2.serving === false && this.#now().getTime() - (status2.lastActivity ?? 0) < KEPT_IDLE_MINUTES * 6e4;
+      if (idle) kept ??= pod;
+    }
+    return kept;
+  }
+  /**
+   * Starts the run on a shared pod, once it serves the model. A run that waited for the pod's
+   * start shares it: its cost starts with the pod. A gateway that serves one run at a time, from
+   * an older image, serves this task alone if it created the pod; any other task gets its own.
+   */
+  async #attach(pod, run2, token, group, own, log) {
+    const target = this.#target(pod);
+    let status2;
+    let checks = 0;
+    let startedBefore = false;
+    const running = await waitUntilReady(
+      this.#host,
+      pod.id,
+      async () => {
+        status2 = await this.#status(target);
+        if (checks++ === 0) startedBefore = status2.ready === true;
+        return status2.ready === true || status2.version === void 0;
+      },
+      {
+        timeoutMs: Math.max(
+          0,
+          pod.createdAt.getTime() + START_MINUTES * 6e4 - this.#now().getTime()
+        ),
+        wait: this.#options.wait
+      }
+    );
+    if ((status2?.version ?? 1) < GATEWAY_VERSION) {
+      log.info(`Pod ${pod.id}'s gateway serves one run at a time, from an older image.`);
+      if (own)
+        return this.#serve(pod, await this.#host.price(this.#settings.gpuType), run2, token, log);
+      log.info("This task gets a pod of its own.");
+      return this.#create(run2, token, log);
+    }
+    const handle = {
+      mode: "pod",
+      podId: pod.id,
+      nonce: target.nonce,
+      url: target.url,
+      start: startedBefore && !own ? this.#now().getTime() : pod.createdAt.getTime(),
+      created: pod.createdAt.getTime(),
+      pricePerSecond: running.pricePerSecond ?? pod.pricePerSecond ?? await this.#host.price(this.#settings.gpuType),
+      reuse: this.#settings.reuse,
+      shared: { task: run2.task, tokenSha256: sha256(token) }
+    };
+    await this.#startRun(handle, run2, token, group);
+    const how = own ? `Pod ${pod.id} serves ${this.#settings.model} after ${((this.#now().getTime() - handle.start) / 6e4).toFixed(1)} minutes` : startedBefore ? `Sharing pod ${pod.id}, already serving ${this.#settings.model}` : `Sharing pod ${pod.id}, from its start`;
+    log.info(
+      `${how}, with the run's other tasks on the same settings, for up to ${usd(run2.limit)}.`
+    );
+    return handle;
+  }
+  #target(pod) {
+    return { url: this.#host.url(pod.id, GATEWAY_PORT), nonce: pod.env.CODEMAN_NONCE ?? "" };
+  }
+  async #status(target) {
+    return await this.#admin(target, "GET", "/admin/status");
+  }
+  #wait(ms) {
+    return (this.#options.wait ?? ((delay) => new Promise((done) => setTimeout(done, delay))))(ms);
   }
   async #reuse(kept, run2, token, log) {
     const { pod, nonce } = kept;
@@ -21037,6 +21406,11 @@ var PodInference = class {
     return handle;
   }
   async #create(run2, token, log) {
+    const { pod, listed } = await this.#launch(run2, log);
+    return this.#serve(pod, listed, run2, token, log);
+  }
+  /** Creates a pod for the run, or for its group of tasks that share one. */
+  async #launch(run2, log, group) {
     const { model, gpuType, image, engine } = this.#settings;
     if (!image) throw new Error("No pod image is pinned; see docs/installation.md.");
     const listed = await this.#host.price(gpuType);
@@ -21049,6 +21423,7 @@ var PodInference = class {
         ...podOwner(this.#options.repository),
         CODEMAN_TASK: run2.task,
         CODEMAN_RUN: run2.runId,
+        ...group ? { CODEMAN_GROUP: group } : {},
         CODEMAN_NONCE: nonce,
         CODEMAN_MODEL: model,
         CODEMAN_ENGINE: engine.name,
@@ -21061,9 +21436,16 @@ var PodInference = class {
       gpuType,
       diskGb: DISK_GB
     });
+    const shared = group ? ", for the run's tasks on the same settings" : "";
     log.info(
-      `Created pod ${pod.id} with ${gpuType}, at ${usd(listed * 3600)} per hour; waiting for ${model}.`
+      `Created pod ${pod.id} with ${gpuType}, at ${usd(listed * 3600)} per hour${shared}; waiting for ${model}.`
     );
+    return { pod, listed };
+  }
+  /** Waits for a new pod to serve the model, and starts the run on it alone. */
+  async #serve(pod, listed, run2, token, log) {
+    const { model } = this.#settings;
+    const nonce = pod.env.CODEMAN_NONCE ?? "";
     const url = this.#host.url(pod.id, GATEWAY_PORT);
     try {
       const ready = await waitUntilReady(
@@ -21098,32 +21480,59 @@ var PodInference = class {
       throw error3;
     }
   }
-  async #startRun(handle, run2, token) {
+  async #startRun(handle, run2, token, group) {
     await this.#admin(handle, "POST", "/admin/run", {
       tokenSha256: sha256(token),
       limit: run2.limit,
       start: handle.start,
-      pricePerSecond: handle.pricePerSecond
+      pricePerSecond: handle.pricePerSecond,
+      ...handle.shared ? { task: handle.shared.task, group } : {}
     });
   }
-  async #admin(handle, method, path, body) {
-    const response = await (this.#options.fetch ?? fetch)(`${handle.url}${path}`, {
-      method,
-      headers: {
-        Authorization: `Bearer ${adminToken(this.#options.accountKey, handle.nonce)}`,
-        ...body === void 0 && method === "GET" ? {} : { "Content-Type": "application/json" }
-      },
-      body: method === "GET" ? null : JSON.stringify(body ?? {}),
-      signal: AbortSignal.timeout(3e4)
-    });
-    if (!response.ok)
-      throw new Error(`The pod's gateway answered ${path} with ${response.status}.`);
-    return response.json();
+  #admin(target, method, path, body) {
+    const { fetch: fetchFn = fetch, accountKey } = this.#options;
+    return callGateway(fetchFn, accountKey, target, method, path, body);
   }
 };
-async function releasePod(host, text, log) {
+function tasksOn(share) {
+  const tasks = [.../* @__PURE__ */ new Set([...share.active, ...share.keepers])].map((task) => `#${task}`);
+  return `the tasks that still use or keep it (${tasks.join(", ")})`;
+}
+function live(pod) {
+  return pod.status === "starting" || pod.status === "running";
+}
+function sortByAge(pods) {
+  return [...pods].sort(
+    (a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id)
+  );
+}
+function tokens(usage) {
+  return {
+    inputTokens: usage?.inputTokens,
+    outputTokens: usage?.outputTokens,
+    requests: usage?.requests,
+    maxInputTokens: usage?.maxInputTokens,
+    tokensPerSecond: usage?.tokensPerSecond
+  };
+}
+async function releasePod(host, text, log, gateway) {
   const handle = parseHandle(text);
   if (handle.mode !== "pod") return;
+  if (handle.shared && gateway) {
+    const status2 = await callGateway(
+      gateway.fetch ?? fetch,
+      gateway.accountKey,
+      handle,
+      "POST",
+      "/admin/release",
+      { task: handle.shared.task }
+    ).catch(() => void 0);
+    const share = { active: status2?.active ?? [], keepers: status2?.keepers ?? [] };
+    if (status2 && share.active.length + share.keepers.length > 0) {
+      log.info(`Released pod ${handle.podId} for this task; it stays for ${tasksOn(share)}.`);
+      return;
+    }
+  }
   await host.terminate(handle.podId);
   log.info(`Terminated pod ${handle.podId}: the task does not go on to another run now.`);
 }
@@ -21243,6 +21652,7 @@ function countRun(pods, run2, billed = {}) {
     }
     if (!pod.runs.includes(run2.runId)) pod.runs.push(run2.runId);
     pod.counted += run2.cost;
+    if (run2.shared) pod.shared = true;
   }
   const costs = {};
   for (const pod of next) {
@@ -21288,14 +21698,15 @@ function inferenceChoice(settings, record, options = {}) {
     gpuProvider: settings["gpu-provider"],
     engine: settings.engine ?? "",
     model: settings.model,
-    pods: record?.inference?.pods.map((pod) => pod.id) ?? [],
+    pods: record?.inference?.pods.filter((pod) => !pod.shared).map((pod) => pod.id) ?? [],
     ...budgeted
   };
   return settings["gpu-mode"] === "serverless" ? { ...common, mode: "serverless", endpoint: settings["serverless-endpoint"] ?? "" } : {
     ...common,
     mode: "pod",
     gpuType: settings["gpu-type"] ?? "",
-    podReuse: settings["pod-reuse"] === "run" ? "run" : "task"
+    podReuse: settings["pod-reuse"] === "run" ? "run" : "task",
+    ...settings["parallel-tasks"] > 1 ? { sharePods: true } : {}
   };
 }
 function providerName(settings) {
@@ -21313,7 +21724,7 @@ function parseInferenceChoice(text) {
   const budgeted = Array.isArray(choice.providers) && choice.providers.every((name) => typeof name === "string" && name !== "") && amount2(choice.recorded?.spent) && amount2(choice.recorded?.selfHosted) && (choice.profile === void 0 || typeof choice.profile === "string") && (choice.reserved === void 0 || amount2(choice.reserved) && choice.reserved >= 0) && (choice.others === void 0 || Array.isArray(choice.others) && choice.others.every((task) => typeof task === "string" && /^\d+$/.test(task)));
   if (!budgeted) throw new Error("The inference input is not a valid choice.");
   if (choice.inference === "openrouter") return choice;
-  const valid = choice.inference === "self-hosted" && typeof choice.model === "string" && ENGINES[choice.engine] !== void 0 && Array.isArray(choice.pods) && (choice.mode === "pod" ? typeof choice.gpuType === "string" : choice.mode === "serverless");
+  const valid = choice.inference === "self-hosted" && typeof choice.model === "string" && ENGINES[choice.engine] !== void 0 && Array.isArray(choice.pods) && (choice.mode === "pod" ? typeof choice.gpuType === "string" && (choice.sharePods === void 0 || typeof choice.sharePods === "boolean") : choice.mode === "serverless");
   if (!valid) throw new Error("The inference input is not a valid choice.");
   return choice;
 }
@@ -21386,7 +21797,13 @@ function selfHosted(choice, repository, inputs) {
   };
   if (choice.mode === "pod") {
     return new PodInference(
-      { ...common, gpuType: choice.gpuType, image: inputs.image, reuse: choice.podReuse },
+      {
+        ...common,
+        gpuType: choice.gpuType,
+        image: inputs.image,
+        reuse: choice.podReuse,
+        share: choice.sharePods === true
+      },
       { repository, gpu, accountKey: inputs.accountKey }
     );
   }
@@ -29799,7 +30216,8 @@ function jobResults(runtime2) {
     tokensPerSecond: amount2("tokens-per-second"),
     taskCosts: parseCosts(runtime2.input("task-costs")),
     pod: /^[\w-]{1,64}$/.test(runtime2.input("pod")) ? runtime2.input("pod") : void 0,
-    podCosts: parsePodCosts(runtime2.input("pod-costs"))
+    podCosts: parsePodCosts(runtime2.input("pod-costs")),
+    podShared: runtime2.input("pod-shared") === "true"
   };
 }
 function goesOn(state) {
@@ -30627,7 +31045,8 @@ function podSpend(io, task, record) {
     {
       runId: io.runtime.runIdOf(task.runUrl) ?? io.runtime.run.id,
       cost: io.jobs.runCost ?? 0,
-      pod: io.jobs.pod
+      pod: io.jobs.pod,
+      shared: io.jobs.podShared
     },
     io.jobs.podCosts
   );
@@ -30762,6 +31181,7 @@ async function closeKey({ runtime: runtime2, inference }) {
   if (usage.taskCosts) runtime2.output("task-costs", JSON.stringify(usage.taskCosts));
   if (usage.pod) runtime2.output("pod", usage.pod);
   if (usage.podCosts) runtime2.output("pod-costs", JSON.stringify(usage.podCosts));
+  if (usage.podShared) runtime2.output("pod-shared", "true");
   if (usage.keptPod) runtime2.output("kept-pod", usage.keptPod);
 }
 async function release({ runtime: runtime2 }) {
@@ -30770,9 +31190,10 @@ async function release({ runtime: runtime2 }) {
     runtime2.info("Nothing to release: the run had no pod.");
     return;
   }
-  const gpu = gpuProvider(choice.gpuProvider, runtime2.input("gpu-key", { required: true }));
+  const accountKey = runtime2.input("gpu-key", { required: true });
+  const gpu = gpuProvider(choice.gpuProvider, accountKey);
   if (!gpu.pods) throw new Error(`${gpu.name} has no pods.`);
-  await releasePod(gpu.pods, runtime2.input("handle", { required: true }), runtime2);
+  await releasePod(gpu.pods, runtime2.input("handle", { required: true }), runtime2, { accountKey });
 }
 
 // src/steps/select.ts

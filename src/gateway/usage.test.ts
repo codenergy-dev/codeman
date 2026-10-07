@@ -4,6 +4,7 @@ import {
   busyMs,
   EventReader,
   meterCost,
+  podShares,
   summarize,
   type WorkerSample,
   type Workers,
@@ -79,6 +80,41 @@ test("time a sample could not tell counts, as without samples", () => {
   assert.equal(busyMs(requests, 5_000, 99_999, unknown), busyMs(requests, 5_000, 99_999));
   const gap = samples(0, "none", "none", undefined, "none", "none", "none", "none");
   assert.equal(busyMs(requests, 5_000, 99_999, gap), 15_000);
+});
+
+test("splits a pod's seconds among its runs, and seconds without one among its keepers", () => {
+  const price = 1;
+  const shares = podShares(
+    [
+      { id: 1, start: 0, end: 40_000, pricePerSecond: price },
+      { id: 2, start: 20_000, end: 60_000, pricePerSecond: price },
+      // Still on the pod: counts until now.
+      { id: 3, start: 100_000, pricePerSecond: price },
+    ],
+    [
+      { task: "7", from: 40_000, to: 100_000 },
+      { task: "8", from: 60_000 },
+    ],
+    120_000,
+    price,
+  );
+  // Run 1: 20 seconds alone, 20 shared. Run 2: 20 shared, 20 alone. Run 3: 20 alone.
+  assert.deepEqual(
+    [...shares.runs],
+    [
+      [1, 30],
+      [2, 30],
+      [3, 20],
+    ],
+  );
+  // From 60 to 100 seconds no run uses the pod: tasks 7 and 8 keep it.
+  assert.deepEqual(
+    [...shares.kept],
+    [
+      ["7", 20],
+      ["8", 20],
+    ],
+  );
 });
 
 test("a pod costs its time; a worker its busy time", () => {

@@ -88,6 +88,8 @@ inputs:
     description: "(apply) pod output of the close-key job."
   pod-costs:
     description: "(apply) pod-costs output of the close-key job."
+  pod-shared:
+    description: "(apply) pod-shared output of the close-key job."
   workdir:
     description: "Directory for Codeman's files. Defaults to RUNNER_TEMP/codeman."
 outputs:
@@ -147,8 +149,10 @@ outputs:
     description: "(close-key) The pod that served the run, for self-hosted inference."
   pod-costs:
     description: "(close-key) What each of the task's pods cost so far, in USD, as JSON: its billing, or the run's pod's whole life at its rate when higher."
+  pod-shared:
+    description: "(close-key) true when the run's pod serves several tasks of the run: its cost in pod-costs is the task's share, as the pod's gateway measured it, not the pod's billing."
   kept-pod:
-    description: "(close-key) The pod kept for the task's next run, which release-pod terminates if none follows."
+    description: "(close-key) The pod kept for the task's next run, which release-pod terminates if none follows; a pod several tasks share stays while another uses or keeps it."
   gateway-usage:
     description: "(agent) What the agent job's gateway measured, for self-hosted inference on Serverless."
   encrypted-key:

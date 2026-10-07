@@ -49,7 +49,8 @@ permissions: {}
 
 jobs:
   # Gives this run access to its model, limited to what remains of the task's budget: an
-  # OpenRouter key, or a token for a self-hosted model's gateway, which may start a pod. Only the
+  # OpenRouter key, or a token for a self-hosted model's gateway, which may start a pod, or share
+  # one with the run's other tasks on the same pod settings (parallel-tasks above 1). Only the
   # key jobs (this one, close-key and release-pod) hold the management and GPU account keys. The
   # month counts every provider the settings and their inference profiles name, so this job
   # needs each one's secret; an unset secret is empty.
@@ -138,7 +139,8 @@ jobs:
 
   # Ends the run's access, whatever happened, and reads what the run and each earlier run of the
   # task spent: it disables the OpenRouter key, or ends the run on its pod, which it keeps for the
-  # task's next run or terminates. Apply waits for it to report the spend.
+  # task's next run or terminates (a pod the run's tasks share stays while another uses it).
+  # Apply waits for it to report the spend.
   close-key:
     name: Close key
     needs: [open-key, agent]
@@ -155,6 +157,7 @@ jobs:
       task-costs: ${{ steps.codeman.outputs.task-costs }}
       pod: ${{ steps.codeman.outputs.pod }}
       pod-costs: ${{ steps.codeman.outputs.pod-costs }}
+      pod-shared: ${{ steps.codeman.outputs.pod-shared }}
       kept-pod: ${{ steps.codeman.outputs.kept-pod }}
     steps:
       - uses: codenergy-dev/codeman@COMMIT_SHA
@@ -232,6 +235,7 @@ jobs:
           task-costs: ${{ needs.close-key.outputs.task-costs }}
           pod: ${{ needs.close-key.outputs.pod }}
           pod-costs: ${{ needs.close-key.outputs.pod-costs }}
+          pod-shared: ${{ needs.close-key.outputs.pod-shared }}
       # Tells next-run that the task moved.
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: steps.codeman.outputs.chain == 'true'
@@ -241,7 +245,8 @@ jobs:
           retention-days: 1
 
   # Terminates the pod close-key kept for the task's next run, when the task does not go on to
-  # one now (or apply failed). A kept pod also terminates itself after 15 idle minutes.
+  # one now (or apply failed), unless another task of the run shares it and uses or keeps it. A
+  # kept pod also terminates itself after 15 idle minutes.
   release-pod:
     name: Release pod
     needs: [open-key, close-key, apply]

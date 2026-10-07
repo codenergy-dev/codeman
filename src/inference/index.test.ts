@@ -95,6 +95,32 @@ test("with several tasks, a choice names the run's others and what the month kee
   }
 });
 
+test("with several tasks at once, pods are shared, and the billing of shared pods is not read", () => {
+  const shared = {
+    spent: 0.75,
+    inference: {
+      pods: [
+        { id: "p1", runs: ["1"], counted: 0.5 },
+        { id: "p2", runs: ["2"], counted: 0.25, shared: true },
+      ],
+    },
+  };
+  const pod = { inference: "self-hosted" as const, model: "qwen3-coder:30b", "gpu-type": "GPU A" };
+  const choice = inferenceChoice(settings({ ...pod, "parallel-tasks": 2 }), shared);
+  assert.equal(choice.inference === "self-hosted" && choice.pods.join(), "p1");
+  assert.equal(
+    choice.inference === "self-hosted" && choice.mode === "pod" && choice.sharePods,
+    true,
+  );
+  assert.deepEqual(parseInferenceChoice(JSON.stringify(choice)), choice);
+  const alone = inferenceChoice(settings(pod), shared);
+  assert.ok(!("sharePods" in alone), "one task at a time: as before");
+  assert.throws(
+    () => parseInferenceChoice(JSON.stringify({ ...choice, sharePods: "yes" })),
+    /not a valid/,
+  );
+});
+
 test("an empty choice, from older workflow files, is OpenRouter; anything else must be whole", () => {
   assert.deepEqual(parseInferenceChoice(""), {
     inference: "openrouter",

@@ -125,6 +125,8 @@ export interface JobResults {
   /** Self-hosted inference: the pod that served the run, and the billing of the task's pods. */
   pod?: string | undefined;
   podCosts?: Record<string, number> | undefined;
+  /** The pod served several tasks: its billing is not this task's alone. */
+  podShared?: boolean | undefined;
 }
 
 export function jobResults(runtime: Runtime): JobResults {
@@ -149,6 +151,7 @@ export function jobResults(runtime: Runtime): JobResults {
     taskCosts: parseCosts(runtime.input("task-costs")),
     pod: /^[\w-]{1,64}$/.test(runtime.input("pod")) ? runtime.input("pod") : undefined,
     podCosts: parsePodCosts(runtime.input("pod-costs")),
+    podShared: runtime.input("pod-shared") === "true",
   };
 }
 
@@ -1241,6 +1244,7 @@ function podSpend(
       runId: io.runtime.runIdOf(task.runUrl) ?? io.runtime.run.id,
       cost: io.jobs.runCost ?? 0,
       pod: io.jobs.pod,
+      shared: io.jobs.podShared,
     },
     io.jobs.podCosts,
   );

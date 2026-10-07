@@ -28,6 +28,25 @@ test("a kept pod's runs add up, and its idle time shows in its billing, not in a
   assert.deepEqual(second.costs, {}, "a pod that served two runs refreshes no row");
 });
 
+test("a shared pod is marked, and counts the task's share that close-key reports for it", () => {
+  const first = countRun(
+    undefined,
+    { runId: "100", cost: 0.06, pod: "a", shared: true },
+    { a: 0.06 },
+  );
+  assert.deepEqual(first.pods, [{ id: "a", runs: ["100"], counted: 0.06, shared: true }]);
+  // The next run's share, and the kept time between the runs given to the task.
+  const second = countRun(
+    first.pods,
+    { runId: "101", cost: 0.06, pod: "a", shared: true },
+    {
+      a: 0.18,
+    },
+  );
+  assert.ok(Math.abs(second.added - 0.12) < 1e-9);
+  assert.equal(second.pods[0]?.counted, 0.18);
+});
+
 test("keeps the newest pods only", () => {
   let pods = countRun(undefined, { runId: "0", cost: 0, pod: "p0" }).pods;
   for (let index = 1; index <= MAX_PODS; index++) {

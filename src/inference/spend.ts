@@ -8,6 +8,11 @@ export interface PodSpend {
   runs: string[];
   /** What the task's total counts for it so far, in USD. */
   counted: number;
+  /**
+   * It served several tasks: its billing is theirs together, so it does not refresh the count,
+   * which is the task's share as the pod's gateway measured it.
+   */
+  shared?: boolean | undefined;
 }
 
 /**
@@ -39,7 +44,7 @@ export const MAX_PODS = 20;
  */
 export function countRun(
   pods: readonly PodSpend[] | undefined,
-  run: { runId: string; cost: number; pod?: string | undefined },
+  run: { runId: string; cost: number; pod?: string | undefined; shared?: boolean | undefined },
   billed: Readonly<Record<string, number>> = {},
 ): { pods: PodSpend[]; added: number; costs: Record<string, number> } {
   const next = (pods ?? []).map((pod) => ({ ...pod, runs: [...pod.runs] }));
@@ -52,6 +57,7 @@ export function countRun(
     }
     if (!pod.runs.includes(run.runId)) pod.runs.push(run.runId);
     pod.counted += run.cost;
+    if (run.shared) pod.shared = true;
   }
   const costs: Record<string, number> = {};
   for (const pod of next) {

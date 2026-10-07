@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import type { Server } from "node:http";
+import { Gateway } from "../gateway/gateway.ts";
 import { type InferenceEngine, openAiUsage } from "../inference/engine.ts";
 import type {
   Endpoint,
@@ -127,15 +129,47 @@ export interface FakeGatewayState {
 
 /**
  * The gateways of a FakeGpu's pods, answering `fetch` at their URLs: `/health` and the admin
- * routes, which take only the token whose hash the pod was created with.
+ * routes, which take only the token whose hash the pod was created with. By default each one
+ * answers as a gateway that serves one run at a time; with `real`, Codeman's own gateway answers,
+ * on the loopback, on the GPU's clock.
  */
 export class FakeGateways {
   readonly gpu: FakeGpu;
   readonly states = new Map<string, FakeGatewayState>();
   readonly calls: string[] = [];
+  readonly #real: boolean;
+  readonly #gateways = new Map<string, { gateway: Gateway; url: string; server: Server }>();
 
-  constructor(gpu: FakeGpu) {
+  constructor(gpu: FakeGpu, options: { real?: boolean } = {}) {
     this.gpu = gpu;
+    this.#real = options.real === true;
+  }
+
+  /** The real gateway of a pod, in `real` mode. */
+  gateway(id: string): Gateway | undefined {
+    return this.#gateways.get(id)?.gateway;
+  }
+
+  /** Stops the real gateways' servers. */
+  close(): void {
+    for (const { server } of this.#gateways.values()) server.close();
+  }
+
+  async #serve(id: string, adminSha256: string | undefined) {
+    let served = this.#gateways.get(id);
+    if (!served) {
+      const gateway = new Gateway({
+        upstream: "http://127.0.0.1:9/v1",
+        engine: fakeEngine,
+        adminSha256,
+        now: () => this.gpu.now().getTime(),
+      });
+      gateway.contextLength = 65536;
+      const { server, url } = await gateway.listen();
+      served = { gateway, url, server };
+      this.#gateways.set(id, served);
+    }
+    return served;
   }
 
   state(id: string): FakeGatewayState {
@@ -161,6 +195,11 @@ export class FakeGateways {
     this.calls.push(`${init?.method ?? "GET"} ${id} ${url.pathname}`);
     const state = this.state(id);
     if (!pod || !state.reachable) throw new TypeError("fetch failed");
+    if (this.#real) {
+      const { gateway, url: base } = await this.#serve(id, pod.env.CODEMAN_ADMIN_SHA256);
+      gateway.ready = state.ready;
+      return fetch(`${base}${url.pathname}`, init);
+    }
     const json = (status: number, body: unknown) =>
       new Response(JSON.stringify(body), {
         status,
