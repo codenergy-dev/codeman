@@ -19,6 +19,11 @@ export interface Settings {
   model: string;
   "task-budget": number;
   "monthly-budget": number;
+  /**
+   * Spending limit per calendar month of the organization's repositories together; only the
+   * organization's settings set it. Undefined: no limit.
+   */
+  "organization-monthly-budget"?: number | undefined;
   "max-runs": number;
   "max-files": number;
   "max-file-bytes": number;
@@ -97,6 +102,14 @@ export const TASK_SETTINGS: ReadonlySet<SettingName> = new Set([
   "gpu-type",
 ]);
 
+/**
+ * Settings only the organization's settings may set: a repository must not raise a limit that
+ * holds for every repository.
+ */
+export const ORGANIZATION_SETTINGS: ReadonlySet<SettingName> = new Set([
+  "organization-monthly-budget",
+]);
+
 /** Settings that take one of a few values. */
 export const CHOICES: Readonly<Partial<Record<SettingName, readonly string[]>>> = {
   inference: ["openrouter", "self-hosted"],
@@ -110,6 +123,7 @@ const NAMES: readonly SettingName[] = [
   "model",
   "task-budget",
   "monthly-budget",
+  "organization-monthly-budget",
   "max-runs",
   "max-files",
   "max-file-bytes",
@@ -168,7 +182,11 @@ export function settingKind(name: SettingName): SettingKind {
   if (name === "model" || name === "language" || name === "gpu-type") return name;
   if (name === "serverless-endpoint") return "endpoint";
   if (CHOICES[name]) return "choice";
-  return name === "task-budget" || name === "monthly-budget" ? "number" : "integer";
+  return name === "task-budget" ||
+    name === "monthly-budget" ||
+    name === "organization-monthly-budget"
+    ? "number"
+    : "integer";
 }
 
 export function isSettingName(name: string): name is SettingName {
@@ -282,6 +300,16 @@ export function parseSettings(text: string, source = SETTINGS_FILE): Parsed<Sett
     const parsed =
       entry.key === "inference-profiles" ? profiles(entry.value) : setting(entry, "setting");
     if (!parsed.ok) return { ok: false, error: `${source}, line ${parsed.line}: ${parsed.error}` };
+    if (
+      source !== SHARED_SETTINGS &&
+      isSettingName(entry.key) &&
+      ORGANIZATION_SETTINGS.has(entry.key)
+    ) {
+      return {
+        ok: false,
+        error: `${source}, line ${entry.line}: \`${entry.key}\` can be set only in the organization's settings, the CODEMAN_SETTINGS variable.`,
+      };
+    }
     settings[entry.key] = parsed.value;
   }
   return { ok: true, value: settings as SettingsLayer };

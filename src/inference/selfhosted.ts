@@ -7,7 +7,6 @@ import type { RepositoryRef } from "../platform/types.ts";
 import type { Log } from "../runtime/runtime.ts";
 import type { InferenceEngine } from "./engine.ts";
 import {
-  accountMonthSpent,
   endpointProblems,
   type GpuProvider,
   type Pod,
@@ -40,8 +39,6 @@ export interface SelfHostedSettings {
   /** The engine's model name. */
   model: string;
   engine: InferenceEngine;
-  /** What the task spent so far, from its record: providers bill pods, not tasks. */
-  taskSpent: number;
   /** The pods the task's record lists, whose billing refreshes its spend. */
   pods: readonly string[];
   /** The run's other tasks that run an agent at the same time: their jobs manage their pods. */
@@ -181,14 +178,6 @@ export class PodInference implements InferenceProvider {
 
   #now(): Date {
     return this.#options.now?.() ?? new Date();
-  }
-
-  async taskSpent(): Promise<number> {
-    return this.#settings.taskSpent;
-  }
-
-  async monthSpent(): Promise<number> {
-    return accountMonthSpent(this.#options.gpu, this.#now());
   }
 
   async open(run: RunRequest, log: Log): Promise<OpenedRun> {
@@ -782,32 +771,16 @@ export interface ServerlessSettings extends SelfHostedSettings {
 export class ServerlessInference implements InferenceProvider {
   readonly name: string;
   readonly #settings: ServerlessSettings;
-  readonly #gpu: GpuProvider;
   readonly #host: ServerlessHost;
   readonly #usage: string;
-  readonly #now: () => Date;
 
   /** `usage` is what the agent job's gateway reported, as JSON; empty when it reported nothing. */
-  constructor(
-    settings: ServerlessSettings,
-    gpu: GpuProvider,
-    options: { usage?: string; now?: () => Date } = {},
-  ) {
+  constructor(settings: ServerlessSettings, gpu: GpuProvider, options: { usage?: string } = {}) {
     if (!gpu.serverless) throw new Error(`${gpu.name} has no Serverless endpoints.`);
     this.name = `${gpu.name} Serverless`;
     this.#settings = settings;
-    this.#gpu = gpu;
     this.#host = gpu.serverless;
     this.#usage = options.usage ?? "";
-    this.#now = options.now ?? (() => new Date());
-  }
-
-  async taskSpent(): Promise<number> {
-    return this.#settings.taskSpent;
-  }
-
-  async monthSpent(): Promise<number> {
-    return accountMonthSpent(this.#gpu, this.#now());
   }
 
   /** Checks the endpoint (decision 10 of the plan) and prices its workers. */

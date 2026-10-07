@@ -17,7 +17,7 @@ test("hands the key jobs the task's choice of inference, with its spend and pods
   assert.deepEqual(openrouter, {
     inference: "openrouter",
     providers: ["openrouter"],
-    recorded: { spent: 0.75, selfHosted: 0.75 },
+    recorded: { spent: 0.75 },
   });
   assert.equal(agentMode(openrouter), "openrouter");
 
@@ -37,7 +37,7 @@ test("hands the key jobs the task's choice of inference, with its spend and pods
     model: "qwen3-coder:30b",
     pods: ["p1"],
     providers: ["runpod"],
-    recorded: { spent: 0.75, selfHosted: 0.75 },
+    recorded: { spent: 0.75 },
     mode: "pod",
     gpuType: "GPU A",
     podReuse: "run",
@@ -61,32 +61,28 @@ test("hands the key jobs the task's choice of inference, with its spend and pods
     model: "org/model",
     pods: [],
     providers: ["runpod"],
-    recorded: { spent: 0, selfHosted: 0 },
+    recorded: { spent: 0 },
     mode: "serverless",
     endpoint: "ep1",
   });
   assert.deepEqual(parseInferenceChoice(JSON.stringify(pod)), pod);
 });
 
-test("with several tasks, a choice names the run's others and what the month keeps for them", () => {
-  const choice = inferenceChoice(settings({ model: "a/b" }), null, {
-    reserved: 1.5,
-    others: ["4", "9"],
-  });
+test("with several tasks, a choice names the run's others", () => {
+  const choice = inferenceChoice(settings({ model: "a/b" }), null, { others: ["4", "9"] });
   assert.deepEqual(choice, {
     inference: "openrouter",
     providers: ["openrouter"],
-    recorded: { spent: 0, selfHosted: 0 },
-    reserved: 1.5,
+    recorded: { spent: 0 },
     others: ["4", "9"],
   });
   assert.deepEqual(parseInferenceChoice(JSON.stringify(choice)), choice);
-  // One task: neither, as before parallel tasks.
+  // One task: none, as before parallel tasks.
   assert.deepEqual(
-    inferenceChoice(settings({ model: "a/b" }), null, { reserved: 0, others: [] }),
+    inferenceChoice(settings({ model: "a/b" }), null, { others: [] }),
     inferenceChoice(settings({ model: "a/b" }), null),
   );
-  for (const bad of [{ reserved: -1 }, { reserved: "1" }, { others: ["../x"] }, { others: [4] }]) {
+  for (const bad of [{ recorded: {} }, { others: ["../x"] }, { others: [4] }]) {
     assert.throws(
       () => parseInferenceChoice(JSON.stringify({ ...choice, ...bad })),
       /not a valid/,
@@ -125,7 +121,7 @@ test("an empty choice, from older workflow files, is OpenRouter; anything else m
   assert.deepEqual(parseInferenceChoice(""), {
     inference: "openrouter",
     providers: ["openrouter"],
-    recorded: { spent: 0, selfHosted: 0 },
+    recorded: { spent: 0 },
   });
   assert.throws(
     () => parseInferenceChoice('{"inference":"self-hosted","model":"m"}'),

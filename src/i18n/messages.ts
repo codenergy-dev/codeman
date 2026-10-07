@@ -110,8 +110,10 @@ export interface Messages {
   ];
   /** The provider column: the provider and, on Runpod, the mode. */
   provider(mode: AgentMode): string;
-  /** A note under the table: how a run's cost and the month are measured with `mode`. */
+  /** A note under the table: how a run's cost is measured with `mode`. */
   spendNote(mode: AgentMode): string;
+  /** The note under the table after those: how Codeman's ledger counts the month. */
+  monthNote: string;
   earlierRuns(runs: number): string;
   /** The label of the row that totals every run of the task. */
   totalRow(runs: number): string;
@@ -149,6 +151,7 @@ export interface Messages {
   missingCredentials: string;
   taskBudgetSpent(spent: string, budget: string, minimum: string): string;
   monthlyBudgetReached(used: string, budget: string, limit: string): string;
+  organizationBudgetReached(used: string, budget: string, limit: string): string;
   tryLater(reason: string): string;
 
   // Results.

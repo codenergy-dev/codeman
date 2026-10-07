@@ -7,6 +7,9 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
+import { Ledger } from "../ledger.ts";
+import { FakeRuntime } from "../testing/fake-runtime.ts";
+import { seedRuns } from "../testing/ledger-runs.ts";
 import { storeContract } from "./contract.ts";
 import { Firestore } from "./firestore.ts";
 
@@ -35,6 +38,32 @@ after(() => {
 });
 
 storeContract("Firestore emulator", () => Firestore.emulator(host, project()), { skip });
+
+test("Firestore emulator: two runs that reserve at once near the monthly budget", {
+  skip,
+}, async () => {
+  const store = Firestore.emulator(host, project());
+  await seedRuns(store, {
+    "250-1-9": { status: "closed", cost: 16.5 },
+    "300-1-7": {},
+    "300-1-8": {},
+  });
+  const runtime = new FakeRuntime({ runId: "300" });
+  const reserve = (task: number) =>
+    new Ledger(store, { runtime, job: "open-key" }).reserve(`300-1-${task}`, {
+      task,
+      taskBudget: 2,
+      monthlyBudget: 20,
+      recorded: 0,
+      billed: new Map(),
+    });
+  const outcomes = await Promise.all([reserve(7), reserve(8)]);
+  assert.deepEqual(outcomes.map((one) => one.outcome).sort(), ["over-budget", "reserved"]);
+  const open = await store.query("organizations/o/runs", {
+    where: [{ field: "status", op: "==", value: "open" }],
+  });
+  assert.equal(open.length, 1);
+});
 
 const rulesSkip = jar
   ? false

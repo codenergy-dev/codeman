@@ -28,6 +28,10 @@ on:
       monthly-budget:
         type: string
         required: true
+      # Only the organization's settings set it; empty when they do not.
+      organization-monthly-budget:
+        type: string
+        required: false
       inference:
         type: string
         required: true
@@ -56,8 +60,9 @@ jobs:
   # OpenRouter key, or a token for a self-hosted model's gateway, which may start a pod, or share
   # one with the run's other tasks on the same pod settings (parallel-tasks above 1). Only the
   # key jobs (this one, close-key and release-pod) hold the management and GPU account keys. The
-  # month counts every provider the settings and their inference profiles name, so this job
-  # needs each one's secret; an unset secret is empty.
+  # budgets come from Codeman's ledger, where this job reserves the run's limit; with an
+  # organization-monthly-budget, it also reads each GPU account's billing. An unset secret is
+  # empty.
   open-key:
     name: Open key
     if: inputs.needs-agent == 'true'
@@ -72,6 +77,7 @@ jobs:
       reason: ${{ steps.codeman.outputs.reason }}
       task-spent: ${{ steps.codeman.outputs.task-spent }}
       month-spent: ${{ steps.codeman.outputs.month-spent }}
+      organization-month-spent: ${{ steps.codeman.outputs.organization-month-spent }}
       key-limit: ${{ steps.codeman.outputs.key-limit }}
       key-hash: ${{ steps.codeman.outputs.key-hash }}
       handle: ${{ steps.codeman.outputs.handle }}
@@ -86,6 +92,7 @@ jobs:
           task: ${{ inputs.task }}
           task-budget: ${{ inputs.task-budget }}
           monthly-budget: ${{ inputs.monthly-budget }}
+          organization-monthly-budget: ${{ inputs.organization-monthly-budget }}
           inference: ${{ inputs.inference }}
           ledger-run: ${{ inputs.ledger-run }}
           firebase-project: ${{ vars.CODEMAN_FIREBASE_PROJECT }}
@@ -149,10 +156,10 @@ jobs:
           if-no-files-found: ignore
           retention-days: 1
 
-  # Ends the run's access, whatever happened, and reads what the run and each earlier run of the
-  # task spent: it disables the OpenRouter key, or ends the run on its pod, which it keeps for the
-  # task's next run or terminates (a pod the run's tasks share stays while another uses it).
-  # Apply waits for it to report the spend.
+  # Ends the run's access, whatever happened, and reads what the run spent: it disables the
+  # OpenRouter key, or ends the run on its pod, which it keeps for the task's next run or
+  # terminates (a pod the run's tasks share stays while another uses it). Then records it in
+  # Codeman's ledger, and reports the task's spend from there; apply waits for it.
   close-key:
     name: Close key
     needs: [open-key, agent]
@@ -170,8 +177,8 @@ jobs:
       max-input-tokens: ${{ steps.codeman.outputs.max-input-tokens }}
       tokens-per-second: ${{ steps.codeman.outputs.tokens-per-second }}
       task-costs: ${{ steps.codeman.outputs.task-costs }}
+      task-total: ${{ steps.codeman.outputs.task-total }}
       pod: ${{ steps.codeman.outputs.pod }}
-      pod-costs: ${{ steps.codeman.outputs.pod-costs }}
       pod-shared: ${{ steps.codeman.outputs.pod-shared }}
       kept-pod: ${{ steps.codeman.outputs.kept-pod }}
     steps:
@@ -244,9 +251,11 @@ jobs:
           key-reason: ${{ needs.open-key.outputs.reason }}
           agent-job-result: ${{ needs.agent.result }}
           task-spent: ${{ needs.open-key.outputs.task-spent }}
+          task-total: ${{ needs.close-key.outputs.task-total }}
           run-cost: ${{ needs.close-key.outputs.run-cost }}
           key-limit: ${{ needs.open-key.outputs.key-limit }}
           month-spent: ${{ needs.open-key.outputs.month-spent }}
+          organization-month-spent: ${{ needs.open-key.outputs.organization-month-spent }}
           input-tokens: ${{ needs.close-key.outputs.input-tokens }}
           output-tokens: ${{ needs.close-key.outputs.output-tokens }}
           requests: ${{ needs.close-key.outputs.requests }}
@@ -254,7 +263,6 @@ jobs:
           tokens-per-second: ${{ needs.close-key.outputs.tokens-per-second }}
           task-costs: ${{ needs.close-key.outputs.task-costs }}
           pod: ${{ needs.close-key.outputs.pod }}
-          pod-costs: ${{ needs.close-key.outputs.pod-costs }}
           pod-shared: ${{ needs.close-key.outputs.pod-shared }}
       # Tells next-run that the task moved.
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

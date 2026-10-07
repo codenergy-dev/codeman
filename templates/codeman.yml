@@ -149,6 +149,7 @@ jobs:
       base-sha: ${{ matrix.base-sha }}
       task-budget: ${{ matrix.task-budget }}
       monthly-budget: ${{ matrix.monthly-budget }}
+      organization-monthly-budget: ${{ matrix.organization-monthly-budget }}
       inference: ${{ matrix.inference }}
       ledger-run: ${{ matrix.ledger-run }}
     # Each job of codeman-task.yml uses only the secrets it used here before.

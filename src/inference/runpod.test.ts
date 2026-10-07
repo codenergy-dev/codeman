@@ -133,17 +133,33 @@ test("adds up the billing of the given pods since the day they started", async (
   assert.deepEqual(await new Runpod("rk", fetch).pods.billing([], new Date()), {});
 });
 
-test("reads this month's spend of the whole account", async () => {
+test("reads the whole account's billing by the hour", async () => {
   const { fetch, calls } = fakeFetch([
     {
-      records: [{ startTime: "2026-10-01T00:00:00Z", totalAmount: 4.25 }],
-      metadata: { totals: { totalAmount: 4.25 } },
+      records: [
+        { startTime: "2026-10-03T13:00:00Z", totalAmount: 0.25 },
+        { startTime: "2026-10-03T14:00:00Z", totalAmount: 1.5 },
+        { startTime: "2026-10-03T15:00:00Z" },
+        { startTime: "2026-09-30T23:00:00Z", totalAmount: 9 },
+      ],
     },
   ]);
-  assert.equal(await new Runpod("rk", fetch).monthSpent(new Date("2026-10-03T15:30:00Z")), 4.25);
+  const hours = await new Runpod("rk", fetch).billedHours(
+    new Date("2026-10-01T00:00:00Z"),
+    new Date("2026-10-03T15:30:00Z"),
+  );
+  assert.deepEqual(
+    [...hours].map(([hour, amount]) => [new Date(hour).toISOString(), amount]),
+    [
+      ["2026-10-03T13:00:00.000Z", 0.25],
+      ["2026-10-03T14:00:00.000Z", 1.5],
+      ["2026-10-03T15:00:00.000Z", 0],
+    ],
+    "an hour before the window is left out",
+  );
   assert.equal(
     calls[0]?.[0],
-    "https://api.runpod.io/v2/billing?bucketSize=month&startTime=2026-10-01T00%3A00%3A00Z&endTime=2026-11-01T00%3A00%3A00Z",
+    "https://api.runpod.io/v2/billing?bucketSize=hour&startTime=2026-10-01T00%3A00%3A00Z&endTime=2026-10-03T16%3A00%3A00Z",
   );
 });
 
@@ -211,7 +227,7 @@ test("reports what a failure's problem says, and nothing of another body", async
     new Response("<html>gateway error</html>", { status: 502 }),
   ]);
   const runpod = new Runpod("rk", fetch);
-  await assert.rejects(runpod.monthSpent(new Date("2026-10-05T12:00:00Z")), {
+  await assert.rejects(runpod.billedHours(new Date("2026-10-01"), new Date("2026-10-05")), {
     message:
       "Runpod GET /billing failed with 400: Bad Request — invalid query — bucketSize: must be one of hour, day",
   });

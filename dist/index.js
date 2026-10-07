@@ -19768,31 +19768,6 @@ function readTask(runtime2) {
   return task;
 }
 
-// src/inference/budget.ts
-var ProviderBudget = class {
-  missing;
-  #recorded;
-  #accounts;
-  constructor(recorded2, accounts, missing = []) {
-    this.#recorded = recorded2;
-    this.#accounts = accounts;
-    this.missing = missing;
-  }
-  async taskSpent(task) {
-    const openRouter = this.#accounts.find((account) => account.name === "openrouter");
-    if (!openRouter || !("provider" in openRouter)) return this.#recorded.spent;
-    return await openRouter.provider.taskSpent(task) + this.#recorded.selfHosted;
-  }
-  async monthSpent() {
-    return Promise.all(
-      this.#accounts.map(async (account) => ({
-        provider: account.name,
-        spent: await ("provider" in account ? account.provider.monthSpent() : account.month())
-      }))
-    );
-  }
-};
-
 // src/inference/engine.ts
 function openAiUsage(body, cachedApart = false) {
   if (typeof body !== "object" || body === null) return void 0;
@@ -19859,78 +19834,6 @@ function vllmContextLength(env) {
 var ENGINES = { ollama, vllm };
 var MODE_ENGINE = { pod: "ollama", serverless: "vllm" };
 
-// src/inference/gpu.ts
-async function accountMonthSpent(gpu, now) {
-  const billed = await gpu.monthSpent(now);
-  if (!gpu.pods) return billed;
-  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-  const live2 = (await gpu.pods.list({})).filter(
-    (pod) => pod.status !== "terminated" && pod.pricePerSecond !== void 0
-  );
-  if (live2.length === 0) return billed;
-  const podBilled = await gpu.pods.billing(
-    live2.map((pod) => pod.id),
-    start
-  );
-  let unbilled2 = 0;
-  for (const pod of live2) {
-    const from = pod.createdAt > start ? pod.createdAt : start;
-    const estimate = podCost(from, now, pod.pricePerSecond ?? 0);
-    unbilled2 += Math.max(0, estimate - (podBilled[pod.id] ?? 0));
-  }
-  return billed + unbilled2;
-}
-var MAX_IDLE_TIMEOUT_SECONDS = 300;
-function endpointProblems(endpoint2) {
-  const problems = [];
-  if (endpoint2.type !== void 0 && endpoint2.type !== "QUEUE") {
-    problems.push(`it is a ${endpoint2.type} endpoint; the vLLM worker needs a queue-based one`);
-  }
-  if (endpoint2.workersMin !== 0) {
-    problems.push(
-      `it keeps ${endpoint2.workersMin} active worker(s), billed all the time; set active workers to 0`
-    );
-  }
-  if (endpoint2.workersMax === 0) {
-    problems.push(
-      "its max workers is 0, as the provider sets it after 7 days without requests; set it to 1"
-    );
-  } else if (endpoint2.workersMax !== 1) {
-    problems.push(`it may run ${endpoint2.workersMax} workers at once; set max workers to 1`);
-  }
-  const idle = endpoint2.idleTimeoutSeconds;
-  if (idle === void 0 || idle > MAX_IDLE_TIMEOUT_SECONDS) {
-    problems.push(
-      `its idle timeout is ${idle === void 0 ? "unknown" : `${idle} seconds`}; set it to ${MAX_IDLE_TIMEOUT_SECONDS} seconds or less`
-    );
-  }
-  return problems;
-}
-function podCost(start, end, pricePerSecond) {
-  return Math.max(0, end.getTime() - start.getTime()) / 1e3 * pricePerSecond;
-}
-async function waitUntilReady(host, id, ready, options) {
-  const wait = options.wait ?? sleep;
-  const interval = options.intervalMs ?? 1e4;
-  for (let waited = 0; ; waited += interval) {
-    const pod = await host.get(id);
-    if (!pod) throw new Error(`Pod ${id} no longer exists.`);
-    if (pod.status === "failed" || pod.status === "stopped" || pod.status === "terminated") {
-      throw new Error(`Pod ${id} is ${pod.status}.`);
-    }
-    if (pod.status === "running" && await ready().catch(() => false)) return pod;
-    if (waited >= options.timeoutMs) {
-      throw new Error(
-        `Pod ${id} was not ready within ${Math.round(options.timeoutMs / 6e4)} minutes.`
-      );
-    }
-    await wait(interval);
-  }
-}
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 // src/budget.ts
 var MIN_RUN_BUDGET = 0.1;
 function runLimit(taskBudget, spent) {
@@ -19940,6 +19843,103 @@ function runLimit(taskBudget, spent) {
 function usd(amount2) {
   return `US$ ${amount2.toFixed(2)}`;
 }
+var RESERVATION_MS = 2 * 36e5;
+var HOUR_MS = 36e5;
+function runAmount(run2) {
+  const own = run2.cost ?? (run2.status === "open" ? run2.limit ?? 0 : 0);
+  return (run2.spentBefore ?? 0) + own;
+}
+function reserving(run2, now) {
+  return run2.status === "open" && run2.cost === void 0 && run2.expiresAt > now;
+}
+function expired(run2, now) {
+  return run2.status === "open" && run2.cost === void 0 && run2.expiresAt <= now;
+}
+function counted(runs) {
+  const alone = [];
+  const onPods = /* @__PURE__ */ new Map();
+  for (const run2 of runs) {
+    if (!run2.pod) {
+      alone.push({ runs: [run2], amount: runAmount(run2) });
+      continue;
+    }
+    const key = JSON.stringify([run2.repository, run2.task, run2.pod]);
+    onPods.set(key, [...onPods.get(key) ?? [], run2]);
+  }
+  const pods = [...onPods.values()].map((group) => ({
+    runs: group,
+    amount: Math.max(
+      group.reduce((sum, run2) => sum + runAmount(run2), 0),
+      ...group.map((run2) => run2.podCost ?? 0)
+    )
+  }));
+  return [...alone, ...pods];
+}
+function spentBy(runs) {
+  return counted(runs).reduce((sum, group) => sum + group.amount, 0);
+}
+function taskTotal(runs) {
+  return spentBy(runs) + runs.reduce((sum, run2) => sum + (run2.carried ?? 0), 0);
+}
+function costsByWorkflowRun(runs) {
+  const costs = {};
+  for (const group of counted(runs)) {
+    for (const run2 of group.runs) {
+      const amount2 = group.runs.length === 1 ? group.amount : runAmount(run2);
+      costs[run2.workflowRun] = (costs[run2.workflowRun] ?? 0) + amount2;
+    }
+  }
+  return Object.fromEntries(
+    Object.entries(costs).map(([run2, cost]) => [run2, Number(cost.toFixed(4))])
+  );
+}
+function reconciledMonth(runs, billed, now) {
+  let total = 0;
+  const estimates = /* @__PURE__ */ new Map();
+  for (const group of counted(runs)) {
+    const [first] = group.runs;
+    const hours = first && billed.get(first.provider);
+    if (!first || !hours || group.runs.some((run2) => reserving(run2, now))) {
+      total += group.amount;
+      continue;
+    }
+    const start = Math.min(...group.runs.map((run2) => run2.start.getTime()));
+    const end = Math.max(...group.runs.map((run2) => endOf(run2, now).getTime()));
+    let estimate = estimates.get(first.provider);
+    if (!estimate) {
+      estimate = /* @__PURE__ */ new Map();
+      estimates.set(first.provider, estimate);
+    }
+    spread(estimate, group.amount, start, end);
+  }
+  for (const [provider, hours] of billed) {
+    const estimate = estimates.get(provider) ?? /* @__PURE__ */ new Map();
+    for (const hour of /* @__PURE__ */ new Set([...hours.keys(), ...estimate.keys()])) {
+      const bill = hours.get(hour) ?? 0;
+      total += Math.max(bill, estimate.get(hour) ?? 0);
+    }
+  }
+  return total;
+}
+function endOf(run2, now) {
+  return run2.closedAt ?? (run2.expiresAt < now ? run2.expiresAt : now);
+}
+function spread(hours, amount2, start, end) {
+  if (amount2 <= 0) return;
+  const add2 = (hour, part) => hours.set(hour, (hours.get(hour) ?? 0) + part);
+  const first = start - start % HOUR_MS;
+  if (end <= start) {
+    add2(first, amount2);
+    return;
+  }
+  for (let hour = first; hour < end; hour += HOUR_MS) {
+    const overlap = Math.min(end, hour + HOUR_MS) - Math.max(start, hour);
+    add2(hour, amount2 * overlap / (end - start));
+  }
+}
+function monthStart(date) {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
+}
 
 // src/inference/openrouter.ts
 var API = "https://openrouter.ai/api/v1";
@@ -19948,9 +19948,6 @@ function keyPrefix(repository) {
 }
 function taskKeyPrefix(repository, issue2) {
   return `${keyPrefix(repository)}${issue2}/`;
-}
-function sumUsage(keys, prefix, field) {
-  return keys.filter((key) => key.name.startsWith(prefix)).reduce((total, key) => total + (key[field] ?? 0), 0);
 }
 function costsByRun(keys, prefix) {
   const costs = {};
@@ -19993,10 +19990,6 @@ var OpenRouter = class {
       keys.push(...data);
     }
     throw new Error("Too many OpenRouter keys to add up.");
-  }
-  /** This month's usage, in USD, of every key whose name starts with `prefix`, disabled ones included. */
-  async monthlyUsage(prefix) {
-    return sumUsage(await this.listKeys(), prefix, "usage_monthly");
   }
   async key(hash) {
     const { data } = await this.#request(`/keys/${encodeURIComponent(hash)}`);
@@ -20106,22 +20099,16 @@ var OpenRouterProvider = class {
   #router;
   #repository;
   #expiryHours;
-  #keys;
   constructor(router, repository, expiryHours) {
     this.#router = router;
     this.#repository = repository;
     this.#expiryHours = expiryHours;
   }
-  /** The account's keys, listed once for both sums. */
-  #listKeys() {
-    this.#keys ??= this.#router.listKeys();
-    return this.#keys;
-  }
-  async taskSpent(task) {
-    return sumUsage(await this.#listKeys(), taskKeyPrefix(this.#repository, task), "usage");
-  }
-  async monthSpent() {
-    return sumUsage(await this.#listKeys(), keyPrefix(this.#repository), "usage_monthly");
+  /** What each run of the task spent, by run ID, as its keys' usage tells, rounded as costs are. */
+  async taskCosts(task) {
+    return rounded(
+      costsByRun(await this.#router.listKeys(), taskKeyPrefix(this.#repository, task))
+    );
   }
   async open(run2, log) {
     const hours = this.#expiryHours();
@@ -20160,7 +20147,7 @@ var OpenRouterProvider = class {
     };
   }
 };
-async function runCost(router, hash, used, wait = sleep2) {
+async function runCost(router, hash, used, wait = sleep) {
   let cost = await router.keyUsage(hash);
   for (let attempt = 0; attempt < (used ? 12 : 6); attempt++) {
     await wait(5e3);
@@ -20177,10 +20164,7 @@ async function taskCosts(router, hash, repository, log) {
     if (!prefix.startsWith(keyPrefix(repository)) || prefix === keyPrefix(repository)) {
       throw new Error("the key's name is not a task key's.");
     }
-    const costs = costsByRun(await router.listKeys(), prefix);
-    return Object.fromEntries(
-      Object.entries(costs).map(([run2, cost]) => [run2, Number(cost.toFixed(4))])
-    );
+    return rounded(costsByRun(await router.listKeys(), prefix));
   } catch (error3) {
     log.warning(
       `Could not read what the task's runs spent: ${error3 instanceof Error ? error3.message : error3}`
@@ -20188,14 +20172,19 @@ async function taskCosts(router, hash, repository, log) {
     return void 0;
   }
 }
+function rounded(costs) {
+  return Object.fromEntries(
+    Object.entries(costs).map(([run2, cost]) => [run2, Number(cost.toFixed(4))])
+  );
+}
 var KEY_LIFETIME_MS = 48 * 36e5;
-async function runTokens(router, hash, spent, log, wait = sleep2) {
+async function runTokens(router, hash, spent, log, wait = sleep) {
   try {
     for (let attempt = 0; ; attempt++) {
       const now = /* @__PURE__ */ new Date();
       const tokens2 = await router.keyTokens(hash, new Date(now.getTime() - KEY_LIFETIME_MS), now);
-      const counted = tokens2 !== void 0 && tokens2.input + tokens2.output > 0;
-      if (counted || !spent) return tokens2 ?? (spent ? void 0 : { input: 0, output: 0 });
+      const counted2 = tokens2 !== void 0 && tokens2.input + tokens2.output > 0;
+      if (counted2 || !spent) return tokens2 ?? (spent ? void 0 : { input: 0, output: 0 });
       if (attempt === 6) {
         log.warning("OpenRouter's analytics has no tokens for this run's key yet.");
         return void 0;
@@ -20209,7 +20198,7 @@ async function runTokens(router, hash, spent, log, wait = sleep2) {
     return void 0;
   }
 }
-async function runStats(router, hash, generated, log, wait = sleep2) {
+async function runStats(router, hash, generated, log, wait = sleep) {
   try {
     for (let attempt = 0; ; attempt++) {
       const now = /* @__PURE__ */ new Date();
@@ -20228,12 +20217,13 @@ async function runStats(router, hash, generated, log, wait = sleep2) {
     return void 0;
   }
 }
-function sleep2(ms) {
+function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 // src/inference/runpod.ts
 var API2 = "https://api.runpod.io/v2";
+var HOUR_MS2 = 36e5;
 var STATUS = {
   PROVISIONING: "starting",
   STARTING: "starting",
@@ -20269,14 +20259,21 @@ var Runpod = class {
     };
   }
   /**
-   * `GET /v2/billing`, by month: the account's total since the month began (UTC). The API takes
-   * `startTime` only with `endTime`; both fall on the month's boundaries.
+   * `GET /v2/billing`, by hour: the account's total for each hour from `start` (UTC). The API
+   * snaps the window to whole hours, and takes `startTime` only with `endTime`.
    */
-  async monthSpent(now) {
-    const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-    const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
-    const response = await this.#request(`/billing?bucketSize=month&${window(start, end)}`);
-    return (response.records ?? []).filter((record) => !record.startTime || Date.parse(record.startTime) >= start.getTime()).reduce((total, record) => total + amount(record.totalAmount), 0);
+  async billedHours(start, end) {
+    const from = new Date(start.getTime() - start.getTime() % HOUR_MS2);
+    const to = new Date(Math.ceil(end.getTime() / HOUR_MS2) * HOUR_MS2);
+    const response = await this.#request(`/billing?bucketSize=hour&${window(from, to)}`);
+    const hours = /* @__PURE__ */ new Map();
+    for (const record of response.records ?? []) {
+      const at = Date.parse(record.startTime ?? "");
+      if (!Number.isFinite(at) || at < from.getTime()) continue;
+      const hour = at - at % HOUR_MS2;
+      hours.set(hour, (hours.get(hour) ?? 0) + amount(record.totalAmount));
+    }
+    return hours;
   }
   async #podPrice(gpuType) {
     const gpu = await this.#request(
@@ -21062,6 +21059,58 @@ function runSettings(body) {
 // src/gateway/pod.ts
 var GATEWAY_PORT = 8080;
 
+// src/inference/gpu.ts
+var MAX_IDLE_TIMEOUT_SECONDS = 300;
+function endpointProblems(endpoint2) {
+  const problems = [];
+  if (endpoint2.type !== void 0 && endpoint2.type !== "QUEUE") {
+    problems.push(`it is a ${endpoint2.type} endpoint; the vLLM worker needs a queue-based one`);
+  }
+  if (endpoint2.workersMin !== 0) {
+    problems.push(
+      `it keeps ${endpoint2.workersMin} active worker(s), billed all the time; set active workers to 0`
+    );
+  }
+  if (endpoint2.workersMax === 0) {
+    problems.push(
+      "its max workers is 0, as the provider sets it after 7 days without requests; set it to 1"
+    );
+  } else if (endpoint2.workersMax !== 1) {
+    problems.push(`it may run ${endpoint2.workersMax} workers at once; set max workers to 1`);
+  }
+  const idle = endpoint2.idleTimeoutSeconds;
+  if (idle === void 0 || idle > MAX_IDLE_TIMEOUT_SECONDS) {
+    problems.push(
+      `its idle timeout is ${idle === void 0 ? "unknown" : `${idle} seconds`}; set it to ${MAX_IDLE_TIMEOUT_SECONDS} seconds or less`
+    );
+  }
+  return problems;
+}
+function podCost(start, end, pricePerSecond) {
+  return Math.max(0, end.getTime() - start.getTime()) / 1e3 * pricePerSecond;
+}
+async function waitUntilReady(host, id, ready, options) {
+  const wait = options.wait ?? sleep2;
+  const interval = options.intervalMs ?? 1e4;
+  for (let waited = 0; ; waited += interval) {
+    const pod = await host.get(id);
+    if (!pod) throw new Error(`Pod ${id} no longer exists.`);
+    if (pod.status === "failed" || pod.status === "stopped" || pod.status === "terminated") {
+      throw new Error(`Pod ${id} is ${pod.status}.`);
+    }
+    if (pod.status === "running" && await ready().catch(() => false)) return pod;
+    if (waited >= options.timeoutMs) {
+      throw new Error(
+        `Pod ${id} was not ready within ${Math.round(options.timeoutMs / 6e4)} minutes.`
+      );
+    }
+    await wait(interval);
+  }
+}
+function sleep2(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 // src/inference/selfhosted.ts
 var START_MINUTES = 25;
 var KEPT_IDLE_MINUTES = 15;
@@ -21114,12 +21163,6 @@ var PodInference = class {
   }
   #now() {
     return this.#options.now?.() ?? /* @__PURE__ */ new Date();
-  }
-  async taskSpent() {
-    return this.#settings.taskSpent;
-  }
-  async monthSpent() {
-    return accountMonthSpent(this.#options.gpu, this.#now());
   }
   async open(run2, log) {
     const token = randomBytes(32).toString("base64url");
@@ -21580,25 +21623,15 @@ function parseHandle(text) {
 var ServerlessInference = class {
   name;
   #settings;
-  #gpu;
   #host;
   #usage;
-  #now;
   /** `usage` is what the agent job's gateway reported, as JSON; empty when it reported nothing. */
   constructor(settings, gpu, options = {}) {
     if (!gpu.serverless) throw new Error(`${gpu.name} has no Serverless endpoints.`);
     this.name = `${gpu.name} Serverless`;
     this.#settings = settings;
-    this.#gpu = gpu;
     this.#host = gpu.serverless;
     this.#usage = options.usage ?? "";
-    this.#now = options.now ?? (() => /* @__PURE__ */ new Date());
-  }
-  async taskSpent() {
-    return this.#settings.taskSpent;
-  }
-  async monthSpent() {
-    return accountMonthSpent(this.#gpu, this.#now());
   }
   /** Checks the endpoint (decision 10 of the plan) and prices its workers. */
   async open(run2, log) {
@@ -21669,61 +21702,12 @@ function parseUsage(text) {
   return usage;
 }
 
-// src/inference/spend.ts
-function selfHostedSpent(record) {
-  if (!record?.inference) return 0;
-  return record.inference.spent ?? record.spent ?? 0;
-}
-var MAX_PODS = 20;
-function countRun(pods, run2, billed = {}) {
-  const next = (pods ?? []).map((pod) => ({ ...pod, runs: [...pod.runs] }));
-  let added = run2.cost;
-  if (run2.pod) {
-    let pod = next.find((candidate) => candidate.id === run2.pod);
-    if (!pod) {
-      pod = { id: run2.pod, runs: [], counted: 0 };
-      next.push(pod);
-    }
-    if (!pod.runs.includes(run2.runId)) pod.runs.push(run2.runId);
-    pod.counted += run2.cost;
-    if (run2.shared) pod.shared = true;
-  }
-  const costs = {};
-  for (const pod of next) {
-    const amount2 = billed[pod.id];
-    if (amount2 !== void 0 && amount2 > pod.counted) {
-      added += amount2 - pod.counted;
-      pod.counted = amount2;
-    }
-    const [only] = pod.runs;
-    if (amount2 !== void 0 && only !== void 0 && pod.runs.length === 1) {
-      costs[only] = Number(pod.counted.toFixed(4));
-    }
-  }
-  return { pods: next.slice(-MAX_PODS), added, costs };
-}
-function parsePodCosts(text) {
-  let value;
-  try {
-    value = JSON.parse(text);
-  } catch {
-    return void 0;
-  }
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return void 0;
-  const entries = Object.entries(value);
-  const valid = entries.every(
-    ([id, cost]) => /^[\w-]{1,64}$/.test(id) && typeof cost === "number" && Number.isFinite(cost) && cost >= 0
-  );
-  return valid ? Object.fromEntries(entries) : void 0;
-}
-
 // src/inference/index.ts
 function inferenceChoice(settings, record, options = {}) {
   const budgeted = {
     ...options.profile ? { profile: options.profile } : {},
     providers: [.../* @__PURE__ */ new Set([providerName(settings), ...options.providers ?? []])],
-    recorded: { spent: record?.spent ?? 0, selfHosted: selfHostedSpent(record) },
-    ...options.reserved ? { reserved: options.reserved } : {},
+    recorded: { spent: record?.spent ?? 0 },
     ...options.others?.length ? { others: [...options.others] } : {}
   };
   if (settings.inference !== "self-hosted") return { inference: "openrouter", ...budgeted };
@@ -21755,7 +21739,7 @@ function parseInferenceChoice(text) {
   }
   const choice = JSON.parse(text);
   const amount2 = (value) => typeof value === "number" && Number.isFinite(value);
-  const budgeted = Array.isArray(choice.providers) && choice.providers.every((name) => typeof name === "string" && name !== "") && amount2(choice.recorded?.spent) && amount2(choice.recorded?.selfHosted) && (choice.profile === void 0 || typeof choice.profile === "string") && (choice.reserved === void 0 || amount2(choice.reserved) && choice.reserved >= 0) && (choice.others === void 0 || Array.isArray(choice.others) && choice.others.every((task) => typeof task === "string" && /^\d+$/.test(task)));
+  const budgeted = Array.isArray(choice.providers) && choice.providers.every((name) => typeof name === "string" && name !== "") && amount2(choice.recorded?.spent) && (choice.profile === void 0 || typeof choice.profile === "string") && (choice.others === void 0 || Array.isArray(choice.others) && choice.others.every((task) => typeof task === "string" && /^\d+$/.test(task)));
   if (!budgeted) throw new Error("The inference input is not a valid choice.");
   if (choice.inference === "openrouter") return choice;
   const valid = choice.inference === "self-hosted" && typeof choice.model === "string" && ENGINES[choice.engine] !== void 0 && Array.isArray(choice.pods) && (choice.mode === "pod" ? typeof choice.gpuType === "string" && (choice.sharePods === void 0 || typeof choice.sharePods === "boolean") : choice.mode === "serverless");
@@ -21763,7 +21747,7 @@ function parseInferenceChoice(text) {
   return choice;
 }
 function zero() {
-  return { spent: 0, selfHosted: 0 };
+  return { spent: 0 };
 }
 function agentMode(choice) {
   return choice.inference === "openrouter" ? "openrouter" : choice.mode;
@@ -21794,29 +21778,29 @@ var CREDENTIALS = {
   openrouter: { input: "management-key", secret: "CODEMAN_OPENROUTER_MANAGEMENT_KEY" },
   runpod: { input: "gpu-key", secret: "CODEMAN_RUNPOD_API_KEY" }
 };
-function inferenceBudget(runtime2, run2) {
-  const choice = parseInferenceChoice(runtime2.input("inference"));
-  const own = choiceProvider(choice);
-  const accounts = [];
-  const missing = [];
-  for (const name of /* @__PURE__ */ new Set([own, ...choice.providers])) {
-    const credential = CREDENTIALS[name];
-    if (!credential) throw new Error(`Unknown inference provider "${name}".`);
-    const key = runtime2.input(credential.input);
-    if (key === "") {
-      missing.push(credential.secret);
-      continue;
+function isGpuProvider(name) {
+  return name !== "openrouter" && Object.hasOwn(CREDENTIALS, name);
+}
+function providerAccounts(runtime2) {
+  const credential = (name) => {
+    const found = CREDENTIALS[name];
+    if (!found) throw new Error(`Unknown inference provider "${name}".`);
+    return { ...found, key: runtime2.input(found.input) };
+  };
+  return {
+    missing: (name) => {
+      const { key, secret } = credential(name);
+      return key === "" ? secret : void 0;
+    },
+    taskCosts: async (task) => {
+      const { key } = credential("openrouter");
+      return key === "" ? void 0 : openRouterProvider(runtime2, key).taskCosts(task);
+    },
+    billedHours: async (name, start, end) => {
+      if (!isGpuProvider(name)) throw new Error(`${name} has no hourly billing.`);
+      return gpuProvider(name, credential(name).key).billedHours(start, end);
     }
-    if (name === own) {
-      accounts.push({ name, provider: run2() });
-    } else if (name === "openrouter") {
-      accounts.push({ name, provider: openRouterProvider(runtime2, key) });
-    } else {
-      const gpu = gpuProvider(name, key);
-      accounts.push({ name, month: () => accountMonthSpent(gpu, /* @__PURE__ */ new Date()) });
-    }
-  }
-  return new ProviderBudget(choice.recorded, accounts, missing);
+  };
 }
 function selfHosted(choice, repository, inputs) {
   const gpu = inputs.gpu ?? gpuProvider(choice.gpuProvider, inputs.accountKey);
@@ -21825,7 +21809,6 @@ function selfHosted(choice, repository, inputs) {
   const common = {
     model: choice.model,
     engine,
-    taskSpent: choice.recorded.spent,
     pods: choice.pods,
     others: choice.others ?? []
   };
@@ -21868,6 +21851,9 @@ var LAYOUT = {
 };
 function ledgerRunId(workflowRun, attempt, task) {
   return `${workflowRun}-${attempt}-${task}`;
+}
+function ledgerMonth(date) {
+  return date.toISOString().slice(0, 7);
 }
 function isLedgerRunId(text) {
   return /^\d+-\d+-\d+$/.test(text);
@@ -21955,6 +21941,7 @@ function neutralize(text, dialect) {
 
 // src/ledger.ts
 var RETRY_MS = [1e3, 3e3, 9e3];
+var RESERVE_ATTEMPTS = 20;
 var Ledger = class {
   #store;
   #source;
@@ -21989,7 +21976,7 @@ var Ledger = class {
         workflowRun: this.#source.runtime.run.id,
         attempt: this.#source.runtime.run.attempt,
         // The month the run counts in, for the budgets' queries.
-        month: at.toISOString().slice(0, 7),
+        month: ledgerMonth(at),
         status: "picked",
         pickedAt: at,
         stage: picked.stage,
@@ -22001,11 +21988,144 @@ var Ledger = class {
     }
     this.#event(run2, "task-picked", { action: picked.action, stage: picked.stage });
   }
+  /** The runs of the task of `run`, in every month. */
+  async taskRuns(run2, log) {
+    const { owner } = this.#source.runtime.repository;
+    return this.#retry(
+      log,
+      "read Codeman's ledger",
+      async () => ledgerRuns(await taskQuery(this.#store, owner, this.#repository(), taskOf(run2)))
+    );
+  }
+  /** The organization's runs this month, of every repository. */
+  async monthRuns(log) {
+    const { owner } = this.#source.runtime.repository;
+    return this.#retry(
+      log,
+      "read Codeman's ledger",
+      async () => ledgerRuns(await monthQuery(this.#store, owner, ledgerMonth(this.#now())))
+    );
+  }
+  /**
+   * Replaces the costs of a task's `runs` with what the providers say now: OpenRouter's keys,
+   * for each run that closed or expired and whose workflow run has no other run of the task (an
+   * expired run then counts its cost, not its limit); and each pod's cost, on the task's last
+   * run on it, when higher. Writes at once, and returns the runs as they are now.
+   */
+  async refresh(runs, figures, log) {
+    const now = this.#now();
+    const writes = [];
+    const next = runs.map((run2) => ({ ...run2 }));
+    const change = (run2, fields) => {
+      Object.assign(run2, fields);
+      writes.push({
+        op: "set",
+        path: LAYOUT.run(this.#source.runtime.repository.owner, run2.id),
+        fields,
+        merge: true
+      });
+    };
+    for (const [workflowRun, figure] of Object.entries(figures.costs ?? {})) {
+      const same = next.filter((run3) => run3.workflowRun === workflowRun);
+      const [run2] = same;
+      const ended = run2 !== void 0 && (run2.status === "closed" || run2.status === "expired" || expired(run2, now));
+      if (same.length !== 1 || !run2 || run2.provider !== "openrouter" || !ended) continue;
+      const cost = Math.max(0, figure - (run2.spentBefore ?? 0));
+      if (run2.cost !== void 0 && Math.abs(run2.cost - cost) < 1e-4) continue;
+      change(run2, expired(run2, now) ? { cost, status: "expired" } : { cost });
+    }
+    for (const [pod, figure] of Object.entries(figures.pods ?? {})) {
+      const on = next.filter((run2) => run2.pod === pod && !reserving(run2, now));
+      const last = on.at(-1);
+      if (!last || figure <= Math.max(0, ...on.map((run2) => run2.podCost ?? 0))) continue;
+      change(last, { podCost: figure });
+    }
+    if (writes.length > 0) {
+      await this.#retry(log, "write to Codeman's ledger", () => this.#store.write(writes));
+      log.info(`Refreshed ${writes.length} of the task's run(s) in Codeman's ledger.`);
+    }
+    return next;
+  }
+  /**
+   * Reserves the run's limit (decision 1 of the ledger budgets plan): in one transaction, reads
+   * the task's runs and the month's, and when what remains of the task's budget fits in the
+   * repository's month and the organization's, writes it as the run's limit, open. Tasks and
+   * repositories that open at once each see the others' reservations, or run again once they
+   * are written, so together they never pass a budget. Writes nothing when it refuses.
+   */
+  async reserve(run2, budgets) {
+    const { owner } = this.#source.runtime.repository;
+    const repository = this.#repository();
+    const path = LAYOUT.run(owner, run2);
+    const now = this.#now();
+    return this.#store.transaction(
+      async (tx) => {
+        const [task, month] = await Promise.all([
+          taskQuery(tx, owner, repository, budgets.task).then(ledgerRuns),
+          monthQuery(
+            tx,
+            owner,
+            ledgerMonth(now),
+            budgets.organizationBudget === void 0 ? repository : void 0
+          ).then(ledgerRuns)
+        ]);
+        const own = task.find((other) => other.id === run2);
+        const before = own && own.status !== "open" ? runAmount(own) : 0;
+        const others = task.filter((other) => other.id !== run2);
+        const carries = task.some((other) => other.carried !== void 0);
+        const carried = carries ? void 0 : Math.max(0, budgets.recorded - spentBy(others));
+        const spent = spentBy(others) + task.reduce((sum, other) => sum + (other.carried ?? 0), 0) + (carried ?? 0) + before;
+        const monthRuns = month.filter((other) => other.id !== run2);
+        const ours = monthRuns.filter((other) => other.repository === repository);
+        const open3 = ours.filter((other) => reserving(other, now));
+        const reservation = {
+          outcome: "reserved",
+          limit: runLimit(budgets.taskBudget, spent),
+          task: spent,
+          month: spentBy(ours) + before,
+          reserved: { amount: spentBy(open3), runs: open3.length },
+          organization: budgets.organizationBudget === void 0 ? void 0 : reconciledMonth(monthRuns, budgets.billed, now) + before
+        };
+        const { limit } = reservation;
+        if (limit === void 0) return { ...reservation, outcome: "task-budget-spent" };
+        if (reservation.month + limit > budgets.monthlyBudget) {
+          return { ...reservation, outcome: "over-budget" };
+        }
+        if (reservation.organization !== void 0 && budgets.organizationBudget !== void 0 && reservation.organization + limit > budgets.organizationBudget) {
+          return { ...reservation, outcome: "over-organization-budget" };
+        }
+        tx.write({
+          op: "set",
+          path,
+          fields: {
+            status: "open",
+            reservedAt: now,
+            expiresAt: new Date(now.getTime() + RESERVATION_MS),
+            limit,
+            ...carried === void 0 ? {} : { carried },
+            // An earlier attempt's figures give way to this one's, and count as spent before.
+            ...own?.cost === void 0 && own?.spentBefore === void 0 ? {} : { spentBefore: before, cost: null, closedAt: null, podCost: null }
+          },
+          merge: true
+        });
+        return reservation;
+      },
+      { attempts: RESERVE_ATTEMPTS }
+    );
+  }
   /** `open-key` gave the run its access, limited to `limit` USD. */
   open(run2, limit, pods) {
-    this.#update(run2, { status: "open", openedAt: this.#now(), limit });
+    this.#update(run2, { openedAt: this.#now() });
     this.#event(run2, "key-opened", { limit });
     this.#pods(run2, pods);
+  }
+  /**
+   * `open-key` could not open the run it reserved: it spent nothing that the budgets can tell,
+   * and its reservation ends.
+   */
+  fail(run2, reason) {
+    this.#update(run2, { status: "failed", failedAt: this.#now(), cost: 0, reason });
+    this.#event(run2, "key-failed", { reason });
   }
   /** `open-key` refused the run: `status` is its output, `reason` why. */
   refuse(run2, status2, reason) {
@@ -22027,12 +22147,14 @@ var Ledger = class {
     })) {
       if (value !== void 0) figures[name] = value;
     }
+    const podCost2 = usage.pod === void 0 ? void 0 : usage.podCosts?.[usage.pod];
     this.#update(run2, {
       status: "closed",
       closedAt: this.#now(),
       cost: usage.cost,
       ...figures,
-      ...usage.pod ? { pod: usage.pod } : {}
+      ...usage.pod ? { pod: usage.pod } : {},
+      ...podCost2 === void 0 ? {} : { podCost: podCost2 }
     });
     if (agentJob2 !== "" && agentJob2 !== "success") {
       this.#event(run2, "run-stopped", { result: agentJob2 });
@@ -22057,6 +22179,9 @@ var Ledger = class {
     }
     this.#writes = [];
     log.info(`Recorded ${writes.length} document(s) in Codeman's ledger.`);
+  }
+  #repository() {
+    return repositoryName(this.#source.runtime.repository);
   }
   /** Adds fields to a run's document, which replace those of the same name. */
   #update(run2, fields) {
@@ -22120,6 +22245,56 @@ function ledgerRun(runtime2) {
 }
 function taskOf(run2) {
   return Number(run2.slice(run2.lastIndexOf("-") + 1));
+}
+function taskQuery(store, owner, repository, task) {
+  return store.query(LAYOUT.runs(owner), {
+    where: [
+      { field: "repository", op: "==", value: repository },
+      { field: "task", op: "==", value: task }
+    ]
+  });
+}
+function monthQuery(store, owner, month, repository) {
+  return store.query(LAYOUT.runs(owner), {
+    where: [
+      { field: "month", op: "==", value: month },
+      ...repository === void 0 ? [] : [{ field: "repository", op: "==", value: repository }]
+    ]
+  });
+}
+function ledgerRuns(documents) {
+  const runs = documents.flatMap((document) => {
+    const { fields } = document;
+    const id = document.path.slice(document.path.lastIndexOf("/") + 1);
+    const text = (value) => typeof value === "string" ? value : void 0;
+    const amount2 = (value) => typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : void 0;
+    const date = (value) => value instanceof Date ? value : void 0;
+    const repository = text(fields.repository);
+    const task = fields.task;
+    const start = date(fields.reservedAt) ?? date(fields.openedAt) ?? date(fields.pickedAt);
+    if (!repository || typeof task !== "number" || !start) return [];
+    return [
+      {
+        id,
+        repository,
+        task,
+        workflowRun: text(fields.workflowRun) ?? "",
+        status: text(fields.status) ?? "",
+        provider: text(fields.provider) ?? "",
+        limit: amount2(fields.limit),
+        cost: amount2(fields.cost),
+        spentBefore: amount2(fields.spentBefore),
+        carried: amount2(fields.carried),
+        pod: text(fields.pod),
+        podCost: amount2(fields.podCost),
+        start,
+        // Runs opened before reservations expire as theirs would.
+        expiresAt: date(fields.expiresAt) ?? new Date(start.getTime() + RESERVATION_MS),
+        closedAt: date(fields.closedAt)
+      }
+    ];
+  });
+  return runs.sort((a, b) => a.start.getTime() - b.start.getTime() || (a.id < b.id ? -1 : 1));
 }
 
 // src/platform/github/ci.ts
@@ -27637,6 +27812,9 @@ var TASK_SETTINGS = /* @__PURE__ */ new Set([
   "language",
   "gpu-type"
 ]);
+var ORGANIZATION_SETTINGS = /* @__PURE__ */ new Set([
+  "organization-monthly-budget"
+]);
 var CHOICES = {
   inference: ["openrouter", "self-hosted"],
   "gpu-provider": ["runpod"],
@@ -27648,6 +27826,7 @@ var NAMES = [
   "model",
   "task-budget",
   "monthly-budget",
+  "organization-monthly-budget",
   "max-runs",
   "max-files",
   "max-file-bytes",
@@ -27684,7 +27863,7 @@ function settingKind(name) {
   if (name === "model" || name === "language" || name === "gpu-type") return name;
   if (name === "serverless-endpoint") return "endpoint";
   if (CHOICES[name]) return "choice";
-  return name === "task-budget" || name === "monthly-budget" ? "number" : "integer";
+  return name === "task-budget" || name === "monthly-budget" || name === "organization-monthly-budget" ? "number" : "integer";
 }
 function isSettingName(name) {
   return NAMES.includes(name);
@@ -27748,6 +27927,12 @@ function parseSettings(text, source = SETTINGS_FILE) {
   for (const entry of tree.value.entries) {
     const parsed = entry.key === "inference-profiles" ? profiles(entry.value) : setting(entry, "setting");
     if (!parsed.ok) return { ok: false, error: `${source}, line ${parsed.line}: ${parsed.error}` };
+    if (source !== SHARED_SETTINGS && isSettingName(entry.key) && ORGANIZATION_SETTINGS.has(entry.key)) {
+      return {
+        ok: false,
+        error: `${source}, line ${entry.line}: \`${entry.key}\` can be set only in the organization's settings, the CODEMAN_SETTINGS variable.`
+      };
+    }
     settings[entry.key] = parsed.value;
   }
   return { ok: true, value: settings };
@@ -28307,10 +28492,11 @@ var en = {
   ],
   provider: (mode) => ({ openrouter: "OpenRouter", pod: "Runpod (pod)", serverless: "Runpod (Serverless)" })[mode],
   spendNote: (mode) => ({
-    openrouter: "**OpenRouter**: a run's cost is what its key used, exact, and later runs refresh it. The month is what the repository's keys used this month.",
-    pod: "**Runpod (pod)**: a run's cost is its pod's time at the pod's price, refreshed later from Runpod's billing. The month is an estimate: the whole Runpod account's billing, every repository on it included, plus what its running pods cost beyond it.",
-    serverless: "**Runpod (Serverless)**: a run's cost is an estimate of the time Runpod bills its workers. The month is the whole Runpod account's billing, which counts a Serverless run an hour or more late."
+    openrouter: "**OpenRouter**: a run's cost is what its key used, exact, and later runs refresh it.",
+    pod: "**Runpod (pod)**: a run's cost is its pod's time at the pod's price; the task also counts its pod's time between runs, refreshed later from Runpod's billing.",
+    serverless: "**Runpod (Serverless)**: a run's cost is an estimate of the time Runpod bills its workers, which counts in the month as soon as the run ends."
   })[mode],
+  monthNote: "**Month**: what the repository's runs count this month in Codeman's ledger before the run, an estimate: each run's cost as above, and the whole limit of each run still open. The organization's monthly budget, when it has one, counts every repository's runs and Runpod's billing by the hour.",
   earlierRuns: (runs) => `Earlier runs (${runs})`,
   totalRow: (runs) => `Total (${runs} ${runs === 1 ? "run" : "runs"})`,
   runsWithoutRow: "Runs without a row",
@@ -28342,9 +28528,10 @@ Tests: ${test ?? "(no report)"}`,
   replanHint: "Comment `/codeman replan <what to change>` to try again.",
   removeLabelHint: "Remove the `codeman:blocked` label to try again.",
   noKey: "Codeman could not give this run access to its model (an OpenRouter key, or a GPU). See the run log.",
-  missingCredentials: "Codeman could not give this run access to its model: the workflow does not pass the secret of a provider the inference settings name.",
+  missingCredentials: "Codeman could not give this run access to its model: the workflow does not pass the secret of a provider the run needs, its own or one whose billing counts in the organization's month.",
   taskBudgetSpent: (spent, budget, minimum) => `The task has spent ${spent} of its ${budget} budget, and a run needs at least ${minimum}. A maintainer can raise it with \`/codeman set task-budget <usd>\`, then comment \`/codeman continue\`.`,
   monthlyBudgetReached: (used, budget, limit) => `The monthly budget is reached: ${used} used of ${budget}, and this run may use up to ${limit}.`,
+  organizationBudgetReached: (used, budget, limit) => `The organization's monthly budget is reached: ${used} used of ${budget}, and this run may use up to ${limit}.`,
   tryLater: (reason) => `${reason} Codeman will try again in a later run.`,
   planUnfinished: "The agent did not finish the plan. See the run log.",
   noResult: "The agent produced no result. See the run log.",
@@ -28559,10 +28746,11 @@ var ptBR = {
   ],
   provider: (mode) => ({ openrouter: "OpenRouter", pod: "Runpod (pod)", serverless: "Runpod (Serverless)" })[mode],
   spendNote: (mode) => ({
-    openrouter: "**OpenRouter**: o custo de uma rodada \xE9 o que a sua chave usou, exato, e as rodadas seguintes o atualizam. O m\xEAs \xE9 o que as chaves do reposit\xF3rio usaram neste m\xEAs.",
-    pod: "**Runpod (pod)**: o custo de uma rodada \xE9 o tempo do seu pod ao pre\xE7o dele, atualizado depois pela cobran\xE7a da Runpod. O m\xEAs \xE9 uma estimativa: a cobran\xE7a de toda a conta da Runpod, com todos os reposit\xF3rios dela, mais o que os pods em execu\xE7\xE3o custaram al\xE9m dela.",
-    serverless: "**Runpod (Serverless)**: o custo de uma rodada \xE9 uma estimativa do tempo que a Runpod cobra pelos seus workers. O m\xEAs \xE9 a cobran\xE7a de toda a conta da Runpod, que conta uma rodada Serverless com uma hora ou mais de atraso."
+    openrouter: "**OpenRouter**: o custo de uma rodada \xE9 o que a sua chave usou, exato, e as rodadas seguintes o atualizam.",
+    pod: "**Runpod (pod)**: o custo de uma rodada \xE9 o tempo do seu pod ao pre\xE7o dele; a tarefa conta tamb\xE9m o tempo do pod entre rodadas, atualizado depois pela cobran\xE7a da Runpod.",
+    serverless: "**Runpod (Serverless)**: o custo de uma rodada \xE9 uma estimativa do tempo que a Runpod cobra pelos seus workers, que conta no m\xEAs assim que a rodada termina."
   })[mode],
+  monthNote: "**M\xEAs**: o que as rodadas do reposit\xF3rio contam neste m\xEAs no registro do Codeman antes da rodada, uma estimativa: o custo de cada rodada como acima, e o limite inteiro de cada rodada ainda aberta. O or\xE7amento mensal da organiza\xE7\xE3o, quando ela tem um, conta as rodadas de todos os reposit\xF3rios e a cobran\xE7a da Runpod por hora.",
   earlierRuns: (runs) => `Rodadas anteriores (${runs})`,
   totalRow: (runs) => `Total (${runs} ${runs === 1 ? "rodada" : "rodadas"})`,
   runsWithoutRow: "Rodadas sem linha",
@@ -28594,9 +28782,10 @@ Testes: ${test ?? "(sem relat\xF3rio)"}`,
   replanHint: "Comente `/codeman replan <o que mudar>` para tentar de novo.",
   removeLabelHint: "Remova a label `codeman:blocked` para tentar de novo.",
   noKey: "O Codeman n\xE3o conseguiu dar a esta rodada acesso ao modelo (uma chave do OpenRouter, ou uma GPU). Veja o log da rodada.",
-  missingCredentials: "O Codeman n\xE3o conseguiu dar a esta rodada acesso ao modelo: o workflow n\xE3o passa o segredo de um provedor que as configura\xE7\xF5es de infer\xEAncia citam.",
+  missingCredentials: "O Codeman n\xE3o conseguiu dar a esta rodada acesso ao modelo: o workflow n\xE3o passa o segredo de um provedor de que a rodada precisa, o dela ou um cuja cobran\xE7a conta no m\xEAs da organiza\xE7\xE3o.",
   taskBudgetSpent: (spent, budget, minimum) => `A tarefa gastou ${spent} do or\xE7amento de ${budget}, e uma rodada precisa de pelo menos ${minimum}. Um mantenedor pode aument\xE1-lo com \`/codeman set task-budget <usd>\` e depois comentar \`/codeman continue\`.`,
   monthlyBudgetReached: (used, budget, limit) => `O or\xE7amento mensal foi atingido: ${used} usados de ${budget}, e esta rodada pode usar at\xE9 ${limit}.`,
+  organizationBudgetReached: (used, budget, limit) => `O or\xE7amento mensal da organiza\xE7\xE3o foi atingido: ${used} usados de ${budget}, e esta rodada pode usar at\xE9 ${limit}.`,
   tryLater: (reason) => `${reason} O Codeman tenta de novo numa pr\xF3xima rodada.`,
   planUnfinished: "O agente n\xE3o terminou o plano. Veja o log da rodada.",
   noResult: "O agente n\xE3o produziu resultado. Veja o log da rodada.",
@@ -29767,6 +29956,20 @@ function repositoryRules(workspace) {
 import { existsSync as existsSync3, lstatSync as lstatSync3, mkdirSync as mkdirSync5, readFileSync as readFileSync5, writeFileSync as writeFileSync5 } from "node:fs";
 import { join as join7 } from "node:path";
 
+// src/inference/spend.ts
+var MAX_PODS = 20;
+function addPod(pods, run2) {
+  const next = (pods ?? []).map((pod2) => ({ ...pod2, runs: [...pod2.runs] }));
+  let pod = next.find((candidate) => candidate.id === run2.pod);
+  if (!pod) {
+    pod = { id: run2.pod, runs: [] };
+    next.push(pod);
+  }
+  if (!pod.runs.includes(run2.runId)) pod.runs.push(run2.runId);
+  if (run2.shared) pod.shared = true;
+  return next.slice(-MAX_PODS);
+}
+
 // src/pull.ts
 function pullRequestTitle(issueTitle) {
   return oneLine(issueTitle).trim().slice(0, 256) || "Codeman task";
@@ -29924,7 +30127,8 @@ function spendTable(t, spending, total, options = {}) {
 var MODES = ["openrouter", "pod", "serverless"];
 function spendNotes(t, spending) {
   const used = new Set((spending?.rows ?? []).map((row) => row.inference));
-  return MODES.filter((mode) => used.has(mode)).map((mode) => t.spendNote(mode));
+  const notes2 = MODES.filter((mode) => used.has(mode)).map((mode) => t.spendNote(mode));
+  return notes2.length > 0 ? [...notes2, t.monthNote] : [];
 }
 function duration(ms) {
   const seconds = Math.max(0, Math.round(ms / 1e3));
@@ -30436,6 +30640,8 @@ function jobResults(runtime2) {
     agentJob: runtime2.input("agent-job-result"),
     taskSpent: amount2("task-spent"),
     monthSpent: amount2("month-spent"),
+    organizationMonthSpent: amount2("organization-month-spent"),
+    taskTotal: amount2("task-total"),
     keyLimit: amount2("key-limit"),
     runCost: amount2("run-cost"),
     inputTokens: amount2("input-tokens"),
@@ -30445,7 +30651,6 @@ function jobResults(runtime2) {
     tokensPerSecond: amount2("tokens-per-second"),
     taskCosts: parseCosts(runtime2.input("task-costs")),
     pod: /^[\w-]{1,64}$/.test(runtime2.input("pod")) ? runtime2.input("pod") : void 0,
-    podCosts: parsePodCosts(runtime2.input("pod-costs")),
     podShared: runtime2.input("pod-shared") === "true"
   };
 }
@@ -30483,10 +30688,15 @@ async function keyFailed(task, io) {
     return true;
   }
   if (status2 !== "opened") {
+    const limit = t.money(runLimit(budget, spent) ?? 0);
     const reason = status2 === "over-budget" ? t.monthlyBudgetReached(
       t.money(io.jobs.monthSpent ?? 0),
       t.money(task.settings["monthly-budget"]),
-      t.money(runLimit(budget, spent) ?? 0)
+      limit
+    ) : status2 === "over-organization-budget" ? t.organizationBudgetReached(
+      t.money(io.jobs.organizationMonthSpent ?? 0),
+      t.money(task.settings["organization-monthly-budget"] ?? 0),
+      limit
     ) : t.noKey;
     await finish(io, task, task.fromState === "planning" ? "new" : task.fromState, {
       message: t.tryLater(reason),
@@ -31150,14 +31360,15 @@ async function finish(io, task, state, view) {
   const cost = runCosts(io, task);
   const spend = spendRow(io, task, cost.run);
   let record = view.record ?? task.record ?? void 0;
-  const pods = record && selfHostedRun(io, task) ? podSpend(io, task, record) : void 0;
-  if (pods) cost.task = pods.spent;
   if (record && cost.task !== void 0) record = { ...record, spent: cost.task };
-  if (record && pods) {
-    record = { ...record, inference: { pods: pods.pods, spent: pods.selfHosted } };
+  const pod = io.jobs.pod;
+  if (record && pod && selfHostedRun(io, task)) {
+    const runId = io.runtime.runIdOf(task.runUrl) ?? io.runtime.run.id;
+    const pods = addPod(record.inference?.pods, { runId, pod, shared: io.jobs.podShared });
+    record = { ...record, inference: { pods } };
   }
   if (record && spend) record = { ...record, spending: addRow(record.spending, spend) };
-  const costs = pods?.costs ?? io.jobs.taskCosts;
+  const costs = io.jobs.taskCosts;
   if (record?.spending && costs) {
     record = {
       ...record,
@@ -31251,40 +31462,15 @@ async function finish(io, task, state, view) {
   io.runtime.info(`#${task.number} is now ${state}.`);
 }
 function runCosts(io, task) {
-  if (selfHostedRun(io, task)) return { run: io.jobs.runCost };
-  const { taskSpent: before, runCost: run2, taskCosts: costs } = io.jobs;
-  if (costs) {
-    const id = io.runtime.runIdOf(task.runUrl);
-    const total = Object.values(costs).reduce((sum, value) => sum + value, 0);
-    return {
-      run: (id === void 0 ? void 0 : costs[id]) ?? run2,
-      task: total + selfHostedSpent(task.record)
-    };
-  }
-  if (before === void 0) return { task: task.record?.spent };
+  const { taskSpent: before, runCost: runCost2, taskCosts: costs, taskTotal: taskTotal2 } = io.jobs;
+  const id = io.runtime.runIdOf(task.runUrl);
+  const run2 = (id === void 0 ? void 0 : costs?.[id]) ?? runCost2;
+  if (taskTotal2 !== void 0) return { run: run2, task: taskTotal2 };
+  if (before === void 0) return { run: run2, task: task.record?.spent };
   return { run: run2, task: before + (run2 ?? 0) };
 }
 function selfHostedRun(io, task) {
   return task.settings.inference === "self-hosted" && io.jobs.keyStatus === "opened";
-}
-function podSpend(io, task, record) {
-  const before = io.jobs.taskSpent ?? task.record?.spent ?? 0;
-  const counted = countRun(
-    record.inference?.pods,
-    {
-      runId: io.runtime.runIdOf(task.runUrl) ?? io.runtime.run.id,
-      cost: io.jobs.runCost ?? 0,
-      pod: io.jobs.pod,
-      shared: io.jobs.podShared
-    },
-    io.jobs.podCosts
-  );
-  return {
-    spent: before + counted.added,
-    selfHosted: selfHostedSpent(record) + counted.added,
-    pods: counted.pods,
-    costs: counted.costs
-  };
 }
 function spendRow(io, task, cost) {
   if (io.jobs.keyStatus !== "opened") return void 0;
@@ -31333,62 +31519,120 @@ async function openKey(services) {
   const run2 = ledgerRun(runtime2);
   const ledger = services.ledger("open-key");
   await ledger.check(runtime2);
-  const outcome = await open(services);
+  const outcome = await open(services, ledger, run2);
   if (outcome.status === "opened") ledger.open(run2, outcome.limit, outcome.pods);
   else ledger.refuse(run2, outcome.status, outcome.reason);
   await ledger.flush(runtime2);
 }
-async function open({ runtime: runtime2, inference, budget: budgets }) {
+async function open(services, ledger, run2) {
+  const { runtime: runtime2, inference } = services;
   const secret = runtime2.input("encryption-secret", { required: true });
   const task = runtime2.input("task", { required: true });
   const taskBudget = positiveNumber(runtime2, "task-budget");
   const monthlyBudget = positiveNumber(runtime2, "monthly-budget");
-  const { profile: profile2, reserved = 0 } = parseInferenceChoice(runtime2.input("inference"));
-  if (profile2) runtime2.info(`The run uses the inference profile \`${profile2}\`.`);
-  const budget = budgets();
-  if (budget.missing.length > 0) {
-    const secrets = budget.missing.map((name) => `\`${name}\``).join(", ");
-    const reason = `The inference settings name a provider whose secret the workflow does not pass: ${secrets}. Add it to the repository's or the organization's secrets, or remove the profiles that name its provider.`;
+  const organizationBudget = runtime2.input("organization-monthly-budget") === "" ? void 0 : positiveNumber(runtime2, "organization-monthly-budget");
+  const choice = parseInferenceChoice(runtime2.input("inference"));
+  if (choice.profile) runtime2.info(`The run uses the inference profile \`${choice.profile}\`.`);
+  const refuse = (status2, reason) => {
+    runtime2.output("status", status2);
+    runtime2.output("reason", reason);
+    return { status: status2, reason };
+  };
+  const accounts = services.accounts();
+  const now = /* @__PURE__ */ new Date();
+  const needed = /* @__PURE__ */ new Set([choiceProvider(choice)]);
+  if (organizationBudget !== void 0) {
+    const used = (await ledger.monthRuns(runtime2)).map((other) => other.provider);
+    for (const name of [...choice.providers, ...used]) if (isGpuProvider(name)) needed.add(name);
+  }
+  const missing = [...needed].flatMap((name) => accounts.missing(name) ?? []);
+  if (missing.length > 0) {
+    const secrets = missing.map((name) => `\`${name}\``).join(", ");
+    const reason = `The run needs secrets the workflow does not pass: ${secrets}. Its provider's account opens the run, and with \`organization-monthly-budget\`, each GPU account's billing counts in the organization's month. Add them to the repository's or the organization's secrets.`;
     runtime2.error(reason);
-    runtime2.output("status", "missing-credentials");
-    runtime2.output("reason", reason);
-    return { status: "missing-credentials", reason };
+    return refuse("missing-credentials", reason);
   }
-  const spent = await budget.taskSpent(task);
-  const months = await budget.monthSpent();
-  const used = months.reduce((sum, month) => sum + month.spent, 0);
-  runtime2.output("task-spent", spent.toFixed(4));
-  runtime2.output("month-spent", used.toFixed(4));
-  runtime2.info(`This task has spent ${usd(spent)} of ${usd(taskBudget)}.`);
-  const parts = months.map((month) => `${month.provider} ${usd(month.spent)}`).join(", ");
-  runtime2.info(`Usage this month (${parts}): ${usd(used)} of ${usd(monthlyBudget)}.`);
-  if (reserved > 0) {
-    runtime2.info(`Kept for the tasks this run picked before this one: up to ${usd(reserved)}.`);
+  const billed = /* @__PURE__ */ new Map();
+  if (organizationBudget !== void 0) {
+    for (const name of needed) {
+      if (isGpuProvider(name))
+        billed.set(name, await accounts.billedHours(name, monthStart(now), now));
+    }
   }
-  const limit = runLimit(taskBudget, spent);
-  if (limit === void 0) {
-    const reason = `The task has spent ${usd(spent)} of its ${usd(taskBudget)} budget, and a run needs at least ${usd(MIN_RUN_BUDGET)}. A maintainer can raise it with \`/codeman set task-budget <usd>\`.`;
-    runtime2.output("status", "task-budget-spent");
-    runtime2.output("reason", reason);
-    return { status: "task-budget-spent", reason };
+  const runs = await ledger.taskRuns(run2, runtime2);
+  if (runs.some((other) => other.provider === "openrouter" && expired(other, now))) {
+    const costs = await accounts.taskCosts(task).catch((error3) => {
+      runtime2.warning(
+        `Could not read what the task's OpenRouter runs spent: ${error3 instanceof Error ? error3.message : error3}`
+      );
+      return void 0;
+    });
+    if (costs) await ledger.refresh(runs, { costs }, runtime2);
   }
-  if (used + reserved + limit > monthlyBudget) {
-    const others = reserved > 0 ? `, up to ${usd(reserved)} is kept for the run's other tasks` : "";
-    const reason = `The monthly budget is reached: ${usd(used)} used of ${usd(monthlyBudget)}${others}, and this run may use up to ${usd(limit)}.`;
-    runtime2.output("status", "over-budget");
-    runtime2.output("reason", reason);
-    return { status: "over-budget", reason };
+  const reservation = await ledger.reserve(run2, {
+    task: Number(task),
+    taskBudget,
+    monthlyBudget,
+    organizationBudget,
+    recorded: choice.recorded.spent,
+    billed
+  });
+  const { limit } = reservation;
+  runtime2.output("task-spent", reservation.task.toFixed(4));
+  runtime2.output("month-spent", reservation.month.toFixed(4));
+  runtime2.info(`This task has spent ${usd(reservation.task)} of ${usd(taskBudget)}.`);
+  const { reserved } = reservation;
+  const held = reserved.runs > 0 ? `, of which ${reserved.runs} open run(s) reserve ${usd(reserved.amount)}` : "";
+  runtime2.info(
+    `This month, the repository's runs count ${usd(reservation.month)} of ${usd(monthlyBudget)}${held}.`
+  );
+  if (reservation.organization !== void 0 && organizationBudget !== void 0) {
+    runtime2.output("organization-month-spent", reservation.organization.toFixed(4));
+    const hours = billed.size > 0 ? `, with ${[...billed.keys()].join(" and ")}'s hourly billing` : "";
+    runtime2.info(
+      `This month, the organization's runs count ${usd(reservation.organization)} of ${usd(organizationBudget)}${hours}.`
+    );
   }
-  const run2 = await inference().open({ task, runId: runtime2.run.id, limit }, runtime2);
-  runtime2.mask(run2.credential);
+  if (reservation.outcome === "task-budget-spent" || limit === void 0) {
+    return refuse(
+      "task-budget-spent",
+      `The task has spent ${usd(reservation.task)} of its ${usd(taskBudget)} budget, and a run needs at least ${usd(MIN_RUN_BUDGET)}. A maintainer can raise it with \`/codeman set task-budget <usd>\`.`
+    );
+  }
+  if (reservation.outcome === "over-budget") {
+    return refuse(
+      "over-budget",
+      `The monthly budget is reached: ${usd(reservation.month)} used of ${usd(monthlyBudget)}, and this run may use up to ${usd(limit)}.`
+    );
+  }
+  if (reservation.outcome === "over-organization-budget") {
+    return refuse(
+      "over-organization-budget",
+      `The organization's monthly budget is reached: ${usd(reservation.organization ?? 0)} used of ${usd(organizationBudget ?? 0)}, and this run may use up to ${usd(limit)}.`
+    );
+  }
+  runtime2.info(`Reserved ${usd(limit)} for this run in Codeman's ledger.`);
+  let opened;
+  try {
+    opened = await inference().open({ task, runId: runtime2.run.id, limit }, runtime2);
+  } catch (error3) {
+    ledger.fail(run2, oneLine(error3 instanceof Error ? error3.message : String(error3)));
+    await ledger.flush(runtime2).catch((flushError) => {
+      runtime2.warning(
+        `Could not end the run's reservation, which counts its limit until it expires: ${flushError instanceof Error ? flushError.message : flushError}`
+      );
+    });
+    throw error3;
+  }
+  runtime2.mask(opened.credential);
   runtime2.output("status", "opened");
   runtime2.output("key-limit", limit.toFixed(2));
-  runtime2.output("handle", run2.handle);
-  runtime2.output("key-hash", run2.handle);
-  runtime2.output("encrypted-key", encrypt(run2.credential, secret));
-  if (run2.baseUrl) runtime2.output("base-url", run2.baseUrl);
-  if (run2.contextLength) runtime2.output("context-length", String(run2.contextLength));
-  return { status: "opened", limit, pods: run2.pods };
+  runtime2.output("handle", opened.handle);
+  runtime2.output("key-hash", opened.handle);
+  runtime2.output("encrypted-key", encrypt(opened.credential, secret));
+  if (opened.baseUrl) runtime2.output("base-url", opened.baseUrl);
+  if (opened.contextLength) runtime2.output("context-length", String(opened.contextLength));
+  return { status: "opened", limit, pods: opened.pods };
 }
 async function closeKey(services) {
   const { runtime: runtime2, inference } = services;
@@ -31415,14 +31659,22 @@ async function closeKey(services) {
       `Requests: ${usage.requests}; largest prompt: ${usage.maxInputTokens ?? "unknown"} tokens; mean throughput: ${usage.tokensPerSecond?.toFixed(1) ?? "unknown"} tokens per second.`
     );
   }
-  if (usage.taskCosts) runtime2.output("task-costs", JSON.stringify(usage.taskCosts));
   if (usage.pod) runtime2.output("pod", usage.pod);
-  if (usage.podCosts) runtime2.output("pod-costs", JSON.stringify(usage.podCosts));
   if (usage.podShared) runtime2.output("pod-shared", "true");
   if (usage.keptPod) runtime2.output("kept-pod", usage.keptPod);
   const ledger = services.ledger("close-key");
-  ledger.close(ledgerRun(runtime2), usage, runtime2.input("agent-job-result"));
+  const run2 = ledgerRun(runtime2);
+  ledger.close(run2, usage, runtime2.input("agent-job-result"));
   await ledger.flush(runtime2);
+  const runs = await ledger.refresh(
+    await ledger.taskRuns(run2, runtime2),
+    { costs: usage.taskCosts, pods: usage.podCosts },
+    runtime2
+  );
+  const total = taskTotal(runs);
+  runtime2.output("task-total", total.toFixed(4));
+  runtime2.output("task-costs", JSON.stringify(costsByWorkflowRun(runs)));
+  runtime2.info(`The task has spent ${usd(total)} in all.`);
 }
 async function release(services) {
   const { runtime: runtime2 } = services;
@@ -31723,9 +31975,7 @@ async function select(services) {
   for (const choice of choices) picked.push(await prepare(choice));
   for (const one of picked) await one.start();
   const runOf = (one) => ledgerRunId(runtime2.run.id, runtime2.run.attempt, one.number);
-  const outputs = picked.map(
-    (one, index) => taskOutputs(one, picked.slice(0, index), picked, runOf(one))
-  );
+  const outputs = picked.map((one) => taskOutputs(one, picked, runOf(one)));
   runtime2.output("tasks", JSON.stringify(outputs));
   const [first] = outputs;
   const [firstPicked] = picked;
@@ -31748,17 +31998,12 @@ async function select(services) {
   }
   await ledger.flush(runtime2);
 }
-function taskOutputs(task, before, all, run2) {
-  const agents = (list) => list.filter((other) => other.needsAgent);
-  const reserved = agents(before).reduce(
-    (sum, other) => sum + Math.max(0, other.settings["task-budget"] - (other.record?.spent ?? 0)),
-    0
-  );
-  const others = agents(all).filter((other) => other !== task).map((other) => String(other.number));
+function taskOutputs(task, all, run2) {
+  const others = all.filter((other) => other.needsAgent && other !== task).map((other) => String(other.number));
   const choice = inferenceChoice(task.settings, task.record, {
     profile: task.profile,
     providers: task.providers,
-    ...task.needsAgent ? { reserved: Number(reserved.toFixed(4)), others } : {}
+    ...task.needsAgent ? { others } : {}
   });
   return {
     task: String(task.number),
@@ -31768,6 +32013,8 @@ function taskOutputs(task, before, all, run2) {
     "base-sha": task.baseSha,
     "task-budget": String(task.settings["task-budget"]),
     "monthly-budget": String(task.settings["monthly-budget"]),
+    // Only the organization's settings set it; empty when they do not.
+    "organization-monthly-budget": String(task.settings["organization-monthly-budget"] ?? ""),
     inference: JSON.stringify(choice),
     // The run's document in the ledger, which the key jobs add to; none without an agent.
     "ledger-run": task.needsAgent ? run2 : ""
@@ -32240,7 +32487,7 @@ function gitHubServices(runtime2) {
     ),
     ci: () => new GitHubActionsResults(client("github-token"), runtime2.repository),
     inference,
-    budget: () => inferenceBudget(runtime2, inference),
+    accounts: () => providerAccounts(runtime2),
     store: theStore,
     ledger: (job) => new Ledger(theStore(), { runtime: runtime2, job })
   };

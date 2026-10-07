@@ -93,20 +93,20 @@ test("the notes say how each inference of the rows is measured, once each and in
   const serverless = { ...row(0.1), inference: "serverless" as const };
   const pod = { ...row(0.1), inference: "pod" as const };
   const notes = spendNotes(en, { rows: [serverless, old, row(0.1), serverless, pod] });
-  assert.equal(notes.length, 3);
+  assert.equal(notes.length, 4);
   assert.match(notes[0] ?? "", /^\*\*OpenRouter\*\*: a run's cost is what its key used, exact/);
-  assert.match(
-    notes[1] ?? "",
-    /^\*\*Runpod \(pod\)\*\*: .* The month is an estimate: the whole Runpod account's billing/,
-  );
+  assert.match(notes[1] ?? "", /^\*\*Runpod \(pod\)\*\*: .* the task also counts its pod's time/);
   assert.match(notes[2] ?? "", /^\*\*Runpod \(Serverless\)\*\*: a run's cost is an estimate/);
-  assert.match(notes[2] ?? "", /an hour or more late\.$/);
+  assert.match(notes[2] ?? "", /counts in the month as soon as the run ends\.$/);
+  assert.match(
+    notes[3] ?? "",
+    /^\*\*Month\*\*: what the repository's runs count this month in Codeman's ledger/,
+  );
   assert.deepEqual(spendNotes(en, { rows: [old], earlier: { runs: 2, cost: 0.1 } }), []);
   assert.deepEqual(spendNotes(en, undefined), []);
-  assert.match(
-    spendNotes(ptBR, { rows: [pod] })[0] ?? "",
-    /^\*\*Runpod \(pod\)\*\*: .* O mês é uma estimativa/,
-  );
+  const portuguese = spendNotes(ptBR, { rows: [pod] });
+  assert.match(portuguese[0] ?? "", /^\*\*Runpod \(pod\)\*\*: .* o tempo do pod entre rodadas/);
+  assert.match(portuguese[1] ?? "", /^\*\*Mês\*\*: o que as rodadas do repositório contam/);
 });
 
 test("the oldest rows fold into one past the limit, with their sums", () => {

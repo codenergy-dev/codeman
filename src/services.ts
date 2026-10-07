@@ -1,4 +1,4 @@
-import type { InferenceBudget } from "./inference/budget.ts";
+import type { ProviderAccounts } from "./inference/budget.ts";
 import type { InferenceProvider } from "./inference/provider.ts";
 import type { Ledger } from "./ledger.ts";
 import type { Conventions } from "./platform/conventions.ts";
@@ -22,8 +22,8 @@ export interface Services {
   ci(): CiResults;
   /** Where agent runs get their model, with the key jobs' credentials. */
   inference(): InferenceProvider;
-  /** The task's and the month's spend across every provider the settings name. */
-  budget(): InferenceBudget;
+  /** The providers' accounts that the budgets read, with the key jobs' credentials. */
+  accounts(): ProviderAccounts;
   /**
    * Codeman's store, with the job's identity. Throws, saying what to set, when the backend's
    * settings are missing.

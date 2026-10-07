@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { InferenceBudget } from "../inference/budget.ts";
+import type { ProviderAccounts } from "../inference/budget.ts";
 import type { InferenceProvider } from "../inference/provider.ts";
 import { Ledger } from "../ledger.ts";
 import type { Conventions } from "../platform/conventions.ts";
@@ -24,7 +24,7 @@ import type { Services } from "../services.ts";
 import { OPT_IN_LABEL, STATES, type State, stateLabel } from "../state.ts";
 import { MemoryStore } from "../store/memory.ts";
 import type { Store } from "../store/store.ts";
-import { FakeInference, fakeBudget } from "./fake-inference.ts";
+import { FakeAccounts, FakeInference } from "./fake-inference.ts";
 import { FakeRuntime } from "./fake-runtime.ts";
 
 /**
@@ -423,7 +423,7 @@ export function fakeServices(
   runtime: Runtime = new FakeRuntime(),
   ci: CiResults = new FakeCi(),
   inference: InferenceProvider = new FakeInference(),
-  budget: InferenceBudget = fakeBudget(inference),
+  accounts: ProviderAccounts = new FakeAccounts(),
   store: Store = new MemoryStore(),
 ): Services {
   return {
@@ -432,7 +432,7 @@ export function fakeServices(
     platform: () => platform,
     ci: () => ci,
     inference: () => inference,
-    budget: () => budget,
+    accounts: () => accounts,
     store: () => store,
     // No waits between attempts: a store that fails, fails at once.
     ledger: (job) => new Ledger(store, { runtime, job }, { wait: async () => undefined }),

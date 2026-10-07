@@ -40,6 +40,7 @@ function ollamaContextLength(show) {
 
 // src/inference/runpod.ts
 var API = "https://api.runpod.io/v2";
+var HOUR_MS = 36e5;
 var STATUS = {
   PROVISIONING: "starting",
   STARTING: "starting",
@@ -75,14 +76,21 @@ var Runpod = class {
     };
   }
   /**
-   * `GET /v2/billing`, by month: the account's total since the month began (UTC). The API takes
-   * `startTime` only with `endTime`; both fall on the month's boundaries.
+   * `GET /v2/billing`, by hour: the account's total for each hour from `start` (UTC). The API
+   * snaps the window to whole hours, and takes `startTime` only with `endTime`.
    */
-  async monthSpent(now) {
-    const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-    const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
-    const response = await this.#request(`/billing?bucketSize=month&${window(start, end)}`);
-    return (response.records ?? []).filter((record) => !record.startTime || Date.parse(record.startTime) >= start.getTime()).reduce((total, record) => total + amount(record.totalAmount), 0);
+  async billedHours(start, end) {
+    const from = new Date(start.getTime() - start.getTime() % HOUR_MS);
+    const to = new Date(Math.ceil(end.getTime() / HOUR_MS) * HOUR_MS);
+    const response = await this.#request(`/billing?bucketSize=hour&${window(from, to)}`);
+    const hours = /* @__PURE__ */ new Map();
+    for (const record of response.records ?? []) {
+      const at = Date.parse(record.startTime ?? "");
+      if (!Number.isFinite(at) || at < from.getTime()) continue;
+      const hour = at - at % HOUR_MS;
+      hours.set(hour, (hours.get(hour) ?? 0) + amount(record.totalAmount));
+    }
+    return hours;
   }
   async #podPrice(gpuType) {
     const gpu = await this.#request(

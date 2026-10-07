@@ -10,6 +10,7 @@ import type {
 } from "./gpu.ts";
 
 const API = "https://api.runpod.io/v2";
+const HOUR_MS = 3_600_000;
 
 /** Pod states as Runpod names them, in Codeman's terms. */
 const STATUS: Record<string, PodStatus> = {
@@ -81,19 +82,23 @@ export class Runpod implements GpuProvider {
   }
 
   /**
-   * `GET /v2/billing`, by month: the account's total since the month began (UTC). The API takes
-   * `startTime` only with `endTime`; both fall on the month's boundaries.
+   * `GET /v2/billing`, by hour: the account's total for each hour from `start` (UTC). The API
+   * snaps the window to whole hours, and takes `startTime` only with `endTime`.
    */
-  async monthSpent(now: Date): Promise<number> {
-    const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-    const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
-    const response = (await this.#request(`/billing?bucketSize=month&${window(start, end)}`)) as {
+  async billedHours(start: Date, end: Date): Promise<Map<number, number>> {
+    const from = new Date(start.getTime() - (start.getTime() % HOUR_MS));
+    const to = new Date(Math.ceil(end.getTime() / HOUR_MS) * HOUR_MS);
+    const response = (await this.#request(`/billing?bucketSize=hour&${window(from, to)}`)) as {
       records?: { startTime?: string; totalAmount?: number }[];
     };
-    // The window is snapped to whole months; only this month's bucket counts.
-    return (response.records ?? [])
-      .filter((record) => !record.startTime || Date.parse(record.startTime) >= start.getTime())
-      .reduce((total, record) => total + amount(record.totalAmount), 0);
+    const hours = new Map<number, number>();
+    for (const record of response.records ?? []) {
+      const at = Date.parse(record.startTime ?? "");
+      if (!Number.isFinite(at) || at < from.getTime()) continue;
+      const hour = at - (at % HOUR_MS);
+      hours.set(hour, (hours.get(hour) ?? 0) + amount(record.totalAmount));
+    }
+    return hours;
   }
 
   async #podPrice(gpuType: string): Promise<number> {

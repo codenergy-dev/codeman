@@ -4,7 +4,7 @@ import { MIN_RUN_BUDGET, runLimit } from "../budget.ts";
 import type { Change } from "../collect.ts";
 import { type Messages, messages, type RunOutcome, taskLanguage } from "../i18n/index.ts";
 import { agentMode, inferenceChoice } from "../inference/index.ts";
-import { countRun, type PodSpend, parsePodCosts, selfHostedSpent } from "../inference/spend.ts";
+import { addPod } from "../inference/spend.ts";
 import {
   type Cut,
   MARGIN,
@@ -105,14 +105,22 @@ interface Io {
 export interface JobResults {
   /** The result of the key job: `success`, `failure`, `skipped` or `cancelled`. */
   keyJob: string;
-  /** Its status output: `opened`, `over-budget`, `task-budget-spent` or `missing-credentials`. */
+  /**
+   * Its status output: `opened`, `over-budget`, `over-organization-budget`, `task-budget-spent`
+   * or `missing-credentials`.
+   */
   keyStatus: string;
   /** Its reason output, in English, when it opened nothing. */
   keyReason: string;
   /** The result of the agent job. */
   agentJob: string;
+  /** The task's total before the run, as `open-key` read it from the ledger. */
   taskSpent?: number | undefined;
+  /** The repository's month before the run, and the organization's when it has a budget. */
   monthSpent?: number | undefined;
+  organizationMonthSpent?: number | undefined;
+  /** The task's total after the run, as `close-key` read it from the ledger. */
+  taskTotal?: number | undefined;
   keyLimit?: number | undefined;
   runCost?: number | undefined;
   inputTokens?: number | undefined;
@@ -120,11 +128,10 @@ export interface JobResults {
   requests?: number | undefined;
   maxInputTokens?: number | undefined;
   tokensPerSecond?: number | undefined;
-  /** What each run of the task spent, by run ID, as `close-key` read it. */
+  /** What each run of the task spent, by run ID, as `close-key` read it from the ledger. */
   taskCosts?: Record<string, number> | undefined;
-  /** Self-hosted inference: the pod that served the run, and the billing of the task's pods. */
+  /** Self-hosted inference: the pod that served the run. */
   pod?: string | undefined;
-  podCosts?: Record<string, number> | undefined;
   /** The pod served several tasks: its billing is not this task's alone. */
   podShared?: boolean | undefined;
 }
@@ -141,6 +148,8 @@ export function jobResults(runtime: Runtime): JobResults {
     agentJob: runtime.input("agent-job-result"),
     taskSpent: amount("task-spent"),
     monthSpent: amount("month-spent"),
+    organizationMonthSpent: amount("organization-month-spent"),
+    taskTotal: amount("task-total"),
     keyLimit: amount("key-limit"),
     runCost: amount("run-cost"),
     inputTokens: amount("input-tokens"),
@@ -150,7 +159,6 @@ export function jobResults(runtime: Runtime): JobResults {
     tokensPerSecond: amount("tokens-per-second"),
     taskCosts: parseCosts(runtime.input("task-costs")),
     pod: /^[\w-]{1,64}$/.test(runtime.input("pod")) ? runtime.input("pod") : undefined,
-    podCosts: parsePodCosts(runtime.input("pod-costs")),
     podShared: runtime.input("pod-shared") === "true",
   };
 }
@@ -206,14 +214,21 @@ async function keyFailed(task: TaskContext, io: Io): Promise<boolean> {
   }
   if (status !== "opened") {
     // Not the task's fault: go back to where it was, and try again in a later run.
+    const limit = t.money(runLimit(budget, spent) ?? 0);
     const reason =
       status === "over-budget"
         ? t.monthlyBudgetReached(
             t.money(io.jobs.monthSpent ?? 0),
             t.money(task.settings["monthly-budget"]),
-            t.money(runLimit(budget, spent) ?? 0),
+            limit,
           )
-        : t.noKey;
+        : status === "over-organization-budget"
+          ? t.organizationBudgetReached(
+              t.money(io.jobs.organizationMonthSpent ?? 0),
+              t.money(task.settings["organization-monthly-budget"] ?? 0),
+              limit,
+            )
+          : t.noKey;
     await finish(io, task, task.fromState === "planning" ? "new" : task.fromState, {
       message: t.tryLater(reason),
       retry: true,
@@ -1083,16 +1098,17 @@ async function finish(
   const cost = runCosts(io, task);
   const spend = spendRow(io, task, cost.run);
   let record = view.record ?? task.record ?? undefined;
-  // Self-hosted runs add up from the task's pods, which providers bill.
-  const pods = record && selfHostedRun(io, task) ? podSpend(io, task, record) : undefined;
-  if (pods) cost.task = pods.spent;
   if (record && cost.task !== undefined) record = { ...record, spent: cost.task };
-  if (record && pods) {
-    record = { ...record, inference: { pods: pods.pods, spent: pods.selfHosted } };
+  // The task's pods, whose billing close-key reads at the task's next runs.
+  const pod = io.jobs.pod;
+  if (record && pod && selfHostedRun(io, task)) {
+    const runId = io.runtime.runIdOf(task.runUrl) ?? io.runtime.run.id;
+    const pods = addPod(record.inference?.pods, { runId, pod, shared: io.jobs.podShared });
+    record = { ...record, inference: { pods } };
   }
   if (record && spend) record = { ...record, spending: addRow(record.spending, spend) };
   // Earlier runs may have read their cost before OpenRouter, or a pod's billing, counted it.
-  const costs = pods?.costs ?? io.jobs.taskCosts;
+  const costs = io.jobs.taskCosts;
   if (record?.spending && costs) {
     record = {
       ...record,
@@ -1199,61 +1215,25 @@ async function finish(
 }
 
 /**
- * What this run and the whole task have spent, in USD, as far as known: `close-key` reports what
- * each run of the task spent on OpenRouter, read last, to which the record's self-hosted part
- * adds; older workflow files have only `open-key`'s task spend before the run and `close-key`'s
- * run cost.
+ * What this run and the whole task have spent, in USD, as far as known: `close-key` reports both
+ * from Codeman's ledger. Without its report, as when it failed, the task's total before the run
+ * plus the run's cost.
  */
 function runCosts(
   io: Io,
   task: TaskContext,
 ): { run?: number | undefined; task?: number | undefined } {
-  if (selfHostedRun(io, task)) return { run: io.jobs.runCost };
-  const { taskSpent: before, runCost: run, taskCosts: costs } = io.jobs;
-  if (costs) {
-    const id = io.runtime.runIdOf(task.runUrl);
-    const total = Object.values(costs).reduce((sum, value) => sum + value, 0);
-    return {
-      run: (id === undefined ? undefined : costs[id]) ?? run,
-      task: total + selfHostedSpent(task.record),
-    };
-  }
-  if (before === undefined) return { task: task.record?.spent };
+  const { taskSpent: before, runCost, taskCosts: costs, taskTotal } = io.jobs;
+  const id = io.runtime.runIdOf(task.runUrl);
+  const run = (id === undefined ? undefined : costs?.[id]) ?? runCost;
+  if (taskTotal !== undefined) return { run, task: taskTotal };
+  if (before === undefined) return { run, task: task.record?.spent };
   return { run, task: before + (run ?? 0) };
 }
 
 /** Whether this run used self-hosted inference, and reached it. */
 function selfHostedRun(io: Io, task: TaskContext): boolean {
   return task.settings.inference === "self-hosted" && io.jobs.keyStatus === "opened";
-}
-
-/**
- * The task's spend after a self-hosted run: what it spent before, plus the run's estimate and
- * what its pods' billing adds; that part of it alone; and the costs of runs whose pod served
- * them alone.
- */
-function podSpend(
-  io: Io,
-  task: TaskContext,
-  record: TaskRecord,
-): { spent: number; selfHosted: number; pods: PodSpend[]; costs: Record<string, number> } {
-  const before = io.jobs.taskSpent ?? task.record?.spent ?? 0;
-  const counted = countRun(
-    record.inference?.pods,
-    {
-      runId: io.runtime.runIdOf(task.runUrl) ?? io.runtime.run.id,
-      cost: io.jobs.runCost ?? 0,
-      pod: io.jobs.pod,
-      shared: io.jobs.podShared,
-    },
-    io.jobs.podCosts,
-  );
-  return {
-    spent: before + counted.added,
-    selfHosted: selfHostedSpent(record) + counted.added,
-    pods: counted.pods,
-    costs: counted.costs,
-  };
 }
 
 /** The spend table's row for a run that opened a key; older workflow files lack some inputs. */

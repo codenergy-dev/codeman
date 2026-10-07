@@ -120,6 +120,37 @@ test("the organization's settings come after the file, and errors name where the
   assert.ok(!file.ok && file.error.startsWith(".codeman/settings.yml, line 1:"));
 });
 
+test("only the organization's settings set organization-monthly-budget", () => {
+  const shared = parseSettings("model: a/b\norganization-monthly-budget: 60", SHARED_SETTINGS);
+  assert.ok(shared.ok);
+  if (!shared.ok) return;
+  assert.equal(shared.value["organization-monthly-budget"], 60);
+  const resolved = resolveSettings({}, {}, { "monthly-budget": 30 }, shared.value);
+  assert.ok(resolved.ok && resolved.value["organization-monthly-budget"] === 60);
+  assert.ok(resolved.ok && resolved.value["monthly-budget"] === 30);
+  const none = resolveSettings({ model: "a/b" });
+  assert.ok(none.ok && none.value["organization-monthly-budget"] === undefined, "no default");
+
+  assert.deepEqual(parseSettings("model: a/b\norganization-monthly-budget: 1000"), {
+    ok: false,
+    error:
+      ".codeman/settings.yml, line 2: `organization-monthly-budget` can be set only in the organization's settings, the CODEMAN_SETTINGS variable.",
+  });
+  const profile = parseSettings(
+    "model: a/b\ninference-profiles:\n  - name: p\n    organization-monthly-budget: 1000",
+    SHARED_SETTINGS,
+  );
+  assert.ok(
+    !profile.ok && /a profile cannot set `organization-monthly-budget`/.test(profile.error),
+  );
+  assert.ok(!TASK_SETTINGS.has("organization-monthly-budget"), "nor a command");
+  assert.deepEqual(parseSettings("organization-monthly-budget: 0", SHARED_SETTINGS), {
+    ok: false,
+    error:
+      "the `settings` input (organization variable CODEMAN_SETTINGS), line 1: `organization-monthly-budget` must be a positive number.",
+  });
+});
+
 test("a model is required", () => {
   const resolved = resolveSettings({}, {}, {});
   assert.ok(!resolved.ok && resolved.error.includes(".codeman/settings.yml"));

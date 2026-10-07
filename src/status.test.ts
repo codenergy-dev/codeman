@@ -242,7 +242,7 @@ test("the panel shows the spend table with its totals, and a run comment its own
   assert.match(panel, /\| Runs without a row \| \| \| \| \| \| \| \| \| US\$ 0\.377 \|/);
   assert.match(
     panel,
-    /\| \*\*Total \(1 run\)\*\* \| \| \| \| 2 min \| 12\.3K \| 800 \| 4K \| 61\.2 \| \*\*US\$ 0\.500\*\* \| \| \| \|\n\n\*\*OpenRouter\*\*: a run's cost [^\n]*\n\nSpent: US\$ 0\.50 of US\$ 2\.00 for the task\./,
+    /\| \*\*Total \(1 run\)\*\* \| \| \| \| 2 min \| 12\.3K \| 800 \| 4K \| 61\.2 \| \*\*US\$ 0\.500\*\* \| \| \| \|\n\n\*\*OpenRouter\*\*: a run's cost [^\n]*\n\n\*\*Month\*\*: [^\n]*\n\nSpent: US\$ 0\.50 of US\$ 2\.00 for the task\./,
   );
   assert.ok(!panel.includes("Tokens:"), "the totals row has the task's tokens and time");
 
@@ -275,7 +275,7 @@ test("each inference of the table gets a note under it, and older rows a dash an
   assert.match(panel, /\| `a\/b` \| Runpod \(Serverless\) \| 2 min \|/);
   assert.match(
     panel,
-    /\| \*\*Total \(4 runs\)\*\* [^\n]*\n\n\*\*Runpod \(pod\)\*\*: [^\n]*\n\n\*\*Runpod \(Serverless\)\*\*: [^\n]*\n\nSpent: /,
+    /\| \*\*Total \(4 runs\)\*\* [^\n]*\n\n\*\*Runpod \(pod\)\*\*: [^\n]*\n\n\*\*Runpod \(Serverless\)\*\*: [^\n]*\n\n\*\*Month\*\*: [^\n]*\n\nSpent: /,
   );
   assert.ok(!panel.includes("**OpenRouter**"), "no row used OpenRouter");
   const oldOnly = renderStatus({ ...view, record: { ...record, spending: { rows: [old] } } });
@@ -288,7 +288,7 @@ test("each inference of the table gets a note under it, and older rows a dash an
   });
   assert.match(
     body,
-    /\| Runpod \(Serverless\) \|[^\n]*\n\n\*\*Runpod \(Serverless\)\*\*: [^\n]*\n\n<sub>/,
+    /\| Runpod \(Serverless\) \|[^\n]*\n\n\*\*Runpod \(Serverless\)\*\*: [^\n]*\n\n\*\*Month\*\*: [^\n]*\n\n<sub>/,
   );
   assert.ok(!body.includes("**Runpod (pod)**"), "a run comment has its own row's note");
   const portuguese = renderRun({ ...run, t: ptBR, spend: pod });

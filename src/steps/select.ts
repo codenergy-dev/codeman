@@ -398,9 +398,7 @@ export async function select(services: Services): Promise<void> {
   for (const choice of choices) picked.push(await prepare(choice));
   for (const one of picked) await one.start();
   const runOf = (one: Picked) => ledgerRunId(runtime.run.id, runtime.run.attempt, one.number);
-  const outputs = picked.map((one, index) =>
-    taskOutputs(one, picked.slice(0, index), picked, runOf(one)),
-  );
+  const outputs = picked.map((one) => taskOutputs(one, picked, runOf(one)));
   // The jobs of each task, a leg of the run's matrix, take its outputs from this list.
   runtime.output("tasks", JSON.stringify(outputs));
   // The first task's, as one output each, and its context as `task.json`, for workflow files
@@ -446,30 +444,17 @@ interface Picked {
 }
 
 /**
- * A task's outputs, which its jobs read from the `tasks` list. The run's tasks open their keys
- * at once, and each reads the month before the others spend: each keeps, of the monthly budget,
- * what the agents picked before it may spend at most. Their keys' limits are what remains of
- * their task budgets, which their records' totals never exceed (records lag behind, so they
- * keep enough).
+ * A task's outputs, which its jobs read from the `tasks` list. The run's tasks open their keys at
+ * once; Codeman's ledger keeps them within the budgets together.
  */
-function taskOutputs(
-  task: Picked,
-  before: readonly Picked[],
-  all: readonly Picked[],
-  run: string,
-): Record<string, string> {
-  const agents = (list: readonly Picked[]) => list.filter((other) => other.needsAgent);
-  const reserved = agents(before).reduce(
-    (sum, other) => sum + Math.max(0, other.settings["task-budget"] - (other.record?.spent ?? 0)),
-    0,
-  );
-  const others = agents(all)
-    .filter((other) => other !== task)
+function taskOutputs(task: Picked, all: readonly Picked[], run: string): Record<string, string> {
+  const others = all
+    .filter((other) => other.needsAgent && other !== task)
     .map((other) => String(other.number));
   const choice = inferenceChoice(task.settings, task.record, {
     profile: task.profile,
     providers: task.providers,
-    ...(task.needsAgent ? { reserved: Number(reserved.toFixed(4)), others } : {}),
+    ...(task.needsAgent ? { others } : {}),
   });
   return {
     task: String(task.number),
@@ -479,6 +464,8 @@ function taskOutputs(
     "base-sha": task.baseSha,
     "task-budget": String(task.settings["task-budget"]),
     "monthly-budget": String(task.settings["monthly-budget"]),
+    // Only the organization's settings set it; empty when they do not.
+    "organization-monthly-budget": String(task.settings["organization-monthly-budget"] ?? ""),
     inference: JSON.stringify(choice),
     // The run's document in the ledger, which the key jobs add to; none without an agent.
     "ledger-run": task.needsAgent ? run : "",

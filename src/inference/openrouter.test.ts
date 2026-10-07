@@ -11,7 +11,6 @@ import {
   runCost,
   runStats,
   runTokens,
-  sumUsage,
   taskCosts,
   taskKeyPrefix,
 } from "./openrouter.ts";
@@ -33,20 +32,23 @@ test("formats expiry as OpenRouter expects", () => {
   assert.equal(expiresAt(new Date("2026-09-24T10:20:30.456Z"), 24), "2026-09-25T10:20:30Z");
 });
 
-test("adds up this month's usage of the repository's keys, across pages", async () => {
-  const prefix = keyPrefix({ owner: "org", name: "repo" });
+test("lists every key of the account, across pages", async () => {
   const { fetch, calls } = fakeFetch([
     {
       data: [
-        { hash: "1", name: `${prefix}1/100`, usage_monthly: 1.5 },
-        { hash: "2", name: "codeman/org/repo-other/1/1", usage_monthly: 9 },
-        { hash: "3", name: "personal", usage_monthly: 9 },
+        { hash: "1", name: "codeman/org/repo/1/100", usage: 1.5 },
+        { hash: "2", name: "codeman/org/repo-other/1/1", usage: 9 },
+        { hash: "3", name: "personal", usage: 9 },
       ],
     },
-    { data: [{ hash: "4", name: `${prefix}2/101`, usage_monthly: 0.25 }] },
+    { data: [{ hash: "4", name: "codeman/org/repo/2/101", usage: 0.25 }] },
     { data: [] },
   ]);
-  assert.equal(await new OpenRouter("mk", fetch).monthlyUsage(prefix), 1.75);
+  const keys = await new OpenRouter("mk", fetch).listKeys();
+  assert.deepEqual(
+    keys.map((key) => key.hash),
+    ["1", "2", "3", "4"],
+  );
   assert.deepEqual(
     calls.map(([url]) => url.replace("https://openrouter.ai/api/v1", "")),
     [
@@ -91,16 +93,16 @@ test("reports failures without echoing the response", async () => {
   });
 });
 
-test("adds up a task's spend without mixing tasks that share a prefix", () => {
+test("adds up a task's runs without mixing tasks that share a prefix", () => {
   const keys = [
-    { hash: "1", name: "codeman/o/r/1/100", usage: 0.2, usage_monthly: 0.2 },
+    { hash: "1", name: "codeman/o/r/1/100", usage: 0.2 },
     { hash: "2", name: "codeman/o/r/1/101", usage: 0.35 },
     { hash: "3", name: "codeman/o/r/12/102", usage: 5 },
     { hash: "4", name: "codeman/o/r2/1/103", usage: 5 },
   ];
-  assert.equal(sumUsage(keys, taskKeyPrefix(o, 1), "usage"), 0.55);
-  assert.equal(sumUsage(keys, taskKeyPrefix(o, 12), "usage"), 5);
-  assert.equal(sumUsage(keys, keyPrefix(o), "usage_monthly"), 0.2);
+  assert.deepEqual(costsByRun(keys, taskKeyPrefix(o, 1)), { "100": 0.2, "101": 0.35 });
+  assert.deepEqual(costsByRun(keys, taskKeyPrefix(o, 12)), { "102": 5 });
+  assert.equal(keyPrefix(o), "codeman/o/r/");
 });
 
 test("gives each run of a task what its keys spent, adding up a re-run's keys", () => {
@@ -386,24 +388,24 @@ test("a key that is not a task key of this repository, or a failed listing, give
   assert.equal(await taskCosts(failed, "h", o, new FakeRuntime()), undefined);
 });
 
-test("the provider adds up spend from one listing, and names each run's key as before", async () => {
+test("the provider tells what each run of a task spent, and names each run's key as before", async () => {
   const { fetch, calls } = fakeFetch([
     {
       data: [
-        { hash: "1", name: "codeman/o/r/7/100", usage: 0.25, usage_monthly: 0.25 },
-        { hash: "2", name: "codeman/o/r/8/101", usage: 1, usage_monthly: 0.5 },
-        { hash: "3", name: "codeman/o/other/7/102", usage: 9, usage_monthly: 9 },
+        { hash: "1", name: "codeman/o/r/7/100", usage: 0.25 },
+        { hash: "2", name: "codeman/o/r/8/101", usage: 1 },
+        { hash: "3", name: "codeman/o/other/7/102", usage: 9 },
+        { hash: "4", name: "codeman/o/r/7/103", usage: 0.123456 },
       ],
     },
     { data: [] },
     { key: "sk-or-v1-x", data: { hash: "h", name: "codeman/o/r/7/300" } },
   ]);
   const provider = new OpenRouterProvider(new OpenRouter("mk", fetch), o, () => 24);
-  assert.equal(await provider.taskSpent("7"), 0.25);
-  assert.equal(await provider.monthSpent(), 0.75);
+  assert.deepEqual(await provider.taskCosts("7"), { "100": 0.25, "103": 0.1235 });
   const run = await provider.open({ task: "7", runId: "300", limit: 1.75 }, new FakeRuntime());
   assert.deepEqual(run, { handle: "h", credential: "sk-or-v1-x" });
-  assert.equal(calls.length, 3, "one listing for both sums");
+  assert.equal(calls.length, 3);
   const body = JSON.parse(String(calls[2]?.[1].body));
   assert.equal(body.name, "codeman/o/r/7/300");
   assert.equal(body.limit, 1.75);

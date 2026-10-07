@@ -128,9 +128,9 @@ Codeman reads `.codeman/settings.yml` and `.codemanignore` from the default bran
 
 The agent job needs a Linux runner (x64 or arm64).
 
-To update workflow files copied before the backend, copy both templates again, and move any steps you added to the `agent` job into the new `codeman-task.yml`: the jobs that record runs need their new permissions, variables and the run's ID in the ledger. Older workflow files fail in `select`, before they mark any task, since they pass none of the backend's variables.
+To update workflow files copied before the backend, copy both templates again, and move any steps you added to the `agent` job into the new `codeman-task.yml`: the jobs that record runs need their new permissions, variables and the run's ID in the ledger. Older workflow files fail in `select`, before they mark any task, since they pass none of the backend's variables. Workflow files copied before the budgets came from the ledger pass neither the organization's monthly budget nor the task's spend from `close-key` to `apply`: copy both templates again, too.
 
-A run works on one task by default. `parallel-tasks: 2` (up to 10) in `.codeman/settings.yml` lets a run work on that many at once, each with its own key and agent; the run ends when its slowest task does. On OpenRouter, it only finishes tasks sooner: each pays for its own tokens. On pods, the run's tasks with the same pod settings share one pod and split its cost by the second, once the pod image supports it (see [pods](#pods)); on Serverless, each task counts the worker time its requests used, so time two tasks share counts for each. The monthly budget holds across them: see [budget](architecture.md#budget).
+A run works on one task by default. `parallel-tasks: 2` (up to 10) in `.codeman/settings.yml` lets a run work on that many at once, each with its own key and agent; the run ends when its slowest task does. On OpenRouter, it only finishes tasks sooner: each pays for its own tokens. On pods, the run's tasks with the same pod settings share one pod and split its cost by the second, once the pod image supports it (see [pods](#pods)); on Serverless, each task counts the worker time its requests used, so time two tasks share counts for each. The budgets hold across them: each run's limit is reserved in Codeman's ledger before it opens, so tasks that open at once never pass a budget together; see [budget](architecture.md#budget).
 
 ### Shared settings
 
@@ -142,12 +142,15 @@ An organization can give the repositories that use Codeman the same settings, su
    model: deepseek/deepseek-v4.1-flash
    task-budget: 1
    monthly-budget: 50
+   organization-monthly-budget: 120
    ```
 
 2. Under **Repository access**, choose the repositories that use Codeman.
 3. Check that each repository's workflow passes the variable to the `select` step, as the template does: `settings: ${{ vars.CODEMAN_SETTINGS }}`. Workflow files copied before that line existed ignore the variable.
 
 These are defaults: a value in a repository's `.codeman/settings.yml` overrides the organization's, and a manual run's inputs and a task's commands come before both; see [settings](architecture.md#settings). The `select` job's log names where each value came from. A malformed variable stops every run of those repositories, with an error that names the `settings` input.
+
+`organization-monthly-budget` is the exception: only this variable sets it. It limits what all the organization's repositories spend in a calendar month together, every provider included, with the Runpod account's whole billing; without it, only each repository's `monthly-budget` holds. A repository's `.codeman/settings.yml` that sets it stops its runs with an error. See [budget](architecture.md#budget).
 
 - On GitHub Free, private repositories cannot read organization variables.
 - A repository variable named `CODEMAN_SETTINGS` replaces the organization's whole, not value by value: GitHub gives the repository's variable precedence. Use `.codeman/settings.yml` to override single values.
@@ -160,8 +163,8 @@ Instead of OpenRouter, Codeman can serve the model itself on GPUs rented from [R
 
 ### The account
 
-1. Create a Runpod account, or a team, for Codeman only: the whole account's spend this month counts against `monthly-budget`.
-2. Add prepaid credits, about the monthly budget, and leave auto-pay off. At a balance of US$ 0, Runpod stops every pod, so the credits cap what Codeman can spend there.
+1. Create a Runpod account, or a team, for Codeman only, shared by the organization's repositories: with `organization-monthly-budget`, the whole account's billing counts in the organization's month. Each repository's `monthly-budget` counts its own runs, as Codeman's ledger estimates them.
+2. Add prepaid credits, about the organization's monthly budget, and leave auto-pay off. At a balance of US$ 0, Runpod stops every pod, so the credits cap what Codeman can spend there.
 3. Create an API key on the console's **Credentials** page, **API Keys** tab, with **All** permissions (pods and billing need it), and add it as the secret `CODEMAN_RUNPOD_API_KEY`. Only the key jobs of the workflow receive it.
 
 ### Pods
@@ -224,7 +227,7 @@ inference-profiles:
 1. Give each profile a `name`, and under `when` the `stages` it is for: `plan`, `route`, `web`, `design`, `code`, `test` or `review`. A profile without `when` applies to every run, so put it last. (`parallel-tasks` is for when a run works on several tasks at once, which is not available yet.)
 2. Put in each profile only what changes: `model` and the inference settings (`inference`, `gpu-provider`, `gpu-mode`, `gpu-type`, `engine`, `serverless-endpoint`, `pod-reuse`). Everything else, budgets included, stays at the top level and applies to every run.
 3. Order them: the first profile whose conditions hold applies.
-4. Add the secrets of every provider the settings and profiles name, even one only some stages use: the monthly budget adds up each provider's month, so a run on OpenRouter reads the Runpod account's too. Without one, runs stop, and the task's panel names the missing secret.
+4. Add the secrets of every provider the settings and profiles name: a run needs its own provider's, and with `organization-monthly-budget`, every run reads the billing of each GPU provider named, so a run on OpenRouter needs the Runpod key too. Without one, runs stop, and the task's panel names the missing secret.
 
 Each profile must work over the top-level settings: a profile on pods needs a `gpu-type`, here or at the top level. A mistake stops the next run, with an error that names the line or the profile. The `select` job's log names the profile of each run, and the spend table shows each run's model and provider. A task's `/codeman set model` wins over any profile, in the runs whose inference it fits. A repository whose file has `inference-profiles` replaces the organization's list whole; `inference-profiles: []` removes it. See [settings](architecture.md#inference-profiles).
 

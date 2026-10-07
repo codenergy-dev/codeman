@@ -150,11 +150,13 @@ export const en: Messages = {
   spendNote: (mode) =>
     ({
       openrouter:
-        "**OpenRouter**: a run's cost is what its key used, exact, and later runs refresh it. The month is what the repository's keys used this month.",
-      pod: "**Runpod (pod)**: a run's cost is its pod's time at the pod's price, refreshed later from Runpod's billing. The month is an estimate: the whole Runpod account's billing, every repository on it included, plus what its running pods cost beyond it.",
+        "**OpenRouter**: a run's cost is what its key used, exact, and later runs refresh it.",
+      pod: "**Runpod (pod)**: a run's cost is its pod's time at the pod's price; the task also counts its pod's time between runs, refreshed later from Runpod's billing.",
       serverless:
-        "**Runpod (Serverless)**: a run's cost is an estimate of the time Runpod bills its workers. The month is the whole Runpod account's billing, which counts a Serverless run an hour or more late.",
+        "**Runpod (Serverless)**: a run's cost is an estimate of the time Runpod bills its workers, which counts in the month as soon as the run ends.",
     })[mode],
+  monthNote:
+    "**Month**: what the repository's runs count this month in Codeman's ledger before the run, an estimate: each run's cost as above, and the whole limit of each run still open. The organization's monthly budget, when it has one, counts every repository's runs and Runpod's billing by the hour.",
   earlierRuns: (runs) => `Earlier runs (${runs})`,
   totalRow: (runs) => `Total (${runs} ${runs === 1 ? "run" : "runs"})`,
   runsWithoutRow: "Runs without a row",
@@ -197,11 +199,13 @@ export const en: Messages = {
   noKey:
     "Codeman could not give this run access to its model (an OpenRouter key, or a GPU). See the run log.",
   missingCredentials:
-    "Codeman could not give this run access to its model: the workflow does not pass the secret of a provider the inference settings name.",
+    "Codeman could not give this run access to its model: the workflow does not pass the secret of a provider the run needs, its own or one whose billing counts in the organization's month.",
   taskBudgetSpent: (spent, budget, minimum) =>
     `The task has spent ${spent} of its ${budget} budget, and a run needs at least ${minimum}. A maintainer can raise it with \`/codeman set task-budget <usd>\`, then comment \`/codeman continue\`.`,
   monthlyBudgetReached: (used, budget, limit) =>
     `The monthly budget is reached: ${used} used of ${budget}, and this run may use up to ${limit}.`,
+  organizationBudgetReached: (used, budget, limit) =>
+    `The organization's monthly budget is reached: ${used} used of ${budget}, and this run may use up to ${limit}.`,
   tryLater: (reason) => `${reason} Codeman will try again in a later run.`,
 
   planUnfinished: "The agent did not finish the plan. See the run log.",

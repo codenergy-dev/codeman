@@ -1,8 +1,19 @@
 import { setTimeout as sleep } from "node:timers/promises";
+import {
+  type BilledHours,
+  expired,
+  type LedgerRun,
+  RESERVATION_MS,
+  reconciledMonth,
+  reserving,
+  runAmount,
+  runLimit,
+  spentBy,
+} from "./budget.ts";
 import type { PodEvent, RunUsage } from "./inference/provider.ts";
 import type { Log, Runtime } from "./runtime/runtime.ts";
-import { isLedgerRunId, LAYOUT, repositoryName } from "./store/layout.ts";
-import type { Fields, Store, Write } from "./store/store.ts";
+import { isLedgerRunId, LAYOUT, ledgerMonth, repositoryName } from "./store/layout.ts";
+import type { Fields, Store, StoredDocument, StoreReader, Write } from "./store/store.ts";
 import { oneLine } from "./text.ts";
 
 /** What can happen to a run, as its events name it. */
@@ -10,6 +21,7 @@ export type EventType =
   | "task-picked"
   | "key-opened"
   | "key-refused"
+  | "key-failed"
   | "pod-created"
   | "pod-joined"
   | "pod-terminated"
@@ -37,8 +49,49 @@ export interface PickedRun {
   profile: string | undefined;
 }
 
+/** What `open-key` checks a run against, and what the task's record counted before the ledger. */
+export interface Budgets {
+  task: number;
+  taskBudget: number;
+  monthlyBudget: number;
+  /** The organization's monthly budget; undefined when its settings set none. */
+  organizationBudget?: number | undefined;
+  /** The total of the task's record, which the task's first run under the ledger carries. */
+  recorded: number;
+  /** The hourly billing of each GPU provider that reconciles the organization's month. */
+  billed: ReadonlyMap<string, BilledHours>;
+}
+
+/** What `reserve` found, and whether it reserved the run's limit or why not. */
+export interface Reservation {
+  outcome: "reserved" | "task-budget-spent" | "over-budget" | "over-organization-budget";
+  /** What the run may spend: what remains of the task's budget, when that is enough. */
+  limit: number | undefined;
+  /** The task's total before the run. */
+  task: number;
+  /** The repository's month before the run, open runs' limits included. */
+  month: number;
+  /** What the repository's other open runs reserve of it, and how many they are. */
+  reserved: { amount: number; runs: number };
+  /** The organization's month before the run, when it has a budget. */
+  organization: number | undefined;
+}
+
+/** Figures the providers give of a task's runs, which replace the ledger's when they differ. */
+export interface Refreshed {
+  /** What each run of the task spent on OpenRouter, by workflow run ID, from its keys. */
+  costs?: Readonly<Record<string, number>> | undefined;
+  /** What each of the task's pods cost so far, by pod ID. */
+  pods?: Readonly<Record<string, number>> | undefined;
+}
+
 /** Waits between attempts to reach the store: four attempts in all. */
 const RETRY_MS = [1_000, 3_000, 9_000];
+/**
+ * Attempts of a reservation: every `open-key` of the organization reads the month, so tasks
+ * that open at once run their reservations again, one after another.
+ */
+const RESERVE_ATTEMPTS = 20;
 
 /**
  * Codeman's record of its runs, in the store (step 6 of the backend plan): a document for each
@@ -46,7 +99,8 @@ const RETRY_MS = [1_000, 3_000, 9_000];
  * says what it did; the ledger keeps it until `flush`, which a job calls after its GitHub
  * writes, so a store that fails fails the job without leaving GitHub half written. Writes are
  * idempotent, so a re-run job writes the same documents again: a run's fields are merged, and an
- * event's ID is its run and what happened. Nothing reads the ledger yet.
+ * event's ID is its run and what happened. The budgets read it: `reserve` checks a run against
+ * them and reserves its limit, in a transaction (docs/architecture.md#budget).
  */
 export class Ledger {
   readonly #store: Store;
@@ -87,7 +141,7 @@ export class Ledger {
         workflowRun: this.#source.runtime.run.id,
         attempt: this.#source.runtime.run.attempt,
         // The month the run counts in, for the budgets' queries.
-        month: at.toISOString().slice(0, 7),
+        month: ledgerMonth(at),
         status: "picked",
         pickedAt: at,
         stage: picked.stage,
@@ -100,11 +154,162 @@ export class Ledger {
     this.#event(run, "task-picked", { action: picked.action, stage: picked.stage });
   }
 
+  /** The runs of the task of `run`, in every month. */
+  async taskRuns(run: string, log: Log): Promise<LedgerRun[]> {
+    const { owner } = this.#source.runtime.repository;
+    return this.#retry(log, "read Codeman's ledger", async () =>
+      ledgerRuns(await taskQuery(this.#store, owner, this.#repository(), taskOf(run))),
+    );
+  }
+
+  /** The organization's runs this month, of every repository. */
+  async monthRuns(log: Log): Promise<LedgerRun[]> {
+    const { owner } = this.#source.runtime.repository;
+    return this.#retry(log, "read Codeman's ledger", async () =>
+      ledgerRuns(await monthQuery(this.#store, owner, ledgerMonth(this.#now()))),
+    );
+  }
+
+  /**
+   * Replaces the costs of a task's `runs` with what the providers say now: OpenRouter's keys,
+   * for each run that closed or expired and whose workflow run has no other run of the task (an
+   * expired run then counts its cost, not its limit); and each pod's cost, on the task's last
+   * run on it, when higher. Writes at once, and returns the runs as they are now.
+   */
+  async refresh(runs: readonly LedgerRun[], figures: Refreshed, log: Log): Promise<LedgerRun[]> {
+    const now = this.#now();
+    const writes: Write[] = [];
+    const next = runs.map((run) => ({ ...run }));
+    const change = (run: LedgerRun, fields: Partial<LedgerRun> & Fields) => {
+      Object.assign(run, fields);
+      writes.push({
+        op: "set",
+        path: LAYOUT.run(this.#source.runtime.repository.owner, run.id),
+        fields,
+        merge: true,
+      });
+    };
+    for (const [workflowRun, figure] of Object.entries(figures.costs ?? {})) {
+      const same = next.filter((run) => run.workflowRun === workflowRun);
+      const [run] = same;
+      const ended =
+        run !== undefined &&
+        (run.status === "closed" || run.status === "expired" || expired(run, now));
+      if (same.length !== 1 || !run || run.provider !== "openrouter" || !ended) continue;
+      const cost = Math.max(0, figure - (run.spentBefore ?? 0));
+      if (run.cost !== undefined && Math.abs(run.cost - cost) < 0.0001) continue;
+      change(run, expired(run, now) ? { cost, status: "expired" } : { cost });
+    }
+    for (const [pod, figure] of Object.entries(figures.pods ?? {})) {
+      const on = next.filter((run) => run.pod === pod && !reserving(run, now));
+      const last = on.at(-1);
+      if (!last || figure <= Math.max(0, ...on.map((run) => run.podCost ?? 0))) continue;
+      change(last, { podCost: figure });
+    }
+    if (writes.length > 0) {
+      await this.#retry(log, "write to Codeman's ledger", () => this.#store.write(writes));
+      log.info(`Refreshed ${writes.length} of the task's run(s) in Codeman's ledger.`);
+    }
+    return next;
+  }
+
+  /**
+   * Reserves the run's limit (decision 1 of the ledger budgets plan): in one transaction, reads
+   * the task's runs and the month's, and when what remains of the task's budget fits in the
+   * repository's month and the organization's, writes it as the run's limit, open. Tasks and
+   * repositories that open at once each see the others' reservations, or run again once they
+   * are written, so together they never pass a budget. Writes nothing when it refuses.
+   */
+  async reserve(run: string, budgets: Budgets): Promise<Reservation> {
+    const { owner } = this.#source.runtime.repository;
+    const repository = this.#repository();
+    const path = LAYOUT.run(owner, run);
+    const now = this.#now();
+    return this.#store.transaction(
+      async (tx) => {
+        const [task, month] = await Promise.all([
+          taskQuery(tx, owner, repository, budgets.task).then(ledgerRuns),
+          monthQuery(
+            tx,
+            owner,
+            ledgerMonth(now),
+            budgets.organizationBudget === undefined ? repository : undefined,
+          ).then(ledgerRuns),
+        ]);
+        const own = task.find((other) => other.id === run);
+        // What an earlier attempt of this run spent, when it closed; a reservation replaces the
+        // run's own limit.
+        const before = own && own.status !== "open" ? runAmount(own) : 0;
+        const others = task.filter((other) => other.id !== run);
+        const carries = task.some((other) => other.carried !== undefined);
+        const carried = carries ? undefined : Math.max(0, budgets.recorded - spentBy(others));
+        const spent =
+          spentBy(others) +
+          task.reduce((sum, other) => sum + (other.carried ?? 0), 0) +
+          (carried ?? 0) +
+          before;
+        const monthRuns = month.filter((other) => other.id !== run);
+        const ours = monthRuns.filter((other) => other.repository === repository);
+        const open = ours.filter((other) => reserving(other, now));
+        const reservation: Reservation = {
+          outcome: "reserved",
+          limit: runLimit(budgets.taskBudget, spent),
+          task: spent,
+          month: spentBy(ours) + before,
+          reserved: { amount: spentBy(open), runs: open.length },
+          organization:
+            budgets.organizationBudget === undefined
+              ? undefined
+              : reconciledMonth(monthRuns, budgets.billed, now) + before,
+        };
+        const { limit } = reservation;
+        if (limit === undefined) return { ...reservation, outcome: "task-budget-spent" };
+        if (reservation.month + limit > budgets.monthlyBudget) {
+          return { ...reservation, outcome: "over-budget" };
+        }
+        if (
+          reservation.organization !== undefined &&
+          budgets.organizationBudget !== undefined &&
+          reservation.organization + limit > budgets.organizationBudget
+        ) {
+          return { ...reservation, outcome: "over-organization-budget" };
+        }
+        tx.write({
+          op: "set",
+          path,
+          fields: {
+            status: "open",
+            reservedAt: now,
+            expiresAt: new Date(now.getTime() + RESERVATION_MS),
+            limit,
+            ...(carried === undefined ? {} : { carried }),
+            // An earlier attempt's figures give way to this one's, and count as spent before.
+            ...(own?.cost === undefined && own?.spentBefore === undefined
+              ? {}
+              : { spentBefore: before, cost: null, closedAt: null, podCost: null }),
+          },
+          merge: true,
+        });
+        return reservation;
+      },
+      { attempts: RESERVE_ATTEMPTS },
+    );
+  }
+
   /** `open-key` gave the run its access, limited to `limit` USD. */
   open(run: string, limit: number, pods: readonly PodEvent[] | undefined): void {
-    this.#update(run, { status: "open", openedAt: this.#now(), limit });
+    this.#update(run, { openedAt: this.#now() });
     this.#event(run, "key-opened", { limit });
     this.#pods(run, pods);
+  }
+
+  /**
+   * `open-key` could not open the run it reserved: it spent nothing that the budgets can tell,
+   * and its reservation ends.
+   */
+  fail(run: string, reason: string): void {
+    this.#update(run, { status: "failed", failedAt: this.#now(), cost: 0, reason });
+    this.#event(run, "key-failed", { reason });
   }
 
   /** `open-key` refused the run: `status` is its output, `reason` why. */
@@ -129,12 +334,14 @@ export class Ledger {
     })) {
       if (value !== undefined) figures[name] = value;
     }
+    const podCost = usage.pod === undefined ? undefined : usage.podCosts?.[usage.pod];
     this.#update(run, {
       status: "closed",
       closedAt: this.#now(),
       cost: usage.cost,
       ...figures,
       ...(usage.pod ? { pod: usage.pod } : {}),
+      ...(podCost === undefined ? {} : { podCost }),
     });
     if (agentJob !== "" && agentJob !== "success") {
       this.#event(run, "run-stopped", { result: agentJob });
@@ -162,6 +369,10 @@ export class Ledger {
     }
     this.#writes = [];
     log.info(`Recorded ${writes.length} document(s) in Codeman's ledger.`);
+  }
+
+  #repository(): string {
+    return repositoryName(this.#source.runtime.repository);
   }
 
   /** Adds fields to a run's document, which replace those of the same name. */
@@ -236,4 +447,73 @@ export function ledgerRun(runtime: Pick<Runtime, "input">): string {
 /** The task of a run's ID: its last part. */
 function taskOf(run: string): number {
   return Number(run.slice(run.lastIndexOf("-") + 1));
+}
+
+/** A repository's runs of one task. */
+function taskQuery(
+  store: StoreReader,
+  owner: string,
+  repository: string,
+  task: number,
+): Promise<StoredDocument[]> {
+  return store.query(LAYOUT.runs(owner), {
+    where: [
+      { field: "repository", op: "==", value: repository },
+      { field: "task", op: "==", value: task },
+    ],
+  });
+}
+
+/** The organization's runs of a month, or one repository's. */
+function monthQuery(
+  store: StoreReader,
+  owner: string,
+  month: string,
+  repository?: string,
+): Promise<StoredDocument[]> {
+  return store.query(LAYOUT.runs(owner), {
+    where: [
+      { field: "month", op: "==", value: month },
+      ...(repository === undefined
+        ? []
+        : [{ field: "repository", op: "==" as const, value: repository }]),
+    ],
+  });
+}
+
+/** Runs as the budgets read them, in the order they started; documents without a run's fields are left out. */
+export function ledgerRuns(documents: readonly StoredDocument[]): LedgerRun[] {
+  const runs = documents.flatMap((document): LedgerRun[] => {
+    const { fields } = document;
+    const id = document.path.slice(document.path.lastIndexOf("/") + 1);
+    const text = (value: unknown) => (typeof value === "string" ? value : undefined);
+    const amount = (value: unknown) =>
+      typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+    const date = (value: unknown) => (value instanceof Date ? value : undefined);
+    const repository = text(fields.repository);
+    const task = fields.task;
+    const start = date(fields.reservedAt) ?? date(fields.openedAt) ?? date(fields.pickedAt);
+    if (!repository || typeof task !== "number" || !start) return [];
+    return [
+      {
+        id,
+        repository,
+        task,
+        workflowRun: text(fields.workflowRun) ?? "",
+        status: text(fields.status) ?? "",
+        provider: text(fields.provider) ?? "",
+        limit: amount(fields.limit),
+        cost: amount(fields.cost),
+        spentBefore: amount(fields.spentBefore),
+        carried: amount(fields.carried),
+        pod: text(fields.pod),
+        podCost: amount(fields.podCost),
+        start,
+        // Runs opened before reservations expire as theirs would.
+        expiresAt: date(fields.expiresAt) ?? new Date(start.getTime() + RESERVATION_MS),
+        closedAt: date(fields.closedAt),
+      },
+    ];
+  });
+  return runs.sort((a, b) => a.start.getTime() - b.start.getTime() || (a.id < b.id ? -1 : 1));
 }

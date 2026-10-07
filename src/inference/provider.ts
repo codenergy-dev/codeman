@@ -1,16 +1,13 @@
 import type { Log } from "../runtime/runtime.ts";
 
 /**
- * Where a task's agent runs get their model, and how what they spend is counted: OpenRouter, or
- * a model Codeman serves on rented GPUs. The key jobs (`open-key`, `close-key`) are the only
- * ones that use it. See docs/architecture.md#budget.
+ * Where a task's agent runs get their model, and what each run spent: OpenRouter, or a model
+ * Codeman serves on rented GPUs. The key jobs (`open-key`, `close-key`) are the only ones that
+ * use it; Codeman's ledger adds up what runs spent for the budgets. See
+ * docs/architecture.md#budget.
  */
 export interface InferenceProvider {
   readonly name: string;
-  /** What the task has spent so far, in USD, across all its runs. */
-  taskSpent(task: string): Promise<number>;
-  /** What the repository, or the account it shares, has spent this calendar month, in USD. */
-  monthSpent(): Promise<number>;
   /** Gives the run its access to a model, limited to `limit` USD. */
   open(run: RunRequest, log: Log): Promise<OpenedRun>;
   /** Ends the run's access, and reads what it used. `handle` is what `open` returned. */
@@ -60,7 +57,10 @@ export interface RunUsage {
   maxInputTokens?: number | undefined;
   /** Mean completion tokens per second over the run's requests. */
   tokensPerSecond?: number | undefined;
-  /** What each run of the task spent, by run ID, when the provider can tell. */
+  /**
+   * What each run of the task spent, by workflow run ID, when the provider can tell; they
+   * refresh the runs' costs in the ledger.
+   */
   taskCosts?: Record<string, number> | undefined;
   /** The pod that served the run, for a provider that bills pods. */
   pod?: string | undefined;

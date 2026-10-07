@@ -1,4 +1,4 @@
-import { inferenceBudget, inferenceProvider } from "./inference/index.ts";
+import { inferenceProvider, providerAccounts } from "./inference/index.ts";
 import type { InferenceProvider } from "./inference/provider.ts";
 import { Ledger } from "./ledger.ts";
 import { GitHubActionsResults } from "./platform/github/ci.ts";
@@ -29,7 +29,7 @@ const STEPS: Record<string, (services: Services) => Promise<void>> = {
  */
 export function gitHubServices(runtime: Runtime): Services {
   const client = (input: string) => octokit(runtime.input(input, { required: true }));
-  // One provider per job, so the budgets and the run share what it read.
+  // One provider per job, which opens or closes its run.
   let provider: InferenceProvider | undefined;
   // One store per job, so its token serves every request.
   let store: Store | undefined;
@@ -52,7 +52,7 @@ export function gitHubServices(runtime: Runtime): Services {
       ),
     ci: () => new GitHubActionsResults(client("github-token"), runtime.repository),
     inference,
-    budget: () => inferenceBudget(runtime, inference),
+    accounts: () => providerAccounts(runtime),
     store: theStore,
     ledger: (job) => new Ledger(theStore(), { runtime, job }),
   };

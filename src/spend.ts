@@ -225,13 +225,14 @@ export function spendTable(
 const MODES: readonly AgentMode[] = ["openrouter", "pod", "serverless"];
 
 /**
- * How the cost and the month are measured for each inference the table's rows used, since
- * some figures are estimates. Folded rows and rows recorded before the inference was kept add no
- * note.
+ * How the cost is measured for each inference the table's rows used, since some figures are
+ * estimates, then how the month is. Folded rows and rows recorded before the inference was kept
+ * add no note.
  */
 export function spendNotes(t: Messages, spending: Spending | undefined): string[] {
   const used = new Set((spending?.rows ?? []).map((row) => row.inference));
-  return MODES.filter((mode) => used.has(mode)).map((mode) => t.spendNote(mode));
+  const notes = MODES.filter((mode) => used.has(mode)).map((mode) => t.spendNote(mode));
+  return notes.length > 0 ? [...notes, t.monthNote] : [];
 }
 
 /**

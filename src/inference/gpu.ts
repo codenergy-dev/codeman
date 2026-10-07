@@ -1,3 +1,5 @@
+import type { BilledHours } from "../budget.ts";
+
 /**
  * A GPU cloud that serves Codeman's models: pods (a container on a GPU, billed while it exists),
  * Serverless endpoints (workers started on demand, billed while they run), or both. Runpod is the
@@ -7,8 +9,11 @@ export interface GpuProvider {
   readonly name: string;
   readonly pods?: PodHost | undefined;
   readonly serverless?: ServerlessHost | undefined;
-  /** What the account spent this calendar month (UTC), in USD, on every kind of resource. */
-  monthSpent(now: Date): Promise<number>;
+  /**
+   * What the account was billed for each hour from `start` until `end`, in USD, on every kind of
+   * resource. Hours not billed yet are left out.
+   */
+  billedHours(start: Date, end: Date): Promise<BilledHours>;
 }
 
 /** What a new pod runs. */
@@ -73,32 +78,6 @@ export interface ServerlessHost {
   price(endpoint: string): Promise<number>;
   /** The endpoint's job queue, which the agent job's gateway sends requests through. */
   queueUrl(endpoint: string): string;
-}
-
-/**
- * What the account spent this calendar month (UTC), in USD: its billing, plus what its live
- * pods cost so far this month beyond what each was billed. Runpod's billing leaves out a running
- * pod for 40 minutes and more, so a pod kept between runs would not count against the budget.
- */
-export async function accountMonthSpent(gpu: GpuProvider, now: Date): Promise<number> {
-  const billed = await gpu.monthSpent(now);
-  if (!gpu.pods) return billed;
-  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-  const live = (await gpu.pods.list({})).filter(
-    (pod) => pod.status !== "terminated" && pod.pricePerSecond !== undefined,
-  );
-  if (live.length === 0) return billed;
-  const podBilled = await gpu.pods.billing(
-    live.map((pod) => pod.id),
-    start,
-  );
-  let unbilled = 0;
-  for (const pod of live) {
-    const from = pod.createdAt > start ? pod.createdAt : start;
-    const estimate = podCost(from, now, pod.pricePerSecond ?? 0);
-    unbilled += Math.max(0, estimate - (podBilled[pod.id] ?? 0));
-  }
-  return billed + unbilled;
 }
 
 /** Codeman's own limits on a Serverless endpoint; see docs/installation.md. */

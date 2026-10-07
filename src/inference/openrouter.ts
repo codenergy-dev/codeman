@@ -10,12 +10,11 @@ export interface KeyInfo {
   name: string;
   /** Total usage, in USD. */
   usage?: number;
-  usage_monthly?: number;
 }
 
 /**
  * Task keys are named `codeman/<owner>/<repo>/<issue>/<run>`, so usage can be summed per
- * repository and per task. An owner of several segments, such as a group path, must not make
+ * task and per run. An owner of several segments, such as a group path, must not make
  * one repository's prefix another's: the platform's adapter keeps them apart.
  */
 export function keyPrefix(repository: RepositoryRef): string {
@@ -24,17 +23,6 @@ export function keyPrefix(repository: RepositoryRef): string {
 
 export function taskKeyPrefix(repository: RepositoryRef, issue: number | string): string {
   return `${keyPrefix(repository)}${issue}/`;
-}
-
-/** Adds up one usage field over the keys whose name starts with `prefix`. */
-export function sumUsage(
-  keys: readonly KeyInfo[],
-  prefix: string,
-  field: "usage" | "usage_monthly",
-): number {
-  return keys
-    .filter((key) => key.name.startsWith(prefix))
-    .reduce((total, key) => total + (key[field] ?? 0), 0);
 }
 
 /**
@@ -105,11 +93,6 @@ export class OpenRouter {
       keys.push(...data);
     }
     throw new Error("Too many OpenRouter keys to add up.");
-  }
-
-  /** This month's usage, in USD, of every key whose name starts with `prefix`, disabled ones included. */
-  async monthlyUsage(prefix: string): Promise<number> {
-    return sumUsage(await this.listKeys(), prefix, "usage_monthly");
   }
 
   async key(hash: string): Promise<KeyInfo> {
@@ -250,7 +233,6 @@ export class OpenRouterProvider implements InferenceProvider {
   readonly #router: OpenRouter;
   readonly #repository: RepositoryRef;
   readonly #expiryHours: () => number;
-  #keys: Promise<KeyInfo[]> | undefined;
 
   constructor(router: OpenRouter, repository: RepositoryRef, expiryHours: () => number) {
     this.#router = router;
@@ -258,18 +240,11 @@ export class OpenRouterProvider implements InferenceProvider {
     this.#expiryHours = expiryHours;
   }
 
-  /** The account's keys, listed once for both sums. */
-  #listKeys(): Promise<KeyInfo[]> {
-    this.#keys ??= this.#router.listKeys();
-    return this.#keys;
-  }
-
-  async taskSpent(task: string): Promise<number> {
-    return sumUsage(await this.#listKeys(), taskKeyPrefix(this.#repository, task), "usage");
-  }
-
-  async monthSpent(): Promise<number> {
-    return sumUsage(await this.#listKeys(), keyPrefix(this.#repository), "usage_monthly");
+  /** What each run of the task spent, by run ID, as its keys' usage tells, rounded as costs are. */
+  async taskCosts(task: string): Promise<Record<string, number>> {
+    return rounded(
+      costsByRun(await this.#router.listKeys(), taskKeyPrefix(this.#repository, task)),
+    );
   }
 
   async open(run: RunRequest, log: Log): Promise<OpenedRun> {
@@ -350,16 +325,20 @@ export async function taskCosts(
     if (!prefix.startsWith(keyPrefix(repository)) || prefix === keyPrefix(repository)) {
       throw new Error("the key's name is not a task key's.");
     }
-    const costs = costsByRun(await router.listKeys(), prefix);
-    return Object.fromEntries(
-      Object.entries(costs).map(([run, cost]) => [run, Number(cost.toFixed(4))]),
-    );
+    return rounded(costsByRun(await router.listKeys(), prefix));
   } catch (error) {
     log.warning(
       `Could not read what the task's runs spent: ${error instanceof Error ? error.message : error}`,
     );
     return undefined;
   }
+}
+
+/** Costs rounded as `run-cost` is. */
+function rounded(costs: Record<string, number>): Record<string, number> {
+  return Object.fromEntries(
+    Object.entries(costs).map(([run, cost]) => [run, Number(cost.toFixed(4))]),
+  );
 }
 
 /** How far back the key's tokens are counted: longer than any key lives. */

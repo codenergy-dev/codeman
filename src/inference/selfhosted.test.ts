@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import { sha256 } from "../gateway/gateway.ts";
 import { closeKey, openKey } from "../steps/keys.ts";
+import { MemoryStore } from "../store/memory.ts";
 import { FakeGateways, FakeGpu } from "../testing/fake-gpu.ts";
 import { FakePlatform, fakeServices } from "../testing/fake-platform.ts";
 import { FakeRuntime } from "../testing/fake-runtime.ts";
+import { seedRuns } from "../testing/ledger-runs.ts";
 import { ollama, POD_IMAGE, SINGLE_RUN_IMAGES } from "./ollama.ts";
 import {
   adminToken,
@@ -20,7 +22,6 @@ const repository = { owner: "o", name: "r" };
 const settings: PodSettings = {
   model: "qwen3-coder:30b",
   engine: ollama,
-  taskSpent: 0,
   pods: [],
   gpuType: "GPU-A",
   image: "ghcr.io/o/codeman-pod@sha256:1",
@@ -233,8 +234,13 @@ test("a pod that never serves the model is terminated, and the run does not open
 });
 
 test("a run that would pass the month's budget creates no pod", async () => {
-  const { gpu, gateways, make } = setup({ taskSpent: 0.5 });
-  gpu.month = 19.5;
+  const { gpu, gateways, make } = setup();
+  const store = new MemoryStore();
+  await seedRuns(store, {
+    "100-1-7": { status: "closed", cost: 0.5, provider: "runpod", mode: "pod", month: "2000-01" },
+    "200-1-8": { status: "closed", cost: 18.6, provider: "runpod", mode: "pod" },
+    "300-1-7": { provider: "runpod", mode: "pod" },
+  });
   const runtime = new FakeRuntime({
     inputs: {
       "encryption-secret": "s".repeat(32),
@@ -244,24 +250,34 @@ test("a run that would pass the month's budget creates no pod", async () => {
       "ledger-run": "300-1-7",
     },
   });
-  await openKey(fakeServices(new FakePlatform(), runtime, undefined, make()));
+  await openKey(fakeServices(new FakePlatform(), runtime, undefined, make(), undefined, store));
   assert.equal(runtime.outputs.status, "over-budget");
   assert.equal(runtime.outputs["task-spent"], "0.5000");
   assert.equal(gpu.created.length, 0);
   assert.equal(gateways.calls.length, 0);
 });
 
-test("close-key reports the pod, its billing and whether it was kept", async () => {
+test("close-key reports the pod and whether it was kept, and records its pods' costs", async () => {
   const { gpu, make } = setup({ pods: ["old"] });
+  const store = new MemoryStore();
+  const runpod = { provider: "runpod", mode: "pod" };
+  await seedRuns(store, {
+    "200-1-7": { ...runpod, status: "closed", cost: 0.3, pod: "old", podCost: 0.3 },
+    "300-1-7": { ...runpod, status: "open", limit: 1, reservedAt: new Date() },
+  });
   const provider = make();
   const opened = await provider.open({ task: "7", runId: "300", limit: 1 }, new FakeRuntime());
   gpu.billed.old = 0.42;
   const runtime = new FakeRuntime({ inputs: { handle: opened.handle, "ledger-run": "300-1-7" } });
-  await closeKey(fakeServices(new FakePlatform(), runtime, undefined, provider));
+  await closeKey(fakeServices(new FakePlatform(), runtime, undefined, provider, undefined, store));
   assert.equal(runtime.outputs.pod, "pod1");
   assert.equal(runtime.outputs["kept-pod"], "pod1");
-  assert.equal(runtime.outputs["pod-costs"], '{"old":0.42,"pod1":0}');
   assert.equal(runtime.outputs["input-tokens"], "3000");
+  // The old pod's billing passed what the task counted for it: its kept time counts too.
+  assert.equal((await store.get("organizations/o/runs/200-1-7"))?.fields.podCost, 0.42);
+  assert.equal((await store.get("organizations/o/runs/300-1-7"))?.fields.podCost, 0);
+  assert.equal(runtime.outputs["task-total"], "0.4200");
+  assert.equal(runtime.outputs["task-costs"], '{"200":0.42,"300":0}');
 });
 
 test("a kept pod's time between runs counts in its cost, before Runpod bills it", async () => {
@@ -281,19 +297,6 @@ test("a kept pod's time between runs counts in its cost, before Runpod bills it"
   const usage = await second.close(reused.handle, new FakeRuntime());
   assert.ok(Math.abs(usage.cost - 0.06) < 1e-9, "the run: 5 minutes");
   assert.equal(usage.podCosts?.pod1, 0.204, "the pod: 17 minutes, 2 of them between runs");
-});
-
-test("the month counts the account's live pods beyond what they were billed", async () => {
-  const { gpu, make, advance } = setup();
-  gpu.month = 1;
-  const spec = { name: "n", image: "i", env: {}, port: 8080, gpuType: "GPU-A", diskGb: 1 };
-  await gpu.pods.create(spec);
-  await gpu.pods.create(spec);
-  advance(30 * 60_000);
-  gpu.billed.pod1 = 0.1;
-  gpu.billed.pod2 = 0.5;
-  // pod1: 30 minutes at US$ 0.72 per hour, US$ 0.36, of which 0.10 billed; pod2: billed above.
-  assert.ok(Math.abs((await make().monthSpent()) - 1.26) < 1e-9);
 });
 
 /** Runs of a workflow run whose tasks share pods, served by Codeman's own gateway. */
@@ -368,10 +371,14 @@ test("two tasks of a run share one pod: the first creates it, the other attaches
   const runtime = new FakeRuntime({
     inputs: { handle: a.opened.handle, "ledger-run": "300-1-7" },
   });
-  await closeKey(fakeServices(new FakePlatform(), runtime, undefined, seven.provider));
+  const store = new MemoryStore();
+  await closeKey(
+    fakeServices(new FakePlatform(), runtime, undefined, seven.provider, undefined, store),
+  );
   assert.equal(runtime.outputs["run-cost"], "0.0600");
   assert.equal(runtime.outputs["pod-shared"], "true");
-  assert.equal(runtime.outputs["pod-costs"], '{"pod1":0.06}');
+  // The task's count of the shared pod is its share, as the gateway measured it.
+  assert.equal((await store.get("organizations/o/runs/300-1-7"))?.fields.podCost, 0.06);
   assert.equal(runtime.outputs["kept-pod"], "pod1");
   advance(10 * 60_000);
   const second = await eight.provider.close(b.opened.handle, new FakeRuntime());

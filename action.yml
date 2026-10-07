@@ -27,6 +27,8 @@ inputs:
     description: "(select, open-key) Spending limit of each task, across all its runs, in USD. In select, empty uses .codeman/settings.yml or 2."
   monthly-budget:
     description: "(select, open-key) Spending limit per repository per calendar month, in USD. In select, empty uses .codeman/settings.yml or 20."
+  organization-monthly-budget:
+    description: "(open-key) Spending limit per calendar month of the organization's repositories together, in USD, from select's tasks. Only the organization's settings (the settings input) set it. Empty means none."
   max-runs:
     description: "(select) Consecutive implementation runs before a task is blocked. Empty uses .codeman/settings.yml or 3."
   key-expiry-hours:
@@ -35,11 +37,11 @@ inputs:
   task:
     description: "(open-key, agent, apply) Issue number of the job's task, one of select's tasks. agent and apply read its context; empty, as from older workflow files, reads the only one they had."
   management-key:
-    description: "(open-key, close-key) OpenRouter management key, for OpenRouter inference. open-key also needs it when an inference profile names OpenRouter, to count its month."
+    description: "(open-key, close-key) OpenRouter management key, for OpenRouter inference. Without it, open-key does not refresh what the task's expired OpenRouter runs cost."
   inference:
     description: "(open-key, close-key, release-pod) The run's inference, as select outputs it: its profile, and every provider the settings name. Empty is OpenRouter."
   gpu-key:
-    description: "(open-key, close-key, release-pod) The GPU provider's account key, for self-hosted inference. open-key also needs it when an inference profile names the provider, to count its month."
+    description: "(open-key, close-key, release-pod) The GPU provider's account key, for self-hosted inference. With organization-monthly-budget, open-key also needs it when the settings name the provider or the organization's runs used it this month, to read its account's billing."
   pod-image:
     description: "(open-key) Codeman's pod image, by digest. Empty uses the image this version of Codeman pins."
   serverless-key:
@@ -74,6 +76,10 @@ inputs:
     description: "(close-key, apply) Result of the agent job."
   task-spent:
     description: "(apply) task-spent output of the open-key job."
+  task-total:
+    description: "(apply) task-total output of the close-key job."
+  organization-month-spent:
+    description: "(apply) organization-month-spent output of the open-key job."
   run-cost:
     description: "(apply) run-cost output of the close-key job."
   key-limit:
@@ -94,15 +100,13 @@ inputs:
     description: "(apply) task-costs output of the close-key job."
   pod:
     description: "(apply) pod output of the close-key job."
-  pod-costs:
-    description: "(apply) pod-costs output of the close-key job."
   pod-shared:
     description: "(apply) pod-shared output of the close-key job."
   workdir:
     description: "Directory for Codeman's files. Defaults to RUNNER_TEMP/codeman."
 outputs:
   tasks:
-    description: "(select) The tasks this run works on, up to parallel-tasks, as a JSON list: for each, its task, action, needs-agent, stage, base-sha, task-budget, monthly-budget and inference, as the outputs of those names describe them, and ledger-run, the run's ID in Codeman's ledger (empty without an agent). Empty when there is nothing to do."
+    description: "(select) The tasks this run works on, up to parallel-tasks, as a JSON list: for each, its task, action, needs-agent, stage, base-sha, task-budget, monthly-budget and inference, as the outputs of those names describe them, organization-monthly-budget (empty when the organization's settings set none), and ledger-run, the run's ID in Codeman's ledger (empty without an agent). Empty when there is nothing to do."
   action:
     description: "(select) What this run does for its first task: plan, route, implement, record, accept; none when there is nothing to do."
   needs-agent:
@@ -120,17 +124,21 @@ outputs:
   monthly-budget:
     description: "(select) Resolved monthly spending limit, in USD."
   inference:
-    description: "(select) Where the run gets its model, as JSON, for the key jobs: the inference profile that applies, the task's spend from its record, every provider the settings name and, with several tasks, the run's other tasks and what the month keeps for those picked before. The first task's."
+    description: "(select) Where the run gets its model, as JSON, for the key jobs: the inference profile that applies, the task's spend from its record, every provider the settings name and, with several tasks, the run's other tasks. The first task's."
   status:
-    description: "(open-key) opened, over-budget (monthly), task-budget-spent, or missing-credentials (a provider the settings name has no secret)."
+    description: "(open-key) opened, over-budget (the repository's month), over-organization-budget (the organization's month), task-budget-spent, or missing-credentials (a provider the run needs has no secret)."
   task-spent:
-    description: "(open-key) What the task spent before this run, in USD."
+    description: "(open-key) What the task spent before this run, in USD, from Codeman's ledger."
+  task-total:
+    description: "(close-key) What the task spent in all after this run, in USD, from Codeman's ledger."
   run-cost:
     description: "(close-key) What this run's key spent, in USD."
   key-limit:
     description: "(open-key) The limit of this run's key, in USD."
   month-spent:
-    description: "(open-key) What the repository spent this month before this run, in USD, across every provider the settings name."
+    description: "(open-key) What the repository's runs count this month before this run, in USD, from Codeman's ledger: costs, and open runs' limits."
+  organization-month-spent:
+    description: "(open-key) What the organization's runs count this month before this run, in USD, with its GPU accounts' billing by the hour; only with organization-monthly-budget."
   input-tokens:
     description: "(close-key) Input tokens of this run's key, from OpenRouter's analytics."
   output-tokens:
@@ -142,7 +150,7 @@ outputs:
   tokens-per-second:
     description: "(close-key) Mean completion tokens per second of this run's key's requests, from OpenRouter's analytics."
   task-costs:
-    description: "(close-key) What each run of the task spent, in USD, by run ID, as JSON."
+    description: "(close-key) What each run of the task spent, in USD, by workflow run ID, as JSON, from Codeman's ledger."
   reason:
     description: "(open-key) Why no key was created."
   key-hash:
@@ -155,10 +163,8 @@ outputs:
     description: "(open-key) The model's context length, when known."
   pod:
     description: "(close-key) The pod that served the run, for self-hosted inference."
-  pod-costs:
-    description: "(close-key) What each of the task's pods cost so far, in USD, as JSON: its billing, or the run's pod's whole life at its rate when higher."
   pod-shared:
-    description: "(close-key) true when the run's pod serves several tasks of the run: its cost in pod-costs is the task's share, as the pod's gateway measured it, not the pod's billing."
+    description: "(close-key) true when the run's pod serves several tasks of the run: the ledger counts the task's share of it, as the pod's gateway measured it, not the pod's billing."
   kept-pod:
     description: "(close-key) The pod kept for the task's next run, which release-pod terminates if none follows; a pod several tasks share stays while another uses or keeps it."
   gateway-usage:

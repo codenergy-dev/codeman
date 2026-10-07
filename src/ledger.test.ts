@@ -54,6 +54,21 @@ test("a run's document grows with each job, and each job says what it did", asyn
   pick.ledger.pick("300-1-8", { ...picked, action: "record", stage: "", agent: false });
   await pick.ledger.flush(pick.runtime);
   const open = ledger(store, "open-key", { at: "2026-10-07T12:01:00Z" });
+  const reserved = await open.ledger.reserve("300-1-7", {
+    task: 7,
+    taskBudget: 1.75,
+    monthlyBudget: 20,
+    recorded: 0,
+    billed: new Map(),
+  });
+  assert.deepEqual(reserved, {
+    outcome: "reserved",
+    limit: 1.75,
+    task: 0,
+    month: 0,
+    reserved: { amount: 0, runs: 0 },
+    organization: undefined,
+  });
   open.ledger.open("300-1-7", 1.75, [{ pod: "pod1", event: "created" }]);
   await open.ledger.flush(open.runtime);
   const close = ledger(store, "close-key", { at: "2026-10-07T12:31:00Z" });
@@ -90,8 +105,11 @@ test("a run's document grows with each job, and each job says what it did", asyn
       provider: "runpod",
       mode: "pod",
       profile: "small-pod",
-      openedAt: new Date("2026-10-07T12:01:00Z"),
+      reservedAt: new Date("2026-10-07T12:01:00Z"),
+      expiresAt: new Date("2026-10-07T14:01:00Z"),
       limit: 1.75,
+      carried: 0,
+      openedAt: new Date("2026-10-07T12:01:00Z"),
       closedAt: new Date("2026-10-07T12:31:00Z"),
       cost: 0.36,
       inputTokens: 3000,

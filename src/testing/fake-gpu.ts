@@ -27,7 +27,8 @@ export class FakeGpu implements GpuProvider {
   readonly billed: Record<string, number> = {};
   readonly endpoints = new Map<string, Endpoint>();
   endpointPrice = 0.0003;
-  month = 0;
+  /** What the account was billed each hour, by the hour's start. */
+  readonly hours = new Map<number, number>();
   /** The status a pod has after `create`, and how many `get`s it takes to run. */
   startAfter = 0;
   now: () => Date;
@@ -95,8 +96,8 @@ export class FakeGpu implements GpuProvider {
     };
   }
 
-  async monthSpent(): Promise<number> {
-    return this.month;
+  async billedHours(): Promise<Map<number, number>> {
+    return new Map(this.hours);
   }
 
   /** Sets a pod's status, as the provider would. */

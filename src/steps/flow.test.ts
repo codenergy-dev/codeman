@@ -512,6 +512,15 @@ test("select resolves a task's commands, a manual run's inputs, the file, then t
     ],
   );
 
+  const [task] = JSON.parse(runtime.outputs.tasks ?? "") as Record<string, string>[];
+  assert.equal(task?.["organization-monthly-budget"], "", "none unless the organization sets it");
+  const budgeted = new FakeRuntime({
+    inputs: { workdir, settings: `${shared}\norganization-monthly-budget: 100` },
+  });
+  await select(fakeServices(platform, budgeted));
+  const [limited] = JSON.parse(budgeted.outputs.tasks ?? "") as Record<string, string>[];
+  assert.equal(limited?.["organization-monthly-budget"], "100");
+
   // Without a file, the organization's settings are enough.
   const alone = new FakePlatform({});
   alone.maintainers.add("alice");
@@ -530,7 +539,7 @@ test("select resolves a task's commands, a manual run's inputs, the file, then t
   });
 });
 
-test("self-hosted inference: select hands the task's pods to the key jobs, and apply adds up their billing", async () => {
+test("self-hosted inference: select hands the task's pods to the key jobs, and apply takes the ledger's spend", async () => {
   const platform = new FakePlatform({
     ".codeman/settings.yml": 'inference: self-hosted\nmodel: qwen3-coder:30b\ngpu-type: "GPU A"\n',
   });
@@ -564,39 +573,45 @@ test("self-hosted inference: select hands the task's pods to the key jobs, and a
     model: "qwen3-coder:30b",
     pods: [],
     providers: ["runpod"],
-    recorded: { spent: 0, selfHosted: 0 },
+    recorded: { spent: 0 },
     mode: "pod",
     gpuType: "GPU A",
     podReuse: "task",
   });
   const task = readTask(selected);
   agentResult({ [task.planPath]: "# Plan\n" }, { summary: "Plan.", language: "en", decisions: [] });
-  let runtime = await applied("1", { "task-spent": "0", "run-cost": "0.3000", pod: "pod1" });
-  assert.equal(runtime.outputs.continues, "true", "ready: the next run routes it");
-  assert.deepEqual(record(platform, issue)?.inference, {
-    pods: [{ id: "pod1", runs: ["1"], counted: 0.3 }],
-    spent: 0.3,
+  let runtime = await applied("1", {
+    "task-spent": "0",
+    "run-cost": "0.3000",
+    pod: "pod1",
+    "task-total": "0.3000",
+    "task-costs": '{"1":0.3}',
   });
+  assert.equal(runtime.outputs.continues, "true", "ready: the next run routes it");
+  assert.deepEqual(record(platform, issue)?.inference, { pods: [{ id: "pod1", runs: ["1"] }] });
   assert.equal(record(platform, issue)?.spent, 0.3);
 
   // The kept pod serves the routing run; its billing includes the time it waited.
   selected = await step("2");
   const choice = JSON.parse(selected.outputs.inference ?? "") as {
-    recorded: { spent: number; selfHosted: number };
+    recorded: { spent: number };
     pods: string[];
   };
-  assert.deepEqual(choice.recorded, { spent: 0.3, selfHosted: 0.3 });
+  assert.deepEqual(choice.recorded, { spent: 0.3 });
   assert.deepEqual(choice.pods, ["pod1"]);
   routeResult(["code"]);
+  // close-key's figures from the ledger, where the pod's cost passed its runs'.
   runtime = await applied("2", {
     "task-spent": "0.3000",
     "run-cost": "0.1000",
     pod: "pod1",
-    "pod-costs": '{"pod1":0.5}',
+    "task-total": "0.5000",
+    "task-costs": '{"1":0.3,"2":0.1}',
   });
   assert.equal(runtime.outputs.continues, "true", "the code stage runs next");
   const updated = record(platform, issue);
-  assert.ok(Math.abs((updated?.spent ?? 0) - 0.5) < 1e-9, "billing above the runs' estimates");
+  assert.equal(updated?.spent, 0.5, "the ledger's total");
+  assert.deepEqual(updated?.inference, { pods: [{ id: "pod1", runs: ["1", "2"] }] });
   assert.deepEqual(
     updated?.spending?.rows.map((row) => row.cost),
     [0.3, 0.1],
@@ -631,15 +646,14 @@ test("a shared pod: apply marks it in the record, and its billing no longer reac
       "task-spent": "0",
       "run-cost": "0.0600",
       pod: "pod1",
-      "pod-costs": '{"pod1":0.06}',
       "pod-shared": "true",
+      "task-total": "0.0600",
     },
     runId: "1",
   });
   await apply(fakeServices(platform, runtime));
   assert.deepEqual(record(platform, issue)?.inference, {
-    pods: [{ id: "pod1", runs: ["1"], counted: 0.06, shared: true }],
-    spent: 0.06,
+    pods: [{ id: "pod1", runs: ["1"], shared: true }],
   });
   selected = new FakeRuntime({ inputs: { workdir }, runId: "2" });
   await select(fakeServices(platform, selected));
@@ -750,11 +764,16 @@ test("profiles: a task planned on OpenRouter and coded on a pod adds up both pro
     inference: "openrouter",
     profile: "planner",
     providers: ["openrouter", "runpod"],
-    recorded: { spent: 0, selfHosted: 0 },
+    recorded: { spent: 0 },
   });
   const { planPath } = readTask(selected);
   agentResult({ [planPath]: "# Plan\n" }, { summary: "Adds a limiter.", decisions: [] });
-  await applied("1", { "task-spent": "0", "run-cost": "0.25", "task-costs": '{"1":0.25}' });
+  await applied("1", {
+    "task-spent": "0",
+    "run-cost": "0.25",
+    "task-total": "0.25",
+    "task-costs": '{"1":0.25}',
+  });
 
   // Routing has no profile: the top-level settings.
   ({ selected, choice } = await step("2"));
@@ -764,35 +783,42 @@ test("profiles: a task planned on OpenRouter and coded on a pod adds up both pro
   await applied("2", {
     "task-spent": "0.25",
     "run-cost": "0.125",
+    "task-total": "0.375",
     "task-costs": '{"1":0.25,"2":0.125}',
   });
   assert.equal(spent(), 0.375);
 
-  // Coding on a pod: its spend adds to what OpenRouter's keys say.
+  // Coding on a pod: the ledger adds its spend to OpenRouter's runs.
   ({ selected, choice } = await step("3"));
   assert.deepEqual(
     [choice.inference, choice.mode, choice.profile, choice.model, choice.recorded],
-    ["self-hosted", "pod", "small-pod", "qwen3-coder:30b", { spent: 0.375, selfHosted: 0 }],
+    ["self-hosted", "pod", "small-pod", "qwen3-coder:30b", { spent: 0.375 }],
   );
   agentResult(
     { "src/limit.ts": "export const limit = 10;\n" },
     { status: "done", summary: "Added the limiter.", commitMessage: "Add a limiter" },
   );
-  await applied("3", { "task-spent": "0.375", "run-cost": "0.5", pod: "pod1" });
+  await applied("3", {
+    "task-spent": "0.375",
+    "run-cost": "0.5",
+    pod: "pod1",
+    "task-total": "0.875",
+    "task-costs": '{"1":0.25,"2":0.125,"3":0.5}',
+  });
   assert.equal(spent(), 0.875);
-  assert.equal(record(platform, issue)?.inference?.spent, 0.5);
 
-  // Review on OpenRouter again: its keys' sum no longer replaces what the pod added.
+  // Review on OpenRouter again: the ledger counts every provider's runs.
   ({ selected, choice } = await step("4"));
   assert.equal(choice.inference, "openrouter");
-  assert.deepEqual(choice.recorded, { spent: 0.875, selfHosted: 0.5 });
+  assert.deepEqual(choice.recorded, { spent: 0.875 });
   agentResult({}, { status: "done", summary: "Looks right." });
   await applied("4", {
     "task-spent": "0.875",
     "run-cost": "0.0625",
-    "task-costs": '{"1":0.25,"2":0.125,"4":0.0625}',
+    "task-total": "0.9375",
+    "task-costs": '{"1":0.25,"2":0.125,"3":0.5,"4":0.0625}',
   });
-  assert.equal(spent(), 0.9375, "0.4375 on OpenRouter's keys and 0.5 on the pod");
+  assert.equal(spent(), 0.9375, "0.4375 on OpenRouter and 0.5 on the pod");
   const rows = record(platform, issue)?.spending?.rows ?? [];
   assert.deepEqual(
     rows.map((row) => [row.stage, row.model, row.inference, row.cost]),
@@ -923,12 +949,12 @@ test("parallel tasks: one run plans two, each in its own jobs, and one that fail
     [selected.outputs.task, selected.outputs.action, selected.outputs.inference],
     ["1", "plan", tasks[0]?.inference],
   );
-  // Two agents at once: the profile for two tasks applies to both. The second keeps, of the
-  // month, what the first may spend; each leaves the other's pods alone.
+  // Two agents at once: the profile for two tasks applies to both, and each leaves the other's
+  // pods alone. The ledger keeps them within the month together.
   const [one, two] = tasks.map((task) => JSON.parse(task.inference ?? ""));
   assert.deepEqual(
-    [one.profile, one.reserved, one.others, two.profile, two.reserved, two.others],
-    ["crowded", undefined, ["2"], "crowded", 3, ["1"]],
+    [one.profile, one.others, two.profile, two.others],
+    ["crowded", ["2"], "crowded", ["1"]],
   );
   assert.deepEqual(stateLabels(platform, first), ["codeman:planning"]);
   assert.deepEqual(stateLabels(platform, second), ["codeman:planning"]);
@@ -982,7 +1008,6 @@ test("parallel tasks: next-run starts another run only when some task moved", as
   const asked = platform.openIssue("alice", "Add rate limiting", "Limit requests.");
   const selected = await selectStep(platform);
   assert.equal(JSON.parse(selected.outputs.tasks ?? "").length, 1, "one task to pick");
-  assert.equal(JSON.parse(selected.outputs.inference ?? "").reserved, undefined);
   agentResult(
     { [readTask(selected).planPath]: "# Plan\n" },
     {
@@ -1017,9 +1042,9 @@ test("parallel tasks: next-run starts another run only when some task moved", as
       ["2", "plan", "true"],
     ],
   );
-  // Only one agent: the record keeps nothing of the month, and leaves no other task.
+  // Only one agent: it leaves no other task.
   const choice = JSON.parse(tasks[1]?.inference ?? "");
-  assert.deepEqual([choice.reserved, choice.others], [undefined, undefined]);
+  assert.equal(choice.others, undefined);
   await applyLeg(platform, "1", { "key-job-result": "skipped", "agent-job-result": "skipped" });
   await applyLeg(platform, "2", {
     "key-job-result": "success",
@@ -1029,6 +1054,8 @@ test("parallel tasks: next-run starts another run only when some task moved", as
   });
   assert.deepEqual(stateLabels(platform, asked), ["codeman:ready"]);
   assert.deepEqual(stateLabels(platform, refused), [], "back to where it was");
+  const panel = platform.botComments(refused).find((body) => body.includes("codeman:status"));
+  assert.match(panel ?? "", /The monthly budget is reached/);
   assert.deepEqual(marks(), ["1"], "the answers moved a task");
 
   // A run whose only task the month refuses moved nothing: no mark, so no other run.
@@ -1044,4 +1071,30 @@ test("parallel tasks: next-run starts another run only when some task moved", as
   });
   assert.equal(over.outputs.chain, undefined);
   assert.deepEqual(marks(), []);
+
+  // The organization's month refuses a run the same way, and says so.
+  const organization = new FakePlatform({
+    ".codeman/settings.yml": "model: a/b\n",
+  });
+  organization.maintainers.add("alice");
+  const limited = organization.openIssue("alice", "Add a cache", "Cache responses.");
+  await select(
+    fakeServices(
+      organization,
+      new FakeRuntime({ inputs: { workdir, settings: "organization-monthly-budget: 30" } }),
+    ),
+  );
+  const shared = await applyLeg(organization, "1", {
+    "key-job-result": "success",
+    "key-status": "over-organization-budget",
+    "organization-month-spent": "29.5",
+    "agent-job-result": "skipped",
+  });
+  assert.equal(shared.outputs.chain, undefined);
+  assert.deepEqual(stateLabels(organization, limited), [], "back to where it was");
+  const status = organization.botComments(limited).find((body) => body.includes("codeman:status"));
+  assert.match(
+    status ?? "",
+    /The organization's monthly budget is reached: US\$ 29\.50 used of US\$ 30\.00, and this run may use up to US\$ 2\.00\. Codeman will try again in a later run\./,
+  );
 });

@@ -158,11 +158,13 @@ export const ptBR: Messages = {
   spendNote: (mode) =>
     ({
       openrouter:
-        "**OpenRouter**: o custo de uma rodada é o que a sua chave usou, exato, e as rodadas seguintes o atualizam. O mês é o que as chaves do repositório usaram neste mês.",
-      pod: "**Runpod (pod)**: o custo de uma rodada é o tempo do seu pod ao preço dele, atualizado depois pela cobrança da Runpod. O mês é uma estimativa: a cobrança de toda a conta da Runpod, com todos os repositórios dela, mais o que os pods em execução custaram além dela.",
+        "**OpenRouter**: o custo de uma rodada é o que a sua chave usou, exato, e as rodadas seguintes o atualizam.",
+      pod: "**Runpod (pod)**: o custo de uma rodada é o tempo do seu pod ao preço dele; a tarefa conta também o tempo do pod entre rodadas, atualizado depois pela cobrança da Runpod.",
       serverless:
-        "**Runpod (Serverless)**: o custo de uma rodada é uma estimativa do tempo que a Runpod cobra pelos seus workers. O mês é a cobrança de toda a conta da Runpod, que conta uma rodada Serverless com uma hora ou mais de atraso.",
+        "**Runpod (Serverless)**: o custo de uma rodada é uma estimativa do tempo que a Runpod cobra pelos seus workers, que conta no mês assim que a rodada termina.",
     })[mode],
+  monthNote:
+    "**Mês**: o que as rodadas do repositório contam neste mês no registro do Codeman antes da rodada, uma estimativa: o custo de cada rodada como acima, e o limite inteiro de cada rodada ainda aberta. O orçamento mensal da organização, quando ela tem um, conta as rodadas de todos os repositórios e a cobrança da Runpod por hora.",
   earlierRuns: (runs) => `Rodadas anteriores (${runs})`,
   totalRow: (runs) => `Total (${runs} ${runs === 1 ? "rodada" : "rodadas"})`,
   runsWithoutRow: "Rodadas sem linha",
@@ -206,11 +208,13 @@ export const ptBR: Messages = {
   noKey:
     "O Codeman não conseguiu dar a esta rodada acesso ao modelo (uma chave do OpenRouter, ou uma GPU). Veja o log da rodada.",
   missingCredentials:
-    "O Codeman não conseguiu dar a esta rodada acesso ao modelo: o workflow não passa o segredo de um provedor que as configurações de inferência citam.",
+    "O Codeman não conseguiu dar a esta rodada acesso ao modelo: o workflow não passa o segredo de um provedor de que a rodada precisa, o dela ou um cuja cobrança conta no mês da organização.",
   taskBudgetSpent: (spent, budget, minimum) =>
     `A tarefa gastou ${spent} do orçamento de ${budget}, e uma rodada precisa de pelo menos ${minimum}. Um mantenedor pode aumentá-lo com \`/codeman set task-budget <usd>\` e depois comentar \`/codeman continue\`.`,
   monthlyBudgetReached: (used, budget, limit) =>
     `O orçamento mensal foi atingido: ${used} usados de ${budget}, e esta rodada pode usar até ${limit}.`,
+  organizationBudgetReached: (used, budget, limit) =>
+    `O orçamento mensal da organização foi atingido: ${used} usados de ${budget}, e esta rodada pode usar até ${limit}.`,
   tryLater: (reason) => `${reason} O Codeman tenta de novo numa próxima rodada.`,
 
   planUnfinished: "O agente não terminou o plano. Veja o log da rodada.",

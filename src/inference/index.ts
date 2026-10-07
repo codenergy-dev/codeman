@@ -2,15 +2,15 @@ import type { RepositoryRef } from "../platform/types.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import type { Settings } from "../settings.ts";
 import { positiveNumber } from "../steps/common.ts";
-import { type InferenceBudget, type ProviderAccount, ProviderBudget } from "./budget.ts";
+import type { ProviderAccounts } from "./budget.ts";
 import { ENGINES } from "./engines.ts";
-import { accountMonthSpent, type GpuProvider } from "./gpu.ts";
+import type { GpuProvider } from "./gpu.ts";
 import { POD_IMAGE } from "./ollama.ts";
 import { OpenRouter, OpenRouterProvider } from "./openrouter.ts";
 import type { InferenceProvider } from "./provider.ts";
 import { Runpod } from "./runpod.ts";
 import { PodInference, ServerlessInference } from "./selfhosted.ts";
-import { type PodSpend, selfHostedSpent } from "./spend.ts";
+import type { PodSpend } from "./spend.ts";
 import { vllmContextLength, vllmProblems } from "./vllm.ts";
 
 /**
@@ -44,16 +44,16 @@ interface SelfHostedChoice {
 interface Budgeted {
   /** The inference profile the run uses; undefined for the top-level settings. */
   profile?: string | undefined;
-  /** Every provider the settings name, whose months add up: `openrouter` or a GPU provider. */
-  providers: string[];
-  /** What the task spent so far, from its record: in all, and on self-hosted inference. */
-  recorded: { spent: number; selfHosted: number };
   /**
-   * What the run's tasks picked before this one may spend at most, which the month keeps for
-   * them: their keys open at once, and each reads the month before the others spend. Absent
-   * with one task.
+   * Every provider the settings name: `openrouter` or a GPU provider, whose account's billing
+   * reconciles the organization's month.
    */
-  reserved?: number | undefined;
+  providers: string[];
+  /**
+   * What the task's record says it spent, which the ledger carries for a task that started
+   * before it.
+   */
+  recorded: { spent: number };
 }
 
 /** The run's other tasks, when it works on several at once. */
@@ -67,20 +67,18 @@ export function inferenceChoice(
   settings: Settings,
   record: {
     spent?: number | undefined;
-    inference?: { pods: PodSpend[]; spent?: number | undefined } | undefined;
+    inference?: { pods: PodSpend[] } | undefined;
   } | null,
   options: {
     profile?: string | undefined;
     providers?: readonly string[];
-    reserved?: number | undefined;
     others?: readonly string[] | undefined;
   } = {},
 ): InferenceChoice {
   const budgeted: Budgeted & Parallel = {
     ...(options.profile ? { profile: options.profile } : {}),
     providers: [...new Set([providerName(settings), ...(options.providers ?? [])])],
-    recorded: { spent: record?.spent ?? 0, selfHosted: selfHostedSpent(record) },
-    ...(options.reserved ? { reserved: options.reserved } : {}),
+    recorded: { spent: record?.spent ?? 0 },
     ...(options.others?.length ? { others: [...options.others] } : {}),
   };
   if (settings.inference !== "self-hosted") return { inference: "openrouter", ...budgeted };
@@ -124,9 +122,7 @@ export function parseInferenceChoice(text: string): InferenceChoice {
     Array.isArray(choice.providers) &&
     choice.providers.every((name) => typeof name === "string" && name !== "") &&
     amount(choice.recorded?.spent) &&
-    amount(choice.recorded?.selfHosted) &&
     (choice.profile === undefined || typeof choice.profile === "string") &&
-    (choice.reserved === undefined || (amount(choice.reserved) && choice.reserved >= 0)) &&
     (choice.others === undefined ||
       (Array.isArray(choice.others) &&
         choice.others.every((task) => typeof task === "string" && /^\d+$/.test(task))));
@@ -146,7 +142,7 @@ export function parseInferenceChoice(text: string): InferenceChoice {
 }
 
 function zero(): Budgeted["recorded"] {
-  return { spent: 0, selfHosted: 0 };
+  return { spent: 0 };
 }
 
 /** Where a run's model is served: OpenRouter, a pod, or a Serverless endpoint. */
@@ -187,33 +183,32 @@ export const CREDENTIALS: Readonly<Record<string, { input: string; secret: strin
   runpod: { input: "gpu-key", secret: "CODEMAN_RUNPOD_API_KEY" },
 };
 
-/**
- * The budgets across every provider the settings name, with the key jobs' credentials. `run` is
- * the provider of the run, whose account is read through it.
- */
-export function inferenceBudget(runtime: Runtime, run: () => InferenceProvider): InferenceBudget {
-  const choice = parseInferenceChoice(runtime.input("inference"));
-  const own = choiceProvider(choice);
-  const accounts: ProviderAccount[] = [];
-  const missing: string[] = [];
-  for (const name of new Set([own, ...choice.providers])) {
-    const credential = CREDENTIALS[name];
-    if (!credential) throw new Error(`Unknown inference provider "${name}".`);
-    const key = runtime.input(credential.input);
-    if (key === "") {
-      missing.push(credential.secret);
-      continue;
-    }
-    if (name === own) {
-      accounts.push({ name, provider: run() });
-    } else if (name === "openrouter") {
-      accounts.push({ name, provider: openRouterProvider(runtime, key) });
-    } else {
-      const gpu = gpuProvider(name, key);
-      accounts.push({ name, month: () => accountMonthSpent(gpu, new Date()) });
-    }
-  }
-  return new ProviderBudget(choice.recorded, accounts, missing);
+/** Whether a provider rents GPUs, and so has an account billed by the hour. */
+export function isGpuProvider(name: string): boolean {
+  return name !== "openrouter" && Object.hasOwn(CREDENTIALS, name);
+}
+
+/** The providers' accounts that the budgets read, with the key jobs' credentials. */
+export function providerAccounts(runtime: Runtime): ProviderAccounts {
+  const credential = (name: string) => {
+    const found = CREDENTIALS[name];
+    if (!found) throw new Error(`Unknown inference provider "${name}".`);
+    return { ...found, key: runtime.input(found.input) };
+  };
+  return {
+    missing: (name) => {
+      const { key, secret } = credential(name);
+      return key === "" ? secret : undefined;
+    },
+    taskCosts: async (task) => {
+      const { key } = credential("openrouter");
+      return key === "" ? undefined : openRouterProvider(runtime, key).taskCosts(task);
+    },
+    billedHours: async (name, start, end) => {
+      if (!isGpuProvider(name)) throw new Error(`${name} has no hourly billing.`);
+      return gpuProvider(name, credential(name).key).billedHours(start, end);
+    },
+  };
 }
 
 /** Self-hosted inference for a choice, with the account key and the jobs' other inputs. */
@@ -228,7 +223,6 @@ export function selfHosted(
   const common = {
     model: choice.model,
     engine,
-    taskSpent: choice.recorded.spent,
     pods: choice.pods,
     others: choice.others ?? [],
   };

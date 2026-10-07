@@ -16,7 +16,6 @@ import { vllm, vllmContextLength, vllmProblems } from "./vllm.ts";
 const settings: ServerlessSettings = {
   model: "Qwen/Qwen3-Coder-30B-A3B-Instruct",
   engine: vllm,
-  taskSpent: 0.4,
   pods: [],
   endpoint: "ep1",
   engineProblems: vllmProblems,
@@ -40,14 +39,11 @@ const endpoint: Endpoint = {
 function provider(changes: Partial<Endpoint> = {}, usage = "") {
   const gpu = new FakeGpu();
   gpu.endpoints.set("ep1", { ...endpoint, ...changes });
-  gpu.month = 3;
   return new ServerlessInference(settings, gpu, { usage });
 }
 
 test("a run checks the endpoint and prices its workers; the agent gets only a token", async () => {
   const serverless = provider();
-  assert.equal(await serverless.taskSpent(), 0.4);
-  assert.equal(await serverless.monthSpent(), 3);
   const opened = await serverless.open({ task: "7", runId: "300", limit: 1.6 }, new FakeRuntime());
   const handle = JSON.parse(opened.handle) as ServerlessHandle;
   assert.deepEqual(handle, {

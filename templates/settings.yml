@@ -25,7 +25,8 @@ model: deepseek/deepseek-v4.1-flash
 # all hold applies; the settings above apply when none does. A profile sets only `model` and the
 # inference settings above. Conditions: `stages` (plan, route, web, design, code, test, review),
 # and `parallel-tasks` (at least that many of the run's tasks run an agent).
-# The month counts every provider named here, so the workflow needs each one's secret.
+# Each provider a run uses needs its secret; with the organization's monthly budget, so does each
+# GPU provider named here, whose billing counts in the organization's month.
 # inference-profiles:
 #   - name: small-pod
 #     when:
@@ -34,7 +35,9 @@ model: deepseek/deepseek-v4.1-flash
 #     gpu-type: "NVIDIA RTX A6000"
 #     model: qwen3-coder:30b
 
-# Spending limit per task and per calendar month for this repository, in USD.
+# Spending limit per task and per calendar month for this repository, in USD. The limit for all
+# the organization's repositories, organization-monthly-budget, is set only in the organization's
+# settings (the CODEMAN_SETTINGS variable).
 task-budget: 2
 monthly-budget: 20
 

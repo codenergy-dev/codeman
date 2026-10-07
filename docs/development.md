@@ -35,7 +35,7 @@ npm run check   # lint, type check, test and build
 
 ## Firestore's emulator
 
-`src/store/emulator.test.ts` runs the store's contract tests (`src/store/contract.ts`) on Firestore's emulator, the same tests the store in memory passes, and checks that the security rules deny every client. It uses, in this order:
+`src/store/emulator.test.ts` runs the store's contract tests (`src/store/contract.ts`) on Firestore's emulator, the same tests the store in memory passes, checks that two runs that reserve their limits in the ledger at once never pass the monthly budget together, and checks that the security rules deny every client. It uses, in this order:
 
 1. The emulator that `FIRESTORE_EMULATOR_HOST` names (`host:port`), already running. The rules' test still needs the next one.
 2. The newest `cloud-firestore-emulator-v*.jar` in Firebase's cache, `~/.cache/firebase/emulators/`, which the Firebase CLI downloads (`firebase setup:emulators:firestore`); the test starts it with `java -jar` (Java 21) on a free port of the loopback, and stops it at the end.

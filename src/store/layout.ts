@@ -6,8 +6,8 @@ import type { RepositoryRef } from "../platform/types.ts";
  * so one Firebase project serves several organizations, and a repository's documents carry it
  * in a field. Owners and repositories are lowercase, as GitHub compares them.
  *
- * The queries the next plans need (an organization's or a repository's runs of a month, a
- * task's runs) filter on equality only, which Firestore's automatic indexes serve.
+ * The budgets' queries (an organization's or a repository's runs of a month, a task's runs)
+ * filter on equality only, which Firestore's automatic indexes serve.
  */
 export const LAYOUT = {
   organization: (owner: string) => `organizations/${documentId(owner.toLowerCase())}`,
@@ -27,6 +27,11 @@ export const LAYOUT = {
  */
 export function ledgerRunId(workflowRun: string, attempt: number, task: number): string {
   return `${workflowRun}-${attempt}-${task}`;
+}
+
+/** The month a run counts in, for the budgets' queries: its UTC month, such as `2026-10`. */
+export function ledgerMonth(date: Date): string {
+  return date.toISOString().slice(0, 7);
 }
 
 export function isLedgerRunId(text: string): boolean {
