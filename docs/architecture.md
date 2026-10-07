@@ -48,7 +48,7 @@ Jobs that do not apply to a run are skipped: a run that only records answers goe
 
 | Job | Does | Credentials |
 | --- | --- | --- |
-| `select` | Reads the settings and `.codemanignore` from the default branch, picks the task and the action (`plan`, `route`, `implement` with its stage, `record`, `accept` or `none`), sets `codeman:planning`, `codeman:routing` or the stage's label, and writes the task context (`task.json`) as an artifact. | App token: issues write; contents, pull requests and actions read |
+| `select` | Reads the settings and `.codemanignore` from the default branch, and the organization's settings from its `settings` input, picks the task and the action (`plan`, `route`, `implement` with its stage, `record`, `accept` or `none`), sets `codeman:planning`, `codeman:routing` or the stage's label, and writes the task context (`task.json`) as an artifact. | App token: issues write; contents, pull requests and actions read |
 | `open-key` | Checks the task and monthly budgets and gives the run access to its model: an OpenRouter key, or a token for a self-hosted model's gateway, which may start a pod. | OpenRouter management key or GPU account key, encryption secret |
 | `agent` | Runs the harness on a copy of the checkout and uploads what it changed as an artifact, even when the agent fails or runs out of time. For a Serverless run, also runs the gateway, outside the sandbox. | `GITHUB_TOKEN` with contents and actions read (for workflow results; the agent never sees it), the run's key or token; for Serverless, the endpoint's key, which only Codeman's step holds |
 | `close-key` | Ends the run's access (disables the key, or ends the run on its gateway) and reads what it and each earlier run of the task spent. Keeps a pod for the task's next run or terminates it. Runs whatever happened before. | OpenRouter management key or GPU account key |
@@ -269,7 +269,10 @@ Each value comes from the first of these that sets it:
 1. A `/codeman set` command on the task, in a comment or in the issue's description (only `model`, `task-budget`, `max-runs`, `language` and `gpu-type`).
 2. The workflow's inputs, in a manual run.
 3. `.codeman/settings.yml` on the default branch.
-4. Codeman's default.
+4. The organization's settings: the `settings` input of the `select` step, which the template fills from the `CODEMAN_SETTINGS` variable, in the file's format. They are defaults that several repositories share; a repository's file overrides them, value by value. Empty, or not passed by an older workflow file, means none. See [installation](installation.md#shared-settings).
+5. Codeman's default.
+
+When `select` picks a task, its log has a line per layer, naming the values that come from it; the values no line names are Codeman's defaults.
 
 | Name | Default | Meaning |
 | --- | --- | --- |
@@ -298,7 +301,7 @@ The inference settings are checked together once resolved: a model that does not
 
 The `max-*-chars` and count limits are what the agent is told; see [agent output](#agent-output) for the margin.
 
-The settings file accepts only `name: value` lines, comments and blank lines; see [`templates/settings.yml`](../templates/settings.yml). Anything else stops the run with an error, so the file never means something other than what it looks like.
+The settings file accepts only `name: value` lines, comments and blank lines; see [`templates/settings.yml`](../templates/settings.yml). Anything else stops the run with an error, so the file never means something other than what it looks like. The organization's settings follow the same rules, and their errors name the `settings` input instead of the file.
 
 ## Commands
 

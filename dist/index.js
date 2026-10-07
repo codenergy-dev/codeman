@@ -26635,6 +26635,13 @@ function close(server) {
 
 // src/settings.ts
 var SETTINGS_FILE = ".codeman/settings.yml";
+var SHARED_SETTINGS = "the `settings` input (organization variable CODEMAN_SETTINGS)";
+var LAYER_SOURCES = [
+  "the task's commands",
+  "the workflow's inputs",
+  SETTINGS_FILE,
+  SHARED_SETTINGS
+];
 var DEFAULTS2 = {
   "task-budget": 2,
   "monthly-budget": 20,
@@ -26759,10 +26766,10 @@ function parseSetting(name, text) {
   }
   return { ok: true, value };
 }
-function parseSettings(text) {
+function parseSettings(text, source = SETTINGS_FILE) {
   const settings = {};
   for (const [index, raw] of text.split(/\r?\n/).entries()) {
-    const where = `${SETTINGS_FILE}, line ${index + 1}`;
+    const where = `${source}, line ${index + 1}`;
     const line = raw.trimEnd();
     if (line.trim() === "" || line.trim().startsWith("#")) continue;
     const match = /^([a-z-]+):(?:\s+(.*))?$/.exec(line);
@@ -26805,6 +26812,18 @@ function resolveSettings(...layers) {
     settings.engine ??= MODE_ENGINE[settings["gpu-mode"]];
   }
   return { ok: true, value: settings };
+}
+function settingSources(layers) {
+  const named = /* @__PURE__ */ new Set();
+  return layers.flatMap((layer, index) => {
+    const values = Object.entries(layer).filter(
+      ([name, value]) => value !== void 0 && !named.has(name)
+    );
+    if (values.length === 0) return [];
+    for (const [name] of values) named.add(name);
+    const source = LAYER_SOURCES[index] ?? `layer ${index + 1}`;
+    return [`Settings from ${source}: ${values.map(([n, v]) => `${n}=${v}`).join(", ")}.`];
+  });
 }
 function inferenceError(settings) {
   if (settings.inference !== "self-hosted") {
@@ -30319,6 +30338,8 @@ async function select(services) {
   const ci = services.ci();
   const bot = repo.self();
   const inputs = inputSettings(runtime2);
+  const shared = parseSettings(runtime2.input("settings"), SHARED_SETTINGS);
+  if (!shared.ok) throw new Error(shared.error);
   const defaultBranch = await repo.defaultBranch();
   const settingsText = await repo.readFile(defaultBranch, SETTINGS_FILE);
   const fileSettings = settingsText === void 0 ? { ok: true, value: {} } : parseSettings(settingsText);
@@ -30369,7 +30390,7 @@ async function select(services) {
   const refuse = async (task2) => {
     const talk2 = await conversation(task2.number);
     const record2 = talk2.status?.record;
-    const language = taskSettings(authorizedComments(talk2.comments, talk2.maintainers)).language ?? fileSettings.value.language ?? "auto";
+    const language = taskSettings(authorizedComments(talk2.comments, talk2.maintainers)).language ?? fileSettings.value.language ?? shared.value.language ?? "auto";
     const body = renderRefused(messages(taskLanguage(language, record2?.language)), record2);
     if (talk2.status?.body !== body) {
       await repo.upsertComment(task2.number, talk2.status?.id ?? null, body);
@@ -30475,17 +30496,20 @@ async function select(services) {
   const branchSha = await repo.branchSha(branch);
   const baseSha = branchSha ?? await repo.branchSha(defaultBranch);
   if (!baseSha) throw new Error(`Branch ${defaultBranch} not found.`);
-  const own = taskSettings(maintainerComments, description.commands);
-  let settings = resolveSettings(own, inputs, fileSettings.value);
+  let own = taskSettings(maintainerComments, description.commands);
+  const below = [inputs, fileSettings.value, shared.value];
+  let settings = resolveSettings(own, ...below);
   if (!settings.ok && (own.model !== void 0 || own["gpu-type"] !== void 0)) {
     const { model: _model, "gpu-type": _gpuType, ...rest } = own;
-    const fallback = resolveSettings(rest, inputs, fileSettings.value);
+    const fallback = resolveSettings(rest, ...below);
     if (fallback.ok) {
       problems.push({ problem: { kind: "settings-rejected", error: settings.error } });
       settings = fallback;
+      own = rest;
     }
   }
   if (!settings.ok) throw new Error(settings.error);
+  for (const line of settingSources([own, ...below])) runtime2.info(line);
   const model = settings.value.model;
   const context3 = {
     version: 1,

@@ -11,6 +11,8 @@ inputs:
     description: "(apply) GitHub App token that may write workflows, only when accepting staged workflows."
   app-slug:
     description: "(select) Slug of the GitHub App, used to recognize Codeman's own comments."
+  settings:
+    description: "(select) Settings shared by several repositories, such as an organization's variable, in the format of .codeman/settings.yml. Defaults that the repository's file overrides, value by value. Empty means none. Plain text: never secrets."
   model:
     description: "(select) Model ID: OpenRouter's, or the self-hosted engine's. Empty uses .codeman/settings.yml. Maintainers can override it per task with /codeman set."
   task-budget:

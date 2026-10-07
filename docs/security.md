@@ -22,6 +22,8 @@ The workflow is [`templates/codeman.yml`](../templates/codeman.yml); the jobs ar
 
 Organization secrets whose visibility is limited to selected repositories stay limited to those repositories. Inside each of them, though, every workflow that references them gets them, on any branch, including Codeman's task branches.
 
+Variables are not secrets. `CODEMAN_SETTINGS`, the organization's [shared settings](installation.md#shared-settings), is plain text: every repository it is shared with can read it, in any workflow, and the `select` job prints it and the values it gives in its log, which is public on public repositories. Settings never hold secrets; never put one in this variable. Whoever can change it changes the settings of every repository it is shared with, budgets and model included: only organization owners can, and each repository's `.codeman/settings.yml` still overrides it.
+
 ## Risks
 
 From most to least severe. Each risk says which repositories it applies to.

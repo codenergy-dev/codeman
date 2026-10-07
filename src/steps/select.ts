@@ -17,6 +17,8 @@ import {
   parseSettings,
   resolveSettings,
   SETTINGS_FILE,
+  SHARED_SETTINGS,
+  settingSources,
 } from "../settings.ts";
 import { STAGE_STATE, type Stage, stageOfState } from "../stages.ts";
 import { type State, stateOf } from "../state.ts";
@@ -57,6 +59,10 @@ export async function select(services: Services): Promise<void> {
   const ci = services.ci();
   const bot = repo.self();
   const inputs = inputSettings(runtime);
+  // An organization's defaults, which the repository's file overrides. Empty when the workflow
+  // file is older or the variable is not set.
+  const shared = parseSettings(runtime.input("settings"), SHARED_SETTINGS);
+  if (!shared.ok) throw new Error(shared.error);
   // Rules and settings come from the default branch, where the agent cannot change them.
   const defaultBranch = await repo.defaultBranch();
   const settingsText = await repo.readFile(defaultBranch, SETTINGS_FILE);
@@ -119,6 +125,7 @@ export async function select(services: Services): Promise<void> {
     const language =
       taskSettings(authorizedComments(talk.comments, talk.maintainers)).language ??
       fileSettings.value.language ??
+      shared.value.language ??
       "auto";
     const body = renderRefused(messages(taskLanguage(language, record?.language)), record);
     if (talk.status?.body !== body) {
@@ -252,19 +259,22 @@ export async function select(services: Services): Promise<void> {
   const branchSha = await repo.branchSha(branch);
   const baseSha = branchSha ?? (await repo.branchSha(defaultBranch));
   if (!baseSha) throw new Error(`Branch ${defaultBranch} not found.`);
-  const own = taskSettings(maintainerComments, description.commands);
-  let settings = resolveSettings(own, inputs, fileSettings.value);
+  let own = taskSettings(maintainerComments, description.commands);
+  const below = [inputs, fileSettings.value, shared.value];
+  let settings = resolveSettings(own, ...below);
   if (!settings.ok && (own.model !== undefined || own["gpu-type"] !== undefined)) {
     // A task's model or GPU type that does not fit the repository's inference stops this task
     // only: the run goes on without them, and says why.
     const { model: _model, "gpu-type": _gpuType, ...rest } = own;
-    const fallback = resolveSettings(rest, inputs, fileSettings.value);
+    const fallback = resolveSettings(rest, ...below);
     if (fallback.ok) {
       problems.push({ problem: { kind: "settings-rejected", error: settings.error } });
       settings = fallback;
+      own = rest;
     }
   }
   if (!settings.ok) throw new Error(settings.error);
+  for (const line of settingSources([own, ...below])) runtime.info(line);
   const model = settings.value.model;
 
   const context: TaskContext = {

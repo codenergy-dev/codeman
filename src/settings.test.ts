@@ -5,6 +5,8 @@ import {
   parseSetting,
   parseSettings,
   resolveSettings,
+  SHARED_SETTINGS,
+  settingSources,
   TASK_SETTINGS,
 } from "./settings.ts";
 
@@ -67,6 +69,50 @@ test("resolves commands, then inputs, then the file, then the defaults", () => {
       "max-runs": 2,
     },
   });
+});
+
+test("the organization's settings come after the file, and errors name where they are", () => {
+  const shared = parseSettings(
+    "model: org/model\ntask-budget: 4\nmonthly-budget: 40\nmax-runs: 6\nlanguage: pt-BR",
+    SHARED_SETTINGS,
+  );
+  assert.ok(shared.ok);
+  if (!shared.ok) return;
+  const layers = [
+    { "task-budget": 5 },
+    { "max-runs": 2 },
+    { model: "file/model", "monthly-budget": 50, "max-runs": 9 },
+    shared.value,
+  ];
+  assert.deepEqual(resolveSettings(...layers), {
+    ok: true,
+    value: {
+      ...DEFAULTS,
+      model: "file/model",
+      "task-budget": 5,
+      "monthly-budget": 50,
+      "max-runs": 2,
+      language: "pt-BR",
+    },
+  });
+  assert.deepEqual(settingSources(layers), [
+    "Settings from the task's commands: task-budget=5.",
+    "Settings from the workflow's inputs: max-runs=2.",
+    "Settings from .codeman/settings.yml: model=file/model, monthly-budget=50.",
+    `Settings from ${SHARED_SETTINGS}: language=pt-BR.`,
+  ]);
+  assert.deepEqual(settingSources([{}, {}, {}, { model: "org/model" }]), [
+    `Settings from ${SHARED_SETTINGS}: model=org/model.`,
+  ]);
+
+  const invalid = parseSettings("model: a/b\nsecret: x", SHARED_SETTINGS);
+  assert.deepEqual(invalid, {
+    ok: false,
+    error:
+      "the `settings` input (organization variable CODEMAN_SETTINGS), line 2: unknown setting `secret`.",
+  });
+  const file = parseSettings("secret: x");
+  assert.ok(!file.ok && file.error.startsWith(".codeman/settings.yml, line 1:"));
 });
 
 test("a model is required", () => {

@@ -44,6 +44,7 @@ Add these under **Settings → Secrets and variables → Actions**, either in th
 | Secret | `CODEMAN_OPENROUTER_KEY_ENCRYPTION_SECRET` | A random value of at least 32 characters |
 | Secret | `CODEMAN_RUNPOD_API_KEY` | Self-hosted inference only: the Runpod account's API key |
 | Secret | `CODEMAN_RUNPOD_SERVERLESS_KEY` | Self-hosted inference on Serverless only: a key restricted to the endpoint |
+| Variable | `CODEMAN_SETTINGS` | Optional, in the organization: settings its repositories share; see [shared settings](#shared-settings) |
 
 Generate the encryption secret with:
 
@@ -58,13 +59,35 @@ It encrypts each task key, or self-hosted run token, while it travels from the j
 1. Copy [`templates/codeman.yml`](../templates/codeman.yml) to `.github/workflows/codeman.yml` in the target repository.
 2. Replace every `COMMIT_SHA` with a full commit SHA of this repository. Pin a SHA, not a branch or tag, so the code that runs cannot change without a review.
 3. If the agent needs tools that the runner image lacks, set them up in the `agent` job, where the template marks the place (for example `actions/setup-node`). Tools installed inside the runner's home, such as Rust through `rustup`, are out of the agent's reach; install them system-wide instead. Add only steps that install tools: a step that runs repository code, such as `npm ci`, runs code the agent wrote outside its sandbox, where it can read the job's secrets. See [security](security.md#3-steps-added-to-the-agent-job-run-outside-the-sandbox).
-4. Copy [`templates/settings.yml`](../templates/settings.yml) to `.codeman/settings.yml` and choose the model. See [settings](architecture.md#settings) for every value.
+4. Copy [`templates/settings.yml`](../templates/settings.yml) to `.codeman/settings.yml` and choose the model, unless the organization's [shared settings](#shared-settings) choose it. See [settings](architecture.md#settings) for every value.
 5. Optionally, add a `.codemanignore` with the paths the agent may not change; see [change policy](architecture.md#change-policy). Without one, Codeman uses its own rules and proposes them in its first pull request. Those rules keep the agent out of `.github/`, including workflows; see [on-demand workflows](architecture.md#on-demand-workflows) to allow them.
 6. Create a `codeman` label in the target repository.
 
 Codeman reads `.codeman/settings.yml` and `.codemanignore` from the default branch. A manual run (**Actions → Codeman → Run workflow**) can override the model and the budgets for that run.
 
 The agent job needs a Linux runner (x64 or arm64).
+
+### Shared settings
+
+An organization can give the repositories that use Codeman the same settings, such as the model and the budgets, instead of repeating them in each `.codeman/settings.yml`:
+
+1. As an organization owner, under the organization's **Settings → Secrets and variables → Actions → Variables**, create a variable named `CODEMAN_SETTINGS`. Its value has the format of `.codeman/settings.yml`:
+
+   ```yaml
+   model: deepseek/deepseek-v4.1-flash
+   task-budget: 1
+   monthly-budget: 50
+   ```
+
+2. Under **Repository access**, choose the repositories that use Codeman.
+3. Check that each repository's workflow passes the variable to the `select` step, as the template does: `settings: ${{ vars.CODEMAN_SETTINGS }}`. Workflow files copied before that line existed ignore the variable.
+
+These are defaults: a value in a repository's `.codeman/settings.yml` overrides the organization's, and a manual run's inputs and a task's commands come before both; see [settings](architecture.md#settings). The `select` job's log names where each value came from. A malformed variable stops every run of those repositories, with an error that names the `settings` input.
+
+- On GitHub Free, private repositories cannot read organization variables.
+- A repository variable named `CODEMAN_SETTINGS` replaces the organization's whole, not value by value: GitHub gives the repository's variable precedence. Use `.codeman/settings.yml` to override single values.
+- A variable holds at most 48 KB.
+- The variable is plain text, shown in the logs. Never put secrets in it; see [security](security.md#secrets).
 
 ## Self-hosted inference on Runpod
 

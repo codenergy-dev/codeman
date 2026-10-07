@@ -2,6 +2,15 @@ import { ENGINES, MODE_ENGINE } from "./inference/engines.ts";
 import type { Parsed } from "./output.ts";
 
 export const SETTINGS_FILE = ".codeman/settings.yml";
+/** Settings shared by an organization's repositories; Codeman's template fills the input. */
+export const SHARED_SETTINGS = "the `settings` input (organization variable CODEMAN_SETTINGS)";
+/** Where each layer `resolveSettings` takes comes from, in its order, as the run's log names it. */
+export const LAYER_SOURCES = [
+  "the task's commands",
+  "the workflow's inputs",
+  SETTINGS_FILE,
+  SHARED_SETTINGS,
+] as const;
 
 /** Values a repository can configure. Names match the workflow inputs. */
 export interface Settings {
@@ -216,14 +225,15 @@ export function parseSetting(name: SettingName, text: string): Parsed<string | n
 }
 
 /**
- * Reads `.codeman/settings.yml`. Only a flat subset of YAML is accepted: `name: value` lines,
- * blank lines and `#` comments, with values optionally in quotes. Anything else is an error,
- * so the file never means something different from what it looks like.
+ * Reads `.codeman/settings.yml`, or settings in its format from `source`, which errors name.
+ * Only a flat subset of YAML is accepted: `name: value` lines, blank lines and `#` comments,
+ * with values optionally in quotes. Anything else is an error, so the file never means
+ * something different from what it looks like.
  */
-export function parseSettings(text: string): Parsed<PartialSettings> {
+export function parseSettings(text: string, source = SETTINGS_FILE): Parsed<PartialSettings> {
   const settings: Record<string, string | number> = {};
   for (const [index, raw] of text.split(/\r?\n/).entries()) {
-    const where = `${SETTINGS_FILE}, line ${index + 1}`;
+    const where = `${source}, line ${index + 1}`;
     const line = raw.trimEnd();
     if (line.trim() === "" || line.trim().startsWith("#")) continue;
     const match = /^([a-z-]+):(?:\s+(.*))?$/.exec(line);
@@ -250,8 +260,9 @@ function scalar(text: string): string | undefined {
 }
 
 /**
- * Resolves each setting from, in order: the task's commands, the workflow inputs, the
- * repository's settings file and Codeman's defaults.
+ * Resolves each setting from the first layer that sets it, then Codeman's defaults. The layers
+ * are, in order: the task's commands, the workflow inputs, the repository's settings file and
+ * the organization's (`LAYER_SOURCES`).
  */
 export function resolveSettings(...layers: PartialSettings[]): Parsed<Settings> {
   const merged: PartialSettings = { ...DEFAULTS };
@@ -273,6 +284,24 @@ export function resolveSettings(...layers: PartialSettings[]): Parsed<Settings> 
     settings.engine ??= MODE_ENGINE[settings["gpu-mode"] as keyof typeof MODE_ENGINE];
   }
   return { ok: true, value: settings };
+}
+
+/**
+ * For the run's log: a line per layer of `resolveSettings` that a resolved value comes from,
+ * with those values. Values are short and hold no secrets; settings never do. The values no
+ * line names are Codeman's defaults.
+ */
+export function settingSources(layers: readonly PartialSettings[]): string[] {
+  const named = new Set<string>();
+  return layers.flatMap((layer, index) => {
+    const values = Object.entries(layer).filter(
+      ([name, value]) => value !== undefined && !named.has(name),
+    );
+    if (values.length === 0) return [];
+    for (const [name] of values) named.add(name);
+    const source = LAYER_SOURCES[index] ?? `layer ${index + 1}`;
+    return [`Settings from ${source}: ${values.map(([n, v]) => `${n}=${v}`).join(", ")}.`];
+  });
 }
 
 /** Why the inference settings do not fit together; undefined when they do. */

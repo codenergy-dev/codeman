@@ -472,6 +472,64 @@ test("an issue a maintainer did not open is left alone", async () => {
   assert.ok(runtime.logged("warning").some((line) => line.includes("not opened by a maintainer")));
 });
 
+test("select resolves a task's commands, a manual run's inputs, the file, then the organization's settings", async () => {
+  const platform = new FakePlatform({
+    ".codeman/settings.yml": "model: file/model\nmax-runs: 9\n",
+  });
+  platform.maintainers.add("alice");
+  platform.openIssue("alice", "Add a cache", "Cache responses.\n\n/codeman set task-budget 5");
+  const shared = [
+    "# Shared by the organization",
+    "model: org/model",
+    "task-budget: 4",
+    "monthly-budget: 40",
+    "max-runs: 6",
+    "max-files: 50",
+  ].join("\n");
+  const runtime = new FakeRuntime({
+    inputs: { workdir, "monthly-budget": "30", settings: shared },
+  });
+  await select(fakeServices(platform, runtime));
+  const { settings } = readTask(runtime);
+  assert.deepEqual(
+    [
+      settings.model,
+      settings["task-budget"],
+      settings["monthly-budget"],
+      settings["max-runs"],
+      settings["max-files"],
+      settings["max-options"],
+    ],
+    ["file/model", 5, 30, 9, 50, 4],
+  );
+  assert.deepEqual(
+    runtime.logged("info").filter((line) => line.startsWith("Settings from")),
+    [
+      "Settings from the task's commands: task-budget=5.",
+      "Settings from the workflow's inputs: monthly-budget=30.",
+      "Settings from .codeman/settings.yml: model=file/model, max-runs=9.",
+      "Settings from the `settings` input (organization variable CODEMAN_SETTINGS): max-files=50.",
+    ],
+  );
+
+  // Without a file, the organization's settings are enough.
+  const alone = new FakePlatform({});
+  alone.maintainers.add("alice");
+  alone.openIssue("alice", "Add a cache");
+  const fromOrganization = new FakeRuntime({ inputs: { workdir, settings: shared } });
+  await select(fakeServices(alone, fromOrganization));
+  assert.equal(readTask(fromOrganization).model, "org/model");
+
+  // Malformed settings stop the run, named as the organization's, not the file.
+  const malformed = new FakeRuntime({
+    inputs: { workdir, settings: "model: a/b\ngpu-type: x; rm\n" },
+  });
+  await assert.rejects(select(fakeServices(platform, malformed)), {
+    message:
+      "the `settings` input (organization variable CODEMAN_SETTINGS), line 2: the value of `gpu-type` is not a plain value.",
+  });
+});
+
 test("self-hosted inference: select hands the task's pods to the key jobs, and apply adds up their billing", async () => {
   const platform = new FakePlatform({
     ".codeman/settings.yml": 'inference: self-hosted\nmodel: qwen3-coder:30b\ngpu-type: "GPU A"\n',

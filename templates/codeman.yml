@@ -6,8 +6,8 @@ on:
   schedule:
     - cron: "0 9 * * *"
   workflow_dispatch:
-    # Empty inputs use .codeman/settings.yml, then Codeman's defaults. Scheduled and comment
-    # runs have no inputs.
+    # Empty inputs use .codeman/settings.yml, then the organization's settings, then Codeman's
+    # defaults. Scheduled and comment runs have no inputs.
     inputs:
       model:
         description: Model ID, OpenRouter's or the self-hosted engine's.
@@ -104,6 +104,10 @@ jobs:
           step: select
           github-token: ${{ steps.app-token.outputs.token }}
           app-slug: ${{ steps.app-token.outputs.app-slug }}
+          # Settings an organization shares with its repositories, in the format of
+          # .codeman/settings.yml; the repository's file overrides them. Unset is none. The
+          # variable is plain text, shown in the logs: never put secrets in it.
+          settings: ${{ vars.CODEMAN_SETTINGS }}
           model: ${{ inputs.model }}
           task-budget: ${{ inputs.task-budget }}
           monthly-budget: ${{ inputs.monthly-budget }}
