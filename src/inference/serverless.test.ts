@@ -116,17 +116,30 @@ after(() => {
 
 /**
  * The endpoint's job queue: each job completes with a chat answer, unless `hold` keeps it queued
- * until cancelled. Keeps the headers of each job's submission, and the jobs cancelled.
+ * until cancelled. Keeps the headers of each job's submission, and the jobs cancelled. `/health`
+ * reports `workers`, or fails while they are undefined.
  */
 async function endpointApi(hold = false) {
   const requests: IncomingMessage["headers"][] = [];
   const cancelled: string[] = [];
+  const state = {
+    hold,
+    workers: undefined as Record<string, number> | undefined,
+    healthCalls: 0,
+  };
   let jobs = 0;
   const server = createServer(async (request, response) => {
     for await (const _ of request);
     const path = request.url ?? "";
     let body: unknown;
-    if (path === "/run") {
+    if (path === "/health") {
+      state.healthCalls++;
+      if (!state.workers) {
+        response.writeHead(500).end("down");
+        return;
+      }
+      body = { jobs: {}, workers: state.workers };
+    } else if (path === "/run") {
       requests.push(request.headers);
       body = { id: `job${++jobs}`, status: "IN_QUEUE" };
     } else if (path.startsWith("/cancel/")) {
@@ -134,7 +147,7 @@ async function endpointApi(hold = false) {
       body = { status: "CANCELLED" };
     } else if (cancelled.includes(path.slice("/stream/".length))) {
       body = { status: "CANCELLED", stream: [] };
-    } else if (hold) {
+    } else if (state.hold) {
       body = { status: "IN_QUEUE", stream: [] };
     } else {
       const answer = { choices: [], usage: { prompt_tokens: 10, completion_tokens: 2 } };
@@ -146,7 +159,13 @@ async function endpointApi(hold = false) {
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   servers.push(server);
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  return { url, requests, cancelled };
+  return { url, requests, cancelled, state };
+}
+
+/** Waits until `/health` was asked twice more: the gateway then saw what it answers now. */
+async function sampled(api: Awaited<ReturnType<typeof endpointApi>>): Promise<void> {
+  const target = api.state.healthCalls + 2;
+  while (api.state.healthCalls < target) await new Promise((resolve) => setTimeout(resolve, 2));
 }
 
 test("the agent job's gateway holds the endpoint's key; the agent sees a local URL and its token", async () => {
@@ -281,4 +300,103 @@ test("OpenRouter and pods need nothing from the agent job but their credential",
   });
   assert.equal(pod.baseUrl, "https://pod1-8080.proxy.runpod.net/v1");
   await assert.rejects(agentAccess({ mode: "pod", credential: "t" }), /URL is missing/);
+});
+
+/** A run's access through `api`: US$ 0.001 per second of a worker, and 5 seconds of idle time. */
+function serverlessAccess(
+  api: Awaited<ReturnType<typeof endpointApi>>,
+  now: () => number,
+  noWorkerMs?: number,
+) {
+  return agentAccess({
+    mode: "serverless",
+    credential: "t",
+    handle: JSON.stringify({
+      mode: "serverless",
+      endpoint: "ep1",
+      url: api.url,
+      pricePerSecond: 0.001,
+      idleSeconds: 5,
+      limit: 10,
+    }),
+    serverlessKey: "k",
+    engine: vllm,
+    now,
+    pollMs: 1,
+    sampleMs: 1,
+    noWorkerMs,
+  });
+}
+
+const chatCall = (baseUrl: string | undefined) =>
+  fetch(`${baseUrl}/chat/completions`, {
+    method: "POST",
+    headers: { Authorization: "Bearer t" },
+    body: JSON.stringify({ model: "m" }),
+  }).then(async (response) => ({ status: response.status, text: await response.text() }));
+
+const cents = (usd: number | undefined) => Math.round((usd ?? Number.NaN) * 100_000) / 1000;
+
+test("the agent job's gateway counts a cold start from when /health sees a worker running", async () => {
+  const api = await endpointApi(true);
+  api.state.workers = { idle: 0, initializing: 1, running: 0 };
+  let now = 1_000_000;
+  const access = await serverlessAccess(api, () => now);
+  const answered = chatCall(access.baseUrl);
+  while (api.requests.length < 1) await new Promise((resolve) => setTimeout(resolve, 2));
+  await sampled(api);
+  // A minute in the queue while the worker initializes: not billed.
+  now += 60_000;
+  await sampled(api);
+  // Then 30 seconds running, the model's load included, before the answer.
+  api.state.workers = { idle: 0, initializing: 0, running: 1 };
+  await sampled(api);
+  now += 30_000;
+  await sampled(api);
+  api.state.hold = false;
+  assert.equal((await answered).status, 200);
+  const usage = await access.finish();
+  // 30 seconds, and the idle timeout after the request: US$ 0.035.
+  assert.equal(cents(usage?.cost), 3.5);
+});
+
+test("when /health fails, the agent job's gateway counts each request's whole span", async () => {
+  const api = await endpointApi(true);
+  let now = 1_000_000;
+  const access = await serverlessAccess(api, () => now);
+  const answered = chatCall(access.baseUrl);
+  while (api.requests.length < 1) await new Promise((resolve) => setTimeout(resolve, 2));
+  await sampled(api);
+  now += 60_000;
+  await sampled(api);
+  api.state.hold = false;
+  assert.equal((await answered).status, 200);
+  assert.equal(cents((await access.finish())?.cost), 6.5);
+});
+
+test("a run whose request waits with no worker fails, and its wait costs nothing", async () => {
+  const api = await endpointApi(true);
+  api.state.workers = { idle: 1, running: 0, throttled: 1 };
+  let now = 1_000_000;
+  const access = await serverlessAccess(api, () => now, 25 * 60_000);
+  const answered = chatCall(access.baseUrl);
+  while (api.requests.length < 1) await new Promise((resolve) => setTimeout(resolve, 2));
+  await sampled(api);
+  now += 24 * 60_000;
+  await sampled(api);
+  assert.equal(access.stopped?.aborted, false);
+  now += 60_000;
+  await sampled(api);
+  assert.equal(access.stopped?.aborted, true);
+  const reason = /No worker of the endpoint started or ran for 25 minutes while a request waited/;
+  assert.match(String(access.stopped?.reason), reason);
+  const failed = await answered;
+  assert.equal(failed.status, 503);
+  assert.match(failed.text, reason);
+  assert.equal((await chatCall(access.baseUrl)).status, 503, "the run is no longer served");
+  const usage = await access.finish();
+  assert.deepEqual(api.cancelled, ["job1"]);
+  // Only the idle timeout after the request, which the end of sampling cannot see: US$ 0.005.
+  assert.equal(usage?.requests, 1);
+  assert.equal(cents(usage?.cost), 0.5);
 });

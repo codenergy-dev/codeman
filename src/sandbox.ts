@@ -110,12 +110,17 @@ cd "$1" || exit 1; shift
 exec "$@"`;
 }
 
+/**
+ * Runs the harness as the agent, until it exits, its time is up, or `stop` is aborted, as when
+ * its model can no longer be reached; `stopped` then holds the reason.
+ */
 export async function runAsAgent(
   command: HarnessCommand,
   cwd: string,
   timeoutMs: number,
   log: Log,
-): Promise<{ exitCode: number | null; timedOut: boolean }> {
+  stop?: AbortSignal,
+): Promise<{ exitCode: number | null; timedOut: boolean; stopped?: string }> {
   const keep = Object.keys(command.env);
   const args = [
     "-n",
@@ -143,13 +148,25 @@ export async function runAsAgent(
     createInterface({ input: stream }).on("line", (line) => log.info(`│ ${truncate(line, 4000)}`));
   }
 
+  const end = () => {
+    child.kill("SIGTERM");
+    setTimeout(killAgentProcesses, 10_000).unref();
+  };
   let timedOut = false;
   const timer = setTimeout(() => {
     timedOut = true;
     log.warning(`The agent reached its time limit of ${Math.round(timeoutMs / 60_000)} minutes.`);
-    child.kill("SIGTERM");
-    setTimeout(killAgentProcesses, 10_000).unref();
+    end();
   }, timeoutMs);
+  let stopped: string | undefined;
+  const onStop = () => {
+    const reason: unknown = stop?.reason;
+    stopped = reason instanceof Error ? reason.message : String(reason);
+    log.warning(`The agent was stopped: ${stopped}`);
+    end();
+  };
+  if (stop?.aborted) onStop();
+  else stop?.addEventListener("abort", onStop, { once: true });
 
   // `exit`, not `close`: processes the agent left in the background may keep the pipes open.
   const exitCode = await new Promise<number | null>((resolve, reject) => {
@@ -157,5 +174,6 @@ export async function runAsAgent(
     child.on("exit", resolve);
   });
   clearTimeout(timer);
-  return { exitCode, timedOut };
+  stop?.removeEventListener("abort", onStop);
+  return stopped === undefined ? { exitCode, timedOut } : { exitCode, timedOut, stopped };
 }

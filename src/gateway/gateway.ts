@@ -16,6 +16,7 @@ import {
   meterCost,
   type RequestRecord,
   summarize,
+  type WorkerSample,
 } from "./usage.ts";
 
 /** The OpenAI-compatible routes the agent may call; nothing else reaches the engine. */
@@ -77,10 +78,20 @@ export interface GatewayOptions {
   engine: InferenceEngine;
   /** SHA-256, in hex, of the token that may manage runs over HTTP; none disables those routes. */
   adminSha256?: string | undefined;
+  /**
+   * With worker samples: how long a request may wait while no worker starts or runs before
+   * the run stops. Without it, a request waits as long as it takes.
+   */
+  noWorkerMs?: number | undefined;
+  /** Told why, when the gateway stops serving the run before its end. */
+  onStop?: (reason: string) => void;
   now?: () => number;
   keepAliveMs?: number;
   log?: (message: string) => void;
 }
+
+/** Why the gateway stopped the run, as the reason its open requests are aborted with. */
+class RunStopped extends Error {}
 
 /**
  * Codeman's gateway, in front of an engine: it serves one run at a time, to whoever holds that
@@ -91,8 +102,14 @@ export interface GatewayOptions {
 export class Gateway {
   readonly #options: GatewayOptions;
   readonly #now: () => number;
-  #run: (RunSettings & { active: boolean }) | undefined;
+  #run: (RunSettings & { active: boolean; stopped?: string }) | undefined;
   #records: RequestRecord[] = [];
+  /** The run's worker samples, in order. */
+  #samples: WorkerSample[] = [];
+  /** Since when samples have seen no worker starting or running while a request waited. */
+  #noWorkerSince: number | undefined;
+  /** The requests being forwarded, to abort when the run stops. */
+  readonly #open = new Set<AbortController>();
   /** The last time a request arrived or a run started or ended. */
   lastActivity: number;
   ready = false;
@@ -108,7 +125,46 @@ export class Gateway {
   startRun(run: RunSettings): void {
     this.#run = { ...run, active: true };
     this.#records = [];
+    this.#samples = [];
+    this.#noWorkerSince = undefined;
     this.lastActivity = this.#now();
+  }
+
+  /**
+   * Records what the provider said of the run's workers, for its busy meter. A request that
+   * waits `noWorkerMs` while every sample sees no worker starting or running stops the run;
+   * unknown samples neither prove a worker nor its absence.
+   */
+  observe(sample: WorkerSample): void {
+    if (!this.serving) return;
+    this.#samples.push(sample);
+    const limit = this.#options.noWorkerMs;
+    const waiting = this.#records.some((record) => record.end === undefined);
+    if (limit === undefined || sample.workers === undefined) return;
+    if (!waiting || sample.workers !== "none") {
+      this.#noWorkerSince = undefined;
+      return;
+    }
+    this.#noWorkerSince ??= sample.at;
+    if (sample.at - this.#noWorkerSince >= limit) {
+      const minutes = Math.round(limit / 60_000);
+      this.#stop(
+        `No worker of the endpoint started or ran for ${minutes} minutes while a request ` +
+          "waited, as when it has no GPU.",
+      );
+    }
+  }
+
+  /** Stops serving the run: its waiting requests fail with `reason`, and so do new ones. */
+  #stop(reason: string): void {
+    const run = this.#run;
+    if (!run?.active) return;
+    run.active = false;
+    run.stopped = reason;
+    this.lastActivity = this.#now();
+    this.#log(reason);
+    for (const abort of this.#open) abort.abort(new RunStopped(reason));
+    this.#options.onStop?.(reason);
   }
 
   /** Ends the run: its token stops working. Returns what it used. */
@@ -122,7 +178,9 @@ export class Gateway {
   /** What the current or last run used so far. */
   usage(): GatewayUsage | undefined {
     const run = this.#run;
-    return run ? summarize(this.#records, run.meter, run.start, this.#now()) : undefined;
+    return run
+      ? summarize(this.#records, run.meter, run.start, this.#now(), this.#samples)
+      : undefined;
   }
 
   /** Whether a run is being served. */
@@ -141,7 +199,7 @@ export class Gateway {
   #withinBudget(): boolean {
     const run = this.#run;
     if (!run) return false;
-    return meterCost(run.meter, run.start, this.#records, this.#now()) < run.limit;
+    return meterCost(run.meter, run.start, this.#records, this.#now(), this.#samples) < run.limit;
   }
 
   status(): Record<string, unknown> {
@@ -176,9 +234,10 @@ export class Gateway {
       return this.#admin(route, request, response);
     if (!ROUTES.has(route)) return send(response, 404, error("Not found."));
 
-    if (!this.serving || !matches(bearer(request), this.#run?.tokenSha256)) {
-      return send(response, 401, error("Invalid token."));
-    }
+    const holder = matches(bearer(request), this.#run?.tokenSha256);
+    const stopped = this.#run?.stopped;
+    if (holder && stopped) return send(response, 503, error(stopped, "run_stopped"));
+    if (!this.serving || !holder) return send(response, 401, error("Invalid token."));
     this.lastActivity = this.#now();
     if (!this.#withinBudget()) {
       return send(response, 402, error("This run's budget is spent.", "budget_exceeded"));
@@ -224,6 +283,7 @@ export class Gateway {
     const record: RequestRecord = { start: this.#now(), streamed: stream };
     this.#records.push(record);
     const abort = new AbortController();
+    this.#open.add(abort);
     response.on("close", () => {
       if (!response.writableFinished) abort.abort();
     });
@@ -297,13 +357,21 @@ export class Gateway {
       response.end();
     } catch (failure) {
       record.end ??= this.#now();
-      if (abort.signal.aborted) return;
-      this.#log(
-        `The engine failed: ${failure instanceof Error ? failure.message : String(failure)}`,
-      );
-      if (!response.headersSent) send(response, 502, error("The engine did not answer."));
-      else response.end(`data: ${JSON.stringify(error("The engine did not answer."))}\n\n`);
+      const reason: unknown = abort.signal.reason;
+      const stopped = reason instanceof RunStopped ? reason : undefined;
+      if (abort.signal.aborted && !stopped) return;
+      if (!stopped) {
+        this.#log(
+          `The engine failed: ${failure instanceof Error ? failure.message : String(failure)}`,
+        );
+      }
+      const body = stopped
+        ? error(stopped.message, "run_stopped")
+        : error("The engine did not answer.");
+      if (!response.headersSent) send(response, stopped ? 503 : 502, body);
+      else response.end(`data: ${JSON.stringify(body)}\n\n`);
     } finally {
+      this.#open.delete(abort);
       clearInterval(keepAlive);
       this.lastActivity = this.#now();
     }

@@ -3,7 +3,7 @@ import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { after, test } from "node:test";
 import { fakeEngine } from "../testing/fake-gpu.ts";
-import { Gateway, type GatewayOptions, runSettings, sha256 } from "./gateway.ts";
+import { Gateway, type GatewayOptions, runSettings, sha256, type Upstream } from "./gateway.ts";
 
 /** An OpenAI-compatible engine: answers each request as `respond` says, and keeps the bodies. */
 async function engine(
@@ -204,6 +204,90 @@ test("a Serverless run is billed while busy, so its budget lasts through idle ti
   now += 3_600_000;
   assert.equal((await call(url, "t")).status, 200, "an hour later, only 10 seconds were billed");
   assert.equal(instance.usage()?.cost, 0.002);
+});
+
+const busyRun = (start: number, limit = 1) => ({
+  tokenSha256: sha256("t"),
+  limit,
+  start,
+  meter: { kind: "busy" as const, pricePerSecond: 0.001, idleMs: 0 },
+});
+
+const answer: Upstream = async () => ({
+  status: 200,
+  contentType: "application/json",
+  body: (async function* () {
+    yield JSON.stringify(completion);
+  })(),
+});
+
+test("a Serverless run's budget counts only the time a worker ran", async () => {
+  let now = 1_000_000;
+  // Each request waits a minute in the queue: US$ 0.06 at the price of a worker's time.
+  const send: Upstream = async (request) => {
+    now += 60_000;
+    return answer(request);
+  };
+  const { instance, url } = await gateway({ upstream: "unused", send, now: () => now });
+  instance.startRun(busyRun(now, 0.05));
+  instance.observe({ at: now, workers: "none" });
+  assert.equal((await call(url, "t")).status, 200);
+  instance.observe({ at: now, workers: "none" });
+  assert.equal((await call(url, "t")).status, 200, "no worker ran: nothing was spent");
+  // A worker ran during the second request, so its minute counts.
+  instance.observe({ at: now, workers: "running" });
+  assert.equal(instance.usage()?.cost, 0.06);
+  assert.equal((await call(url, "t")).status, 402);
+});
+
+/** An endpoint whose requests wait until they are aborted, as when no worker comes. */
+const waiting: Upstream = (request) =>
+  new Promise((_, reject) => {
+    request.signal.addEventListener("abort", () => reject(request.signal.reason), { once: true });
+  });
+
+test("a request that waits with no worker for the limit stops the run", async () => {
+  let now = 1_000_000;
+  const stops: string[] = [];
+  const { instance, url } = await gateway({
+    upstream: "unused",
+    send: waiting,
+    now: () => now,
+    noWorkerMs: 60_000,
+    onStop: (reason) => stops.push(reason),
+  });
+  instance.startRun(busyRun(now));
+  // Without a request open, no worker is needed.
+  instance.observe({ at: now, workers: "none" });
+  now += 60_000;
+  instance.observe({ at: now, workers: "none" });
+  assert.ok(instance.serving);
+
+  const request = call(url, "t", { model: "m", stream: true });
+  while (!instance.usage()?.requests) await new Promise((resolve) => setTimeout(resolve, 5));
+  const sample = (workers: "running" | "starting" | "none" | undefined, after: number) => {
+    now += after;
+    instance.observe({ at: now, workers });
+  };
+  sample("none", 0);
+  sample("starting", 30_000);
+  sample("none", 10_000);
+  sample(undefined, 30_000);
+  sample("none", 20_000);
+  assert.ok(instance.serving, "a starting worker counts, and an unknown sample does not end it");
+  sample("none", 10_000);
+  assert.ok(!instance.serving);
+
+  const reason = /No worker of the endpoint started or ran for 1 minutes while a request waited/;
+  const failed = await request;
+  assert.match(await failed.text(), reason);
+  assert.match(stops[0] ?? "", reason);
+  const refused = await call(url, "t");
+  assert.equal(refused.status, 503);
+  assert.match(await refused.text(), /"code":"run_stopped"/);
+  assert.equal((await call(url, "other")).status, 401);
+  // No worker ran, but the 50 seconds on either side of the unknown sample count.
+  assert.equal(instance.endRun()?.cost, 0.05);
 });
 
 test("reports usage and manages runs only with the admin token", async () => {

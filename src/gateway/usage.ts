@@ -14,7 +14,7 @@ export interface RequestRecord {
 /**
  * How a run's cost accrues. `time`: a pod, billed every second from the run's start whether or
  * not it generates. `busy`: a Serverless worker, billed while it serves requests and for its
- * idle timeout after each.
+ * idle timeout after each, as far as samples of its state tell.
  */
 export type Meter =
   | { kind: "time"; pricePerSecond: number }
@@ -40,36 +40,73 @@ export interface GatewayUsage {
 }
 
 /**
- * Milliseconds a worker was up: the union of each request's span, extended by the idle timeout
- * after it. Requests still running count until `now`.
+ * What a provider said of an endpoint's workers: one `running`, which is billed; one only
+ * `starting`, which is not yet; or `none`.
  */
-export function busyMs(records: readonly RequestRecord[], idleMs: number, now: number): number {
-  const spans = records
-    .map((record) => [record.start, (record.end ?? now) + idleMs] as const)
-    .sort((a, b) => a[0] - b[0]);
-  let total = 0;
-  let from: number | undefined;
-  let to = 0;
-  for (const [start, end] of spans) {
-    if (from === undefined || start > to) {
-      if (from !== undefined) total += to - from;
-      from = start;
-      to = end;
-    } else {
-      to = Math.max(to, end);
-    }
-  }
-  return from === undefined ? 0 : total + to - from;
+export type Workers = "running" | "starting" | "none";
+
+/** The endpoint's workers at `at`, in milliseconds since the epoch; undefined when unknown. */
+export interface WorkerSample {
+  at: number;
+  workers: Workers | undefined;
 }
 
-/** The run's cost at `now`, in USD. */
+/**
+ * Milliseconds a worker was billed for the run: the union of each request's span, extended by
+ * the idle timeout after it, less the time between two samples that both saw no worker running.
+ * Requests still running count until `now`. Time no pair of samples covers, such as after the
+ * last one, is unknown and counts: without samples, every span does.
+ */
+export function busyMs(
+  records: readonly RequestRecord[],
+  idleMs: number,
+  now: number,
+  samples: readonly WorkerSample[] = [],
+): number {
+  const spans = merge(records.map((record): Span => [record.start, (record.end ?? now) + idleMs]));
+  let total = spans.reduce((sum, [from, to]) => sum + to - from, 0);
+  let first = 0;
+  for (let i = 1; i < samples.length; i++) {
+    const a = samples[i - 1] as WorkerSample;
+    const b = samples[i] as WorkerSample;
+    if (!unbilled(a) || !unbilled(b)) continue;
+    while (first < spans.length && (spans[first] as Span)[1] <= a.at) first++;
+    for (let j = first; j < spans.length && (spans[j] as Span)[0] < b.at; j++) {
+      const [from, to] = spans[j] as Span;
+      total -= Math.max(0, Math.min(to, b.at) - Math.max(from, a.at));
+    }
+  }
+  return total;
+}
+
+type Span = readonly [number, number];
+
+/** Overlapping spans joined, in order. */
+function merge(spans: Span[]): Span[] {
+  const merged: [number, number][] = [];
+  for (const [from, to] of [...spans].sort((a, b) => a[0] - b[0])) {
+    const last = merged[merged.length - 1];
+    if (last && from <= last[1]) last[1] = Math.max(last[1], to);
+    else merged.push([from, to]);
+  }
+  return merged;
+}
+
+/** Whether the sample saw that no worker was billed. */
+function unbilled(sample: WorkerSample): boolean {
+  return sample.workers === "starting" || sample.workers === "none";
+}
+
+/** The run's cost at `now`, in USD; `samples` tell a busy meter when a worker was billed. */
 export function meterCost(
   meter: Meter,
   start: number,
   records: readonly RequestRecord[],
   now: number,
+  samples: readonly WorkerSample[] = [],
 ): number {
-  const ms = meter.kind === "time" ? Math.max(0, now - start) : busyMs(records, meter.idleMs, now);
+  const ms =
+    meter.kind === "time" ? Math.max(0, now - start) : busyMs(records, meter.idleMs, now, samples);
   return (ms / 1000) * meter.pricePerSecond;
 }
 
@@ -79,6 +116,7 @@ export function summarize(
   meter: Meter,
   start: number,
   now: number,
+  samples: readonly WorkerSample[] = [],
 ): GatewayUsage {
   let inputTokens = 0;
   let outputTokens = 0;
@@ -101,7 +139,7 @@ export function summarize(
     outputTokens,
     maxInputTokens,
     tokensPerSecond: measured > 0 ? rates / measured : undefined,
-    cost: meterCost(meter, start, records, now),
+    cost: meterCost(meter, start, records, now, samples),
     start,
     end: now,
   };

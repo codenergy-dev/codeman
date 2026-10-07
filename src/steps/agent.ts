@@ -124,11 +124,17 @@ async function agentJob(services: Services, reached: () => void): Promise<void> 
       prompt: HARNESS_PROMPT,
       instructions: `${worktree}/${RULES_PATH}`,
     };
-    run = await runAsAgent(harness.command(options), worktree, minutes * 60_000, runtime);
+    run = await runAsAgent(
+      harness.command(options),
+      worktree,
+      minutes * 60_000,
+      runtime,
+      access.stopped,
+    );
 
     // Once, while time is left: an output Codeman would reject or cut goes back to the agent.
     const left = started + minutes * 60_000 - Date.now();
-    if (!run.timedOut && left >= FIX_MS) {
+    if (!run.timedOut && !access.stopped?.aborted && left >= FIX_MS) {
       const stage =
         task.action === "implement"
           ? (task.stage ?? "code")
@@ -150,6 +156,7 @@ async function agentJob(services: Services, reached: () => void): Promise<void> 
           worktree,
           left,
           runtime,
+          access.stopped,
         );
         // A fix can only help: one that fails leaves the first outcome, and apply validates both.
         if (fix.exitCode === 0 && !fix.timedOut) run = fix;
@@ -190,7 +197,8 @@ async function agentJob(services: Services, reached: () => void): Promise<void> 
   runtime.info(`Changed ${changes.length} file(s):`);
   for (const change of changes) runtime.info(`  ${change.status} ${oneLine(change.path)}`);
   // The result is kept either way: apply commits unfinished work so the next run continues.
-  if (run.timedOut) runtime.fail(`The agent did not finish within ${minutes} minutes.`);
+  if (access.stopped?.aborted) runtime.fail(`The run stopped: ${stopReason(access.stopped)}`);
+  else if (run.timedOut) runtime.fail(`The agent did not finish within ${minutes} minutes.`);
   else if (run.exitCode !== 0) runtime.fail(`The agent exited with code ${run.exitCode}.`);
 }
 
@@ -217,6 +225,11 @@ async function modelAccess(
     engine: choice.inference === "self-hosted" ? ENGINES[choice.engine] : undefined,
     log: (message) => runtime.info(oneLine(message)),
   });
+}
+
+function stopReason(signal: AbortSignal): string {
+  const reason: unknown = signal.reason;
+  return reason instanceof Error ? reason.message : String(reason);
 }
 
 /** The agent's output as it is now, if it wrote one Codeman would read. */

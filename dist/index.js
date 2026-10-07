@@ -20343,27 +20343,39 @@ import {
 import { request as httpsRequest } from "node:https";
 
 // src/gateway/usage.ts
-function busyMs(records, idleMs, now) {
-  const spans = records.map((record) => [record.start, (record.end ?? now) + idleMs]).sort((a, b) => a[0] - b[0]);
-  let total = 0;
-  let from;
-  let to = 0;
-  for (const [start, end] of spans) {
-    if (from === void 0 || start > to) {
-      if (from !== void 0) total += to - from;
-      from = start;
-      to = end;
-    } else {
-      to = Math.max(to, end);
+function busyMs(records, idleMs, now, samples = []) {
+  const spans = merge(records.map((record) => [record.start, (record.end ?? now) + idleMs]));
+  let total = spans.reduce((sum, [from, to]) => sum + to - from, 0);
+  let first = 0;
+  for (let i = 1; i < samples.length; i++) {
+    const a = samples[i - 1];
+    const b = samples[i];
+    if (!unbilled(a) || !unbilled(b)) continue;
+    while (first < spans.length && spans[first][1] <= a.at) first++;
+    for (let j = first; j < spans.length && spans[j][0] < b.at; j++) {
+      const [from, to] = spans[j];
+      total -= Math.max(0, Math.min(to, b.at) - Math.max(from, a.at));
     }
   }
-  return from === void 0 ? 0 : total + to - from;
+  return total;
 }
-function meterCost(meter, start, records, now) {
-  const ms = meter.kind === "time" ? Math.max(0, now - start) : busyMs(records, meter.idleMs, now);
+function merge(spans) {
+  const merged = [];
+  for (const [from, to] of [...spans].sort((a, b) => a[0] - b[0])) {
+    const last = merged[merged.length - 1];
+    if (last && from <= last[1]) last[1] = Math.max(last[1], to);
+    else merged.push([from, to]);
+  }
+  return merged;
+}
+function unbilled(sample) {
+  return sample.workers === "starting" || sample.workers === "none";
+}
+function meterCost(meter, start, records, now, samples = []) {
+  const ms = meter.kind === "time" ? Math.max(0, now - start) : busyMs(records, meter.idleMs, now, samples);
   return ms / 1e3 * meter.pricePerSecond;
 }
-function summarize(records, meter, start, now) {
+function summarize(records, meter, start, now, samples = []) {
   let inputTokens = 0;
   let outputTokens = 0;
   let maxInputTokens;
@@ -20385,7 +20397,7 @@ function summarize(records, meter, start, now) {
     outputTokens,
     maxInputTokens,
     tokensPerSecond: measured > 0 ? rates / measured : void 0,
-    cost: meterCost(meter, start, records, now),
+    cost: meterCost(meter, start, records, now, samples),
     start,
     end: now
   };
@@ -20432,11 +20444,19 @@ function matches(token, hash) {
   const expected = Buffer.from(hash, "hex");
   return given.length === expected.length && timingSafeEqual(given, expected);
 }
+var RunStopped = class extends Error {
+};
 var Gateway = class {
   #options;
   #now;
   #run;
   #records = [];
+  /** The run's worker samples, in order. */
+  #samples = [];
+  /** Since when samples have seen no worker starting or running while a request waited. */
+  #noWorkerSince;
+  /** The requests being forwarded, to abort when the run stops. */
+  #open = /* @__PURE__ */ new Set();
   /** The last time a request arrived or a run started or ended. */
   lastActivity;
   ready = false;
@@ -20450,7 +20470,43 @@ var Gateway = class {
   startRun(run2) {
     this.#run = { ...run2, active: true };
     this.#records = [];
+    this.#samples = [];
+    this.#noWorkerSince = void 0;
     this.lastActivity = this.#now();
+  }
+  /**
+   * Records what the provider said of the run's workers, for its busy meter. A request that
+   * waits `noWorkerMs` while every sample sees no worker starting or running stops the run;
+   * unknown samples neither prove a worker nor its absence.
+   */
+  observe(sample) {
+    if (!this.serving) return;
+    this.#samples.push(sample);
+    const limit = this.#options.noWorkerMs;
+    const waiting = this.#records.some((record) => record.end === void 0);
+    if (limit === void 0 || sample.workers === void 0) return;
+    if (!waiting || sample.workers !== "none") {
+      this.#noWorkerSince = void 0;
+      return;
+    }
+    this.#noWorkerSince ??= sample.at;
+    if (sample.at - this.#noWorkerSince >= limit) {
+      const minutes = Math.round(limit / 6e4);
+      this.#stop(
+        `No worker of the endpoint started or ran for ${minutes} minutes while a request waited, as when it has no GPU.`
+      );
+    }
+  }
+  /** Stops serving the run: its waiting requests fail with `reason`, and so do new ones. */
+  #stop(reason) {
+    const run2 = this.#run;
+    if (!run2?.active) return;
+    run2.active = false;
+    run2.stopped = reason;
+    this.lastActivity = this.#now();
+    this.#log(reason);
+    for (const abort of this.#open) abort.abort(new RunStopped(reason));
+    this.#options.onStop?.(reason);
   }
   /** Ends the run: its token stops working. Returns what it used. */
   endRun() {
@@ -20462,7 +20518,7 @@ var Gateway = class {
   /** What the current or last run used so far. */
   usage() {
     const run2 = this.#run;
-    return run2 ? summarize(this.#records, run2.meter, run2.start, this.#now()) : void 0;
+    return run2 ? summarize(this.#records, run2.meter, run2.start, this.#now(), this.#samples) : void 0;
   }
   /** Whether a run is being served. */
   get serving() {
@@ -20478,7 +20534,7 @@ var Gateway = class {
   #withinBudget() {
     const run2 = this.#run;
     if (!run2) return false;
-    return meterCost(run2.meter, run2.start, this.#records, this.#now()) < run2.limit;
+    return meterCost(run2.meter, run2.start, this.#records, this.#now(), this.#samples) < run2.limit;
   }
   status() {
     return {
@@ -20509,9 +20565,10 @@ var Gateway = class {
     if (path.startsWith("/admin/") || path === "/usage")
       return this.#admin(route, request2, response);
     if (!ROUTES.has(route)) return send(response, 404, error("Not found."));
-    if (!this.serving || !matches(bearer(request2), this.#run?.tokenSha256)) {
-      return send(response, 401, error("Invalid token."));
-    }
+    const holder = matches(bearer(request2), this.#run?.tokenSha256);
+    const stopped = this.#run?.stopped;
+    if (holder && stopped) return send(response, 503, error(stopped, "run_stopped"));
+    if (!this.serving || !holder) return send(response, 401, error("Invalid token."));
     this.lastActivity = this.#now();
     if (!this.#withinBudget()) {
       return send(response, 402, error("This run's budget is spent.", "budget_exceeded"));
@@ -20554,6 +20611,7 @@ var Gateway = class {
     const record = { start: this.#now(), streamed: stream };
     this.#records.push(record);
     const abort = new AbortController();
+    this.#open.add(abort);
     response.on("close", () => {
       if (!response.writableFinished) abort.abort();
     });
@@ -20622,15 +20680,21 @@ var Gateway = class {
       response.end();
     } catch (failure) {
       record.end ??= this.#now();
-      if (abort.signal.aborted) return;
-      this.#log(
-        `The engine failed: ${failure instanceof Error ? failure.message : String(failure)}`
-      );
-      if (!response.headersSent) send(response, 502, error("The engine did not answer."));
-      else response.end(`data: ${JSON.stringify(error("The engine did not answer."))}
+      const reason = abort.signal.reason;
+      const stopped = reason instanceof RunStopped ? reason : void 0;
+      if (abort.signal.aborted && !stopped) return;
+      if (!stopped) {
+        this.#log(
+          `The engine failed: ${failure instanceof Error ? failure.message : String(failure)}`
+        );
+      }
+      const body2 = stopped ? error(stopped.message, "run_stopped") : error("The engine did not answer.");
+      if (!response.headersSent) send(response, stopped ? 503 : 502, body2);
+      else response.end(`data: ${JSON.stringify(body2)}
 
 `);
     } finally {
+      this.#open.delete(abort);
       clearInterval(keepAlive);
       this.lastActivity = this.#now();
     }
@@ -20741,13 +20805,13 @@ async function accountMonthSpent(gpu, now) {
     live.map((pod) => pod.id),
     start
   );
-  let unbilled = 0;
+  let unbilled2 = 0;
   for (const pod of live) {
     const from = pod.createdAt > start ? pod.createdAt : start;
     const estimate = podCost(from, now, pod.pricePerSecond ?? 0);
-    unbilled += Math.max(0, estimate - (podBilled[pod.id] ?? 0));
+    unbilled2 += Math.max(0, estimate - (podBilled[pod.id] ?? 0));
   }
-  return billed + unbilled;
+  return billed + unbilled2;
 }
 var MAX_IDLE_TIMEOUT_SECONDS = 300;
 function endpointProblems(endpoint2) {
@@ -21569,7 +21633,7 @@ function removeUndefinedProperties(obj) {
   }
   return obj;
 }
-function merge(defaults2, route, options) {
+function merge2(defaults2, route, options) {
   if (typeof route === "string") {
     let [method, url] = route.split(" ");
     options = Object.assign(url ? { method, url } : { url: method }, options);
@@ -21817,15 +21881,15 @@ function parse(options) {
   );
 }
 function endpointWithDefaults(defaults2, route, options) {
-  return parse(merge(defaults2, route, options));
+  return parse(merge2(defaults2, route, options));
 }
 function withDefaults(oldDefaults, newDefaults) {
-  const DEFAULTS22 = merge(oldDefaults, newDefaults);
+  const DEFAULTS22 = merge2(oldDefaults, newDefaults);
   const endpoint2 = endpointWithDefaults.bind(null, DEFAULTS22);
   return Object.assign(endpoint2, {
     DEFAULTS: DEFAULTS22,
     defaults: withDefaults.bind(null, DEFAULTS22),
-    merge: merge.bind(null, DEFAULTS22),
+    merge: merge2.bind(null, DEFAULTS22),
     parse
   });
 }
@@ -25976,7 +26040,7 @@ export ${Object.entries(env).map(([name, value]) => `${name}='${value}'`).join("
 cd "$1" || exit 1; shift
 exec "$@"`;
 }
-async function runAsAgent(command, cwd, timeoutMs, log) {
+async function runAsAgent(command, cwd, timeoutMs, log, stop) {
   const keep = Object.keys(command.env);
   const args = [
     "-n",
@@ -26001,19 +26065,32 @@ async function runAsAgent(command, cwd, timeoutMs, log) {
   for (const stream of [child.stdout, child.stderr]) {
     createInterface({ input: stream }).on("line", (line) => log.info(`\u2502 ${truncate(line, 4e3)}`));
   }
+  const end = () => {
+    child.kill("SIGTERM");
+    setTimeout(killAgentProcesses, 1e4).unref();
+  };
   let timedOut = false;
   const timer = setTimeout(() => {
     timedOut = true;
     log.warning(`The agent reached its time limit of ${Math.round(timeoutMs / 6e4)} minutes.`);
-    child.kill("SIGTERM");
-    setTimeout(killAgentProcesses, 1e4).unref();
+    end();
   }, timeoutMs);
+  let stopped;
+  const onStop = () => {
+    const reason = stop?.reason;
+    stopped = reason instanceof Error ? reason.message : String(reason);
+    log.warning(`The agent was stopped: ${stopped}`);
+    end();
+  };
+  if (stop?.aborted) onStop();
+  else stop?.addEventListener("abort", onStop, { once: true });
   const exitCode = await new Promise((resolve, reject) => {
     child.on("error", reject);
     child.on("exit", resolve);
   });
   clearTimeout(timer);
-  return { exitCode, timedOut };
+  stop?.removeEventListener("abort", onStop);
+  return stopped === void 0 ? { exitCode, timedOut } : { exitCode, timedOut, stopped };
 }
 
 // src/collect.ts
@@ -26246,11 +26323,15 @@ var openCode = {
 // src/harness/index.ts
 var harnesses = { [openCode.name]: openCode };
 
+// src/inference/access.ts
+import { setTimeout as sleep4 } from "node:timers/promises";
+
 // src/gateway/queue.ts
 var POLL_MS = 500;
 var MAX_POLL_FAILURES = 5;
 var POLICY = { executionTimeout: 30 * 6e4, ttl: 60 * 6e4 };
 var FINAL = /* @__PURE__ */ new Set(["COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT"]);
+var HEALTH_TIMEOUT_MS = 5e3;
 var RunpodQueue = class {
   #base;
   #key;
@@ -26260,6 +26341,8 @@ var RunpodQueue = class {
   /** Jobs submitted and not over yet. */
   #active = /* @__PURE__ */ new Set();
   #cancels = /* @__PURE__ */ new Set();
+  /** What `/health` last said of the workers, or why it failed: logged when it changes. */
+  #health;
   /** `base` is the endpoint's API, `https://api.runpod.ai/v2/<endpoint-id>`. */
   constructor(base, key, options = {}) {
     this.#base = base;
@@ -26273,6 +26356,35 @@ var RunpodQueue = class {
   async settle() {
     for (const id of this.#active) this.#cancel(id);
     await Promise.all([...this.#cancels]);
+  }
+  /**
+   * The endpoint's workers, from `/health`; undefined when Runpod does not answer or its answer
+   * cannot be read. See `workerState`.
+   */
+  async workers(signal) {
+    let seen;
+    let workers;
+    try {
+      const response = await this.#call(
+        "GET",
+        "/health",
+        AbortSignal.any([signal, AbortSignal.timeout(HEALTH_TIMEOUT_MS)])
+      );
+      const text = await response.text();
+      if (response.ok) {
+        const body = parseJson2(text);
+        workers = workerState(body);
+        seen = workers === void 0 ? `Runpod GET /health gave workers Codeman cannot read: ${text.slice(0, 500)}` : `Runpod's workers: ${JSON.stringify(body?.workers).slice(0, 500)}`;
+      } else {
+        seen = `Runpod GET /health failed: ${response.status}: ${text.slice(0, 500)}`;
+      }
+    } catch (error3) {
+      if (signal.aborted) return void 0;
+      seen = `Runpod GET /health failed: ${error3 instanceof Error ? error3.message : String(error3)}`;
+    }
+    if (seen !== this.#health) this.#log(seen);
+    this.#health = seen;
+    return workers;
   }
   send = async (request2) => {
     const input = request2.body === void 0 ? { openai_route: request2.path } : { openai_route: request2.path, openai_input: JSON.parse(request2.body) };
@@ -26386,6 +26498,23 @@ var RunpodQueue = class {
     });
   }
 };
+function workerState(body) {
+  if (typeof body !== "object" || body === null) return void 0;
+  const workers = body.workers;
+  if (typeof workers !== "object" || workers === null) return void 0;
+  const { running, initializing = 0 } = workers;
+  const count3 = (value) => typeof value === "number" && Number.isInteger(value) && value >= 0;
+  if (!count3(running) || !count3(initializing)) return void 0;
+  if (running > 0) return "running";
+  return initializing > 0 ? "starting" : "none";
+}
+function parseJson2(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return void 0;
+  }
+}
 function isError(output) {
   return typeof output === "object" && output !== null && "error" in output;
 }
@@ -26418,6 +26547,7 @@ function sleep3(ms, signal) {
 }
 
 // src/inference/access.ts
+var SAMPLE_MS = 5e3;
 async function agentAccess(inputs) {
   const done = async () => void 0;
   if (inputs.mode === "openrouter") return { apiKey: inputs.credential, finish: done };
@@ -26439,10 +26569,13 @@ async function agentAccess(inputs) {
     pollMs: inputs.pollMs,
     log: inputs.log
   });
+  const stop = new AbortController();
   const gateway = new Gateway({
     upstream: handle.url,
     send: queue.send,
     engine: inputs.engine,
+    noWorkerMs: inputs.noWorkerMs ?? START_MINUTES * 6e4,
+    onStop: (reason) => stop.abort(new Error(reason)),
     now,
     log: inputs.log
   });
@@ -26458,16 +26591,39 @@ async function agentAccess(inputs) {
     }
   });
   const { server, url } = await gateway.listen("127.0.0.1", 0);
+  const sampling = sampleWorkers(
+    (signal) => queue.workers(signal),
+    (sample) => gateway.observe(sample),
+    inputs.sampleMs ?? SAMPLE_MS,
+    now
+  );
   return {
     apiKey: inputs.credential,
     baseUrl: `${url}/v1`,
     contextLength: handle.contextLength,
+    stopped: stop.signal,
     finish: async () => {
+      await sampling();
       const usage = gateway.endRun();
       await close(server);
       await queue.settle();
       return usage;
     }
+  };
+}
+function sampleWorkers(read, observe, everyMs, now) {
+  const stop = new AbortController();
+  const loop = (async () => {
+    while (!stop.signal.aborted) {
+      const workers = await read(stop.signal);
+      if (stop.signal.aborted) return;
+      observe({ at: now(), workers });
+      await sleep4(everyMs, void 0, { signal: stop.signal }).catch(() => void 0);
+    }
+  })();
+  return async () => {
+    stop.abort();
+    await loop;
   };
 }
 function close(server) {
@@ -28403,9 +28559,15 @@ async function agentJob(services, reached) {
       prompt: HARNESS_PROMPT,
       instructions: `${worktree}/${RULES_PATH}`
     };
-    run2 = await runAsAgent(harness.command(options), worktree, minutes * 6e4, runtime2);
+    run2 = await runAsAgent(
+      harness.command(options),
+      worktree,
+      minutes * 6e4,
+      runtime2,
+      access2.stopped
+    );
     const left = started + minutes * 6e4 - Date.now();
-    if (!run2.timedOut && left >= FIX_MS) {
+    if (!run2.timedOut && !access2.stopped?.aborted && left >= FIX_MS) {
       const stage = task.action === "implement" ? task.stage ?? "code" : task.action === "route" ? "route" : void 0;
       const problems = outputProblems(
         readAgentOutput(runtime2, `${worktree}/${OUTPUT_FILE}`),
@@ -28421,7 +28583,8 @@ async function agentJob(services, reached) {
           harness.command({ ...options, prompt: fixPrompt(problems), resume: true }),
           worktree,
           left,
-          runtime2
+          runtime2,
+          access2.stopped
         );
         if (fix.exitCode === 0 && !fix.timedOut) run2 = fix;
         else runtime2.warning(`The agent did not finish fixing ${OUTPUT_FILE}.`);
@@ -28457,7 +28620,8 @@ async function agentJob(services, reached) {
   writeFileSync4(join6(out, "manifest.json"), JSON.stringify(manifest, null, 2));
   runtime2.info(`Changed ${changes.length} file(s):`);
   for (const change of changes) runtime2.info(`  ${change.status} ${oneLine(change.path)}`);
-  if (run2.timedOut) runtime2.fail(`The agent did not finish within ${minutes} minutes.`);
+  if (access2.stopped?.aborted) runtime2.fail(`The run stopped: ${stopReason(access2.stopped)}`);
+  else if (run2.timedOut) runtime2.fail(`The agent did not finish within ${minutes} minutes.`);
   else if (run2.exitCode !== 0) runtime2.fail(`The agent exited with code ${run2.exitCode}.`);
 }
 async function modelAccess(runtime2, task, credential) {
@@ -28475,6 +28639,10 @@ async function modelAccess(runtime2, task, credential) {
     engine: choice.inference === "self-hosted" ? ENGINES[choice.engine] : void 0,
     log: (message) => runtime2.info(oneLine(message))
   });
+}
+function stopReason(signal) {
+  const reason = signal.reason;
+  return reason instanceof Error ? reason.message : String(reason);
 }
 function readAgentOutput(runtime2, source) {
   const copy = join6(workdir(runtime2), "output-check.json");

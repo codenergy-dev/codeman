@@ -1,9 +1,13 @@
 import type { Server } from "node:http";
+import { setTimeout as sleep } from "node:timers/promises";
 import { Gateway, sha256 } from "../gateway/gateway.ts";
 import { RunpodQueue } from "../gateway/queue.ts";
-import type { GatewayUsage } from "../gateway/usage.ts";
+import type { GatewayUsage, WorkerSample, Workers } from "../gateway/usage.ts";
 import type { InferenceEngine } from "./engine.ts";
-import { parseHandle } from "./selfhosted.ts";
+import { parseHandle, START_MINUTES } from "./selfhosted.ts";
+
+/** How often the gateway asks for the endpoint's workers, to tell billed time from a wait. */
+const SAMPLE_MS = 5_000;
 
 /** What the sandboxed agent gets to reach its model. It never holds a provider's own key. */
 export interface AgentAccess {
@@ -12,6 +16,8 @@ export interface AgentAccess {
   /** The OpenAI-compatible API to call; undefined for the harness's own provider. */
   baseUrl?: string | undefined;
   contextLength?: number | undefined;
+  /** Aborted, with the reason, when the run stops before the agent ends: the agent must stop. */
+  stopped?: AbortSignal | undefined;
   /** Stops what the agent job started for the run, and reports what it measured. */
   finish(): Promise<GatewayUsage | undefined>;
 }
@@ -29,8 +35,11 @@ export interface AccessInputs {
   serverlessKey?: string | undefined;
   engine?: InferenceEngine | undefined;
   now?: () => number;
-  /** For tests: how often to ask Runpod for a job's output. */
+  /** For tests: how often to ask Runpod for a job's output, and for its workers. */
   pollMs?: number;
+  sampleMs?: number;
+  /** For tests: how long a request may wait with no worker before the run stops. */
+  noWorkerMs?: number;
   log?: (message: string) => void;
 }
 
@@ -63,10 +72,14 @@ export async function agentAccess(inputs: AccessInputs): Promise<AgentAccess> {
     pollMs: inputs.pollMs,
     log: inputs.log,
   });
+  const stop = new AbortController();
+  // Decision 2 of the Serverless cost plan: no worker in a pod's start time fails the run.
   const gateway = new Gateway({
     upstream: handle.url,
     send: queue.send,
     engine: inputs.engine,
+    noWorkerMs: inputs.noWorkerMs ?? START_MINUTES * 60_000,
+    onStop: (reason) => stop.abort(new Error(reason)),
     now,
     log: inputs.log,
   });
@@ -82,17 +95,52 @@ export async function agentAccess(inputs: AccessInputs): Promise<AgentAccess> {
     },
   });
   const { server, url } = await gateway.listen("127.0.0.1", 0);
+  const sampling = sampleWorkers(
+    (signal) => queue.workers(signal),
+    (sample) => gateway.observe(sample),
+    inputs.sampleMs ?? SAMPLE_MS,
+    now,
+  );
   return {
     apiKey: inputs.credential,
     baseUrl: `${url}/v1`,
     contextLength: handle.contextLength,
+    stopped: stop.signal,
     finish: async () => {
+      // Time after the last sample counts as billed: the idle timeout after the last request.
+      await sampling();
       const usage = gateway.endRun();
       await close(server);
       // A job the agent left behind would run later, at the account's cost.
       await queue.settle();
       return usage;
     },
+  };
+}
+
+/**
+ * Samples the endpoint's workers every `everyMs`, the first at once, until the returned
+ * function stops it. Decision 1 of the Serverless cost plan: only a worker's state tells a
+ * start, which Runpod bills, from a wait without a worker, which it does not.
+ */
+function sampleWorkers(
+  read: (signal: AbortSignal) => Promise<Workers | undefined>,
+  observe: (sample: WorkerSample) => void,
+  everyMs: number,
+  now: () => number,
+): () => Promise<void> {
+  const stop = new AbortController();
+  const loop = (async () => {
+    while (!stop.signal.aborted) {
+      const workers = await read(stop.signal);
+      if (stop.signal.aborted) return;
+      observe({ at: now(), workers });
+      await sleep(everyMs, undefined, { signal: stop.signal }).catch(() => undefined);
+    }
+  })();
+  return async () => {
+    stop.abort();
+    await loop;
   };
 }
 

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { UpstreamResponse } from "./gateway.ts";
-import { RunpodQueue } from "./queue.ts";
+import { RunpodQueue, workerState } from "./queue.ts";
 
 interface Call {
   method: string;
@@ -184,4 +184,64 @@ test("a few failed polls are tolerated; five in a row fail the request", async (
   const gone = runpod([404]);
   await assert.rejects(gone.queue.send(chat(true)), /404/);
   assert.equal(gone.calls.filter((call) => call.path === "/stream/j1").length, 1);
+});
+
+test("reads the workers /health reports: running is billed, initializing is a start", () => {
+  const health = (workers: unknown) => ({ jobs: { inQueue: 1 }, workers });
+  assert.equal(workerState(health({ idle: 0, running: 1 })), "running");
+  assert.equal(workerState(health({ idle: 1, initializing: 1, running: 0 })), "starting");
+  // The documented example names only `idle` and `running`.
+  assert.equal(workerState(health({ idle: 1, running: 0 })), "none");
+  assert.equal(
+    workerState(health({ idle: 0, initializing: 0, ready: 1, running: 0, throttled: 1 })),
+    "none",
+  );
+  for (const unreadable of [
+    undefined,
+    "ok",
+    { jobs: {} },
+    health(null),
+    health({ idle: 1 }),
+    health({ running: "1" }),
+    health({ running: 0, initializing: -1 }),
+  ]) {
+    assert.equal(workerState(unreadable), undefined, JSON.stringify(unreadable));
+  }
+});
+
+test("asks /health with the endpoint's key; a failure is unknown, and changes are logged", async () => {
+  const answers: (Response | Error)[] = [
+    Response.json({ workers: { idle: 0, running: 0 } }),
+    Response.json({ workers: { idle: 0, running: 0 } }),
+    Response.json({ workers: { idle: 0, running: 1 } }),
+    new Response("down", { status: 503 }),
+    new Error("socket hang up"),
+    new Response("not json"),
+  ];
+  const calls: { url: string; authorization: string | undefined }[] = [];
+  const logged: string[] = [];
+  const queue = new RunpodQueue("https://api.runpod.ai/v2/ep1", "rpa_key", {
+    fetch: (async (url: string, init: RequestInit) => {
+      calls.push({ url, authorization: (init.headers as Record<string, string>).Authorization });
+      const answer = answers.shift();
+      if (answer instanceof Error || answer === undefined) throw answer;
+      return answer;
+    }) as typeof fetch,
+    log: (message) => logged.push(message),
+  });
+  const signal = new AbortController().signal;
+  const seen = [];
+  for (let i = 0; i < 6; i++) seen.push(await queue.workers(signal));
+  assert.deepEqual(seen, ["none", "none", "running", undefined, undefined, undefined]);
+  assert.deepEqual(calls[0], {
+    url: "https://api.runpod.ai/v2/ep1/health",
+    authorization: "Bearer rpa_key",
+  });
+  assert.deepEqual(logged, [
+    `Runpod's workers: {"idle":0,"running":0}`,
+    `Runpod's workers: {"idle":0,"running":1}`,
+    "Runpod GET /health failed: 503: down",
+    "Runpod GET /health failed: socket hang up",
+    "Runpod GET /health gave workers Codeman cannot read: not json",
+  ]);
 });

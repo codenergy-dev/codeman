@@ -99,7 +99,7 @@ Instead of OpenRouter, Codeman can serve the model itself on GPUs rented from [R
    - **CUDA versions:** 13.0 and newer, the CUDA of the worker's image (v2.28.0). On a host whose driver is older, every start fails with CUDA's error 804 and the worker restarts in a loop.
    - Environment: `MODEL_NAME` (the Hugging Face model), `MAX_MODEL_LEN`, `ENABLE_AUTO_TOOL_CHOICE=true` and the `TOOL_CALL_PARSER` that matches the model, which the agent's tool calls need.
 
-   A request waits in the endpoint's queue until a worker serves it, and Codeman cancels the jobs the agent no longer waits for. Starts still cost the run time: a cached model saves the download, but vLLM's own start remains, 2.5 minutes for a 27B model on 2× RTX 5090, compilation included. If the agent makes no progress, look at the endpoint's workers and logs in Runpod's console.
+   A request waits in the endpoint's queue until a worker serves it, and Codeman cancels the jobs the agent no longer waits for. A run counts the time a worker runs, which the endpoint's `/health` tells, so a wait without a worker costs nothing; but when no worker initializes or runs for 25 minutes while a request waits, as when no GPU of the endpoint's types is free, the run fails. Starts still cost the run time: a cached model saves the download, but vLLM's own start remains, 2.5 minutes for a 27B model on 2× RTX 5090, compilation included. If the agent makes no progress, look at the endpoint's workers and logs in Runpod's console.
 2. Create an API key with **Restricted** permissions and access to this endpoint only, and add it as the secret `CODEMAN_RUNPOD_SERVERLESS_KEY`. Only Codeman's step in the agent job receives it, outside the sandbox.
 3. In `.codeman/settings.yml`:
 
@@ -110,7 +110,7 @@ Instead of OpenRouter, Codeman can serve the model itself on GPUs rented from [R
    model: Qwen/Qwen3-Coder-30B-A3B-Instruct   # what the worker serves
    ```
 
-Codeman checks the endpoint before each run and reports what to change. After 7 days without requests, Runpod sets its max workers to 0; set it back to 1.
+Codeman checks the endpoint before each run and reports what to change. After 7 days without requests, Runpod sets its max workers to 0; set it back to 1, or runs fail after 25 minutes without a worker.
 
 ## Try it
 

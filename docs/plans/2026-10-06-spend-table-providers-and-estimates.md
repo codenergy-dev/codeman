@@ -1,7 +1,7 @@
 ---
 status: completed
 created_at: 2026-10-06T20:43:40-03:00
-updated_at: 2026-10-06T22:18:46-03:00
+updated_at: 2026-10-06T22:33:45-03:00
 commit: 3f6983b
 ---
 
@@ -20,6 +20,8 @@ The figures in the table are measured differently for each inference ([architect
 | OpenRouter | The run key's usage, exact; refreshed by later runs | This month's usage of the repository's keys |
 | Runpod pod | The pod's time at its price; the task's total refreshed from Runpod's billing, or the pod's whole life when higher | The whole Runpod account's billing, plus what its live pods cost beyond it |
 | Runpod Serverless | Estimated: each request's span plus the idle timeout after it, at the flex price | The whole Runpod account's billing, which includes a Serverless run an hour or more late |
+
+Since the [Serverless cost plan](2026-10-06-serverless-cost-from-worker-state.md), a Serverless run's estimate counts those spans only while the endpoint's `/health` reports a worker running.
 
 The table does not say which inference a run used, and the "Monthly budget" column reads as exact. On 2026-10-06 the month read US$ 4.43 at two Serverless runs in a row, while the first had already cost US$ 0.67 (step 8 of the [self-hosted inference plan](2026-10-02-self-hosted-inference.md)). The responsible person chose to state this rather than correct it: Runpod bills endpoints late in any case, and an estimate of runs not yet billed could count some twice.
 

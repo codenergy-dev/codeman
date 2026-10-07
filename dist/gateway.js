@@ -255,27 +255,39 @@ import {
 import { request as httpsRequest } from "node:https";
 
 // src/gateway/usage.ts
-function busyMs(records, idleMs, now) {
-  const spans = records.map((record) => [record.start, (record.end ?? now) + idleMs]).sort((a, b) => a[0] - b[0]);
-  let total = 0;
-  let from;
-  let to = 0;
-  for (const [start, end] of spans) {
-    if (from === void 0 || start > to) {
-      if (from !== void 0) total += to - from;
-      from = start;
-      to = end;
-    } else {
-      to = Math.max(to, end);
+function busyMs(records, idleMs, now, samples = []) {
+  const spans = merge(records.map((record) => [record.start, (record.end ?? now) + idleMs]));
+  let total = spans.reduce((sum, [from, to]) => sum + to - from, 0);
+  let first = 0;
+  for (let i = 1; i < samples.length; i++) {
+    const a = samples[i - 1];
+    const b = samples[i];
+    if (!unbilled(a) || !unbilled(b)) continue;
+    while (first < spans.length && spans[first][1] <= a.at) first++;
+    for (let j = first; j < spans.length && spans[j][0] < b.at; j++) {
+      const [from, to] = spans[j];
+      total -= Math.max(0, Math.min(to, b.at) - Math.max(from, a.at));
     }
   }
-  return from === void 0 ? 0 : total + to - from;
+  return total;
 }
-function meterCost(meter, start, records, now) {
-  const ms = meter.kind === "time" ? Math.max(0, now - start) : busyMs(records, meter.idleMs, now);
+function merge(spans) {
+  const merged = [];
+  for (const [from, to] of [...spans].sort((a, b) => a[0] - b[0])) {
+    const last = merged[merged.length - 1];
+    if (last && from <= last[1]) last[1] = Math.max(last[1], to);
+    else merged.push([from, to]);
+  }
+  return merged;
+}
+function unbilled(sample) {
+  return sample.workers === "starting" || sample.workers === "none";
+}
+function meterCost(meter, start, records, now, samples = []) {
+  const ms = meter.kind === "time" ? Math.max(0, now - start) : busyMs(records, meter.idleMs, now, samples);
   return ms / 1e3 * meter.pricePerSecond;
 }
-function summarize(records, meter, start, now) {
+function summarize(records, meter, start, now, samples = []) {
   let inputTokens = 0;
   let outputTokens = 0;
   let maxInputTokens;
@@ -297,7 +309,7 @@ function summarize(records, meter, start, now) {
     outputTokens,
     maxInputTokens,
     tokensPerSecond: measured > 0 ? rates / measured : void 0,
-    cost: meterCost(meter, start, records, now),
+    cost: meterCost(meter, start, records, now, samples),
     start,
     end: now
   };
@@ -344,11 +356,19 @@ function matches(token, hash) {
   const expected = Buffer.from(hash, "hex");
   return given.length === expected.length && timingSafeEqual(given, expected);
 }
+var RunStopped = class extends Error {
+};
 var Gateway = class {
   #options;
   #now;
   #run;
   #records = [];
+  /** The run's worker samples, in order. */
+  #samples = [];
+  /** Since when samples have seen no worker starting or running while a request waited. */
+  #noWorkerSince;
+  /** The requests being forwarded, to abort when the run stops. */
+  #open = /* @__PURE__ */ new Set();
   /** The last time a request arrived or a run started or ended. */
   lastActivity;
   ready = false;
@@ -362,7 +382,43 @@ var Gateway = class {
   startRun(run) {
     this.#run = { ...run, active: true };
     this.#records = [];
+    this.#samples = [];
+    this.#noWorkerSince = void 0;
     this.lastActivity = this.#now();
+  }
+  /**
+   * Records what the provider said of the run's workers, for its busy meter. A request that
+   * waits `noWorkerMs` while every sample sees no worker starting or running stops the run;
+   * unknown samples neither prove a worker nor its absence.
+   */
+  observe(sample) {
+    if (!this.serving) return;
+    this.#samples.push(sample);
+    const limit = this.#options.noWorkerMs;
+    const waiting = this.#records.some((record) => record.end === void 0);
+    if (limit === void 0 || sample.workers === void 0) return;
+    if (!waiting || sample.workers !== "none") {
+      this.#noWorkerSince = void 0;
+      return;
+    }
+    this.#noWorkerSince ??= sample.at;
+    if (sample.at - this.#noWorkerSince >= limit) {
+      const minutes = Math.round(limit / 6e4);
+      this.#stop(
+        `No worker of the endpoint started or ran for ${minutes} minutes while a request waited, as when it has no GPU.`
+      );
+    }
+  }
+  /** Stops serving the run: its waiting requests fail with `reason`, and so do new ones. */
+  #stop(reason) {
+    const run = this.#run;
+    if (!run?.active) return;
+    run.active = false;
+    run.stopped = reason;
+    this.lastActivity = this.#now();
+    this.#log(reason);
+    for (const abort of this.#open) abort.abort(new RunStopped(reason));
+    this.#options.onStop?.(reason);
   }
   /** Ends the run: its token stops working. Returns what it used. */
   endRun() {
@@ -374,7 +430,7 @@ var Gateway = class {
   /** What the current or last run used so far. */
   usage() {
     const run = this.#run;
-    return run ? summarize(this.#records, run.meter, run.start, this.#now()) : void 0;
+    return run ? summarize(this.#records, run.meter, run.start, this.#now(), this.#samples) : void 0;
   }
   /** Whether a run is being served. */
   get serving() {
@@ -390,7 +446,7 @@ var Gateway = class {
   #withinBudget() {
     const run = this.#run;
     if (!run) return false;
-    return meterCost(run.meter, run.start, this.#records, this.#now()) < run.limit;
+    return meterCost(run.meter, run.start, this.#records, this.#now(), this.#samples) < run.limit;
   }
   status() {
     return {
@@ -421,9 +477,10 @@ var Gateway = class {
     if (path.startsWith("/admin/") || path === "/usage")
       return this.#admin(route, request, response);
     if (!ROUTES.has(route)) return send(response, 404, error("Not found."));
-    if (!this.serving || !matches(bearer(request), this.#run?.tokenSha256)) {
-      return send(response, 401, error("Invalid token."));
-    }
+    const holder = matches(bearer(request), this.#run?.tokenSha256);
+    const stopped = this.#run?.stopped;
+    if (holder && stopped) return send(response, 503, error(stopped, "run_stopped"));
+    if (!this.serving || !holder) return send(response, 401, error("Invalid token."));
     this.lastActivity = this.#now();
     if (!this.#withinBudget()) {
       return send(response, 402, error("This run's budget is spent.", "budget_exceeded"));
@@ -466,6 +523,7 @@ var Gateway = class {
     const record = { start: this.#now(), streamed: stream };
     this.#records.push(record);
     const abort = new AbortController();
+    this.#open.add(abort);
     response.on("close", () => {
       if (!response.writableFinished) abort.abort();
     });
@@ -534,15 +592,21 @@ var Gateway = class {
       response.end();
     } catch (failure) {
       record.end ??= this.#now();
-      if (abort.signal.aborted) return;
-      this.#log(
-        `The engine failed: ${failure instanceof Error ? failure.message : String(failure)}`
-      );
-      if (!response.headersSent) send(response, 502, error("The engine did not answer."));
-      else response.end(`data: ${JSON.stringify(error("The engine did not answer."))}
+      const reason = abort.signal.reason;
+      const stopped = reason instanceof RunStopped ? reason : void 0;
+      if (abort.signal.aborted && !stopped) return;
+      if (!stopped) {
+        this.#log(
+          `The engine failed: ${failure instanceof Error ? failure.message : String(failure)}`
+        );
+      }
+      const body2 = stopped ? error(stopped.message, "run_stopped") : error("The engine did not answer.");
+      if (!response.headersSent) send(response, stopped ? 503 : 502, body2);
+      else response.end(`data: ${JSON.stringify(body2)}
 
 `);
     } finally {
+      this.#open.delete(abort);
       clearInterval(keepAlive);
       this.lastActivity = this.#now();
     }

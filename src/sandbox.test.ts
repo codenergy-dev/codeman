@@ -123,3 +123,21 @@ test("the agent is contained and its changes are collected safely", {
     "chown did not follow the link",
   );
 });
+
+test("the agent stops when its run does, with the reason", { skip: !enabled }, async () => {
+  createAgentUser();
+  const stop = new AbortController();
+  setTimeout(() => stop.abort(new Error("No worker started.")), 200);
+  const runtime = new FakeRuntime();
+  const run = await runAsAgent(
+    { file: "/bin/bash", args: ["-c", "sleep 300"], env: {} },
+    AGENT_HOME,
+    60_000,
+    runtime,
+    stop.signal,
+  );
+  assert.equal(run.stopped, "No worker started.");
+  assert.equal(run.timedOut, false);
+  assert.match(runtime.logged("warning")[0] ?? "", /The agent was stopped: No worker started\./);
+  killAgentProcesses();
+});

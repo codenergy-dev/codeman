@@ -1,4 +1,5 @@
 import type { Upstream, UpstreamResponse } from "./gateway.ts";
+import type { Workers } from "./usage.ts";
 
 /** How often the gateway asks for a job's new output: Runpod's SDK asks every second. */
 const POLL_MS = 500;
@@ -7,6 +8,8 @@ const MAX_POLL_FAILURES = 5;
 /** A job may run as long as a generation can take; a forgotten one leaves the queue within the hour. */
 const POLICY = { executionTimeout: 30 * 60_000, ttl: 60 * 60_000 };
 const FINAL = new Set(["COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT"]);
+/** Runpod's SDKs give `/health` 3 seconds; a slower answer is unknown, and the next is due. */
+const HEALTH_TIMEOUT_MS = 5_000;
 
 type Fetch = typeof fetch;
 
@@ -38,6 +41,8 @@ export class RunpodQueue {
   /** Jobs submitted and not over yet. */
   readonly #active = new Set<string>();
   readonly #cancels = new Set<Promise<void>>();
+  /** What `/health` last said of the workers, or why it failed: logged when it changes. */
+  #health: string | undefined;
 
   /** `base` is the endpoint's API, `https://api.runpod.ai/v2/<endpoint-id>`. */
   constructor(base: string, key: string, options: QueueOptions = {}) {
@@ -52,6 +57,39 @@ export class RunpodQueue {
   async settle(): Promise<void> {
     for (const id of this.#active) this.#cancel(id);
     await Promise.all([...this.#cancels]);
+  }
+
+  /**
+   * The endpoint's workers, from `/health`; undefined when Runpod does not answer or its answer
+   * cannot be read. See `workerState`.
+   */
+  async workers(signal: AbortSignal): Promise<Workers | undefined> {
+    let seen: string;
+    let workers: Workers | undefined;
+    try {
+      const response = await this.#call(
+        "GET",
+        "/health",
+        AbortSignal.any([signal, AbortSignal.timeout(HEALTH_TIMEOUT_MS)]),
+      );
+      const text = await response.text();
+      if (response.ok) {
+        const body = parseJson(text) as { workers?: unknown } | undefined;
+        workers = workerState(body);
+        seen =
+          workers === undefined
+            ? `Runpod GET /health gave workers Codeman cannot read: ${text.slice(0, 500)}`
+            : `Runpod's workers: ${JSON.stringify(body?.workers).slice(0, 500)}`;
+      } else {
+        seen = `Runpod GET /health failed: ${response.status}: ${text.slice(0, 500)}`;
+      }
+    } catch (error) {
+      if (signal.aborted) return undefined;
+      seen = `Runpod GET /health failed: ${error instanceof Error ? error.message : String(error)}`;
+    }
+    if (seen !== this.#health) this.#log(seen);
+    this.#health = seen;
+    return workers;
   }
 
   readonly send: Upstream = async (request) => {
@@ -184,6 +222,33 @@ export class RunpodQueue {
       body: body === undefined ? undefined : JSON.stringify(body),
       signal,
     });
+  }
+}
+
+/**
+ * The workers `/health` reports: `running`, which Runpod bills (the model's load and the idle
+ * timeout included), and `initializing`, which it does not (the image's pull and a cached
+ * model's download). `idle` workers are scaled down, and `throttled` ones have no GPU; `ready`,
+ * which only the SDKs name, is not documented. Undefined when `running` is not a count.
+ * See docs/web/runpod/operation-reference.md#health and docs/web/runpod/overview.md.
+ */
+export function workerState(body: unknown): Workers | undefined {
+  if (typeof body !== "object" || body === null) return undefined;
+  const workers = (body as { workers?: unknown }).workers;
+  if (typeof workers !== "object" || workers === null) return undefined;
+  const { running, initializing = 0 } = workers as Record<string, unknown>;
+  const count = (value: unknown): value is number =>
+    typeof value === "number" && Number.isInteger(value) && value >= 0;
+  if (!count(running) || !count(initializing)) return undefined;
+  if (running > 0) return "running";
+  return initializing > 0 ? "starting" : "none";
+}
+
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
   }
 }
 
