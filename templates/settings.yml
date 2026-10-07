@@ -41,8 +41,9 @@ monthly-budget: 20
 # Consecutive implementation runs before a task is blocked.
 max-runs: 3
 
-# Tasks one run works on at once, from 1 to 10, each with its own key, agent and pod.
-# Above 1, the workflow needs codeman-task.yml next to codeman.yml.
+# Tasks one run works on at once, from 1 to 10, each with its own key and agent. Above 1,
+# tasks on pods with the same settings share one, and the workflow needs codeman-task.yml
+# next to codeman.yml.
 parallel-tasks: 1
 
 # Limits on what one run may change.

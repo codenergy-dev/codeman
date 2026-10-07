@@ -69,7 +69,7 @@ The agent job needs a Linux runner (x64 or arm64).
 
 To update a workflow copied before `codeman-task.yml` existed, copy both templates again and move any steps you added to the `agent` job into `codeman-task.yml`. The older file still runs one task per run with this version of Codeman, but `parallel-tasks` above 1 needs both files: with only the older one, each run would mark several tasks as started and work on the first.
 
-A run works on one task by default. `parallel-tasks: 2` (up to 10) in `.codeman/settings.yml` lets a run work on that many at once, each with its own key, agent and pod; the run ends when its slowest task does. On OpenRouter, it only finishes tasks sooner: each pays for its own tokens. The monthly budget holds across them: see [budget](architecture.md#budget).
+A run works on one task by default. `parallel-tasks: 2` (up to 10) in `.codeman/settings.yml` lets a run work on that many at once, each with its own key and agent; the run ends when its slowest task does. On OpenRouter, it only finishes tasks sooner: each pays for its own tokens. On pods, the run's tasks with the same pod settings share one pod and split its cost by the second, once the pod image supports it (see [pods](#pods)); on Serverless, each task counts the worker time its requests used, so time two tasks share counts for each. The monthly budget holds across them: see [budget](architecture.md#budget).
 
 ### Shared settings
 
@@ -115,6 +115,8 @@ Instead of OpenRouter, Codeman can serve the model itself on GPUs rented from [R
 
    `gpu-type` is the GPU ID in [Runpod's list of GPU types](https://docs.runpod.io/references/gpu-types) (first column), not its display name: `NVIDIA RTX PRO 6000 Blackwell Server Edition MIG 2g.48gb`, not `PRO 6000 MIG 48GB`. Choose a GPU with enough memory for the model at its full context length: Codeman loads it with the context length the model supports.
 2. Codeman runs its own pod image, `ghcr.io/codenergy-dev/codeman-pod`, public and pinned by digest in the version you use (`POD_IMAGE` in `src/inference/ollama.ts`); there is nothing to set up. To run an image of your own, set `pod-image: <image>@sha256:<digest>` on the `open-key` step.
+
+   Shared pods (`parallel-tasks` above 1) need an image whose gateway serves several runs at once, built from Codeman's code since shared pods. The image pinned before them serves one run at a time, and Codeman gives each task a pod of its own on it, as it does with any image whose gateway reports no such support ([shared pods](architecture.md#shared-pods)).
 
 ### Serverless
 

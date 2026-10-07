@@ -28,7 +28,7 @@ npm run check   # lint, type check, test and build
   - `src/harness/`: the `Harness` interface and its adapters. To add a harness, implement `install` and `command` and register it in `src/harness/index.ts`.
 - `dist/`: the bundled action. Committed, because GitHub runs actions straight from the repository. CI fails when it does not match the source, so run `npm run build` before committing.
 - `templates/`: files that target repositories copy.
-- `docker/pod/`: Codeman's pod image. [`.github/workflows/pod-image.yml`](../.github/workflows/pod-image.yml) publishes it when it or `dist/gateway.js` changes on `main`; pin the published digest in `src/inference/ollama.ts` in a commit of its own.
+- `docker/pod/`: Codeman's pod image. [`.github/workflows/pod-image.yml`](../.github/workflows/pod-image.yml) publishes it when it or `dist/gateway.js` changes on `main`; pin the published digest in `src/inference/ollama.ts` in a commit of its own. Images whose gateway serves one run at a time stay listed in `SINGLE_RUN_IMAGES` there, so tasks do not try to share their pods.
 - `docs/web/`: the documentation of the third-party services Codeman uses, one page per file under `docs/web/<third-party>/`, and in `docs/web/tools/` how each kind of page is fetched. The format is in `AGENTS.md` ("Third-party documentation"). Pages are copies only where their license allows; the others hold what Codeman relies on, in our own words.
 
 ## Conventions

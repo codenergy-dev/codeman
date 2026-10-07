@@ -1,7 +1,7 @@
 ---
-status: in progress
+status: completed
 created_at: 2026-10-06T20:43:40-03:00
-updated_at: 2026-10-06T23:37:24-03:00
+updated_at: 2026-10-07T10:21:39-03:00
 commit: 3f6983b
 ---
 
@@ -142,14 +142,23 @@ The responsible person answered every decision on 2026-10-06 with its recommenda
    - **Spend.** A run's cost is its share. A task's count of a shared pod is the gateway's figure for it (its runs' shares and the kept time it was given), as of each of its closes; Runpod's billing does not refresh a shared pod, since the bill is the pod's and the gateway, which knew who used each second, is gone once the pod is. The record marks such a pod `shared`, and `select` leaves it out of the pods whose billing `close-key` reads. So the tasks' totals add up to no more than the bill: they leave out a pod's time after its last run until it is released or terminates itself (often a minute or two, at most the 15-minute kept limit), which the month still counts from Runpod's billing.
    - **Old pod images.** The image this version pins serves one run at a time. Codeman lists it as such and gives each task its own pod, as before this step; with an unknown image (the `pod-image` input), a leg checks the gateway's `version` before it attaches, and falls back to a pod of its own. Shared pods work once a new image is published from this code and pinned in `src/inference/ollama.ts`.
    - **Serverless.** The legs' gateways run in their own agent jobs and cannot see each other's requests; sharing them would need one job to serve the others, across jobs, with the endpoint's key. Each task keeps counting the worker time its own requests overlapped, as after step 5: two tasks on the worker count the same seconds twice. A divergence from decision 3, on the side of counting more.
+
+   **Done on 2026-10-07.** As designed above, in [`src/gateway/gateway.ts`](../../src/gateway/gateway.ts) (runs at once, `podShares` in `usage.ts`, `expireRuns`, the `/admin/release` route and the status's `version`, `group`, `tasks`, `active` and `keepers`), [`src/gateway/pod.ts`](../../src/gateway/pod.ts) (the pod's limits over every run) and [`src/inference/selfhosted.ts`](../../src/inference/selfhosted.ts). What adds to the design:
+   - **Which runs share** is set by `select`: a pod choice gets `sharePods` when `parallel-tasks` is above 1, even for a task alone in its group, so that every pod made while tasks run at once is a shared one and its tasks' counts never take its whole bill; with `parallel-tasks: 1`, nothing in the choice, the sweep or the handle changes.
+   - **A pod that is gone.** A task that cannot join its group's pod (its tasks left it before this task's job started, or it failed to start) looks again and creates one; pods that are not starting or running are not candidates.
+   - **Data.** The handle of a shared run carries its task and its token's hash (not secret: the hash of 32 random bytes); `close-key` has a new output, `pod-shared`, which `apply` takes as an input of the same name (`action.yml`, `codeman-task.yml`); the record's pods gain an optional `shared`, and `select` leaves such pods out of those whose billing `close-key` reads. Records and workflow files from before read as they did.
+   - **The pod image.** `SINGLE_RUN_IMAGES` in [`src/inference/ollama.ts`](../../src/inference/ollama.ts) lists the image pinned today, so until a new image is published from this code and pinned, tasks keep a pod each, as after step 5. To enable shared pods, the responsible person runs the `pod-image` workflow (or lets it run on `main`), and pins its digest as `POD_IMAGE`, keeping the old digest in `SINGLE_RUN_IMAGES`.
+   - Tests: `gateway.test.ts` (two runs at once with their own tokens, a split where one run ends first, kept time between runs, a run spent alone among others, the admin routes), `usage.test.ts` (the split), `pod.test.ts` (a pod with several runs), `selfhosted.test.ts` with Codeman's own gateway behind the fake pods (creation by one task and attachment by another, each paying its share; keep and release with two tasks; two pods created at once ending as one, with the start shared; the next run's tasks on the pod they kept, with the kept time split; `pod-reuse: run`; a pod that cannot be reached; a gateway of an older image, and the pinned image, giving a pod per task), `index.test.ts`, `spend.test.ts` and `flow.test.ts` (the record's `shared` mark and the choice without its pod); the single-task tests are unchanged.
 7. Docs: [`docs/architecture.md`](../architecture.md) (Runs, Jobs, Settings, Self-hosted inference), [`docs/installation.md`](../installation.md) (an organization's settings) and [`docs/security.md`](../security.md) (what the variable may hold). Done when they describe each part.
 
    Part 1 (shared settings) is described as of 2026-10-06.
 
    Part 2 (inference profiles) is described as of 2026-10-06: architecture (Settings with its Inference profiles subsection, Jobs, Budget, Self-hosted inference's Choosing and Spend), installation (Inference profiles, the credentials table), the README, `action.yml` and both templates. `docs/security.md` needed no change: the key jobs hold the same secrets as before.
 
-   Part 3, parallel tasks (step 5), is described as of 2026-10-06: architecture (Runs, Jobs, Budget, Choosing, Pods, Serverless, Settings, Inference profiles), installation (both workflow files, updating, `parallel-tasks`), security (the second file, its secrets and permissions), `action.yml` and the templates. The shared GPU (step 6) is not yet.
+   Part 3, parallel tasks (step 5), is described as of 2026-10-06: architecture (Runs, Jobs, Budget, Choosing, Pods, Serverless, Settings, Inference profiles), installation (both workflow files, updating, `parallel-tasks`), security (the second file, its secrets and permissions), `action.yml` and the templates. The shared GPU (step 6) is described as of 2026-10-07: architecture (Runs, Jobs, Choosing, Layers, the gateway, Pods, a new Shared pods section, Serverless, Spend, Settings), installation (`parallel-tasks`, the pod image that shared pods need), security (several tokens on one public gateway), development (`SINGLE_RUN_IMAGES`), `action.yml` and the task template.
 8. On the test account, with the responsible person's approval of the cost: two tasks on one pod. Done when the results are recorded here.
+
+   Left to the responsible person, with the [end-to-end test](#end-to-end-test)'s parts; the plan is complete without its results, which are recorded below when the tests run.
 9. Rebuild `dist/` and run `npm run check` after each part. Done when it passes.
 
    Part 1: passed on 2026-10-06.
@@ -157,6 +166,8 @@ The responsible person answered every decision on 2026-10-06 with its recommenda
    Part 2: passed on 2026-10-06.
 
    Part 3, parallel tasks (step 5): passed on 2026-10-06.
+
+   Part 3, a shared GPU (step 6): passed on 2026-10-07.
 
 ## End-to-end test
 
@@ -214,7 +225,20 @@ Costs a few planning runs on OpenRouter. On the test repository, with both workf
 5. The monthly cap: lower `monthly-budget` so that the month's spend so far plus 1.5 task budgets fits, but not 2 (with `task-budget: 1`, about the spend plus 1.5), open two new issues and run. Check that the first leg opens its key and the second logs ``The monthly budget is reached: ..., up to US$ 1.00 is kept for the run's other tasks, ...`` and goes back to its previous state; then that the next run, with the first task's spend recorded, tries the second again. Restore the budget.
 6. Set `parallel-tasks: 1` and check that a run behaves as before: one leg, `next-run` as before. Then, with `parallel-tasks: 2`, comment an answer on an issue awaiting a decision while a new issue is open: the run records the answer and plans the new issue at once.
 
-The shared GPU's steps (step 6) follow here once that part is done.
+Results: to be recorded here.
+
+### Part 3: a shared GPU
+
+Costs pod time on Runpod (two short runs of an RTX A6000 and their start, about US$ 1) and a few Serverless runs, within the test account's budgets; the responsible person approves it first (step 8). On the test repository, with both workflow files of this version:
+
+1. Publish and pin the pod image: run the `pod-image` workflow on this commit (or push it to `main`), read the published digest, set it as `POD_IMAGE` in `src/inference/ollama.ts` (keeping the old digest in `SINGLE_RUN_IMAGES`), rebuild `dist/`, and point the test repository's workflow at that commit. Without this, check first that a run with the settings of step 2 gives each task its own pod and logs ``The pod image serves one run at a time: this task gets a pod of its own.``
+2. In `.codeman/settings.yml`: `inference: self-hosted`, `model: qwen3-coder:30b`, `gpu-type: NVIDIA RTX A6000`, `parallel-tasks: 2`, `task-budget: 1`. Open two issues with small, clear changes, label them `codeman`, and start a manual run.
+3. One pod: check that one leg's `open-key` logs ``Created pod <id> ..., for the run's tasks on the same settings; ...`` and the other's ``Sharing pod <id>, from its start, ...`` (or ``already serving``, if its job started late), with the same pod ID, and that Runpod's console lists one pod, with `CODEMAN_GROUP` in its environment. If both legs created one, check that the later one was terminated within a minute (``... created pod <id> first.``).
+4. Costs split: when both runs end, check that each `close-key` logs a run cost about half the pod's time while both ran, plus its time alone, and that the two costs add up to the pod's time from its creation to the last run's end at its price. Check each panel's spend table, and that each record's pod has `shared: true` and counts what that task's `close-key` reported in `pod-costs`.
+5. Keep and release: with both tasks going on (planned, then routing), check that both `close-key` jobs keep the pod and that no `release-pod` runs; in the next run, check that both legs join the kept pod (no new pod), and that each task's `pod-costs` grew by half the minutes the pod waited between the runs. When one task stops going on (it awaits decisions, for example), check that its `release-pod` logs ``Released pod <id> for this task; it stays for ...``, and that the last task's `release-pod` terminates it.
+6. A spent run among others: give one task `/codeman set task-budget 0.3` before a code stage, and check that its run ends with `402` while the other's goes on, and that the pod terminates itself only when every run on it is spent or silent.
+7. Serverless with two tasks: switch the settings to a Serverless endpoint (`gpu-mode: serverless`, its endpoint and model) with `parallel-tasks: 2`, run two tasks, and check that each agent job's gateway reports its own usage and that the worker's shared seconds count in both tasks (the divergence recorded in step 6).
+8. Compare with Runpod's billing the next day: the pod's bill against the sum of the tasks' counts for it (the counts should be below the bill by the time the pod waited after its last run and before it was terminated), and the month's spend in `open-key` against the account's billing.
 
 Results: to be recorded here.
 
