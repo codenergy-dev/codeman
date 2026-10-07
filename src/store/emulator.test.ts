@@ -7,6 +7,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
+import { PodRegistry } from "../inference/registry.ts";
 import { Ledger } from "../ledger.ts";
 import { FakeRuntime } from "../testing/fake-runtime.ts";
 import { seedRuns } from "../testing/ledger-runs.ts";
@@ -63,6 +64,25 @@ test("Firestore emulator: two runs that reserve at once near the monthly budget"
     where: [{ field: "status", op: "==", value: "open" }],
   });
   assert.equal(open.length, 1);
+});
+
+test("Firestore emulator: tasks that claim a pod's settings at once get one creator", {
+  skip,
+}, async () => {
+  const registry = new PodRegistry(Firestore.emulator(host, project()), "o");
+  const description = {
+    settings: "0123456789abcdef",
+    model: "qwen3-coder:30b",
+    gpuType: "GPU-A",
+    image: "ghcr.io/o/codeman-pod@sha256:1",
+    reuse: "task",
+    provider: "runpod",
+  };
+  const claims = await Promise.all(
+    ["o/r#7", "o/s#7"].map((holder) => registry.claim(description, holder, "300")),
+  );
+  assert.deepEqual(claims.map((claim) => claim.kind).sort(), ["create", "wait"]);
+  assert.equal((await registry.live()).length, 1);
 });
 
 const rulesSkip = jar

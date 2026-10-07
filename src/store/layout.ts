@@ -17,6 +17,12 @@ export const LAYOUT = {
   /** What the jobs did, one document each, named after its run and what happened. */
   events: (owner: string) => `${LAYOUT.organization(owner)}/events`,
   event: (owner: string, event: string) => `${LAYOUT.events(owner)}/${documentId(event)}`,
+  /**
+   * The pod registry: a pod Codeman created, named by the nonce of its admin token, which the
+   * task that creates it draws first; with the leases of the tasks that use or keep it.
+   */
+  pods: (owner: string) => `${LAYOUT.organization(owner)}/pods`,
+  pod: (owner: string, nonce: string) => `${LAYOUT.pods(owner)}/${documentId(nonce)}`,
 } as const;
 
 /**
