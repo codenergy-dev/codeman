@@ -1,7 +1,7 @@
 ---
-status: pending
+status: in progress
 created_at: 2026-10-06T20:43:40-03:00
-updated_at: 2026-10-06T21:00:00-03:00
+updated_at: 2026-10-06T22:44:26-03:00
 commit: 3f6983b
 ---
 
@@ -100,14 +100,40 @@ The responsible person answered every decision on 2026-10-06 with its recommenda
 ## Steps
 
 1. Read and record GitHub's pages on variables (limits, who can read and set them), on matrices (`strategy.matrix`, `fail-fast`, `max-parallel`) and on concurrency, in `docs/web/github/`. Done when the pages are there and this plan is updated with what differs.
+
+   **Done on 2026-10-06.** Recorded in full (CC BY 4.0): [Variables](../web/github/variables.md), [Store information in variables](../web/github/store-information-in-variables.md), [Variables reference](../web/github/variables-reference.md), [Running variations of jobs in a workflow](../web/github/running-variations-of-jobs-in-a-workflow.md), [Concurrency](../web/github/concurrency.md) and [Control the concurrency of workflows and jobs](../web/github/control-the-concurrency-of-workflows-and-jobs.md). What they add to the context:
+   - Variables: only organization owners create an organization's variables, each with a repository access policy; private repositories on GitHub Free cannot read them; a variable holds at most 48 KB; an unset variable reads as an empty string; variables are shown unmasked in the logs. A repository variable with the same name takes precedence over the organization's, whole: it cannot override single values, so a repository does that in its file, as decision 7 intends.
+   - For part 3: in a matrix with `fail-fast: true`, a failing job cancels the jobs in progress and queued, so the agent jobs need `fail-fast: false` for one failing task to leave the others; `max-parallel` caps the jobs at once. A concurrency group now also takes `queue: max` (up to 100 pending runs), besides the default single pending run that replaces the previous one; `concurrency: codeman` keeps the default.
 2. Shared settings (decision 7): the `settings` input, its layer, the template's `vars.CODEMAN_SETTINGS`, and the log of each value's source. Done when `settings` and `select` tests cover the four layers.
+
+   **Done on 2026-10-06.** As planned. The layer order is: task commands, a manual run's inputs, `.codeman/settings.yml`, the `settings` input, Codeman's defaults. An empty input is no layer, so older workflow files work unchanged. Errors in the input name it as ``the `settings` input (organization variable CODEMAN_SETTINGS)``, and stop the run like a malformed file. `select` logs a line per layer with the values that come from it (`Settings from .codeman/settings.yml: model=..., max-runs=9.`); values are short scalars. The language of a refusal panel, read before a task is picked, also falls back to the organization's. Docs: architecture (Settings, Jobs), installation (Shared settings, credentials table), security (Secrets), the README, the template and `action.yml`.
 3. The settings format (decision 4): the parser's subset, with errors that name the line, and the profiles' fields and conditions. Done when `settings` tests cover valid and invalid profiles, and today's flat files read the same.
 4. Profiles (decisions 5 and 6): each run's profile, passed to the jobs as `select`'s `inference` output is today; the task's and month's spend across providers; a profile's provider whose secret is missing reported as a problem. Done when tests cover a profile per stage, a fallback, a task's override and a task that used two providers.
 5. Parallel tasks (decision 1): `select` picks up to `parallel-tasks` tasks, and the jobs run as a matrix, each task's `apply` writing only its own task. Done when tests cover two tasks moving in one run, one failing, and `next-run`.
 6. A shared GPU (decisions 2 and 3): the gateway's runs at once, its cost split, a pod kept while any of its tasks goes on, and the Serverless gateway shared by the agent jobs of a run. Done when gateway and inference tests cover two runs at once, a split, and a run that ends before the other.
 7. Docs: [`docs/architecture.md`](../architecture.md) (Runs, Jobs, Settings, Self-hosted inference), [`docs/installation.md`](../installation.md) (an organization's settings) and [`docs/security.md`](../security.md) (what the variable may hold). Done when they describe each part.
+
+   Part 1 (shared settings) is described as of 2026-10-06.
 8. On the test account, with the responsible person's approval of the cost: two tasks on one pod. Done when the results are recorded here.
 9. Rebuild `dist/` and run `npm run check` after each part. Done when it passes.
+
+   Part 1: passed on 2026-10-06.
+
+## End-to-end test
+
+### Part 1: shared settings
+
+No GPU and no cost beyond a planning run on OpenRouter. On a test organization with a test repository that runs Codeman (its workflow updated to this version, with the `settings: ${{ vars.CODEMAN_SETTINGS }}` line):
+
+1. Remove `model` and `task-budget` from the test repository's `.codeman/settings.yml`, keeping a value such as `max-runs: 3`.
+2. As an organization owner, create the organization variable `CODEMAN_SETTINGS` with `model: <an OpenRouter model ID>`, `task-budget: 1` and `max-runs: 5`, and grant the test repository access to it.
+3. Open an issue as a maintainer, label it `codeman`, and start a manual run (**Run workflow**) with empty inputs. Check that the run plans the task with the organization's model, and that the `select` step's log has ``Settings from .codeman/settings.yml: max-runs=3.`` and ``Settings from the `settings` input (organization variable CODEMAN_SETTINGS): model=..., task-budget=1.`` (`select` logs the settings only when it picks a task.)
+4. Add `task-budget: 2` to the repository's file on the default branch, close the first issue, open a second one and run again. Check that `task-budget=2` moved to the file's line, and that the panel's budget shows 2.
+5. Close it, open a third issue whose description has the line `/codeman set task-budget 3`, and start a manual run with `max-runs` set to 4. Check the lines of the task's commands (`task-budget=3`) and of the workflow's inputs (`max-runs=4`), and that the organization's line keeps only `model`.
+6. Change the variable to a malformed line, such as `secret: x`, and run. Check that `select` fails with ``the `settings` input (organization variable CODEMAN_SETTINGS), line 1: unknown setting `secret`.`` and that no other job ran.
+7. Restore the variable, or delete it and put `model` back in the file; check that a run without the variable behaves as before.
+
+Results: to be recorded here.
 
 ## Out of scope
 
