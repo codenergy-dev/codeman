@@ -7,9 +7,11 @@ import { FakeRuntime } from "../testing/fake-runtime.ts";
 import { agentAccess } from "./access.ts";
 import type { Endpoint } from "./gpu.ts";
 import {
+  MAX_USAGE_CHARS,
   type ServerlessHandle,
   ServerlessInference,
   type ServerlessSettings,
+  usageReport,
 } from "./selfhosted.ts";
 import { vllm, vllmContextLength, vllmProblems } from "./vllm.ts";
 
@@ -103,6 +105,68 @@ test("close costs the run from what the agent job's gateway measured", async () 
   const runtime = new FakeRuntime();
   assert.deepEqual(await provider({}, "").close(handle, runtime), { cost: 1.6 });
   assert.match(runtime.logged("warning")[0] ?? "", /whole limit, US\$ 1\.60/);
+});
+
+test("close returns the run's billed times on the endpoint's worker, for the ledger's split", async () => {
+  const report = (busy: unknown) =>
+    JSON.stringify({
+      requests: 1,
+      inputTokens: 9,
+      outputTokens: 3,
+      cost: 0.02,
+      start: 1,
+      end: 2,
+      busy,
+    });
+  const handle = JSON.stringify({
+    mode: "serverless",
+    endpoint: "ep1",
+    url: "u",
+    pricePerSecond: 0.001,
+    idleSeconds: 5,
+    limit: 1.6,
+  });
+  const busy = [
+    [1_000, 11_000],
+    [20_000, 30_000],
+  ];
+  const usage = await provider({}, report(busy)).close(handle, new FakeRuntime());
+  assert.deepEqual(usage.busy, { endpoint: "ep1", pricePerSecond: 0.001, spans: busy });
+  assert.equal(usage.cost, 0.02);
+  // Times out of order, or not numbers, leave the run out of the split, at its own estimate.
+  for (const wrong of [
+    [
+      [20_000, 30_000],
+      [1_000, 11_000],
+    ],
+    [[1, "2"]],
+    [[5, 1]],
+    "x",
+  ]) {
+    const unsplit = await provider({}, report(wrong)).close(handle, new FakeRuntime());
+    assert.equal(unsplit.busy, undefined);
+    assert.equal(unsplit.cost, 0.02);
+  }
+});
+
+test("a usage report too large for GitHub's job outputs leaves out the billed times", () => {
+  const usage = { requests: 1, inputTokens: 9, outputTokens: 3, cost: 0.02, start: 1, end: 2 };
+  const warnings: string[] = [];
+  const few: [number, number][] = [[1, 2]];
+  assert.equal(
+    usageReport({ ...usage, busy: few }, (text) => warnings.push(text)).includes('"busy"'),
+    true,
+  );
+  const many = Array.from({ length: 10_000 }, (_, i): [number, number] => [
+    1_791_000_000_000 + i * 2,
+    1_791_000_000_001 + i * 2,
+  ]);
+  const text = usageReport({ ...usage, busy: many }, (warning) => warnings.push(warning));
+  assert.ok(text.length <= MAX_USAGE_CHARS);
+  assert.deepEqual(JSON.parse(text), usage);
+  assert.deepEqual(warnings, [
+    "The run's 10000 billed time span(s) do not fit in the job's output; the run counts its own estimate, unsplit.",
+  ]);
 });
 
 const servers: Server[] = [];
@@ -354,6 +418,7 @@ test("the agent job's gateway counts a cold start from when /health sees a worke
   const usage = await access.finish();
   // 30 seconds, and the idle timeout after the request: US$ 0.035.
   assert.equal(cents(usage?.cost), 3.5);
+  assert.deepEqual(usage?.busy, [[1_060_000, 1_095_000]], "the times the estimate counts");
 });
 
 test("when /health fails, the agent job's gateway counts each request's whole span", async () => {

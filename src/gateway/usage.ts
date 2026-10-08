@@ -37,6 +37,11 @@ export interface GatewayUsage {
   /** When the run started and when this was read, in milliseconds since the epoch. */
   start: number;
   end: number;
+  /**
+   * For a busy meter, the times a worker was billed for the run (`busySpans`): its cost is their
+   * length at the meter's price.
+   */
+  busy?: Span[] | undefined;
 }
 
 /**
@@ -52,34 +57,39 @@ export interface WorkerSample {
 }
 
 /**
- * Milliseconds a worker was billed for the run: the union of each request's span, extended by
- * the idle timeout after it, less the time between two samples that both saw no worker running.
- * Requests still running count until `now`. Time no pair of samples covers, such as after the
- * last one, is unknown and counts: without samples, every span does.
+ * The times a worker was billed for the run, in order: the union of each request's span, extended
+ * by the idle timeout after it, less the time between two samples that both saw no worker
+ * running. Requests still running count until `now`. Time no pair of samples covers, such as
+ * after the last one, is unknown and counts: without samples, every span does.
  */
+export function busySpans(
+  records: readonly RequestRecord[],
+  idleMs: number,
+  now: number,
+  samples: readonly WorkerSample[] = [],
+): Span[] {
+  const spans = merge(records.map((record): Span => [record.start, (record.end ?? now) + idleMs]));
+  const unbilledSpans: Span[] = [];
+  for (let i = 1; i < samples.length; i++) {
+    const a = samples[i - 1] as WorkerSample;
+    const b = samples[i] as WorkerSample;
+    if (unbilled(a) && unbilled(b)) unbilledSpans.push([a.at, b.at]);
+  }
+  return subtract(spans, merge(unbilledSpans));
+}
+
+/** Milliseconds a worker was billed for the run: the length of its `busySpans`. */
 export function busyMs(
   records: readonly RequestRecord[],
   idleMs: number,
   now: number,
   samples: readonly WorkerSample[] = [],
 ): number {
-  const spans = merge(records.map((record): Span => [record.start, (record.end ?? now) + idleMs]));
-  let total = spans.reduce((sum, [from, to]) => sum + to - from, 0);
-  let first = 0;
-  for (let i = 1; i < samples.length; i++) {
-    const a = samples[i - 1] as WorkerSample;
-    const b = samples[i] as WorkerSample;
-    if (!unbilled(a) || !unbilled(b)) continue;
-    while (first < spans.length && (spans[first] as Span)[1] <= a.at) first++;
-    for (let j = first; j < spans.length && (spans[j] as Span)[0] < b.at; j++) {
-      const [from, to] = spans[j] as Span;
-      total -= Math.max(0, Math.min(to, b.at) - Math.max(from, a.at));
-    }
-  }
-  return total;
+  return busySpans(records, idleMs, now, samples).reduce((sum, [from, to]) => sum + to - from, 0);
 }
 
-type Span = readonly [number, number];
+/** A time span, from and to, in milliseconds since the epoch. */
+export type Span = readonly [number, number];
 
 /** Overlapping spans joined, in order. */
 function merge(spans: Span[]): Span[] {
@@ -90,6 +100,23 @@ function merge(spans: Span[]): Span[] {
     else merged.push([from, to]);
   }
   return merged;
+}
+
+/** What remains of `spans` outside `holes`; both in order, and neither overlapping itself. */
+function subtract(spans: readonly Span[], holes: readonly Span[]): Span[] {
+  const left: Span[] = [];
+  let first = 0;
+  for (const [from, to] of spans) {
+    let start = from;
+    while (first < holes.length && (holes[first] as Span)[1] <= start) first++;
+    for (let i = first; i < holes.length && (holes[i] as Span)[0] < to; i++) {
+      const [holeFrom, holeTo] = holes[i] as Span;
+      if (holeFrom > start) left.push([start, holeFrom]);
+      start = Math.max(start, holeTo);
+    }
+    if (start < to) left.push([start, to]);
+  }
+  return left;
 }
 
 /** Whether the sample saw that no worker was billed. */
@@ -164,6 +191,47 @@ export function podShares(
   return shares;
 }
 
+/** A run's billed times on a Serverless worker, and its price, for `busyShares`. */
+export interface BusyRun {
+  id: string;
+  /** In order, and not overlapping each other. */
+  busy: readonly Span[];
+  pricePerSecond: number;
+}
+
+/**
+ * What each run owes for a worker that several runs used at once, in USD, by run ID (decision 1
+ * of the Serverless split plan): each millisecond in the billed times of several runs is split
+ * evenly among them, each at its own price, as a pod's seconds are among its runs. A run alone
+ * owes its billed times whole.
+ */
+export function busyShares(runs: readonly BusyRun[]): Map<string, number> {
+  const changes: { at: number; run: BusyRun; delta: number }[] = [];
+  for (const run of runs) {
+    for (const [from, to] of run.busy) {
+      if (to <= from) continue;
+      changes.push({ at: from, run, delta: 1 }, { at: to, run, delta: -1 });
+    }
+  }
+  changes.sort((a, b) => a.at - b.at);
+  const shares = new Map(runs.map((run) => [run.id, 0]));
+  const on = new Map<BusyRun, number>();
+  let last = 0;
+  for (const change of changes) {
+    if (on.size > 0 && change.at > last) {
+      const seconds = (change.at - last) / 1000;
+      for (const run of on.keys()) {
+        shares.set(run.id, (shares.get(run.id) ?? 0) + (seconds * run.pricePerSecond) / on.size);
+      }
+    }
+    last = change.at;
+    const count = (on.get(change.run) ?? 0) + change.delta;
+    if (count > 0) on.set(change.run, count);
+    else on.delete(change.run);
+  }
+  return shares;
+}
+
 /** Sums a run's requests as OpenRouter reports a key's. */
 export function summarize(
   records: readonly RequestRecord[],
@@ -196,6 +264,7 @@ export function summarize(
     cost: meterCost(meter, start, records, now, samples),
     start,
     end: now,
+    ...(meter.kind === "busy" ? { busy: busySpans(records, meter.idleMs, now, samples) } : {}),
   };
 }
 

@@ -1,3 +1,4 @@
+import type { Span } from "../gateway/usage.ts";
 import type { Log } from "../runtime/runtime.ts";
 
 /**
@@ -103,4 +104,17 @@ export interface RunUsage {
   keptPod?: string | undefined;
   /** What the provider did with pods to close the run, for the ledger. */
   pods?: PodEvent[] | undefined;
+  /** A Serverless run's billed times, when its gateway reported them. */
+  busy?: BusyTime | undefined;
+}
+
+/**
+ * A Serverless run's billed times on its endpoint's worker, which the ledger splits with the
+ * other runs that used the worker at the same times.
+ */
+export interface BusyTime {
+  endpoint: string;
+  pricePerSecond: number;
+  /** In order, not overlapping, in milliseconds since the epoch. */
+  spans: Span[];
 }

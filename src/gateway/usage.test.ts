@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   busyMs,
+  busyShares,
+  busySpans,
   EventReader,
   meterCost,
   podShares,
@@ -80,6 +82,71 @@ test("time a sample could not tell counts, as without samples", () => {
   assert.equal(busyMs(requests, 5_000, 99_999, unknown), busyMs(requests, 5_000, 99_999));
   const gap = samples(0, "none", "none", undefined, "none", "none", "none", "none");
   assert.equal(busyMs(requests, 5_000, 99_999, gap), 15_000);
+});
+
+test("a run's billed times are its spans after the idle timeout, less what samples saw unbilled", () => {
+  const requests = [
+    { start: 0, end: 10_000 },
+    { start: 20_000, end: 30_000 },
+  ];
+  // The worker scaled down from 15 to 20 seconds, within the idle timeout after the first request.
+  const states = samples(0, "running", "running", "running", "none", "none", "running", "running");
+  assert.deepEqual(busySpans(requests, 15_000, 99_999, states), [
+    [0, 15_000],
+    [20_000, 45_000],
+  ]);
+  assert.equal(busyMs(requests, 15_000, 99_999, states), 40_000);
+  // A wait without a worker cuts the span; unknown samples do not.
+  const waits = samples(0, undefined, "none", "starting", "running", undefined);
+  assert.deepEqual(busySpans([{ start: 0, end: 20_000 }], 0, 99_999, waits), [
+    [0, 5_000],
+    [10_000, 20_000],
+  ]);
+  assert.deepEqual(busySpans([], 5_000, 0, waits), []);
+});
+
+test("a Serverless run reports its billed times, whose length at the price is its cost; a pod's does not", () => {
+  const records = [
+    { start: 0, end: 4_000 },
+    { start: 20_000, end: 22_000 },
+  ];
+  const busy = summarize(records, { kind: "busy", pricePerSecond: 0.5, idleMs: 1_000 }, 0, 30_000);
+  assert.deepEqual(busy.busy, [
+    [0, 5_000],
+    [20_000, 23_000],
+  ]);
+  assert.equal(busy.cost, 4);
+  const pod = summarize(records, { kind: "time", pricePerSecond: 0.5 }, 0, 30_000);
+  assert.equal(pod.busy, undefined);
+  assert.equal("busy" in pod, false, "a pod's usage is as before");
+});
+
+test("splits a worker's billed time among the runs that used it at once, each at its price", () => {
+  const shares = busyShares([
+    // 10 seconds alone, then 10 with run b, then 10 with b and c.
+    { id: "a", busy: [[0, 30_000]], pricePerSecond: 1 },
+    {
+      id: "b",
+      busy: [
+        [10_000, 30_000],
+        [40_000, 50_000],
+      ],
+      pricePerSecond: 1,
+    },
+    { id: "c", busy: [[20_000, 30_000]], pricePerSecond: 0.6 },
+    // Touching another run's time is not sharing it.
+    { id: "d", busy: [[50_000, 60_000]], pricePerSecond: 1 },
+    { id: "e", busy: [], pricePerSecond: 1 },
+  ]);
+  const rounded = Object.fromEntries(
+    [...shares].map(([id, cost]) => [id, Number(cost.toFixed(6))]),
+  );
+  assert.deepEqual(rounded, { a: 18.333333, b: 18.333333, c: 2, d: 10, e: 0 });
+  // Alone, a run owes its billed time whole.
+  assert.deepEqual(
+    [...busyShares([{ id: "a", busy: [[0, 30_000]], pricePerSecond: 1 }])],
+    [["a", 30]],
+  );
 });
 
 test("splits a pod's seconds among its runs, and seconds without one among its keepers", () => {

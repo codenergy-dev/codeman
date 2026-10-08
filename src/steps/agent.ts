@@ -6,6 +6,7 @@ import { harnesses } from "../harness/index.ts";
 import { type AgentAccess, agentAccess } from "../inference/access.ts";
 import { ENGINES } from "../inference/engines.ts";
 import { agentMode, inferenceChoice } from "../inference/index.ts";
+import { usageReport } from "../inference/selfhosted.ts";
 import { outputLimits, outputProblems } from "../output.ts";
 import {
   fixPrompt,
@@ -168,7 +169,11 @@ async function agentJob(services: Services, reached: () => void): Promise<void> 
   } finally {
     // The run's token stops working, and what the gateway measured goes to close-key.
     const usage = await access.finish();
-    if (usage) runtime.output("gateway-usage", JSON.stringify(usage));
+    if (usage)
+      runtime.output(
+        "gateway-usage",
+        usageReport(usage, (text) => runtime.warning(text)),
+      );
   }
 
   const out = resultDir(runtime);

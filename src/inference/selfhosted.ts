@@ -2,7 +2,7 @@ import { createHmac, randomBytes } from "node:crypto";
 import { usd } from "../budget.ts";
 import { type EndedRun, GATEWAY_VERSION, sha256 } from "../gateway/gateway.ts";
 import { GATEWAY_PORT } from "../gateway/pod.ts";
-import type { GatewayUsage } from "../gateway/usage.ts";
+import type { GatewayUsage, Span } from "../gateway/usage.ts";
 import type { RepositoryRef } from "../platform/types.ts";
 import type { Log } from "../runtime/runtime.ts";
 import { repositoryName } from "../store/layout.ts";
@@ -915,8 +915,38 @@ export class ServerlessInference implements InferenceProvider {
       requests: usage.requests,
       maxInputTokens: usage.maxInputTokens,
       tokensPerSecond: usage.tokensPerSecond,
+      ...(usage.busy
+        ? {
+            busy: {
+              endpoint: handle.endpoint,
+              pricePerSecond: handle.pricePerSecond,
+              spans: usage.busy,
+            },
+          }
+        : {}),
     };
   }
+}
+
+/**
+ * Characters of the agent job's usage report at most: GitHub keeps 1 MB of a job's outputs,
+ * counted in UTF-16, and 50 MB of a workflow run's, which ten parallel tasks stay far below.
+ */
+export const MAX_USAGE_CHARS = 200_000;
+
+/**
+ * The gateway's usage as the agent job outputs it. A report too large for GitHub's outputs leaves
+ * out the run's billed times: the run then counts its own estimate, and takes no part in the
+ * split with the endpoint's other runs, whose shared time with it counts whole.
+ */
+export function usageReport(usage: GatewayUsage, warn: (message: string) => void): string {
+  const text = JSON.stringify(usage);
+  if (text.length <= MAX_USAGE_CHARS) return text;
+  const { busy, ...rest } = usage;
+  warn(
+    `The run's ${busy?.length ?? 0} billed time span(s) do not fit in the job's output; the run counts its own estimate, unsplit.`,
+  );
+  return JSON.stringify(rest);
 }
 
 /** The gateway's usage report, as the agent job outputs it; undefined when missing or invalid. */
@@ -932,5 +962,21 @@ export function parseUsage(text: string): GatewayUsage | undefined {
     typeof field === "number" && Number.isFinite(field) && field >= 0;
   if (!usage || !finite(usage.cost) || !finite(usage.requests)) return undefined;
   if (!finite(usage.inputTokens) || !finite(usage.outputTokens)) return undefined;
-  return usage as GatewayUsage;
+  // Billed times that are not in order, or not numbers, are left out: the run is not split.
+  const { busy, ...rest } = usage as GatewayUsage;
+  return spansInOrder(busy) ? { ...rest, busy } : rest;
+}
+
+/** Whether `value` holds spans in milliseconds, each after the one before it. */
+function spansInOrder(value: unknown): value is Span[] {
+  if (!Array.isArray(value)) return false;
+  let last = Number.NEGATIVE_INFINITY;
+  for (const span of value as unknown[]) {
+    if (!Array.isArray(span) || span.length !== 2) return false;
+    const [from, to] = span as unknown[];
+    if (typeof from !== "number" || typeof to !== "number") return false;
+    if (!Number.isFinite(from) || !Number.isFinite(to) || from < last || to < from) return false;
+    last = to;
+  }
+  return true;
 }
