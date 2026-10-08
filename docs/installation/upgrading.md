@@ -10,7 +10,7 @@ Settings written before the [provider settings plan](../plans/2026-10-08-provide
 - `gpu-provider` and `gpu-mode` go.
 - `inference-profiles` becomes `profiles`.
 
-A task that changed its GPU with `/codeman set gpu-type` needs `/codeman set gpu` instead.
+A task that changed its GPU with `/codeman set gpu-type` needs `/codeman set gpu` instead: the old command is reported as a problem that gives the new name.
 
 ## Workflow files copied before the backend
 

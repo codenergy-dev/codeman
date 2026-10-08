@@ -59,7 +59,7 @@ It encrypts each task key, or self-hosted run token, while it travels from the j
 
 Codeman records each run, what it cost and what its jobs did, in [Cloud Firestore](https://firebase.google.com/docs/firestore), in a Firebase project of its own; see [backend](../backend/backend.md). Its jobs reach it as a service account, with the OIDC token GitHub gives each job, so no key is stored anywhere. One project serves every repository of the organization, and several organizations if you like. The backend is required: without its variables, every run fails in `select`, saying which to set.
 
-Firestore's free quota (50,000 reads and 20,000 writes a day) covers Codeman's use by far, so the project needs no billing account. You need a Google account; the commands below run in [Cloud Shell](https://shell.cloud.google.com), which has `gcloud`, or anywhere `gcloud` is installed.
+Firestore's free quota covers Codeman's use by far ([cost](../backend/backend.md)), so the project needs no billing account. You need a Google account; the commands below run in [Cloud Shell](https://shell.cloud.google.com), which has `gcloud`, or anywhere `gcloud` is installed.
 
 1. **Create the project.** In the [Firebase console](https://console.firebase.google.com), **Create a project**, named for instance `codeman-ops`; Google Analytics is not needed. Note its **project ID** (Project settings), which may differ from its name.
 2. **Create the database.** Under **Build → Firestore Database**, **Create database**: **Standard edition**, the database ID `(default)`, a location near GitHub's runners (such as `nam5` or `us-east1`; it cannot be changed later), and **production mode**.

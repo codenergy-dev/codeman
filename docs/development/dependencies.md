@@ -115,7 +115,7 @@ Audited on 2026-10-07 for the [backend plan](../plans/2026-10-07-firestore-backe
 - **Why:** what jobs share across runs and repositories, atomically: the ledger now, budget reservations, pod leases and endpoints' intervals next. GitHub cannot hold it, and the responsible person wants no Codeman service to host.
 - **Data:** Codeman's records of runs (repository and task numbers, stages, models, limits, costs, tokens, pods) and events. No secret, no code, no issue text.
 - **Credentials:** none stored. Jobs act as a service account through Workload Identity Federation ([deployment pipelines](../web/google-cloud/configure-workload-identity-federation-with-deployment-pipelines.md)); the service account has only Cloud Datastore User (`roles/datastore.user`, [IAM roles](../web/firebase/identity-and-access-management-iam.md)), and its tokens last an hour, scoped to Firestore. The security rules deny every client ([rules](../web/firebase/get-started-with-cloud-firestore-security-rules.md)).
-- **Spending:** none within the free quota of 50,000 reads and 20,000 writes a day, which applies to one database per project ([billing](../web/firebase/understand-cloud-firestore-billing.md)); a project without a billing account cannot go beyond it.
+- **Spending:** none within the free quota ([cost](../backend/backend.md)), which applies to one database per project ([billing](../web/firebase/understand-cloud-firestore-billing.md)); a project without a billing account cannot go beyond it.
 - **Terms:** Google Cloud's and Firebase's terms; Google's documentation is CC BY 4.0, so the pages in `docs/web/` are copies.
 
 ### Firestore's emulator

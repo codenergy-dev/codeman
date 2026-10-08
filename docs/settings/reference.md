@@ -30,7 +30,7 @@ When `select` picks a task, its log has a line per layer, naming the values that
 | `profiles` | none | A provider, a model and that provider's settings for some runs; see [profiles](profiles.md) |
 | `parallel-tasks` | `1` | Tasks one run works on at once, from 1 to 10, each in its own jobs; see [runs](../runs/runs-and-jobs.md#runs). Tasks on pods with the same settings share one, whatever this says ([shared pods](../inference/pods.md#shared-pods)) |
 
-The settings that only some providers accept (`engine`, `gpu`, `endpoint`, `pod-reuse`) are in [providers](providers.md). Some settings had other names before the [provider settings plan](../plans/2026-10-08-provider-settings.md): `inference`, `gpu-provider` and `gpu-mode` are now `provider`; `gpu-type` is `gpu`; `serverless-endpoint` is `endpoint`; `inference-profiles` is `profiles`. An old name stops the run with an error that gives the new one, in the file, the organization's settings and a profile; `/codeman set gpu-type` is reported as a problem that does too.
+The settings that only some providers accept (`engine`, `gpu`, `endpoint`, `pod-reuse`) are in [providers](providers.md). Some settings had other names before the [provider settings plan](../plans/2026-10-08-provider-settings.md); an old name stops the run with an error that gives the new one, and [upgrading](../installation/upgrading.md#old-setting-names) lists them.
 
 The `max-*-chars` and count limits are what the agent is told; see [agent output](../runs/agent.md#agent-output) for the margin.
 
