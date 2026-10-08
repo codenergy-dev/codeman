@@ -1,7 +1,7 @@
 ---
-status: in progress
+status: completed
 created_at: 2026-10-07T14:56:15-03:00
-updated_at: 2026-10-07T21:10:02-03:00
+updated_at: 2026-10-07T21:15:02-03:00
 commit: a8594ea
 ---
 
@@ -62,10 +62,36 @@ Refined on 2026-10-07 against the backend, the ledger and the pod registry as bu
    - **Choice: what is written.** Only `cost`, never `limit` or `status`: an open run keeps counting its whole limit (its reservation), and a run that is not `closed` (expired, failed, or reopened) is left alone. The budgets read the new `cost` as any other: the task's total and the repository's month at once, and the organization's month spread over the run's time, reconciled with Runpod's billed hours, which still count the worker's time no run accounts for.
    - **Done on 2026-10-07**: `Ledger.close` records the run's `endpoint` and keeps its billed times; `flush`, after the job's writes and pods' untracked time, runs `#split` for each, a transaction of up to 20 attempts, wrapped in the ledger's retries. `busyShares` in [`usage.ts`](../../src/gateway/usage.ts); `LAYOUT.endpoint`, `endpointRuns` and `endpointRun` in [`layout.ts`](../../src/store/layout.ts). `close-key` logs whether the run used the worker alone so far, or what it counts of its estimate and how many other runs count less now. Tests in `ledger.test.ts`: two repositories' runs that overlap, the first closing alone at its estimate and then lowered by the second's close, with the repository's and the organization's months before and after, an open run's limit untouched, and a re-run of the second `close-key`; a run reopened by `open-key`, whose earlier attempt's time still splits and whose reservation is left alone; `close-key`'s `task-costs` and `task-total` with the share, and the other task's next `close-key` with its run's share. `emulator.test.ts`: two closes at once on Firestore's emulator, which both end at their shares.
 3. **The spend table, the task's total and docs.** `close-key` already outputs the task's total and runs' costs from the ledger after its writes, so the closing task's `apply` shows its split cost, and each other task's at its next `apply` (decision 2). `close-key` logs the split. The spend table's Serverless note says that time shared with other runs is split, and later runs refresh it (English and Portuguese). Docs: [architecture](../architecture.md) (Choosing, Serverless, Spend, Budget, Backend's data layout and ledger), the agent job's comment in the task template, `action.yml`. Rebuild `dist/` and run `npm run check`. Done when they pass.
+   - **Done on 2026-10-07**: the Serverless note under the spend table ([`en.ts`](../../src/i18n/en.ts), [`pt-BR.ts`](../../src/i18n/pt-BR.ts)) adds that time a worker served several runs at once, of any of the organization's repositories, is split among them, and later runs refresh it. Docs: [architecture](../architecture.md) (Jobs' `close-key`, Budget's report of the runs' costs, Choosing, Serverless with a new "Splitting" item and the live limit's double count, Spend, Backend's cost, data layout with the endpoints' runs and the run's `endpoint`, and the ledger), [installation](../installation.md) (`parallel-tasks` on Serverless), [security](../security.md) (risk 3: a step added to the agent job can change the usage report, which moves cost between runs but does not lower their total), the task template's comments on `agent` and `close-key`, and `action.yml` (`gateway-usage`). `npm run check`: 454 tests, 452 pass and 2 skipped (the sandbox's, Linux runners only); the 13 emulator tests ran on the emulator of Firebase's cache.
+   - **The pod image.** `dist/gateway.js` changed (`busySpans`, `subtract`, and `summarize`'s `busy` for a busy meter): on `main`, the pod image workflow publishes a new image. A pod's gateway uses a time meter, so its behavior and API are the same, and `POD_IMAGE` needs no new pin for this plan.
 
 ## End-to-end test
 
-To be written by the implementer with the steps, covering two parallel tasks on one endpoint, whose costs add up to about the worker's billed time for those hours.
+On the test repository and a second repository of the same organization, with the backend set up as the [backend plan's test](2026-10-07-firestore-backend.md#end-to-end-test) left it, and the Serverless endpoint of the [Serverless plan's test](2026-10-06-serverless-cost-from-worker-state.md#end-to-end-test) (max workers 1, an idle timeout of 300 seconds or less). **Cost**: about US$ 1.50 of Serverless worker time, at most US$ 3: two tasks at once on the worker for about 20 minutes, one start included, then a task of each repository at once for about 15 minutes. No pod and no OpenRouter spend. Keep `organization-monthly-budget` at US$ 10 or more, or unset, during the test.
+
+1. **Workflow files and settings.**
+   1. Copy `templates/codeman.yml` and `templates/codeman-task.yml` of the commit under test into both repositories' `.github/workflows/`, with `COMMIT_SHA` replaced by that commit, and keep the steps the test repository adds to the `agent` job. Both repositories receive `CODEMAN_RUNPOD_API_KEY` and `CODEMAN_RUNPOD_SERVERLESS_KEY`. Pushing `main` publishes a new pod image, since `dist/gateway.js` changed; this test uses no pod, and nothing needs pinning.
+   2. In both repositories' `.codeman/settings.yml`, set the endpoint, with `task-budget: 1.5` so a run stays under its limit, and in the test repository also `parallel-tasks: 2`:
+
+      ```yaml
+      inference: self-hosted
+      gpu-mode: serverless
+      serverless-endpoint: <the endpoint's ID>
+      model: <the endpoint's MODEL_NAME>
+      task-budget: 1.5
+      ```
+
+   3. Start the test at the beginning of a UTC hour, with no worker running in the endpoint's **Workers** tab, and use the endpoint for nothing else until the hour after the test, so its billing for those hours is the test's alone.
+2. **Two tasks at once on one worker.** In the test repository, open two issues with small, clear changes, label them `codeman`, and start a manual run. Both agent jobs run at once; each log has `Runpod's workers` lines, and the endpoint's **Workers** tab shows one worker serving both.
+   - The `Close key` that ends first logs "This run spent US$ A." (its gateway's estimate) and "Recorded the run's time on endpoint `<endpoint>`'s worker in Codeman's ledger; no other run used it at the same time so far." In **Firestore Database → Data**, its run's document, `organizations/<owner>/runs/<run ID>-1-<issue>`, has `endpoint` and `cost` A, while the other run is still `open` with its `limit`.
+   - The second `Close key` logs "This run spent US$ B." and "The run shared endpoint `<endpoint>`'s worker with 1 other run(s) of the organization: it counts US$ B′ of its US$ B estimate, and 1 other run(s) count less now.", with B′ below B. The first run's `cost` is now A′, below A, and B′ − B equals A′ − A: the shared time moved from each to half each.
+   - `organizations/<owner>/endpoints/<endpoint>/runs/` has one document per run, named `<run ID>-1-<issue>-<reservation in milliseconds>`, with `repository`, `from`, `to`, `busy` (the billed times, as `[from, to]` pairs in milliseconds), `estimate` (A, then B) and `share` (A′, then B′).
+   - The second task's spend table shows B′ in its row. The first task's shows A until its next run: when it goes on (a plan goes on to routing), or after `/codeman continue`, its next `Close key` reports the task's costs again and its table shows A′ in the earlier row.
+3. **The month follows.** In the next `Open key` of the test repository (the first task's next run is enough), "This month, the repository's runs count …" is the figure of step 2's `Open key` logs plus A′ + B′, not A + B, with no other run of the repository in between. With an organization's budget, the organization's line grows the same way.
+4. **Two repositories at once.** With no worker running, open an issue in each repository, label them, and start both workflows within a minute of each other. Each `Close key` logs its split as in step 2: the one that closes first, alone so far; the second, sharing with 1 other run of the organization. The endpoint's runs now include a document whose `repository` is the second repository's, and each run's `cost` is below its estimate by half the time they shared. Each repository's next `Open key` counts only its own run's share in the repository's month.
+5. **The bill.** An hour or more after the test, read the endpoint's billing for the test's hours, with the account's key: `curl -fsS -H "Authorization: Bearer $RUNPOD_API_KEY" "https://api.runpod.io/v2/billing/serverless?bucketSize=hour&startTime=<start>&endTime=<end>&serverlessId=<endpoint>"`, with whole UTC hours such as `2026-10-07T15:00:00Z` ([Serverless billing history](../web/runpod/get-serverless-billing-history.md)). The sum of the test runs' `cost` in the ledger is close to the sum of `totalAmount`, and not below it by more than a few cents: the estimate uses the dearest GPU type's price and counts up to 5 seconds around each change of the worker's state. Before this plan, the sum of the estimates (A + B and the next pair) would have been well above the bill, by the time the runs shared.
+
+Results: to be recorded here.
 
 ## Out of scope
 

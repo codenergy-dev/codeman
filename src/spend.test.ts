@@ -97,7 +97,8 @@ test("the notes say how each inference of the rows is measured, once each and in
   assert.match(notes[0] ?? "", /^\*\*OpenRouter\*\*: a run's cost is what its key used, exact/);
   assert.match(notes[1] ?? "", /^\*\*Runpod \(pod\)\*\*: .* the task also counts its pod's time/);
   assert.match(notes[2] ?? "", /^\*\*Runpod \(Serverless\)\*\*: a run's cost is an estimate/);
-  assert.match(notes[2] ?? "", /counts in the month as soon as the run ends\.$/);
+  assert.match(notes[2] ?? "", /counts in the month as soon as the run ends; time a worker/);
+  assert.match(notes[2] ?? "", /is split among them, and later runs refresh it\.$/);
   assert.match(
     notes[3] ?? "",
     /^\*\*Month\*\*: what the repository's runs count this month in Codeman's ledger/,
@@ -107,6 +108,11 @@ test("the notes say how each inference of the rows is measured, once each and in
   const portuguese = spendNotes(ptBR, { rows: [pod] });
   assert.match(portuguese[0] ?? "", /^\*\*Runpod \(pod\)\*\*: .* o tempo do pod entre rodadas/);
   assert.match(portuguese[1] ?? "", /^\*\*Mês\*\*: o que as rodadas do repositório contam/);
+  const [serverlessNote] = spendNotes(ptBR, { rows: [serverless] });
+  assert.match(
+    serverlessNote ?? "",
+    /é dividido entre elas, e as rodadas seguintes o atualizam\.$/,
+  );
 });
 
 test("the oldest rows fold into one past the limit, with their sums", () => {

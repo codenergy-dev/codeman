@@ -263,21 +263,18 @@ import {
 import { request as httpsRequest } from "node:https";
 
 // src/gateway/usage.ts
-function busyMs(records, idleMs, now, samples = []) {
+function busySpans(records, idleMs, now, samples = []) {
   const spans = merge(records.map((record) => [record.start, (record.end ?? now) + idleMs]));
-  let total = spans.reduce((sum, [from, to]) => sum + to - from, 0);
-  let first = 0;
+  const unbilledSpans = [];
   for (let i = 1; i < samples.length; i++) {
     const a = samples[i - 1];
     const b = samples[i];
-    if (!unbilled(a) || !unbilled(b)) continue;
-    while (first < spans.length && spans[first][1] <= a.at) first++;
-    for (let j = first; j < spans.length && spans[j][0] < b.at; j++) {
-      const [from, to] = spans[j];
-      total -= Math.max(0, Math.min(to, b.at) - Math.max(from, a.at));
-    }
+    if (unbilled(a) && unbilled(b)) unbilledSpans.push([a.at, b.at]);
   }
-  return total;
+  return subtract(spans, merge(unbilledSpans));
+}
+function busyMs(records, idleMs, now, samples = []) {
+  return busySpans(records, idleMs, now, samples).reduce((sum, [from, to]) => sum + to - from, 0);
 }
 function merge(spans) {
   const merged = [];
@@ -287,6 +284,21 @@ function merge(spans) {
     else merged.push([from, to]);
   }
   return merged;
+}
+function subtract(spans, holes) {
+  const left = [];
+  let first = 0;
+  for (const [from, to] of spans) {
+    let start = from;
+    while (first < holes.length && holes[first][1] <= start) first++;
+    for (let i = first; i < holes.length && holes[i][0] < to; i++) {
+      const [holeFrom, holeTo] = holes[i];
+      if (holeFrom > start) left.push([start, holeFrom]);
+      start = Math.max(start, holeTo);
+    }
+    if (start < to) left.push([start, to]);
+  }
+  return left;
 }
 function unbilled(sample) {
   return sample.workers === "starting" || sample.workers === "none";
@@ -346,7 +358,8 @@ function summarize(records, meter, start, now, samples = []) {
     tokensPerSecond: measured > 0 ? rates / measured : void 0,
     cost: meterCost(meter, start, records, now, samples),
     start,
-    end: now
+    end: now,
+    ...meter.kind === "busy" ? { busy: busySpans(records, meter.idleMs, now, samples) } : {}
   };
 }
 var EventReader = class {

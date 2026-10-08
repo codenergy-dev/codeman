@@ -59,6 +59,8 @@ How to protect:
 
 Only Codeman's step runs the agent as the unprivileged `codeman-agent` user. Any other step in the `agent` job runs as the runner's user, which has `sudo` and can read the job's secrets from the runner's memory: the encryption secret and the job's `GITHUB_TOKEN`. The job checks out the task branch, so a step that runs repository code (`npm ci`, `make`, a test script) runs code the agent wrote.
 
+Such a step can also change the job's outputs, among them a Serverless gateway's usage, which `close-key` trusts. It can make its run count nothing, or claim times its run did not use the endpoint's worker: those lower the costs of the organization's runs that used the worker then, and its own run counts that time instead, so the runs' total in the budgets does not drop ([Serverless](architecture.md#serverless)).
+
 How to protect: in the `agent` job (in `codeman-task.yml`), add only steps that install tools, such as `actions/setup-node`. Leave installing dependencies and running scripts to the agent, inside the sandbox.
 
 ### 4. The agent can send its task key out

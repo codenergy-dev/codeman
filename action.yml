@@ -53,7 +53,7 @@ inputs:
   context-length:
     description: "(agent) The model's context length, from open-key."
   gateway-usage:
-    description: "(close-key) What the agent job's gateway measured, for self-hosted inference on Serverless."
+    description: "(close-key) What the agent job's gateway measured, for self-hosted inference on Serverless, with the times the endpoint's worker was billed for the run, which close-key splits in Codeman's ledger with the runs that shared them."
   encryption-secret:
     description: "(open-key, agent) Secret that encrypts the task key between jobs. At least 32 characters."
   encrypted-key:
@@ -168,7 +168,7 @@ outputs:
   kept-pod:
     description: "(close-key) The pod the task keeps for the next run on its settings; release-pod ends the task's keep lease if the task does not go on, and terminates the pod when no other task uses or keeps it."
   gateway-usage:
-    description: "(agent) What the agent job's gateway measured, for self-hosted inference on Serverless."
+    description: "(agent) What the agent job's gateway measured, for self-hosted inference on Serverless: its usage, and the times its estimate counts, left out when they would not fit in GitHub's job outputs."
   encrypted-key:
     description: "(open-key) The task key, encrypted."
   chain:

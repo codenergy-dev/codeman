@@ -161,7 +161,7 @@ export const ptBR: Messages = {
         "**OpenRouter**: o custo de uma rodada é o que a sua chave usou, exato, e as rodadas seguintes o atualizam.",
       pod: "**Runpod (pod)**: o custo de uma rodada é o tempo do seu pod ao preço dele; a tarefa conta também o tempo do pod entre rodadas, atualizado depois pela cobrança da Runpod.",
       serverless:
-        "**Runpod (Serverless)**: o custo de uma rodada é uma estimativa do tempo que a Runpod cobra pelos seus workers, que conta no mês assim que a rodada termina.",
+        "**Runpod (Serverless)**: o custo de uma rodada é uma estimativa do tempo que a Runpod cobra pelos seus workers, que conta no mês assim que a rodada termina; o tempo em que um worker atendeu várias rodadas ao mesmo tempo, de qualquer repositório da organização, é dividido entre elas, e as rodadas seguintes o atualizam.",
     })[mode],
   monthNote:
     "**Mês**: o que as rodadas do repositório contam neste mês no registro do Codeman antes da rodada, uma estimativa: o custo de cada rodada como acima, e o limite inteiro de cada rodada ainda aberta. O orçamento mensal da organização, quando ela tem um, conta as rodadas de todos os repositórios e a cobrança da Runpod por hora.",

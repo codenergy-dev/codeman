@@ -105,7 +105,9 @@ jobs:
 
   # Runs the agent with read-only access. Its result is an artifact for the apply job, even when
   # the agent fails or runs out of time, so unfinished work is kept. It never gets an OIDC token:
-  # neither the agent nor a Serverless gateway may reach Codeman's store.
+  # neither the agent nor a Serverless gateway may reach Codeman's store. A Serverless gateway's
+  # usage, with the times the endpoint's worker was billed for the run, leaves as its output, and
+  # close-key splits that time in the ledger with the organization's other runs on the endpoint.
   agent:
     name: Agent (${{ inputs.stage }})
     needs: open-key
@@ -160,7 +162,8 @@ jobs:
   # Ends the run's access, whatever happened, and reads what the run spent: it disables the
   # OpenRouter key, or ends the run on its pod, which it keeps for the next run on its settings
   # or leaves, terminating it when no other task uses or keeps it. Then records it in Codeman's
-  # ledger, and reports the task's spend from there; apply waits for it.
+  # ledger, where a Serverless run's time on the endpoint's worker is split with the runs that
+  # shared it, and reports the task's spend from there; apply waits for it.
   close-key:
     name: Close key
     needs: [open-key, agent]

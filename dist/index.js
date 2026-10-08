@@ -20449,21 +20449,18 @@ import {
 import { request as httpsRequest } from "node:https";
 
 // src/gateway/usage.ts
-function busyMs(records, idleMs, now, samples = []) {
+function busySpans(records, idleMs, now, samples = []) {
   const spans = merge(records.map((record) => [record.start, (record.end ?? now) + idleMs]));
-  let total = spans.reduce((sum, [from, to]) => sum + to - from, 0);
-  let first = 0;
+  const unbilledSpans = [];
   for (let i = 1; i < samples.length; i++) {
     const a = samples[i - 1];
     const b = samples[i];
-    if (!unbilled(a) || !unbilled(b)) continue;
-    while (first < spans.length && spans[first][1] <= a.at) first++;
-    for (let j = first; j < spans.length && spans[j][0] < b.at; j++) {
-      const [from, to] = spans[j];
-      total -= Math.max(0, Math.min(to, b.at) - Math.max(from, a.at));
-    }
+    if (unbilled(a) && unbilled(b)) unbilledSpans.push([a.at, b.at]);
   }
-  return total;
+  return subtract(spans, merge(unbilledSpans));
+}
+function busyMs(records, idleMs, now, samples = []) {
+  return busySpans(records, idleMs, now, samples).reduce((sum, [from, to]) => sum + to - from, 0);
 }
 function merge(spans) {
   const merged = [];
@@ -20473,6 +20470,21 @@ function merge(spans) {
     else merged.push([from, to]);
   }
   return merged;
+}
+function subtract(spans, holes) {
+  const left = [];
+  let first = 0;
+  for (const [from, to] of spans) {
+    let start = from;
+    while (first < holes.length && holes[first][1] <= start) first++;
+    for (let i = first; i < holes.length && holes[i][0] < to; i++) {
+      const [holeFrom, holeTo] = holes[i];
+      if (holeFrom > start) left.push([start, holeFrom]);
+      start = Math.max(start, holeTo);
+    }
+    if (start < to) left.push([start, to]);
+  }
+  return left;
 }
 function unbilled(sample) {
   return sample.workers === "starting" || sample.workers === "none";
@@ -20508,6 +20520,32 @@ function podShares(runs, kept, now, pricePerSecond) {
   }
   return shares;
 }
+function busyShares(runs) {
+  const changes = [];
+  for (const run2 of runs) {
+    for (const [from, to] of run2.busy) {
+      if (to <= from) continue;
+      changes.push({ at: from, run: run2, delta: 1 }, { at: to, run: run2, delta: -1 });
+    }
+  }
+  changes.sort((a, b) => a.at - b.at);
+  const shares = new Map(runs.map((run2) => [run2.id, 0]));
+  const on = /* @__PURE__ */ new Map();
+  let last = 0;
+  for (const change of changes) {
+    if (on.size > 0 && change.at > last) {
+      const seconds = (change.at - last) / 1e3;
+      for (const run2 of on.keys()) {
+        shares.set(run2.id, (shares.get(run2.id) ?? 0) + seconds * run2.pricePerSecond / on.size);
+      }
+    }
+    last = change.at;
+    const count3 = (on.get(change.run) ?? 0) + change.delta;
+    if (count3 > 0) on.set(change.run, count3);
+    else on.delete(change.run);
+  }
+  return shares;
+}
 function summarize(records, meter, start, now, samples = []) {
   let inputTokens = 0;
   let outputTokens = 0;
@@ -20532,7 +20570,8 @@ function summarize(records, meter, start, now, samples = []) {
     tokensPerSecond: measured > 0 ? rates / measured : void 0,
     cost: meterCost(meter, start, records, now, samples),
     start,
-    end: now
+    end: now,
+    ...meter.kind === "busy" ? { busy: busySpans(records, meter.idleMs, now, samples) } : {}
   };
 }
 var EventReader = class {
@@ -21073,7 +21112,15 @@ var LAYOUT = {
    * task that creates it draws first; with the leases of the tasks that use or keep it.
    */
   pods: (owner) => `${LAYOUT.organization(owner)}/pods`,
-  pod: (owner, nonce) => `${LAYOUT.pods(owner)}/${documentId(nonce)}`
+  pod: (owner, nonce) => `${LAYOUT.pods(owner)}/${documentId(nonce)}`,
+  /**
+   * A Serverless endpoint of the organization's GPU account, by its ID; under it, each run's
+   * billed times on the endpoint's worker, named by the run and its reservation, which the ledger
+   * splits among the runs that used the worker at once.
+   */
+  endpoint: (owner, endpoint2) => `${LAYOUT.organization(owner)}/endpoints/${documentId(endpoint2)}`,
+  endpointRuns: (owner, endpoint2) => `${LAYOUT.endpoint(owner, endpoint2)}/runs`,
+  endpointRun: (owner, endpoint2, id) => `${LAYOUT.endpointRuns(owner, endpoint2)}/${documentId(id)}`
 };
 function ledgerRunId(workflowRun, attempt, task) {
   return `${workflowRun}-${attempt}-${task}`;
@@ -21996,10 +22043,27 @@ var ServerlessInference = class {
       outputTokens: usage.outputTokens,
       requests: usage.requests,
       maxInputTokens: usage.maxInputTokens,
-      tokensPerSecond: usage.tokensPerSecond
+      tokensPerSecond: usage.tokensPerSecond,
+      ...usage.busy ? {
+        busy: {
+          endpoint: handle.endpoint,
+          pricePerSecond: handle.pricePerSecond,
+          spans: usage.busy
+        }
+      } : {}
     };
   }
 };
+var MAX_USAGE_CHARS = 2e5;
+function usageReport(usage, warn) {
+  const text = JSON.stringify(usage);
+  if (text.length <= MAX_USAGE_CHARS) return text;
+  const { busy, ...rest } = usage;
+  warn(
+    `The run's ${busy?.length ?? 0} billed time span(s) do not fit in the job's output; the run counts its own estimate, unsplit.`
+  );
+  return JSON.stringify(rest);
+}
 function parseUsage(text) {
   let value;
   try {
@@ -22011,7 +22075,20 @@ function parseUsage(text) {
   const finite = (field) => typeof field === "number" && Number.isFinite(field) && field >= 0;
   if (!usage || !finite(usage.cost) || !finite(usage.requests)) return void 0;
   if (!finite(usage.inputTokens) || !finite(usage.outputTokens)) return void 0;
-  return usage;
+  const { busy, ...rest } = usage;
+  return spansInOrder(busy) ? { ...rest, busy } : rest;
+}
+function spansInOrder(value) {
+  if (!Array.isArray(value)) return false;
+  let last = Number.NEGATIVE_INFINITY;
+  for (const span of value) {
+    if (!Array.isArray(span) || span.length !== 2) return false;
+    const [from, to] = span;
+    if (typeof from !== "number" || typeof to !== "number") return false;
+    if (!Number.isFinite(from) || !Number.isFinite(to) || from < last || to < from) return false;
+    last = to;
+  }
+  return true;
 }
 
 // src/inference/index.ts
@@ -22219,6 +22296,7 @@ function neutralize(text, dialect) {
 // src/ledger.ts
 var RETRY_MS = [1e3, 3e3, 9e3];
 var RESERVE_ATTEMPTS = 20;
+var SPLIT_ATTEMPTS = 20;
 var Ledger = class {
   #store;
   #source;
@@ -22227,6 +22305,8 @@ var Ledger = class {
   #writes = [];
   /** The pods the job terminated, with their lives: `flush` records their time no task counted. */
   #lives = [];
+  /** The Serverless runs the job closed, with their billed times: `flush` splits them. */
+  #splits = [];
   constructor(store, source, options = {}) {
     this.#store = store;
     this.#source = source;
@@ -22438,8 +22518,10 @@ var Ledger = class {
       cost: usage.cost,
       ...figures,
       ...usage.pod ? { pod: usage.pod } : {},
-      ...podCost2 === void 0 ? {} : { podCost: podCost2 }
+      ...podCost2 === void 0 ? {} : { podCost: podCost2 },
+      ...usage.busy ? { endpoint: usage.busy.endpoint } : {}
     });
+    if (usage.busy) this.#splits.push({ run: run2, busy: usage.busy });
     if (agentJob2 !== "" && agentJob2 !== "success") {
       this.#event(run2, "run-stopped", { result: agentJob2 });
     }
@@ -22466,6 +22548,106 @@ var Ledger = class {
     const lives = this.#lives;
     this.#lives = [];
     for (const { pod, life } of lives) await this.#untracked(pod, life, log);
+    const splits = this.#splits;
+    this.#splits = [];
+    for (const { run: run2, busy } of splits) await this.#split(run2, busy, log);
+  }
+  /**
+   * Splits the time a Serverless endpoint's worker was billed for a run with the endpoint's other
+   * runs, of any repository of the organization, that used it at the same times (decision 1 of
+   * the Serverless split plan). In one transaction, writes the run's billed times under the
+   * endpoint, and the share of each run that overlaps it as that run's cost, when the run is
+   * closed and the times are of its current reservation. Each later close on the endpoint does the
+   * same, so a run's cost only goes down as overlaps appear, and never below its share. Runs after
+   * the job's own writes, so the run is closed.
+   */
+  async #split(run2, busy, log) {
+    const { owner } = this.#source.runtime.repository;
+    const [first] = busy.spans;
+    const last = busy.spans.at(-1);
+    if (!first || !last) return;
+    const now = this.#now();
+    const split = await this.#retry(
+      log,
+      "split the endpoint's time in Codeman's ledger",
+      () => this.#store.transaction(
+        async (tx) => {
+          const own = await tx.get(LAYOUT.run(owner, run2));
+          const reservedAt = reservationOf(own);
+          const mine = {
+            id: `${run2}-${reservedAt}`,
+            run: run2,
+            reservedAt,
+            busy: busy.spans,
+            pricePerSecond: busy.pricePerSecond
+          };
+          const since = new Date(first[0] - RESERVATION_MS);
+          const found = endpointRuns(
+            await tx.query(LAYOUT.endpointRuns(owner, busy.endpoint), {
+              where: [{ field: "to", op: ">=", value: since }]
+            })
+          );
+          const runs = [...found.filter((other) => other.id !== mine.id), mine];
+          const shares = busyShares(runs);
+          const others = runs.filter((other) => other !== mine && overlaps(other.busy, mine.busy));
+          const documents = await Promise.all(
+            others.map((other) => tx.get(LAYOUT.run(owner, other.run)))
+          );
+          const share = (one) => round(shares.get(one.id) ?? 0);
+          const estimate = round(
+            busy.spans.reduce((sum, [from, to]) => sum + to - from, 0) / 1e3 * busy.pricePerSecond
+          );
+          tx.write({
+            op: "set",
+            path: LAYOUT.endpointRun(owner, busy.endpoint, mine.id),
+            fields: {
+              run: run2,
+              repository: this.#repository(),
+              task: taskOf(run2),
+              reservedAt: reservedAt === 0 ? null : new Date(reservedAt),
+              from: new Date(first[0]),
+              to: new Date(last[1]),
+              pricePerSecond: busy.pricePerSecond,
+              busy: JSON.stringify(busy.spans),
+              estimate,
+              share: share(mine),
+              splitAt: now
+            }
+          });
+          let lowered = 0;
+          for (const [i, other] of others.entries()) {
+            if (other.share === void 0 || Math.abs(other.share - share(other)) >= 1e-6) {
+              tx.write({
+                op: "set",
+                path: LAYOUT.endpointRun(owner, busy.endpoint, other.id),
+                fields: { share: share(other), splitAt: now },
+                merge: true
+              });
+            }
+            if (this.#cost(tx, documents[i], other, share(other))) lowered++;
+          }
+          this.#cost(tx, own, mine, share(mine));
+          return { share: share(mine), estimate, others: others.length, lowered };
+        },
+        { attempts: SPLIT_ATTEMPTS }
+      )
+    );
+    log.info(
+      split.others === 0 ? `Recorded the run's time on endpoint ${busy.endpoint}'s worker in Codeman's ledger; no other run used it at the same time so far.` : `The run shared endpoint ${busy.endpoint}'s worker with ${split.others} other run(s) of the organization: it counts ${usd(split.share)} of its ${usd(split.estimate)} estimate, and ${split.lowered} other run(s) count less now.`
+    );
+  }
+  /**
+   * Writes a run's share of an endpoint's worker as its cost, when the run is closed and its
+   * billed times are of its current reservation: an open run counts its limit, and a reopened
+   * run's earlier attempt counts in `spentBefore`. Tells whether it wrote.
+   */
+  #cost(tx, document, run2, share) {
+    if (document?.fields.status !== "closed") return false;
+    if (reservationOf(document) !== run2.reservedAt) return false;
+    const { cost } = document.fields;
+    if (typeof cost === "number" && Math.abs(cost - share) < 1e-6) return false;
+    tx.write({ op: "set", path: document.path, fields: { cost: share }, merge: true });
+    return true;
   }
   /**
    * Records on a terminated pod's document its time that no task counted (decision 4 of the pod
@@ -22654,6 +22836,47 @@ function untrackedRuns(documents) {
       }
     ];
   });
+}
+function endpointRuns(documents) {
+  return documents.flatMap((document) => {
+    const { run: run2, pricePerSecond, busy, share } = document.fields;
+    if (typeof run2 !== "string" || typeof pricePerSecond !== "number") return [];
+    if (typeof busy !== "string") return [];
+    let spans;
+    try {
+      spans = JSON.parse(busy);
+    } catch {
+      return [];
+    }
+    const valid = (span) => Array.isArray(span) && span.length === 2 && span.every((time) => typeof time === "number" && Number.isFinite(time));
+    if (!Array.isArray(spans) || !spans.every(valid)) return [];
+    return [
+      {
+        id: document.path.slice(document.path.lastIndexOf("/") + 1),
+        run: run2,
+        reservedAt: reservationOf(document),
+        busy: spans,
+        pricePerSecond,
+        share: typeof share === "number" ? share : void 0
+      }
+    ];
+  });
+}
+function reservationOf(document) {
+  const at = document?.fields.reservedAt;
+  return at instanceof Date ? at.getTime() : 0;
+}
+function overlaps(a, b) {
+  let i = 0;
+  let j = 0;
+  while (i < a.length && j < b.length) {
+    const [aFrom, aTo] = a[i];
+    const [bFrom, bTo] = b[j];
+    if (Math.max(aFrom, bFrom) < Math.min(aTo, bTo)) return true;
+    if (aTo <= bTo) i++;
+    else j++;
+  }
+  return false;
 }
 function round(amount2) {
   return Number(amount2.toFixed(6));
@@ -28856,7 +29079,7 @@ var en = {
   spendNote: (mode) => ({
     openrouter: "**OpenRouter**: a run's cost is what its key used, exact, and later runs refresh it.",
     pod: "**Runpod (pod)**: a run's cost is its pod's time at the pod's price; the task also counts its pod's time between runs, refreshed later from Runpod's billing.",
-    serverless: "**Runpod (Serverless)**: a run's cost is an estimate of the time Runpod bills its workers, which counts in the month as soon as the run ends."
+    serverless: "**Runpod (Serverless)**: a run's cost is an estimate of the time Runpod bills its workers, which counts in the month as soon as the run ends; time a worker served several runs at once, of any of the organization's repositories, is split among them, and later runs refresh it."
   })[mode],
   monthNote: "**Month**: what the repository's runs count this month in Codeman's ledger before the run, an estimate: each run's cost as above, and the whole limit of each run still open. The organization's monthly budget, when it has one, counts every repository's runs and Runpod's billing by the hour.",
   earlierRuns: (runs) => `Earlier runs (${runs})`,
@@ -29110,7 +29333,7 @@ var ptBR = {
   spendNote: (mode) => ({
     openrouter: "**OpenRouter**: o custo de uma rodada \xE9 o que a sua chave usou, exato, e as rodadas seguintes o atualizam.",
     pod: "**Runpod (pod)**: o custo de uma rodada \xE9 o tempo do seu pod ao pre\xE7o dele; a tarefa conta tamb\xE9m o tempo do pod entre rodadas, atualizado depois pela cobran\xE7a da Runpod.",
-    serverless: "**Runpod (Serverless)**: o custo de uma rodada \xE9 uma estimativa do tempo que a Runpod cobra pelos seus workers, que conta no m\xEAs assim que a rodada termina."
+    serverless: "**Runpod (Serverless)**: o custo de uma rodada \xE9 uma estimativa do tempo que a Runpod cobra pelos seus workers, que conta no m\xEAs assim que a rodada termina; o tempo em que um worker atendeu v\xE1rias rodadas ao mesmo tempo, de qualquer reposit\xF3rio da organiza\xE7\xE3o, \xE9 dividido entre elas, e as rodadas seguintes o atualizam."
   })[mode],
   monthNote: "**M\xEAs**: o que as rodadas do reposit\xF3rio contam neste m\xEAs no registro do Codeman antes da rodada, uma estimativa: o custo de cada rodada como acima, e o limite inteiro de cada rodada ainda aberta. O or\xE7amento mensal da organiza\xE7\xE3o, quando ela tem um, conta as rodadas de todos os reposit\xF3rios e a cobran\xE7a da Runpod por hora.",
   earlierRuns: (runs) => `Rodadas anteriores (${runs})`,
@@ -30248,7 +30471,11 @@ async function agentJob(services, reached) {
     killAgentProcesses();
   } finally {
     const usage = await access2.finish();
-    if (usage) runtime2.output("gateway-usage", JSON.stringify(usage));
+    if (usage)
+      runtime2.output(
+        "gateway-usage",
+        usageReport(usage, (text) => runtime2.warning(text))
+      );
   }
   const out = resultDir(runtime2);
   rmSync4(out, { recursive: true, force: true });
