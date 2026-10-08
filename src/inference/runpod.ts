@@ -110,7 +110,7 @@ export class Runpod implements GpuProvider {
     )) as RunpodGpu | undefined;
     if (!gpu) {
       throw new Error(
-        `Runpod has no GPU type "${gpuType}". \`gpu-type\` takes the GPU's ID, such as "NVIDIA RTX A6000", not its display name; see https://docs.runpod.io/references/gpu-types.`,
+        `Runpod has no GPU type "${gpuType}". \`gpu\` takes the GPU's ID, such as "NVIDIA RTX A6000", not its display name; see https://docs.runpod.io/references/gpu-types.`,
       );
     }
     const hourly = gpu.price?.secure;

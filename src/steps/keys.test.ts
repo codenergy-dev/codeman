@@ -246,8 +246,8 @@ test("a task that started before the ledger carries what its record counted", as
   // A run the ledger has, which the record also counted.
   await seedRuns(store, { "200-1-7": { status: "closed", cost: 0.2 }, "300-1-7": {} });
   const choice = JSON.stringify({
-    inference: "openrouter",
-    providers: ["openrouter"],
+    provider: "openrouter",
+    accounts: ["openrouter"],
     recorded: { spent: 1.5 },
   });
   const first = await open(store, { inputs: openInputs({ inference: choice }) });
@@ -262,9 +262,9 @@ test("a provider without its secret opens nothing, and says which", async () => 
   const accounts = new FakeAccounts();
   accounts.secrets.runpod = "CODEMAN_RUNPOD_API_KEY";
   const choice = JSON.stringify({
-    inference: "openrouter",
+    provider: "openrouter",
     profile: "plan-or",
-    providers: ["openrouter", "runpod"],
+    accounts: ["openrouter", "runpod"],
     recorded: { spent: 0 },
   });
   // Runpod's account counts only in the organization's month.
@@ -279,7 +279,7 @@ test("a provider without its secret opens nothing, and says which", async () => 
   });
   assert.equal(runtime.outputs.status, "missing-credentials");
   assert.match(runtime.outputs.reason ?? "", /`CODEMAN_RUNPOD_API_KEY`/);
-  assert.ok(runtime.logged("info").includes("The run uses the inference profile `plan-or`."));
+  assert.ok(runtime.logged("info").includes("The run uses the profile `plan-or`."));
   assert.equal(inference.opened.length, 0);
   assert.equal((await run(runs, "300-1-7"))?.status, "refused");
 });

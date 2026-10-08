@@ -145,16 +145,21 @@ export const en: Messages = {
     "Task budget",
     "Month (estimated)",
   ],
-  provider: (mode) =>
-    ({ openrouter: "OpenRouter", pod: "Runpod (pod)", serverless: "Runpod (Serverless)" })[mode],
-  spendNote: (mode) =>
+  provider: (provider) =>
+    ({
+      openrouter: "OpenRouter",
+      "runpod-pod": "Runpod (pod)",
+      "runpod-serverless": "Runpod (Serverless)",
+    })[provider],
+  spendNote: (provider) =>
     ({
       openrouter:
         "**OpenRouter**: a run's cost is what its key used, exact, and later runs refresh it.",
-      pod: "**Runpod (pod)**: a run's cost is its pod's time at the pod's price; the task also counts its pod's time between runs, refreshed later from Runpod's billing.",
-      serverless:
+      "runpod-pod":
+        "**Runpod (pod)**: a run's cost is its pod's time at the pod's price; the task also counts its pod's time between runs, refreshed later from Runpod's billing.",
+      "runpod-serverless":
         "**Runpod (Serverless)**: a run's cost is an estimate of the time Runpod bills its workers, which counts in the month as soon as the run ends; time a worker served several runs at once, of any of the organization's repositories, is split among them, and later runs refresh it.",
-    })[mode],
+    })[provider],
   monthNote:
     "**Month**: what the repository's runs count this month in Codeman's ledger before the run, an estimate: each run's cost as above, and the whole limit of each run still open. The organization's monthly budget, when it has one, counts every repository's runs and Runpod's billing by the hour.",
   earlierRuns: (runs) => `Earlier runs (${runs})`,
@@ -286,6 +291,8 @@ export const en: Messages = {
         return `\`set\` changes one of ${problem.names.map((name) => `\`${name}\``).join(", ")} for this task.`;
       case "set-one-value":
         return `\`set ${problem.name}\` needs one value.`;
+      case "renamed-setting":
+        return `\`${problem.name}\` is now \`${problem.now}\`: write \`set ${problem.now}\`.`;
       case "invalid-setting":
         return {
           model: `\`${problem.name}\` must be a model ID, such as \`provider/model\` on OpenRouter or \`qwen3-coder:30b\` on Ollama.`,
@@ -293,8 +300,8 @@ export const en: Messages = {
           number: `\`${problem.name}\` must be a positive number.`,
           integer: `\`${problem.name}\` must be a positive whole number.`,
           choice: `\`${problem.name}\` must be one of ${(problem.values ?? []).map((value) => `\`${value}\``).join(", ")}.`,
-          "gpu-type": `\`${problem.name}\` must be a GPU type, such as \`NVIDIA RTX A6000\`.`,
-          endpoint: `\`${problem.name}\` must be an endpoint's ID, letters and digits.`,
+          gpu: `\`${problem.name}\` must be a GPU type, such as \`NVIDIA RTX A6000\`.`,
+          endpoint: `\`${problem.name}\` must be an endpoint's ID, letters and digits, or its URL on \`https://api.runpod.ai\`.`,
         }[problem.type];
       case "settings-rejected":
         return `The task's settings were not applied: ${problem.error}`;

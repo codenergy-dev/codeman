@@ -29,7 +29,6 @@ export async function seedRuns(
           status: "picked",
           pickedAt: now,
           provider: "openrouter",
-          mode: "openrouter",
           ...fields,
         },
       };
@@ -49,8 +48,7 @@ export function minutes(from: number, to: number): Span {
 export function serverlessRun(name: string, reservedAt: number): Fields {
   return {
     repository: `codenergy/${name}`,
-    provider: "runpod",
-    mode: "serverless",
+    provider: "runpod-serverless",
     status: "open",
     limit: 1,
     reservedAt: new Date(reservedAt),

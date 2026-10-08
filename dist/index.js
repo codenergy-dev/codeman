@@ -4873,8 +4873,8 @@ var require_util2 = __commonJS({
       }
       return values;
     }
-    function getDecodeSplit(name, list) {
-      const value = list.get(name, true);
+    function getDecodeSplit(name, list2) {
+      const value = list2.get(name, true);
       if (value === null) {
         return null;
       }
@@ -12243,9 +12243,9 @@ var require_headers = __commonJS({
       // https://fetch.spec.whatwg.org/#dom-headers-getsetcookie
       getSetCookie() {
         webidl.brandCheck(this, _Headers);
-        const list = this.#headersList.cookies;
-        if (list) {
-          return [...list];
+        const list2 = this.#headersList.cookies;
+        if (list2) {
+          return [...list2];
         }
         return [];
       }
@@ -12285,8 +12285,8 @@ var require_headers = __commonJS({
       static getHeadersList(o) {
         return o.#headersList;
       }
-      static setHeadersList(o, list) {
-        o.#headersList = list;
+      static setHeadersList(o, list2) {
+        o.#headersList = list2;
       }
     };
     var { getHeadersGuard, setHeadersGuard, getHeadersList, setHeadersList } = Headers2;
@@ -13254,13 +13254,13 @@ var require_request2 = __commonJS({
         if (this.signal.aborted) {
           ac.abort(this.signal.reason);
         } else {
-          let list = dependentControllerMap.get(this.signal);
-          if (list === void 0) {
-            list = /* @__PURE__ */ new Set();
-            dependentControllerMap.set(this.signal, list);
+          let list2 = dependentControllerMap.get(this.signal);
+          if (list2 === void 0) {
+            list2 = /* @__PURE__ */ new Set();
+            dependentControllerMap.set(this.signal, list2);
           }
           const acRef = new WeakRef(ac);
-          list.add(acRef);
+          list2.add(acRef);
           util.addAbortListener(
             ac.signal,
             buildAbort(acRef)
@@ -19832,7 +19832,6 @@ function vllmContextLength(env) {
 
 // src/inference/engines.ts
 var ENGINES = { ollama, vllm };
-var MODE_ENGINE = { pod: "ollama", serverless: "vllm" };
 
 // src/budget.ts
 var MIN_RUN_BUDGET = 0.1;
@@ -19898,17 +19897,17 @@ function reconciledMonth(runs, billed, now) {
   const estimates = /* @__PURE__ */ new Map();
   for (const group of counted(runs)) {
     const [first] = group.runs;
-    const hours = first && billed.get(first.provider);
+    const hours = first && billed.get(first.account);
     if (!first || !hours || group.runs.some((run2) => reserving(run2, now))) {
       total += group.amount;
       continue;
     }
     const start = Math.min(...group.runs.map((run2) => run2.start.getTime()));
     const end = Math.max(...group.runs.map((run2) => endOf(run2, now).getTime()));
-    let estimate = estimates.get(first.provider);
+    let estimate = estimates.get(first.account);
     if (!estimate) {
       estimate = /* @__PURE__ */ new Map();
-      estimates.set(first.provider, estimate);
+      estimates.set(first.account, estimate);
     }
     spread(estimate, group.amount, start, end);
   }
@@ -20221,6 +20220,141 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// src/inference/providers.ts
+var PROVIDER_NAMES = ["openrouter", "runpod-pod", "runpod-serverless"];
+var PROVIDER_SETTINGS = ["engine", "gpu", "endpoint", "pod-reuse"];
+var ACCOUNTS = {
+  openrouter: {
+    input: "management-key",
+    secret: "CODEMAN_OPENROUTER_MANAGEMENT_KEY",
+    hourly: false
+  },
+  runpod: { input: "gpu-key", secret: "CODEMAN_RUNPOD_API_KEY", hourly: true }
+};
+var PROVIDERS = {
+  openrouter: { account: "openrouter", settings: {}, model: "openrouter", secrets: [] },
+  "runpod-pod": {
+    account: "runpod",
+    settings: {
+      engine: { values: ["ollama"], default: "ollama" },
+      gpu: { required: true, example: '"NVIDIA RTX A6000"' },
+      "pod-reuse": { values: ["task", "run"], default: "task" }
+    },
+    model: "engine",
+    secrets: []
+  },
+  "runpod-serverless": {
+    account: "runpod",
+    settings: {
+      engine: { values: ["vllm"], default: "vllm" },
+      endpoint: { required: true, example: "abc123xyz" }
+    },
+    model: "engine",
+    // The endpoint's key, restricted to it: only the agent job's gateway holds it.
+    secrets: [{ secret: "CODEMAN_RUNPOD_SERVERLESS_KEY", input: "serverless-key", job: "agent" }]
+  }
+};
+function isProviderName(name) {
+  return PROVIDER_NAMES.includes(name);
+}
+function accountOf(provider) {
+  return isProviderName(provider) ? PROVIDERS[provider].account : provider;
+}
+function isHourlyAccount(name) {
+  return ACCOUNTS[name]?.hourly ?? false;
+}
+function settingValues(name) {
+  const values = Object.values(PROVIDERS).flatMap(
+    (provider) => provider.settings[name]?.values ?? []
+  );
+  return values.length > 0 ? [...new Set(values)] : void 0;
+}
+function providerProblem(settings) {
+  const name = settings.provider;
+  if (!isProviderName(name)) return `Unknown provider \`${name}\`.`;
+  const provider = PROVIDERS[name];
+  for (const setting2 of PROVIDER_SETTINGS) {
+    if (settings[setting2] !== void 0 && !provider.settings[setting2]) {
+      return `\`${name}\` does not accept \`${setting2}\`; ${acceptedText(name)}`;
+    }
+  }
+  for (const setting2 of PROVIDER_SETTINGS) {
+    const spec = provider.settings[setting2];
+    const value = settings[setting2];
+    if (!spec) continue;
+    if (value === void 0) {
+      if (spec.required) {
+        return `\`${name}\` needs \`${setting2}\`${spec.example ? `, such as \`${spec.example}\`` : ""}.`;
+      }
+      continue;
+    }
+    if (spec.values && !spec.values.includes(value)) {
+      const offered = spec.values.map((v) => `\`${v}\``).join(", ");
+      return setting2 === "engine" ? `\`${name}\` does not offer the engine \`${value}\`; it offers ${offered}.` : `With \`${name}\`, \`${setting2}\` must be one of ${offered}, not \`${value}\`.`;
+    }
+  }
+  return modelProblem(name, settings.model, settings.engine);
+}
+function withProviderDefaults(settings) {
+  const provider = isProviderName(settings.provider) ? PROVIDERS[settings.provider] : void 0;
+  const filled = { ...settings };
+  for (const [setting2, spec] of Object.entries(provider?.settings ?? {})) {
+    if (spec.default !== void 0 && filled[setting2] === void 0) {
+      Object.assign(filled, { [setting2]: spec.default });
+    }
+  }
+  return filled;
+}
+function acceptedText(name) {
+  const accepted = Object.keys(PROVIDERS[name].settings).map((setting2) => `\`${setting2}\``);
+  return accepted.length === 0 ? "it takes only `model`." : `besides \`model\`, it takes ${list(accepted)}.`;
+}
+function list(items) {
+  return items.length < 2 ? items[0] ?? "" : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
+}
+function modelProblem(name, model, engine) {
+  const provider = PROVIDERS[name];
+  if (provider.model === "openrouter") {
+    return isOpenRouterModel(model) ? void 0 : `With \`${name}\`, \`model\` must be an OpenRouter model ID, such as \`provider/model\`, not \`${model}\`.`;
+  }
+  const engineName = engine ?? provider.settings.engine?.default ?? "";
+  const served = ENGINES[engineName];
+  if (!served) return `\`${name}\` has no engine \`${engineName}\`.`;
+  return served.isModel(model) ? void 0 : `With \`${name}\`, \`model\` must be a model name of the engine \`${engineName}\`, such as \`${served.example}\`, not \`${model}\`.`;
+}
+var OPENROUTER_MODEL = /^~?[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._:-]*$/i;
+function isOpenRouterModel(text) {
+  return text.length <= 100 && OPENROUTER_MODEL.test(text);
+}
+var ENDPOINT_ID = /^[a-z0-9]{1,64}$/i;
+var RUNPOD_API_HOST = "api.runpod.ai";
+function endpointId(text) {
+  if (ENDPOINT_ID.test(text)) return { ok: true, value: text };
+  let url;
+  try {
+    url = new URL(text);
+  } catch {
+    return {
+      ok: false,
+      error: `\`endpoint\` must be an endpoint's ID, letters and digits, or its URL, such as \`https://${RUNPOD_API_HOST}/v2/abc123xyz/run\`.`
+    };
+  }
+  if (url.protocol !== "https:" || url.hostname !== RUNPOD_API_HOST || url.port !== "") {
+    return {
+      ok: false,
+      error: `\`endpoint\` takes only URLs of \`https://${RUNPOD_API_HOST}\`, where the endpoint's key goes, not \`${url.protocol}//${url.host}\`.`
+    };
+  }
+  const [, version, id = ""] = url.pathname.split("/");
+  if (url.username || url.password || version !== "v2" || !ENDPOINT_ID.test(id)) {
+    return {
+      ok: false,
+      error: `\`endpoint\`'s URL must be the endpoint's, such as \`https://${RUNPOD_API_HOST}/v2/abc123xyz/run\`.`
+    };
+  }
+  return { ok: true, value: id };
+}
+
 // src/inference/runpod.ts
 var API2 = "https://api.runpod.io/v2";
 var HOUR_MS2 = 36e5;
@@ -20284,7 +20418,7 @@ var Runpod = class {
     );
     if (!gpu) {
       throw new Error(
-        `Runpod has no GPU type "${gpuType}". \`gpu-type\` takes the GPU's ID, such as "NVIDIA RTX A6000", not its display name; see https://docs.runpod.io/references/gpu-types.`
+        `Runpod has no GPU type "${gpuType}". \`gpu\` takes the GPU's ID, such as "NVIDIA RTX A6000", not its display name; see https://docs.runpod.io/references/gpu-types.`
       );
     }
     const hourly = gpu.price?.secure;
@@ -21245,19 +21379,19 @@ var PodRegistry = class {
             merge: true
           });
         }
-        const serving = pods.find((pod2) => pod2.status === "serving");
-        if (serving) {
-          const seats = serving.seats.includes(holder) ? serving.seats : [...serving.seats, holder];
-          const leases = [...serving.leases.filter((one) => one.holder !== holder), lease];
+        const serving2 = pods.find((pod2) => pod2.status === "serving");
+        if (serving2) {
+          const seats = serving2.seats.includes(holder) ? serving2.seats : [...serving2.seats, holder];
+          const leases = [...serving2.leases.filter((one) => one.holder !== holder), lease];
           tx.write({
             op: "set",
-            path: this.#path(serving.nonce),
+            path: this.#path(serving2.nonce),
             fields: { leases: leases.map(leaseFields), seats },
             merge: true
           });
           return {
             kind: "join",
-            pod: { ...serving, leases, seats },
+            pod: { ...serving2, leases, seats },
             seat: seats.indexOf(holder) + 1
           };
         }
@@ -22095,57 +22229,46 @@ function spansInOrder(value) {
 function inferenceChoice(settings, record, options = {}) {
   const budgeted = {
     ...options.profile ? { profile: options.profile } : {},
-    providers: [.../* @__PURE__ */ new Set([providerName(settings), ...options.providers ?? []])],
+    accounts: [.../* @__PURE__ */ new Set([accountOf(settings.provider), ...options.accounts ?? []])],
     recorded: { spent: record?.spent ?? 0 }
   };
-  if (settings.inference !== "self-hosted") return { inference: "openrouter", ...budgeted };
+  if (settings.provider === "openrouter") return { provider: "openrouter", ...budgeted };
   const common = {
-    inference: "self-hosted",
-    gpuProvider: settings["gpu-provider"],
     engine: settings.engine ?? "",
     model: settings.model,
     pods: record?.inference?.pods.filter((pod) => !pod.shared).map((pod) => pod.id) ?? [],
     ...budgeted
   };
-  return settings["gpu-mode"] === "serverless" ? { ...common, mode: "serverless", endpoint: settings["serverless-endpoint"] ?? "" } : {
+  return settings.provider === "runpod-serverless" ? { ...common, provider: "runpod-serverless", endpoint: settings.endpoint ?? "" } : {
     ...common,
-    mode: "pod",
-    gpuType: settings["gpu-type"] ?? "",
+    provider: "runpod-pod",
+    gpu: settings.gpu ?? "",
     podReuse: settings["pod-reuse"] === "run" ? "run" : "task"
   };
 }
-function providerName(settings) {
-  return settings.inference === "self-hosted" ? settings["gpu-provider"] : "openrouter";
-}
-function choiceProvider(choice) {
-  return choice.inference === "self-hosted" ? choice.gpuProvider : "openrouter";
-}
 function parseInferenceChoice(text) {
   if (text.trim() === "") {
-    return { inference: "openrouter", providers: ["openrouter"], recorded: zero() };
+    return { provider: "openrouter", accounts: ["openrouter"], recorded: zero() };
   }
   const choice = JSON.parse(text);
   const amount2 = (value) => typeof value === "number" && Number.isFinite(value);
-  const budgeted = Array.isArray(choice.providers) && choice.providers.every((name) => typeof name === "string" && name !== "") && amount2(choice.recorded?.spent) && (choice.profile === void 0 || typeof choice.profile === "string");
+  const budgeted = isProviderName(choice.provider) && Array.isArray(choice.accounts) && choice.accounts.every((name) => typeof name === "string" && name !== "") && amount2(choice.recorded?.spent) && (choice.profile === void 0 || typeof choice.profile === "string");
   if (!budgeted) throw new Error("The inference input is not a valid choice.");
-  if (choice.inference === "openrouter") return choice;
-  const valid = choice.inference === "self-hosted" && typeof choice.model === "string" && ENGINES[choice.engine] !== void 0 && Array.isArray(choice.pods) && (choice.mode === "pod" ? typeof choice.gpuType === "string" : choice.mode === "serverless");
+  if (choice.provider === "openrouter") return choice;
+  const valid = typeof choice.model === "string" && ENGINES[choice.engine] !== void 0 && Array.isArray(choice.pods) && (choice.provider === "runpod-pod" ? typeof choice.gpu === "string" : typeof choice.endpoint === "string");
   if (!valid) throw new Error("The inference input is not a valid choice.");
   return choice;
 }
 function zero() {
   return { spent: 0 };
 }
-function agentMode(choice) {
-  return choice.inference === "openrouter" ? "openrouter" : choice.mode;
-}
-function gpuProvider(name, key) {
-  if (name === "runpod") return new Runpod(key);
-  throw new Error(`Unknown GPU provider "${name}".`);
+function gpuProvider(account, key) {
+  if (account === "runpod") return new Runpod(key);
+  throw new Error(`Unknown GPU account "${account}".`);
 }
 function inferenceProvider(runtime2, store) {
   const choice = parseInferenceChoice(runtime2.input("inference"));
-  if (choice.inference === "openrouter") {
+  if (choice.provider === "openrouter") {
     return openRouterProvider(runtime2, runtime2.input("management-key", { required: true }));
   }
   return selfHosted(choice, runtime2.repository, {
@@ -22162,17 +22285,10 @@ function openRouterProvider(runtime2, managementKey) {
     () => positiveNumber(runtime2, "key-expiry-hours")
   );
 }
-var CREDENTIALS = {
-  openrouter: { input: "management-key", secret: "CODEMAN_OPENROUTER_MANAGEMENT_KEY" },
-  runpod: { input: "gpu-key", secret: "CODEMAN_RUNPOD_API_KEY" }
-};
-function isGpuProvider(name) {
-  return name !== "openrouter" && Object.hasOwn(CREDENTIALS, name);
-}
 function providerAccounts(runtime2) {
   const credential = (name) => {
-    const found = CREDENTIALS[name];
-    if (!found) throw new Error(`Unknown inference provider "${name}".`);
+    const found = ACCOUNTS[name];
+    if (!found) throw new Error(`Unknown account "${name}".`);
     return { ...found, key: runtime2.input(found.input) };
   };
   return {
@@ -22185,21 +22301,21 @@ function providerAccounts(runtime2) {
       return key === "" ? void 0 : openRouterProvider(runtime2, key).taskCosts(task);
     },
     billedHours: async (name, start, end) => {
-      if (!isGpuProvider(name)) throw new Error(`${name} has no hourly billing.`);
+      if (!isHourlyAccount(name)) throw new Error(`${name} has no hourly billing.`);
       return gpuProvider(name, credential(name).key).billedHours(start, end);
     }
   };
 }
 function selfHosted(choice, repository, inputs) {
-  const gpu = inputs.gpu ?? gpuProvider(choice.gpuProvider, inputs.accountKey);
+  const gpu = inputs.gpu ?? gpuProvider(accountOf(choice.provider), inputs.accountKey);
   const engine = ENGINES[choice.engine];
   if (!engine) throw new Error(`Unknown engine "${choice.engine}".`);
   const common = { model: choice.model, engine, pods: choice.pods };
-  if (choice.mode === "pod") {
+  if (choice.provider === "runpod-pod") {
     return new PodInference(
       {
         ...common,
-        gpuType: choice.gpuType,
+        gpuType: choice.gpu,
         image: inputs.image,
         reuse: choice.podReuse
       },
@@ -22341,7 +22457,6 @@ var Ledger = class {
         stage: picked.stage,
         model: picked.model,
         provider: picked.provider,
-        mode: picked.mode,
         profile: picked.profile ?? null
       });
     }
@@ -22391,7 +22506,7 @@ var Ledger = class {
       const same = next.filter((run3) => run3.workflowRun === workflowRun);
       const [run2] = same;
       const ended2 = run2 !== void 0 && (run2.status === "closed" || run2.status === "expired" || expired(run2, now));
-      if (same.length !== 1 || !run2 || run2.provider !== "openrouter" || !ended2) continue;
+      if (same.length !== 1 || !run2 || run2.account !== "openrouter" || !ended2) continue;
       const cost = Math.max(0, figure - (run2.spentBefore ?? 0));
       if (run2.cost !== void 0 && Math.abs(run2.cost - cost) < 1e-4) continue;
       change(run2, expired(run2, now) ? { cost, status: "expired" } : { cost });
@@ -22792,7 +22907,8 @@ function ledgerRuns(documents) {
         task,
         workflowRun: text(fields.workflowRun) ?? "",
         status: text(fields.status) ?? "",
-        provider: text(fields.provider) ?? "",
+        // Runs picked before providers name the account (`openrouter`, `runpod`) instead.
+        account: accountOf(text(fields.provider) ?? ""),
         limit: amount2(fields.limit),
         cost: amount2(fields.cost),
         spentBefore: amount2(fields.spentBefore),
@@ -22827,7 +22943,7 @@ function untrackedRuns(documents) {
         task: 0,
         workflowRun: "",
         status: "closed",
-        provider,
+        account: accountOf(provider),
         cost: untracked,
         pod,
         start: createdAt,
@@ -28098,8 +28214,8 @@ function sleep4(ms, signal) {
 var SAMPLE_MS = 5e3;
 async function agentAccess(inputs) {
   const done = async () => void 0;
-  if (inputs.mode === "openrouter") return { apiKey: inputs.credential, finish: done };
-  if (inputs.mode === "pod") {
+  if (inputs.provider === "openrouter") return { apiKey: inputs.credential, finish: done };
+  if (inputs.provider === "runpod-pod") {
     if (!inputs.baseUrl) throw new Error("The pod's gateway URL is missing.");
     return {
       apiKey: inputs.credential,
@@ -28287,7 +28403,7 @@ var Reader = class {
   }
   /** The `- item` lines at `indent`. An item is a scalar or a mapping that starts on its line. */
   #list(indent) {
-    const list = { kind: "list", line: this.peek()?.number ?? 1, items: [] };
+    const list2 = { kind: "list", line: this.peek()?.number ?? 1, items: [] };
     for (let line = this.peek(); line && line.indent >= indent; line = this.peek()) {
       if (line.indent > indent) throw new YamlError(line.number, "unexpected indentation.");
       if (!ITEM.test(line.text)) break;
@@ -28302,16 +28418,16 @@ var Reader = class {
       if (KEY.test(content)) {
         line.indent += 1 + after.length - content.length;
         line.text = content;
-        list.items.push(this.mapping(line.indent));
+        list2.items.push(this.mapping(line.indent));
         continue;
       }
       this.#next++;
       const value = scalar(content);
       if (value === void 0)
         throw new YamlError(line.number, "a list item is not a plain value.");
-      list.items.push({ kind: "scalar", line: line.number, text: value });
+      list2.items.push({ kind: "scalar", line: line.number, text: value });
     }
-    return list;
+    return list2;
   }
 };
 function flowList(key, line, text) {
@@ -28374,10 +28490,7 @@ var DEFAULTS2 = {
   "max-label-chars": 150,
   "max-summary-chars": 2e3,
   language: "auto",
-  inference: "openrouter",
-  "gpu-provider": "runpod",
-  "gpu-mode": "pod",
-  "pod-reuse": "task",
+  provider: "openrouter",
   "parallel-tasks": 1
 };
 var LIMIT_BOUNDS = {
@@ -28395,17 +28508,16 @@ var TASK_SETTINGS = /* @__PURE__ */ new Set([
   "task-budget",
   "max-runs",
   "language",
-  "gpu-type"
+  "gpu"
 ]);
+var RENAMED_TASK_SETTINGS = { "gpu-type": "gpu" };
 var ORGANIZATION_SETTINGS = /* @__PURE__ */ new Set([
   "organization-monthly-budget"
 ]);
 var CHOICES = {
-  inference: ["openrouter", "self-hosted"],
-  "gpu-provider": ["runpod"],
-  "gpu-mode": ["pod", "serverless"],
-  engine: Object.keys(ENGINES),
-  "pod-reuse": ["task", "run"]
+  provider: PROVIDER_NAMES,
+  engine: settingValues("engine"),
+  "pod-reuse": settingValues("pod-reuse")
 };
 var NAMES = [
   "model",
@@ -28422,31 +28534,22 @@ var NAMES = [
   "max-label-chars",
   "max-summary-chars",
   "language",
-  "inference",
-  "gpu-provider",
-  "gpu-mode",
-  "gpu-type",
-  "engine",
-  "serverless-endpoint",
-  "pod-reuse",
+  "provider",
+  ...PROVIDER_SETTINGS,
   "parallel-tasks"
 ];
-var MODEL_ID = /^~?[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._:-]*$/i;
-function isModelId(text) {
-  return text.length <= 100 && MODEL_ID.test(text);
-}
 function isModelName(text) {
-  return isModelId(text) || Object.values(ENGINES).some((engine) => engine.isModel(text));
+  return isOpenRouterModel(text) || Object.values(ENGINES).some((engine) => engine.isModel(text));
 }
 var GPU_TYPE = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,78}[A-Za-z0-9]$/;
-var ENDPOINT_ID = /^[a-z0-9]{1,64}$/i;
 var LANGUAGE_TAG = /^[a-z]{2,3}(-[a-z0-9]{2,8}){0,3}$/i;
 function isLanguageTag(text) {
   return LANGUAGE_TAG.test(text);
 }
 function settingKind(name) {
-  if (name === "model" || name === "language" || name === "gpu-type") return name;
-  if (name === "serverless-endpoint") return "endpoint";
+  if (name === "model" || name === "language" || name === "gpu" || name === "endpoint") {
+    return name;
+  }
   if (CHOICES[name]) return "choice";
   return name === "task-budget" || name === "monthly-budget" || name === "organization-monthly-budget" ? "number" : "integer";
 }
@@ -28467,12 +28570,10 @@ function parseSetting(name, text) {
       error: `\`${name}\` must be one of ${choices.map((c) => `\`${c}\``).join(", ")}.`
     };
   }
-  if (name === "gpu-type") {
+  if (name === "gpu") {
     return GPU_TYPE.test(text) ? { ok: true, value: text } : { ok: false, error: `\`${name}\` must be a GPU type, such as \`NVIDIA RTX A6000\`.` };
   }
-  if (name === "serverless-endpoint") {
-    return ENDPOINT_ID.test(text) ? { ok: true, value: text } : { ok: false, error: `\`${name}\` must be an endpoint's ID, letters and digits.` };
-  }
+  if (name === "endpoint") return endpointId(text);
   if (name === "language") {
     return text === "auto" || isLanguageTag(text) ? { ok: true, value: text } : {
       ok: false,
@@ -28493,16 +28594,36 @@ function parseSetting(name, text) {
   }
   return { ok: true, value };
 }
-var PROFILE_SETTINGS = [
-  "inference",
-  "gpu-provider",
-  "gpu-mode",
-  "gpu-type",
-  "engine",
-  "serverless-endpoint",
-  "pod-reuse",
-  "model"
-];
+var PROFILE_SETTINGS = ["provider", "model", ...PROVIDER_SETTINGS];
+function renamedSetting(name, value) {
+  const now = (text) => `\`${name}\` is now ${text}.`;
+  switch (name) {
+    case "inference":
+      if (value === "openrouter") return now("`provider`: write `provider: openrouter`");
+      return now(
+        value === "self-hosted" ? "`provider`: write `provider: runpod-pod` or `provider: runpod-serverless`" : `\`provider\`: ${PROVIDER_NAMES.map((provider) => `\`${provider}\``).join(", ")}`
+      );
+    case "gpu-provider":
+      return now(
+        "part of `provider`: write `provider: runpod-pod` or `provider: runpod-serverless`"
+      );
+    case "gpu-mode":
+      if (value === "pod" || value === "serverless") {
+        return now(`part of \`provider\`: write \`provider: runpod-${value}\``);
+      }
+      return now(
+        "part of `provider`: write `provider: runpod-pod` or `provider: runpod-serverless`"
+      );
+    case "gpu-type":
+      return now("`gpu`");
+    case "serverless-endpoint":
+      return now("`endpoint`, with `provider: runpod-serverless`");
+    case "inference-profiles":
+      return now("`profiles`");
+    default:
+      return void 0;
+  }
+}
 var PROFILE_STAGES = ["plan", "route", ...STAGES];
 var PROFILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 function parseSettings(text, source = SETTINGS_FILE) {
@@ -28510,7 +28631,7 @@ function parseSettings(text, source = SETTINGS_FILE) {
   if (!tree.ok) return { ok: false, error: `${source}, line ${tree.line}: ${tree.error}` };
   const settings = {};
   for (const entry of tree.value.entries) {
-    const parsed = entry.key === "inference-profiles" ? profiles(entry.value) : setting(entry, "setting");
+    const parsed = entry.key === "profiles" ? profiles(entry.value) : setting(entry, "setting");
     if (!parsed.ok) return { ok: false, error: `${source}, line ${parsed.line}: ${parsed.error}` };
     if (source !== SHARED_SETTINGS && isSettingName(entry.key) && ORGANIZATION_SETTINGS.has(entry.key)) {
       return {
@@ -28524,6 +28645,8 @@ function parseSettings(text, source = SETTINGS_FILE) {
 }
 function setting(entry, what) {
   const { key: name, line, value } = entry;
+  const renamed = renamedSetting(name, value.kind === "scalar" ? value.text : void 0);
+  if (renamed) return { ok: false, line, error: renamed };
   if (!isSettingName(name)) return { ok: false, line, error: `unknown setting \`${name}\`.` };
   if (what === "profile" && !PROFILE_SETTINGS.includes(name)) {
     return {
@@ -28543,23 +28666,23 @@ function profiles(node) {
     return {
       ok: false,
       line: node.kind === "list" ? node.items[0]?.line ?? node.line : node.line,
-      error: "`inference-profiles` must be a list of profiles, each a block of settings."
+      error: "`profiles` must be a list of profiles, each a block of settings."
     };
   }
-  const list = [];
+  const list2 = [];
   for (const item of node.items) {
     const parsed = profile(item);
     if (!parsed.ok) return parsed;
-    if (list.some((other) => other.name === parsed.value.name)) {
+    if (list2.some((other) => other.name === parsed.value.name)) {
       return {
         ok: false,
         line: item.line,
         error: `two profiles are named \`${parsed.value.name}\`.`
       };
     }
-    list.push(parsed.value);
+    list2.push(parsed.value);
   }
-  return { ok: true, value: list };
+  return { ok: true, value: list2 };
 }
 function profile(node) {
   if (node.kind !== "map") return { ok: false, line: node.line, error: "expected a profile." };
@@ -28632,46 +28755,70 @@ function isProfileStage(value) {
 }
 function resolveRun(layers, run2) {
   const [own = {}] = layers;
-  const merged = merge3(layers);
-  const { "inference-profiles": profiles2 = [], ...values } = merged;
+  const { profiles: list2 = [], ...values } = merge3(layers);
   if (values.model === void 0) {
     return {
       ok: false,
       error: `No model is configured. Set \`model\` in ${SETTINGS_FILE} or in the workflow's inputs.`
     };
   }
-  const forTask = pick(own, PROFILE_SETTINGS);
-  const below = merge3(layers.slice(1), {});
-  const top = { ...values };
-  for (const name of PROFILE_SETTINGS) {
-    if (below[name] !== void 0) Object.assign(top, { [name]: below[name] });
-  }
-  const topError = inferenceError(top);
+  const below = serving(layers.slice(1), { provider: DEFAULTS2.provider });
+  const top = { ...omit2(values, PROFILE_SETTINGS), ...below, model: below.model ?? values.model };
+  const topError = settingsProblem(top);
   if (topError) return { ok: false, error: topError };
-  for (const profile2 of profiles2) {
-    const error4 = inferenceError({ ...top, ...profile2.settings });
-    if (error4) return { ok: false, error: `Inference profile \`${profile2.name}\`: ${error4}` };
+  const profiled = list2.map((profile2) => ({
+    profile: profile2,
+    settings: { ...omit2(top, PROFILE_SETTINGS), ...serving([profile2.settings], top) }
+  }));
+  for (const { profile: profile2, settings: settings2 } of profiled) {
+    const error4 = settingsProblem(settings2);
+    if (error4) return { ok: false, error: `Profile \`${profile2.name}\`: ${error4}` };
   }
-  const chosen = run2 ? profiles2.find((profile2) => applies(profile2, run2)) : void 0;
-  const settings = { ...top, ...chosen?.settings, ...forTask };
-  const error3 = inferenceError(settings);
-  if (error3) {
-    return { ok: false, error: chosen ? `Inference profile \`${chosen.name}\`: ${error3}` : error3 };
-  }
-  if (settings.inference === "self-hosted") {
-    settings.engine ??= MODE_ENGINE[settings["gpu-mode"]];
-  }
-  const providers = [top, ...profiles2.map((profile2) => ({ ...top, ...profile2.settings }))].map(
-    (layer) => layer.inference === "self-hosted" ? layer["gpu-provider"] ?? "" : "openrouter"
+  const forTask = pick(own, PROFILE_SETTINGS);
+  const chosen = run2 ? profiled.find(({ profile: profile2 }) => applies(profile2, run2)) : void 0;
+  const base = chosen?.settings ?? top;
+  const providers = [top, ...profiled.map(({ settings: settings2 }) => settings2)].map(
+    (settings2) => settings2.provider ?? DEFAULTS2.provider
   );
+  for (const name of PROVIDER_SETTINGS) {
+    if (forTask[name] !== void 0 && !providers.some((p) => PROVIDERS[p].settings[name])) {
+      return {
+        ok: false,
+        error: `No provider of the settings accepts \`${name}\`: they name ${[...new Set(providers)].map((p) => `\`${p}\``).join(", ")}.`
+      };
+    }
+  }
+  const accepted = PROVIDERS[base.provider ?? DEFAULTS2.provider].settings;
+  const taskServing = Object.fromEntries(
+    Object.entries(forTask).filter(([name]) => name === "model" || name in accepted)
+  );
+  const settings = withProviderDefaults({ ...base, ...taskServing });
+  const error3 = settingsProblem(settings);
+  if (error3) {
+    return { ok: false, error: chosen ? `Profile \`${chosen.profile.name}\`: ${error3}` : error3 };
+  }
   return {
     ok: true,
-    value: { settings, profile: chosen?.name, providers: [...new Set(providers)] }
+    value: {
+      settings,
+      profile: chosen?.profile.name,
+      accounts: [...new Set(providers.map(accountOf))]
+    }
   };
 }
 function applies(profile2, run2) {
   const { stages, "parallel-tasks": tasks } = profile2.when;
   return (!stages || stages.includes(run2.stage)) && (tasks === void 0 || run2.tasks >= tasks);
+}
+function serving(layers, base) {
+  let result = pick(base, PROFILE_SETTINGS);
+  for (const layer of [...layers].reverse()) {
+    if (layer.provider !== void 0 && layer.provider !== result.provider) {
+      result = omit2(result, PROVIDER_SETTINGS);
+    }
+    Object.assign(result, pick(layer, PROFILE_SETTINGS));
+  }
+  return result;
 }
 function merge3(layers, defaults2 = DEFAULTS2) {
   const merged = { ...defaults2 };
@@ -28684,10 +28831,11 @@ function merge3(layers, defaults2 = DEFAULTS2) {
 }
 function pick(layer, names) {
   return Object.fromEntries(
-    Object.entries(layer).filter(
-      ([name, value]) => value !== void 0 && names.includes(name)
-    )
+    Object.entries(layer).filter(([name, value]) => value !== void 0 && names.includes(name))
   );
+}
+function omit2(layer, names) {
+  return Object.fromEntries(Object.entries(layer).filter(([name]) => !names.includes(name)));
 }
 function settingSources(layers) {
   const named = /* @__PURE__ */ new Set();
@@ -28702,26 +28850,13 @@ function settingSources(layers) {
     return [`Settings from ${source}: ${values.map(([n, v]) => `${n}=${show(v)}`).join(", ")}.`];
   });
 }
-function inferenceError(settings) {
-  if (settings.inference !== "self-hosted") {
-    return isModelId(settings.model) ? void 0 : `\`model\` must be an OpenRouter model ID, such as \`provider/model\`, not \`${settings.model}\`.`;
-  }
-  const mode = settings["gpu-mode"];
-  const engine = settings.engine ?? MODE_ENGINE[mode];
-  if (engine !== MODE_ENGINE[mode]) {
-    return `With \`gpu-mode: ${mode}\`, the engine is \`${MODE_ENGINE[mode]}\`, not \`${engine}\`.`;
-  }
-  if (mode === "pod" && !settings["gpu-type"]) {
-    return `Self-hosted inference on pods needs \`gpu-type\`, such as \`"NVIDIA RTX A6000"\`, in ${SETTINGS_FILE}.`;
-  }
-  if (mode === "serverless" && !settings["serverless-endpoint"]) {
-    return `Self-hosted inference on Serverless needs \`serverless-endpoint\` in ${SETTINGS_FILE}.`;
-  }
-  const model = ENGINES[engine];
-  if (model && !model.isModel(settings.model)) {
-    return `\`model\` must be a ${engine} model name, such as \`${model.example}\`, not \`${settings.model}\`.`;
-  }
-  return void 0;
+function settingsProblem(settings) {
+  const values = pick(settings, PROVIDER_SETTINGS);
+  return providerProblem({
+    ...values,
+    provider: settings.provider ?? DEFAULTS2.provider,
+    model: settings.model ?? ""
+  });
 }
 
 // src/output.ts
@@ -28842,7 +28977,7 @@ function parseRouteOutput(text, limits) {
   const seen = /* @__PURE__ */ new Set();
   const steps = (value, name, field) => {
     if (!Array.isArray(value)) return { ok: false, error: `${name} must be a list.` };
-    const list = [];
+    const list2 = [];
     for (const [index, item] of value.entries()) {
       const where = `${name}[${index}]`;
       if (!isObject(item) || !STAGES.includes(item.stage)) {
@@ -28853,9 +28988,9 @@ function parseRouteOutput(text, limits) {
       seen.add(stage);
       const text2 = string(item[field], `${where}.${field}`, limits.summary, cuts);
       if (!text2.ok) return text2;
-      list.push({ stage, [field]: text2.value });
+      list2.push({ stage, [field]: text2.value });
     }
-    return { ok: true, value: list };
+    return { ok: true, value: list2 };
   };
   const route = steps(data.route, "route", "brief");
   if (!route.ok) return route;
@@ -29075,12 +29210,16 @@ var en = {
     "Task budget",
     "Month (estimated)"
   ],
-  provider: (mode) => ({ openrouter: "OpenRouter", pod: "Runpod (pod)", serverless: "Runpod (Serverless)" })[mode],
-  spendNote: (mode) => ({
+  provider: (provider) => ({
+    openrouter: "OpenRouter",
+    "runpod-pod": "Runpod (pod)",
+    "runpod-serverless": "Runpod (Serverless)"
+  })[provider],
+  spendNote: (provider) => ({
     openrouter: "**OpenRouter**: a run's cost is what its key used, exact, and later runs refresh it.",
-    pod: "**Runpod (pod)**: a run's cost is its pod's time at the pod's price; the task also counts its pod's time between runs, refreshed later from Runpod's billing.",
-    serverless: "**Runpod (Serverless)**: a run's cost is an estimate of the time Runpod bills its workers, which counts in the month as soon as the run ends; time a worker served several runs at once, of any of the organization's repositories, is split among them, and later runs refresh it."
-  })[mode],
+    "runpod-pod": "**Runpod (pod)**: a run's cost is its pod's time at the pod's price; the task also counts its pod's time between runs, refreshed later from Runpod's billing.",
+    "runpod-serverless": "**Runpod (Serverless)**: a run's cost is an estimate of the time Runpod bills its workers, which counts in the month as soon as the run ends; time a worker served several runs at once, of any of the organization's repositories, is split among them, and later runs refresh it."
+  })[provider],
   monthNote: "**Month**: what the repository's runs count this month in Codeman's ledger before the run, an estimate: each run's cost as above, and the whole limit of each run still open. The organization's monthly budget, when it has one, counts every repository's runs and Runpod's billing by the hour.",
   earlierRuns: (runs) => `Earlier runs (${runs})`,
   totalRow: (runs) => `Total (${runs} ${runs === 1 ? "run" : "runs"})`,
@@ -29182,6 +29321,8 @@ Tests: ${test ?? "(no report)"}`,
         return `\`set\` changes one of ${problem2.names.map((name) => `\`${name}\``).join(", ")} for this task.`;
       case "set-one-value":
         return `\`set ${problem2.name}\` needs one value.`;
+      case "renamed-setting":
+        return `\`${problem2.name}\` is now \`${problem2.now}\`: write \`set ${problem2.now}\`.`;
       case "invalid-setting":
         return {
           model: `\`${problem2.name}\` must be a model ID, such as \`provider/model\` on OpenRouter or \`qwen3-coder:30b\` on Ollama.`,
@@ -29189,8 +29330,8 @@ Tests: ${test ?? "(no report)"}`,
           number: `\`${problem2.name}\` must be a positive number.`,
           integer: `\`${problem2.name}\` must be a positive whole number.`,
           choice: `\`${problem2.name}\` must be one of ${(problem2.values ?? []).map((value) => `\`${value}\``).join(", ")}.`,
-          "gpu-type": `\`${problem2.name}\` must be a GPU type, such as \`NVIDIA RTX A6000\`.`,
-          endpoint: `\`${problem2.name}\` must be an endpoint's ID, letters and digits.`
+          gpu: `\`${problem2.name}\` must be a GPU type, such as \`NVIDIA RTX A6000\`.`,
+          endpoint: `\`${problem2.name}\` must be an endpoint's ID, letters and digits, or its URL on \`https://api.runpod.ai\`.`
         }[problem2.type];
       case "settings-rejected":
         return `The task's settings were not applied: ${problem2.error}`;
@@ -29329,12 +29470,16 @@ var ptBR = {
     "Or\xE7amento da tarefa",
     "M\xEAs (estimado)"
   ],
-  provider: (mode) => ({ openrouter: "OpenRouter", pod: "Runpod (pod)", serverless: "Runpod (Serverless)" })[mode],
-  spendNote: (mode) => ({
+  provider: (provider) => ({
+    openrouter: "OpenRouter",
+    "runpod-pod": "Runpod (pod)",
+    "runpod-serverless": "Runpod (Serverless)"
+  })[provider],
+  spendNote: (provider) => ({
     openrouter: "**OpenRouter**: o custo de uma rodada \xE9 o que a sua chave usou, exato, e as rodadas seguintes o atualizam.",
-    pod: "**Runpod (pod)**: o custo de uma rodada \xE9 o tempo do seu pod ao pre\xE7o dele; a tarefa conta tamb\xE9m o tempo do pod entre rodadas, atualizado depois pela cobran\xE7a da Runpod.",
-    serverless: "**Runpod (Serverless)**: o custo de uma rodada \xE9 uma estimativa do tempo que a Runpod cobra pelos seus workers, que conta no m\xEAs assim que a rodada termina; o tempo em que um worker atendeu v\xE1rias rodadas ao mesmo tempo, de qualquer reposit\xF3rio da organiza\xE7\xE3o, \xE9 dividido entre elas, e as rodadas seguintes o atualizam."
-  })[mode],
+    "runpod-pod": "**Runpod (pod)**: o custo de uma rodada \xE9 o tempo do seu pod ao pre\xE7o dele; a tarefa conta tamb\xE9m o tempo do pod entre rodadas, atualizado depois pela cobran\xE7a da Runpod.",
+    "runpod-serverless": "**Runpod (Serverless)**: o custo de uma rodada \xE9 uma estimativa do tempo que a Runpod cobra pelos seus workers, que conta no m\xEAs assim que a rodada termina; o tempo em que um worker atendeu v\xE1rias rodadas ao mesmo tempo, de qualquer reposit\xF3rio da organiza\xE7\xE3o, \xE9 dividido entre elas, e as rodadas seguintes o atualizam."
+  })[provider],
   monthNote: "**M\xEAs**: o que as rodadas do reposit\xF3rio contam neste m\xEAs no registro do Codeman antes da rodada, uma estimativa: o custo de cada rodada como acima, e o limite inteiro de cada rodada ainda aberta. O or\xE7amento mensal da organiza\xE7\xE3o, quando ela tem um, conta as rodadas de todos os reposit\xF3rios e a cobran\xE7a da Runpod por hora.",
   earlierRuns: (runs) => `Rodadas anteriores (${runs})`,
   totalRow: (runs) => `Total (${runs} ${runs === 1 ? "rodada" : "rodadas"})`,
@@ -29436,6 +29581,8 @@ Testes: ${test ?? "(sem relat\xF3rio)"}`,
         return `\`set\` muda, nesta tarefa, uma destas configura\xE7\xF5es: ${problem2.names.map((name) => `\`${name}\``).join(", ")}.`;
       case "set-one-value":
         return `\`set ${problem2.name}\` precisa de um valor.`;
+      case "renamed-setting":
+        return `\`${problem2.name}\` agora se chama \`${problem2.now}\`: escreva \`set ${problem2.now}\`.`;
       case "invalid-setting":
         return {
           model: `\`${problem2.name}\` precisa ser o ID de um modelo, como \`provedor/modelo\` no OpenRouter ou \`qwen3-coder:30b\` no Ollama.`,
@@ -29443,8 +29590,8 @@ Testes: ${test ?? "(sem relat\xF3rio)"}`,
           number: `\`${problem2.name}\` precisa ser um n\xFAmero positivo.`,
           integer: `\`${problem2.name}\` precisa ser um n\xFAmero inteiro positivo.`,
           choice: `\`${problem2.name}\` precisa ser um destes valores: ${(problem2.values ?? []).map((value) => `\`${value}\``).join(", ")}.`,
-          "gpu-type": `\`${problem2.name}\` precisa ser um tipo de GPU, como \`NVIDIA RTX A6000\`.`,
-          endpoint: `\`${problem2.name}\` precisa ser o ID de um endpoint, com letras e d\xEDgitos.`
+          gpu: `\`${problem2.name}\` precisa ser um tipo de GPU, como \`NVIDIA RTX A6000\`.`,
+          endpoint: `\`${problem2.name}\` precisa ser o ID de um endpoint, com letras e d\xEDgitos, ou a URL dele em \`https://api.runpod.ai\`.`
         }[problem2.type];
       case "settings-rejected":
         return `As configura\xE7\xF5es da tarefa n\xE3o foram aplicadas: ${problem2.error}`;
@@ -30511,13 +30658,13 @@ async function modelAccess(runtime2, task, credential) {
   if (serverlessKey) runtime2.mask(serverlessKey);
   const contextLength = Number(runtime2.input("context-length"));
   return agentAccess({
-    mode: agentMode(choice),
+    provider: choice.provider,
     credential,
     baseUrl: runtime2.input("base-url") || void 0,
     contextLength: Number.isInteger(contextLength) && contextLength > 0 ? contextLength : void 0,
     handle: runtime2.input("handle"),
     serverlessKey: serverlessKey || void 0,
-    engine: choice.inference === "self-hosted" ? ENGINES[choice.engine] : void 0,
+    engine: choice.provider === "openrouter" ? void 0 : ENGINES[choice.engine],
     log: (message) => runtime2.info(oneLine(message))
   });
 }
@@ -30681,13 +30828,14 @@ function spendTable(t, spending, total, options = {}) {
   for (const row of rows) {
     const month = row.monthSpent === void 0 ? t.money(row.monthlyBudget) : t.of(t.money(row.monthSpent), t.money(row.monthlyBudget));
     const when = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(row.at) ? t.dateTime(row.at) : "\u2014";
+    const provider = rowProvider(row);
     lines.push(
       [
         "",
         `[${when}](${row.runUrl})`,
         t.stage(row.stage),
         `\`${row.model.replace(/[`|\s]/g, "")}\``,
-        row.inference ? t.provider(row.inference) : "\u2014",
+        provider ? t.provider(provider) : "\u2014",
         dash(row.durationMs, duration),
         dash(row.inputTokens, t.tokens),
         dash(row.outputTokens, t.tokens),
@@ -30713,10 +30861,18 @@ function spendTable(t, spending, total, options = {}) {
   }
   return lines;
 }
-var MODES = ["openrouter", "pod", "serverless"];
+function rowProvider(row) {
+  if (row.provider) return row.provider;
+  const older = {
+    openrouter: "openrouter",
+    pod: "runpod-pod",
+    serverless: "runpod-serverless"
+  };
+  return row.inference ? older[row.inference] : void 0;
+}
 function spendNotes(t, spending) {
-  const used = new Set((spending?.rows ?? []).map((row) => row.inference));
-  const notes2 = MODES.filter((mode) => used.has(mode)).map((mode) => t.spendNote(mode));
+  const used = new Set((spending?.rows ?? []).map(rowProvider));
+  const notes2 = PROVIDER_NAMES.filter((name) => used.has(name)).map((name) => t.spendNote(name));
   return notes2.length > 0 ? [...notes2, t.monthNote] : [];
 }
 function duration(ms) {
@@ -31003,11 +31159,13 @@ function parseDecide(args, invalid) {
 }
 function parseSet(args, invalid) {
   const [name = "", ...values] = args;
+  const renamed = RENAMED_TASK_SETTINGS[name];
+  if (renamed) return invalid({ kind: "renamed-setting", name, now: renamed });
   if (!isSettingName(name) || !TASK_SETTINGS.has(name)) {
     return invalid({ kind: "set-which", names: [...TASK_SETTINGS] });
   }
-  const value = name === "gpu-type" && values.length > 0 ? values.join(" ") : values[0];
-  if (value === void 0 || name !== "gpu-type" && values.length > 1) {
+  const value = name === "gpu" && values.length > 0 ? values.join(" ") : values[0];
+  if (value === void 0 || name !== "gpu" && values.length > 1) {
     return invalid({ kind: "set-one-value", name });
   }
   const parsed = parseSetting(name, value);
@@ -32059,7 +32217,7 @@ function runCosts(io, task) {
   return { run: run2, task: before + (run2 ?? 0) };
 }
 function selfHostedRun(io, task) {
-  return task.settings.inference === "self-hosted" && io.jobs.keyStatus === "opened";
+  return task.settings.provider !== "openrouter" && io.jobs.keyStatus === "opened";
 }
 function spendRow(io, task, cost) {
   if (io.jobs.keyStatus !== "opened") return void 0;
@@ -32072,7 +32230,7 @@ function spendRow(io, task, cost) {
     stage: task.action === "implement" ? task.stage ?? "code" : task.action,
     model: task.model,
     // The choice select made, from the same settings it passes to the key jobs.
-    inference: agentMode(inferenceChoice(task.settings, null)),
+    provider: task.settings.provider,
     cost,
     keyLimit: io.jobs.keyLimit,
     taskBudget: task.settings["task-budget"],
@@ -32121,7 +32279,7 @@ async function open(services, ledger, run2) {
   const monthlyBudget = positiveNumber(runtime2, "monthly-budget");
   const organizationBudget = runtime2.input("organization-monthly-budget") === "" ? void 0 : positiveNumber(runtime2, "organization-monthly-budget");
   const choice = parseInferenceChoice(runtime2.input("inference"));
-  if (choice.profile) runtime2.info(`The run uses the inference profile \`${choice.profile}\`.`);
+  if (choice.profile) runtime2.info(`The run uses the profile \`${choice.profile}\`.`);
   const refuse = (status2, reason) => {
     runtime2.output("status", status2);
     runtime2.output("reason", reason);
@@ -32129,10 +32287,10 @@ async function open(services, ledger, run2) {
   };
   const accounts = services.accounts();
   const now = /* @__PURE__ */ new Date();
-  const needed = /* @__PURE__ */ new Set([choiceProvider(choice)]);
+  const needed = /* @__PURE__ */ new Set([accountOf(choice.provider)]);
   if (organizationBudget !== void 0) {
-    const used = (await ledger.monthRuns(runtime2)).map((other) => other.provider);
-    for (const name of [...choice.providers, ...used]) if (isGpuProvider(name)) needed.add(name);
+    const used = (await ledger.monthRuns(runtime2)).map((other) => other.account);
+    for (const name of [...choice.accounts, ...used]) if (isHourlyAccount(name)) needed.add(name);
   }
   const missing = [...needed].flatMap((name) => accounts.missing(name) ?? []);
   if (missing.length > 0) {
@@ -32144,12 +32302,12 @@ async function open(services, ledger, run2) {
   const billed = /* @__PURE__ */ new Map();
   if (organizationBudget !== void 0) {
     for (const name of needed) {
-      if (isGpuProvider(name))
+      if (isHourlyAccount(name))
         billed.set(name, await accounts.billedHours(name, monthStart(now), now));
     }
   }
   const runs = await ledger.taskRuns(run2, runtime2);
-  if (runs.some((other) => other.provider === "openrouter" && expired(other, now))) {
+  if (runs.some((other) => other.account === "openrouter" && expired(other, now))) {
     const costs = await accounts.taskCosts(task).catch((error3) => {
       runtime2.warning(
         `Could not read what the task's OpenRouter runs spent: ${error3 instanceof Error ? error3.message : error3}`
@@ -32272,12 +32430,12 @@ async function closeKey(services) {
 async function release(services) {
   const { runtime: runtime2 } = services;
   const choice = parseInferenceChoice(runtime2.input("inference"));
-  if (choice.inference !== "self-hosted" || choice.mode !== "pod") {
+  if (choice.provider !== "runpod-pod") {
     runtime2.info("Nothing to release: the run had no pod.");
     return;
   }
   const accountKey = runtime2.input("gpu-key", { required: true });
-  const gpu = gpuProvider(choice.gpuProvider, accountKey);
+  const gpu = gpuProvider(accountOf(choice.provider), accountKey);
   if (!gpu.pods) throw new Error(`${gpu.name} has no pods.`);
   const handle = runtime2.input("handle", { required: true });
   const registry = new PodRegistry(services.store(), runtime2.repository.owner);
@@ -32410,8 +32568,8 @@ async function select(services) {
   }
   const agents = choices.filter((choice) => runsAgent(choice.action)).length;
   if (choices.length > 1) {
-    const list = choices.map((choice) => `#${choice.number} (${choice.action})`).join(", ");
-    runtime2.info(`Picked ${choices.length} tasks, of up to ${parallel}: ${list}.`);
+    const list2 = choices.map((choice) => `#${choice.number} (${choice.action})`).join(", ");
+    runtime2.info(`Picked ${choices.length} tasks, of up to ${parallel}: ${list2}.`);
   }
   const prepare = async (choice) => {
     const task = tasks.find((candidate) => candidate.number === choice.number);
@@ -32470,8 +32628,8 @@ async function select(services) {
     const agentWork = action === "plan" || action === "route" ? action : stage;
     const runConditions = agentWork ? { stage: agentWork, tasks: agents } : void 0;
     let resolved = resolveRun([own, ...below], runConditions);
-    if (!resolved.ok && (own.model !== void 0 || own["gpu-type"] !== void 0)) {
-      const { model: _model, "gpu-type": _gpuType, ...rest } = own;
+    if (!resolved.ok && (own.model !== void 0 || own.gpu !== void 0)) {
+      const { model: _model, gpu: _gpu, ...rest } = own;
       const fallback = resolveRun([rest, ...below], runConditions);
       if (fallback.ok) {
         problems.push({ problem: { kind: "settings-rejected", error: resolved.error } });
@@ -32481,9 +32639,9 @@ async function select(services) {
     }
     if (!resolved.ok) throw new Error(resolved.error);
     for (const line of settingSources([own, ...below])) runtime2.info(line);
-    const { profile: profile2, providers } = resolved.value;
+    const { profile: profile2, accounts } = resolved.value;
     const settings = resolved.value.settings;
-    if (profile2) runtime2.info(`Inference profile \`${profile2}\` applies to this run.`);
+    if (profile2) runtime2.info(`Profile \`${profile2}\` applies to this run.`);
     const model = settings.model;
     const context3 = {
       version: 1,
@@ -32563,7 +32721,7 @@ async function select(services) {
       settings,
       record: record ?? null,
       profile: profile2,
-      providers,
+      accounts,
       context: context3,
       start
     };
@@ -32582,14 +32740,12 @@ async function select(services) {
     writeFileSync6(taskFile(runtime2), JSON.stringify(firstPicked.context, null, 2));
   }
   for (const one of picked) {
-    const choice = inferenceChoice(one.settings, null);
     ledger.pick(runOf(one), {
       action: one.action,
       stage: one.stage,
       agent: one.needsAgent,
       model: one.model,
-      provider: choiceProvider(choice),
-      mode: agentMode(choice),
+      provider: one.settings.provider,
       profile: one.profile
     });
   }
@@ -32598,7 +32754,7 @@ async function select(services) {
 function taskOutputs(task, run2) {
   const choice = inferenceChoice(task.settings, task.record, {
     profile: task.profile,
-    providers: task.providers
+    accounts: task.accounts
   });
   return {
     task: String(task.number),

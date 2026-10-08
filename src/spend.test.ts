@@ -22,7 +22,7 @@ const row = (cost: number | undefined, run = 1): SpendRow => ({
   at: "2026-09-28T19:40:12.345Z",
   stage: "code",
   model: "deepseek/deepseek-v4.1-flash",
-  inference: "openrouter",
+  provider: "openrouter",
   cost,
   keyLimit: 1.5,
   taskBudget: 2,
@@ -78,20 +78,26 @@ test("unknown values show a dash, and the model cannot break the table", () => {
 test("each row names its provider, and a row recorded before it was kept shows a dash", () => {
   const cell = (entry: SpendRow, t = en) => spendTable(t, { rows: [entry] })[2]?.split(" | ")[3];
   assert.equal(cell(row(0.1)), "OpenRouter");
-  assert.equal(cell({ ...row(0.1), inference: "pod" }), "Runpod (pod)");
-  assert.equal(cell({ ...row(0.1), inference: "serverless" }), "Runpod (Serverless)");
-  assert.equal(cell({ ...row(0.1), inference: "serverless" }, ptBR), "Runpod (Serverless)");
-  assert.equal(cell({ ...row(0.1), inference: undefined }), "—");
+  assert.equal(cell({ ...row(0.1), provider: "runpod-pod" }), "Runpod (pod)");
+  assert.equal(cell({ ...row(0.1), provider: "runpod-serverless" }), "Runpod (Serverless)");
+  assert.equal(cell({ ...row(0.1), provider: "runpod-serverless" }, ptBR), "Runpod (Serverless)");
+  assert.equal(cell({ ...row(0.1), provider: undefined }), "—");
+  // Rows recorded before providers keep their older `inference`.
+  const older = (inference: string) => ({ ...row(0.1), provider: undefined, inference });
+  assert.equal(cell(older("openrouter")), "OpenRouter");
+  assert.equal(cell(older("pod")), "Runpod (pod)");
+  assert.equal(cell(older("serverless")), "Runpod (Serverless)");
+  assert.equal(cell(older("elsewhere")), "—");
   assert.equal(
     spendTable(ptBR, { rows: [row(0.1)] })[0],
     "| Rodada | Etapa | Modelo | Provedor | Tempo | Tokens de entrada | Tokens de saída | Contexto | Tok/s | Custo | Limite da chave | Orçamento da tarefa | Mês (estimado) |",
   );
 });
 
-test("the notes say how each inference of the rows is measured, once each and in a fixed order", () => {
-  const old = { ...row(0.1), inference: undefined };
-  const serverless = { ...row(0.1), inference: "serverless" as const };
-  const pod = { ...row(0.1), inference: "pod" as const };
+test("the notes say how each provider of the rows is measured, once each and in a fixed order", () => {
+  const old = { ...row(0.1), provider: undefined };
+  const serverless = { ...row(0.1), provider: "runpod-serverless" as const };
+  const pod = { ...row(0.1), provider: undefined, inference: "pod" };
   const notes = spendNotes(en, { rows: [serverless, old, row(0.1), serverless, pod] });
   assert.equal(notes.length, 4);
   assert.match(notes[0] ?? "", /^\*\*OpenRouter\*\*: a run's cost is what its key used, exact/);

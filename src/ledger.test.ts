@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
-import { Ledger, type PickedRun } from "./ledger.ts";
+import { Ledger, ledgerRuns, type PickedRun } from "./ledger.ts";
 import { closeKey, openKey } from "./steps/keys.ts";
 import { select } from "./steps/select.ts";
 import { MemoryStore } from "./store/memory.ts";
@@ -21,8 +21,7 @@ const picked: PickedRun = {
   stage: "code",
   agent: true,
   model: "qwen3-coder:30b",
-  provider: "runpod",
-  mode: "pod",
+  provider: "runpod-pod",
   profile: "small-pod",
 };
 
@@ -103,8 +102,7 @@ test("a run's document grows with each job, and each job says what it did", asyn
       pickedAt: new Date("2026-10-07T12:00:00Z"),
       stage: "code",
       model: "qwen3-coder:30b",
-      provider: "runpod",
-      mode: "pod",
+      provider: "runpod-pod",
       profile: "small-pod",
       reservedAt: new Date("2026-10-07T12:01:00Z"),
       expiresAt: new Date("2026-10-07T14:01:00Z"),
@@ -518,4 +516,36 @@ test("a task's run from select to close-key, and a re-run of its key jobs, write
   assert.deepEqual(Object.keys(second).sort(), Object.keys(first).sort());
   assert.equal(second["organizations/o/runs/300-1-1"]?.attempt, 1, "the attempt that picked it");
   assert.equal(second["organizations/o/events/300-1-1-key-opened"]?.attempt, 2);
+});
+
+test("runs picked before providers read with their account, as new ones do", () => {
+  const document = (id: string, fields: Fields) => ({
+    path: `organizations/o/runs/${id}`,
+    version: "1",
+    fields: {
+      repository: "o/r",
+      task: 7,
+      pickedAt: new Date("2026-10-07T12:00:00Z"),
+      ...fields,
+    },
+  });
+  const runs = ledgerRuns([
+    document("100-1-7", { provider: "runpod", mode: "pod" }),
+    document("101-1-7", { provider: "openrouter", mode: "openrouter" }),
+    document("102-1-7", { provider: "runpod", mode: "serverless" }),
+    document("103-1-7", { provider: "runpod-pod" }),
+    document("104-1-7", { provider: "runpod-serverless" }),
+    document("105-1-7", { provider: "openrouter" }),
+  ]);
+  assert.deepEqual(
+    runs.map((run) => [run.id, run.account]),
+    [
+      ["100-1-7", "runpod"],
+      ["101-1-7", "openrouter"],
+      ["102-1-7", "runpod"],
+      ["103-1-7", "runpod"],
+      ["104-1-7", "runpod"],
+      ["105-1-7", "openrouter"],
+    ],
+  );
 });

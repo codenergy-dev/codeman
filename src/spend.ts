@@ -1,5 +1,5 @@
 import type { Messages } from "./i18n/index.ts";
-import type { AgentMode } from "./inference/index.ts";
+import { PROVIDER_NAMES, type ProviderName } from "./inference/providers.ts";
 import type { Stage } from "./stages.ts";
 
 /** What one agent run spent, and the limits that applied to it. */
@@ -10,7 +10,12 @@ export interface SpendRow {
   stage: Stage | "plan" | "route";
   model: string;
   /** Where the run's model was served; rows recorded before it was kept have none. */
-  inference?: AgentMode | undefined;
+  provider?: ProviderName | undefined;
+  /**
+   * Where the run's model was served, in rows recorded before providers: `openrouter`, `pod` or
+   * `serverless`. Read only, by `rowProvider`.
+   */
+  inference?: string | undefined;
   /** Undefined when the run's cost could not be read. */
   cost?: number | undefined;
   keyLimit?: number | undefined;
@@ -186,13 +191,14 @@ export function spendTable(
         ? t.money(row.monthlyBudget)
         : t.of(t.money(row.monthSpent), t.money(row.monthlyBudget));
     const when = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(row.at) ? t.dateTime(row.at) : "—";
+    const provider = rowProvider(row);
     lines.push(
       [
         "",
         `[${when}](${row.runUrl})`,
         t.stage(row.stage),
         `\`${row.model.replace(/[`|\s]/g, "")}\``,
-        row.inference ? t.provider(row.inference) : "—",
+        provider ? t.provider(provider) : "—",
         dash(row.durationMs, duration),
         dash(row.inputTokens, t.tokens),
         dash(row.outputTokens, t.tokens),
@@ -221,8 +227,16 @@ export function spendTable(
   return lines;
 }
 
-/** The order of the notes under the table. */
-const MODES: readonly AgentMode[] = ["openrouter", "pod", "serverless"];
+/** The provider of a row: its own, or that of the older `inference` of rows written before. */
+export function rowProvider(row: SpendRow): ProviderName | undefined {
+  if (row.provider) return row.provider;
+  const older: Record<string, ProviderName> = {
+    openrouter: "openrouter",
+    pod: "runpod-pod",
+    serverless: "runpod-serverless",
+  };
+  return row.inference ? older[row.inference] : undefined;
+}
 
 /**
  * How the cost is measured for each inference the table's rows used, since some figures are
@@ -230,8 +244,8 @@ const MODES: readonly AgentMode[] = ["openrouter", "pod", "serverless"];
  * add no note.
  */
 export function spendNotes(t: Messages, spending: Spending | undefined): string[] {
-  const used = new Set((spending?.rows ?? []).map((row) => row.inference));
-  const notes = MODES.filter((mode) => used.has(mode)).map((mode) => t.spendNote(mode));
+  const used = new Set((spending?.rows ?? []).map(rowProvider));
+  const notes = PROVIDER_NAMES.filter((name) => used.has(name)).map((name) => t.spendNote(name));
   return notes.length > 0 ? [...notes, t.monthNote] : [];
 }
 

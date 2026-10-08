@@ -3,6 +3,7 @@ import {
   CHOICES,
   isSettingName,
   parseSetting,
+  RENAMED_TASK_SETTINGS,
   type SettingName,
   settingKind,
   TASK_SETTINGS,
@@ -162,15 +163,17 @@ function parseDecide(args: string[], invalid: (problem: CommandProblem) => Comma
 
 /**
  * `set <name> <value>`, for the settings a task may override. `model <id>` is a shortcut. A GPU
- * type's name has spaces, so `gpu-type` takes the rest of the line.
+ * type's name has spaces, so `gpu` takes the rest of the line.
  */
 function parseSet(args: string[], invalid: (problem: CommandProblem) => Command): Command {
   const [name = "", ...values] = args;
+  const renamed = RENAMED_TASK_SETTINGS[name];
+  if (renamed) return invalid({ kind: "renamed-setting", name, now: renamed });
   if (!isSettingName(name) || !TASK_SETTINGS.has(name)) {
     return invalid({ kind: "set-which", names: [...TASK_SETTINGS] });
   }
-  const value = name === "gpu-type" && values.length > 0 ? values.join(" ") : values[0];
-  if (value === undefined || (name !== "gpu-type" && values.length > 1)) {
+  const value = name === "gpu" && values.length > 0 ? values.join(" ") : values[0];
+  if (value === undefined || (name !== "gpu" && values.length > 1)) {
     return invalid({ kind: "set-one-value", name });
   }
   const parsed = parseSetting(name, value);

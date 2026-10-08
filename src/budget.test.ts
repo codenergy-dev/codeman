@@ -33,7 +33,7 @@ function run(id: string, start: string, fields: Partial<LedgerRun> = {}, minutes
     task: 7,
     workflowRun: id.split("-")[0] ?? "",
     status: "closed",
-    provider: "runpod",
+    account: "runpod",
     start: at,
     expiresAt: new Date(at.getTime() + RESERVATION_MS),
     closedAt: fields.status === "open" ? undefined : new Date(at.getTime() + minutes * 60_000),
@@ -43,7 +43,7 @@ function run(id: string, start: string, fields: Partial<LedgerRun> = {}, minutes
 
 test("runs count their costs, open runs their limits, and a task's pod at least its cost", () => {
   const runs = [
-    run("100-1-7", "2026-10-07T10:00:00Z", { provider: "openrouter", cost: 0.2 }),
+    run("100-1-7", "2026-10-07T10:00:00Z", { account: "openrouter", cost: 0.2 }),
     // A pod kept between two runs: its cost, 0.6, is above the runs' 0.5.
     run("101-1-7", "2026-10-07T11:00:00Z", { cost: 0.3, pod: "a", podCost: 0.3 }),
     run("102-1-7", "2026-10-07T11:40:00Z", { cost: 0.2, pod: "a", podCost: 0.6 }),
@@ -140,7 +140,7 @@ test("the organization's month: an hour billed below the ledger counts the ledge
 
 test("the organization's month: open runs count whole, other providers' runs as they are", () => {
   const open = run("100-1-7", "2026-10-07T15:00:00Z", { status: "open", limit: 1.5 });
-  const openRouter = run("101-1-8", "2026-10-07T13:00:00Z", { provider: "openrouter", cost: 0.4 });
+  const openRouter = run("101-1-8", "2026-10-07T13:00:00Z", { account: "openrouter", cost: 0.4 });
   // A run whose reservation expired counts its limit over its two hours.
   const expired = run("90-1-9", "2026-10-07T10:00:00Z", { status: "open", limit: 2 });
   const ten = Date.parse("2026-10-07T10:00:00Z");

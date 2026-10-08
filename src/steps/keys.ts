@@ -8,13 +8,9 @@ import {
   usd,
 } from "../budget.ts";
 import { encrypt } from "../crypto.ts";
-import {
-  choiceProvider,
-  gpuProvider,
-  isGpuProvider,
-  parseInferenceChoice,
-} from "../inference/index.ts";
+import { gpuProvider, parseInferenceChoice } from "../inference/index.ts";
 import { type OpenedRun, OpenFailure, type PodEvent } from "../inference/provider.ts";
+import { accountOf, isHourlyAccount } from "../inference/providers.ts";
 import { PodRegistry } from "../inference/registry.ts";
 import { releasePod } from "../inference/selfhosted.ts";
 import { type Ledger, ledgerRun } from "../ledger.ts";
@@ -65,21 +61,22 @@ async function open(services: Services, ledger: Ledger, run: string): Promise<Op
       ? undefined
       : positiveNumber(runtime, "organization-monthly-budget");
   const choice = parseInferenceChoice(runtime.input("inference"));
-  if (choice.profile) runtime.info(`The run uses the inference profile \`${choice.profile}\`.`);
+  if (choice.profile) runtime.info(`The run uses the profile \`${choice.profile}\`.`);
   const refuse = (status: Exclude<Opened["status"], "opened">, reason: string): Opened => {
     runtime.output("status", status);
     runtime.output("reason", reason);
     return { status, reason };
   };
 
-  // The run's provider; with an organization's budget, also each GPU account whose billing
-  // reconciles the organization's month: those the settings name, and those its runs used.
+  // The account of the run's provider; with an organization's budget, also each GPU account
+  // whose billing reconciles the organization's month: those of the providers the settings
+  // name, and those its runs used.
   const accounts = services.accounts();
   const now = new Date();
-  const needed = new Set([choiceProvider(choice)]);
+  const needed = new Set([accountOf(choice.provider)]);
   if (organizationBudget !== undefined) {
-    const used = (await ledger.monthRuns(runtime)).map((other) => other.provider);
-    for (const name of [...choice.providers, ...used]) if (isGpuProvider(name)) needed.add(name);
+    const used = (await ledger.monthRuns(runtime)).map((other) => other.account);
+    for (const name of [...choice.accounts, ...used]) if (isHourlyAccount(name)) needed.add(name);
   }
   const missing = [...needed].flatMap((name) => accounts.missing(name) ?? []);
   if (missing.length > 0) {
@@ -91,14 +88,14 @@ async function open(services: Services, ledger: Ledger, run: string): Promise<Op
   const billed = new Map<string, BilledHours>();
   if (organizationBudget !== undefined) {
     for (const name of needed) {
-      if (isGpuProvider(name))
+      if (isHourlyAccount(name))
         billed.set(name, await accounts.billedHours(name, monthStart(now), now));
     }
   }
 
   // A run that never closed counts its limit; once it expired, OpenRouter's keys tell its cost.
   const runs = await ledger.taskRuns(run, runtime);
-  if (runs.some((other) => other.provider === "openrouter" && expired(other, now))) {
+  if (runs.some((other) => other.account === "openrouter" && expired(other, now))) {
     const costs = await accounts.taskCosts(task).catch((error: unknown) => {
       runtime.warning(
         `Could not read what the task's OpenRouter runs spent: ${error instanceof Error ? error.message : error}`,
@@ -246,12 +243,12 @@ export async function closeKey(services: Services): Promise<void> {
 export async function release(services: Services): Promise<void> {
   const { runtime } = services;
   const choice = parseInferenceChoice(runtime.input("inference"));
-  if (choice.inference !== "self-hosted" || choice.mode !== "pod") {
+  if (choice.provider !== "runpod-pod") {
     runtime.info("Nothing to release: the run had no pod.");
     return;
   }
   const accountKey = runtime.input("gpu-key", { required: true });
-  const gpu = gpuProvider(choice.gpuProvider, accountKey);
+  const gpu = gpuProvider(accountOf(choice.provider), accountKey);
   if (!gpu.pods) throw new Error(`${gpu.name} has no pods.`);
   const handle = runtime.input("handle", { required: true });
   const registry = new PodRegistry(services.store(), runtime.repository.owner);

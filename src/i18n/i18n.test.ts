@@ -113,6 +113,7 @@ test("every command problem has a text in each catalog", () => {
     { kind: "not-an-answer", arg: "x" },
     { kind: "set-which", names: ["model"] },
     { kind: "set-one-value", name: "model" },
+    { kind: "renamed-setting", name: "gpu-type", now: "gpu" },
     { kind: "invalid-setting", name: "language", type: "language" },
     { kind: "text-too-long", max: 2000 },
     { kind: "no-decision", id: 1 },

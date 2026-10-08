@@ -34,8 +34,11 @@ export interface LedgerRun {
   workflowRun: string;
   /** `picked`, `open`, `refused`, `failed`, `closed` or `expired`. */
   status: string;
-  /** `openrouter`, or the GPU provider. */
-  provider: string;
+  /**
+   * The account the run's provider bills: `openrouter`, or `runpod` for pods and Serverless
+   * endpoints.
+   */
+  account: string;
   /** What the run may spend, once `open-key` reserved it. */
   limit?: number | undefined;
   /** What the run spent, once closed; for an expired run, what OpenRouter's keys said since. */
@@ -149,17 +152,17 @@ export function reconciledMonth(
   const estimates = new Map<string, Map<number, number>>();
   for (const group of counted(runs)) {
     const [first] = group.runs;
-    const hours = first && billed.get(first.provider);
+    const hours = first && billed.get(first.account);
     if (!first || !hours || group.runs.some((run) => reserving(run, now))) {
       total += group.amount;
       continue;
     }
     const start = Math.min(...group.runs.map((run) => run.start.getTime()));
     const end = Math.max(...group.runs.map((run) => endOf(run, now).getTime()));
-    let estimate = estimates.get(first.provider);
+    let estimate = estimates.get(first.account);
     if (!estimate) {
       estimate = new Map();
-      estimates.set(first.provider, estimate);
+      estimates.set(first.account, estimate);
     }
     spread(estimate, group.amount, start, end);
   }

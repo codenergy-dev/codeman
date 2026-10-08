@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { descriptionCommands, parseCommands } from "./commands.ts";
-import { isModelId } from "./settings.ts";
+import { isOpenRouterModel } from "./inference/providers.ts";
 
 test("parses approve", () => {
   assert.deepEqual(parseCommands("/codeman approve"), [{ kind: "approve" }]);
@@ -51,8 +51,8 @@ test("reports invalid commands", () => {
     "/codeman set max-runs 2.5",
     "/codeman set max-runs 2 3",
     "/codeman set model ~a",
-    "/codeman set gpu-type",
-    "/codeman set inference local",
+    "/codeman set gpu",
+    "/codeman set provider runpod-pod",
   ].map((line) => parseCommands(line)[0]?.kind);
   assert.deepEqual(kinds, Array(19).fill("invalid"));
 });
@@ -74,13 +74,13 @@ test("finds commands among other lines, skipping quotes and code blocks", () => 
 });
 
 test("validates model IDs", () => {
-  assert.ok(isModelId("deepseek/deepseek-v4.1-flash"));
-  assert.ok(isModelId("~deepseek/deepseek-flash-latest"));
-  assert.ok(isModelId("openai/gpt-5:free"));
-  assert.ok(!isModelId("deepseek"));
-  assert.ok(!isModelId("a/b/c"));
-  assert.ok(!isModelId("a/b`c"));
-  assert.ok(!isModelId(`a/${"b".repeat(100)}`));
+  assert.ok(isOpenRouterModel("deepseek/deepseek-v4.1-flash"));
+  assert.ok(isOpenRouterModel("~deepseek/deepseek-flash-latest"));
+  assert.ok(isOpenRouterModel("openai/gpt-5:free"));
+  assert.ok(!isOpenRouterModel("deepseek"));
+  assert.ok(!isOpenRouterModel("a/b/c"));
+  assert.ok(!isOpenRouterModel("a/b`c"));
+  assert.ok(!isOpenRouterModel(`a/${"b".repeat(100)}`));
 });
 
 test("decide accepts `1 a`, `1=a` and mixes of both", () => {
@@ -225,16 +225,31 @@ test("keeps a description without commands as it is", () => {
   });
 });
 
-test("a GPU type takes the rest of the line, since its name has spaces", () => {
-  assert.deepEqual(parseCommands("/codeman set gpu-type NVIDIA GeForce RTX 4090"), [
-    { kind: "set", name: "gpu-type", value: "NVIDIA GeForce RTX 4090" },
+test("a GPU takes the rest of the line, since its name has spaces", () => {
+  assert.deepEqual(parseCommands("/codeman set gpu NVIDIA GeForce RTX 4090"), [
+    { kind: "set", name: "gpu", value: "NVIDIA GeForce RTX 4090" },
   ]);
-  assert.deepEqual(parseCommands("/codeman set inference local")[0], {
+  assert.deepEqual(parseCommands("/codeman set provider runpod-pod")[0], {
     kind: "invalid",
-    text: "/codeman set inference local",
+    text: "/codeman set provider runpod-pod",
     problem: {
       kind: "set-which",
-      names: ["model", "task-budget", "max-runs", "language", "gpu-type"],
+      names: ["model", "task-budget", "max-runs", "language", "gpu"],
     },
   });
+});
+
+test("an old name is a problem that gives the new one", () => {
+  assert.deepEqual(parseCommands("/codeman set gpu-type NVIDIA RTX A5000")[0], {
+    kind: "invalid",
+    text: "/codeman set gpu-type NVIDIA RTX A5000",
+    problem: { kind: "renamed-setting", name: "gpu-type", now: "gpu" },
+  });
+  assert.deepEqual(descriptionCommands("/codeman set gpu-type NVIDIA RTX A5000").commands, [
+    {
+      kind: "invalid",
+      text: "/codeman set gpu-type NVIDIA RTX A5000",
+      problem: { kind: "renamed-setting", name: "gpu-type", now: "gpu" },
+    },
+  ]);
 });

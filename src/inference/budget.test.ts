@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { FakeRuntime } from "../testing/fake-runtime.ts";
-import { isGpuProvider, providerAccounts } from "./index.ts";
+import { providerAccounts } from "./index.ts";
 
 test("the accounts say which secret the job lacks for each provider", () => {
   const both = providerAccounts(
@@ -12,7 +12,7 @@ test("the accounts say which secret the job lacks for each provider", () => {
   const none = providerAccounts(new FakeRuntime());
   assert.equal(none.missing("openrouter"), "CODEMAN_OPENROUTER_MANAGEMENT_KEY");
   assert.equal(none.missing("runpod"), "CODEMAN_RUNPOD_API_KEY");
-  assert.throws(() => none.missing("elsewhere"), /Unknown inference provider "elsewhere"/);
+  assert.throws(() => none.missing("elsewhere"), /Unknown account "elsewhere"/);
 });
 
 test("without OpenRouter's key, the accounts tell no run's cost; OpenRouter bills no hours", async () => {
@@ -22,10 +22,4 @@ test("without OpenRouter's key, the accounts tell no run's cost; OpenRouter bill
     accounts.billedHours("openrouter", new Date(), new Date()),
     /openrouter has no hourly billing/,
   );
-  assert.deepEqual(["openrouter", "runpod", "", "elsewhere"].map(isGpuProvider), [
-    false,
-    true,
-    false,
-    false,
-  ]);
 });

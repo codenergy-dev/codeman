@@ -137,7 +137,7 @@ test("only the organization's settings set organization-monthly-budget", () => {
       ".codeman/settings.yml, line 2: `organization-monthly-budget` can be set only in the organization's settings, the CODEMAN_SETTINGS variable.",
   });
   const profile = parseSettings(
-    "model: a/b\ninference-profiles:\n  - name: p\n    organization-monthly-budget: 1000",
+    "model: a/b\nprofiles:\n  - name: p\n    organization-monthly-budget: 1000",
     SHARED_SETTINGS,
   );
   assert.ok(
@@ -187,100 +187,158 @@ test("a run takes one task by default, and up to ten at once", () => {
   assert.ok(!TASK_SETTINGS.has("parallel-tasks"), "one run's, not a task's");
 });
 
-test("OpenRouter is the default inference, and takes only OpenRouter model IDs", () => {
+test("OpenRouter is the default provider, and takes only OpenRouter model IDs", () => {
   const resolved = resolveSettings({}, {}, { model: "deepseek/deepseek-v4.1-flash" });
-  assert.ok(resolved.ok && resolved.value.inference === "openrouter");
+  assert.ok(resolved.ok && resolved.value.provider === "openrouter");
   assert.ok(resolved.ok && resolved.value.engine === undefined);
+  assert.ok(resolved.ok && !("pod-reuse" in resolved.value));
   const ollamaName = resolveSettings({}, {}, { model: "qwen3-coder:30b" });
   assert.ok(!ollamaName.ok && ollamaName.error.includes("OpenRouter model ID"));
+  const gpu = parseSettings('provider: openrouter\nmodel: a/b\ngpu: "NVIDIA RTX A6000"');
+  assert.ok(gpu.ok);
+  const refused = resolveSettings({}, {}, gpu.ok ? gpu.value : {});
+  assert.deepEqual(refused, {
+    ok: false,
+    error: "`openrouter` does not accept `gpu`; it takes only `model`.",
+  });
 });
 
-test("self-hosted pods need a GPU type, serve Ollama models, and keep the pod for the task", () => {
+test("pods need a GPU, serve Ollama models, and keep the pod for the task", () => {
   const file = parseSettings(
-    'inference: self-hosted\nmodel: qwen3-coder:30b\ngpu-type: "NVIDIA RTX A6000"',
+    'provider: runpod-pod\nmodel: qwen3-coder:30b\ngpu: "NVIDIA RTX A6000"',
   );
   assert.ok(file.ok);
   const resolved = resolveSettings({}, {}, file.ok ? file.value : {});
   assert.ok(resolved.ok);
   if (!resolved.ok) return;
-  assert.equal(resolved.value["gpu-provider"], "runpod");
-  assert.equal(resolved.value["gpu-mode"], "pod");
-  assert.equal(resolved.value["gpu-type"], "NVIDIA RTX A6000");
+  assert.equal(resolved.value.provider, "runpod-pod");
+  assert.equal(resolved.value.gpu, "NVIDIA RTX A6000");
   assert.equal(resolved.value.engine, "ollama");
   assert.equal(resolved.value["pod-reuse"], "task");
 
-  const noGpu = resolveSettings({}, {}, { inference: "self-hosted", model: "qwen3-coder:30b" });
-  assert.ok(!noGpu.ok && noGpu.error.includes("gpu-type"));
+  const noGpu = resolveSettings({}, {}, { provider: "runpod-pod", model: "qwen3-coder:30b" });
+  assert.ok(!noGpu.ok && noGpu.error.includes("`runpod-pod` needs `gpu`"));
   const wrongEngine = resolveSettings(
     {},
     {},
-    {
-      inference: "self-hosted",
-      model: "qwen3-coder:30b",
-      "gpu-type": "G",
-      engine: "vllm",
-    },
+    { provider: "runpod-pod", model: "qwen3-coder:30b", gpu: "G", engine: "vllm" },
   );
-  assert.ok(!wrongEngine.ok && wrongEngine.error.includes("the engine is `ollama`"));
+  assert.ok(!wrongEngine.ok && wrongEngine.error.includes("does not offer the engine `vllm`"));
   const wrongModel = resolveSettings(
     {},
     {},
-    {
-      inference: "self-hosted",
-      model: "~org/model",
-      "gpu-type": "G1",
-    },
+    { provider: "runpod-pod", model: "~org/model", gpu: "G1" },
   );
-  assert.ok(!wrongModel.ok && wrongModel.error.includes("ollama model name"));
+  assert.ok(!wrongModel.ok && wrongModel.error.includes("model name of the engine `ollama`"));
+  const endpoint = resolveSettings(
+    {},
+    {},
+    { provider: "runpod-pod", model: "qwen3-coder:30b", gpu: "G", endpoint: "abc" },
+  );
+  assert.ok(!endpoint.ok && endpoint.error.includes("`runpod-pod` does not accept `endpoint`"));
 });
 
-test("self-hosted Serverless needs an endpoint and serves vLLM models", () => {
-  const resolved = resolveSettings(
-    {},
-    {},
-    {
-      inference: "self-hosted",
-      "gpu-mode": "serverless",
-      "serverless-endpoint": "abc123xyz",
-      model: "Qwen/Qwen3-Coder-30B-A3B-Instruct",
-    },
+test("Serverless needs an endpoint, by ID or URL, serves vLLM models, and takes no GPU", () => {
+  const file = parseSettings(
+    [
+      "provider: runpod-serverless",
+      "endpoint: https://api.runpod.ai/v2/abc123xyz/openai/v1",
+      "model: Qwen/Qwen3-Coder-30B-A3B-Instruct",
+    ].join("\n"),
   );
+  assert.ok(file.ok && file.value.endpoint === "abc123xyz", "the URL's endpoint ID");
+  const resolved = resolveSettings({}, {}, file.ok ? file.value : {});
   assert.ok(resolved.ok && resolved.value.engine === "vllm");
+  assert.ok(resolved.ok && resolved.value.endpoint === "abc123xyz");
+  const elsewhere = parseSettings("endpoint: https://example.com/v2/abc123xyz/run");
+  assert.ok(
+    !elsewhere.ok &&
+      elsewhere.error.startsWith(
+        ".codeman/settings.yml, line 1: `endpoint` takes only URLs of `https://api.runpod.ai`",
+      ),
+  );
   const noEndpoint = resolveSettings(
     {},
     {},
+    { provider: "runpod-serverless", model: "Qwen/Qwen3-Coder-30B-A3B-Instruct" },
+  );
+  assert.ok(!noEndpoint.ok && noEndpoint.error.includes("`runpod-serverless` needs `endpoint`"));
+  const gpu = resolveSettings(
+    {},
+    {},
     {
-      inference: "self-hosted",
-      "gpu-mode": "serverless",
+      provider: "runpod-serverless",
+      endpoint: "abc",
+      gpu: "G",
       model: "Qwen/Qwen3-Coder-30B-A3B-Instruct",
     },
   );
-  assert.ok(!noEndpoint.ok && noEndpoint.error.includes("serverless-endpoint"));
+  assert.ok(!gpu.ok && gpu.error.startsWith("`runpod-serverless` does not accept `gpu`"));
 });
 
-test("checks each inference setting on its own, and a task may set its GPU type", () => {
-  assert.equal(parseSetting("inference", "local").ok, false);
-  assert.equal(parseSetting("gpu-mode", "spot").ok, false);
+test("checks each provider setting on its own, and a task may set its GPU", () => {
+  assert.equal(parseSetting("provider", "self-hosted").ok, false);
+  assert.equal(parseSetting("provider", "runpod-serverless").ok, true);
+  assert.equal(parseSetting("engine", "llama.cpp").ok, false);
   assert.equal(parseSetting("pod-reuse", "run").ok, true);
-  assert.equal(parseSetting("gpu-type", "NVIDIA GeForce RTX 4090").ok, true);
-  assert.equal(parseSetting("gpu-type", "x; rm").ok, false);
-  assert.equal(parseSetting("serverless-endpoint", "abc-123").ok, false);
-  assert.ok(TASK_SETTINGS.has("gpu-type") && TASK_SETTINGS.has("model"));
-  assert.ok(!TASK_SETTINGS.has("inference"));
+  assert.equal(parseSetting("gpu", "NVIDIA GeForce RTX 4090").ok, true);
+  assert.equal(parseSetting("gpu", "x; rm").ok, false);
+  assert.equal(parseSetting("endpoint", "abc-123").ok, false);
+  assert.ok(TASK_SETTINGS.has("gpu") && TASK_SETTINGS.has("model"));
+  assert.ok(!TASK_SETTINGS.has("provider"));
 });
 
-test("reads inference profiles: a list of blocks, with conditions", () => {
+test("an old name stops the run with an error that gives the new one", () => {
+  const cases: [string, string][] = [
+    ["gpu-type: NVIDIA RTX A6000", "`gpu-type` is now `gpu`."],
+    ["inference: openrouter", "`inference` is now `provider`: write `provider: openrouter`."],
+    [
+      "inference: self-hosted",
+      "`inference` is now `provider`: write `provider: runpod-pod` or `provider: runpod-serverless`.",
+    ],
+    [
+      "gpu-mode: serverless",
+      "`gpu-mode` is now part of `provider`: write `provider: runpod-serverless`.",
+    ],
+    ["gpu-mode: pod", "`gpu-mode` is now part of `provider`: write `provider: runpod-pod`."],
+    [
+      "gpu-provider: runpod",
+      "`gpu-provider` is now part of `provider`: write `provider: runpod-pod` or `provider: runpod-serverless`.",
+    ],
+    [
+      "serverless-endpoint: abc123",
+      "`serverless-endpoint` is now `endpoint`, with `provider: runpod-serverless`.",
+    ],
+    ["inference-profiles: []", "`inference-profiles` is now `profiles`."],
+  ];
+  for (const [text, error] of cases) {
+    assert.deepEqual(parseSettings(`model: a/b\n${text}`), {
+      ok: false,
+      error: `.codeman/settings.yml, line 2: ${error}`,
+    });
+  }
+  // In a profile, and in the organization's settings.
+  assert.deepEqual(parseSettings("profiles:\n  - name: a\n    gpu-type: G"), {
+    ok: false,
+    error: ".codeman/settings.yml, line 3: `gpu-type` is now `gpu`.",
+  });
+  assert.deepEqual(parseSettings("inference-profiles: []", SHARED_SETTINGS), {
+    ok: false,
+    error: `${SHARED_SETTINGS}, line 1: \`inference-profiles\` is now \`profiles\`.`,
+  });
+});
+
+test("reads profiles: a list of blocks, with conditions", () => {
   const valid = parseSettings(
     [
       "model: anthropic/claude-sonnet-4.5     # the default profile",
-      "inference-profiles:",
+      "profiles:",
       "  - name: small-pod",
       "    when:",
       "      stages: [route, code, test]",
       "      parallel-tasks: 2                 # when the run has at least 2 tasks",
-      "    inference: self-hosted",
-      "    gpu-mode: pod",
-      "    gpu-type: NVIDIA RTX A6000",
+      "    provider: runpod-pod",
+      "    gpu: NVIDIA RTX A6000",
       "    model: qwen3-coder:30b",
       "",
       "  # A block list of stages reads as the brackets do.",
@@ -297,14 +355,13 @@ test("reads inference profiles: a list of blocks, with conditions", () => {
     ok: true,
     value: {
       model: "anthropic/claude-sonnet-4.5",
-      "inference-profiles": [
+      profiles: [
         {
           name: "small-pod",
           when: { stages: ["route", "code", "test"], "parallel-tasks": 2 },
           settings: {
-            inference: "self-hosted",
-            "gpu-mode": "pod",
-            "gpu-type": "NVIDIA RTX A6000",
+            provider: "runpod-pod",
+            gpu: "NVIDIA RTX A6000",
             model: "qwen3-coder:30b",
           },
         },
@@ -318,59 +375,45 @@ test("reads inference profiles: a list of blocks, with conditions", () => {
     },
   });
   const sameIndent = parseSettings(
-    "model: a/b\ninference-profiles:\n- name: planner\n  when:\n    stages: [plan]\n  model: c/d\nmax-runs: 2",
+    "model: a/b\nprofiles:\n- name: planner\n  when:\n    stages: [plan]\n  model: c/d\nmax-runs: 2",
   );
   assert.deepEqual(sameIndent, {
     ok: true,
     value: {
       model: "a/b",
-      "inference-profiles": [
-        { name: "planner", when: { stages: ["plan"] }, settings: { model: "c/d" } },
-      ],
+      profiles: [{ name: "planner", when: { stages: ["plan"] }, settings: { model: "c/d" } }],
       "max-runs": 2,
     },
   });
-  assert.deepEqual(parseSettings("inference-profiles: []"), {
-    ok: true,
-    value: { "inference-profiles": [] },
-  });
-  const flowMapping = parseSettings("inference-profiles:\n  - name: a\n    when: {stages: [plan]}");
+  assert.deepEqual(parseSettings("profiles: []"), { ok: true, value: { profiles: [] } });
+  const flowMapping = parseSettings("profiles:\n  - name: a\n    when: {stages: [plan]}");
   assert.ok(!flowMapping.ok && flowMapping.error.includes("line 3"), "not in the subset");
 });
 
 test("rejects malformed profiles, naming the line", () => {
   const cases: [string, string][] = [
-    ["inference-profiles:\n  - model: a/b", "line 2: a profile needs a `name`."],
+    ["profiles:\n  - model: a/b", "line 2: a profile needs a `name`."],
     [
-      "inference-profiles:\n  - name: a\n    task-budget: 5",
-      "line 3: a profile cannot set `task-budget`; it sets only `inference`, `gpu-provider`, `gpu-mode`, `gpu-type`, `engine`, `serverless-endpoint`, `pod-reuse`, `model`.",
+      "profiles:\n  - name: a\n    task-budget: 5",
+      "line 3: a profile cannot set `task-budget`; it sets only `provider`, `model`, `engine`, `gpu`, `endpoint`, `pod-reuse`.",
     ],
-    ["inference-profiles:\n  - name: a\n    secret: x", "line 3: unknown setting `secret`."],
-    ["inference-profiles:\n  - name: a\n    gpu-mode: spot", "line 3: `gpu-mode` must be one of"],
-    ["inference-profiles:\n  - name: a\n  - name: a", "line 3: two profiles are named `a`."],
-    ["inference-profiles:\n  - name: a b", "line 2: a profile's `name` must be"],
-    [
-      "inference-profiles:\n  - name: a\n    when:\n      stages: [deploy]",
-      "line 4: `stages` must list",
-    ],
-    ["inference-profiles:\n  - name: a\n    when:\n      stages: []", "line 4: `stages` must list"],
-    [
-      "inference-profiles:\n  - name: a\n    when:\n      parallel-tasks: 0",
-      "line 4: `parallel-tasks` must",
-    ],
-    [
-      "inference-profiles:\n  - name: a\n    when:\n      labels: [x]",
-      "line 4: unknown condition `labels`",
-    ],
-    ["inference-profiles:\n  - name: a\n    when: plan", "line 3: `when` must be a block"],
-    ["inference-profiles: [a, b]", "line 1: `inference-profiles` must be a list of profiles"],
-    ["inference-profiles:\n  - a", "line 2: `inference-profiles` must be a list of profiles"],
-    ["inference-profiles:", "line 1: `inference-profiles` must be a list of profiles"],
-    ["inference-profiles:\n  - name: a\n     model: b/c", "line 3: unexpected indentation."],
-    ["inference-profiles:\n  - name: a\n   model: b/c", "line 3: unexpected indentation."],
-    ["inference-profiles:\n  -\n    name: a", "line 2: expected a value after `-`"],
-    ["inference-profiles:\n  - - name: a", "line 2: a list item cannot be a list."],
-    ["inference-profiles:\n\t- name: a", "line 2: indent with spaces, not tabs."],
+    ["profiles:\n  - name: a\n    secret: x", "line 3: unknown setting `secret`."],
+    ["profiles:\n  - name: a\n    provider: spot", "line 3: `provider` must be one of"],
+    ["profiles:\n  - name: a\n  - name: a", "line 3: two profiles are named `a`."],
+    ["profiles:\n  - name: a b", "line 2: a profile's `name` must be"],
+    ["profiles:\n  - name: a\n    when:\n      stages: [deploy]", "line 4: `stages` must list"],
+    ["profiles:\n  - name: a\n    when:\n      stages: []", "line 4: `stages` must list"],
+    ["profiles:\n  - name: a\n    when:\n      parallel-tasks: 0", "line 4: `parallel-tasks` must"],
+    ["profiles:\n  - name: a\n    when:\n      labels: [x]", "line 4: unknown condition `labels`"],
+    ["profiles:\n  - name: a\n    when: plan", "line 3: `when` must be a block"],
+    ["profiles: [a, b]", "line 1: `profiles` must be a list of profiles"],
+    ["profiles:\n  - a", "line 2: `profiles` must be a list of profiles"],
+    ["profiles:", "line 1: `profiles` must be a list of profiles"],
+    ["profiles:\n  - name: a\n     model: b/c", "line 3: unexpected indentation."],
+    ["profiles:\n  - name: a\n   model: b/c", "line 3: unexpected indentation."],
+    ["profiles:\n  -\n    name: a", "line 2: expected a value after `-`"],
+    ["profiles:\n  - - name: a", "line 2: a list item cannot be a list."],
+    ["profiles:\n\t- name: a", "line 2: indent with spaces, not tabs."],
     ["model: [a/b", "line 1: an item of `model` is not a plain value."],
     ["model: [a/b] x", "line 1: expected only a comment after the list of `model`."],
     ["model: a/b\nmodel:\n  - c/d", "line 2: `model` appears twice."],
@@ -389,17 +432,19 @@ test("rejects malformed profiles, naming the line", () => {
 test("today's flat files read the same, and the template is one", () => {
   const text = readFileSync("templates/settings.yml", "utf8");
   assert.ok(parseSettings(text).ok);
-  // Its profile, once uncommented, reads too.
-  const profile = parseSettings(text.replace(/^# (?=inference-profiles:| {2})/gm, ""));
-  assert.ok(profile.ok && profile.value["inference-profiles"]?.[0]?.name === "small-pod");
-  assert.deepEqual(parseSettings("gpu-type: \"NVIDIA RTX A6000\"\nmodel: '~a/b' # latest"), {
+  // Each provider's block and the profiles, once uncommented, read too.
+  for (const block of text.split(/\n\n/).filter((part) => /^# (provider|profiles):/m.test(part))) {
+    const uncommented = parseSettings(block.replace(/^# (?=[a-z-]+:| {2})/gm, ""));
+    assert.ok(uncommented.ok, uncommented.ok ? "" : uncommented.error);
+  }
+  assert.deepEqual(parseSettings("gpu: \"NVIDIA RTX A6000\"\nmodel: '~a/b' # latest"), {
     ok: true,
-    value: { "gpu-type": "NVIDIA RTX A6000", model: "~a/b" },
+    value: { gpu: "NVIDIA RTX A6000", model: "~a/b" },
   });
   // A plain value of several words, as YAML reads it.
-  assert.deepEqual(parseSettings("gpu-type: NVIDIA RTX  A6000 # two spaces"), {
+  assert.deepEqual(parseSettings("gpu: NVIDIA RTX  A6000 # two spaces"), {
     ok: true,
-    value: { "gpu-type": "NVIDIA RTX  A6000" },
+    value: { gpu: "NVIDIA RTX  A6000" },
   });
 });
 
@@ -408,7 +453,7 @@ function profiled(extra: PartialSettings = {}) {
   const file = parseSettings(
     [
       "model: anthropic/claude-sonnet-4.5",
-      "inference-profiles:",
+      "profiles:",
       "  - name: crowded",
       "    when:",
       "      parallel-tasks: 2",
@@ -420,15 +465,14 @@ function profiled(extra: PartialSettings = {}) {
       "  - name: small-pod",
       "    when:",
       "      stages: [code, test]",
-      "    inference: self-hosted",
-      "    gpu-type: NVIDIA RTX A6000",
+      "    provider: runpod-pod",
+      "    gpu: NVIDIA RTX A6000",
       "    model: qwen3-coder:30b",
       "  - name: reviewer",
       "    when:",
       "      stages: [review]",
-      "    inference: self-hosted",
-      "    gpu-mode: serverless",
-      "    serverless-endpoint: abc123",
+      "    provider: runpod-serverless",
+      "    endpoint: abc123",
       "    model: Qwen/Qwen3-Coder-30B-A3B-Instruct",
     ].join("\n"),
   );
@@ -456,19 +500,94 @@ test("a run uses the first profile whose conditions hold, else the top-level set
     ],
   );
   const pod = run("code")?.settings;
-  assert.equal(pod?.inference, "self-hosted");
+  assert.equal(pod?.provider, "runpod-pod");
   assert.equal(pod?.engine, "ollama");
-  assert.equal(run("review")?.settings.engine, "vllm", "the mode's engine, not the top level's");
-  assert.equal(run("web")?.settings.inference, "openrouter");
+  assert.equal(pod?.["pod-reuse"], "task");
+  assert.equal(run("review")?.settings.engine, "vllm", "the provider's engine");
+  assert.equal(run("web")?.settings.provider, "openrouter");
   assert.equal(run("code", 2)?.profile, "crowded", "first in the file's order");
-  assert.deepEqual(run("plan")?.providers, ["openrouter", "runpod"]);
+  assert.deepEqual(run("plan")?.accounts, ["openrouter", "runpod"]);
   // Without a run, as for recording answers, no profile applies.
   const top = resolveSettings(...layers);
   assert.ok(top.ok && top.value.model === "anthropic/claude-sonnet-4.5");
-  assert.ok(top.ok && !("inference-profiles" in top.value));
+  assert.ok(top.ok && !("profiles" in top.value));
 });
 
-test("a task's model wins over the profile, and must fit its inference", () => {
+test("a profile on another provider leaves out the top level's provider settings", () => {
+  const file = parseSettings(
+    [
+      "provider: runpod-pod",
+      "gpu: NVIDIA RTX A6000",
+      "pod-reuse: run",
+      "model: qwen3-coder:30b",
+      "profiles:",
+      "  - name: reviewer",
+      "    when:",
+      "      stages: [review]",
+      "    provider: runpod-serverless",
+      "    endpoint: https://api.runpod.ai/v2/abc123/run",
+      "    model: Qwen/Qwen3-Coder-30B-A3B-Instruct",
+      "  - name: planner",
+      "    when:",
+      "      stages: [plan]",
+      "    provider: openrouter",
+      "    model: openai/gpt-5",
+      "  - name: big-pod",
+      "    when:",
+      "      stages: [code]",
+      "    gpu: NVIDIA A100 80GB PCIe",
+    ].join("\n"),
+  );
+  assert.ok(file.ok, file.ok ? "" : file.error);
+  const layers = [{}, {}, file.ok ? file.value : {}];
+  const settings = (stage: ProfileStage) => {
+    const resolved = resolveRun(layers, { stage, tasks: 1 });
+    assert.ok(resolved.ok, resolved.ok ? "" : resolved.error);
+    return resolved.ok ? resolved.value.settings : undefined;
+  };
+  const review = settings("review");
+  assert.deepEqual(
+    [review?.provider, review?.endpoint, review?.engine, review?.gpu, review?.["pod-reuse"]],
+    ["runpod-serverless", "abc123", "vllm", undefined, undefined],
+  );
+  const plan = settings("plan");
+  assert.deepEqual([plan?.provider, plan?.gpu, plan?.engine], ["openrouter", undefined, undefined]);
+  // A profile on the same provider keeps the top level's settings it does not set.
+  const code = settings("code");
+  assert.deepEqual(
+    [code?.provider, code?.gpu, code?.["pod-reuse"], code?.model],
+    ["runpod-pod", "NVIDIA A100 80GB PCIe", "run", "qwen3-coder:30b"],
+  );
+  // A profile's settings must fit its own provider.
+  const wrong = parseSettings(
+    "model: a/b\nprofiles:\n  - name: planner\n    when:\n      stages: [plan]\n    gpu: GPU",
+  );
+  const resolved = resolveRun([{}, {}, wrong.ok ? wrong.value : {}], { stage: "code", tasks: 1 });
+  assert.deepEqual(resolved, {
+    ok: false,
+    error: "Profile `planner`: `openrouter` does not accept `gpu`; it takes only `model`.",
+  });
+});
+
+test("a layer on another provider leaves out the provider settings of the layers below", () => {
+  const shared = parseSettings(
+    "provider: runpod-pod\ngpu: GPU\nmodel: qwen3-coder:30b",
+    SHARED_SETTINGS,
+  );
+  assert.ok(shared.ok);
+  if (!shared.ok) return;
+  const openrouter = resolveSettings(
+    {},
+    {},
+    { provider: "openrouter", model: "a/b" },
+    shared.value,
+  );
+  assert.ok(openrouter.ok && openrouter.value.gpu === undefined);
+  const kept = resolveSettings({}, {}, { provider: "runpod-pod" }, shared.value);
+  assert.ok(kept.ok && kept.value.gpu === "GPU", "the same provider keeps them");
+});
+
+test("a task's model wins over the profile, and must fit its provider", () => {
   const layers = profiled({ model: "qwen3-coder:480b", "task-budget": 5 });
   const code = resolveRun(layers, { stage: "code", tasks: 1 });
   assert.ok(code.ok);
@@ -476,30 +595,43 @@ test("a task's model wins over the profile, and must fit its inference", () => {
   assert.equal(code.ok && code.value.settings["task-budget"], 5);
   assert.equal(code.ok && code.value.profile, "small-pod");
   const plan = resolveRun(layers, { stage: "plan", tasks: 1 });
-  assert.ok(!plan.ok && plan.error.startsWith("Inference profile `planner`: `model` must be"));
+  assert.ok(
+    !plan.ok && plan.error.startsWith("Profile `planner`: With `openrouter`, `model` must be"),
+  );
+});
+
+test("a task's GPU applies to the runs whose provider accepts it", () => {
+  const layers = profiled({ gpu: "NVIDIA RTX A5000" });
+  const code = resolveRun(layers, { stage: "code", tasks: 1 });
+  assert.ok(code.ok && code.value.settings.gpu === "NVIDIA RTX A5000");
+  const plan = resolveRun(layers, { stage: "plan", tasks: 1 });
+  assert.ok(plan.ok && plan.value.settings.gpu === undefined);
+  const review = resolveRun(layers, { stage: "review", tasks: 1 });
+  assert.ok(review.ok && review.value.settings.gpu === undefined);
+  // When no provider of the settings accepts it, it is an error, which `select` reports.
+  const none = resolveRun([{ gpu: "G" }, {}, { model: "a/b" }], { stage: "code", tasks: 1 });
+  assert.deepEqual(none, {
+    ok: false,
+    error: "No provider of the settings accepts `gpu`: they name `openrouter`.",
+  });
 });
 
 test("every profile must fit with the top-level settings, whichever stage runs", () => {
   const file = parseSettings(
-    "model: a/b\ninference-profiles:\n  - name: pods\n    when:\n      stages: [code]\n    inference: self-hosted\n    model: qwen3-coder:30b",
+    "model: a/b\nprofiles:\n  - name: pods\n    when:\n      stages: [code]\n    provider: runpod-pod\n    model: qwen3-coder:30b",
   );
   assert.ok(file.ok);
   const resolved = resolveRun([{}, {}, file.ok ? file.value : {}], { stage: "plan", tasks: 1 });
-  assert.ok(
-    !resolved.ok &&
-      resolved.error.startsWith(
-        "Inference profile `pods`: Self-hosted inference on pods needs `gpu-type`",
-      ),
-  );
+  assert.ok(!resolved.ok && resolved.error.startsWith("Profile `pods`: `runpod-pod` needs `gpu`"));
 });
 
 test("the repository's profiles replace the organization's whole, and the log names them", () => {
   const shared = parseSettings(
-    "model: org/model\ninference-profiles:\n  - name: org-plan\n    when:\n      stages: [plan]\n    model: org/planner",
+    "model: org/model\nprofiles:\n  - name: org-plan\n    when:\n      stages: [plan]\n    model: org/planner",
     SHARED_SETTINGS,
   );
   const file = parseSettings(
-    "inference-profiles:\n  - name: repo-code\n    when:\n      stages: [code]\n    model: repo/coder",
+    "profiles:\n  - name: repo-code\n    when:\n      stages: [code]\n    model: repo/coder",
   );
   assert.ok(shared.ok && file.ok);
   if (!shared.ok || !file.ok) return;
@@ -511,13 +643,13 @@ test("the repository's profiles replace the organization's whole, and the log na
   const code = resolveRun(layers, { stage: "code", tasks: 1 });
   assert.ok(code.ok && code.value.profile === "repo-code");
   assert.deepEqual(settingSources(layers), [
-    "Settings from .codeman/settings.yml: inference-profiles=[repo-code].",
+    "Settings from .codeman/settings.yml: profiles=[repo-code].",
     `Settings from ${SHARED_SETTINGS}: model=org/model.`,
   ]);
   // A file without profiles keeps the organization's; `[]` removes them.
   const kept = resolveRun([{}, {}, {}, shared.value], { stage: "plan", tasks: 1 });
   assert.ok(kept.ok && kept.value.profile === "org-plan");
-  const none = parseSettings("inference-profiles: []");
+  const none = parseSettings("profiles: []");
   const removed = resolveRun([{}, {}, none.ok ? none.value : {}, shared.value], {
     stage: "plan",
     tasks: 1,

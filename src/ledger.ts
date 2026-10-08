@@ -13,6 +13,7 @@ import {
 } from "./budget.ts";
 import { busyShares, type Span } from "./gateway/usage.ts";
 import type { BusyTime, PodEvent, PodLife, RunUsage } from "./inference/provider.ts";
+import { accountOf, type ProviderName } from "./inference/providers.ts";
 import type { Log, Runtime } from "./runtime/runtime.ts";
 import { isLedgerRunId, LAYOUT, ledgerMonth, repositoryName } from "./store/layout.ts";
 import type {
@@ -52,9 +53,8 @@ export interface PickedRun {
   /** Whether the task runs an agent, and so has a run's document. */
   agent: boolean;
   model: string;
-  /** Where the model is served: `openrouter`, or the GPU provider. */
-  provider: string;
-  mode: "openrouter" | "pod" | "serverless";
+  /** Where the model is served. */
+  provider: ProviderName;
   profile: string | undefined;
 }
 
@@ -165,7 +165,6 @@ export class Ledger {
         stage: picked.stage,
         model: picked.model,
         provider: picked.provider,
-        mode: picked.mode,
         profile: picked.profile ?? null,
       });
     }
@@ -218,7 +217,7 @@ export class Ledger {
       const ended =
         run !== undefined &&
         (run.status === "closed" || run.status === "expired" || expired(run, now));
-      if (same.length !== 1 || !run || run.provider !== "openrouter" || !ended) continue;
+      if (same.length !== 1 || !run || run.account !== "openrouter" || !ended) continue;
       const cost = Math.max(0, figure - (run.spentBefore ?? 0));
       if (run.cost !== undefined && Math.abs(run.cost - cost) < 0.0001) continue;
       change(run, expired(run, now) ? { cost, status: "expired" } : { cost });
@@ -687,7 +686,8 @@ export function ledgerRuns(documents: readonly StoredDocument[]): LedgerRun[] {
         task,
         workflowRun: text(fields.workflowRun) ?? "",
         status: text(fields.status) ?? "",
-        provider: text(fields.provider) ?? "",
+        // Runs picked before providers name the account (`openrouter`, `runpod`) instead.
+        account: accountOf(text(fields.provider) ?? ""),
         limit: amount(fields.limit),
         cost: amount(fields.cost),
         spentBefore: amount(fields.spentBefore),
@@ -733,7 +733,7 @@ export function untrackedRuns(documents: readonly StoredDocument[]): LedgerRun[]
         task: 0,
         workflowRun: "",
         status: "closed",
-        provider,
+        account: accountOf(provider),
         cost: untracked,
         pod,
         start: createdAt,

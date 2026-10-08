@@ -3,7 +3,6 @@ import { join } from "node:path";
 import { MIN_RUN_BUDGET, runLimit } from "../budget.ts";
 import type { Change } from "../collect.ts";
 import { type Messages, messages, type RunOutcome, taskLanguage } from "../i18n/index.ts";
-import { agentMode, inferenceChoice } from "../inference/index.ts";
 import { addPod } from "../inference/spend.ts";
 import {
   type Cut,
@@ -1231,9 +1230,9 @@ function runCosts(
   return { run, task: before + (run ?? 0) };
 }
 
-/** Whether this run used self-hosted inference, and reached it. */
+/** Whether this run used a model Codeman serves on rented GPUs, and reached it. */
 function selfHostedRun(io: Io, task: TaskContext): boolean {
-  return task.settings.inference === "self-hosted" && io.jobs.keyStatus === "opened";
+  return task.settings.provider !== "openrouter" && io.jobs.keyStatus === "opened";
 }
 
 /** The spend table's row for a run that opened a key; older workflow files lack some inputs. */
@@ -1248,7 +1247,7 @@ function spendRow(io: Io, task: TaskContext, cost: number | undefined): SpendRow
     stage: task.action === "implement" ? (task.stage ?? "code") : task.action,
     model: task.model,
     // The choice select made, from the same settings it passes to the key jobs.
-    inference: agentMode(inferenceChoice(task.settings, null)),
+    provider: task.settings.provider,
     cost,
     keyLimit: io.jobs.keyLimit,
     taskBudget: task.settings["task-budget"],

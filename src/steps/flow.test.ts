@@ -208,7 +208,7 @@ test("plans, records answers, and works through the stages on a platform unlike 
   assert.equal(decisionsComments().length, 1);
   const rows = record(platform, issue)?.spending?.rows;
   assert.equal(rows?.length, 4, "plan, route, design and code");
-  assert.ok(rows?.every((row) => row.inference === "openrouter"));
+  assert.ok(rows?.every((row) => row.provider === "openrouter"));
   platform.say(issue, "alice", "/codeman replan Expire the counters.");
   runtime = await selectStep(platform);
   assert.deepEqual([runtime.outputs.action, runtime.outputs.stage], ["plan", "plan"]);
@@ -531,17 +531,17 @@ test("select resolves a task's commands, a manual run's inputs, the file, then t
 
   // Malformed settings stop the run, named as the organization's, not the file.
   const malformed = new FakeRuntime({
-    inputs: { workdir, settings: "model: a/b\ngpu-type: x; rm\n" },
+    inputs: { workdir, settings: "model: a/b\ngpu: x; rm\n" },
   });
   await assert.rejects(select(fakeServices(platform, malformed)), {
     message:
-      "the `settings` input (organization variable CODEMAN_SETTINGS), line 2: the value of `gpu-type` is not a plain value.",
+      "the `settings` input (organization variable CODEMAN_SETTINGS), line 2: the value of `gpu` is not a plain value.",
   });
 });
 
-test("self-hosted inference: select hands the task's pods to the key jobs, and apply takes the ledger's spend", async () => {
+test("pods: select hands the task's pods to the key jobs, and apply takes the ledger's spend", async () => {
   const platform = new FakePlatform({
-    ".codeman/settings.yml": 'inference: self-hosted\nmodel: qwen3-coder:30b\ngpu-type: "GPU A"\n',
+    ".codeman/settings.yml": 'provider: runpod-pod\nmodel: qwen3-coder:30b\ngpu: "GPU A"\n',
   });
   platform.maintainers.add("alice");
   const issue = platform.openIssue("alice", "Add a cache", "Cache responses.");
@@ -567,15 +567,13 @@ test("self-hosted inference: select hands the task's pods to the key jobs, and a
 
   let selected = await step("1");
   assert.deepEqual(JSON.parse(selected.outputs.inference ?? ""), {
-    inference: "self-hosted",
-    gpuProvider: "runpod",
+    provider: "runpod-pod",
     engine: "ollama",
     model: "qwen3-coder:30b",
     pods: [],
-    providers: ["runpod"],
+    accounts: ["runpod"],
     recorded: { spent: 0 },
-    mode: "pod",
-    gpuType: "GPU A",
+    gpu: "GPU A",
     podReuse: "task",
   });
   const task = readTask(selected);
@@ -618,15 +616,15 @@ test("self-hosted inference: select hands the task's pods to the key jobs, and a
     "a pod that served two runs refreshes neither",
   );
   assert.deepEqual(
-    updated?.spending?.rows.map((row) => row.inference),
-    ["pod", "pod"],
+    updated?.spending?.rows.map((row) => row.provider),
+    ["runpod-pod", "runpod-pod"],
   );
 });
 
 test("a shared pod: apply marks it in the record, and its billing no longer reaches the key jobs", async () => {
   const platform = new FakePlatform({
     ".codeman/settings.yml":
-      'inference: self-hosted\nmodel: qwen3-coder:30b\ngpu-type: "GPU A"\nparallel-tasks: 2\n',
+      'provider: runpod-pod\nmodel: qwen3-coder:30b\ngpu: "GPU A"\nparallel-tasks: 2\n',
   });
   platform.maintainers.add("alice");
   const issue = platform.openIssue("alice", "Add a cache", "Cache responses.");
@@ -663,19 +661,21 @@ test("a shared pod: apply marks it in the record, and its billing no longer reac
   assert.equal(choice.recorded.spent, 0.06);
 });
 
-test("each row keeps its run's inference, and rows recorded before it show a dash", async () => {
+test("each row keeps its run's provider, older rows read as before, and the oldest show a dash", async () => {
   const platform = new FakePlatform({ ".codeman/settings.yml": "model: a/b\n" });
   const { issue } = await plannedTask(platform);
-  // The plan's row, as a record written before rows kept their inference holds it too.
+  // The plan's row, as records written before rows kept their provider hold it: without one,
+  // and with the older `inference`.
   const panel = platform.comments.get(issue)?.find((comment) => isStatusComment(comment.body));
   const before = record(platform, issue);
   const planRow = before?.spending?.rows[0];
   assert.ok(panel && before && planRow);
-  assert.equal(planRow.inference, "openrouter");
-  const { inference: _, ...oldRow } = planRow;
+  assert.equal(planRow.provider, "openrouter");
+  const { provider: _, ...oldRow } = planRow;
+  const olderRow = { ...oldRow, inference: "pod" };
   panel.body = panel.body.replace(
     /<!-- codeman:status [A-Za-z0-9_-]* -->/,
-    encodeStatus({ ...before, spending: { rows: [oldRow, planRow] } }),
+    encodeStatus({ ...before, spending: { rows: [oldRow, olderRow, planRow] } }),
   );
 
   // The task moves to Serverless before it is routed.
@@ -689,26 +689,29 @@ test("each row keeps its run's inference, and rows recorded before it show a das
       {
         path: ".codeman/settings.yml",
         content: Buffer.from(
-          "inference: self-hosted\ngpu-mode: serverless\nserverless-endpoint: abc123\nmodel: Qwen/Qwen3-Coder-30B-A3B-Instruct\n",
+          "provider: runpod-serverless\nendpoint: abc123\nmodel: Qwen/Qwen3-Coder-30B-A3B-Instruct\n",
         ),
       },
     ],
     message: "Use Serverless",
   });
   const selected = await selectStep(platform);
-  assert.equal(JSON.parse(selected.outputs.inference ?? "").mode, "serverless");
+  assert.equal(JSON.parse(selected.outputs.inference ?? "").provider, "runpod-serverless");
   routeResult(["code"]);
   await applyStep(platform);
   assert.deepEqual(
-    record(platform, issue)?.spending?.rows.map((row) => row.inference),
-    [undefined, "openrouter", "serverless"],
+    record(platform, issue)?.spending?.rows.map((row) => row.provider ?? row.inference),
+    [undefined, "pod", "openrouter", "runpod-serverless"],
   );
   const shown = platform.botComments(issue).find((body) => body.includes("codeman:status")) ?? "";
   assert.match(shown, /\| Month \(estimated\) \|/);
-  for (const provider of ["—", "OpenRouter", "Runpod \\(Serverless\\)"]) {
+  for (const provider of ["—", "Runpod \\(pod\\)", "OpenRouter", "Runpod \\(Serverless\\)"]) {
     assert.match(shown, new RegExp(`\\| \`[^\`]*\` \\| ${provider} \\|`));
   }
-  assert.match(shown, /\n\*\*OpenRouter\*\*: [^\n]*\n\n\*\*Runpod \(Serverless\)\*\*: /);
+  assert.match(
+    shown,
+    /\n\*\*OpenRouter\*\*: [^\n]*\n\n\*\*Runpod \(pod\)\*\*: [^\n]*\n\n\*\*Runpod \(Serverless\)\*\*: /,
+  );
   const run = platform.botComments(issue).at(-1) ?? "";
   assert.match(run, /\| Runpod \(Serverless\) \|/);
   assert.match(run, /\*\*Runpod \(Serverless\)\*\*: /);
@@ -719,7 +722,7 @@ test("profiles: a task planned on OpenRouter and coded on a pod adds up both pro
   const platform = new FakePlatform({
     ".codeman/settings.yml": [
       "model: a/b",
-      "inference-profiles:",
+      "profiles:",
       "  - name: planner",
       "    when:",
       "      stages: [plan]",
@@ -727,8 +730,8 @@ test("profiles: a task planned on OpenRouter and coded on a pod adds up both pro
       "  - name: small-pod",
       "    when:",
       "      stages: [code]",
-      "    inference: self-hosted",
-      "    gpu-type: NVIDIA RTX A6000",
+      "    provider: runpod-pod",
+      "    gpu: NVIDIA RTX A6000",
       "    model: qwen3-coder:30b",
     ].join("\n"),
   });
@@ -757,11 +760,11 @@ test("profiles: a task planned on OpenRouter and coded on a pod adds up both pro
   // Planning on OpenRouter, with the planner's model.
   let { selected, choice } = await step("1");
   assert.equal(selected.outputs.model, "c/d");
-  assert.ok(selected.logged("info").includes("Inference profile `planner` applies to this run."));
+  assert.ok(selected.logged("info").includes("Profile `planner` applies to this run."));
   assert.deepEqual(choice, {
-    inference: "openrouter",
+    provider: "openrouter",
     profile: "planner",
-    providers: ["openrouter", "runpod"],
+    accounts: ["openrouter", "runpod"],
     recorded: { spent: 0 },
   });
   const { planPath } = readTask(selected);
@@ -789,8 +792,8 @@ test("profiles: a task planned on OpenRouter and coded on a pod adds up both pro
   // Coding on a pod: the ledger adds its spend to OpenRouter's runs.
   ({ selected, choice } = await step("3"));
   assert.deepEqual(
-    [choice.inference, choice.mode, choice.profile, choice.model, choice.recorded],
-    ["self-hosted", "pod", "small-pod", "qwen3-coder:30b", { spent: 0.375 }],
+    [choice.provider, choice.profile, choice.model, choice.recorded],
+    ["runpod-pod", "small-pod", "qwen3-coder:30b", { spent: 0.375 }],
   );
   agentResult(
     { "src/limit.ts": "export const limit = 10;\n" },
@@ -807,7 +810,7 @@ test("profiles: a task planned on OpenRouter and coded on a pod adds up both pro
 
   // Review on OpenRouter again: the ledger counts every provider's runs.
   ({ selected, choice } = await step("4"));
-  assert.equal(choice.inference, "openrouter");
+  assert.equal(choice.provider, "openrouter");
   assert.deepEqual(choice.recorded, { spent: 0.875 });
   agentResult({}, { status: "done", summary: "Looks right." });
   await applied("4", {
@@ -819,11 +822,11 @@ test("profiles: a task planned on OpenRouter and coded on a pod adds up both pro
   assert.equal(spent(), 0.9375, "0.4375 on OpenRouter and 0.5 on the pod");
   const rows = record(platform, issue)?.spending?.rows ?? [];
   assert.deepEqual(
-    rows.map((row) => [row.stage, row.model, row.inference, row.cost]),
+    rows.map((row) => [row.stage, row.model, row.provider, row.cost]),
     [
       ["plan", "c/d", "openrouter", 0.25],
       ["route", "a/b", "openrouter", 0.125],
-      ["code", "qwen3-coder:30b", "pod", 0.5],
+      ["code", "qwen3-coder:30b", "runpod-pod", 0.5],
       ["review", "a/b", "openrouter", 0.0625],
     ],
   );
@@ -858,12 +861,12 @@ test("profiles: a task's model wins where it fits, and is reported where it does
   const platform = new FakePlatform({
     ".codeman/settings.yml": [
       "model: a/b",
-      "inference-profiles:",
+      "profiles:",
       "  - name: small-pod",
       "    when:",
       "      stages: [plan]",
-      "    inference: self-hosted",
-      '    gpu-type: "NVIDIA RTX A6000"',
+      "    provider: runpod-pod",
+      '    gpu: "NVIDIA RTX A6000"',
       "    model: qwen3-coder:30b",
     ].join("\n"),
   });
@@ -871,11 +874,12 @@ test("profiles: a task's model wins where it fits, and is reported where it does
   platform.openIssue(
     "alice",
     "Add a limiter",
-    "Limit requests.\n\n/codeman set model qwen3-coder:480b",
+    "Limit requests.\n\n/codeman set model qwen3-coder:480b\n/codeman set gpu NVIDIA RTX A5000",
   );
   const planned = await selectStep(platform);
   assert.equal(planned.outputs.model, "qwen3-coder:480b");
-  assert.equal(JSON.parse(planned.outputs.inference ?? "").profile, "small-pod");
+  const choice = JSON.parse(planned.outputs.inference ?? "");
+  assert.deepEqual([choice.profile, choice.gpu], ["small-pod", "NVIDIA RTX A5000"]);
   assert.deepEqual(readTask(planned).problems, []);
 
   // Without the profile, the task's model does not fit OpenRouter: the run goes on without it.
@@ -920,7 +924,7 @@ test("parallel tasks: one run plans two, each in its own jobs, and one that fail
       "model: a/b",
       "parallel-tasks: 2",
       "task-budget: 3",
-      "inference-profiles:",
+      "profiles:",
       "  - name: crowded",
       "    when:",
       "      parallel-tasks: 2",

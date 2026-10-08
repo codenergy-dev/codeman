@@ -186,7 +186,7 @@ test("prices a GPU type on Secure Cloud per second, and refuses one it does not 
   const { fetch: missing } = fakeFetch([new Response("{}", { status: 404 })]);
   await assert.rejects(
     new Runpod("rk", missing).pods.price("PRO 6000 MIG 48GB"),
-    /no GPU type "PRO 6000 MIG 48GB"\. `gpu-type` takes the GPU's ID/,
+    /no GPU type "PRO 6000 MIG 48GB"\. `gpu` takes the GPU's ID/,
   );
 });
 

@@ -3,10 +3,11 @@ import { test } from "node:test";
 import { resolveSettings, type Settings } from "../settings.ts";
 import { MemoryStore } from "../store/memory.ts";
 import { FakeRuntime } from "../testing/fake-runtime.ts";
-import { agentMode, inferenceChoice, inferenceProvider, parseInferenceChoice } from "./index.ts";
+import { inferenceChoice, inferenceProvider, parseInferenceChoice } from "./index.ts";
 
+/** The settings of a repository's file that sets `layer`. */
 function settings(layer: Partial<Settings>): Settings {
-  const resolved = resolveSettings(layer);
+  const resolved = resolveSettings({}, {}, layer);
   if (!resolved.ok) throw new Error(resolved.error);
   return resolved.value;
 }
@@ -16,54 +17,42 @@ const record = { spent: 0.75, inference: { pods: [{ id: "p1", runs: ["1"], count
 test("hands the key jobs the task's choice of inference, with its spend and pods", () => {
   const openrouter = inferenceChoice(settings({ model: "a/b" }), record);
   assert.deepEqual(openrouter, {
-    inference: "openrouter",
-    providers: ["openrouter"],
+    provider: "openrouter",
+    accounts: ["openrouter"],
     recorded: { spent: 0.75 },
   });
-  assert.equal(agentMode(openrouter), "openrouter");
 
   const pod = inferenceChoice(
     settings({
-      inference: "self-hosted",
+      provider: "runpod-pod",
       model: "qwen3-coder:30b",
-      "gpu-type": "GPU A",
+      gpu: "GPU A",
       "pod-reuse": "run",
     }),
     record,
   );
   assert.deepEqual(pod, {
-    inference: "self-hosted",
-    gpuProvider: "runpod",
+    provider: "runpod-pod",
     engine: "ollama",
     model: "qwen3-coder:30b",
     pods: ["p1"],
-    providers: ["runpod"],
+    accounts: ["runpod"],
     recorded: { spent: 0.75 },
-    mode: "pod",
-    gpuType: "GPU A",
+    gpu: "GPU A",
     podReuse: "run",
   });
-  assert.equal(agentMode(pod), "pod");
 
   const serverless = inferenceChoice(
-    settings({
-      inference: "self-hosted",
-      "gpu-mode": "serverless",
-      "serverless-endpoint": "ep1",
-      model: "org/model",
-    }),
+    settings({ provider: "runpod-serverless", endpoint: "ep1", model: "org/model" }),
     null,
   );
-  assert.equal(agentMode(serverless), "serverless");
   assert.deepEqual(serverless, {
-    inference: "self-hosted",
-    gpuProvider: "runpod",
+    provider: "runpod-serverless",
     engine: "vllm",
     model: "org/model",
     pods: [],
-    providers: ["runpod"],
+    accounts: ["runpod"],
     recorded: { spent: 0 },
-    mode: "serverless",
     endpoint: "ep1",
   });
   assert.deepEqual(parseInferenceChoice(JSON.stringify(pod)), pod);
@@ -71,7 +60,7 @@ test("hands the key jobs the task's choice of inference, with its spend and pods
 
 test("a choice must be whole", () => {
   const choice = inferenceChoice(settings({ model: "a/b" }), null);
-  for (const bad of [{ recorded: {} }, { providers: [""] }, { profile: 4 }]) {
+  for (const bad of [{ recorded: {} }, { accounts: [""] }, { profile: 4 }, { provider: "pod" }]) {
     assert.throws(
       () => parseInferenceChoice(JSON.stringify({ ...choice, ...bad })),
       /not a valid/,
@@ -90,23 +79,20 @@ test("the billing of shared pods is not read as the task's", () => {
       ],
     },
   };
-  const pod = { inference: "self-hosted" as const, model: "qwen3-coder:30b", "gpu-type": "GPU A" };
+  const pod = { provider: "runpod-pod" as const, model: "qwen3-coder:30b", gpu: "GPU A" };
   const choice = inferenceChoice(settings({ ...pod, "parallel-tasks": 2 }), shared);
-  assert.equal(choice.inference === "self-hosted" && choice.pods.join(), "p1");
+  assert.equal(choice.provider === "runpod-pod" && choice.pods.join(), "p1");
   assert.deepEqual(parseInferenceChoice(JSON.stringify(choice)), choice);
   assert.deepEqual(choice, inferenceChoice(settings(pod), shared), "whatever parallel-tasks says");
 });
 
 test("an empty choice, from older workflow files, is OpenRouter; anything else must be whole", () => {
   assert.deepEqual(parseInferenceChoice(""), {
-    inference: "openrouter",
-    providers: ["openrouter"],
+    provider: "openrouter",
+    accounts: ["openrouter"],
     recorded: { spent: 0 },
   });
-  assert.throws(
-    () => parseInferenceChoice('{"inference":"self-hosted","model":"m"}'),
-    /not a valid/,
-  );
+  assert.throws(() => parseInferenceChoice('{"provider":"runpod-pod","model":"m"}'), /not a valid/);
 });
 
 test("builds the provider the choice names, with only the credentials it needs", () => {
@@ -114,7 +100,7 @@ test("builds the provider the choice names, with only the credentials it needs",
   const store = () => new MemoryStore();
   assert.equal(inferenceProvider(openrouter, store).name, "openrouter");
   const choice = inferenceChoice(
-    settings({ inference: "self-hosted", model: "qwen3-coder:30b", "gpu-type": "GPU A" }),
+    settings({ provider: "runpod-pod", model: "qwen3-coder:30b", gpu: "GPU A" }),
     null,
   );
   const pod = new FakeRuntime({ inputs: { inference: JSON.stringify(choice), "gpu-key": "rk" } });

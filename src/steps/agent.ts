@@ -5,7 +5,7 @@ import { decrypt } from "../crypto.ts";
 import { harnesses } from "../harness/index.ts";
 import { type AgentAccess, agentAccess } from "../inference/access.ts";
 import { ENGINES } from "../inference/engines.ts";
-import { agentMode, inferenceChoice } from "../inference/index.ts";
+import { inferenceChoice } from "../inference/index.ts";
 import { usageReport } from "../inference/selfhosted.ts";
 import { outputLimits, outputProblems } from "../output.ts";
 import {
@@ -221,13 +221,13 @@ async function modelAccess(
   if (serverlessKey) runtime.mask(serverlessKey);
   const contextLength = Number(runtime.input("context-length"));
   return agentAccess({
-    mode: agentMode(choice),
+    provider: choice.provider,
     credential,
     baseUrl: runtime.input("base-url") || undefined,
     contextLength: Number.isInteger(contextLength) && contextLength > 0 ? contextLength : undefined,
     handle: runtime.input("handle"),
     serverlessKey: serverlessKey || undefined,
-    engine: choice.inference === "self-hosted" ? ENGINES[choice.engine] : undefined,
+    engine: choice.provider === "openrouter" ? undefined : ENGINES[choice.engine],
     log: (message) => runtime.info(oneLine(message)),
   });
 }

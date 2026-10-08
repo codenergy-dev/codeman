@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { descriptionCommands } from "../commands.ts";
 import { type Messages, messages, taskLanguage } from "../i18n/index.ts";
-import { agentMode, choiceProvider, inferenceChoice } from "../inference/index.ts";
+import { inferenceChoice } from "../inference/index.ts";
 import type { WorkflowConventions } from "../platform/conventions.ts";
 import type { CiRun, Comment, Review } from "../platform/types.ts";
 import { IGNORE_FILE, unprotected } from "../policy.ts";
@@ -285,10 +285,10 @@ export async function select(services: Services): Promise<void> {
       ? { stage: agentWork, tasks: agents }
       : undefined;
     let resolved = resolveRun([own, ...below], runConditions);
-    if (!resolved.ok && (own.model !== undefined || own["gpu-type"] !== undefined)) {
-      // A task's model or GPU type that does not fit the run's inference stops this task only:
-      // the run goes on without them, and says why.
-      const { model: _model, "gpu-type": _gpuType, ...rest } = own;
+    if (!resolved.ok && (own.model !== undefined || own.gpu !== undefined)) {
+      // A task's model or GPU that does not fit the run's provider stops this task only: the run
+      // goes on without them, and says why.
+      const { model: _model, gpu: _gpu, ...rest } = own;
       const fallback = resolveRun([rest, ...below], runConditions);
       if (fallback.ok) {
         problems.push({ problem: { kind: "settings-rejected", error: resolved.error } });
@@ -298,9 +298,9 @@ export async function select(services: Services): Promise<void> {
     }
     if (!resolved.ok) throw new Error(resolved.error);
     for (const line of settingSources([own, ...below])) runtime.info(line);
-    const { profile, providers } = resolved.value;
+    const { profile, accounts } = resolved.value;
     const settings = resolved.value.settings;
-    if (profile) runtime.info(`Inference profile \`${profile}\` applies to this run.`);
+    if (profile) runtime.info(`Profile \`${profile}\` applies to this run.`);
     const model = settings.model;
 
     const context: TaskContext = {
@@ -387,7 +387,7 @@ export async function select(services: Services): Promise<void> {
       settings,
       record: record ?? null,
       profile,
-      providers,
+      accounts,
       context,
       start,
     };
@@ -412,14 +412,12 @@ export async function select(services: Services): Promise<void> {
   }
   // After GitHub's writes: a ledger that fails fails the job, and its tasks run nothing.
   for (const one of picked) {
-    const choice = inferenceChoice(one.settings, null);
     ledger.pick(runOf(one), {
       action: one.action,
       stage: one.stage,
       agent: one.needsAgent,
       model: one.model,
-      provider: choiceProvider(choice),
-      mode: agentMode(choice),
+      provider: one.settings.provider,
       profile: one.profile,
     });
   }
@@ -438,7 +436,8 @@ interface Picked {
   settings: Settings;
   record: TaskRecord | null;
   profile: string | undefined;
-  providers: string[];
+  /** The account of every provider the settings name. */
+  accounts: string[];
   context: TaskContext;
   start: () => Promise<void>;
 }
@@ -450,7 +449,7 @@ interface Picked {
 function taskOutputs(task: Picked, run: string): Record<string, string> {
   const choice = inferenceChoice(task.settings, task.record, {
     profile: task.profile,
-    providers: task.providers,
+    accounts: task.accounts,
   });
   return {
     task: String(task.number),

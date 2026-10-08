@@ -153,16 +153,21 @@ export const ptBR: Messages = {
     "Orçamento da tarefa",
     "Mês (estimado)",
   ],
-  provider: (mode) =>
-    ({ openrouter: "OpenRouter", pod: "Runpod (pod)", serverless: "Runpod (Serverless)" })[mode],
-  spendNote: (mode) =>
+  provider: (provider) =>
+    ({
+      openrouter: "OpenRouter",
+      "runpod-pod": "Runpod (pod)",
+      "runpod-serverless": "Runpod (Serverless)",
+    })[provider],
+  spendNote: (provider) =>
     ({
       openrouter:
         "**OpenRouter**: o custo de uma rodada é o que a sua chave usou, exato, e as rodadas seguintes o atualizam.",
-      pod: "**Runpod (pod)**: o custo de uma rodada é o tempo do seu pod ao preço dele; a tarefa conta também o tempo do pod entre rodadas, atualizado depois pela cobrança da Runpod.",
-      serverless:
+      "runpod-pod":
+        "**Runpod (pod)**: o custo de uma rodada é o tempo do seu pod ao preço dele; a tarefa conta também o tempo do pod entre rodadas, atualizado depois pela cobrança da Runpod.",
+      "runpod-serverless":
         "**Runpod (Serverless)**: o custo de uma rodada é uma estimativa do tempo que a Runpod cobra pelos seus workers, que conta no mês assim que a rodada termina; o tempo em que um worker atendeu várias rodadas ao mesmo tempo, de qualquer repositório da organização, é dividido entre elas, e as rodadas seguintes o atualizam.",
-    })[mode],
+    })[provider],
   monthNote:
     "**Mês**: o que as rodadas do repositório contam neste mês no registro do Codeman antes da rodada, uma estimativa: o custo de cada rodada como acima, e o limite inteiro de cada rodada ainda aberta. O orçamento mensal da organização, quando ela tem um, conta as rodadas de todos os repositórios e a cobrança da Runpod por hora.",
   earlierRuns: (runs) => `Rodadas anteriores (${runs})`,
@@ -295,6 +300,8 @@ export const ptBR: Messages = {
         return `\`set\` muda, nesta tarefa, uma destas configurações: ${problem.names.map((name) => `\`${name}\``).join(", ")}.`;
       case "set-one-value":
         return `\`set ${problem.name}\` precisa de um valor.`;
+      case "renamed-setting":
+        return `\`${problem.name}\` agora se chama \`${problem.now}\`: escreva \`set ${problem.now}\`.`;
       case "invalid-setting":
         return {
           model: `\`${problem.name}\` precisa ser o ID de um modelo, como \`provedor/modelo\` no OpenRouter ou \`qwen3-coder:30b\` no Ollama.`,
@@ -302,8 +309,8 @@ export const ptBR: Messages = {
           number: `\`${problem.name}\` precisa ser um número positivo.`,
           integer: `\`${problem.name}\` precisa ser um número inteiro positivo.`,
           choice: `\`${problem.name}\` precisa ser um destes valores: ${(problem.values ?? []).map((value) => `\`${value}\``).join(", ")}.`,
-          "gpu-type": `\`${problem.name}\` precisa ser um tipo de GPU, como \`NVIDIA RTX A6000\`.`,
-          endpoint: `\`${problem.name}\` precisa ser o ID de um endpoint, com letras e dígitos.`,
+          gpu: `\`${problem.name}\` precisa ser um tipo de GPU, como \`NVIDIA RTX A6000\`.`,
+          endpoint: `\`${problem.name}\` precisa ser o ID de um endpoint, com letras e dígitos, ou a URL dele em \`https://api.runpod.ai\`.`,
         }[problem.type];
       case "settings-rejected":
         return `As configurações da tarefa não foram aplicadas: ${problem.error}`;

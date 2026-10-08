@@ -240,7 +240,7 @@ test("the agent job's gateway holds the endpoint's key; the agent sees a local U
     contextLength: 65536,
   };
   const access = await agentAccess({
-    mode: "serverless",
+    provider: "runpod-serverless",
     credential: "run-token",
     handle: JSON.stringify(handle),
     serverlessKey: "rpa_endpoint_key",
@@ -275,7 +275,7 @@ test("the agent job's gateway stops serving once the run's estimated cost reache
   const api = await endpointApi();
   let now = 1_000_000;
   const access = await agentAccess({
-    mode: "serverless",
+    provider: "runpod-serverless",
     credential: "t",
     handle: JSON.stringify({
       mode: "serverless",
@@ -312,7 +312,7 @@ test("the agent job's gateway stops serving once the run's estimated cost reache
 test("the agent job's gateway cancels the jobs the agent left waiting when the run ends", async () => {
   const api = await endpointApi(true);
   const access = await agentAccess({
-    mode: "serverless",
+    provider: "runpod-serverless",
     credential: "t",
     handle: JSON.stringify({
       mode: "serverless",
@@ -349,17 +349,17 @@ test("the agent job's gateway cancels the jobs the agent left waiting when the r
 });
 
 test("OpenRouter and pods need nothing from the agent job but their credential", async () => {
-  const openrouter = await agentAccess({ mode: "openrouter", credential: "sk-or" });
+  const openrouter = await agentAccess({ provider: "openrouter", credential: "sk-or" });
   assert.equal(openrouter.apiKey, "sk-or");
   assert.equal(openrouter.baseUrl, undefined);
   const pod = await agentAccess({
-    mode: "pod",
+    provider: "runpod-pod",
     credential: "t",
     baseUrl: "https://pod1-8080.proxy.runpod.net/v1",
     contextLength: 32768,
   });
   assert.equal(pod.baseUrl, "https://pod1-8080.proxy.runpod.net/v1");
-  await assert.rejects(agentAccess({ mode: "pod", credential: "t" }), /URL is missing/);
+  await assert.rejects(agentAccess({ provider: "runpod-pod", credential: "t" }), /URL is missing/);
 });
 
 /** A run's access through `api`: US$ 0.001 per second of a worker, and 5 seconds of idle time. */
@@ -369,7 +369,7 @@ function serverlessAccess(
   noWorkerMs?: number,
 ) {
   return agentAccess({
-    mode: "serverless",
+    provider: "runpod-serverless",
     credential: "t",
     handle: JSON.stringify({
       mode: "serverless",

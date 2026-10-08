@@ -11,6 +11,8 @@ export type CommandProblem =
   | { kind: "not-an-answer"; arg: string }
   | { kind: "set-which"; names: readonly string[] }
   | { kind: "set-one-value"; name: SettingName }
+  /** A setting `set` took under an older name. */
+  | { kind: "renamed-setting"; name: string; now: SettingName }
   | {
       kind: "invalid-setting";
       name: SettingName;

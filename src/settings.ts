@@ -1,4 +1,17 @@
-import { ENGINES, MODE_ENGINE } from "./inference/engines.ts";
+import { ENGINES } from "./inference/engines.ts";
+import {
+  accountOf,
+  endpointId,
+  isOpenRouterModel,
+  PROVIDER_NAMES,
+  PROVIDER_SETTINGS,
+  PROVIDERS,
+  type ProviderName,
+  type ProviderSettingName,
+  providerProblem,
+  settingValues,
+  withProviderDefaults,
+} from "./inference/providers.ts";
 import type { Parsed } from "./output.ts";
 import { STAGES } from "./stages.ts";
 import { parseYaml, type YamlEntry, type YamlNode } from "./yaml.ts";
@@ -36,20 +49,19 @@ export interface Settings {
   "max-summary-chars": number;
   /** The language Codeman talks to maintainers in: a BCP 47 tag, or `auto` for the issue's. */
   language: string;
-  /** Where agent runs get their model: `openrouter`, or `self-hosted` on rented GPUs. */
-  inference: string;
-  /** The GPU cloud of self-hosted inference: `runpod`. */
-  "gpu-provider": string;
-  /** `pod`: a GPU rented for the run; `serverless`: an endpoint's workers, started on demand. */
-  "gpu-mode": string;
-  /** The GPU type of a pod, as the provider names it, such as `NVIDIA RTX A6000`. */
-  "gpu-type"?: string | undefined;
+  /**
+   * Where agent runs get their model: `openrouter`, `runpod-pod` or `runpod-serverless`. The
+   * settings below it are accepted only by some providers (`src/inference/providers.ts`).
+   */
+  provider: ProviderName;
   /** What serves the model: `ollama` on pods, `vllm` on Serverless endpoints. */
   engine?: string | undefined;
+  /** The GPU type of a pod, as the provider names it, such as `NVIDIA RTX A6000`. */
+  gpu?: string | undefined;
   /** The ID of the Serverless endpoint a maintainer created. */
-  "serverless-endpoint"?: string | undefined;
+  endpoint?: string | undefined;
   /** `task`: a pod serves the task's next run too, while the task goes on; `run`: one run. */
-  "pod-reuse": string;
+  "pod-reuse"?: string | undefined;
   /** How many tasks one run works on at once, each in its own jobs. */
   "parallel-tasks": number;
 }
@@ -71,10 +83,7 @@ export const DEFAULTS: Omit<Settings, "model"> = {
   "max-label-chars": 150,
   "max-summary-chars": 2000,
   language: "auto",
-  inference: "openrouter",
-  "gpu-provider": "runpod",
-  "gpu-mode": "pod",
-  "pod-reuse": "task",
+  provider: "openrouter",
   "parallel-tasks": 1,
 };
 
@@ -99,8 +108,11 @@ export const TASK_SETTINGS: ReadonlySet<SettingName> = new Set([
   "task-budget",
   "max-runs",
   "language",
-  "gpu-type",
+  "gpu",
 ]);
+
+/** Settings a task could change with `/codeman set` under an older name, and their names now. */
+export const RENAMED_TASK_SETTINGS: Readonly<Record<string, SettingName>> = { "gpu-type": "gpu" };
 
 /**
  * Settings only the organization's settings may set: a repository must not raise a limit that
@@ -112,11 +124,9 @@ export const ORGANIZATION_SETTINGS: ReadonlySet<SettingName> = new Set([
 
 /** Settings that take one of a few values. */
 export const CHOICES: Readonly<Partial<Record<SettingName, readonly string[]>>> = {
-  inference: ["openrouter", "self-hosted"],
-  "gpu-provider": ["runpod"],
-  "gpu-mode": ["pod", "serverless"],
-  engine: Object.keys(ENGINES),
-  "pod-reuse": ["task", "run"],
+  provider: PROVIDER_NAMES,
+  engine: settingValues("engine"),
+  "pod-reuse": settingValues("pod-reuse"),
 };
 
 const NAMES: readonly SettingName[] = [
@@ -134,32 +144,18 @@ const NAMES: readonly SettingName[] = [
   "max-label-chars",
   "max-summary-chars",
   "language",
-  "inference",
-  "gpu-provider",
-  "gpu-mode",
-  "gpu-type",
-  "engine",
-  "serverless-endpoint",
-  "pod-reuse",
+  "provider",
+  ...PROVIDER_SETTINGS,
   "parallel-tasks",
 ];
 
-/** OpenRouter model IDs, such as `deepseek/deepseek-v4.1-flash` or `~deepseek/deepseek-flash-latest`. */
-const MODEL_ID = /^~?[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._:-]*$/i;
-
-export function isModelId(text: string): boolean {
-  return text.length <= 100 && MODEL_ID.test(text);
-}
-
 /** A model name of OpenRouter or of one of the engines; which one fits is checked once resolved. */
 export function isModelName(text: string): boolean {
-  return isModelId(text) || Object.values(ENGINES).some((engine) => engine.isModel(text));
+  return isOpenRouterModel(text) || Object.values(ENGINES).some((engine) => engine.isModel(text));
 }
 
 /** GPU type IDs, such as `NVIDIA GeForce RTX 4090`. */
 const GPU_TYPE = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,78}[A-Za-z0-9]$/;
-/** Serverless endpoint IDs. */
-const ENDPOINT_ID = /^[a-z0-9]{1,64}$/i;
 
 /** BCP 47 language tags, such as `pt-BR`, without the rarer extensions. */
 const LANGUAGE_TAG = /^[a-z]{2,3}(-[a-z0-9]{2,8}){0,3}$/i;
@@ -174,13 +170,14 @@ export type SettingKind =
   | "number"
   | "integer"
   | "choice"
-  | "gpu-type"
+  | "gpu"
   | "endpoint";
 
 /** What kind of value a setting takes. */
 export function settingKind(name: SettingName): SettingKind {
-  if (name === "model" || name === "language" || name === "gpu-type") return name;
-  if (name === "serverless-endpoint") return "endpoint";
+  if (name === "model" || name === "language" || name === "gpu" || name === "endpoint") {
+    return name;
+  }
   if (CHOICES[name]) return "choice";
   return name === "task-budget" ||
     name === "monthly-budget" ||
@@ -212,16 +209,12 @@ export function parseSetting(name: SettingName, text: string): Parsed<string | n
           error: `\`${name}\` must be one of ${choices.map((c) => `\`${c}\``).join(", ")}.`,
         };
   }
-  if (name === "gpu-type") {
+  if (name === "gpu") {
     return GPU_TYPE.test(text)
       ? { ok: true, value: text }
       : { ok: false, error: `\`${name}\` must be a GPU type, such as \`NVIDIA RTX A6000\`.` };
   }
-  if (name === "serverless-endpoint") {
-    return ENDPOINT_ID.test(text)
-      ? { ok: true, value: text }
-      : { ok: false, error: `\`${name}\` must be an endpoint's ID, letters and digits.` };
-  }
+  if (name === "endpoint") return endpointId(text);
   if (name === "language") {
     return text === "auto" || isLanguageTag(text)
       ? { ok: true, value: text }
@@ -250,24 +243,54 @@ export function parseSetting(name: SettingName, text: string): Parsed<string | n
   return { ok: true, value };
 }
 
-/** Settings an inference profile may change: where the model is served, and which model. */
-export const PROFILE_SETTINGS: readonly SettingName[] = [
-  "inference",
-  "gpu-provider",
-  "gpu-mode",
-  "gpu-type",
-  "engine",
-  "serverless-endpoint",
-  "pod-reuse",
-  "model",
-];
+/** Settings a profile may change: where the model is served, and which model. */
+export const PROFILE_SETTINGS: readonly SettingName[] = ["provider", "model", ...PROVIDER_SETTINGS];
+
+/**
+ * Names settings had before the provider settings plan, and what to write instead (decision 7):
+ * an old name stops the run, so each thing has one name.
+ */
+export function renamedSetting(name: string, value?: string): string | undefined {
+  const now = (text: string) => `\`${name}\` is now ${text}.`;
+  switch (name) {
+    case "inference":
+      if (value === "openrouter") return now("`provider`: write `provider: openrouter`");
+      return now(
+        value === "self-hosted"
+          ? "`provider`: write `provider: runpod-pod` or `provider: runpod-serverless`"
+          : `\`provider\`: ${PROVIDER_NAMES.map((provider) => `\`${provider}\``).join(", ")}`,
+      );
+    case "gpu-provider":
+      return now(
+        "part of `provider`: write `provider: runpod-pod` or `provider: runpod-serverless`",
+      );
+    case "gpu-mode":
+      if (value === "pod" || value === "serverless") {
+        return now(`part of \`provider\`: write \`provider: runpod-${value}\``);
+      }
+      return now(
+        "part of `provider`: write `provider: runpod-pod` or `provider: runpod-serverless`",
+      );
+    case "gpu-type":
+      return now("`gpu`");
+    case "serverless-endpoint":
+      return now("`endpoint`, with `provider: runpod-serverless`");
+    case "inference-profiles":
+      return now("`profiles`");
+    default:
+      return undefined;
+  }
+}
 
 /** What a profile's `stages` condition names: planning, routing, and each stage. */
 export const PROFILE_STAGES = ["plan", "route", ...STAGES] as const;
 export type ProfileStage = (typeof PROFILE_STAGES)[number];
 
-/** The inference settings for some runs: the first profile whose conditions all hold applies. */
-export interface InferenceProfile {
+/**
+ * A rule that picks a provider, a model and that provider's settings for some runs: the first
+ * profile whose conditions all hold applies.
+ */
+export interface Profile {
   name: string;
   /** Conditions that must all hold; a profile without any always applies. */
   when: {
@@ -281,7 +304,7 @@ export interface InferenceProfile {
 
 /** What one layer of settings sets: values, and the whole list of profiles. */
 export type SettingsLayer = PartialSettings & {
-  "inference-profiles"?: readonly InferenceProfile[] | undefined;
+  profiles?: readonly Profile[] | undefined;
 };
 
 const PROFILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -289,16 +312,15 @@ const PROFILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 /**
  * Reads `.codeman/settings.yml`, or settings in its format from `source`, which errors name.
  * The format is a strict subset of YAML (`src/yaml.ts`): `name: value` lines, and the list of
- * `inference-profiles`. Anything else is an error, so the file never means something different
- * from what it looks like.
+ * `profiles`. Anything else is an error, so the file never means something different from what
+ * it looks like.
  */
 export function parseSettings(text: string, source = SETTINGS_FILE): Parsed<SettingsLayer> {
   const tree = parseYaml(text);
   if (!tree.ok) return { ok: false, error: `${source}, line ${tree.line}: ${tree.error}` };
   const settings: Record<string, unknown> = {};
   for (const entry of tree.value.entries) {
-    const parsed =
-      entry.key === "inference-profiles" ? profiles(entry.value) : setting(entry, "setting");
+    const parsed = entry.key === "profiles" ? profiles(entry.value) : setting(entry, "setting");
     if (!parsed.ok) return { ok: false, error: `${source}, line ${parsed.line}: ${parsed.error}` };
     if (
       source !== SHARED_SETTINGS &&
@@ -320,6 +342,8 @@ type Read<T> = { ok: true; value: T } | { ok: false; line: number; error: string
 
 function setting(entry: YamlEntry, what: "setting" | "profile"): Read<string | number> {
   const { key: name, line, value } = entry;
+  const renamed = renamedSetting(name, value.kind === "scalar" ? value.text : undefined);
+  if (renamed) return { ok: false, line, error: renamed };
   if (!isSettingName(name)) return { ok: false, line, error: `unknown setting \`${name}\`.` };
   if (what === "profile" && !PROFILE_SETTINGS.includes(name)) {
     return {
@@ -335,16 +359,16 @@ function setting(entry: YamlEntry, what: "setting" | "profile"): Read<string | n
   return parsed.ok ? parsed : { ok: false, line, error: parsed.error };
 }
 
-/** `inference-profiles`: a list of profiles, or `[]` for none. */
-function profiles(node: YamlNode): Read<InferenceProfile[]> {
+/** `profiles`: a list of profiles, or `[]` for none. */
+function profiles(node: YamlNode): Read<Profile[]> {
   if (node.kind !== "list" || node.items.some((item) => item.kind !== "map")) {
     return {
       ok: false,
       line: node.kind === "list" ? (node.items[0]?.line ?? node.line) : node.line,
-      error: "`inference-profiles` must be a list of profiles, each a block of settings.",
+      error: "`profiles` must be a list of profiles, each a block of settings.",
     };
   }
-  const list: InferenceProfile[] = [];
+  const list: Profile[] = [];
   for (const item of node.items) {
     const parsed = profile(item);
     if (!parsed.ok) return parsed;
@@ -360,9 +384,9 @@ function profiles(node: YamlNode): Read<InferenceProfile[]> {
   return { ok: true, value: list };
 }
 
-function profile(node: YamlNode): Read<InferenceProfile> {
+function profile(node: YamlNode): Read<Profile> {
   if (node.kind !== "map") return { ok: false, line: node.line, error: "expected a profile." };
-  const result: InferenceProfile = { name: "", when: {}, settings: {} };
+  const result: Profile = { name: "", when: {}, settings: {} };
   for (const entry of node.entries) {
     const { key, line, value } = entry;
     if (key === "name") {
@@ -389,12 +413,12 @@ function profile(node: YamlNode): Read<InferenceProfile> {
   return { ok: true, value: result };
 }
 
-function conditions(entry: YamlEntry): Read<InferenceProfile["when"]> {
+function conditions(entry: YamlEntry): Read<Profile["when"]> {
   const { line, value } = entry;
   if (value.kind !== "map") {
     return { ok: false, line, error: "`when` must be a block of conditions." };
   }
-  const when: InferenceProfile["when"] = {};
+  const when: Profile["when"] = {};
   for (const { key, line, value: condition } of value.entries) {
     if (key === "stages") {
       const names = condition.kind === "list" ? condition.items : [];
@@ -440,16 +464,16 @@ export interface RunConditions {
   tasks: number;
 }
 
-/** The settings of one run, and where its inference comes from. */
+/** The settings of one run, and where its model is served. */
 export interface RunSettings {
   settings: Settings;
   /** The profile that applies; undefined when none does, and the top-level settings do. */
   profile?: string | undefined;
   /**
-   * The provider of the top-level settings and of each profile, whose months add up against
-   * the monthly budget: `openrouter`, or the GPU provider of self-hosted inference.
+   * The account of the top-level settings' provider and of each profile's, whose months add up
+   * against the monthly budget: `openrouter` or `runpod`.
    */
-  providers: string[];
+  accounts: string[];
 }
 
 /**
@@ -459,52 +483,70 @@ export interface RunSettings {
  * has one gives it whole. Then, for a run, the first profile whose conditions hold replaces the
  * top-level values it sets, except those the task's own commands (the first layer) set.
  *
- * The top-level settings and every profile must fit together on their own, without the task's
- * commands, so that a mistake shows on the first run and not when a stage reaches it.
+ * A provider's settings go with it: a layer or a profile that names another provider than the
+ * one below it leaves out the settings that were for that one. A task's own provider settings
+ * (`gpu`) apply to the runs whose provider accepts them.
+ *
+ * The top-level settings and every profile must fit their providers on their own, without the
+ * task's commands, so that a mistake shows on the first run and not when a stage reaches it.
  */
 export function resolveRun(
   layers: readonly SettingsLayer[],
   run?: RunConditions,
 ): Parsed<RunSettings> {
   const [own = {}] = layers;
-  const merged = merge(layers);
-  const { "inference-profiles": profiles = [], ...values } = merged;
+  const { profiles: list = [], ...values } = merge(layers);
   if (values.model === undefined) {
     return {
       ok: false,
       error: `No model is configured. Set \`model\` in ${SETTINGS_FILE} or in the workflow's inputs.`,
     };
   }
-  const forTask = pick(own, PROFILE_SETTINGS);
-  // The top level as the layers below the task's commands set it; where none does, as the
-  // task's commands do.
-  const below = merge(layers.slice(1), {});
-  const top: PartialSettings = { ...values };
-  for (const name of PROFILE_SETTINGS) {
-    if (below[name] !== undefined) Object.assign(top, { [name]: below[name] });
-  }
-  const topError = inferenceError(top as Settings);
+  // The top level as the layers below the task's commands set it; a task's model fills it only
+  // when none of them sets one.
+  const below = serving(layers.slice(1), { provider: DEFAULTS.provider });
+  const top = { ...omit(values, PROFILE_SETTINGS), ...below, model: below.model ?? values.model };
+  const topError = settingsProblem(top);
   if (topError) return { ok: false, error: topError };
-  for (const profile of profiles) {
-    const error = inferenceError({ ...top, ...profile.settings } as Settings);
-    if (error) return { ok: false, error: `Inference profile \`${profile.name}\`: ${error}` };
+  const profiled = list.map((profile) => ({
+    profile,
+    settings: { ...omit(top, PROFILE_SETTINGS), ...serving([profile.settings], top) },
+  }));
+  for (const { profile, settings } of profiled) {
+    const error = settingsProblem(settings);
+    if (error) return { ok: false, error: `Profile \`${profile.name}\`: ${error}` };
   }
 
-  const chosen = run ? profiles.find((profile) => applies(profile, run)) : undefined;
-  const settings = { ...top, ...chosen?.settings, ...forTask } as Settings;
-  const error = inferenceError(settings);
-  if (error) {
-    return { ok: false, error: chosen ? `Inference profile \`${chosen.name}\`: ${error}` : error };
-  }
-  if (settings.inference === "self-hosted") {
-    settings.engine ??= MODE_ENGINE[settings["gpu-mode"] as keyof typeof MODE_ENGINE];
-  }
-  const providers = [top, ...profiles.map((profile) => ({ ...top, ...profile.settings }))].map(
-    (layer) => (layer.inference === "self-hosted" ? (layer["gpu-provider"] ?? "") : "openrouter"),
+  const forTask = pick(own, PROFILE_SETTINGS);
+  const chosen = run ? profiled.find(({ profile }) => applies(profile, run)) : undefined;
+  const base = chosen?.settings ?? top;
+  const providers = [top, ...profiled.map(({ settings }) => settings)].map(
+    (settings) => settings.provider ?? DEFAULTS.provider,
   );
+  for (const name of PROVIDER_SETTINGS) {
+    if (forTask[name] !== undefined && !providers.some((p) => PROVIDERS[p].settings[name])) {
+      return {
+        ok: false,
+        error: `No provider of the settings accepts \`${name}\`: they name ${[...new Set(providers)].map((p) => `\`${p}\``).join(", ")}.`,
+      };
+    }
+  }
+  const accepted = PROVIDERS[base.provider ?? DEFAULTS.provider].settings;
+  const taskServing = Object.fromEntries(
+    Object.entries(forTask).filter(([name]) => name === "model" || name in accepted),
+  );
+  const settings = withProviderDefaults({ ...base, ...taskServing } as Settings);
+  const error = settingsProblem(settings);
+  if (error) {
+    return { ok: false, error: chosen ? `Profile \`${chosen.profile.name}\`: ${error}` : error };
+  }
   return {
     ok: true,
-    value: { settings, profile: chosen?.name, providers: [...new Set(providers)] },
+    value: {
+      settings,
+      profile: chosen?.profile.name,
+      accounts: [...new Set(providers.map(accountOf))],
+    },
   };
 }
 
@@ -515,9 +557,25 @@ export function resolveSettings(...layers: SettingsLayer[]): Parsed<Settings> {
 }
 
 /** Whether all of a profile's conditions hold for a run. */
-export function applies(profile: InferenceProfile, run: RunConditions): boolean {
+export function applies(profile: Profile, run: RunConditions): boolean {
   const { stages, "parallel-tasks": tasks } = profile.when;
   return (!stages || stages.includes(run.stage)) && (tasks === undefined || run.tasks >= tasks);
+}
+
+/**
+ * Where the model is served, from `layers` over `base` (the first layer wins): the provider, the
+ * model, and the provider's settings. A layer that names another provider than the one below it
+ * starts that provider's settings afresh (decision 2 of the provider settings plan).
+ */
+function serving(layers: readonly PartialSettings[], base: PartialSettings): PartialSettings {
+  let result: PartialSettings = pick(base, PROFILE_SETTINGS);
+  for (const layer of [...layers].reverse()) {
+    if (layer.provider !== undefined && layer.provider !== result.provider) {
+      result = omit(result, PROVIDER_SETTINGS);
+    }
+    Object.assign(result, pick(layer, PROFILE_SETTINGS));
+  }
+  return result;
 }
 
 function merge(
@@ -533,12 +591,14 @@ function merge(
   return merged;
 }
 
-function pick(layer: PartialSettings, names: readonly SettingName[]): PartialSettings {
+function pick(layer: PartialSettings, names: readonly string[]): PartialSettings {
   return Object.fromEntries(
-    Object.entries(layer).filter(
-      ([name, value]) => value !== undefined && (names as readonly string[]).includes(name),
-    ),
+    Object.entries(layer).filter(([name, value]) => value !== undefined && names.includes(name)),
   );
+}
+
+function omit<T extends PartialSettings>(layer: T, names: readonly string[]): T {
+  return Object.fromEntries(Object.entries(layer).filter(([name]) => !names.includes(name))) as T;
 }
 
 /**
@@ -550,7 +610,7 @@ export function settingSources(layers: readonly SettingsLayer[]): string[] {
   const named = new Set<string>();
   const show = (value: unknown) =>
     Array.isArray(value)
-      ? `[${value.map((profile: InferenceProfile) => profile.name).join(", ")}]`
+      ? `[${value.map((profile: Profile) => profile.name).join(", ")}]`
       : String(value);
   return layers.flatMap((layer, index) => {
     const values = Object.entries(layer).filter(
@@ -563,27 +623,12 @@ export function settingSources(layers: readonly SettingsLayer[]): string[] {
   });
 }
 
-/** Why the inference settings do not fit together; undefined when they do. */
-function inferenceError(settings: Settings): string | undefined {
-  if (settings.inference !== "self-hosted") {
-    return isModelId(settings.model)
-      ? undefined
-      : `\`model\` must be an OpenRouter model ID, such as \`provider/model\`, not \`${settings.model}\`.`;
-  }
-  const mode = settings["gpu-mode"] as keyof typeof MODE_ENGINE;
-  const engine = settings.engine ?? MODE_ENGINE[mode];
-  if (engine !== MODE_ENGINE[mode]) {
-    return `With \`gpu-mode: ${mode}\`, the engine is \`${MODE_ENGINE[mode]}\`, not \`${engine}\`.`;
-  }
-  if (mode === "pod" && !settings["gpu-type"]) {
-    return `Self-hosted inference on pods needs \`gpu-type\`, such as \`"NVIDIA RTX A6000"\`, in ${SETTINGS_FILE}.`;
-  }
-  if (mode === "serverless" && !settings["serverless-endpoint"]) {
-    return `Self-hosted inference on Serverless needs \`serverless-endpoint\` in ${SETTINGS_FILE}.`;
-  }
-  const model = ENGINES[engine];
-  if (model && !model.isModel(settings.model)) {
-    return `\`model\` must be a ${engine} model name, such as \`${model.example}\`, not \`${settings.model}\`.`;
-  }
-  return undefined;
+/** Why settings do not fit their provider; undefined when they do. */
+function settingsProblem(settings: PartialSettings): string | undefined {
+  const values = pick(settings, PROVIDER_SETTINGS) as Partial<Record<ProviderSettingName, string>>;
+  return providerProblem({
+    ...values,
+    provider: settings.provider ?? DEFAULTS.provider,
+    model: settings.model ?? "",
+  });
 }

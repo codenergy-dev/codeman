@@ -1,4 +1,4 @@
-import type { AgentMode } from "../inference/index.ts";
+import type { ProviderName } from "../inference/providers.ts";
 import type { DropReason } from "../policy.ts";
 import type { CommandProblem } from "../problems.ts";
 import type { Stage } from "../stages.ts";
@@ -108,10 +108,10 @@ export interface Messages {
     string,
     string,
   ];
-  /** The provider column: the provider and, on Runpod, the mode. */
-  provider(mode: AgentMode): string;
-  /** A note under the table: how a run's cost is measured with `mode`. */
-  spendNote(mode: AgentMode): string;
+  /** The provider column: the provider's name, as people read it. */
+  provider(provider: ProviderName): string;
+  /** A note under the table: how a run's cost is measured on `provider`. */
+  spendNote(provider: ProviderName): string;
   /** The note under the table after those: how Codeman's ledger counts the month. */
   monthNote: string;
   earlierRuns(runs: number): string;
