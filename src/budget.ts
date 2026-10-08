@@ -132,12 +132,12 @@ export function costsByWorkflowRun(runs: readonly LedgerRun[]): Record<string, n
   );
 }
 
-/** What a GPU provider's account billed, in USD, by the start of each hour (milliseconds). */
+/** What a GPU account billed, in USD, by the start of each hour (milliseconds). */
 export type BilledHours = ReadonlyMap<number, number>;
 
 /**
  * The organization's month (decision 2 of the ledger budgets plan): what its runs spent, with
- * the runs of each GPU provider in `billed` reconciled with its account's billing. Their amounts
+ * the runs of each GPU account in `billed` reconciled with its account's billing. Their amounts
  * spread evenly over their time (a task's pod over its runs' span); each hour the account billed
  * counts the higher of its bill and the runs' estimate, so a pod's time no run accounts for still
  * counts, and each other hour counts the estimate, so a run counts as soon as it ends. Open

@@ -50,8 +50,8 @@ Jobs that do not apply to a task are skipped: a task that only records answers g
 
 | Job | Does | Credentials |
 | --- | --- | --- |
-| `select` | Reads the settings and `.codemanignore` from the default branch, and the organization's settings from its `settings` input, picks the tasks and each one's action (`plan`, `route`, `implement` with its stage, `record`, `accept`; `none` when nothing can move) and [inference profile](#inference-profiles), sets `codeman:planning`, `codeman:routing` or the stage's label, and writes each task's context as an artifact. | App token: issues write; contents, pull requests and actions read; OIDC token, for the [backend](#backend) |
-| `open-key` | Checks the task's and the months' budgets against Codeman's ledger, where it reserves the run's limit, and gives the run access to its model: an OpenRouter key, or a token for a self-hosted model's gateway, on a pod of the [pod registry](#pods) that it joins or creates; it first terminates the organization's pods that nothing holds. | The OpenRouter management key and the GPU account key, each when the settings or a profile name its provider; encryption secret; OIDC token |
+| `select` | Reads the settings and `.codemanignore` from the default branch, and the organization's settings from its `settings` input, picks the tasks and each one's action (`plan`, `route`, `implement` with its stage, `record`, `accept`; `none` when nothing can move) and [profile](#profiles), sets `codeman:planning`, `codeman:routing` or the stage's label, and writes each task's context as an artifact. | App token: issues write; contents, pull requests and actions read; OIDC token, for the [backend](#backend) |
+| `open-key` | Checks the task's and the months' budgets against Codeman's ledger, where it reserves the run's limit, and gives the run access to its model: an OpenRouter key, or a token for a self-hosted model's gateway, on a pod of the [pod registry](#pods) that it joins or creates; it first terminates the organization's pods that nothing holds. | The key of each account whose provider the settings or a profile name: OpenRouter's management key, Runpod's API key; encryption secret; OIDC token |
 | `agent` | Runs the harness on a copy of the checkout and uploads what it changed as an artifact, even when the agent fails or runs out of time. For a Serverless run, also runs the gateway, outside the sandbox. | `GITHUB_TOKEN` with contents and actions read (for workflow results; the agent never sees it), the run's key or token; for Serverless, the endpoint's key, which only Codeman's step holds |
 | `close-key` | Ends the run's access (disables the key, or ends the run on its gateway), reads what it spent, and records it in the ledger with what the providers say now of the task's earlier runs, and for Serverless, splits the worker's time with the runs that shared it; reports the task's spend from the ledger. Keeps the pod for the next run on its settings (a keep lease) or leaves it, and terminates it when no other task uses or keeps it. Runs whatever happened before. | OpenRouter management key or GPU account key; OIDC token |
 | `apply` | Validates the agent's result and writes it to its own task: commits, pull request, labels, run and status comments, spend. When the action is `record`, it applies the maintainers' answers instead; when it is `accept`, it moves the accepted workflows. Says whether the task goes on to another agent run (`continues`), and, when the task moved, uploads an artifact that says so (`codeman-chain-<number>`). | App token: contents, issues and pull requests write; for `accept` only, a second token with contents and workflows write |
@@ -83,7 +83,7 @@ Every agent run gets Codeman's working rules: the `##` sections of Codeman's own
 
 ## Budget
 
-Codeman's [ledger](#the-ledger) records what each run spent, whatever served it, and the budgets are checked against it, so they hold across providers, across the tasks of a run and across repositories. The choices were made in the [ledger budgets plan](plans/2026-10-07-budgets-from-the-ledger.md). With self-hosted inference, spend is counted from GPU time ([spend](#spend)); with [inference profiles](#inference-profiles), a task's runs may use several providers, and the ledger adds them up.
+Codeman's [ledger](#the-ledger) records what each run spent, whatever served it, and the budgets are checked against it, so they hold across providers, across the tasks of a run and across repositories. The choices were made in the [ledger budgets plan](plans/2026-10-07-budgets-from-the-ledger.md). With self-hosted inference, spend is counted from GPU time ([spend](#spend)); with [profiles](#profiles), a task's runs may use several providers, and the ledger adds them up.
 
 - **Task.** The task budget (default US$ 2) covers the whole task, from the first plan to the last fix: its runs in the ledger, each at its cost once closed and at its limit while open. A task's runs on one pod count at least the pod's cost as `close-key` last read it, which includes the pod's time between them. A task that started before the ledger carries what its record counted then (`carried`, on its first run in the ledger).
 - **Month.** `monthly-budget` (default US$ 20) limits the repository's runs of the calendar month (UTC): their costs, and the limits of those still open.
@@ -91,10 +91,10 @@ Codeman's [ledger](#the-ledger) records what each run spent, whatever served it,
 - **Reservations.** Before it opens a run, `open-key` reads the task's runs and the month's in one store transaction. When what remains of the task's budget, in whole cents rounded down, is US$ 0.10 or more and fits in the repository's month and the organization's, it writes it as the run's limit, open; otherwise it refuses the run and reserves nothing. Tasks and repositories that open at once each see the others' reservations, or run their transaction again once those are written, so together they never pass a budget. `close-key` replaces the limit with the run's cost.
 - **Expiry.** A reservation whose run never closes, as after a cancelled job, expires 2 hours after it was made, longer than the jobs' timeouts add up to, and the run goes on counting its whole limit. An expired OpenRouter run's key tells what it spent: the task's next `open-key` or `close-key` takes its cost from there. A run whose provider fails to open it costs nothing, and its reservation ends.
 - **Refusals.** Below US$ 0.10, the task becomes `codeman:blocked`; a maintainer can raise the budget with `/codeman set task-budget <usd>` and then comment `/codeman continue`. A run that does not fit the repository's month or the organization's goes back to the task's previous state, until a later run finds room. `open-key`'s log shows the task's total, the repository's month and what its open runs reserve of it, and the organization's month.
-- **Secrets.** `open-key` needs the secret of the run's provider; with an organization's budget, also the account key of each GPU provider that the settings name or that the organization's runs used this month, to read its billing. When one is missing, it opens nothing, and the task becomes `codeman:blocked` with an error that names the secret.
+- **Secrets.** `open-key` needs the key of the run's provider's account; with an organization's budget, also Runpod's account key when the settings or a profile name a Runpod provider, or when the organization's runs used Runpod this month, to read its billing ([providers](#providers)). When one is missing, it opens nothing, and the task becomes `codeman:blocked` with an error that names the secret.
 - Each run gets its own OpenRouter key, expiring after 24 hours. Keys are named `codeman/<owner>/<repo>/<issue>/<run>` and are disabled, not deleted, so their usage still counts.
 - After the agent, `close-key` disables the key and reads its final usage, waiting briefly while OpenRouter still counts the last requests. The key's usage may still read zero when the analytics already has the run's tokens; then it waits up to about a minute more. It also lists the task's keys, and in the ledger replaces the cost of each earlier run of the task with what its key says now (by run ID, the end of the key's name). Then it reports, from the ledger, the task's total and what each run spent, including a Serverless run's cost that a later close on its endpoint lowered ([Serverless](#serverless)). `apply` refreshes the cost of each row in the spend table from that, so a run that read its cost too soon gets it right on the next run, shows what the task spent at the end of the pull request's description, and keeps the task's total in the task record.
-- The status comment has a spend table, with one row per run that used the agent: when, stage, model, provider, how long the agent ran, input and output tokens, context length, tokens per second, cost, the key's limit, the task budget, and the month: what the repository's runs counted this month in the ledger before the run, of the monthly budget. The provider is where the run's model was served: `OpenRouter`, `Runpod (pod)` or `Runpod (Serverless)`; rows recorded before the record kept it show "—". Each run comment shows its own row.
+- The status comment has a spend table, with one row per run that used the agent: when, stage, model, provider, how long the agent ran, input and output tokens, context length, tokens per second, cost, the key's limit, the task budget, and the month: what the repository's runs counted this month in the ledger before the run, of the monthly budget. The provider is where the run's model was served: `OpenRouter`, `Runpod (pod)` or `Runpod (Serverless)` (the [providers](#providers) `openrouter`, `runpod-pod` and `runpod-serverless`); rows recorded before providers keep the name they had, and rows recorded before the record kept it show "—". Each run comment shows its own row.
 - Under the table, a note for each provider in its rows says how a run's cost is measured, since only OpenRouter's is exact (see [Spend](#spend) for Runpod), and a last note how the month is; a run comment has its own row's notes. The month counts estimates and open runs' limits, so its column is named "Month (estimated)", while the `monthly-budget` setting it is spent against keeps its name. The record keeps the last 30 rows; older ones fold into one, with their sums, and their costs are no longer refreshed. A run with several rows (a re-run of the whole workflow) keeps them as they are. The task's total comes from the ledger, so when the rows add up to less (a run whose `apply` failed has no row, or a pod's time between runs), a row shows the difference.
 - A last row totals every run of the task: agent time, tokens and cost are summed, so its cost is the task's total; the context length is the largest of the task, and tokens per second the mean over every request (each run's mean weighted by its requests). Limits and budgets are left empty. Under the table goes what the task spent of its budget.
 - The agent job measures the agent's time outside the sandbox. `close-key` reads the key's tokens from OpenRouter's analytics (`POST /api/v1/analytics/query`, filtered by the key's hash), as OpenRouter counts them: input includes cached prompt tokens, and output is the completion tokens. Analytics and billing may count a request at different times, so it asks again for up to about a minute; a run whose tokens are not there by then shows "—".
@@ -103,12 +103,12 @@ Codeman's [ledger](#the-ledger) records what each run spent, whatever served it,
 
 ## Self-hosted inference
 
-With `inference: self-hosted`, a task's agents use a model that Codeman serves on GPUs rented from Runpod, instead of OpenRouter. The choice was made in the [self-hosted inference plan](plans/2026-10-02-self-hosted-inference.md), which records its decisions. Runpod charges per second of GPU, whether or not the agent is generating, so a run's cost is time, not tokens.
+With `provider: runpod-pod` or `provider: runpod-serverless` ([providers](#providers)), a task's agents use a model that Codeman serves on GPUs rented from Runpod, instead of OpenRouter. The choice was made in the [self-hosted inference plan](plans/2026-10-02-self-hosted-inference.md), which records its decisions. Runpod charges per second of GPU, whether or not the agent is generating, so a run's cost is time, not tokens.
 
-| Mode (`gpu-mode`) | GPU | Engine | Billed | Start |
+| Provider | GPU | Engine | Billed | Start |
 | --- | --- | --- | --- | --- |
-| `pod` (default) | A pod Codeman creates, with the task's `gpu-type`, on Secure Cloud | Ollama, in Codeman's pod image | Every second the pod exists, from its creation | Minutes, unless the task's pod was kept |
-| `serverless` | The workers of an endpoint a maintainer created ([installation](installation.md#self-hosted-inference-on-runpod)) | Runpod's vLLM worker | Every second a worker runs, its model's load and idle timeout included | Minutes, while vLLM prepares the model, unless a worker is still up; a run with no worker for 25 minutes fails |
+| `runpod-pod` | A pod Codeman creates, with the task's `gpu`, on Secure Cloud | Ollama, in Codeman's pod image | Every second the pod exists, from its creation | Minutes, unless the task's pod was kept |
+| `runpod-serverless` | The workers of an endpoint a maintainer created ([installation](installation.md#self-hosted-inference-on-runpod)) | Runpod's vLLM worker | Every second a worker runs, its model's load and idle timeout included | Minutes, while vLLM prepares the model, unless a worker is still up; a run with no worker for 25 minutes fails |
 
 ### Choosing
 
@@ -118,7 +118,7 @@ What Codeman's tests on Runpod showed (step 8 of the plan):
 - **A pod** bills its whole life, used or not, but not per token: long contexts and many requests cost the same. It pays off when a smaller model does the work and runs follow each other, since a pod is kept between runs. The organization's tasks on the same pod settings share one pod, at once or one after another, and split its cost by the second ([shared pods](#shared-pods)): one task's tool runs leave the GPU to another's requests, and one repository's next run finds the pod another kept.
 - **Serverless** bills each worker's start (minutes, compilation included), its requests and the idle timeout after its last one, at the flex price. It cost the most: US$ 1.96 for three runs of a task, against US$ 1.90 for a four-run task on a pod, though twice as fast on its GPUs. It pays off only when its worker stays busy, such as one endpoint serving several repositories at once (a worker takes several requests at once), so that starts and idle time are shared; never for a single task. Each run counts the worker time it used, and time it shared with other runs, of any of the organization's repositories, is split among them ([Serverless](#serverless)).
 
-[Inference profiles](#inference-profiles) combine them in one task, such as OpenRouter for planning and a pod for the stages whose runs follow each other.
+[Profiles](#profiles) combine them in one task, such as OpenRouter for planning and a pod for the stages whose runs follow each other.
 
 ### Layers
 
@@ -176,8 +176,8 @@ The organization's tasks whose pods' settings are the same share one pod, whethe
 - **Task.** Providers bill pods, not tasks, so the task's record lists its pods (the last 20), whose billing `close-key` reads at each of the task's runs. A pod's cost is its billing or, for the run's own pod, its whole life so far at its rate, when higher: that includes a kept pod's time between runs, which Runpod bills late. `close-key` records it in the ledger (`podCost`, on the task's last run on the pod), and the task counts for each pod the higher of that and its runs' costs on it. The spend table shows the difference in its row for what the task spent outside its runs. A run whose pod served it alone gets the pod's cost as its own. Serverless runs count their share of the worker's estimated time ([Serverless](#serverless)). The minutes between a task's last run and its pod's termination count as the pod's untracked time, in the organization's month.
 - **A shared pod.** A run's cost is its share of the pod. Runpod bills the pod as a whole, so a task counts for a shared pod what the gateway measured for it, as of each of its closes: its runs' shares and the kept time it was given. The record marks such a pod (`shared`), whose billing `close-key` then no longer reads, since the gateway, which knew who used each second, is gone with the pod. The tasks' counts therefore add up to no more than the pod's bill: they leave out the time after a task's last close that it kept the pod, unless it runs on the pod again, and the time after the last task left it, which count as the pod's untracked time.
 - **The spend table.** Its rows name `Runpod (pod)` or `Runpod (Serverless)`, and the notes under it say how their figures are measured: a pod run's cost is its pod's time at its price, and the task also counts its pod's time between runs, refreshed from billing; a Serverless run's is an estimate, which counts in the month as soon as the run ends, and shrinks when other runs that used the worker at the same times close. The month is the repository's, from the ledger.
-- `select` passes the task's pods and its record's total, which the ledger carries for a task that started before it, to the key jobs (`inference` output), with the rest of its choice: the run's profile, and every provider the settings name.
-- A task whose runs use several providers, through [inference profiles](#inference-profiles) or a change of `inference`, adds them up in the ledger.
+- `select` passes the task's pods and its record's total, which the ledger carries for a task that started before it, to the key jobs (`inference` output), with the rest of its choice: the run's provider and its settings, its profile, and the account of every provider the settings name.
+- A task whose runs use several providers, through [profiles](#profiles) or a change of `provider`, adds them up in the ledger.
 
 ## Backend
 
@@ -201,9 +201,9 @@ Everything belongs to an organization, the repositories' owner (a user account i
 
 | Path | One document per | Fields |
 | --- | --- | --- |
-| `organizations/{owner}/runs/{run}` | Run of a task's agent | `repository` (`owner/name`), `task`, `workflowRun`, `attempt`, `month` (`2026-10`), `status` (`picked`, `open`, `refused`, `failed`, `closed`, `expired`), `pickedAt`, `stage`, `model`, `provider` (`openrouter` or `runpod`), `mode` (`openrouter`, `pod` or `serverless`), `profile`; then `reservedAt`, `expiresAt`, `limit`, `carried` (on the task's first run in the ledger) and `openedAt`, or `refusedAt`, `refusal` and `reason`, or `failedAt`, `reason` and a `cost` of 0; then `closedAt`, `cost`, `inputTokens`, `outputTokens`, `requests`, `maxInputTokens`, `tokensPerSecond`, `pod` and `podCost`, `endpoint` (Serverless), when known; `spentBefore` when `open-key` ran again after the run closed |
+| `organizations/{owner}/runs/{run}` | Run of a task's agent | `repository` (`owner/name`), `task`, `workflowRun`, `attempt`, `month` (`2026-10`), `status` (`picked`, `open`, `refused`, `failed`, `closed`, `expired`), `pickedAt`, `stage`, `model`, `provider` (`openrouter`, `runpod-pod` or `runpod-serverless`; runs picked before providers have the account, `openrouter` or `runpod`, and a `mode`: `openrouter`, `pod` or `serverless`), `profile`; then `reservedAt`, `expiresAt`, `limit`, `carried` (on the task's first run in the ledger) and `openedAt`, or `refusedAt`, `refusal` and `reason`, or `failedAt`, `reason` and a `cost` of 0; then `closedAt`, `cost`, `inputTokens`, `outputTokens`, `requests`, `maxInputTokens`, `tokensPerSecond`, `pod` and `podCost`, `endpoint` (Serverless), when known; `spentBefore` when `open-key` ran again after the run closed |
 | `organizations/{owner}/events/{run}-{type}[-{subject}]` | Thing a job did | `type`, `repository`, `task`, `run`, `workflowRun`, `attempt` (the job's), `job`, `at`, and the type's own fields |
-| `organizations/{owner}/pods/{nonce}` | Pod Codeman created, named by the nonce of its admin token | `settings` (a hash), `model`, `gpuType`, `image`, `reuse`, `provider`, `status` (`creating`, `serving`, `abandoned`, `ended`), `live`, `claimedAt`, `claimedBy`, `creatingUntil`, `leases` (`holder`: `owner/name#task`, `run`, `kind`: `run` or `keep`, `until`), `seats` (holders, by seat); then `pod`, `createdAt`, `pricePerSecond`; `endedAt` and `reason`; when a job terminated it, `terminatedAt`, `month`, `lifeCost`, `counted` and `untracked` |
+| `organizations/{owner}/pods/{nonce}` | Pod Codeman created, named by the nonce of its admin token | `settings` (a hash), `model`, `gpuType`, `image`, `reuse`, `provider` (`runpod`, the cloud that runs and bills the pod), `status` (`creating`, `serving`, `abandoned`, `ended`), `live`, `claimedAt`, `claimedBy`, `creatingUntil`, `leases` (`holder`: `owner/name#task`, `run`, `kind`: `run` or `keep`, `until`), `seats` (holders, by seat); then `pod`, `createdAt`, `pricePerSecond`; `endedAt` and `reason`; when a job terminated it, `terminatedAt`, `month`, `lifeCost`, `counted` and `untracked` |
 | `organizations/{owner}/endpoints/{endpoint}/runs/{run}-{reservation}` | Serverless run's time on the endpoint's worker, by the run and its reservation's time in milliseconds | `run`, `repository`, `task`, `reservedAt`, `from` and `to` (its billed times' bounds), `pricePerSecond`, `busy` (its billed times, as JSON text of `[from, to]` pairs in milliseconds), `estimate` (its gateway's), `share` (the last split's), `splitAt` |
 
 - A run's ID is `{workflow run}-{attempt}-{task}`: the workflow run, the attempt in which `select` picked the task, and the task. Workflow runs' IDs grow with time, so runs sort in the order they started. `select` gives it to the task's jobs (its `ledger-run` output). A re-run of failed jobs keeps the attempt that picked the task, and so writes the same run; a re-run of the whole workflow picks again, as a new run.
@@ -331,7 +331,7 @@ A workflow file runs as soon as it reaches a branch, if it listens to `push`, an
 
 Each value comes from the first of these that sets it:
 
-1. A `/codeman set` command on the task, in a comment or in the issue's description (only `model`, `task-budget`, `max-runs`, `language` and `gpu-type`).
+1. A `/codeman set` command on the task, in a comment or in the issue's description (only `model`, `task-budget`, `max-runs`, `language` and `gpu`).
 2. The workflow's inputs, in a manual run.
 3. `.codeman/settings.yml` on the default branch.
 4. The organization's settings: the `settings` input of the `select` step, which the template fills from the `CODEMAN_SETTINGS` variable, in the file's format. They are defaults that several repositories share; a repository's file overrides them, value by value. Empty, or not passed by an older workflow file, means none. Only they set `organization-monthly-budget`: a repository's file or profile that sets it stops the run with an error, and neither commands nor a manual run's inputs take it. See [installation](installation.md#shared-settings).
@@ -341,7 +341,7 @@ When `select` picks a task, its log has a line per layer, naming the values that
 
 | Name | Default | Meaning |
 | --- | --- | --- |
-| `model` | none; required | Model ID: OpenRouter's; with self-hosted inference, Ollama's on pods (such as `qwen3-coder:30b`) or the vLLM worker's on Serverless (its Hugging Face ID) |
+| `model` | none; required | Model ID, in the form the provider takes ([providers](#providers)) |
 | `task-budget` | `2` | Spending limit of each task, across all its runs, in USD |
 | `monthly-budget` | `20` | Spending limit per calendar month for the repository, in USD |
 | `organization-monthly-budget` | none | Spending limit per calendar month for all the organization's repositories together, in USD, with the GPU accounts' billing; only the organization's settings set it. See [budget](#budget) |
@@ -355,42 +355,79 @@ When `select` picks a task, its log has a line per layer, naming the values that
 | `max-label-chars` | `150` | Characters of an option's label, at most 300 |
 | `max-summary-chars` | `2000` | Characters of the agent's summary and reason, at most 4,000 |
 | `language` | `auto` | The language Codeman talks to maintainers in, as a BCP 47 tag such as `pt-BR`; `auto` uses the conversation's. See [conversation language](#conversation-language) |
-| `inference` | `openrouter` | `openrouter`, or `self-hosted`; see [self-hosted inference](#self-hosted-inference) |
-| `gpu-provider` | `runpod` | The GPU cloud of self-hosted inference |
-| `gpu-mode` | `pod` | `pod` or `serverless` |
-| `gpu-type` | none; required on pods | The pod's GPU type, by Runpod's GPU ID (not its display name), such as `"NVIDIA RTX A6000"` (quoted or not in the file; `/codeman set gpu-type` takes the rest of its line) |
-| `engine` | `ollama` on pods, `vllm` on Serverless | What serves the model; each mode has one |
-| `serverless-endpoint` | none; required on Serverless | The endpoint's ID |
-| `pod-reuse` | `task` | `task`: a pod is kept after a run for the next run on its settings, of any task; `run`: a pod ends with its runs |
-| `inference-profiles` | none | Other inference settings for some runs; see [inference profiles](#inference-profiles) |
+| `provider` | `openrouter` | Where agent runs get their model: `openrouter`, `runpod-pod` or `runpod-serverless`. Each provider accepts only its own settings; see [providers](#providers) |
+| `profiles` | none | A provider, a model and that provider's settings for some runs; see [profiles](#profiles) |
 | `parallel-tasks` | `1` | Tasks one run works on at once, from 1 to 10, each in its own jobs; see [runs](#runs). Tasks on pods with the same settings share one, whatever this says ([shared pods](#shared-pods)) |
 
-The inference settings are checked together once resolved, the top level's and each profile's: a model that does not fit the engine, or a mode without its GPU type or endpoint, stops the run with an error. A task's own `model` or `gpu-type` that does not fit is reported as a problem instead, and the run goes on without it.
+The settings that only some providers accept (`engine`, `gpu`, `endpoint`, `pod-reuse`) are in [providers](#providers). Some settings had other names before the [provider settings plan](plans/2026-10-08-provider-settings.md): `inference`, `gpu-provider` and `gpu-mode` are now `provider`; `gpu-type` is `gpu`; `serverless-endpoint` is `endpoint`; `inference-profiles` is `profiles`. An old name stops the run with an error that gives the new one, in the file, the organization's settings and a profile; `/codeman set gpu-type` is reported as a problem that does too.
 
 The `max-*-chars` and count limits are what the agent is told; see [agent output](#agent-output) for the margin.
 
 The settings file is a strict subset of YAML, read without a dependency ([`src/yaml.ts`](../src/yaml.ts)): `name: value` lines, block mappings and lists (indented with spaces) for the profiles, lists of values in brackets (`[code, test]`), plain or quoted values, comments and blank lines; see [`templates/settings.yml`](../templates/settings.yml). Anything else, such as `{...}`, anchors, tags or multi-line values, stops the run with an error that names its line, so the file never means something other than what it looks like. The organization's settings follow the same rules, and their errors name the `settings` input instead of the file.
 
-### Inference profiles
+### Providers
 
-`inference-profiles` is a list of profiles, each with a `name`, optional conditions under `when`, and the settings it changes: only `model` and the inference settings (`inference`, `gpu-provider`, `gpu-mode`, `gpu-type`, `engine`, `serverless-endpoint`, `pod-reuse`). Budgets and limits stay at the top level. The choice was made in the [inference profiles plan](plans/2026-10-06-parallel-tasks-and-inference-profiles.md) (decisions 4 to 6).
+`provider` chooses where a run's model is served. Each provider accepts its own settings beside `model`, and a setting it does not accept, a value it does not offer, or a required setting it lacks stops the run with an error that names the provider. The registry in [`src/inference/providers.ts`](../src/inference/providers.ts) holds them; a new provider is a new entry. The choices were made in the [provider settings plan](plans/2026-10-08-provider-settings.md).
+
+A provider's settings go with it: a layer of settings ([above](#settings)) or a [profile](#profiles) that names another provider than the one below it leaves out that one's settings, so a repository with `provider: openrouter` drops the organization's `gpu`, and a profile on Serverless over a top level on pods takes no `gpu`. `model` carries over, and must fit the new provider.
+
+Each provider bills an account, whose key opens its runs and whose billing the [budgets](#budget) read: `openrouter`, or `runpod` for both Runpod providers.
+
+#### `openrouter`
+
+The default. It accepts no setting beside `model`.
+
+- **Model ID:** OpenRouter's, such as `deepseek/deepseek-v4.1-flash`.
+- **Secrets:** `CODEMAN_OPENROUTER_MANAGEMENT_KEY`, in the key jobs.
+- **Cost:** what the run's key used, exact, from OpenRouter.
+
+#### `runpod-pod`
+
+A pod Codeman creates on Runpod's Secure Cloud, shared by the organization's tasks with the same pod settings ([pods](#pods)).
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `gpu` | none; required | The pod's GPU type, by Runpod's GPU ID (not its display name), such as `"NVIDIA RTX A6000"` (quoted or not in the file; `/codeman set gpu` takes the rest of its line) |
+| `pod-reuse` | `task` | `task`: a pod is kept after a run for the next run on its settings, of any task; `run`: a pod ends with its runs |
+| `engine` | `ollama` | What serves the model; `ollama` is the only engine on pods so far |
+
+- **Model ID:** Ollama's, such as `qwen3-coder:30b`.
+- **Secrets:** `CODEMAN_RUNPOD_API_KEY`, in the key jobs.
+- **Cost:** the pod's time at its price, split among the runs on it ([spend](#spend)).
+
+#### `runpod-serverless`
+
+The workers of a Serverless endpoint a maintainer created, running Runpod's vLLM worker ([Serverless](#serverless)). An endpoint's GPU types are set on the endpoint, so it takes no `gpu`.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `endpoint` | none; required | The endpoint's ID, or a URL of it from Runpod's console (`https://api.runpod.ai/v2/<id>/...`), whose path gives the ID. A URL on any other host, or not on HTTPS, is an error, since the endpoint's key goes there |
+| `engine` | `vllm` | What serves the model; `vllm` is the only engine on Serverless |
+
+- **Model ID:** what the worker serves, its Hugging Face ID, such as `Qwen/Qwen3-Coder-30B-A3B-Instruct`.
+- **Secrets:** `CODEMAN_RUNPOD_API_KEY`, in the key jobs; `CODEMAN_RUNPOD_SERVERLESS_KEY`, the endpoint's key, in the agent job.
+- **Cost:** an estimate of the time Runpod bills the endpoint's worker for the run, split with the runs that used it at the same times ([Serverless](#serverless)).
+
+### Profiles
+
+`profiles` is a list of profiles, each with a `name`, optional conditions under `when`, and the settings it changes: only `provider`, `model` and the provider's settings. Budgets and limits stay at the top level. The choice was made in the [inference profiles plan](plans/2026-10-06-parallel-tasks-and-inference-profiles.md) (decisions 4 to 6), and the names in the [provider settings plan](plans/2026-10-08-provider-settings.md).
 
 ```yaml
 model: deepseek/deepseek-v4.1-flash      # when no profile applies
-inference-profiles:
+profiles:
   - name: small-pod
     when:
       stages: [code, test]
-    inference: self-hosted
-    gpu-type: NVIDIA RTX A6000
+    provider: runpod-pod
+    gpu: NVIDIA RTX A6000
     model: qwen3-coder:30b
 ```
 
 - **Conditions.** `stages` lists what the agent works on: `plan`, `route`, or a stage (`web`, `design`, `code`, `test`, `review`). `parallel-tasks: N` holds when at least N of the run's tasks run an agent (recording answers and accepting workflows do not), whatever the `parallel-tasks` setting allows. A profile without conditions always applies.
-- **Which applies.** `select` takes the first profile, in the list's order, whose conditions all hold for the run, and its values replace the top-level ones; with none, the top-level settings apply. Runs without an agent (recording answers, accepting workflows) use the top-level settings. The run's log names the profile, and the spend table's model and provider columns show what each run used.
-- **Layers.** The list is one value: the first layer that has one gives it whole, so a repository's file with `inference-profiles` replaces the organization's list, and `inference-profiles: []` removes it. A profile's values replace those of every layer below the task's commands, a manual run's inputs included: a manual run's `model` applies only to runs whose profile sets none. A task's `/codeman set` (`model`, `gpu-type`) wins over any profile; where it does not fit the run's inference, it is reported as a problem, and the run goes on without it.
-- **Checks.** The top-level settings, and each profile over them, must fit together on their own, whichever stage runs: a mistake stops the first run, with an error that names the profile.
-- **Budgets.** The task and the months count every run in the ledger, whatever served it; with an organization's budget, `open-key` reads the billing of every GPU provider the profiles name. See [budget](#budget).
+- **Which applies.** `select` takes the first profile, in the list's order, whose conditions all hold for the run, and its values replace the top-level ones; with none, the top-level settings apply. A profile that names another provider than the top level's leaves out the top level's provider settings ([providers](#providers)). Runs without an agent (recording answers, accepting workflows) use the top-level settings. The run's log names the profile, and the spend table's model and provider columns show what each run used.
+- **Layers.** The list is one value: the first layer that has one gives it whole, so a repository's file with `profiles` replaces the organization's list, and `profiles: []` removes it. A profile's values replace those of every layer below the task's commands, a manual run's inputs included: a manual run's `model` applies only to runs whose profile sets none. A task's `/codeman set model` wins over any profile; where it does not fit the run's provider, it is reported as a problem, and the run goes on without it. A task's `/codeman set gpu` applies to the runs whose provider accepts it, and is reported as a problem when none of the settings' providers does.
+- **Checks.** The top-level settings, and each profile over them, must fit their providers on their own, whichever stage runs: a mistake stops the first run, with an error that names the profile.
+- **Budgets.** The task and the months count every run in the ledger, whatever served it; with an organization's budget, `open-key` reads the billing of the Runpod account when a profile names a Runpod provider. See [budget](#budget).
 
 ## Commands
 
@@ -405,7 +442,7 @@ Maintainers steer a task with comments on its issue or on its pull request, and 
 | `/codeman fix <text>` | Asks for changes to the implementation. Also a review that requests changes. See [feedback](#feedback). |
 | `/codeman accept-workflows` | Moves the workflows the agent staged under `.codeman/workflows/` into `.github/workflows/`, after a maintainer has read them. See [on-demand workflows](#on-demand-workflows). |
 | `/codeman continue <text>` | Resumes a blocked or unfinished task with a new run count. The text is optional guidance for the agent. |
-| `/codeman set <name> <value>` | Changes `model`, `task-budget`, `max-runs`, `language` or `gpu-type` for this task from now on. The last valid one wins. |
+| `/codeman set <name> <value>` | Changes `model`, `task-budget`, `max-runs`, `language` or `gpu` for this task from now on. The last valid one wins. |
 | `/codeman model <id>` | Short for `/codeman set model <id>`. |
 
 The issue's description may also hold `set` and `model` lines, to choose settings when opening the issue. Comments come after it, so a `set` in a comment wins. The agent reads the description without its command lines. Any other command in the description is a problem. Problems in the description, including invalid settings, are reported in every run while the description has them. The description does not start a run.

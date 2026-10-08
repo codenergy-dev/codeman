@@ -34,7 +34,7 @@ export class FakeAccounts implements ProviderAccounts {
   readonly secrets: Record<string, string> = {};
   /** OpenRouter's costs of the task's runs; undefined as without its key. */
   costs: Record<string, number> | undefined;
-  /** Each GPU provider's hourly billing. */
+  /** Each GPU account's hourly billing. */
   readonly hours = new Map<string, Map<number, number>>();
   readonly billingRead: string[] = [];
 

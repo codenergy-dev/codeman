@@ -35,12 +35,12 @@ Codeman is model-agnostic: it reaches models through OpenRouter, and each task g
 You can also serve an open model yourself, on GPUs rented from [Runpod](https://www.runpod.io), with the same budgets:
 
 ```yaml
-inference: self-hosted
+provider: runpod-pod
 model: qwen3-coder:30b
-gpu-type: "NVIDIA RTX A6000"
+gpu: "NVIDIA RTX A6000"
 ```
 
-Codeman then starts a GPU, serves the model with Ollama behind its own gateway, shares it among the organization's tasks on the same model and GPU, and stops it when no task needs it any more. A Serverless endpoint works too. See [self-hosted inference](docs/installation.md#self-hosted-inference-on-runpod). [Inference profiles](docs/installation.md#inference-profiles) mix both in one task, such as OpenRouter to plan and a GPU to write the code, under the same budgets.
+Codeman then starts a GPU, serves the model with Ollama behind its own gateway, shares it among the organization's tasks on the same model and GPU, and stops it when no task needs it any more. A Serverless endpoint works too (`provider: runpod-serverless`). Each provider takes only its own settings; see [self-hosted inference](docs/installation.md#self-hosted-inference-on-runpod). [Profiles](docs/installation.md#profiles) mix providers in one task, such as OpenRouter to plan and a GPU to write the code, under the same budgets.
 
 The workflow runs once a day, when you start it manually, when a maintainer comments a `/codeman` command, and when a review on one of Codeman's pull requests asks for changes:
 

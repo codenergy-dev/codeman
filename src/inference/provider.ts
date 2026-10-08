@@ -54,7 +54,7 @@ export interface PodEvent {
 export interface PodLife {
   /** The pod's document in the registry: the nonce of its admin token. */
   record: string;
-  /** The GPU provider. */
+  /** The GPU cloud that runs and bills the pod: `runpod`. */
   provider: string;
   from: number;
   to: number;

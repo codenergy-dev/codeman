@@ -1,7 +1,7 @@
 ---
-status: in progress
+status: completed
 created_at: 2026-10-08T13:54:00-03:00
-updated_at: 2026-10-08T14:19:43-03:00
+updated_at: 2026-10-08T14:23:27-03:00
 commit: 8b911ba
 ---
 
@@ -95,19 +95,23 @@ The plan left these open; each follows its decisions (one name per thing, strict
 4. Workflow and templates: `action.yml` and the workflows' inputs, `templates/settings.yml` (one commented block per provider), `src/templates.test.ts`. Done when the templates use only the new names.
    - **Done on 2026-10-08**: [`templates/settings.yml`](../../templates/settings.yml) sets `provider: openrouter`, then a commented block for `runpod-pod` and one for `runpod-serverless`, and a profile; `action.yml`'s descriptions and the workflow templates' comments name the providers. The workflows' inputs and secrets keep their names (choice 14). Tests: `settings.test.ts` uncomments each provider's block, which must name exactly the settings the registry gives it; `templates.test.ts` checks that each provider's account key and other secrets reach the jobs and inputs the registry names, and that no template nor `action.yml` uses an old name.
 5. Docs: [architecture](../architecture.md) (Settings: a section per provider with its settings, secrets, model ID and how its cost is measured; Inference profiles as Profiles), [installation](../installation.md), README. A test checks that each provider's documented settings match the registry. Done when the docs name only the new settings.
+   - **Done on 2026-10-08**: architecture: Settings lists `provider` and `profiles`, with the old names and their new ones; a new "Providers" section, with a part per provider (its settings, defaults, model ID, secrets and cost), how a provider's settings go with it across layers and profiles, and the accounts; "Inference profiles" is now "Profiles"; Jobs, Budget's secrets and spend table, Self-hosted inference's table, Spend and the data layout (a run's `provider`, older runs' account and `mode`; a pod's `provider`) follow. Installation: the secrets, both Runpod setups, Profiles, and what to change in settings written before. README, [security](../security.md), [dependencies](../dependencies.md) and [development](../development.md) name the providers. `providers.test.ts` checks that each provider's part of the architecture lists the registry's settings, defaults and secrets. The old names stay only where the docs say what they became.
 6. Rebuild `dist/` and run `npm run check`. Done when it passes.
+   - **Done on 2026-10-08**: 469 tests, 467 pass and 2 skipped (the sandbox's, Linux runners only); the emulator tests ran on the emulator of Firebase's cache. `dist/gateway.js` changed in step 3 only (choice of step 3: the Runpod adapter's error names `gpu`): pushing `main` publishes a new pod image, and `POD_IMAGE` needs no new pin.
 
 ## End-to-end test
 
-On the test repository, with Codeman installed from the plan's last commit and its two workflow files copied again:
+Before it, the responsible person changes the old names (installation's [list](../installation.md#5-add-the-workflow-and-settings)): in the test repository's `.codeman/settings.yml`, and in the organization's `CODEMAN_SETTINGS` variable if it sets any, `inference: openrouter` becomes `provider: openrouter` (or goes), `inference: self-hosted` with pods becomes `provider: runpod-pod` and `gpu-type` becomes `gpu`, Serverless becomes `provider: runpod-serverless` and `serverless-endpoint` becomes `endpoint`, `gpu-provider` and `gpu-mode` go, and `inference-profiles` becomes `profiles`. The secrets and the workflows' inputs keep their names. Pushing `main` publishes a new pod image, since `dist/gateway.js` changed; nothing needs pinning.
+
+On the test repository, with Codeman installed from the plan's last commit and its two workflow files copied again (with `COMMIT_SHA` replaced, keeping the steps the test repository adds to the `agent` job):
 
 1. **OpenRouter.** `.codeman/settings.yml` with `provider: openrouter` and a model. Run a task to its first stage: it runs as before, and the spend table's provider reads "OpenRouter".
-2. **A setting the provider does not accept.** Add `gpu: "NVIDIA RTX A6000"` at the top level, with `provider: openrouter`. The next run stops in `select` with an error that says `openrouter` does not accept `gpu`. Remove it.
-3. **An old name.** Write `gpu-type` instead, or `inference-profiles`: the error gives the new name. Restore the file.
-4. **Runpod Serverless by URL.** A profile with `provider: runpod-serverless` and `endpoint` set to the endpoint's URL from Runpod's console, for the `code` stage. Run a task to that stage: `select`'s log names the profile, `open-key` checks the endpoint by its ID, and the row reads "Runpod (Serverless)". Costs about as a Serverless run does today (US$ 0.30 to 0.50).
+2. **A setting the provider does not accept.** Add `gpu: "NVIDIA RTX A6000"` at the top level, with `provider: openrouter`. The next run stops in `select` with the error "`openrouter` does not accept `gpu`; it takes only `model`." Remove it.
+3. **An old name.** Write `gpu-type` instead, or `inference-profiles`: the error names its line and gives the new name ("`gpu-type` is now `gpu`.", "`inference-profiles` is now `profiles`."). Restore the file.
+4. **Runpod Serverless by URL.** A profile with `provider: runpod-serverless` and `endpoint` set to the endpoint's URL from Runpod's console, for the `code` stage. Run a task to that stage: `select`'s log says "Profile `<name>` applies to this run.", `open-key` checks the endpoint by its ID, and the row reads "Runpod (Serverless)". Costs about as a Serverless run does today (US$ 0.30 to 0.50).
 5. **Runpod pod.** A profile with `provider: runpod-pod`, `gpu` and the pod's model. Run a task to that stage; the row reads "Runpod (pod)". About US$ 0.50 of pod time.
-6. **Command.** On a task, `/codeman set gpu "NVIDIA RTX A5000"` applies to its next pod run; `/codeman set gpu-type ...` is reported as a problem that gives the new name.
-7. **Older rows.** A task with rows from before this change shows them with their provider as before.
+6. **Command.** On a task, `/codeman set gpu NVIDIA RTX A5000` applies to its next pod run (its runs on other providers ignore it); `/codeman set gpu-type ...` is reported as a problem: "`gpu-type` is now `gpu`: write `set gpu`."
+7. **Older rows.** A task with rows from before this change shows them with their provider as before; its ledger runs keep counting in the budgets.
 
 ## Out of scope
 

@@ -20,7 +20,7 @@ npm run check   # lint, type check, test and build
 - `action.yml`: action metadata. Runs `dist/index.js` on Node 24.
 - `src/`: source and tests (`*.test.ts` next to the code they test).
   - `src/steps/`: one module per workflow job (`select`, `open-key`, `agent`, `close-key`, `apply`, `release-pod`). Each takes `Services` (`src/services.ts`): the runtime, the platform's conventions, its API, and the inference provider.
-  - `src/inference/`: the `InferenceProvider`, `GpuProvider` and `InferenceEngine` interfaces and their adapters (OpenRouter, Runpod, Ollama, vLLM); see [self-hosted inference](architecture.md#self-hosted-inference).
+  - `src/inference/`: the registry of providers and the settings each accepts (`providers.ts`; see [providers](architecture.md#providers)), the `InferenceProvider`, `GpuProvider` and `InferenceEngine` interfaces and their adapters (OpenRouter, Runpod, Ollama, vLLM); see [self-hosted inference](architecture.md#self-hosted-inference).
   - `src/gateway/`: the gateway in front of a self-hosted engine, which runs in Codeman's pod image (`docker/pod/Dockerfile`) and in the agent job. It uses Node's modules only.
   - `src/platform/`: the `Platform`, `CiResults` and `Conventions` interfaces and the types they share. Adapters live in a directory each, such as `src/platform/github/`; see [platforms](architecture.md#platforms) for what they must guarantee.
   - `src/runtime/`: the `Runtime` interface and its adapters, such as `src/runtime/github-actions.ts`. Only runtime adapters import `@actions/core`.

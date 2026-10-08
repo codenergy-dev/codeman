@@ -7,13 +7,13 @@ import type { BilledHours } from "../budget.ts";
  * month.
  */
 export interface ProviderAccounts {
-  /** The secret the job lacks to reach `provider`'s account; undefined when it has it. */
-  missing(provider: string): string | undefined;
+  /** The secret the job lacks to reach `account`; undefined when it has it. */
+  missing(account: string): string | undefined;
   /**
    * What each run of the task spent on OpenRouter, by workflow run ID, from its keys; undefined
    * when the job has no OpenRouter management key.
    */
   taskCosts(task: string): Promise<Record<string, number> | undefined>;
-  /** What a GPU provider's account billed each hour from `start` until `end`. */
-  billedHours(provider: string, start: Date, end: Date): Promise<BilledHours>;
+  /** What a GPU account billed each hour from `start` until `end`. */
+  billedHours(account: string, start: Date, end: Date): Promise<BilledHours>;
 }

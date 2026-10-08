@@ -67,7 +67,7 @@ export interface Budgets {
   organizationBudget?: number | undefined;
   /** The total of the task's record, which the task's first run under the ledger carries. */
   recorded: number;
-  /** The hourly billing of each GPU provider that reconciles the organization's month. */
+  /** The hourly billing of each GPU account that reconciles the organization's month. */
   billed: ReadonlyMap<string, BilledHours>;
 }
 

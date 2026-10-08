@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import {
   ACCOUNTS,
@@ -135,5 +136,37 @@ test("an endpoint is its ID, or a URL of it on Runpod's API", () => {
     "",
   ]) {
     assert.equal(endpointId(text).ok, false, text);
+  }
+});
+
+test("the docs give each provider the settings, defaults and secrets of the registry", () => {
+  const docs = readFileSync("docs/architecture.md", "utf8");
+  const sections = docs.split(/^#### /m).slice(1);
+  const documented = new Map(
+    sections.map((section) => [/^`([a-z-]+)`/.exec(section)?.[1] ?? "", section]),
+  );
+  assert.deepEqual([...documented.keys()], [...PROVIDER_NAMES]);
+  for (const name of PROVIDER_NAMES) {
+    const section = (documented.get(name) ?? "").split(/^##/m)[0] ?? "";
+    const rows = [...section.matchAll(/^\| `([a-z-]+)` \| ([^|]+) \|/gm)].map((match) => [
+      match[1] ?? "",
+      (match[2] ?? "").trim(),
+    ]);
+    const expected = Object.entries(PROVIDERS[name].settings).map(([setting, spec]) => [
+      setting,
+      spec.required ? "none; required" : `\`${spec.default}\``,
+    ]);
+    assert.deepEqual(rows.sort(), expected.sort(), name);
+    const secrets = [
+      ...(/^- \*\*Secrets:\*\* (.*)$/m.exec(section)?.[1] ?? "").matchAll(/`([A-Z_]+)`/g),
+    ];
+    assert.deepEqual(
+      secrets.map((match) => match[1]),
+      [
+        ACCOUNTS[PROVIDERS[name].account]?.secret,
+        ...PROVIDERS[name].secrets.map(({ secret }) => secret),
+      ],
+      name,
+    );
   }
 });

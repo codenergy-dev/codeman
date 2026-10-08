@@ -40,10 +40,10 @@ Add these under **Settings → Secrets and variables → Actions**, either in th
 | --- | --- | --- |
 | Variable | `CODEMAN_GITHUB_APP_CLIENT_ID` | The App's Client ID |
 | Secret | `CODEMAN_GITHUB_APP_PRIVATE_KEY` | The full contents of the private key file |
-| Secret | `CODEMAN_OPENROUTER_MANAGEMENT_KEY` | The OpenRouter management key; not needed when neither the settings nor an [inference profile](#inference-profiles) use OpenRouter |
+| Secret | `CODEMAN_OPENROUTER_MANAGEMENT_KEY` | The OpenRouter management key; not needed when neither the settings nor a [profile](#profiles) use the `openrouter` provider |
 | Secret | `CODEMAN_OPENROUTER_KEY_ENCRYPTION_SECRET` | A random value of at least 32 characters |
-| Secret | `CODEMAN_RUNPOD_API_KEY` | Self-hosted inference only, in the settings or a profile: the Runpod account's API key |
-| Secret | `CODEMAN_RUNPOD_SERVERLESS_KEY` | Self-hosted inference on Serverless only: a key restricted to the endpoint |
+| Secret | `CODEMAN_RUNPOD_API_KEY` | The `runpod-pod` and `runpod-serverless` providers only, in the settings or a profile: the Runpod account's API key |
+| Secret | `CODEMAN_RUNPOD_SERVERLESS_KEY` | The `runpod-serverless` provider only: a key restricted to the endpoint |
 | Variable | `CODEMAN_SETTINGS` | Optional, in the organization: settings its repositories share; see [shared settings](#shared-settings) |
 | Variable | `CODEMAN_FIREBASE_PROJECT`, `CODEMAN_WORKLOAD_IDENTITY_PROVIDER`, `CODEMAN_SERVICE_ACCOUNT` | The backend; see [the next part](#4-set-up-the-backend) |
 
@@ -126,6 +126,16 @@ The workflow templates pass these variables to the jobs that record runs, and gi
 
 Codeman reads `.codeman/settings.yml` and `.codemanignore` from the default branch. A manual run (**Actions → Codeman → Run workflow**) can override the model and the budgets for that run.
 
+Settings written before the [provider settings plan](plans/2026-10-08-provider-settings.md) stop the run with an error that gives the new name. In `.codeman/settings.yml`, the organization's `CODEMAN_SETTINGS` and each profile:
+
+- `inference: openrouter` becomes `provider: openrouter`, or goes, since it is the default.
+- `inference: self-hosted` with `gpu-mode: pod` (or no `gpu-mode`) becomes `provider: runpod-pod`, and `gpu-type` becomes `gpu`.
+- `inference: self-hosted` with `gpu-mode: serverless` becomes `provider: runpod-serverless`, and `serverless-endpoint` becomes `endpoint`.
+- `gpu-provider` and `gpu-mode` go.
+- `inference-profiles` becomes `profiles`.
+
+A task that changed its GPU with `/codeman set gpu-type` needs `/codeman set gpu` instead.
+
 The agent job needs a Linux runner (x64 or arm64).
 
 To update workflow files copied before the backend, copy both templates again, and move any steps you added to the `agent` job into the new `codeman-task.yml`: the jobs that record runs need their new permissions, variables and the run's ID in the ledger. Older workflow files fail in `select`, before they mark any task, since they pass none of the backend's variables. Workflow files copied before the budgets came from the ledger pass neither the organization's monthly budget nor the task's spend from `close-key` to `apply`: copy both templates again, too. With pods, update every repository of the organization at once to a version with the pod registry: its `open-key` terminates the organization's pods created by older versions, which the registry does not hold, and older versions cannot share the newer pods.
@@ -159,7 +169,7 @@ These are defaults: a value in a repository's `.codeman/settings.yml` overrides 
 
 ## Self-hosted inference on Runpod
 
-Instead of OpenRouter, Codeman can serve the model itself on GPUs rented from [Runpod](https://www.runpod.io): on a pod it creates for the task (`gpu-mode: pod`), or on the workers of a Serverless endpoint you create (`gpu-mode: serverless`). See [architecture](architecture.md#self-hosted-inference) for how it works, what it costs and [which to choose](architecture.md#choosing), and [security](security.md) for the secrets. OpenRouter's management key is not needed then, unless an [inference profile](#inference-profiles) uses OpenRouter; the encryption secret still is.
+Instead of OpenRouter, Codeman can serve the model itself on GPUs rented from [Runpod](https://www.runpod.io): on a pod it creates for the task (`provider: runpod-pod`), or on the workers of a Serverless endpoint you create (`provider: runpod-serverless`). Each provider takes its own settings ([providers](architecture.md#providers)). See [architecture](architecture.md#self-hosted-inference) for how it works, what it costs and [which to choose](architecture.md#choosing), and [security](security.md) for the secrets. OpenRouter's management key is not needed then, unless a [profile](#profiles) uses OpenRouter; the encryption secret still is.
 
 ### The account
 
@@ -172,15 +182,15 @@ Instead of OpenRouter, Codeman can serve the model itself on GPUs rented from [R
 1. In `.codeman/settings.yml`:
 
    ```yaml
-   inference: self-hosted
+   provider: runpod-pod
    model: qwen3-coder:30b        # an Ollama model name
-   gpu-type: "NVIDIA RTX A6000"  # the GPU ID, quoted; on Secure Cloud
+   gpu: "NVIDIA RTX A6000"       # the GPU ID, quoted; on Secure Cloud
    ```
 
-   `gpu-type` is the GPU ID in [Runpod's list of GPU types](https://docs.runpod.io/references/gpu-types) (first column), not its display name: `NVIDIA RTX PRO 6000 Blackwell Server Edition MIG 2g.48gb`, not `PRO 6000 MIG 48GB`. Choose a GPU with enough memory for the model at its full context length: Codeman loads it with the context length the model supports.
+   `gpu` is the GPU ID in [Runpod's list of GPU types](https://docs.runpod.io/references/gpu-types) (first column), not its display name: `NVIDIA RTX PRO 6000 Blackwell Server Edition MIG 2g.48gb`, not `PRO 6000 MIG 48GB`. Choose a GPU with enough memory for the model at its full context length: Codeman loads it with the context length the model supports.
 2. Codeman runs its own pod image, `ghcr.io/codenergy-dev/codeman-pod`, public and pinned by digest in the version you use (`POD_IMAGE` in `src/inference/ollama.ts`); there is nothing to set up. To run an image of your own, set `pod-image: <image>@sha256:<digest>` on the `open-key` step.
 
-   The organization's tasks with the same pod settings (model, `gpu-type`, image and `pod-reuse`), in any of its repositories, share one pod, and a pod kept after a run serves the next run on its settings ([shared pods](architecture.md#shared-pods)). That needs an image whose gateway serves several runs at once, built from Codeman's code since shared pods. The image pinned before them serves one run at a time, and Codeman gives each task a pod of its own on it; an image of your own must serve several runs, or be listed in `SINGLE_RUN_IMAGES`, or its runs fail.
+   The organization's tasks with the same pod settings (model, `gpu`, image and `pod-reuse`), in any of its repositories, share one pod, and a pod kept after a run serves the next run on its settings ([shared pods](architecture.md#shared-pods)). That needs an image whose gateway serves several runs at once, built from Codeman's code since shared pods. The image pinned before them serves one run at a time, and Codeman gives each task a pod of its own on it; an image of your own must serve several runs, or be listed in `SINGLE_RUN_IMAGES`, or its runs fail.
 3. Codeman keeps its pods in the [backend](#4-set-up-the-backend), and terminates the pods of the Runpod account that carry the organization's environment (`CODEMAN_ORGANIZATION`, or `CODEMAN_REPOSITORY` of one of its repositories) and that its registry does not hold. Create other pods of the account without those variables, or in another account; Codeman never touches them.
 
 ### Serverless
@@ -198,26 +208,27 @@ Instead of OpenRouter, Codeman can serve the model itself on GPUs rented from [R
 3. In `.codeman/settings.yml`:
 
    ```yaml
-   inference: self-hosted
-   gpu-mode: serverless
-   serverless-endpoint: <the endpoint's ID>
+   provider: runpod-serverless
+   endpoint: <the endpoint's ID, or its URL from the console>
    model: Qwen/Qwen3-Coder-30B-A3B-Instruct   # what the worker serves
    ```
 
+   `endpoint` takes the endpoint's ID, or a URL of it as Runpod's console shows it, such as `https://api.runpod.ai/v2/<id>/run`, from which Codeman takes the ID. A URL on another host is an error.
+
 Codeman checks the endpoint before each run and reports what to change. After 7 days without requests, Runpod sets its max workers to 0; set it back to 1, or runs fail after 25 minutes without a worker.
 
-## Inference profiles
+## Profiles
 
-A repository can use different inference for different runs, such as OpenRouter's strongest model to plan and route, and a pod for the stages that write and test code. Add a list of profiles to `.codeman/settings.yml` (or to the organization's [shared settings](#shared-settings)); the top-level settings apply where no profile does:
+A repository can use different providers for different runs, such as OpenRouter's strongest model to plan and route, and a pod for the stages that write and test code. Add a list of profiles to `.codeman/settings.yml` (or to the organization's [shared settings](#shared-settings)); the top-level settings apply where no profile does:
 
 ```yaml
 model: anthropic/claude-sonnet-4.5     # the default: OpenRouter
-inference-profiles:
+profiles:
   - name: small-pod
     when:
       stages: [code, test]
-    inference: self-hosted
-    gpu-type: NVIDIA RTX A6000
+    provider: runpod-pod
+    gpu: NVIDIA RTX A6000
     model: qwen3-coder:30b
   - name: cheap-review
     when:
@@ -226,11 +237,11 @@ inference-profiles:
 ```
 
 1. Give each profile a `name`, and under `when` the `stages` it is for: `plan`, `route`, `web`, `design`, `code`, `test` or `review`. A profile without `when` applies to every run, so put it last. (`parallel-tasks` is for when a run works on several tasks at once, which is not available yet.)
-2. Put in each profile only what changes: `model` and the inference settings (`inference`, `gpu-provider`, `gpu-mode`, `gpu-type`, `engine`, `serverless-endpoint`, `pod-reuse`). Everything else, budgets included, stays at the top level and applies to every run.
+2. Put in each profile only what changes: `provider`, `model` and the provider's settings ([providers](architecture.md#providers)). Everything else, budgets included, stays at the top level and applies to every run.
 3. Order them: the first profile whose conditions hold applies.
-4. Add the secrets of every provider the settings and profiles name: a run needs its own provider's, and with `organization-monthly-budget`, every run reads the billing of each GPU provider named, so a run on OpenRouter needs the Runpod key too. Without one, runs stop, and the task's panel names the missing secret.
+4. Add the secrets of every provider the settings and profiles name: a run needs its own provider's, and with `organization-monthly-budget`, every run reads the billing of the Runpod account when a Runpod provider is named, so a run on OpenRouter needs the Runpod key too. Without one, runs stop, and the task's panel names the missing secret.
 
-Each profile must work over the top-level settings: a profile on pods needs a `gpu-type`, here or at the top level. A mistake stops the next run, with an error that names the line or the profile. The `select` job's log names the profile of each run, and the spend table shows each run's model and provider. A task's `/codeman set model` wins over any profile, in the runs whose inference it fits. A repository whose file has `inference-profiles` replaces the organization's list whole; `inference-profiles: []` removes it. See [settings](architecture.md#inference-profiles).
+Each profile must work over the top-level settings: a profile on pods needs a `gpu`, here or at the top level when it is on pods too. A profile on another provider than the top level's does not take the top level's provider settings, such as its `gpu`. A mistake stops the next run, with an error that names the line or the profile. The `select` job's log names the profile of each run, and the spend table shows each run's model and provider. A task's `/codeman set model` wins over any profile, in the runs whose provider it fits, and `/codeman set gpu` applies to its runs on pods. A repository whose file has `profiles` replaces the organization's list whole; `profiles: []` removes it. See [profiles](architecture.md#profiles).
 
 ## Try it
 

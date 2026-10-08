@@ -61,7 +61,7 @@ export interface PodDescription {
   gpuType: string;
   image: string;
   reuse: string;
-  /** The GPU provider. */
+  /** The GPU cloud that runs and bills the pod: `runpod`. */
   provider: string;
 }
 
