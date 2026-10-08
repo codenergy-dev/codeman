@@ -857,7 +857,7 @@ test("a run whose provider's secret is missing blocks the task, and says which",
   assert.match(run, /`CODEMAN_RUNPOD_API_KEY`/);
 });
 
-test("profiles: a task's model wins where it fits, and is reported where it does not", async () => {
+test("profiles: a task's model is for the top level's provider, and is reported where it does not fit", async () => {
   const platform = new FakePlatform({
     ".codeman/settings.yml": [
       "model: a/b",
@@ -874,10 +874,11 @@ test("profiles: a task's model wins where it fits, and is reported where it does
   platform.openIssue(
     "alice",
     "Add a limiter",
-    "Limit requests.\n\n/codeman set model qwen3-coder:480b\n/codeman set gpu NVIDIA RTX A5000",
+    "Limit requests.\n\n/codeman set model deepseek/deepseek-v4.1-flash\n/codeman set gpu NVIDIA RTX A5000",
   );
+  // The profile is on another provider: it keeps its own model, and takes the task's GPU.
   const planned = await selectStep(platform);
-  assert.equal(planned.outputs.model, "qwen3-coder:480b");
+  assert.equal(planned.outputs.model, "qwen3-coder:30b");
   const choice = JSON.parse(planned.outputs.inference ?? "");
   assert.deepEqual([choice.profile, choice.gpu], ["small-pod", "NVIDIA RTX A5000"]);
   assert.deepEqual(readTask(planned).problems, []);
@@ -892,6 +893,28 @@ test("profiles: a task's model wins where it fits, and is reported where it does
     readTask(fallback).problems.map((error) => error.problem.kind),
     ["settings-rejected"],
   );
+
+  // A profile on another provider without its own model stops the run in `select`, before any
+  // key job, even when the task sets a model.
+  const unset = new FakePlatform({
+    ".codeman/settings.yml": [
+      "model: a/b",
+      "profiles:",
+      "  - name: small-pod",
+      "    when:",
+      "      stages: [code]",
+      "    provider: runpod-pod",
+      '    gpu: "NVIDIA RTX A6000"',
+    ].join("\n"),
+  });
+  unset.maintainers.add("alice");
+  unset.openIssue("alice", "Add a queue", "Queue.\n\n/codeman set model qwen3-coder:30b");
+  const stopped = new FakeRuntime({ inputs: { workdir } });
+  await assert.rejects(select(fakeServices(unset, stopped)), {
+    message:
+      "Profile `small-pod` names `runpod-pod`, another provider than the `openrouter` below it, so it must set its own `model`, one for `runpod-pod`.",
+  });
+  assert.equal(stopped.outputs.action, undefined);
 });
 
 /** Runs one task's apply job, as a leg of the run's matrix does: with its `task` input. */

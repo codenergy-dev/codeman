@@ -1,7 +1,7 @@
 ---
-status: pending
+status: in progress
 created_at: 2026-10-08T16:29:39-03:00
-updated_at: 2026-10-08T16:29:39-03:00
+updated_at: 2026-10-08T16:33:49-03:00
 commit: 44485dc
 ---
 
@@ -41,7 +41,7 @@ A model set for one provider never reaches another: a layer or a profile that ch
 
 1. Write this plan. Done when it is committed with status `pending`, then set `in progress`.
 2. Code (`src/settings.ts`): `serving` names each layer and refuses a change of provider without `model` when a model would carry over (choices 2 to 4); `resolveRun` applies a task's model only to runs on the top level's provider, and checks it against that provider (choice 5). Tests in `src/settings.test.ts`: a profile that changes provider without `model` stops the run, with `model` it runs; a profile with no provider or the same one inherits `model`; a repository file that changes the organization's provider (or the default `openrouter`, under an organization that sets only a model) without `model` stops the run; with no model below, it does not; neither a manual run's `model` nor a task's satisfies the requirement; a task's model applies to the top level's provider only. The four examples of [provider settings across layers](../settings/provider-settings-across-layers.md) follow the new rule. `src/steps/flow.test.ts`'s task model test follows choice 5. Done when the tests pass.
-3. Docs: [provider settings across layers](../settings/provider-settings-across-layers.md) (the rule, `#the-model`, examples 2 and 4, the summary table), [profiles](../settings/profiles.md) (layers and checks), [installation's profiles](../installation/profiles.md), and the profiles comment of `templates/settings.yml`. Done when no file outside `docs/plans/` states the old rule and the docs link checker passes.
+3. Docs: [provider settings across layers](../settings/provider-settings-across-layers.md) (the rule, `#the-model`, examples 2 and 4, the summary table), [profiles](../settings/profiles.md) (layers and checks), [installation's profiles](../installation/profiles.md), [upgrading](../installation/upgrading.md) (what settings written before must change, and its line in `docs/README.md`), and the profiles comment of `templates/settings.yml`. Done when no file outside `docs/plans/` states the old rule and the docs link checker passes.
 4. Rebuild `dist/` and run `npm run check`. Done when it passes and the working tree is clean.
 
 ## End-to-end test

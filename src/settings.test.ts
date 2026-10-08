@@ -603,17 +603,30 @@ test("a layer on another provider leaves out the provider settings of the layers
   assert.ok(kept.ok && kept.value.gpu === "GPU", "the same provider keeps them");
 });
 
-test("a task's model wins over the profile, and must fit its provider", () => {
-  const layers = profiled({ model: "qwen3-coder:480b", "task-budget": 5 });
+test("a task's model applies to the runs on the top level's provider, and must fit it", () => {
+  const layers = profiled({ model: "deepseek/deepseek-v4.1-flash", "task-budget": 5 });
+  const run = (stage: ProfileStage) => {
+    const resolved = resolveRun(layers, { stage, tasks: 1 });
+    assert.ok(resolved.ok, resolved.ok ? "" : resolved.error);
+    return resolved.ok ? [resolved.value.profile, resolved.value.settings.model] : [];
+  };
+  // It wins over a profile on the same provider, and never reaches one on another provider.
+  assert.deepEqual(run("web"), [undefined, "deepseek/deepseek-v4.1-flash"]);
+  assert.deepEqual(run("plan"), ["planner", "deepseek/deepseek-v4.1-flash"]);
+  assert.deepEqual(run("code"), ["small-pod", "qwen3-coder:30b"]);
+  assert.deepEqual(run("review"), ["reviewer", "Qwen/Qwen3-Coder-30B-A3B-Instruct"]);
   const code = resolveRun(layers, { stage: "code", tasks: 1 });
-  assert.ok(code.ok);
-  assert.equal(code.ok && code.value.settings.model, "qwen3-coder:480b");
   assert.equal(code.ok && code.value.settings["task-budget"], 5);
-  assert.equal(code.ok && code.value.profile, "small-pod");
-  const plan = resolveRun(layers, { stage: "plan", tasks: 1 });
-  assert.ok(
-    !plan.ok && plan.error.startsWith("Profile `planner`: With `openrouter`, `model` must be"),
-  );
+  // One that does not fit the top level's provider is an error on every run, which `select`
+  // reports, going on without it.
+  for (const stage of ["plan", "code"] as const) {
+    const pod = resolveRun(profiled({ model: "qwen3-coder:480b" }), { stage, tasks: 1 });
+    assert.deepEqual(pod, {
+      ok: false,
+      error:
+        "The task's `model` is for `openrouter`, the top-level settings' provider. With `openrouter`, `model` must be an OpenRouter model ID, such as `provider/model`, not `qwen3-coder:480b`.",
+    });
+  }
 });
 
 test("a task's GPU applies to the runs whose provider accepts it", () => {
@@ -671,6 +684,83 @@ test("the repository's profiles replace the organization's whole, and the log na
     tasks: 1,
   });
   assert.ok(removed.ok && removed.value.profile === undefined);
+});
+
+test("a layer or profile that changes provider must set its own model", () => {
+  const code = { stage: "code", tasks: 1 } as const;
+  const pods = (profile: string[]) =>
+    parseSettings(
+      [
+        "model: deepseek/deepseek-v4.1-flash",
+        "profiles:",
+        "  - name: small-pod",
+        "    when:",
+        "      stages: [code]",
+        ...profile,
+      ].join("\n"),
+    );
+  const pod = ["    provider: runpod-pod", '    gpu: "NVIDIA RTX A6000"'];
+  const without = pods(pod);
+  assert.ok(without.ok);
+  const error =
+    "Profile `small-pod` names `runpod-pod`, another provider than the `openrouter` below it, so it must set its own `model`, one for `runpod-pod`.";
+  // Whichever stage runs, and even when the task sets a model.
+  for (const own of [{}, { model: "qwen3-coder:30b" }]) {
+    for (const stage of ["plan", "code"] as const) {
+      assert.deepEqual(
+        resolveRun([own, {}, without.ok ? without.value : {}], { stage, tasks: 1 }),
+        {
+          ok: false,
+          error,
+        },
+      );
+    }
+  }
+  const own = pods([...pod, "    model: qwen3-coder:30b"]);
+  const fine = resolveRun([{}, {}, own.ok ? own.value : {}], code);
+  assert.ok(fine.ok && fine.value.settings.model === "qwen3-coder:30b");
+  // No provider, or the same one, inherits the model.
+  for (const profile of [[], ["    provider: openrouter"]]) {
+    const same = parseSettings(
+      ["model: deepseek/deepseek-v4.1-flash", "profiles:", "  - name: same", ...profile].join("\n"),
+    );
+    const resolved = resolveRun([{}, {}, same.ok ? same.value : {}], code);
+    assert.ok(resolved.ok, resolved.ok ? "" : resolved.error);
+    assert.deepEqual(resolved.ok && [resolved.value.profile, resolved.value.settings.model], [
+      "same",
+      "deepseek/deepseek-v4.1-flash",
+    ]);
+  }
+
+  // A repository's file over the organization's provider, or over the default `openrouter`.
+  const file = { provider: "runpod-pod", gpu: "NVIDIA RTX A6000" } as const;
+  const organization = parseSettings("model: deepseek/deepseek-v4.1-flash", SHARED_SETTINGS);
+  assert.ok(organization.ok);
+  const shared = organization.ok ? organization.value : {};
+  const fileError =
+    ".codeman/settings.yml names `runpod-pod`, another provider than the `openrouter` below it, so it must set its own `model`, one for `runpod-pod`.";
+  assert.deepEqual(resolveRun([{}, {}, file, shared], code), { ok: false, error: fileError });
+  // A manual run's model does not make up for it: scheduled runs have none.
+  assert.deepEqual(resolveRun([{}, { model: "qwen3-coder:30b" }, file, shared], code), {
+    ok: false,
+    error: fileError,
+  });
+  const set = resolveRun([{}, {}, { ...file, model: "qwen3-coder:30b" }, shared], code);
+  assert.ok(set.ok && set.value.settings.model === "qwen3-coder:30b");
+  // With no model below, none carries over: the model comes from a layer above the change.
+  const noModel = parseSettings('provider: runpod-pod\ngpu: "NVIDIA RTX A6000"', SHARED_SETTINGS);
+  assert.ok(noModel.ok);
+  for (const layers of [
+    [{}, {}, { model: "qwen3-coder:30b" }, noModel.ok ? noModel.value : {}],
+    [{}, { model: "qwen3-coder:30b" }, file],
+  ]) {
+    const resolved = resolveRun(layers, code);
+    assert.ok(resolved.ok, resolved.ok ? "" : resolved.error);
+    assert.deepEqual(
+      resolved.ok && [resolved.value.settings.provider, resolved.value.settings.model],
+      ["runpod-pod", "qwen3-coder:30b"],
+    );
+  }
 });
 
 // The examples of docs/settings/provider-settings-across-layers.md, with their outcomes.
@@ -748,7 +838,7 @@ describe("provider settings across layers", () => {
       undefined,
     ]);
     assert.equal(settings?.["task-budget"], 1);
-    // Without its own model, the organization's carries over, and does not fit OpenRouter.
+    // Without its own model, the organization's would carry over: the file must set one.
     const alone = resolveRun([{}, {}, layer(["provider: openrouter"]), organization()], {
       stage: "code",
       tasks: 1,
@@ -756,7 +846,7 @@ describe("provider settings across layers", () => {
     assert.deepEqual(alone, {
       ok: false,
       error:
-        "With `openrouter`, `model` must be an OpenRouter model ID, such as `provider/model`, not `qwen3-coder:30b`.",
+        ".codeman/settings.yml names `openrouter`, another provider than the `runpod-pod` below it, so it must set its own `model`, one for `openrouter`.",
     });
   });
 
@@ -816,7 +906,7 @@ describe("provider settings across layers", () => {
     ]);
   });
 
-  test("4. the model always carries over, and only its form is checked", () => {
+  test("4. a profile that changes provider must set its own model", () => {
     const file = layer([
       "provider: runpod-pod",
       "model: qwen3-coder:30b",
@@ -831,10 +921,11 @@ describe("provider settings across layers", () => {
       assert.deepEqual(resolveRun([{}, {}, file], { stage, tasks: 1 }), {
         ok: false,
         error:
-          "Profile `planner`: With `openrouter`, `model` must be an OpenRouter model ID, such as `provider/model`, not `qwen3-coder:30b`.",
+          "Profile `planner` names `openrouter`, another provider than the `runpod-pod` below it, so it must set its own `model`, one for `openrouter`.",
       });
     }
-    // An OpenRouter ID also has the form of an Ollama name and of a Hugging Face ID.
+    // The other way round too, though an OpenRouter ID has the form of an Ollama name and of a
+    // Hugging Face ID.
     const top = ["model: deepseek/deepseek-v4.1-flash", "profiles:", "  - name: gpu", "    when:"];
     for (const [profile, provider] of [
       [["    provider: runpod-pod", '    gpu: "NVIDIA RTX A6000"'], "runpod-pod"],
@@ -844,11 +935,10 @@ describe("provider settings across layers", () => {
         stage: "code",
         tasks: 1,
       });
-      assert.ok(resolved.ok, resolved.ok ? "" : resolved.error);
-      assert.deepEqual(
-        resolved.ok && [resolved.value.settings.provider, resolved.value.settings.model],
-        [provider, "deepseek/deepseek-v4.1-flash"],
-      );
+      assert.deepEqual(resolved, {
+        ok: false,
+        error: `Profile \`gpu\` names \`${provider}\`, another provider than the \`openrouter\` below it, so it must set its own \`model\`, one for \`${provider}\`.`,
+      });
     }
   });
 });

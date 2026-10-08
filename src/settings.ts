@@ -484,8 +484,9 @@ export interface RunSettings {
  * top-level values it sets, except those the task's own commands (the first layer) set.
  *
  * A provider's settings go with it: a layer or a profile that names another provider than the
- * one below it leaves out the settings that were for that one. A task's own provider settings
- * (`gpu`) apply to the runs whose provider accepts them.
+ * one below it leaves out the settings that were for that one, and must set its own model when
+ * one would carry over. A task's own provider settings (`gpu`) apply to the runs whose provider
+ * accepts them, and its model to the runs on the top level's provider.
  *
  * The top-level settings and every profile must fit their providers on their own, without the
  * task's commands, so that a mistake shows on the first run and not when a stage reaches it.
@@ -504,20 +505,40 @@ export function resolveRun(
   }
   // The top level as the layers below the task's commands set it; a task's model fills it only
   // when none of them sets one.
-  const below = serving(layers.slice(1), { provider: DEFAULTS.provider });
-  const top = { ...omit(values, PROFILE_SETTINGS), ...below, model: below.model ?? values.model };
+  const below = serving(
+    layers.slice(1).map((settings, index) => ({ name: layerSource(index + 1), settings })),
+    { provider: DEFAULTS.provider },
+  );
+  if (!below.ok) return below;
+  const top = {
+    ...omit(values, PROFILE_SETTINGS),
+    ...below.value,
+    model: below.value.model ?? values.model,
+  };
   const topError = settingsProblem(top);
   if (topError) return { ok: false, error: topError };
-  const profiled = list.map((profile) => ({
-    profile,
-    settings: { ...omit(top, PROFILE_SETTINGS), ...serving([profile.settings], top) },
-  }));
-  for (const { profile, settings } of profiled) {
+  const profiled: { profile: Profile; settings: PartialSettings }[] = [];
+  for (const profile of list) {
+    const name = `Profile \`${profile.name}\``;
+    const served = serving([{ name, settings: profile.settings }], top);
+    if (!served.ok) return served;
+    const settings = { ...omit(top, PROFILE_SETTINGS), ...served.value };
     const error = settingsProblem(settings);
-    if (error) return { ok: false, error: `Profile \`${profile.name}\`: ${error}` };
+    if (error) return { ok: false, error: `${name}: ${error}` };
+    profiled.push({ profile, settings });
   }
 
   const forTask = pick(own, PROFILE_SETTINGS);
+  // A task's model is for the top level's provider: a profile on another one keeps its own.
+  if (forTask.model !== undefined) {
+    const error = settingsProblem({ ...top, model: forTask.model });
+    if (error) {
+      return {
+        ok: false,
+        error: `The task's \`model\` is for \`${top.provider}\`, the top-level settings' provider. ${error}`,
+      };
+    }
+  }
   const chosen = run ? profiled.find(({ profile }) => applies(profile, run)) : undefined;
   const base = chosen?.settings ?? top;
   const providers = [top, ...profiled.map(({ settings }) => settings)].map(
@@ -533,7 +554,9 @@ export function resolveRun(
   }
   const accepted = PROVIDERS[base.provider ?? DEFAULTS.provider].settings;
   const taskServing = Object.fromEntries(
-    Object.entries(forTask).filter(([name]) => name === "model" || name in accepted),
+    Object.entries(forTask).filter(([name]) =>
+      name === "model" ? base.provider === top.provider : name in accepted,
+    ),
   );
   const settings = withProviderDefaults({ ...base, ...taskServing } as Settings);
   const error = settingsProblem(settings);
@@ -562,20 +585,40 @@ export function applies(profile: Profile, run: RunConditions): boolean {
   return (!stages || stages.includes(run.stage)) && (tasks === undefined || run.tasks >= tasks);
 }
 
+/** A layer of `serving`, and how its errors name it. */
+interface NamedLayer {
+  name: string;
+  settings: PartialSettings;
+}
+
 /**
  * Where the model is served, from `layers` over `base` (the first layer wins): the provider, the
  * model, and the provider's settings. A layer that names another provider than the one below it
- * starts that provider's settings afresh (decision 2 of the provider settings plan).
+ * starts that provider's settings afresh (decision 2 of the provider settings plan), and must set
+ * its own model when one would carry over (the model per provider plan).
  */
-function serving(layers: readonly PartialSettings[], base: PartialSettings): PartialSettings {
+function serving(layers: readonly NamedLayer[], base: PartialSettings): Parsed<PartialSettings> {
   let result: PartialSettings = pick(base, PROFILE_SETTINGS);
-  for (const layer of [...layers].reverse()) {
-    if (layer.provider !== undefined && layer.provider !== result.provider) {
+  for (const { name, settings } of [...layers].reverse()) {
+    const { provider } = settings;
+    if (provider !== undefined && provider !== result.provider) {
+      if (result.model !== undefined && settings.model === undefined) {
+        return {
+          ok: false,
+          error: `${name} names \`${provider}\`, another provider than the \`${result.provider}\` below it, so it must set its own \`model\`, one for \`${provider}\`.`,
+        };
+      }
       result = omit(result, PROVIDER_SETTINGS);
     }
-    Object.assign(result, pick(layer, PROFILE_SETTINGS));
+    Object.assign(result, pick(settings, PROFILE_SETTINGS));
   }
-  return result;
+  return { ok: true, value: result };
+}
+
+/** How errors name the layer at `index` of `resolveSettings`: where it comes from, capitalized. */
+function layerSource(index: number): string {
+  const source: string = LAYER_SOURCES[index] ?? `layer ${index + 1}`;
+  return source.charAt(0).toUpperCase() + source.slice(1);
 }
 
 function merge(

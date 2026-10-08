@@ -286,8 +286,8 @@ export async function select(services: Services): Promise<void> {
       : undefined;
     let resolved = resolveRun([own, ...below], runConditions);
     if (!resolved.ok && (own.model !== undefined || own.gpu !== undefined)) {
-      // A task's model or GPU that does not fit the run's provider stops this task only: the run
-      // goes on without them, and says why.
+      // A task's model that does not fit the top level's provider, or a GPU that no provider
+      // accepts, stops this task only: the run goes on without them, and says why.
       const { model: _model, gpu: _gpu, ...rest } = own;
       const fallback = resolveRun([rest, ...below], runConditions);
       if (fallback.ok) {

@@ -28762,19 +28762,38 @@ function resolveRun(layers, run2) {
       error: `No model is configured. Set \`model\` in ${SETTINGS_FILE} or in the workflow's inputs.`
     };
   }
-  const below = serving(layers.slice(1), { provider: DEFAULTS2.provider });
-  const top = { ...omit2(values, PROFILE_SETTINGS), ...below, model: below.model ?? values.model };
+  const below = serving(
+    layers.slice(1).map((settings2, index) => ({ name: layerSource(index + 1), settings: settings2 })),
+    { provider: DEFAULTS2.provider }
+  );
+  if (!below.ok) return below;
+  const top = {
+    ...omit2(values, PROFILE_SETTINGS),
+    ...below.value,
+    model: below.value.model ?? values.model
+  };
   const topError = settingsProblem(top);
   if (topError) return { ok: false, error: topError };
-  const profiled = list2.map((profile2) => ({
-    profile: profile2,
-    settings: { ...omit2(top, PROFILE_SETTINGS), ...serving([profile2.settings], top) }
-  }));
-  for (const { profile: profile2, settings: settings2 } of profiled) {
+  const profiled = [];
+  for (const profile2 of list2) {
+    const name = `Profile \`${profile2.name}\``;
+    const served = serving([{ name, settings: profile2.settings }], top);
+    if (!served.ok) return served;
+    const settings2 = { ...omit2(top, PROFILE_SETTINGS), ...served.value };
     const error4 = settingsProblem(settings2);
-    if (error4) return { ok: false, error: `Profile \`${profile2.name}\`: ${error4}` };
+    if (error4) return { ok: false, error: `${name}: ${error4}` };
+    profiled.push({ profile: profile2, settings: settings2 });
   }
   const forTask = pick(own, PROFILE_SETTINGS);
+  if (forTask.model !== void 0) {
+    const error4 = settingsProblem({ ...top, model: forTask.model });
+    if (error4) {
+      return {
+        ok: false,
+        error: `The task's \`model\` is for \`${top.provider}\`, the top-level settings' provider. ${error4}`
+      };
+    }
+  }
   const chosen = run2 ? profiled.find(({ profile: profile2 }) => applies(profile2, run2)) : void 0;
   const base = chosen?.settings ?? top;
   const providers = [top, ...profiled.map(({ settings: settings2 }) => settings2)].map(
@@ -28790,7 +28809,9 @@ function resolveRun(layers, run2) {
   }
   const accepted = PROVIDERS[base.provider ?? DEFAULTS2.provider].settings;
   const taskServing = Object.fromEntries(
-    Object.entries(forTask).filter(([name]) => name === "model" || name in accepted)
+    Object.entries(forTask).filter(
+      ([name]) => name === "model" ? base.provider === top.provider : name in accepted
+    )
   );
   const settings = withProviderDefaults({ ...base, ...taskServing });
   const error3 = settingsProblem(settings);
@@ -28812,13 +28833,24 @@ function applies(profile2, run2) {
 }
 function serving(layers, base) {
   let result = pick(base, PROFILE_SETTINGS);
-  for (const layer of [...layers].reverse()) {
-    if (layer.provider !== void 0 && layer.provider !== result.provider) {
+  for (const { name, settings } of [...layers].reverse()) {
+    const { provider } = settings;
+    if (provider !== void 0 && provider !== result.provider) {
+      if (result.model !== void 0 && settings.model === void 0) {
+        return {
+          ok: false,
+          error: `${name} names \`${provider}\`, another provider than the \`${result.provider}\` below it, so it must set its own \`model\`, one for \`${provider}\`.`
+        };
+      }
       result = omit2(result, PROVIDER_SETTINGS);
     }
-    Object.assign(result, pick(layer, PROFILE_SETTINGS));
+    Object.assign(result, pick(settings, PROFILE_SETTINGS));
   }
-  return result;
+  return { ok: true, value: result };
+}
+function layerSource(index) {
+  const source = LAYER_SOURCES[index] ?? `layer ${index + 1}`;
+  return source.charAt(0).toUpperCase() + source.slice(1);
 }
 function merge3(layers, defaults2 = DEFAULTS2) {
   const merged = { ...defaults2 };
