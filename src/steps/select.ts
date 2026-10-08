@@ -24,7 +24,7 @@ import {
   SHARED_SETTINGS,
   settingSources,
 } from "../settings.ts";
-import { STAGE_STATE, type Stage, stageOfState } from "../stages.ts";
+import { ROUTED_STAGE_STATE, type RoutedStage, routedStageOfState } from "../stages.ts";
 import { type State, stateOf } from "../state.ts";
 import { decisionsUrl, renderRefused, renderStatus, reportUrl } from "../status.ts";
 import { ledgerRunId } from "../store/layout.ts";
@@ -256,10 +256,12 @@ export async function select(services: Services): Promise<void> {
       : [];
     const requests = [...resumeRequests(windowSources), ...newRequests];
     // Without a route, a stage goes on where the task was.
-    const stage: Stage | undefined =
+    const stage: RoutedStage | undefined =
       action !== "implement"
         ? undefined
-        : (record?.stage ?? stageOfState(fromStateOf(task.labels)) ?? firstStage(task.labels));
+        : (record?.stage ??
+          routedStageOfState(fromStateOf(task.labels)) ??
+          firstStage(task.labels));
     // Settings may also come from the description, which the agent reads without command lines.
     const description = descriptionCommands(task.body);
     // Problems in the description are reported in every run, until a maintainer fixes them.
@@ -354,7 +356,7 @@ export async function select(services: Services): Promise<void> {
     const start = async (): Promise<void> => {
       if (needsAgent) {
         const t = messages(taskLanguage(settings.language, record?.language));
-        const state = stage ? STAGE_STATE[stage] : route ? "routing" : "planning";
+        const state = stage ? ROUTED_STAGE_STATE[stage] : route ? "routing" : "planning";
         await repo.setState(task.number, task.labels, state);
         context.statusCommentId = await repo.upsertComment(
           task.number,
@@ -429,7 +431,7 @@ interface Picked {
   number: number;
   action: TaskContext["action"];
   needsAgent: boolean;
-  /** What the agent works on: `plan`, `route` or a stage; empty without an agent. */
+  /** Its stage: `plan`, `route` or a routed stage; empty without an agent. */
   stage: string;
   baseSha: string;
   model: string;
@@ -481,10 +483,10 @@ function firstSet<Name extends keyof SettingsLayer>(
 }
 
 /**
- * Whether the routing agent runs instead of a stage, and why: after decisions are answered (or
- * a plan has none), which leaves the task ready; after a `fix` request, or review asking for
+ * Whether the routing agent runs instead of a routed stage, and why: after decisions are answered
+ * (or a plan has none), which leaves the task ready; after a `fix` request, or review asking for
  * changes, which leaves it routing; and on `continue` after the router blocked the task. The
- * fallback is the first stage of the fixed order, for when its result cannot be used.
+ * fallback is the first routed stage of the fixed order, for when its result cannot be used.
  */
 export function routing(
   labels: readonly string[],
@@ -508,7 +510,7 @@ export function routing(
 }
 
 /** Where work starts without a recorded stage: design, or code once a task was done. */
-function firstStage(labels: readonly string[]): Stage {
+function firstStage(labels: readonly string[]): RoutedStage {
   return fromStateOf(labels) === "done" ? "code" : "design";
 }
 

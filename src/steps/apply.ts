@@ -39,7 +39,13 @@ import {
 import type { Runtime } from "../runtime/runtime.ts";
 import type { Services } from "../services.ts";
 import { addRow, parseCosts, refreshCosts, type SpendRow } from "../spend.ts";
-import { nextInRoute, STAGE_STATE, type Stage, stageOfState, stagesFrom } from "../stages.ts";
+import {
+  nextInRoute,
+  ROUTED_STAGE_STATE,
+  type RoutedStage,
+  routedStageOfState,
+  stagesFrom,
+} from "../stages.ts";
 import type { State } from "../state.ts";
 import { decisionsUrl, renderDecisions, renderRun, renderStatus, reportUrl } from "../status.ts";
 import { commandsAfter, type TaskContext } from "../tasks.ts";
@@ -163,12 +169,12 @@ export function jobResults(runtime: Runtime): JobResults {
 }
 
 /**
- * Whether the task goes on to another agent run: it is in a stage or routing, or ready, which
- * the next run routes. A pod kept for the task is released otherwise (decision 12 of the
+ * Whether the task goes on to another agent run: it is in a routed stage or routing, or ready,
+ * which the next run routes. A pod kept for the task is released otherwise (decision 12 of the
  * self-hosted inference plan).
  */
 export function goesOn(state: State | "new"): boolean {
-  return state === "ready" || state === "routing" || stageOfState(state) !== undefined;
+  return state === "ready" || state === "routing" || routedStageOfState(state) !== undefined;
 }
 
 /**
@@ -358,7 +364,7 @@ async function applyStage(task: TaskContext, io: Io): Promise<void> {
     message: string,
     report?: string,
   ): Promise<void> =>
-    finish(io, task, runs >= maxRuns ? "blocked" : STAGE_STATE[stage], {
+    finish(io, task, runs >= maxRuns ? "blocked" : ROUTED_STAGE_STATE[stage], {
       outcome,
       record,
       message: runs >= maxRuns ? `${message} ${t.maxRuns(stage, runs, maxRuns)}` : message,
@@ -531,7 +537,7 @@ async function applyStage(task: TaskContext, io: Io): Promise<void> {
     if (stage === "code") {
       updated.pullRequest = await openPullRequest(io, task, updated, "draft");
     }
-    return finish(io, task, STAGE_STATE[next], {
+    return finish(io, task, ROUTED_STAGE_STATE[next], {
       outcome,
       record: updated,
       message,
@@ -610,7 +616,7 @@ async function applyRoute(task: TaskContext, io: Io): Promise<void> {
       stage: first,
       runs: 0,
     };
-    return finish(io, task, STAGE_STATE[first], { ...view, record });
+    return finish(io, task, ROUTED_STAGE_STATE[first], { ...view, record });
   };
   const fallback = (error: string): Promise<void> => {
     const stages = stagesFrom(task.route?.fallback ?? "design");
@@ -668,7 +674,7 @@ function routeReport(t: Messages, output: RouteOutput): string {
   return lines.join("\n");
 }
 
-const STAGE_NAMES: Record<Stage, string> = {
+const STAGE_NAMES: Record<RoutedStage, string> = {
   web: "Third-party docs",
   design: "Design",
   code: "Code",
@@ -815,7 +821,7 @@ async function acceptWorkflows(task: TaskContext, io: Io): Promise<void> {
  */
 export function defer(
   record: TaskRecord,
-  stage: Stage,
+  stage: RoutedStage,
   workflows: readonly string[],
   staged: ReadonlySet<string>,
 ): TaskRecord | undefined {
@@ -903,7 +909,7 @@ export function afterAccept(
   }
   if (state === "blocked" && record.stage) {
     return {
-      state: STAGE_STATE[record.stage],
+      state: ROUTED_STAGE_STATE[record.stage],
       record: { ...accepted, runs: 0 },
       message: t.acceptResumes(record.stage),
     };

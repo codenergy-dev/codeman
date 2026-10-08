@@ -9,11 +9,11 @@ import {
 } from "./output.ts";
 import { GITHUB } from "./platform/github/conventions.ts";
 import { DEFAULTS } from "./settings.ts";
-import type { Stage } from "./stages.ts";
+import type { RoutedStage } from "./stages.ts";
 
 const limits = outputLimits(DEFAULTS);
 const parsePlanOutput = (text: string) => parsePlan(text, limits);
-const parseStageOutput = (text: string, stage: Stage) =>
+const parseStageOutput = (text: string, stage: RoutedStage) =>
   parseStage(text, stage, limits, GITHUB.workflows);
 
 const decision = (id: number) => ({
@@ -319,7 +319,8 @@ test("a revised plan's decisions start after the settled ones", () => {
 });
 
 const route = (value: Record<string, unknown>) => parseRouteOutput(JSON.stringify(value), limits);
-const left = (...stages: Stage[]) => stages.map((stage) => ({ stage, reason: `No ${stage}.` }));
+const left = (...stages: RoutedStage[]) =>
+  stages.map((stage) => ({ stage, reason: `No ${stage}.` }));
 
 test("a route lists stages in order with briefs, ends with review, and leaves the others out with reasons", () => {
   const parsed = route({
@@ -358,7 +359,7 @@ test("a route rejects one without review, out of order, listed twice, missing or
     [{ skipped: left("web", "design", "code", "test", "review") }, /route must be a list/],
     [
       { route: [review, { stage: "code", brief: "c" }], skipped: left("web", "design", "test") },
-      /order of stages/,
+      /order of the routed stages/,
     ],
     [
       {

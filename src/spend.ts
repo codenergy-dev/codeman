@@ -7,7 +7,7 @@ export interface SpendRow {
   runUrl: string;
   /** When the run ended, as an ISO timestamp. */
   at: string;
-  stage: Stage | "plan" | "route";
+  stage: Stage;
   model: string;
   /** Where the run's model was served; rows recorded before it was kept have none. */
   provider?: ProviderName | undefined;

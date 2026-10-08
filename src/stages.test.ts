@@ -1,27 +1,36 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  isStage,
+  isRoutedStage,
   nextInRoute,
   nextStage,
-  STAGE_STATE,
+  ROUTED_STAGE_STATE,
+  ROUTED_STAGES,
+  routedStageOfState,
   STAGES,
-  stageOfState,
   stagesFrom,
 } from "./stages.ts";
 import { chooseTask } from "./tasks.ts";
 
-test("stages run in order, each with its own state", () => {
-  assert.deepEqual(STAGES, ["web", "design", "code", "test", "review"]);
+test("every agent run is a stage; the routed ones run in order, each with its own state", () => {
+  assert.deepEqual(STAGES, ["plan", "route", "web", "design", "code", "test", "review"]);
+  assert.deepEqual(ROUTED_STAGES, ["web", "design", "code", "test", "review"]);
   assert.equal(nextStage("design"), "code");
   assert.equal(nextStage("review"), undefined);
-  for (const stage of STAGES) assert.equal(stageOfState(STAGE_STATE[stage]), stage);
-  assert.equal(stageOfState("in-progress"), "code", "tasks from before stages go on coding");
-  assert.equal(stageOfState("ready"), undefined);
-  assert.ok(isStage("test") && !isStage("plan"));
+  for (const stage of ROUTED_STAGES) {
+    assert.equal(routedStageOfState(ROUTED_STAGE_STATE[stage]), stage);
+  }
+  assert.equal(
+    routedStageOfState("in-progress"),
+    "code",
+    "tasks from before the routed stages go on coding",
+  );
+  assert.equal(routedStageOfState("ready"), undefined);
+  assert.equal(routedStageOfState("planning"), undefined);
+  assert.ok(isRoutedStage("test") && !isRoutedStage("plan") && !isRoutedStage("route"));
 });
 
-test("a task in any stage goes on", () => {
+test("a task in any routed stage goes on", () => {
   for (const state of ["designing", "coding", "testing", "reviewing"] as const) {
     assert.deepEqual(chooseTask([{ number: 1, state }]), { number: 1, action: "implement" });
   }

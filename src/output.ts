@@ -1,7 +1,7 @@
 import type { WorkflowConventions } from "./platform/conventions.ts";
 import type { Decision } from "./record.ts";
 import { isLanguageTag, type Settings } from "./settings.ts";
-import { STAGES, type Stage } from "./stages.ts";
+import { ROUTED_STAGES, type RoutedStage } from "./stages.ts";
 import { truncate } from "./text.ts";
 
 /** What the agent reports after planning, in `.codeman/output.json`. */
@@ -137,7 +137,7 @@ export type StageStatus =
  */
 export function outputProblems(
   text: string | undefined,
-  stage: Stage | "route" | undefined,
+  stage: RoutedStage | "route" | undefined,
   limits: OutputLimits,
   workflows: WorkflowConventions,
   firstDecision = 1,
@@ -153,8 +153,8 @@ export function outputProblems(
   return parsed.value.cuts.map(cutText);
 }
 
-/** What each stage may report. Review never leaves work half done; it judges. */
-export const STAGE_STATUSES: Readonly<Record<Stage, readonly StageStatus[]>> = {
+/** What each routed stage may report. Review never leaves work half done; it judges. */
+export const STAGE_STATUSES: Readonly<Record<RoutedStage, readonly StageStatus[]>> = {
   web: ["done", "skipped", "partial", "blocked"],
   design: ["done", "skipped", "partial", "blocked", "decisions"],
   code: ["done", "skipped", "partial", "blocked", "awaiting-workflow"],
@@ -171,7 +171,7 @@ const NEEDS_REASON: ReadonlySet<StageStatus> = new Set([
 ]);
 export function parseStageOutput(
   text: string,
-  stage: Stage,
+  stage: RoutedStage,
   limits: OutputLimits,
   workflows: WorkflowConventions,
 ): Parsed<StageOutput> {
@@ -233,17 +233,17 @@ export function parseStageOutput(
 /** What the routing agent reports, in `.codeman/output.json`. */
 export interface RouteOutput {
   summary: string;
-  /** The stages to run, in the order of stages, each with a brief; review always ends it. */
-  route: { stage: Stage; brief: string }[];
-  /** Every other stage, with why it is left out. */
-  skipped: { stage: Stage; reason: string }[];
+  /** The stages to run, in the routed stages' order, each with a brief; review always ends it. */
+  route: { stage: RoutedStage; brief: string }[];
+  /** Every other routed stage, with why it is left out. */
+  skipped: { stage: RoutedStage; reason: string }[];
   cuts: Cut[];
 }
 
 /**
- * Validates the routing agent's output strictly. Every stage is either in the route or left out
- * with a reason; the route keeps the order of stages; and it always ends with review, which has
- * the last word on the task. A route of review alone means no other stage has work.
+ * Validates the routing agent's output strictly. Every routed stage is either in the route or left
+ * out with a reason; the route keeps the routed stages' order; and it always ends with review,
+ * which has the last word on the task. A route of review alone means no other stage has work.
  */
 export function parseRouteOutput(text: string, limits: OutputLimits): Parsed<RouteOutput> {
   let data: unknown;
@@ -257,44 +257,47 @@ export function parseRouteOutput(text: string, limits: OutputLimits): Parsed<Rou
   const summary = string(data.summary, "summary", limits.summary, cuts);
   if (!summary.ok) return summary;
 
-  const seen = new Set<Stage>();
+  const seen = new Set<RoutedStage>();
   const steps = <T extends string>(
     value: unknown,
     name: "route" | "skipped",
     field: T,
-  ): Parsed<({ stage: Stage } & Record<T, string>)[]> => {
+  ): Parsed<({ stage: RoutedStage } & Record<T, string>)[]> => {
     if (!Array.isArray(value)) return { ok: false, error: `${name} must be a list.` };
-    const list: ({ stage: Stage } & Record<T, string>)[] = [];
+    const list: ({ stage: RoutedStage } & Record<T, string>)[] = [];
     for (const [index, item] of value.entries()) {
       const where = `${name}[${index}]`;
-      if (!isObject(item) || !(STAGES as readonly unknown[]).includes(item.stage)) {
-        return { ok: false, error: `${where}.stage must be one of ${STAGES.join(", ")}.` };
+      if (!isObject(item) || !(ROUTED_STAGES as readonly unknown[]).includes(item.stage)) {
+        return { ok: false, error: `${where}.stage must be one of ${ROUTED_STAGES.join(", ")}.` };
       }
-      const stage = item.stage as Stage;
+      const stage = item.stage as RoutedStage;
       if (seen.has(stage)) return { ok: false, error: `${where}: ${stage} is listed twice.` };
       seen.add(stage);
       const text = string(item[field], `${where}.${field}`, limits.summary, cuts);
       if (!text.ok) return text;
-      list.push({ stage, [field]: text.value } as { stage: Stage } & Record<T, string>);
+      list.push({ stage, [field]: text.value } as { stage: RoutedStage } & Record<T, string>);
     }
     return { ok: true, value: list };
   };
   const route = steps(data.route, "route", "brief");
   if (!route.ok) return route;
-  const order = route.value.map((step) => STAGES.indexOf(step.stage));
+  const order = route.value.map((step) => ROUTED_STAGES.indexOf(step.stage));
   if (order.some((position, index) => index > 0 && position < (order[index - 1] ?? 0))) {
-    return { ok: false, error: `route must keep the order of stages: ${STAGES.join(", ")}.` };
+    return {
+      ok: false,
+      error: `route must keep the order of the routed stages: ${ROUTED_STAGES.join(", ")}.`,
+    };
   }
   if (route.value.at(-1)?.stage !== "review") {
     return { ok: false, error: "route must end with review, which always runs." };
   }
   const skipped = steps(data.skipped ?? [], "skipped", "reason");
   if (!skipped.ok) return skipped;
-  const missing = STAGES.filter((stage) => !seen.has(stage));
+  const missing = ROUTED_STAGES.filter((stage) => !seen.has(stage));
   if (missing.length > 0) {
     return {
       ok: false,
-      error: `Every stage must be in route or in skipped; missing: ${missing.join(", ")}.`,
+      error: `Every routed stage must be in route or in skipped; missing: ${missing.join(", ")}.`,
     };
   }
   return {

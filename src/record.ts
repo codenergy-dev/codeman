@@ -3,7 +3,7 @@ import type { Command } from "./commands.ts";
 import type { PodSpend } from "./inference/spend.ts";
 import type { CommandError } from "./problems.ts";
 import type { Spending } from "./spend.ts";
-import type { Stage } from "./stages.ts";
+import type { RoutedStage } from "./stages.ts";
 import type { WebPage } from "./webdocs.ts";
 
 export interface Option {
@@ -26,10 +26,10 @@ export interface Handled {
 
 /** The stages the routing agent chose to run next, and the ones it left out. */
 export interface Route {
-  /** The stages to run, in the order of stages, each with the router's brief for its agent. */
-  stages: { stage: Stage; brief: string }[];
+  /** The stages to run, in the routed stages' order, each with the router's brief for its agent. */
+  stages: { stage: RoutedStage; brief: string }[];
   /** The stages left out, each with the router's reason. */
-  skipped: { stage: Stage; reason: string }[];
+  skipped: { stage: RoutedStage; reason: string }[];
   /**
    * The requests the route answers: maintainer comments after `after` and up to `upTo`, and
    * reviews likewise. The router handled them, and its stages read them again.
@@ -70,7 +70,7 @@ export interface TaskRecord {
   /** Workflows (paths in the platform's workflow directory) whose runs the agent waits for. */
   awaiting?: string[] | undefined;
   /** The stage that works on the task next, or is working on it. */
-  stage?: Stage | undefined;
+  stage?: RoutedStage | undefined;
   /**
    * The routing agent's choice, while its stages run; review always ends it. Without one, as in
    * records from before routing, stages follow their fixed order. An empty route is from before
@@ -78,11 +78,11 @@ export interface TaskRecord {
    */
   route?: Route | undefined;
   /** What the last stage left for the next one: its report, or why it had nothing to do. */
-  handoff?: { stage: Stage; text: string } | undefined;
+  handoff?: { stage: RoutedStage; text: string } | undefined;
   /** Times review sent the work back to code in a row. */
   reviewRounds?: number | undefined;
   /** Each stage's last summary, for the pull request's description. */
-  reports?: Partial<Record<Stage, string>> | undefined;
+  reports?: Partial<Record<RoutedStage, string>> | undefined;
   /** The suggested squash commit message, from the code stage. */
   commitMessage?: string | undefined;
   /** What each agent run spent, for the status comment's table. */
@@ -97,7 +97,7 @@ export interface TaskRecord {
    * A stage that needs the runs of workflows still staged: the task goes on to review, and this
    * stage goes on with their results once they are accepted.
    */
-  deferred?: { stage: Stage; workflows: string[] } | undefined;
+  deferred?: { stage: RoutedStage; workflows: string[] } | undefined;
   /** Review passed, and the task waits for its staged workflows to be accepted. */
   reviewed?: boolean | undefined;
   /**

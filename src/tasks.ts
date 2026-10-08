@@ -16,7 +16,7 @@ import {
   type TaskRecord,
 } from "./record.ts";
 import type { PartialSettings, Settings } from "./settings.ts";
-import { type Stage, stageOfState } from "./stages.ts";
+import { type RoutedStage, routedStageOfState } from "./stages.ts";
 import type { State } from "./state.ts";
 import { isRunComment, runCommentText } from "./status.ts";
 
@@ -314,7 +314,8 @@ export function chooseTask(
     sorted.find(
       (task) =>
         (task.pending === "resume" && task.planned) ||
-        ((stageOfState(task.state) !== undefined || task.state === "routing") && !task.pending) ||
+        ((routedStageOfState(task.state) !== undefined || task.state === "routing") &&
+          !task.pending) ||
         (task.state === "awaiting-workflow" && task.workflowsDone && !task.pending),
     ) ?? sorted.find((task) => task.state === "ready" && !task.pending);
   if (implement) return { number: implement.number, action: "implement" };
@@ -363,12 +364,12 @@ export interface TaskContext {
   /** Problems with the new commands, for the run comment. */
   problems: CommandError[];
   /** For `implement`: the stage this run works on. */
-  stage?: Stage | undefined;
+  stage?: RoutedStage | undefined;
   /**
    * For `route`: what made the router run, and the first stage of the fixed order that runs
    * when its result cannot be used.
    */
-  route?: { trigger: RouteTrigger; fallback: Stage } | undefined;
+  route?: { trigger: RouteTrigger; fallback: RoutedStage } | undefined;
   /** For `accept`: the comment that accepted the staged workflows. */
   accept?: TaskComment | undefined;
   /** Finished runs of the workflows the agent waited for, whose results it gets. */

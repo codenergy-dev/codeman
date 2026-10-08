@@ -1,7 +1,7 @@
 import type { ProviderName } from "../inference/providers.ts";
 import type { DropReason } from "../policy.ts";
 import type { CommandProblem } from "../problems.ts";
-import type { Stage } from "../stages.ts";
+import type { RoutedStage, Stage } from "../stages.ts";
 import type { State } from "../state.ts";
 
 /** How a run ended. */
@@ -40,11 +40,11 @@ export interface Messages {
   of(part: string, whole: string): string;
 
   // Stages and runs.
-  stage(stage: Stage | "plan" | "route"): string;
+  stage(stage: Stage): string;
   /** What a run worked on and how it ended, such as "Design stage: skipped". */
   runTitle(run: {
     action: "plan" | "route" | "implement" | "record" | "accept";
-    stage?: Stage | undefined;
+    stage?: RoutedStage | undefined;
     revised: boolean;
     outcome?: RunOutcome | undefined;
   }): string;
@@ -132,7 +132,7 @@ export interface Messages {
 
   // Start of a run.
   startPlan(revising: boolean): string;
-  startStage(stage: Stage): string;
+  startStage(stage: RoutedStage): string;
   startRoute: string;
   startWithWorkflowResults: string;
   startWithChanges: string;
@@ -164,16 +164,21 @@ export interface Messages {
   droppedChange(path: string, reason: DropReason): string;
   outOfTime: string;
   partial: string;
-  maxRuns(stage: Stage, runs: number, max: number): string;
-  stageNeedsMaintainer(stage: Stage): string;
+  maxRuns(stage: RoutedStage, runs: number, max: number): string;
+  stageNeedsMaintainer(stage: RoutedStage): string;
   agentReports(reason: string): string;
   missingWorkflows(paths: string): string;
-  awaitingWorkflows(stage: Stage, paths: string, reason: string): string;
+  awaitingWorkflows(stage: RoutedStage, paths: string, reason: string): string;
   /** A stage needs the runs of workflows that are still staged, so the task goes on meanwhile. */
-  deferredWorkflows(stage: Stage, paths: string, reason: string, next: Stage | undefined): string;
+  deferredWorkflows(
+    stage: RoutedStage,
+    paths: string,
+    reason: string,
+    next: RoutedStage | undefined,
+  ): string;
   /** Review passed, and the staged workflows wait to be accepted. */
   acceptAfterReview(paths: string): string;
-  stageDecisions(stage: Stage, count: number): string;
+  stageDecisions(stage: RoutedStage, count: number): string;
   reviewRounds(rounds: number, max: number): string;
   skipped(reason: string): string;
   workDone: string;
@@ -189,7 +194,7 @@ export interface Messages {
   // Accepting workflows.
   accepted(by: string, paths: string): string;
   acceptWaits: string;
-  acceptResumes(stage: Stage): string;
+  acceptResumes(stage: RoutedStage): string;
   nothingStaged: string;
   stagedChanged: string;
   stagedChangedDetail(by: string, paths: string): string;

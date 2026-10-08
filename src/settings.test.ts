@@ -5,8 +5,6 @@ import { PROVIDERS } from "./inference/providers.ts";
 import {
   DEFAULTS,
   type PartialSettings,
-  PROFILE_STAGES,
-  type ProfileStage,
   parseSetting,
   parseSettings,
   resolveRun,
@@ -16,6 +14,7 @@ import {
   settingSources,
   TASK_SETTINGS,
 } from "./settings.ts";
+import { STAGES, type Stage } from "./stages.ts";
 
 test("reads flat settings, with comments and quotes", () => {
   const parsed = parseSettings(
@@ -403,7 +402,10 @@ test("rejects malformed profiles, naming the line", () => {
     ["profiles:\n  - name: a\n    provider: spot", "line 3: `provider` must be one of"],
     ["profiles:\n  - name: a\n  - name: a", "line 3: two profiles are named `a`."],
     ["profiles:\n  - name: a b", "line 2: a profile's `name` must be"],
-    ["profiles:\n  - name: a\n    when:\n      stages: [deploy]", "line 4: `stages` must list"],
+    [
+      "profiles:\n  - name: a\n    when:\n      stages: [deploy]",
+      "line 4: `stages` must list some of the stages `plan`, `route`, `web`",
+    ],
     ["profiles:\n  - name: a\n    when:\n      stages: []", "line 4: `stages` must list"],
     ["profiles:\n  - name: a\n    when:\n      parallel-tasks: 0", "line 4: `parallel-tasks` must"],
     ["profiles:\n  - name: a\n    when:\n      labels: [x]", "line 4: unknown condition `labels`"],
@@ -498,13 +500,13 @@ function profiled(extra: PartialSettings = {}) {
 
 test("a run uses the first profile whose conditions hold, else the top-level settings", () => {
   const layers = profiled();
-  const run = (stage: ProfileStage, tasks = 1) => {
+  const run = (stage: Stage, tasks = 1) => {
     const resolved = resolveRun(layers, { stage, tasks });
     assert.ok(resolved.ok, resolved.ok ? "" : resolved.error);
     return resolved.ok ? resolved.value : undefined;
   };
   assert.deepEqual(
-    PROFILE_STAGES.map((stage) => [stage, run(stage)?.profile, run(stage)?.settings.model]),
+    STAGES.map((stage) => [stage, run(stage)?.profile, run(stage)?.settings.model]),
     [
       ["plan", "planner", "openai/gpt-5"],
       ["route", "planner", "openai/gpt-5"],
@@ -556,7 +558,7 @@ test("a profile on another provider leaves out the top level's provider settings
   );
   assert.ok(file.ok, file.ok ? "" : file.error);
   const layers = [{}, {}, file.ok ? file.value : {}];
-  const settings = (stage: ProfileStage) => {
+  const settings = (stage: Stage) => {
     const resolved = resolveRun(layers, { stage, tasks: 1 });
     assert.ok(resolved.ok, resolved.ok ? "" : resolved.error);
     return resolved.ok ? resolved.value.settings : undefined;
@@ -605,7 +607,7 @@ test("a layer on another provider leaves out the provider settings it inherits",
 
 test("a task's model applies to the runs on the top level's provider, and must fit it", () => {
   const layers = profiled({ model: "deepseek/deepseek-v4.1-flash", "task-budget": 5 });
-  const run = (stage: ProfileStage) => {
+  const run = (stage: Stage) => {
     const resolved = resolveRun(layers, { stage, tasks: 1 });
     assert.ok(resolved.ok, resolved.ok ? "" : resolved.error);
     return resolved.ok ? [resolved.value.profile, resolved.value.settings.model] : [];
@@ -884,7 +886,7 @@ describe("provider settings across layers", () => {
       "    provider: runpod-pod",
       "    model: qwen2.5-coder:32b",
     ]);
-    const run = (stage: ProfileStage) => {
+    const run = (stage: Stage) => {
       const resolved = resolveRun([{}, {}, file], { stage, tasks: 1 });
       return serving(resolved.ok ? resolved.value.settings : undefined);
     };

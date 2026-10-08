@@ -11,7 +11,7 @@ import type { Conventions } from "./platform/conventions.ts";
 import { defaultIgnore } from "./policy.ts";
 import { nextDecisionId } from "./record.ts";
 import { RESULTS_DIR } from "./results.ts";
-import { STAGES, type Stage } from "./stages.ts";
+import { ROUTED_STAGES, type RoutedStage } from "./stages.ts";
 import type { RouteTrigger, TaskContext } from "./tasks.ts";
 
 export const OUTPUT_DIR = ".codeman";
@@ -84,7 +84,7 @@ function planLanguage(task: TaskContext): string {
 }
 
 /** The limits of `output.json`, as the agent is told them. */
-function limitsText(limits: OutputLimits, stage?: Stage): string {
+function limitsText(limits: OutputLimits, stage?: RoutedStage): string {
   const texts =
     stage === undefined
       ? `\`summary\` up to ${limits.summary}`
@@ -179,7 +179,7 @@ ${revision}`;
 }
 
 /** What each stage does, as the routing agent is told. */
-const STAGE_ROLES: Record<Stage, string> = {
+const STAGE_ROLES: Record<RoutedStage, string> = {
   web: "the documentation of the third-party services, APIs and tools the task relies on, recorded in `docs/web/` from their sources, when pages are missing or a maintainer asked to refresh them.",
   design:
     "flowcharts in Mermaid and screen drafts in plain HTML, with their images, when the task has a flow or a screen worth drawing. It may ask the maintainers to choose between designs.",
@@ -224,7 +224,7 @@ ${untrustedRule(conventions)}
 
 ## The stages
 
-${STAGES.map((stage) => `- **${stage}**: ${STAGE_ROLES[stage]}`).join("\n")}
+${ROUTED_STAGES.map((stage) => `- **${stage}**: ${STAGE_ROLES[stage]}`).join("\n")}
 
 ## Why you run
 
@@ -262,7 +262,7 @@ ${historySection(task, quote)}${handoff}${requests}`;
 }
 
 /** What each stage's agent does, after deciding whether its stage has work. */
-const STAGE_WORK: Record<Stage, (task: TaskContext, conventions: Conventions) => string> = {
+const STAGE_WORK: Record<RoutedStage, (task: TaskContext, conventions: Conventions) => string> = {
   web: () => `Your stage is **web**: record in \`docs/web/\` the documentation of the third-party services, APIs and tools the task relies on, following the rules for third-party documentation you received. You change nothing else, except the plan's progress note: every other change is discarded.
 
 1. Find the third parties the plan relies on. Read the tools in \`docs/web/tools/\` and the pages already in \`docs/web/\`. If every page the task needs is there, and no maintainer asked for a refresh (under Requests, or in the brief), report \`skipped\` and say why.
@@ -310,7 +310,7 @@ const STAGE_WORK: Record<Stage, (task: TaskContext, conventions: Conventions) =>
 
 /** The output file's shape, with the statuses this stage may report. */
 function outputShape(
-  stage: Stage,
+  stage: RoutedStage,
   limits: OutputLimits,
   workflows: Conventions["workflows"],
 ): string {

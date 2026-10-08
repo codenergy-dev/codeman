@@ -48,7 +48,7 @@ export interface LedgerSource {
 /** What `select` knows of a run when it picks its task. */
 export interface PickedRun {
   action: string;
-  /** What the agent works on: `plan`, `route` or a stage; empty without an agent. */
+  /** Its stage: `plan`, `route` or a routed stage; empty without an agent. */
   stage: string;
   /** Whether the task runs an agent, and so has a run's document. */
   agent: boolean;

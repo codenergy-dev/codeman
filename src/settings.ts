@@ -13,7 +13,7 @@ import {
   withProviderDefaults,
 } from "./inference/providers.ts";
 import type { Parsed } from "./output.ts";
-import { STAGES } from "./stages.ts";
+import { isStage, STAGES, type Stage } from "./stages.ts";
 import { parseYaml, type YamlEntry, type YamlNode } from "./yaml.ts";
 
 export const SETTINGS_FILE = ".codeman/settings.yml";
@@ -290,10 +290,6 @@ export function renamedSetting(name: string, value?: string): string | undefined
   }
 }
 
-/** What a profile's `stages` condition names: planning, routing, and each stage. */
-export const PROFILE_STAGES = ["plan", "route", ...STAGES] as const;
-export type ProfileStage = (typeof PROFILE_STAGES)[number];
-
 /**
  * A rule that picks a provider, a model and that provider's settings for some runs: the first
  * profile whose conditions all hold applies.
@@ -302,7 +298,8 @@ export interface Profile {
   name: string;
   /** Conditions that must all hold; a profile without any always applies. */
   when: {
-    stages?: ProfileStage[] | undefined;
+    /** The stages it applies to, any of `STAGES`. */
+    stages?: Stage[] | undefined;
     /** The run works on at least this many tasks at once. */
     "parallel-tasks"?: number | undefined;
   };
@@ -431,15 +428,15 @@ function conditions(entry: YamlEntry): Read<Profile["when"]> {
     if (key === "stages") {
       const names = condition.kind === "list" ? condition.items : [];
       const stages = names.flatMap((item) => (item.kind === "scalar" ? [item.text] : []));
-      const valid = stages.length === names.length && stages.every(isProfileStage);
+      const valid = stages.length === names.length && stages.every(isStage);
       if (names.length === 0 || !valid) {
         return {
           ok: false,
           line,
-          error: `\`stages\` must list some of ${PROFILE_STAGES.map((stage) => `\`${stage}\``).join(", ")}, such as \`[plan, route]\`.`,
+          error: `\`stages\` must list some of the stages ${STAGES.map((stage) => `\`${stage}\``).join(", ")}, such as \`[plan, route]\`.`,
         };
       }
-      when.stages = stages as ProfileStage[];
+      when.stages = stages as Stage[];
     } else if (key === "parallel-tasks") {
       const count =
         condition.kind === "scalar" && condition.text !== "" ? Number(condition.text) : Number.NaN;
@@ -462,13 +459,9 @@ function conditions(entry: YamlEntry): Read<Profile["when"]> {
   return { ok: true, value: when };
 }
 
-function isProfileStage(value: string): value is ProfileStage {
-  return (PROFILE_STAGES as readonly string[]).includes(value);
-}
-
 /** What a run's profile depends on: its stage, and how many tasks it works on at once. */
 export interface RunConditions {
-  stage: ProfileStage;
+  stage: Stage;
   tasks: number;
 }
 

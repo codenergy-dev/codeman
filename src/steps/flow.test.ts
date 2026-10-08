@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { after, test } from "node:test";
 import type { Change, Manifest } from "../collect.ts";
 import { decodeStatus, encodeStatus, isStatusComment } from "../record.ts";
-import { STAGES, type Stage } from "../stages.ts";
+import { ROUTED_STAGES, type RoutedStage } from "../stages.ts";
 import { FakePlatform, fakeServices } from "../testing/fake-platform.ts";
 import { FakeRuntime } from "../testing/fake-runtime.ts";
 import { apply } from "./apply.ts";
@@ -74,14 +74,14 @@ async function applyStep(platform: FakePlatform, agentRan = true): Promise<FakeR
 }
 
 /** The routing agent's output: these stages run, and the others are left out. */
-function routeResult(stages: Stage[]): void {
+function routeResult(stages: RoutedStage[]): void {
   agentResult(
     {},
     {
       status: "done",
       summary: `Runs ${stages.join(", ")}.`,
       route: stages.map((stage) => ({ stage, brief: `Brief for ${stage}.` })),
-      skipped: STAGES.filter((stage) => !stages.includes(stage)).map((stage) => ({
+      skipped: ROUTED_STAGES.filter((stage) => !stages.includes(stage)).map((stage) => ({
         stage,
         reason: `No ${stage} needed.`,
       })),
@@ -90,7 +90,7 @@ function routeResult(stages: Stage[]): void {
 }
 
 /** Runs the routing agent, which chooses `stages`. */
-async function routeStep(platform: FakePlatform, stages: Stage[]): Promise<FakeRuntime> {
+async function routeStep(platform: FakePlatform, stages: RoutedStage[]): Promise<FakeRuntime> {
   const runtime = await selectStep(platform);
   assert.deepEqual([runtime.outputs.action, runtime.outputs.stage], ["route", "route"]);
   routeResult(stages);

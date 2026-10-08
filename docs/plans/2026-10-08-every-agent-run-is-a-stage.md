@@ -1,7 +1,7 @@
 ---
-status: pending
+status: in progress
 created_at: 2026-10-08T17:38:51-03:00
-updated_at: 2026-10-08T17:38:51-03:00
+updated_at: 2026-10-08T17:42:40-03:00
 commit: 3d6a0f9
 ---
 
@@ -38,7 +38,9 @@ The docs, the messages, the prompts and the code call every agent run a stage: s
 ## Steps
 
 1. Write this plan. Done when it is committed with status `pending`, then set `in progress`.
+   - **Done on 2026-10-08**: committed as `2b039ee` with status `pending`, then set `in progress`.
 2. Code: `src/stages.ts` with the names of choice 3; `src/settings.ts` uses `STAGES` and `Stage` for the condition; the other modules and the tests follow. The router's output errors (`src/output.ts`) name the routed stages. Done when `npm run typecheck` and `npm test` pass, with no test's expected stored or emitted value changed.
+   - **Done on 2026-10-08**: `src/stages.ts` has `STAGES`, `Stage` and `isStage` for the seven, and `ROUTED_STAGES`, `RoutedStage`, `ROUTED_STAGE_STATE`, `routedStageOfState` and `isRoutedStage` for the five. `src/settings.ts` drops `PROFILE_STAGES`, `ProfileStage` and `isProfileStage` for them, and its error reads "`stages` must list some of the stages `plan`, `route`, ...". The records' and outputs' types (`src/record.ts`, `src/output.ts`, `src/tasks.ts`, the steps) take `RoutedStage`; `src/spend.ts` and `src/i18n/messages.ts` take `Stage` for `Stage | "plan" | "route"`. The router's output errors say "the routed stages' order" and "Every routed stage must be in route or in skipped". `StageStatus` and `STAGE_STATUSES` keep their names: a status is reported by a routed stage only, and their types say so. `PickedRun.stage` and `Picked.stage` stay `string`, as the ledger stores them. The tests changed only these names and the two error texts; no stored or emitted value did.
 3. Messages and prompts: `src/i18n/en.ts`, `src/i18n/pt-BR.ts` and `src/prompt.ts` per choices 4 and 5, with their tests. Done when no message or prompt sets planning or routing apart from the stages, and the tests pass.
 4. Docs: the stages page per choice 2; every page that sets planning or routing apart from the stages, or uses "stages" for the five where the distinction matters (`git grep -n -i stage` over `docs/` except `docs/plans/` and `docs/web/`, `README.md`, `AGENTS.md`, `templates/` and `action.yml`); `docs/README.md`'s lines. Done when that grep shows no such use and the docs link checker passes.
 5. Rebuild `dist/` and run `npm run check`. Done when it passes, the working tree is clean, and whether `dist/gateway.js` changed is recorded.
