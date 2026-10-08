@@ -10,6 +10,18 @@ After planning, a task goes through up to five stages, one run and one agent eac
 | Test | Integration and end-to-end tests where they apply, more unit tests where coverage is thin, and every check the repository has. What can only be tested outside the task branch (a deploy, a release) goes in a "Manual tests" section of its report, which the pull request's description shows; it is no reason to block. |
 | Review | A critical review against the plan and the decisions, and a merge of the default branch in its sandbox to find conflicts and integration problems early. It changes nothing; its report goes on the pull request. It is not an approval to merge. |
 
+## Agent runs
+
+Planning and routing are not stages, but each runs an agent, in a run of its own, like a stage. A [profile](../settings/profiles.md)'s `stages` condition takes any of them, by these names:
+
+| Agent run | Name in a profile's `stages` | A stage? |
+| --- | --- | --- |
+| [Planning](lifecycle.md#planning) | `plan` | No: it comes before the stages |
+| [Routing](#routing) | `route` | No: it chooses the stages |
+| Web, design, code, test, review | `web`, `design`, `code`, `test`, `review` | Yes |
+
+Recording the maintainers' answers and accepting workflows run no agent, so no profile applies to them.
+
 ## Routing
 
 The routing agent runs, in a run of its own, whenever the task needs to know what comes next: after the decisions are answered (or the plan has none), after a `fix` request, and after review asks for changes. It reads the plan, the decisions, the requests, the earlier run comments and the task branch's changes, and chooses:

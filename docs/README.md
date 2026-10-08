@@ -22,7 +22,7 @@ One subject per file, grouped by what the reader wants to do. The [root README](
 ## How it works
 
 - [Task lifecycle](tasks/lifecycle.md): a task's states and labels, and planning.
-- [Stages](tasks/stages.md): the stages, routing, running a stage, and feedback.
+- [Stages](tasks/stages.md): the stages, the agent runs a profile can target, routing, running a stage, and feedback.
 - [Runs and jobs](runs/runs-and-jobs.md): what starts a run, parallel tasks, and each job with its credentials.
 - [The agent](runs/agent.md): its sandbox, its working rules, and its output and limits.
 - [What the agent may change](runs/changes.md): the change policy, on-demand workflows, and third-party documentation.

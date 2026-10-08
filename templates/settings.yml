@@ -34,8 +34,9 @@ provider: openrouter
 # whose conditions all hold applies; the top-level settings apply when none does. A profile
 # inherits the top-level settings and sets only `provider`, `model` and the provider's settings;
 # one on another provider than the top level's inherits none of that one's settings, and must
-# set its own `model`. Conditions: `stages` (plan, route, web, design, code, test, review), and
-# `parallel-tasks` (at least that many of the run's tasks run an agent).
+# set its own `model`. Conditions: `stages` (plan and route, for planning and routing, which are
+# not stages but run an agent; web, design, code, test, review), and `parallel-tasks` (at least
+# that many of the run's tasks run an agent).
 # Each provider a run uses needs its secret; with the organization's monthly budget, so does the
 # Runpod account of a Runpod provider named here, whose billing counts in the organization's
 # month.
