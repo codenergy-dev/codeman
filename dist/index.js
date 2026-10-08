@@ -21989,7 +21989,7 @@ var PodInference = class {
   /** Creates the pod of a creation lease, named by its nonce, with its settings in its environment. */
   async #launch(record, log) {
     const { model, gpuType, image, engine } = this.#settings;
-    if (!image) throw new Error("No pod image is pinned; see docs/installation.md.");
+    if (!image) throw new Error("No pod image is pinned; see docs/installation/runpod.md#pods.");
     const listed = await this.#host.price(gpuType);
     const owner = this.#options.repository.owner.toLowerCase();
     const now = this.#now();
@@ -33174,7 +33174,7 @@ var BACKEND_SETTINGS = [
   { input: "workload-identity-provider", variable: "CODEMAN_WORKLOAD_IDENTITY_PROVIDER" },
   { input: "service-account", variable: "CODEMAN_SERVICE_ACCOUNT" }
 ];
-var SETUP = "docs/installation.md#4-set-up-the-backend";
+var SETUP = "docs/installation/setup.md#4-set-up-the-backend";
 function backendStore(runtime2, fetchFn) {
   const values = BACKEND_SETTINGS.map(({ input }) => runtime2.input(input).trim());
   const missing = BACKEND_SETTINGS.filter((_, index) => values[index] === "");

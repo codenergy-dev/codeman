@@ -1,7 +1,7 @@
 import type { RepositoryRef } from "../platform/types.ts";
 
 /**
- * Where Codeman keeps its documents in the store (docs/architecture.md#backend). Everything
+ * Where Codeman keeps its documents in the store (docs/backend/data-layout.md). Everything
  * belongs to an organization, the repository's owner (a user account is its own organization),
  * so one Firebase project serves several organizations, and a repository's documents carry it
  * in a field. Owners and repositories are lowercase, as GitHub compares them.

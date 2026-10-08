@@ -14,7 +14,7 @@ export const BACKEND_SETTINGS = [
   { input: "service-account", variable: "CODEMAN_SERVICE_ACCOUNT" },
 ] as const;
 
-const SETUP = "docs/installation.md#4-set-up-the-backend";
+const SETUP = "docs/installation/setup.md#4-set-up-the-backend";
 
 /**
  * Codeman's store: Firestore in the Firebase project the settings name, reached as their

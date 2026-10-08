@@ -3,7 +3,7 @@ import type { BilledHours } from "../budget.ts";
 /**
  * A GPU cloud that serves Codeman's models: pods (a container on a GPU, billed while it exists),
  * Serverless endpoints (workers started on demand, billed while they run), or both. Runpod is the
- * first adapter; see docs/architecture.md#self-hosted-inference.
+ * first adapter; see docs/inference/self-hosted.md.
  */
 export interface GpuProvider {
   readonly name: string;
@@ -80,7 +80,7 @@ export interface ServerlessHost {
   queueUrl(endpoint: string): string;
 }
 
-/** Codeman's own limits on a Serverless endpoint; see docs/installation.md. */
+/** Codeman's own limits on a Serverless endpoint; see docs/installation/runpod.md#serverless. */
 export const MAX_IDLE_TIMEOUT_SECONDS = 300;
 
 /**

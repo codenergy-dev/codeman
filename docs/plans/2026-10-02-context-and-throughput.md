@@ -26,7 +26,7 @@ What OpenRouter's analytics API offers (`POST /api/v1/analytics/query`, manageme
 - `tokens_prompt` per request, by grouping on the `generation_id` dimension (also limited to 31 days) and ordering by `tokens_prompt`, descending, with `limit: 1`. There is no `max` aggregate.
 - `request_count`, to weigh a run's mean when adding up a task.
 
-Keys live at most 48 hours and `close-key` reads them right after the run, so the 31-day limit does not matter. `close-key` already reads the key's tokens from the same API ([architecture](../architecture.md#budget)), with retries while analytics catches up; the new figures follow the same path: `close-key` outputs, `apply` inputs, a spend row.
+Keys live at most 48 hours and `close-key` reads them right after the run, so the 31-day limit does not matter. `close-key` already reads the key's tokens from the same API ([architecture](../inference/openrouter.md)), with retries while analytics catches up; the new figures follow the same path: `close-key` outputs, `apply` inputs, a spend row.
 
 `tokens_prompt` includes cached prompt tokens, like the input column. The context length is therefore the prompt the model saw, not what was billed at full price.
 
@@ -57,7 +57,7 @@ Answered on 2026-10-02 by the responsible person: the recommendation of each, an
 4. `action.yml` and [`templates/codeman.yml`](../../templates/codeman.yml) declare and pass the outputs to `apply`. Done when both agree.
 5. `SpendRow` gets `maxInputTokens`, `tokensPerSecond` and `requests`; folding keeps the largest context and a request-weighted throughput (decision 2). The table renders them (decision 1), with "—" for missing values, as with an older workflow file. Done when `spend` tests cover new rows, folded rows, old records and missing values.
 6. The totals row (decision 3), in the status comment's table; a run comment's table has one row and gets none. The lines under the table keep only what the row does not show. Done when `spend` and `status` tests cover it with and without folded rows and the difference row, in both catalogs.
-7. Update [`docs/architecture.md`](../architecture.md) (Budget). Done when it describes both figures, where they come from, and the totals row.
+7. Update [`docs/architecture.md`](../README.md) (Budget). Done when it describes both figures, where they come from, and the totals row.
 8. Rebuild `dist/`, run `npm run check`. Done when it passes.
 9. The responsible person updates the test repository's workflow file and checks the figures after a few runs against OpenRouter's activity page.
 

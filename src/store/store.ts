@@ -1,7 +1,7 @@
 /**
  * Codeman's operational store: what its jobs share across runs and repositories, such as each
  * run's ledger. Firestore in production, memory in tests; both pass the same contract
- * (`contract.ts`). See docs/architecture.md#backend.
+ * (`contract.ts`). See docs/backend/backend.md#the-store.
  *
  * Paths name documents and collections by their segments, as in `organizations/o/runs/1`: a
  * document's path has an even number of segments, a collection's an odd one. Build them with

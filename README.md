@@ -24,13 +24,13 @@ Codeman turns ambiguity into questions instead. The flow it is being built for:
    Codeman answers in the language of the issue. Code, commit messages and documentation stay in English, unless your `AGENTS.md` says otherwise.
 4. Codeman carries out the plan in stages, one agent each: web (the documentation of the third-party services the task relies on, in `docs/web/`), design (flows and screen drafts), code, test and review. A routing agent chooses which stages each task needs, and says why it leaves any out; review always runs, and has the last word. Then Codeman opens a pull request. You review it: a review that requests changes, or `/codeman fix <what to change>`, sends it back to the routing agent. You merge it; Codeman never merges.
 
-Only maintainers (people with write access to the repository) can steer Codeman, and it works only on issues they opened. Comments from anyone else are ignored. [docs/security.md](docs/security.md) explains what Codeman protects, the risks that remain, and how to protect your repository.
+Only maintainers (people with write access to the repository) can steer Codeman, and it works only on issues they opened. Comments from anyone else are ignored. [docs/security/](docs/security/overview.md) explains what Codeman protects, the risks that remain, and how to protect your repository.
 
 ## Getting started
 
-You need a GitHub App for Codeman, an [OpenRouter](https://openrouter.ai) account, their credentials in your repository or organization, a free [Firebase](https://firebase.google.com) project where Codeman records its runs, and a workflow. [docs/installation.md](docs/installation.md) walks through each one.
+You need a GitHub App for Codeman, an [OpenRouter](https://openrouter.ai) account, their credentials in your repository or organization, a free [Firebase](https://firebase.google.com) project where Codeman records its runs, and a workflow. [docs/installation/](docs/installation/setup.md) walks through each one.
 
-Codeman is model-agnostic: it reaches models through OpenRouter, and each task gets its own key with a spending limit, inside a monthly budget per repository and, if you set one, per organization. You choose the model and the budgets in `.codeman/settings.yml`, over defaults an organization can [share](docs/installation.md#shared-settings) with its repositories, and the paths the agent may not change in `.codemanignore`.
+Codeman is model-agnostic: it reaches models through OpenRouter, and each task gets its own key with a spending limit, inside a monthly budget per repository and, if you set one, per organization. You choose the model and the budgets in `.codeman/settings.yml`, over defaults an organization can [share](docs/installation/shared-settings.md) with its repositories, and the paths the agent may not change in `.codemanignore`.
 
 You can also serve an open model yourself, on GPUs rented from [Runpod](https://www.runpod.io), with the same budgets:
 
@@ -40,7 +40,7 @@ model: qwen3-coder:30b
 gpu: "NVIDIA RTX A6000"
 ```
 
-Codeman then starts a GPU, serves the model with Ollama behind its own gateway, shares it among the organization's tasks on the same model and GPU, and stops it when no task needs it any more. A Serverless endpoint works too (`provider: runpod-serverless`). Each provider takes only its own settings; see [self-hosted inference](docs/installation.md#self-hosted-inference-on-runpod). [Profiles](docs/installation.md#profiles) mix providers in one task, such as OpenRouter to plan and a GPU to write the code, under the same budgets.
+Codeman then starts a GPU, serves the model with Ollama behind its own gateway, shares it among the organization's tasks on the same model and GPU, and stops it when no task needs it any more. A Serverless endpoint works too (`provider: runpod-serverless`). Each provider takes only its own settings; see [self-hosted inference](docs/installation/runpod.md). [Profiles](docs/installation/profiles.md) mix providers in one task, such as OpenRouter to plan and a GPU to write the code, under the same budgets.
 
 The workflow runs once a day, when you start it manually, when a maintainer comments a `/codeman` command, and when a review on one of Codeman's pull requests asks for changes:
 
@@ -57,10 +57,11 @@ on:
 
 ## Learn more
 
-- [Architecture](docs/architecture.md): tasks, states and how runs work.
-- [Security](docs/security.md): secrets, risks and how to protect your repository.
-- [Dependencies](docs/dependencies.md): what Codeman depends on and why.
-- [Development](docs/development.md): building and testing Codeman itself.
+- [The documentation's index](docs/README.md): every page, by what you want to do.
+- [Settings](docs/settings/reference.md): every setting, and where its value comes from.
+- [Task lifecycle](docs/tasks/lifecycle.md) and [stages](docs/tasks/stages.md): what a task goes through.
+- [Security](docs/security/overview.md): secrets, risks and how to protect your repository.
+- [Development](docs/development/guide.md): building and testing Codeman itself.
 
 ## License
 

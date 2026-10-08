@@ -24,7 +24,7 @@ export const RESERVATION_MS = 2 * 3_600_000;
 
 const HOUR_MS = 3_600_000;
 
-/** A run of Codeman's ledger, as the budgets read it (docs/architecture.md#the-ledger). */
+/** A run of Codeman's ledger, as the budgets read it (docs/backend/backend.md#the-ledger). */
 export interface LedgerRun {
   id: string;
   /** `owner/name`, lowercase; empty for a pod's time no task counted, the organization's. */

@@ -4,7 +4,7 @@ import { type InferenceEngine, openAiUsage } from "./engine.ts";
  * Codeman's pod image: Ollama, Node and the gateway, built by `.github/workflows/pod-image.yml`
  * from `docker/pod/Dockerfile` and referenced by digest. Published from 4a910f2; pin a new
  * digest whenever the Dockerfile or `dist/gateway.js` changes. The `pod-image` input overrides
- * it. See docs/installation.md.
+ * it. See docs/installation/runpod.md#pods.
  */
 export const POD_IMAGE =
   "ghcr.io/codenergy-dev/codeman-pod@sha256:6a7617fc8772c43600349a971a424bc918982c6d38972e7d1802a1a607e76d27";

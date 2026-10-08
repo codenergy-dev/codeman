@@ -20,7 +20,7 @@ What changes, in what that plan built:
 - The router's output: `review` is always the last stage of the route; it can no longer be left out.
 - A route without work stages is no longer a block: it is a route with review only, and review judges whether nothing was needed.
 - What only existed for routes without review goes away: completing the work at the end of any stage (`complete` after the last stage), `reviewLeftOut` in the record, and its texts in the pull request's description and the run comment.
-- [`docs/security.md`](../security.md) loses the risk that a manipulated router leaves review out.
+- [`docs/security.md`](../security/overview.md) loses the risk that a manipulated router leaves review out.
 
 What stays: the router still runs at the same triggers, briefs each stage, gives a reason for each one it leaves out, and falls back to the fixed order when its result cannot be used (that order already ends with review).
 
@@ -49,7 +49,7 @@ Answered on 2026-10-02 by the responsible person: the recommendation of each.
 2. Review's prompt covers a branch with nothing but the plan (decision 2). Done when a `prompt` test shows it.
 3. `apply`: remove completing the work at the end of a route without review, `reviewLeftOut` and the router's block; records that still hold an empty route (blocked by the router before this change) route again on `continue`, as today. Done when the `flow` tests cover a route of review alone and an older record with an empty route, and no code refers to `reviewLeftOut`.
 4. Texts: remove `reviewLeftOut`, `routeBlocked` and `routeBlockedHint`, and `readySummary`'s third argument, from both catalogs. Done when they type check.
-5. Update [`docs/architecture.md`](../architecture.md) (routing and running a stage), [`docs/security.md`](../security.md) and the README's flow. Done when they say review always runs.
+5. Update [`docs/architecture.md`](../README.md) (routing and running a stage), [`docs/security.md`](../security/overview.md) and the README's flow. Done when they say review always runs.
 6. Rebuild `dist/`, run `npm run check`. Done when it passes.
 7. The responsible person runs, on the test repository, a task the router sends straight to review. Done when review decides it.
 

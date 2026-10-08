@@ -114,7 +114,7 @@ const SPLIT_ATTEMPTS = 20;
  * writes, so a store that fails fails the job without leaving GitHub half written. Writes are
  * idempotent, so a re-run job writes the same documents again: a run's fields are merged, and an
  * event's ID is its run and what happened. The budgets read it: `reserve` checks a run against
- * them and reserves its limit, in a transaction (docs/architecture.md#budget).
+ * them and reserves its limit, in a transaction (docs/budget/budget.md).
  */
 export class Ledger {
   readonly #store: Store;

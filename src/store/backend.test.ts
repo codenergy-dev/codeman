@@ -23,7 +23,7 @@ after(() => rmSync(workdir, { recursive: true, force: true }));
 test("without the backend's settings, a step fails and names the variables to set", () => {
   assert.throws(
     () => backendStore(new FakeRuntime()),
-    /^Error: Codeman's backend is not set up: this step has no `CODEMAN_FIREBASE_PROJECT`, `CODEMAN_WORKLOAD_IDENTITY_PROVIDER`, `CODEMAN_SERVICE_ACCOUNT`\. Set these variables in the repository or the organization, as docs\/installation\.md#4-set-up-the-backend says/,
+    /^Error: Codeman's backend is not set up: this step has no `CODEMAN_FIREBASE_PROJECT`, `CODEMAN_WORKLOAD_IDENTITY_PROVIDER`, `CODEMAN_SERVICE_ACCOUNT`\. Set these variables in the repository or the organization, as docs\/installation\/setup\.md#4-set-up-the-backend says/,
   );
   const runtime = new FakeRuntime({ inputs: { ...settings, "service-account": " " } });
   assert.throws(

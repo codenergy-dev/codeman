@@ -1,7 +1,7 @@
 # Codeman's pod image: Ollama behind Codeman's gateway. Built from dist/ by
 # .github/workflows/pod-image.yml: `docker build -f docker/pod/Dockerfile dist`.
 # Every input is pinned by digest. After changing one, publish the image and pin its digest in
-# src/inference/ollama.ts. See docs/dependencies.md#self-hosted-inference.
+# src/inference/ollama.ts. See docs/development/dependencies.md#self-hosted-inference.
 
 # Only its node binary is used.
 FROM node:24.21.0-bookworm-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6 AS node

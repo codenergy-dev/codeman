@@ -1,6 +1,6 @@
 # The jobs of one task of a Codeman run: codeman.yml calls this workflow once per task it
 # picked, at once. Copy it to .github/workflows/codeman-task.yml, next to codeman.yml.
-# Setup: https://github.com/codenergy-dev/codeman/blob/main/docs/installation.md
+# Setup: https://github.com/codenergy-dev/codeman/blob/main/docs/installation/setup.md
 name: Codeman task
 
 on:

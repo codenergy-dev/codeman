@@ -69,7 +69,7 @@ export interface Settings {
 export type SettingName = keyof Settings;
 export type PartialSettings = Partial<Settings>;
 
-/** Codeman's own defaults. There is no default model (see docs/architecture.md). */
+/** Codeman's own defaults. There is no default model (see docs/settings/reference.md). */
 export const DEFAULTS: Omit<Settings, "model"> = {
   "task-budget": 2,
   "monthly-budget": 20,

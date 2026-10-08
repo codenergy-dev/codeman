@@ -3,7 +3,7 @@ import { ollamaContextLength } from "../inference/ollama.ts";
 /** The port a pod exposes, to the gateway; Ollama's own port stays on the pod's loopback. */
 export const GATEWAY_PORT = 8080;
 
-/** When a pod terminates itself. See docs/architecture.md#self-hosted-inference. */
+/** When a pod terminates itself. See docs/inference/pods.md. */
 export interface PodPolicy {
   /** The model must be served by then, in milliseconds since the epoch. */
   startBy: number;

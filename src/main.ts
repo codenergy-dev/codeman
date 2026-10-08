@@ -13,7 +13,7 @@ import { select } from "./steps/select.ts";
 import { backendStore } from "./store/backend.ts";
 import type { Store } from "./store/store.ts";
 
-/** Each job of the Codeman workflow runs one step. See docs/architecture.md. */
+/** Each job of the Codeman workflow runs one step. See docs/runs/runs-and-jobs.md#jobs. */
 const STEPS: Record<string, (services: Services) => Promise<void>> = {
   select,
   "open-key": openKey,

@@ -1,6 +1,6 @@
 /**
  * What Codeman reads from a code hosting platform, in the platform's terms normalized. Each
- * adapter maps its platform's shapes to these. See docs/architecture.md#platforms.
+ * adapter maps its platform's shapes to these. See docs/development/platforms.md.
  */
 
 /** The repository Codeman works on. `owner` may hold several segments, such as a group path. */

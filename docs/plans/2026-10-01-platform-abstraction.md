@@ -52,7 +52,7 @@ From documentation known today, to verify in each platform's own plan.
 Two findings shape the decisions below:
 
 - Outside GitHub and Gitea, CI cannot start on a comment. Codeman there needs a webhook relay, a self-hosted service, or a schedule-only mode.
-- The security model relies on per-job credentials and runtime masking ([security](../security.md#secrets)). It must be checked again for each runtime; it does not carry over.
+- The security model relies on per-job credentials and runtime masking ([security](../security/secrets.md)). It must be checked again for each runtime; it does not carry over.
 
 No new dependency is needed for this plan.
 

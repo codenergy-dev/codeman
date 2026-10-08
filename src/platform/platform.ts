@@ -16,7 +16,7 @@ import type {
 /**
  * A code hosting platform's API, scoped to one repository: everything Codeman reads and writes
  * there, except CI results. Each method states what adapters must guarantee; see
- * docs/architecture.md#platforms.
+ * docs/development/platforms.md.
  */
 export interface Platform {
   readonly repository: RepositoryRef;

@@ -5,7 +5,7 @@ import type { Log } from "../runtime/runtime.ts";
  * Where a task's agent runs get their model, and what each run spent: OpenRouter, or a model
  * Codeman serves on rented GPUs. The key jobs (`open-key`, `close-key`) are the only ones that
  * use it; Codeman's ledger adds up what runs spent for the budgets. See
- * docs/architecture.md#budget.
+ * docs/budget/budget.md.
  */
 export interface InferenceProvider {
   readonly name: string;

@@ -184,7 +184,7 @@ export interface SelfHostedOptions {
  * Self-hosted inference on pods: each run gets a token for a gateway in a pod that serves the
  * task's model. The organization's tasks with the same pod settings share one pod, which they
  * find, create, keep and leave through the pod registry, each with its own run and share of the
- * pod. See docs/architecture.md#self-hosted-inference.
+ * pod. See docs/inference/pods.md.
  */
 export class PodInference implements InferenceProvider {
   readonly name: string;
@@ -629,7 +629,7 @@ export class PodInference implements InferenceProvider {
   /** Creates the pod of a creation lease, named by its nonce, with its settings in its environment. */
   async #launch(record: RegisteredPod, log: Log): Promise<{ pod: Pod; listed: number }> {
     const { model, gpuType, image, engine } = this.#settings;
-    if (!image) throw new Error("No pod image is pinned; see docs/installation.md.");
+    if (!image) throw new Error("No pod image is pinned; see docs/installation/runpod.md#pods.");
     const listed = await this.#host.price(gpuType);
     const owner = this.#options.repository.owner.toLowerCase();
     const now = this.#now();
@@ -845,7 +845,7 @@ export interface ServerlessSettings extends SelfHostedSettings {
  * Self-hosted inference on a Serverless endpoint a maintainer created: the agent job runs the
  * gateway outside the sandbox, with the endpoint's key, and gives the agent a local URL and the
  * run's token. A run's cost is estimated from the gateway's measures, since the provider bills
- * endpoints by the hour. See docs/architecture.md#self-hosted-inference.
+ * endpoints by the hour. See docs/inference/serverless.md.
  */
 export class ServerlessInference implements InferenceProvider {
   readonly name: string;

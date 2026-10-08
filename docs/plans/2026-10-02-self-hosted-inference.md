@@ -13,7 +13,7 @@ A task can run its agents on a model that Codeman serves on rented GPUs, instead
 
 ## Context
 
-OpenRouter does four things for Codeman today ([budget](../architecture.md#budget)):
+OpenRouter does four things for Codeman today ([budget](../inference/openrouter.md)):
 
 | What | How, with OpenRouter | What replaces it |
 | --- | --- | --- |
@@ -79,7 +79,7 @@ This plan depends on [`2026-10-02-context-and-throughput`](2026-10-02-context-an
 
 ### Audit
 
-Recorded in [`docs/dependencies.md`](../dependencies.md#self-hosted-inference) (step 1). No npm package is added: the Runpod API is called with `fetch`, as OpenRouter's is, and the gateway uses Node's built-in modules only.
+Recorded in [`docs/dependencies.md`](../development/dependencies.md#self-hosted-inference) (step 1). No npm package is added: the Runpod API is called with `fetch`, as OpenRouter's is, and the gateway uses Node's built-in modules only.
 
 ## Decisions
 
@@ -236,7 +236,7 @@ Decisions 9 to 12 were answered on 2026-10-02 by the responsible person: the rec
    - Confirmed by these runs: Runpod accepts the pods as Codeman creates them; OpenCode 1.18.32 reaches the gateway through `@ai-sdk/openai-compatible`; a pod serves its model within 2 minutes, well within `open-key`'s 35.
    - Not checked: a workflow cancelled while its pod serves, and a pod's self-termination with `RUNPOD_API_KEY`, the guard when no job terminates it; the least privileged key for pods (the installation steps ask for **All**); how often Runpod has no capacity for the chosen GPU, which fails the run, as the responsible person wants; the vLLM worker's `usage` in a plain response, which OpenCode does not ask for.
 
-9. Update [`docs/architecture.md`](../architecture.md) (budget, jobs, a section on self-hosted inference), [`docs/security.md`](../security.md) (where code goes, the new secrets, the public URL, the gateway outside the sandbox), [`docs/installation.md`](../installation.md) (the endpoint's settings, for serverless) and the README's "Getting started". Done when they describe every mode. **Done on 2026-10-04**, with [`docs/development.md`](../development.md) (the gateway's bundle and the pod image). The installation steps state what step 8 has yet to confirm only where it matters to a user: the pod image must be published and pinned first.
+9. Update [`docs/architecture.md`](../README.md) (budget, jobs, a section on self-hosted inference), [`docs/security.md`](../security/overview.md) (where code goes, the new secrets, the public URL, the gateway outside the sandbox), [`docs/installation.md`](../installation/setup.md) (the endpoint's settings, for serverless) and the README's "Getting started". Done when they describe every mode. **Done on 2026-10-04**, with [`docs/development.md`](../development/guide.md) (the gateway's bundle and the pod image). The installation steps state what step 8 has yet to confirm only where it matters to a user: the pod image must be published and pinned first.
 10. Rebuild `dist/`, run `npm run check`. Done when it passes. **Done on 2026-10-04**: 310 tests pass. A review of the whole change added two commits: the gateway reaches the engine with `node:http` and the pod pulls its model as a stream, since `fetch` gives up on a response that has not started within five minutes; and an agent job that fails before reaching its model reports nothing used.
 
 ## Out of scope

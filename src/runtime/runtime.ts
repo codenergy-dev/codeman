@@ -10,7 +10,7 @@ export interface Log {
 /**
  * Where Codeman runs: a CI job today, maybe a service later. Each step reads its inputs and
  * writes its outputs here, and the runtime carries outputs to the steps that need them. See
- * docs/architecture.md#platforms.
+ * docs/development/platforms.md.
  */
 export interface Runtime extends Log {
   /** One of the step's inputs; empty when it is not set. Throws when `required` and empty. */

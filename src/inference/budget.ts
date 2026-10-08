@@ -2,7 +2,7 @@ import type { BilledHours } from "../budget.ts";
 
 /**
  * What the key jobs read from the providers' accounts for the budgets, beside Codeman's ledger,
- * which holds the budgets' figures (docs/architecture.md#budget): OpenRouter's keys, which tell
+ * which holds the budgets' figures (docs/budget/budget.md): OpenRouter's keys, which tell
  * what its runs cost, and each GPU account's hourly billing, which reconciles the organization's
  * month.
  */

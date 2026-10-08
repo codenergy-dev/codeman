@@ -1,6 +1,6 @@
 # Codeman workflow for a target repository. Copy it to .github/workflows/codeman.yml, and
 # codeman-task.yml, which runs each task's jobs, next to it.
-# Setup: https://github.com/codenergy-dev/codeman/blob/main/docs/installation.md
+# Setup: https://github.com/codenergy-dev/codeman/blob/main/docs/installation/setup.md
 name: Codeman
 
 on:

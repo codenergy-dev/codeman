@@ -28,8 +28,8 @@ What constrains it:
 
 - **Copyright.** Codeman's repository is public. Committing a page's full text redistributes it. GitHub's documentation is licensed CC BY 4.0, which allows that with attribution; OpenRouter's terms reserve its materials to OpenRouter and its licensors; Runpod's documentation states no license that was found. Many target repositories are private, but some are public too.
 - **Fidelity and cost.** An LLM that retypes a page spends output tokens on every line and may change it. A command that saves the source does neither. Many documentation sites serve Markdown already: OpenRouter's and Runpod's pages answer with Markdown when `.md` is appended to their URL, and GitHub's documentation lives as Markdown in a public repository.
-- **Untrusted text.** A third-party page is text nobody at the repository wrote. Committed under `docs/web/`, every later agent may read it. It is data, like the [other untrusted input](../security.md#2-prompt-injection-through-what-the-agent-reads), and it reaches the default branch only through a pull request a maintainer reviews.
-- **Agent rules.** The `##` sections of `AGENTS.md` are Codeman's working rules in every repository it works on ([agent rules](../architecture.md#agent-rules)). A rule about `docs/web/` there applies to all of them.
+- **Untrusted text.** A third-party page is text nobody at the repository wrote. Committed under `docs/web/`, every later agent may read it. It is data, like the [other untrusted input](../security/risks.md#2-prompt-injection-through-what-the-agent-reads), and it reaches the default branch only through a pull request a maintainer reviews.
+- **Agent rules.** The `##` sections of `AGENTS.md` are Codeman's working rules in every repository it works on ([agent rules](../runs/agent.md#agent-rules)). A rule about `docs/web/` there applies to all of them.
 - **Size.** Each file Codeman commits has at most `max-file-bytes` (1 MiB by default). Long reference pages may need splitting.
 - **Reading pages for the status comment** costs an API call per file. The task record therefore keeps each page's `updated_at` by path, and reads again only the files whose blob changed.
 
@@ -91,7 +91,7 @@ Answered on 2026-10-02 by the responsible person: the recommendations of decisio
 1. A `## Third-party documentation` section in `AGENTS.md`: before relying on a third-party service, read its pages in `docs/web/` and add what is missing, following the format and decisions 1 to 3; refresh a page when the person responsible asks for it. Done when the section is short, holds for any repository, and Codeman's rules test still finds every section.
 2. Tools: a generic one (Markdown sources in the order of decision 3, and how to write a page in the agent's own words when there is none or its license does not allow copying), and specialized ones for GitHub's documentation, OpenRouter's and OpenCode's, each with its Markdown source and license. Done when each tool, followed by hand, fetches one of its pages.
 3. Pages for what Codeman uses today, following the tools: GitHub's REST endpoints for issues, comments, labels, pull requests, reviews, the Git database, contents, collaborators, Actions (runs, jobs, logs, artifacts, dispatch) and App installation tokens, and the GraphQL mutation that marks a pull request ready; OpenRouter's keys API, analytics query and analytics meta; npm's package metadata; OpenCode's configuration and permissions. Done when each external call in `src/` maps to a page.
-4. [`docs/dependencies.md`](../dependencies.md) links each service to its pages, and [`docs/development.md`](../development.md) says what `docs/web/` holds. Done when both are updated.
+4. [`docs/dependencies.md`](../development/dependencies.md) links each service to its pages, and [`docs/development.md`](../development/guide.md) says what `docs/web/` holds. Done when both are updated.
 
 ### The `web` agent
 
@@ -100,7 +100,7 @@ Answered on 2026-10-02 by the responsible person: the recommendations of decisio
 7. The change policy for it: only `docs/web/**/*.md` is committed, and each file's front matter is checked: the fields, ISO 8601 dates, a `tool` that exists, a file name that is the slug of its title, and the `license` rule of decision 1. Other stages' changes under `docs/web/` are dropped (decision 6). Done when `policy` and `apply` tests cover a valid page, each invalid field and a page from another stage.
 8. Every stage's prompt says that `docs/web/` is third-party text, to treat as data. Done when `prompt` tests show it.
 9. Pages getting old (decision 5): on each run that updates the status comment, Codeman reads the front matter of the files under `docs/web/` at the head of the task branch (the default branch before the branch exists), skipping the tools, and lists the pages whose `updated_at` is older than 30 days, grouped by third party, with their age and how to ask for a refresh. The record keeps each page's `updated_at` by blob, so unchanged files are not read again; a front matter that cannot be read is listed as such. Titles and paths are rendered inert. Done when `status` tests cover no pages, fresh and old pages, an unreadable front matter and the comment's size limit, in both catalogs.
-10. Update [`docs/architecture.md`](../architecture.md) (states, stages, change policy, status comment), [`docs/security.md`](../security.md) (third-party text committed to the repository) and the README's flow, in English, and the i18n catalogs in both languages. Done when they describe the `web` agent and the list of old pages.
+10. Update [`docs/architecture.md`](../README.md) (states, stages, change policy, status comment), [`docs/security.md`](../security/overview.md) (third-party text committed to the repository) and the README's flow, in English, and the i18n catalogs in both languages. Done when they describe the `web` agent and the list of old pages.
 11. Rebuild `dist/`, run `npm run check`. Done when it passes.
 12. The responsible person runs, on the test repository, a task that uses a third-party API and one that uses none, and asks for a refresh of an old page. Done when the router sends only the first to `web`, its pages are valid, and the refresh updates `updated_at`.
 
@@ -119,6 +119,6 @@ Steps 1 to 11 are done; step 12 is left to the responsible person, on the test r
 - Converting HTML pages into full copies (decision 3, options b and c).
 - Refreshing pages without a maintainer asking, and a setting for the 30 days.
 - A command to fetch a given page.
-- Restricting the agent's network ([security roadmap](../security.md#roadmap) item 1).
+- Restricting the agent's network ([security roadmap](../security/overview.md#roadmap) item 1).
 - Searching or indexing `docs/web/`.
 - Runpod's, Ollama's and vLLM's pages: [`2026-10-02-self-hosted-inference`](2026-10-02-self-hosted-inference.md) records them in its first step.

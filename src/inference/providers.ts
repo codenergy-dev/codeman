@@ -4,7 +4,7 @@ import { ENGINES } from "./engines.ts";
  * The providers a run's model can be served by, as the `provider` setting names them, and the
  * settings each accepts (decisions 1 to 3 of the provider settings plan). A new provider is a new
  * entry; validation, errors, the secrets `open-key` requires and the docs come from here. See
- * docs/architecture.md#providers.
+ * docs/settings/providers.md.
  */
 export const PROVIDER_NAMES = ["openrouter", "runpod-pod", "runpod-serverless"] as const;
 export type ProviderName = (typeof PROVIDER_NAMES)[number];

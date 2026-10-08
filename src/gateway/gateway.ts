@@ -145,7 +145,7 @@ export const GATEWAY_VERSION = 2;
  * records each request, and stops serving a run once its budget is spent. In a pod it is reached
  * through the provider's public proxy, and serves the runs of several tasks at once, splitting
  * the pod's time among them; for Serverless the agent job runs it on the loopback, outside the
- * sandbox, for its one run. See docs/architecture.md#self-hosted-inference.
+ * sandbox, for its one run. See docs/inference/self-hosted.md#the-gateway.
  */
 export class Gateway {
   readonly #options: GatewayOptions;

@@ -33,7 +33,7 @@ export interface Lease {
   until: Date;
 }
 
-/** A pod as the registry holds it (docs/architecture.md#pods). */
+/** A pod as the registry holds it (docs/inference/pods.md). */
 export interface RegisteredPod {
   /** The document's ID: the nonce of the pod's admin token, drawn before the pod exists. */
   nonce: string;
@@ -92,7 +92,7 @@ export interface Left {
  * Codeman's pod registry, in the store (decision 1 of the pod registry plan): a document per pod,
  * which the tasks of an organization with the same settings find, join or create in
  * transactions, and on which each holds a lease. A pod no lease holds is ended; the job that
- * ends it terminates it. See docs/architecture.md#pods.
+ * ends it terminates it. See docs/inference/pods.md.
  */
 export class PodRegistry {
   readonly #store: Store;

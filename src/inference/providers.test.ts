@@ -140,8 +140,12 @@ test("an endpoint is its ID, or a URL of it on Runpod's API", () => {
 });
 
 test("the docs give each provider the settings, defaults and secrets of the registry", () => {
-  const docs = readFileSync("docs/architecture.md", "utf8");
-  const sections = docs.split(/^#### /m).slice(1);
+  const docs = readFileSync("docs/settings/providers.md", "utf8");
+  // Each provider is a `##` section named after it, such as "## `openrouter`".
+  const sections = docs
+    .split(/^## /m)
+    .slice(1)
+    .filter((section) => section.startsWith("`"));
   const documented = new Map(
     sections.map((section) => [/^`([a-z-]+)`/.exec(section)?.[1] ?? "", section]),
   );

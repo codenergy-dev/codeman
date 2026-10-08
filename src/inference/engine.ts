@@ -1,6 +1,6 @@
 /**
  * An inference engine: what serves a model behind Codeman's gateway, on a pod (Ollama) or a
- * Serverless worker (vLLM). See docs/architecture.md#self-hosted-inference.
+ * Serverless worker (vLLM). See docs/inference/self-hosted.md.
  */
 export interface InferenceEngine {
   readonly name: string;

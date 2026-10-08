@@ -13,7 +13,7 @@ A routing agent decides which stages run next, in which order, and what each mus
 
 ## Context
 
-The order of stages is fixed today ([architecture](../architecture.md#stages)):
+The order of stages is fixed today ([architecture](../tasks/stages.md)):
 
 | When | What runs next |
 | --- | --- |
@@ -27,7 +27,7 @@ Each stage's agent decides only whether its own stage has work, and reports `ski
 
 What constrains the design:
 
-- Only the `agent` job runs an LLM, with a key opened for the run ([jobs](../architecture.md#jobs)). The router is therefore an agent run of its own, with its own key, spend row and run comment.
+- Only the `agent` job runs an LLM, with a key opened for the run ([jobs](../runs/runs-and-jobs.md#jobs)). The router is therefore an agent run of its own, with its own key, spend row and run comment.
 - The router reads the same untrusted text as the stages, so it runs in the same sandbox, and `apply` validates its output strictly.
 - A run that only routes moves the task, so `next-run` starts the first stage of the route.
 - `max-runs`, review rounds and the budgets keep bounding the loop.
@@ -81,7 +81,7 @@ Answered on 2026-10-02 by the responsible person: the recommendation of each, ex
 5. `apply` for the router: records the route, posts the run comment with the route, the briefs and the reasons for what it left out, and moves the task to the first stage; an empty route blocks the task with the router's suggestion (decision 2); on failure, per decision 4. Done when `apply` tests cover a full route, a route without review, an empty route and each failure.
 6. The end of a route without review, as in the context: the pull request is opened if missing, marked ready, and its description says review was left out. Done when `apply` tests cover a route that ends in code and one that ends in test.
 7. The spend table, run comments and i18n catalogs name the new stage in English and Brazilian Portuguese. Done when `status` tests pass in both.
-8. Update [`docs/architecture.md`](../architecture.md) (states, runs, stages, feedback) and the README's flow. Done when they describe the router.
+8. Update [`docs/architecture.md`](../README.md) (states, runs, stages, feedback) and the README's flow. Done when they describe the router.
 9. Rebuild `dist/`, run `npm run check`. Done when it passes.
 10. The responsible person runs, on the test repository, a task with a screen, a task without one, a `/codeman fix` and a review that requests changes, and checks the routes and their reasons.
 
@@ -93,7 +93,7 @@ Steps 1 to 9 are done; step 10 is left to the responsible person, on the test re
 - The record keeps the route: the stages with their briefs, the stages left out with their reasons, and the range of comment and review IDs the router handled, so the stages of a route read those requests again. Review is a stage of the route like the others, so it also reads the `fix` it checks.
 - When the router's result cannot be used, the route is the fixed order from the stage the task was at: design after planning, code after a `fix` or a review. Decision 4's fallback reuses the route's machinery, with empty briefs.
 - The end of a route without review completes the work as a passing review does, and the record keeps the router's reason (`reviewLeftOut`) for the pull request's description, which a later accept of staged workflows rewrites.
-- [`docs/security.md`](../security.md) now notes that a manipulated router can leave review out.
+- [`docs/security.md`](../security/overview.md) now notes that a manipulated router can leave review out.
 
 ## Out of scope
 

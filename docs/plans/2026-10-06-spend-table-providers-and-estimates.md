@@ -13,7 +13,7 @@ The spend table says which provider served each run, and, under it, how each pro
 
 ## Context
 
-The figures in the table are measured differently for each inference ([architecture](../architecture.md#budget), [self-hosted inference](../architecture.md#spend)):
+The figures in the table are measured differently for each inference ([architecture](../budget/spend.md#the-spend-table), [self-hosted inference](../budget/spend.md#self-hosted-runs)):
 
 | Inference | A run's cost | The month |
 | --- | --- | --- |
@@ -58,7 +58,7 @@ The responsible person answered every decision on 2026-10-06 with its recommenda
 
 1. The record keeps each row's inference (`openrouter`, `pod` or `serverless`), from the run's choice of inference (`select`'s `inference` output), set by `apply`. A row without it, recorded before, shows "—". Done when `record` and `apply` tests cover a new row, an old one and a task whose rows differ. **Done on 2026-10-06**: `SpendRow.inference` in [`src/spend.ts`](../../src/spend.ts), optional, so older records read as they are. `apply` takes it from the task's settings that `select` hands over, with `inferenceChoice` and `agentMode`, as the agent job does; that is the choice `select` outputs as `inference`, so `apply` needs no new input and older workflow files keep working.
 2. The table: the new column after the model, the month column's new name and the notes, in English and Portuguese. Done when `spend` and `status` tests cover each inference, an old row and a mixed table. **Done on 2026-10-06**: the column is "Provider" / "Provedor". The notes come from `spendNotes`, in a fixed order (OpenRouter, pod, Serverless), each a paragraph between the table and the line with what the task spent.
-3. Docs: [`docs/architecture.md`](../architecture.md) (Budget and Spend: the column, the notes, and that the month is an estimate on Runpod). Done when they describe the table as it is. **Done on 2026-10-06**.
+3. Docs: [`docs/architecture.md`](../README.md) (Budget and Spend: the column, the notes, and that the month is an estimate on Runpod). Done when they describe the table as it is. **Done on 2026-10-06**.
 4. Rebuild `dist/` and run `npm run check`. Done when it passes. **Done on 2026-10-06**.
 
 ## End-to-end test

@@ -21,4 +21,4 @@ What Codeman relies on, in its own words. The [npm/registry](https://github.com/
 - `dist.integrity` (since April 2017) is `<hashAlgorithm>-<base64-hash>`, in the Subresource Integrity format, such as `sha512-…`: the hash of the tarball's bytes.
 - `dist.shasum` is the tarball's SHA-1.
 
-Codeman downloads a harness's tarball from its `dist.tarball` URL and compares the SHA-512 of its bytes with the pinned `dist.integrity` before extracting it ([dependencies](../../dependencies.md)).
+Codeman downloads a harness's tarball from its `dist.tarball` URL and compares the SHA-512 of its bytes with the pinned `dist.integrity` before extracting it ([dependencies](../../development/dependencies.md)).

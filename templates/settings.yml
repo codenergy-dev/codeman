@@ -1,7 +1,7 @@
 # Codeman settings for a target repository. Copy it to .codeman/settings.yml.
 # Only `name: value` lines and the list of profiles below are accepted.
 # Workflow inputs and `/codeman set` take precedence.
-# Reference: https://github.com/codenergy-dev/codeman/blob/main/docs/architecture.md#settings
+# Reference: https://github.com/codenergy-dev/codeman/blob/main/docs/settings/reference.md
 
 # Model ID, required here or as a workflow input, in the form the provider takes: OpenRouter's,
 # Ollama's on Runpod pods, or the Hugging Face ID the vLLM worker serves on Runpod Serverless.
@@ -9,7 +9,7 @@ model: deepseek/deepseek-v4.1-flash
 
 # Where agent runs get their model: openrouter (the default), runpod-pod or runpod-serverless.
 # Each provider accepts only its own settings, below; any other stops the run with an error.
-# See docs/installation.md for the secrets each needs.
+# See docs/settings/providers.md for the secrets each needs.
 provider: openrouter
 
 # runpod-pod: a GPU pod Codeman rents, which serves the model with Ollama.

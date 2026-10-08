@@ -1,0 +1,37 @@
+# Settings
+
+Each value comes from the first of these that sets it:
+
+1. A `/codeman set` command on the task, in a comment or in the issue's description (only `model`, `task-budget`, `max-runs`, `language` and `gpu`).
+2. The workflow's inputs, in a manual run.
+3. `.codeman/settings.yml` on the default branch.
+4. The organization's settings: the `settings` input of the `select` step, which the template fills from the `CODEMAN_SETTINGS` variable, in the file's format. They are defaults that several repositories share; a repository's file overrides them, value by value. Empty, or not passed by an older workflow file, means none. Only they set `organization-monthly-budget`: a repository's file or profile that sets it stops the run with an error, and neither commands nor a manual run's inputs take it. See [installation](../installation/shared-settings.md).
+5. Codeman's default.
+
+When `select` picks a task, its log has a line per layer, naming the values that come from it; the values no line names are Codeman's defaults.
+
+| Name | Default | Meaning |
+| --- | --- | --- |
+| `model` | none; required | Model ID, in the form the provider takes ([providers](providers.md)) |
+| `task-budget` | `2` | Spending limit of each task, across all its runs, in USD |
+| `monthly-budget` | `20` | Spending limit per calendar month for the repository, in USD |
+| `organization-monthly-budget` | none | Spending limit per calendar month for all the organization's repositories together, in USD, with the GPU accounts' billing; only the organization's settings set it. See [budget](../budget/budget.md) |
+| `max-runs` | `3` | Implementation runs in a row without finishing before a task is blocked |
+| `max-files` | `300` | Files one run may change |
+| `max-file-bytes` | `1048576` | Size limit of each changed file |
+| `max-decisions` | `10` | Decisions in one output of the agent, at most 10 |
+| `max-options` | `4` | Options of each decision, from 2 to 6 |
+| `max-title-chars` | `80` | Characters of a decision's title, at most 200 |
+| `max-question-chars` | `600` | Characters of a decision's question, at most 1,500 |
+| `max-label-chars` | `150` | Characters of an option's label, at most 300 |
+| `max-summary-chars` | `2000` | Characters of the agent's summary and reason, at most 4,000 |
+| `language` | `auto` | The language Codeman talks to maintainers in, as a BCP 47 tag such as `pt-BR`; `auto` uses the conversation's. See [conversation language](../tasks/comments.md#conversation-language) |
+| `provider` | `openrouter` | Where agent runs get their model: `openrouter`, `runpod-pod` or `runpod-serverless`. Each provider accepts only its own settings; see [providers](providers.md) |
+| `profiles` | none | A provider, a model and that provider's settings for some runs; see [profiles](profiles.md) |
+| `parallel-tasks` | `1` | Tasks one run works on at once, from 1 to 10, each in its own jobs; see [runs](../runs/runs-and-jobs.md#runs). Tasks on pods with the same settings share one, whatever this says ([shared pods](../inference/pods.md#shared-pods)) |
+
+The settings that only some providers accept (`engine`, `gpu`, `endpoint`, `pod-reuse`) are in [providers](providers.md). Some settings had other names before the [provider settings plan](../plans/2026-10-08-provider-settings.md): `inference`, `gpu-provider` and `gpu-mode` are now `provider`; `gpu-type` is `gpu`; `serverless-endpoint` is `endpoint`; `inference-profiles` is `profiles`. An old name stops the run with an error that gives the new one, in the file, the organization's settings and a profile; `/codeman set gpu-type` is reported as a problem that does too.
+
+The `max-*-chars` and count limits are what the agent is told; see [agent output](../runs/agent.md#agent-output) for the margin.
+
+The settings file is a strict subset of YAML, read without a dependency ([`src/yaml.ts`](../../src/yaml.ts)): `name: value` lines, block mappings and lists (indented with spaces) for the profiles, lists of values in brackets (`[code, test]`), plain or quoted values, comments and blank lines; see [`templates/settings.yml`](../../templates/settings.yml). Anything else, such as `{...}`, anchors, tags or multi-line values, stops the run with an error that names its line, so the file never means something other than what it looks like. The organization's settings follow the same rules, and their errors name the `settings` input instead of the file.

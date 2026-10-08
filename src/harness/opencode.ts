@@ -4,7 +4,7 @@ import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Harness, HarnessCommand, HarnessOptions } from "./harness.ts";
 
-/** Pinned version and npm `dist.integrity` of each platform package. See docs/dependencies.md. */
+/** Pinned version and npm `dist.integrity` of each platform package. See docs/development/dependencies.md. */
 export const OPENCODE_VERSION = "1.18.32";
 const PACKAGES: Record<string, { name: string; integrity: string }> = {
   "linux-x64": {
