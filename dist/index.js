@@ -19785,7 +19785,7 @@ function count(value) {
 }
 
 // src/inference/ollama.ts
-var POD_IMAGE = "ghcr.io/codenergy-dev/codeman-pod@sha256:6a7617fc8772c43600349a971a424bc918982c6d38972e7d1802a1a607e76d27";
+var POD_IMAGE = "ghcr.io/codenergy-dev/codeman-pod@sha256:3252d41775a230249490b5af79aec050151e49c4722bb62f9ce3d247d02f6ca3";
 var SINGLE_RUN_IMAGES = /* @__PURE__ */ new Set([
   "ghcr.io/codenergy-dev/codeman-pod@sha256:6a7617fc8772c43600349a971a424bc918982c6d38972e7d1802a1a607e76d27"
 ]);
