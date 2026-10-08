@@ -20,7 +20,7 @@ on:
         description: Spending limit per month for this repository, in USD.
         type: string
       max-runs:
-        description: Consecutive implementation runs before a task is blocked.
+        description: Consecutive runs of a routed stage before a task is blocked.
         type: string
   issue_comment:
     types: [created]

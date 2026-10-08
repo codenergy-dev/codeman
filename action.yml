@@ -30,7 +30,7 @@ inputs:
   organization-monthly-budget:
     description: "(open-key) Spending limit per calendar month of the organization's repositories together, in USD, from select's tasks. Only the organization's settings (the settings input) set it. Empty means none."
   max-runs:
-    description: "(select) Consecutive implementation runs before a task is blocked. Empty uses .codeman/settings.yml or 3."
+    description: "(select) Consecutive runs of a routed stage before a task is blocked. Empty uses .codeman/settings.yml or 3."
   key-expiry-hours:
     description: "(open-key) Hours until a task key expires."
     default: "24"
@@ -112,7 +112,7 @@ outputs:
   needs-agent:
     description: "(select) Whether the first task needs a key and the agent: true or false."
   stage:
-    description: "(select) What the agent works on: plan, route, design, code, test or review. The first task's."
+    description: "(select) The stage the agent works on: plan, route, web, design, code, test or review. The first task's."
   task:
     description: "(select) Issue number of the first task."
   model:

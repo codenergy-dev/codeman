@@ -19,7 +19,7 @@ When `select` picks a task, its log has a line per layer, naming the values that
 | `task-budget` | `2` | Spending limit of each task, across all its runs, in USD |
 | `monthly-budget` | `20` | Spending limit per calendar month for the repository, in USD |
 | `organization-monthly-budget` | none | Spending limit per calendar month for all the organization's repositories together, in USD, with the GPU accounts' billing; only the organization's settings set it. See [budget](../budget/budget.md) |
-| `max-runs` | `3` | Implementation runs in a row without finishing before a task is blocked |
+| `max-runs` | `3` | Runs in a row of a routed stage without finishing, or review rounds asking for changes, before a task is blocked |
 | `max-files` | `300` | Files one run may change |
 | `max-file-bytes` | `1048576` | Size limit of each changed file |
 | `max-decisions` | `10` | Decisions in one output of the agent, at most 10 |

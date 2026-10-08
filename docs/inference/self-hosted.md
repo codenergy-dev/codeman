@@ -15,7 +15,7 @@ What Codeman's tests on Runpod showed (step 8 of the plan):
 - **A pod** bills its whole life, used or not, but not per token: long contexts and many requests cost the same. It pays off when a smaller model does the work and runs follow each other, since a pod is kept between runs. The organization's tasks on the same pod settings share one pod, at once or one after another, and split its cost by the second ([shared pods](pods.md#shared-pods)): one task's tool runs leave the GPU to another's requests, and one repository's next run finds the pod another kept.
 - **Serverless** bills each worker's start (minutes, compilation included), its requests and the idle timeout after its last one, at the flex price. It cost the most: US$ 1.96 for three runs of a task, against US$ 1.90 for a four-run task on a pod, though twice as fast on its GPUs. It pays off only when its worker stays busy, such as one endpoint serving several repositories at once (a worker takes several requests at once), so that starts and idle time are shared; never for a single task. Each run counts the worker time it used, and time it shared with other runs, of any of the organization's repositories, is split among them ([Serverless](serverless.md)).
 
-[Profiles](../settings/profiles.md) combine them in one task, such as OpenRouter for planning and a pod for the stages whose runs follow each other.
+[Profiles](../settings/profiles.md) combine them in one task, such as OpenRouter for planning and a pod for the routed stages, whose runs follow each other.
 
 ## Layers
 

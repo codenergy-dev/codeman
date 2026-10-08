@@ -21,7 +21,7 @@ Every agent run gets Codeman's working rules: the `##` sections of Codeman's own
 
 ## Agent output
 
-The agent reports in `.codeman/output.json`: a summary and decisions when planning, and a status, a summary, a reason, a commit message and decisions in a stage. What it writes there ends up in comments on GitHub, which hold at most 65,536 characters, so each text has a limit; see [settings](../settings/reference.md).
+The agent reports in `.codeman/output.json`: a summary and decisions when planning; a summary and the route when routing ([routing](../tasks/stages.md#routing)); and a status, a summary, a reason, a commit message and decisions in a routed stage. What it writes there ends up in comments on GitHub, which hold at most 65,536 characters, so each text has a limit; see [settings](../settings/reference.md).
 
 - The prompt states the limits. Codeman accepts each text up to twice its limit, without telling the agent: LLMs count characters poorly, and a text a little too long is not worth losing a run. The commit message's limit is 1,000 characters.
 - Counts have no margin: at most `max-decisions` decisions, with 2 to `max-options` options each.
