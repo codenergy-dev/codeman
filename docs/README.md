@@ -15,6 +15,7 @@ One subject per file, grouped by what the reader wants to do. The [root README](
 - [Settings](settings/reference.md): where settings come from, every setting, and the file's format.
 - [Providers](settings/providers.md): each provider's settings, model IDs, secrets and cost.
 - [Profiles](settings/profiles.md): conditions, which profile applies, layers and checks.
+- [Provider settings across layers](settings/provider-settings-across-layers.md): what a layer or profile that changes provider keeps, with worked examples.
 - [Commands](tasks/commands.md): every `/codeman` command.
 - [Comments](tasks/comments.md): the status, decisions and run comments, and the conversation's language.
 

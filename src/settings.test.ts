@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { test } from "node:test";
+import { describe, test } from "node:test";
 import { PROVIDERS } from "./inference/providers.ts";
 import {
   DEFAULTS,
@@ -11,6 +11,7 @@ import {
   parseSettings,
   resolveRun,
   resolveSettings,
+  type Settings,
   SHARED_SETTINGS,
   settingSources,
   TASK_SETTINGS,
@@ -670,4 +671,184 @@ test("the repository's profiles replace the organization's whole, and the log na
     tasks: 1,
   });
   assert.ok(removed.ok && removed.value.profile === undefined);
+});
+
+// The examples of docs/settings/provider-settings-across-layers.md, with their outcomes.
+describe("provider settings across layers", () => {
+  const layer = (lines: string[], source?: string) => {
+    const parsed = parseSettings(lines.join("\n"), source);
+    assert.ok(parsed.ok, parsed.ok ? "" : parsed.error);
+    return parsed.ok ? parsed.value : {};
+  };
+  const serving = (settings: Partial<Settings> | undefined) => [
+    settings?.provider,
+    settings?.model,
+    settings?.engine,
+    settings?.gpu,
+    settings?.endpoint,
+    settings?.["pod-reuse"],
+  ];
+  const organization = () =>
+    layer(
+      [
+        "provider: runpod-pod",
+        "model: qwen3-coder:30b",
+        'gpu: "NVIDIA RTX A6000"',
+        "pod-reuse: run",
+        "task-budget: 1",
+      ],
+      SHARED_SETTINGS,
+    );
+
+  test("1. a profile that switches provider starts without the provider settings below", () => {
+    const file = layer([
+      "provider: runpod-pod",
+      "model: qwen3-coder:30b",
+      'gpu: "NVIDIA RTX A6000"',
+      "profiles:",
+      "  - name: serverless-review",
+      "    when:",
+      "      stages: [review]",
+      "    provider: runpod-serverless",
+      "    endpoint: abc123xyz",
+      "    model: Qwen/Qwen3-Coder-30B-A3B-Instruct",
+    ]);
+    const review = resolveRun([{}, {}, file], { stage: "review", tasks: 1 });
+    assert.ok(review.ok && review.value.profile === "serverless-review");
+    assert.deepEqual(serving(review.ok ? review.value.settings : undefined), [
+      "runpod-serverless",
+      "Qwen/Qwen3-Coder-30B-A3B-Instruct",
+      "vllm",
+      undefined,
+      "abc123xyz",
+      undefined,
+    ]);
+    const code = resolveRun([{}, {}, file], { stage: "code", tasks: 1 });
+    assert.deepEqual(serving(code.ok ? code.value.settings : undefined), [
+      "runpod-pod",
+      "qwen3-coder:30b",
+      "ollama",
+      "NVIDIA RTX A6000",
+      undefined,
+      "task",
+    ]);
+  });
+
+  test("2. a repository on another provider drops the organization's, but not its budgets", () => {
+    const file = layer(["provider: openrouter", "model: deepseek/deepseek-v4.1-flash"]);
+    const resolved = resolveRun([{}, {}, file, organization()], { stage: "code", tasks: 1 });
+    assert.ok(resolved.ok, resolved.ok ? "" : resolved.error);
+    const settings = resolved.ok ? resolved.value.settings : undefined;
+    assert.deepEqual(serving(settings), [
+      "openrouter",
+      "deepseek/deepseek-v4.1-flash",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    ]);
+    assert.equal(settings?.["task-budget"], 1);
+    // Without its own model, the organization's carries over, and does not fit OpenRouter.
+    const alone = resolveRun([{}, {}, layer(["provider: openrouter"]), organization()], {
+      stage: "code",
+      tasks: 1,
+    });
+    assert.deepEqual(alone, {
+      ok: false,
+      error:
+        "With `openrouter`, `model` must be an OpenRouter model ID, such as `provider/model`, not `qwen3-coder:30b`.",
+    });
+  });
+
+  test("3. no provider, or the same one, keeps the provider settings below", () => {
+    for (const lines of [
+      ["model: qwen2.5-coder:32b"],
+      ["provider: runpod-pod", "model: qwen2.5-coder:32b"],
+    ]) {
+      const resolved = resolveRun([{}, {}, layer(lines), organization()], {
+        stage: "code",
+        tasks: 1,
+      });
+      assert.deepEqual(serving(resolved.ok ? resolved.value.settings : undefined), [
+        "runpod-pod",
+        "qwen2.5-coder:32b",
+        "ollama",
+        "NVIDIA RTX A6000",
+        undefined,
+        "run",
+      ]);
+    }
+    const file = layer([
+      "provider: runpod-pod",
+      "model: qwen3-coder:30b",
+      'gpu: "NVIDIA RTX A6000"',
+      "pod-reuse: run",
+      "profiles:",
+      "  - name: bigger-gpu",
+      "    when:",
+      "      stages: [code]",
+      '    gpu: "NVIDIA H100 80GB HBM3"',
+      "  - name: other-model",
+      "    when:",
+      "      stages: [test]",
+      "    provider: runpod-pod",
+      "    model: qwen2.5-coder:32b",
+    ]);
+    const run = (stage: ProfileStage) => {
+      const resolved = resolveRun([{}, {}, file], { stage, tasks: 1 });
+      return serving(resolved.ok ? resolved.value.settings : undefined);
+    };
+    assert.deepEqual(run("code"), [
+      "runpod-pod",
+      "qwen3-coder:30b",
+      "ollama",
+      "NVIDIA H100 80GB HBM3",
+      undefined,
+      "run",
+    ]);
+    assert.deepEqual(run("test"), [
+      "runpod-pod",
+      "qwen2.5-coder:32b",
+      "ollama",
+      "NVIDIA RTX A6000",
+      undefined,
+      "run",
+    ]);
+  });
+
+  test("4. the model always carries over, and only its form is checked", () => {
+    const file = layer([
+      "provider: runpod-pod",
+      "model: qwen3-coder:30b",
+      'gpu: "NVIDIA RTX A6000"',
+      "profiles:",
+      "  - name: planner",
+      "    when:",
+      "      stages: [plan, route]",
+      "    provider: openrouter",
+    ]);
+    for (const stage of ["plan", "code"] as const) {
+      assert.deepEqual(resolveRun([{}, {}, file], { stage, tasks: 1 }), {
+        ok: false,
+        error:
+          "Profile `planner`: With `openrouter`, `model` must be an OpenRouter model ID, such as `provider/model`, not `qwen3-coder:30b`.",
+      });
+    }
+    // An OpenRouter ID also has the form of an Ollama name and of a Hugging Face ID.
+    const top = ["model: deepseek/deepseek-v4.1-flash", "profiles:", "  - name: gpu", "    when:"];
+    for (const [profile, provider] of [
+      [["    provider: runpod-pod", '    gpu: "NVIDIA RTX A6000"'], "runpod-pod"],
+      [["    provider: runpod-serverless", "    endpoint: abc123xyz"], "runpod-serverless"],
+    ] as const) {
+      const resolved = resolveRun([{}, {}, layer([...top, "      stages: [code]", ...profile])], {
+        stage: "code",
+        tasks: 1,
+      });
+      assert.ok(resolved.ok, resolved.ok ? "" : resolved.error);
+      assert.deepEqual(
+        resolved.ok && [resolved.value.settings.provider, resolved.value.settings.model],
+        [provider, "deepseek/deepseek-v4.1-flash"],
+      );
+    }
+  });
 });

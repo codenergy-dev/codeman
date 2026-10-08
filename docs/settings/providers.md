@@ -2,7 +2,7 @@
 
 `provider` chooses where a run's model is served. Each provider accepts its own settings beside `model`, and a setting it does not accept, a value it does not offer, or a required setting it lacks stops the run with an error that names the provider. The registry in [`src/inference/providers.ts`](../../src/inference/providers.ts) holds them; a new provider is a new entry. The choices were made in the [provider settings plan](../plans/2026-10-08-provider-settings.md).
 
-A provider's settings go with it: a layer of settings ([above](reference.md)) or a [profile](profiles.md) that names another provider than the one below it leaves out that one's settings, so a repository with `provider: openrouter` drops the organization's `gpu`, and a profile on Serverless over a top level on pods takes no `gpu`. `model` carries over, and must fit the new provider.
+What a [layer](reference.md) or a [profile](profiles.md) that names another provider keeps of the provider settings below it is in [provider settings across layers](provider-settings-across-layers.md).
 
 Each provider bills an account, whose key opens its runs and whose billing the [budgets](../budget/budget.md) read: `openrouter`, or `runpod` for both Runpod providers.
 
