@@ -278,18 +278,18 @@ export async function select(services: Services): Promise<void> {
     const baseSha = branchSha ?? (await repo.branchSha(defaultBranch));
     if (!baseSha) throw new Error(`Branch ${defaultBranch} not found.`);
     let own = taskSettings(maintainerComments, description.commands);
-    const below = [inputs, fileSettings.value, shared.value];
+    const inherited = [inputs, fileSettings.value, shared.value];
     // The profile depends on what the agent works on, and on how many agents the run has.
     const agentWork = action === "plan" || action === "route" ? action : stage;
     const runConditions: RunConditions | undefined = agentWork
       ? { stage: agentWork, tasks: agents }
       : undefined;
-    let resolved = resolveRun([own, ...below], runConditions);
+    let resolved = resolveRun([own, ...inherited], runConditions);
     if (!resolved.ok && (own.model !== undefined || own.gpu !== undefined)) {
       // A task's model that does not fit the top level's provider, or a GPU that no provider
       // accepts, stops this task only: the run goes on without them, and says why.
       const { model: _model, gpu: _gpu, ...rest } = own;
-      const fallback = resolveRun([rest, ...below], runConditions);
+      const fallback = resolveRun([rest, ...inherited], runConditions);
       if (fallback.ok) {
         problems.push({ problem: { kind: "settings-rejected", error: resolved.error } });
         resolved = fallback;
@@ -297,7 +297,7 @@ export async function select(services: Services): Promise<void> {
       }
     }
     if (!resolved.ok) throw new Error(resolved.error);
-    for (const line of settingSources([own, ...below])) runtime.info(line);
+    for (const line of settingSources([own, ...inherited])) runtime.info(line);
     const { profile, accounts } = resolved.value;
     const settings = resolved.value.settings;
     if (profile) runtime.info(`Profile \`${profile}\` applies to this run.`);

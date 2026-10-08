@@ -27,6 +27,14 @@ export const LAYER_SOURCES = [
   SHARED_SETTINGS,
 ] as const;
 
+/** How an error names each layer of `LAYER_SOURCES` as the base another inherits from. */
+const LAYER_BASES = [
+  "the task's commands",
+  "the workflow's inputs",
+  SETTINGS_FILE,
+  "the organization's settings",
+] as const;
+
 /** Values a repository can configure. Names match the workflow inputs. */
 export interface Settings {
   model: string;
@@ -51,7 +59,7 @@ export interface Settings {
   language: string;
   /**
    * Where agent runs get their model: `openrouter`, `runpod-pod` or `runpod-serverless`. The
-   * settings below it are accepted only by some providers (`src/inference/providers.ts`).
+   * settings that follow it are accepted only by some providers (`src/inference/providers.ts`).
    */
   provider: ProviderName;
   /** What serves the model: `ollama` on pods, `vllm` on Serverless endpoints. */
@@ -484,7 +492,7 @@ export interface RunSettings {
  * top-level values it sets, except those the task's own commands (the first layer) set.
  *
  * A provider's settings go with it: a layer or a profile that names another provider than the
- * one below it leaves out the settings that were for that one, and must set its own model when
+ * one it inherits leaves out the settings that were for that one, and must set its own model when
  * one would carry over. A task's own provider settings (`gpu`) apply to the runs whose provider
  * accepts them, and its model to the runs on the top level's provider.
  *
@@ -503,24 +511,31 @@ export function resolveRun(
       error: `No model is configured. Set \`model\` in ${SETTINGS_FILE} or in the workflow's inputs.`,
     };
   }
-  // The top level as the layers below the task's commands set it; a task's model fills it only
+  // The top level, as the layers the task's commands inherit set it; a task's model fills it only
   // when none of them sets one.
-  const below = serving(
-    layers.slice(1).map((settings, index) => ({ name: layerSource(index + 1), settings })),
-    { provider: DEFAULTS.provider },
+  const inherited = serving(
+    layers.slice(1).map((settings, index) => ({
+      name: layerSource(index + 1),
+      source: LAYER_BASES[index + 1] ?? `layer ${index + 2}`,
+      settings,
+    })),
+    { source: "Codeman's default", settings: { provider: DEFAULTS.provider } },
   );
-  if (!below.ok) return below;
+  if (!inherited.ok) return inherited;
   const top = {
     ...omit(values, PROFILE_SETTINGS),
-    ...below.value,
-    model: below.value.model ?? values.model,
+    ...inherited.value,
+    model: inherited.value.model ?? values.model,
   };
   const topError = settingsProblem(top);
   if (topError) return { ok: false, error: topError };
   const profiled: { profile: Profile; settings: PartialSettings }[] = [];
   for (const profile of list) {
     const name = `Profile \`${profile.name}\``;
-    const served = serving([{ name, settings: profile.settings }], top);
+    const served = serving([{ name, source: name, settings: profile.settings }], {
+      source: "the top level",
+      settings: top,
+    });
     if (!served.ok) return served;
     const settings = { ...omit(top, PROFILE_SETTINGS), ...served.value };
     const error = settingsProblem(settings);
@@ -587,29 +602,39 @@ export function applies(profile: Profile, run: RunConditions): boolean {
 
 /** A layer of `serving`, and how its errors name it. */
 interface NamedLayer {
+  /** As the layer an error is about, capitalized. */
   name: string;
+  /** As the base another layer inherits its provider from. */
+  source: string;
   settings: PartialSettings;
 }
 
 /**
- * Where the model is served, from `layers` over `base` (the first layer wins): the provider, the
- * model, and the provider's settings. A layer that names another provider than the one below it
- * starts that provider's settings afresh (decision 2 of the provider settings plan), and must set
- * its own model when one would carry over (the model per provider plan).
+ * Where the model is served, from `layers` and `base` (the first layer wins; `base` is what the
+ * last one inherits): the provider, the model, and the provider's settings. A layer that names
+ * another provider than the one it inherits starts that provider's settings afresh (decision 2
+ * of the provider settings plan), and must set its own model when one would carry over (the
+ * model per provider plan).
  */
-function serving(layers: readonly NamedLayer[], base: PartialSettings): Parsed<PartialSettings> {
-  let result: PartialSettings = pick(base, PROFILE_SETTINGS);
-  for (const { name, settings } of [...layers].reverse()) {
+function serving(
+  layers: readonly NamedLayer[],
+  base: Omit<NamedLayer, "name">,
+): Parsed<PartialSettings> {
+  let result: PartialSettings = pick(base.settings, PROFILE_SETTINGS);
+  // The layer the provider so far comes from.
+  let from = base.source;
+  for (const { name, source, settings } of [...layers].reverse()) {
     const { provider } = settings;
     if (provider !== undefined && provider !== result.provider) {
       if (result.model !== undefined && settings.model === undefined) {
         return {
           ok: false,
-          error: `${name} names \`${provider}\`, another provider than the \`${result.provider}\` below it, so it must set its own \`model\`, one for \`${provider}\`.`,
+          error: `${name} names \`${provider}\`, but inherits \`${result.provider}\` from ${from}, so it must set its own \`model\`, one for \`${provider}\`.`,
         };
       }
       result = omit(result, PROVIDER_SETTINGS);
     }
+    if (provider !== undefined) from = source;
     Object.assign(result, pick(settings, PROFILE_SETTINGS));
   }
   return { ok: true, value: result };

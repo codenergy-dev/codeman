@@ -912,7 +912,7 @@ test("profiles: a task's model is for the top level's provider, and is reported 
   const stopped = new FakeRuntime({ inputs: { workdir } });
   await assert.rejects(select(fakeServices(unset, stopped)), {
     message:
-      "Profile `small-pod` names `runpod-pod`, another provider than the `openrouter` below it, so it must set its own `model`, one for `runpod-pod`.",
+      "Profile `small-pod` names `runpod-pod`, but inherits `openrouter` from the top level, so it must set its own `model`, one for `runpod-pod`.",
   });
   assert.equal(stopped.outputs.action, undefined);
 });

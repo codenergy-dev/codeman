@@ -14,7 +14,7 @@ A task that changed its GPU with `/codeman set gpu-type` needs `/codeman set gpu
 
 ## A model per provider
 
-Since the [model per provider plan](../plans/2026-10-08-model-per-provider.md), a repository's file or a profile that names another provider than the one below it must set its own `model`; the first run stops with an error that names it otherwise. Add the model the new provider serves, such as `model: qwen3-coder:30b` to a profile with `provider: runpod-pod` under an OpenRouter top level. A task's `/codeman set model` now applies only to the runs on the top level's provider ([the model](../settings/provider-settings-across-layers.md#the-model)).
+Since the [model per provider plan](../plans/2026-10-08-model-per-provider.md), a repository's file or a profile that names another provider than the one it inherits must set its own `model`; the first run stops with an error that names it otherwise. Add the model the new provider serves, such as `model: qwen3-coder:30b` to a profile with `provider: runpod-pod` that inherits OpenRouter from the top level. A task's `/codeman set model` now applies only to the runs on the top level's provider ([the model](../settings/provider-settings-across-layers.md#the-model)).
 
 ## Workflow files copied before the backend
 

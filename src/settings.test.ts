@@ -585,7 +585,7 @@ test("a profile on another provider leaves out the top level's provider settings
   });
 });
 
-test("a layer on another provider leaves out the provider settings of the layers below", () => {
+test("a layer on another provider leaves out the provider settings it inherits", () => {
   const shared = parseSettings(
     "provider: runpod-pod\ngpu: GPU\nmodel: qwen3-coder:30b",
     SHARED_SETTINGS,
@@ -610,7 +610,7 @@ test("a task's model applies to the runs on the top level's provider, and must f
     assert.ok(resolved.ok, resolved.ok ? "" : resolved.error);
     return resolved.ok ? [resolved.value.profile, resolved.value.settings.model] : [];
   };
-  // It wins over a profile on the same provider, and never reaches one on another provider.
+  // It overrides a profile on the same provider, and never reaches one on another provider.
   assert.deepEqual(run("web"), [undefined, "deepseek/deepseek-v4.1-flash"]);
   assert.deepEqual(run("plan"), ["planner", "deepseek/deepseek-v4.1-flash"]);
   assert.deepEqual(run("code"), ["small-pod", "qwen3-coder:30b"]);
@@ -703,7 +703,7 @@ test("a layer or profile that changes provider must set its own model", () => {
   const without = pods(pod);
   assert.ok(without.ok);
   const error =
-    "Profile `small-pod` names `runpod-pod`, another provider than the `openrouter` below it, so it must set its own `model`, one for `runpod-pod`.";
+    "Profile `small-pod` names `runpod-pod`, but inherits `openrouter` from the top level, so it must set its own `model`, one for `runpod-pod`.";
   // Whichever stage runs, and even when the task sets a model.
   for (const own of [{}, { model: "qwen3-coder:30b" }]) {
     for (const stage of ["plan", "code"] as const) {
@@ -732,13 +732,13 @@ test("a layer or profile that changes provider must set its own model", () => {
     ]);
   }
 
-  // A repository's file over the organization's provider, or over the default `openrouter`.
+  // A repository's file that overrides the organization's provider, or the default `openrouter`.
   const file = { provider: "runpod-pod", gpu: "NVIDIA RTX A6000" } as const;
   const organization = parseSettings("model: deepseek/deepseek-v4.1-flash", SHARED_SETTINGS);
   assert.ok(organization.ok);
   const shared = organization.ok ? organization.value : {};
   const fileError =
-    ".codeman/settings.yml names `runpod-pod`, another provider than the `openrouter` below it, so it must set its own `model`, one for `runpod-pod`.";
+    ".codeman/settings.yml names `runpod-pod`, but inherits `openrouter` from Codeman's default, so it must set its own `model`, one for `runpod-pod`.";
   assert.deepEqual(resolveRun([{}, {}, file, shared], code), { ok: false, error: fileError });
   // A manual run's model does not make up for it: scheduled runs have none.
   assert.deepEqual(resolveRun([{}, { model: "qwen3-coder:30b" }, file, shared], code), {
@@ -747,7 +747,7 @@ test("a layer or profile that changes provider must set its own model", () => {
   });
   const set = resolveRun([{}, {}, { ...file, model: "qwen3-coder:30b" }, shared], code);
   assert.ok(set.ok && set.value.settings.model === "qwen3-coder:30b");
-  // With no model below, none carries over: the model comes from a layer above the change.
+  // With no model inherited, none carries over: a layer that inherits the change sets it.
   const noModel = parseSettings('provider: runpod-pod\ngpu: "NVIDIA RTX A6000"', SHARED_SETTINGS);
   assert.ok(noModel.ok);
   for (const layers of [
@@ -790,7 +790,7 @@ describe("provider settings across layers", () => {
       SHARED_SETTINGS,
     );
 
-  test("1. a profile that switches provider starts without the provider settings below", () => {
+  test("1. a profile that switches provider starts without the provider settings it inherits", () => {
     const file = layer([
       "provider: runpod-pod",
       "model: qwen3-coder:30b",
@@ -846,11 +846,11 @@ describe("provider settings across layers", () => {
     assert.deepEqual(alone, {
       ok: false,
       error:
-        ".codeman/settings.yml names `openrouter`, another provider than the `runpod-pod` below it, so it must set its own `model`, one for `openrouter`.",
+        ".codeman/settings.yml names `openrouter`, but inherits `runpod-pod` from the organization's settings, so it must set its own `model`, one for `openrouter`.",
     });
   });
 
-  test("3. no provider, or the same one, keeps the provider settings below", () => {
+  test("3. no provider, or the same one, keeps the provider settings it inherits", () => {
     for (const lines of [
       ["model: qwen2.5-coder:32b"],
       ["provider: runpod-pod", "model: qwen2.5-coder:32b"],
@@ -921,7 +921,7 @@ describe("provider settings across layers", () => {
       assert.deepEqual(resolveRun([{}, {}, file], { stage, tasks: 1 }), {
         ok: false,
         error:
-          "Profile `planner` names `openrouter`, another provider than the `runpod-pod` below it, so it must set its own `model`, one for `openrouter`.",
+          "Profile `planner` names `openrouter`, but inherits `runpod-pod` from the top level, so it must set its own `model`, one for `openrouter`.",
       });
     }
     // The other way round too, though an OpenRouter ID has the form of an Ollama name and of a
@@ -937,7 +937,7 @@ describe("provider settings across layers", () => {
       });
       assert.deepEqual(resolved, {
         ok: false,
-        error: `Profile \`gpu\` names \`${provider}\`, another provider than the \`openrouter\` below it, so it must set its own \`model\`, one for \`${provider}\`.`,
+        error: `Profile \`gpu\` names \`${provider}\`, but inherits \`openrouter\` from the top level, so it must set its own \`model\`, one for \`${provider}\`.`,
       });
     }
   });

@@ -1,12 +1,15 @@
 # Settings
 
-Each value comes from the first of these that sets it:
+Settings come in layers. Each layer **inherits** from its **base**, the settings that the layers before it resolve to, and may **override** any of its values: a value it sets replaces the base's, and a value it does not set is the base's. The layers, in order:
 
-1. A `/codeman set` command on the task, in a comment or in the issue's description (only `model`, `task-budget`, `max-runs`, `language` and `gpu`).
-2. The workflow's inputs, in a manual run.
+1. Codeman's default, the table's `Default` column.
+2. The organization's settings: the `settings` input of the `select` step, which the template fills from the `CODEMAN_SETTINGS` variable, in the file's format. They are defaults that several repositories share. Empty, or not passed by an older workflow file, means none. Only they set `organization-monthly-budget`: a repository's file or profile that sets it stops the run with an error, and neither commands nor a manual run's inputs take it. See [installation](../installation/shared-settings.md).
 3. `.codeman/settings.yml` on the default branch.
-4. The organization's settings: the `settings` input of the `select` step, which the template fills from the `CODEMAN_SETTINGS` variable, in the file's format. They are defaults that several repositories share; a repository's file overrides them, value by value. Empty, or not passed by an older workflow file, means none. Only they set `organization-monthly-budget`: a repository's file or profile that sets it stops the run with an error, and neither commands nor a manual run's inputs take it. See [installation](../installation/shared-settings.md).
-5. Codeman's default.
+4. The workflow's inputs, in a manual run.
+5. The [profile](profiles.md) that applies to the run, if any. It overrides only the provider, the model and the provider's settings.
+6. A `/codeman set` command on the task, in a comment or in the issue's description (only `model`, `task-budget`, `max-runs`, `language` and `gpu`). Its `model` is for the top level's provider, and overrides a profile only on that provider; its `gpu` applies to the runs whose provider accepts it ([the model](provider-settings-across-layers.md#the-model)).
+
+So a value comes from the last layer that sets it. The **top level** is the settings outside `profiles`: in a file, its keys outside `profiles`; for a run, what layers 1 to 4 resolve to, which is a profile's base. A layer that names another provider than the one it inherits keeps none of the inherited provider's settings ([provider settings across layers](provider-settings-across-layers.md)).
 
 When `select` picks a task, its log has a line per layer, naming the values that come from it; the values no line names are Codeman's defaults.
 

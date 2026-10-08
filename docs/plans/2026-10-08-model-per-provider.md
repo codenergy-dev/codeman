@@ -1,7 +1,7 @@
 ---
 status: completed
 created_at: 2026-10-08T16:29:39-03:00
-updated_at: 2026-10-08T16:34:00-03:00
+updated_at: 2026-10-08T16:52:00-03:00
 commit: 44485dc
 ---
 
@@ -61,3 +61,7 @@ On the test repository, with Codeman installed from the plan's last commit. It c
 - Telling providers' model IDs apart by more than their form (decision 1, option c).
 - Letting a task choose a model per provider, or change its provider (`/codeman set provider`).
 - A `provider` input for manual runs.
+
+## Notes
+
+- **2026-10-08**: the error message and the docs were reworded from "below" to inheritance; the message now names where the inherited provider comes from: "Profile `planner` names `openrouter`, but inherits `runpod-pod` from the top level, so it must set its own `model`, one for `openrouter`." (for a layer, from the organization's settings or Codeman's default).

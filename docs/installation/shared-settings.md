@@ -14,7 +14,7 @@ An organization can give the repositories that use Codeman the same settings, su
 2. Under **Repository access**, choose the repositories that use Codeman.
 3. Check that each repository's workflow passes the variable to the `select` step, as the template does: `settings: ${{ vars.CODEMAN_SETTINGS }}`. Workflow files copied before that line existed ignore the variable.
 
-These are defaults: a value in a repository's `.codeman/settings.yml` overrides the organization's, and a manual run's inputs and a task's commands come before both; see [settings](../settings/reference.md). The `select` job's log names where each value came from. A malformed variable stops every run of those repositories, with an error that names the `settings` input.
+These are defaults: a repository's `.codeman/settings.yml` inherits them and overrides them value by value, and a manual run's inputs and a task's commands override both; see [settings](../settings/reference.md). The `select` job's log names where each value came from. A malformed variable stops every run of those repositories, with an error that names the `settings` input.
 
 `organization-monthly-budget` is the exception: only this variable sets it. It limits what all the organization's repositories spend in a calendar month together, every provider included, with the Runpod account's whole billing; without it, only each repository's `monthly-budget` holds. A repository's `.codeman/settings.yml` that sets it stops its runs with an error. See [budget](../budget/budget.md).
 

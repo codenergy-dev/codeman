@@ -1,6 +1,7 @@
 # Codeman settings for a target repository. Copy it to .codeman/settings.yml.
 # Only `name: value` lines and the list of profiles below are accepted.
-# Workflow inputs and `/codeman set` take precedence.
+# It inherits the organization's settings, if any, and workflow inputs and `/codeman set`
+# override it.
 # Reference: https://github.com/codenergy-dev/codeman/blob/main/docs/settings/reference.md
 
 # Model ID, required here or as a workflow input, in the form the provider takes: OpenRouter's,
@@ -30,11 +31,11 @@ provider: openrouter
 # engine: vllm
 
 # Profiles: a provider, a model and that provider's settings for some runs. The first profile
-# whose conditions all hold applies; the settings above apply when none does. A profile sets
-# only `provider`, `model` and the provider's settings; one on another provider than the one
-# above leaves out that one's settings, and must set its own `model`. Conditions: `stages`
-# (plan, route, web, design, code, test, review), and `parallel-tasks` (at least that many of
-# the run's tasks run an agent).
+# whose conditions all hold applies; the top-level settings apply when none does. A profile
+# inherits the top-level settings and sets only `provider`, `model` and the provider's settings;
+# one on another provider than the top level's inherits none of that one's settings, and must
+# set its own `model`. Conditions: `stages` (plan, route, web, design, code, test, review), and
+# `parallel-tasks` (at least that many of the run's tasks run an agent).
 # Each provider a run uses needs its secret; with the organization's monthly budget, so does the
 # Runpod account of a Runpod provider named here, whose billing counts in the organization's
 # month.

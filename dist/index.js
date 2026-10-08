@@ -28477,6 +28477,12 @@ var LAYER_SOURCES = [
   SETTINGS_FILE,
   SHARED_SETTINGS
 ];
+var LAYER_BASES = [
+  "the task's commands",
+  "the workflow's inputs",
+  SETTINGS_FILE,
+  "the organization's settings"
+];
 var DEFAULTS2 = {
   "task-budget": 2,
   "monthly-budget": 20,
@@ -28762,22 +28768,29 @@ function resolveRun(layers, run2) {
       error: `No model is configured. Set \`model\` in ${SETTINGS_FILE} or in the workflow's inputs.`
     };
   }
-  const below = serving(
-    layers.slice(1).map((settings2, index) => ({ name: layerSource(index + 1), settings: settings2 })),
-    { provider: DEFAULTS2.provider }
+  const inherited = serving(
+    layers.slice(1).map((settings2, index) => ({
+      name: layerSource(index + 1),
+      source: LAYER_BASES[index + 1] ?? `layer ${index + 2}`,
+      settings: settings2
+    })),
+    { source: "Codeman's default", settings: { provider: DEFAULTS2.provider } }
   );
-  if (!below.ok) return below;
+  if (!inherited.ok) return inherited;
   const top = {
     ...omit2(values, PROFILE_SETTINGS),
-    ...below.value,
-    model: below.value.model ?? values.model
+    ...inherited.value,
+    model: inherited.value.model ?? values.model
   };
   const topError = settingsProblem(top);
   if (topError) return { ok: false, error: topError };
   const profiled = [];
   for (const profile2 of list2) {
     const name = `Profile \`${profile2.name}\``;
-    const served = serving([{ name, settings: profile2.settings }], top);
+    const served = serving([{ name, source: name, settings: profile2.settings }], {
+      source: "the top level",
+      settings: top
+    });
     if (!served.ok) return served;
     const settings2 = { ...omit2(top, PROFILE_SETTINGS), ...served.value };
     const error4 = settingsProblem(settings2);
@@ -28832,18 +28845,20 @@ function applies(profile2, run2) {
   return (!stages || stages.includes(run2.stage)) && (tasks === void 0 || run2.tasks >= tasks);
 }
 function serving(layers, base) {
-  let result = pick(base, PROFILE_SETTINGS);
-  for (const { name, settings } of [...layers].reverse()) {
+  let result = pick(base.settings, PROFILE_SETTINGS);
+  let from = base.source;
+  for (const { name, source, settings } of [...layers].reverse()) {
     const { provider } = settings;
     if (provider !== void 0 && provider !== result.provider) {
       if (result.model !== void 0 && settings.model === void 0) {
         return {
           ok: false,
-          error: `${name} names \`${provider}\`, another provider than the \`${result.provider}\` below it, so it must set its own \`model\`, one for \`${provider}\`.`
+          error: `${name} names \`${provider}\`, but inherits \`${result.provider}\` from ${from}, so it must set its own \`model\`, one for \`${provider}\`.`
         };
       }
       result = omit2(result, PROVIDER_SETTINGS);
     }
+    if (provider !== void 0) from = source;
     Object.assign(result, pick(settings, PROFILE_SETTINGS));
   }
   return { ok: true, value: result };
@@ -32656,13 +32671,13 @@ async function select(services) {
     const baseSha = branchSha ?? await repo.branchSha(defaultBranch);
     if (!baseSha) throw new Error(`Branch ${defaultBranch} not found.`);
     let own = taskSettings(maintainerComments, description.commands);
-    const below = [inputs, fileSettings.value, shared.value];
+    const inherited = [inputs, fileSettings.value, shared.value];
     const agentWork = action === "plan" || action === "route" ? action : stage;
     const runConditions = agentWork ? { stage: agentWork, tasks: agents } : void 0;
-    let resolved = resolveRun([own, ...below], runConditions);
+    let resolved = resolveRun([own, ...inherited], runConditions);
     if (!resolved.ok && (own.model !== void 0 || own.gpu !== void 0)) {
       const { model: _model, gpu: _gpu, ...rest } = own;
-      const fallback = resolveRun([rest, ...below], runConditions);
+      const fallback = resolveRun([rest, ...inherited], runConditions);
       if (fallback.ok) {
         problems.push({ problem: { kind: "settings-rejected", error: resolved.error } });
         resolved = fallback;
@@ -32670,7 +32685,7 @@ async function select(services) {
       }
     }
     if (!resolved.ok) throw new Error(resolved.error);
-    for (const line of settingSources([own, ...below])) runtime2.info(line);
+    for (const line of settingSources([own, ...inherited])) runtime2.info(line);
     const { profile: profile2, accounts } = resolved.value;
     const settings = resolved.value.settings;
     if (profile2) runtime2.info(`Profile \`${profile2}\` applies to this run.`);
