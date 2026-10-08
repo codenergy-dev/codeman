@@ -12,7 +12,7 @@ npm run check   # lint, type check, test and build
 | `npm run lint` | Biome lint and format check |
 | `npm run format` | Apply Biome fixes and formatting |
 | `npm run typecheck` | `tsc`, no output |
-| `npm test` | `node:test` on `src/**/*.test.ts`. The sandbox test runs only on Linux with `CODEMAN_SANDBOX_TEST=1`, because it creates a system user with `sudo`; CI sets it. The store's contract tests run on Firestore's emulator when there is one, and are skipped otherwise, as on CI; see [the emulator](#firestores-emulator). |
+| `npm test` | `node:test` on `src/**/*.test.ts`. The sandbox test runs only on Linux with `CODEMAN_SANDBOX_TEST=1`, because it creates a system user with `sudo`; CI sets it. The store's contract tests run on Firestore's emulator when there is one, and are skipped otherwise, as on CI; see [the emulator](#firestores-emulator). `src/docs.test.ts` checks that every relative link in `README.md`, `AGENTS.md` and `docs/`, and every path of `docs/` named in the code, the templates and the pod image, names a file and a heading that exist. |
 | `npm run build` | Bundle `src/index.ts` into `dist/index.js`, and the gateway, `src/gateway/main.ts`, into `dist/gateway.js` |
 
 ## Layout
