@@ -399,6 +399,22 @@ test("rejects malformed profiles, naming the line", () => {
       "line 3: a profile cannot set `task-budget`; it sets only `provider`, `model`, `engine`, `gpu`, `endpoint`, `pod-reuse`.",
     ],
     ["profiles:\n  - name: a\n    secret: x", "line 3: unknown setting `secret`."],
+    [
+      "profiles:\n  - name: a\n    stages: [plan]",
+      "line 3: `stages` is a condition here: write it under the profile's `when`.",
+    ],
+    [
+      "profiles:\n  - name: a\n    parallel-tasks: 2",
+      "line 3: `parallel-tasks` is a condition here: write it under the profile's `when`.",
+    ],
+    [
+      "model: a/b\nwhen:\n  stages: [plan]",
+      "line 2: `when` is a profile's condition: write it in a profile, under `profiles`.",
+    ],
+    [
+      "stages: [plan]",
+      "line 1: `stages` is a profile's condition: write it under a profile's `when`, in `profiles`.",
+    ],
     ["profiles:\n  - name: a\n    provider: spot", "line 3: `provider` must be one of"],
     ["profiles:\n  - name: a\n  - name: a", "line 3: two profiles are named `a`."],
     ["profiles:\n  - name: a b", "line 2: a profile's `name` must be"],

@@ -28656,6 +28656,8 @@ function setting(entry, what) {
   const { key: name, line, value } = entry;
   const renamed = renamedSetting(name, value.kind === "scalar" ? value.text : void 0);
   if (renamed) return { ok: false, line, error: renamed };
+  const misplaced = misplacedCondition(name, what);
+  if (misplaced) return { ok: false, line, error: misplaced };
   if (!isSettingName(name)) return { ok: false, line, error: `unknown setting \`${name}\`.` };
   if (what === "profile" && !PROFILE_SETTINGS.includes(name)) {
     return {
@@ -28669,6 +28671,18 @@ function setting(entry, what) {
   }
   const parsed = parseSetting(name, value.text);
   return parsed.ok ? parsed : { ok: false, line, error: parsed.error };
+}
+function misplacedCondition(name, what) {
+  if (what === "setting" && name === "when") {
+    return "`when` is a profile's condition: write it in a profile, under `profiles`. The top-level settings apply when no profile does.";
+  }
+  if (what === "setting" && name === "stages") {
+    return "`stages` is a profile's condition: write it under a profile's `when`, in `profiles`. The top-level settings apply when no profile does.";
+  }
+  if (what === "profile" && (name === "stages" || name === "parallel-tasks")) {
+    return `\`${name}\` is a condition here: write it under the profile's \`when\`.`;
+  }
+  return void 0;
 }
 function profiles(node) {
   if (node.kind !== "list" || node.items.some((item) => item.kind !== "map")) {
