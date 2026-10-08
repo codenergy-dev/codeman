@@ -147,7 +147,7 @@ jobs:
           handle: ${{ needs.open-key.outputs.handle }}
           base-url: ${{ needs.open-key.outputs.base-url }}
           context-length: ${{ needs.open-key.outputs.context-length }}
-          # Self-hosted inference on Serverless: held by the gateway outside the sandbox.
+          # The runpod-serverless provider: held by the gateway outside the sandbox.
           serverless-key: ${{ secrets.CODEMAN_RUNPOD_SERVERLESS_KEY }}
           agent-minutes: 50
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

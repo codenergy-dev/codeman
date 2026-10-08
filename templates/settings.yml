@@ -1,38 +1,48 @@
 # Codeman settings for a target repository. Copy it to .codeman/settings.yml.
-# Only `name: value` lines and the list of inference profiles below are accepted.
+# Only `name: value` lines and the list of profiles below are accepted.
 # Workflow inputs and `/codeman set` take precedence.
 # Reference: https://github.com/codenergy-dev/codeman/blob/main/docs/architecture.md#settings
 
-# Model ID, required here or as a workflow input: OpenRouter's, or, with self-hosted inference,
-# the engine's (Ollama's on pods, the Hugging Face ID the vLLM worker serves on Serverless).
+# Model ID, required here or as a workflow input, in the form the provider takes: OpenRouter's,
+# Ollama's on Runpod pods, or the Hugging Face ID the vLLM worker serves on Runpod Serverless.
 model: deepseek/deepseek-v4.1-flash
 
-# Where agent runs get their model: openrouter, or self-hosted on GPUs rented from Runpod.
+# Where agent runs get their model: openrouter (the default), runpod-pod or runpod-serverless.
+# Each provider accepts only its own settings, below; any other stops the run with an error.
 # See docs/installation.md for the secrets each needs.
-# inference: self-hosted
-# gpu-provider: runpod
-# A pod rented for the run (pod), or the workers of a Serverless endpoint you created
-# (serverless).
-# gpu-mode: pod
-# Pods: the GPU type, by Runpod's GPU ID (not its display name); quote it. A task can change it with /codeman set.
-# gpu-type: "NVIDIA RTX A6000"
-# Pods: keep the pod for the task's next run (task), or one pod per run (run).
-# pod-reuse: task
-# Serverless: the endpoint's ID.
-# serverless-endpoint: abc123xyz
+provider: openrouter
 
-# Inference profiles: other inference settings for some runs. The first profile whose conditions
-# all hold applies; the settings above apply when none does. A profile sets only `model` and the
-# inference settings above. Conditions: `stages` (plan, route, web, design, code, test, review),
-# and `parallel-tasks` (at least that many of the run's tasks run an agent).
-# Each provider a run uses needs its secret; with the organization's monthly budget, so does each
-# GPU provider named here, whose billing counts in the organization's month.
-# inference-profiles:
+# runpod-pod: a GPU pod Codeman rents, which serves the model with Ollama.
+# provider: runpod-pod
+# The GPU type, by Runpod's GPU ID (not its display name); quote it. Required.
+# A task can change it with /codeman set gpu.
+# gpu: "NVIDIA RTX A6000"
+# Keep the pod for the next run on its settings (task), or one pod per run (run).
+# pod-reuse: task
+# The engine: ollama, the only one on pods so far.
+# engine: ollama
+
+# runpod-serverless: the workers of a Serverless endpoint you created, running Runpod's vLLM worker.
+# provider: runpod-serverless
+# The endpoint's ID, or its URL from Runpod's console (https://api.runpod.ai/v2/<id>/...). Required.
+# endpoint: abc123xyz
+# The engine: vllm, the only one on Serverless.
+# engine: vllm
+
+# Profiles: a provider, a model and that provider's settings for some runs. The first profile
+# whose conditions all hold applies; the settings above apply when none does. A profile sets
+# only `provider`, `model` and the provider's settings; one on another provider than the one
+# above leaves out that one's settings. Conditions: `stages` (plan, route, web, design, code,
+# test, review), and `parallel-tasks` (at least that many of the run's tasks run an agent).
+# Each provider a run uses needs its secret; with the organization's monthly budget, so does the
+# Runpod account of a Runpod provider named here, whose billing counts in the organization's
+# month.
+# profiles:
 #   - name: small-pod
 #     when:
 #       stages: [code, test]
-#     inference: self-hosted
-#     gpu-type: "NVIDIA RTX A6000"
+#     provider: runpod-pod
+#     gpu: "NVIDIA RTX A6000"
 #     model: qwen3-coder:30b
 
 # Spending limit per task and per calendar month for this repository, in USD. The limit for all

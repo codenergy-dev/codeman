@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import { PROVIDERS } from "./inference/providers.ts";
 import {
   DEFAULTS,
   type PartialSettings,
@@ -432,11 +433,25 @@ test("rejects malformed profiles, naming the line", () => {
 test("today's flat files read the same, and the template is one", () => {
   const text = readFileSync("templates/settings.yml", "utf8");
   assert.ok(parseSettings(text).ok);
-  // Each provider's block and the profiles, once uncommented, read too.
-  for (const block of text.split(/\n\n/).filter((part) => /^# (provider|profiles):/m.test(part))) {
-    const uncommented = parseSettings(block.replace(/^# (?=[a-z-]+:| {2})/gm, ""));
+  // Each provider's block and the profiles, once uncommented, read too; a provider's block
+  // names the settings the provider accepts.
+  const blocks = text.split(/\n\n/).filter((part) => /^# (provider|profiles):/m.test(part));
+  const named = blocks.map((block) => {
+    const uncommented = parseSettings(block.replace(/^# (?=[a-z-]+:( \S+| "[^"]*")?$| {2})/gm, ""));
     assert.ok(uncommented.ok, uncommented.ok ? "" : uncommented.error);
+    return uncommented.ok ? uncommented.value : {};
+  });
+  for (const name of ["runpod-pod", "runpod-serverless"] as const) {
+    const block = named.find((settings) => settings.provider === name && !settings.profiles);
+    assert.deepEqual(
+      Object.keys(block ?? {})
+        .filter((setting) => setting !== "provider")
+        .sort(),
+      Object.keys(PROVIDERS[name].settings).sort(),
+      name,
+    );
   }
+  assert.ok(named.some((settings) => settings.profiles?.[0]?.name === "small-pod"));
   assert.deepEqual(parseSettings("gpu: \"NVIDIA RTX A6000\"\nmodel: '~a/b' # latest"), {
     ok: true,
     value: { gpu: "NVIDIA RTX A6000", model: "~a/b" },

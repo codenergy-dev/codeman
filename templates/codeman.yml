@@ -11,7 +11,7 @@ on:
     # defaults. Scheduled and comment runs have no inputs.
     inputs:
       model:
-        description: Model ID, OpenRouter's or the self-hosted engine's.
+        description: Model ID, in the form the provider takes.
         type: string
       task-budget:
         description: Spending limit per task, in USD.

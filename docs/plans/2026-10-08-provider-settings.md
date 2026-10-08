@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-10-08T13:54:00-03:00
-updated_at: 2026-10-08T14:17:37-03:00
+updated_at: 2026-10-08T14:19:43-03:00
 commit: 8b911ba
 ---
 
@@ -93,6 +93,7 @@ The plan left these open; each follows its decisions (one name per thing, strict
 3. The rest of the code on the registry: `select` and its outputs, the key jobs, the secrets `open-key` requires (from the providers the settings and profiles name), the ledger's new runs and the spend table, keeping older records readable. Done when the existing tests pass on the new names and a test reads an older record and ledger run.
    - **Done on 2026-10-08**: the `inference` output's choice names its `provider`, `gpu` and `accounts` (`src/inference/index.ts`); the agent's access, `apply`'s spend rows, `open-key`'s secrets and billing (by account) and `release-pod` read it; `select` writes the provider to the ledger (choice 11); the spend table names `provider` and reads older rows' `inference` (`rowProvider` in `src/spend.ts`). Tests: `ledger.test.ts` reads older and new runs' accounts; `flow.test.ts` shows rows without a provider, with an older `inference` and with a provider, and a task's `gpu` on a pod profile; `spend.test.ts` reads older rows. `dist/gateway.js` changes: it bundles the Runpod adapter, whose error for an unknown GPU type now names `gpu`. The gateway never calls it, so pods behave as before; pushing `main` publishes a new pod image, and `POD_IMAGE` needs no new pin.
 4. Workflow and templates: `action.yml` and the workflows' inputs, `templates/settings.yml` (one commented block per provider), `src/templates.test.ts`. Done when the templates use only the new names.
+   - **Done on 2026-10-08**: [`templates/settings.yml`](../../templates/settings.yml) sets `provider: openrouter`, then a commented block for `runpod-pod` and one for `runpod-serverless`, and a profile; `action.yml`'s descriptions and the workflow templates' comments name the providers. The workflows' inputs and secrets keep their names (choice 14). Tests: `settings.test.ts` uncomments each provider's block, which must name exactly the settings the registry gives it; `templates.test.ts` checks that each provider's account key and other secrets reach the jobs and inputs the registry names, and that no template nor `action.yml` uses an old name.
 5. Docs: [architecture](../architecture.md) (Settings: a section per provider with its settings, secrets, model ID and how its cost is measured; Inference profiles as Profiles), [installation](../installation.md), README. A test checks that each provider's documented settings match the registry. Done when the docs name only the new settings.
 6. Rebuild `dist/` and run `npm run check`. Done when it passes.
 

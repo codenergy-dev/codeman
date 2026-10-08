@@ -3,6 +3,8 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
+import { ACCOUNTS, PROVIDERS } from "./inference/providers.ts";
+import { renamedSetting } from "./settings.ts";
 import { select } from "./steps/select.ts";
 import { FakePlatform, fakeServices } from "./testing/fake-platform.ts";
 import { FakeRuntime } from "./testing/fake-runtime.ts";
@@ -49,6 +51,12 @@ function secretsOf(text: string, job: string): string[] {
     .join("\n")
     .matchAll(/secrets\.([A-Z_]+)/g);
   return [...new Set([...names].map((match) => match[1] ?? ""))].sort();
+}
+
+/** The input of `step` in a job, with its value. */
+function stepInput(text: string, job: string, input: string): string | undefined {
+  const line = block(text, ["jobs", job]).find((entry) => new RegExp(`^\\s*${input}:`).test(entry));
+  return line?.slice(line.indexOf(":") + 1).trim();
 }
 
 const workdir = mkdtempSync(join(tmpdir(), "codeman-templates-"));
@@ -113,6 +121,31 @@ test("each job keeps the secrets it had before parallel tasks, and the agent job
   );
   assert.deepEqual(entries(task, ["jobs", "agent", "permissions"]), read);
   assert.ok(!entries(task, ["jobs", "apply"]).has("permissions"));
+});
+
+test("each provider's secrets reach the jobs that use them, under the inputs the registry names", () => {
+  for (const [name, provider] of Object.entries(PROVIDERS)) {
+    const account = ACCOUNTS[provider.account];
+    assert.ok(account, name);
+    for (const job of ["open-key", "close-key"]) {
+      assert.equal(stepInput(task, job, account.input), `\${{ secrets.${account.secret} }}`, job);
+    }
+    for (const { secret, input, job } of provider.secrets) {
+      assert.equal(stepInput(task, job, input), `\${{ secrets.${secret} }}`, `${name}: ${job}`);
+    }
+  }
+});
+
+test("the templates and the action name settings only as they are named now", () => {
+  const settings = readFileSync("templates/settings.yml", "utf8");
+  const action = readFileSync("action.yml", "utf8");
+  for (const [file, text] of Object.entries({ caller, task, settings, action })) {
+    const names = [...text.matchAll(/[a-z][a-z-]*[a-z]/g)].map((match) => match[0]);
+    const old = names.filter((name) => renamedSetting(name) !== undefined && name !== "inference");
+    assert.deepEqual(old, [], file);
+  }
+  // `inference` is the run's choice between jobs, not a setting; the settings file has none.
+  assert.ok(!/^#? ?inference:/m.test(settings));
 });
 
 test("only the jobs that use Codeman's store get an OIDC token and the backend's settings", () => {

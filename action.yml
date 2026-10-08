@@ -22,7 +22,7 @@ inputs:
   ledger-run:
     description: "(open-key, close-key, release-pod) The run's ID in Codeman's ledger, from select's tasks."
   model:
-    description: "(select) Model ID: OpenRouter's, or the self-hosted engine's. Empty uses .codeman/settings.yml. Maintainers can override it per task with /codeman set."
+    description: "(select) Model ID, in the form the provider takes: OpenRouter's, or the engine's on Runpod. Empty uses .codeman/settings.yml. Maintainers can override it per task with /codeman set."
   task-budget:
     description: "(select, open-key) Spending limit of each task, across all its runs, in USD. In select, empty uses .codeman/settings.yml or 2."
   monthly-budget:
@@ -39,13 +39,13 @@ inputs:
   management-key:
     description: "(open-key, close-key) OpenRouter management key, for OpenRouter inference. Without it, open-key does not refresh what the task's expired OpenRouter runs cost."
   inference:
-    description: "(open-key, close-key, release-pod) The run's inference, as select outputs it: its profile, and every provider the settings name. Empty is OpenRouter."
+    description: "(open-key, close-key, release-pod) The run's inference, as select outputs it: its provider and profile, and the account of every provider the settings name. Empty is OpenRouter."
   gpu-key:
-    description: "(open-key, close-key, release-pod) The GPU provider's account key, for self-hosted inference. With organization-monthly-budget, open-key also needs it when the settings name the provider or the organization's runs used it this month, to read its account's billing."
+    description: "(open-key, close-key, release-pod) Runpod's account key, for the runpod-pod and runpod-serverless providers. With organization-monthly-budget, open-key also needs it when the settings name a Runpod provider or the organization's runs used Runpod this month, to read its account's billing."
   pod-image:
     description: "(open-key) Codeman's pod image, by digest. Empty uses the image this version of Codeman pins."
   serverless-key:
-    description: "(agent) Key of the Serverless endpoint, restricted to it, for self-hosted inference on Serverless. Only the gateway outside the sandbox holds it."
+    description: "(agent) Key of the Serverless endpoint, restricted to it, for the runpod-serverless provider. Only the gateway outside the sandbox holds it."
   handle:
     description: "(agent, close-key, release-pod) The run's handle, from open-key."
   base-url:
@@ -53,7 +53,7 @@ inputs:
   context-length:
     description: "(agent) The model's context length, from open-key."
   gateway-usage:
-    description: "(close-key) What the agent job's gateway measured, for self-hosted inference on Serverless, with the times the endpoint's worker was billed for the run, which close-key splits in Codeman's ledger with the runs that shared them."
+    description: "(close-key) What the agent job's gateway measured, for the runpod-serverless provider, with the times the endpoint's worker was billed for the run, which close-key splits in Codeman's ledger with the runs that shared them."
   encryption-secret:
     description: "(open-key, agent) Secret that encrypts the task key between jobs. At least 32 characters."
   encrypted-key:
@@ -124,9 +124,9 @@ outputs:
   monthly-budget:
     description: "(select) Resolved monthly spending limit, in USD."
   inference:
-    description: "(select) Where the run gets its model, as JSON, for the key jobs: the inference profile that applies, the task's spend from its record, every provider the settings name and, with several tasks, the run's other tasks. The first task's."
+    description: "(select) Where the run gets its model, as JSON, for the key jobs: its provider and that provider's settings, the profile that applies, the task's spend from its record, and the account of every provider the settings name. The first task's."
   status:
-    description: "(open-key) opened, over-budget (the repository's month), over-organization-budget (the organization's month), task-budget-spent, or missing-credentials (a provider the run needs has no secret)."
+    description: "(open-key) opened, over-budget (the repository's month), over-organization-budget (the organization's month), task-budget-spent, or missing-credentials (an account the run needs has no secret)."
   task-spent:
     description: "(open-key) What the task spent before this run, in USD, from Codeman's ledger."
   task-total:
@@ -156,19 +156,19 @@ outputs:
   key-hash:
     description: "(open-key) The run's handle, under its older name: for OpenRouter, the hash of the task key."
   handle:
-    description: "(open-key) What close-key needs to end the run: an OpenRouter key's hash, or a self-hosted run's JSON."
+    description: "(open-key) What close-key needs to end the run: an OpenRouter key's hash, or a Runpod run's JSON."
   base-url:
-    description: "(open-key) The OpenAI-compatible API of the run's pod, for self-hosted inference."
+    description: "(open-key) The OpenAI-compatible API of the run's pod, for the runpod-pod provider."
   context-length:
     description: "(open-key) The model's context length, when known."
   pod:
-    description: "(close-key) The pod that served the run, for self-hosted inference."
+    description: "(close-key) The pod that served the run, for the runpod-pod provider."
   pod-shared:
     description: "(close-key) true when the run's pod serves several tasks: the ledger counts the task's share of it, as the pod's gateway measured it, not the pod's billing."
   kept-pod:
     description: "(close-key) The pod the task keeps for the next run on its settings; release-pod ends the task's keep lease if the task does not go on, and terminates the pod when no other task uses or keeps it."
   gateway-usage:
-    description: "(agent) What the agent job's gateway measured, for self-hosted inference on Serverless: its usage, and the times its estimate counts, left out when they would not fit in GitHub's job outputs."
+    description: "(agent) What the agent job's gateway measured, for the runpod-serverless provider: its usage, and the times its estimate counts, left out when they would not fit in GitHub's job outputs."
   encrypted-key:
     description: "(open-key) The task key, encrypted."
   chain:
