@@ -23,6 +23,16 @@ export const LAYOUT = {
    */
   pods: (owner: string) => `${LAYOUT.organization(owner)}/pods`,
   pod: (owner: string, nonce: string) => `${LAYOUT.pods(owner)}/${documentId(nonce)}`,
+  /**
+   * A Serverless endpoint of the organization's GPU account, by its ID; under it, each run's
+   * billed times on the endpoint's worker, named by the run and its reservation, which the ledger
+   * splits among the runs that used the worker at once.
+   */
+  endpoint: (owner: string, endpoint: string) =>
+    `${LAYOUT.organization(owner)}/endpoints/${documentId(endpoint)}`,
+  endpointRuns: (owner: string, endpoint: string) => `${LAYOUT.endpoint(owner, endpoint)}/runs`,
+  endpointRun: (owner: string, endpoint: string, id: string) =>
+    `${LAYOUT.endpointRuns(owner, endpoint)}/${documentId(id)}`,
 } as const;
 
 /**

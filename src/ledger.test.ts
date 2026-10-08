@@ -11,7 +11,7 @@ import type { Fields, Store, Write } from "./store/store.ts";
 import { FakeInference } from "./testing/fake-inference.ts";
 import { FakePlatform, fakeServices } from "./testing/fake-platform.ts";
 import { FakeRuntime } from "./testing/fake-runtime.ts";
-import { seedRuns } from "./testing/ledger-runs.ts";
+import { closeOnEndpoint, minutes, NOON, seedRuns, serverlessRun } from "./testing/ledger-runs.ts";
 
 const workdir = mkdtempSync(join(tmpdir(), "codeman-ledger-"));
 after(() => rmSync(workdir, { recursive: true, force: true }));
@@ -222,6 +222,188 @@ test("a terminated pod's time that no task counted counts in the organization's 
   );
   assert.ok(Math.abs(organization.month - 0.24) < 1e-9);
   assert.ok((await open.ledger.monthRuns(open.runtime)).some((run) => run.id === "pod-n1"));
+});
+
+/** A run's cost in the ledger of the organization `codenergy`. */
+async function costOf(store: Store, run: string): Promise<unknown> {
+  return (await store.get(`organizations/codenergy/runs/${run}`))?.fields.cost;
+}
+
+test("Serverless runs of two repositories split the time they shared the endpoint's worker, as each closes", async () => {
+  const store = new MemoryStore();
+  await seedRuns(
+    store,
+    {
+      "300-1-7": serverlessRun("codeman", NOON - 60_000),
+      "310-1-4": serverlessRun("other", NOON + 4 * 60_000),
+      // Still open: it counts its limit, whatever the others' closes do.
+      "320-1-9": serverlessRun("codeman", NOON + 8 * 60_000),
+      "330-1-11": { repository: "codenergy/codeman" },
+      "340-1-12": { repository: "codenergy/codeman" },
+    },
+    "codenergy",
+    new Date(NOON),
+  );
+  const months = async (run: string, at: number) => {
+    const open = new Ledger(
+      store,
+      {
+        runtime: new FakeRuntime({ repository: { owner: "Codenergy", name: "Codeman" } }),
+        job: "open-key",
+      },
+      { now: () => new Date(at) },
+    );
+    const reservation = await open.reserve(run, {
+      task: Number(run.split("-")[2]),
+      taskBudget: 1,
+      monthlyBudget: 20,
+      organizationBudget: 100,
+      recorded: 0,
+      billed: new Map(),
+    });
+    return [reservation.month, reservation.organization].map((amount) => amount?.toFixed(4));
+  };
+
+  // The first run closes alone so far: it counts its whole estimate, 10 minutes at US$ 0.06.
+  const first = await closeOnEndpoint(
+    store,
+    "300-1-7",
+    "codeman",
+    [minutes(0, 10)],
+    NOON + 11 * 60_000,
+  );
+  assert.equal(await costOf(store, "300-1-7"), 0.6);
+  assert.match(first.logged("info").join("\n"), /no other run used it at the same time so far/);
+  // The repository's month: its closed run and its open one; the organization's adds the other's.
+  assert.deepEqual(await months("330-1-11", NOON + 12 * 60_000), ["1.6000", "2.6000"]);
+
+  // The other repository's run used the worker from 5 to 15 minutes: they shared 5 minutes.
+  const second = await closeOnEndpoint(
+    store,
+    "310-1-4",
+    "other",
+    [minutes(5, 15)],
+    NOON + 16 * 60_000,
+  );
+  assert.equal(await costOf(store, "310-1-4"), 0.45);
+  assert.equal(await costOf(store, "300-1-7"), 0.45, "the earlier close counts less now");
+  assert.match(
+    second.logged("info").join("\n"),
+    /shared endpoint ep1's worker with 1 other run\(s\) of the organization: it counts US\$ 0\.45 of its US\$ 0\.60 estimate, and 1 other run\(s\) count less now/,
+  );
+  assert.equal((await store.get("organizations/codenergy/runs/310-1-4"))?.fields.endpoint, "ep1");
+  // The costs add up to the worker's 15 minutes; the open runs, and the one reserved above, still
+  // count their limits.
+  assert.deepEqual(await months("340-1-12", NOON + 17 * 60_000), ["2.4500", "2.9000"]);
+  assert.equal(await costOf(store, "320-1-9"), undefined);
+
+  const endpoint = await store.query("organizations/codenergy/endpoints/ep1/runs");
+  assert.deepEqual(
+    endpoint.map(({ path, fields }) => [
+      path.split("/").at(-1),
+      fields.repository,
+      fields.estimate,
+      fields.share,
+    ]),
+    [
+      [`300-1-7-${NOON - 60_000}`, "codenergy/codeman", 0.6, 0.45],
+      [`310-1-4-${NOON + 4 * 60_000}`, "codenergy/other", 0.6, 0.45],
+    ],
+  );
+  assert.equal(endpoint[0]?.fields.busy, JSON.stringify([minutes(0, 10)]));
+
+  // A re-run of the second close-key writes the same documents, and the same costs.
+  const again = await closeOnEndpoint(
+    store,
+    "310-1-4",
+    "other",
+    [minutes(5, 15)],
+    NOON + 20 * 60_000,
+  );
+  assert.equal((await store.query("organizations/codenergy/endpoints/ep1/runs")).length, 2);
+  assert.equal(await costOf(store, "310-1-4"), 0.45);
+  assert.equal(await costOf(store, "300-1-7"), 0.45);
+  assert.match(again.logged("info").join("\n"), /and 0 other run\(s\) count less now/);
+});
+
+test("a run that open-key opened again keeps its earlier attempt's time in the split, and an open run its limit", async () => {
+  const store = new MemoryStore();
+  await seedRuns(
+    store,
+    {
+      "300-1-7": serverlessRun("codeman", NOON - 60_000),
+      "310-1-4": serverlessRun("other", NOON + 4 * 60_000),
+    },
+    "codenergy",
+    new Date(NOON),
+  );
+  await closeOnEndpoint(store, "300-1-7", "codeman", [minutes(0, 10)], NOON + 11 * 60_000);
+  // A re-run of its open-key reserves again: what it spent becomes spentBefore.
+  const reopen = ledger(store, "open-key", { at: new Date(NOON + 12 * 60_000).toISOString() });
+  await reopen.ledger.reserve("300-1-7", {
+    task: 7,
+    taskBudget: 2,
+    monthlyBudget: 20,
+    recorded: 0,
+    billed: new Map(),
+  });
+  await closeOnEndpoint(store, "310-1-4", "other", [minutes(5, 15)], NOON + 16 * 60_000);
+  assert.equal(await costOf(store, "310-1-4"), 0.45, "the earlier attempt shared the worker");
+  const reopened = (await store.get("organizations/codenergy/runs/300-1-7"))?.fields;
+  assert.deepEqual(
+    [reopened?.status, reopened?.cost, reopened?.limit, reopened?.spentBefore],
+    ["open", null, 1.4, 0.6],
+    "an open run keeps its reservation",
+  );
+  // Its second attempt closes alone, beside the first's time.
+  await closeOnEndpoint(store, "300-1-7", "codeman", [minutes(20, 25)], NOON + 26 * 60_000);
+  assert.equal(await costOf(store, "300-1-7"), 0.3);
+  assert.equal((await store.query("organizations/codenergy/endpoints/ep1/runs")).length, 3);
+  assert.equal(await costOf(store, "310-1-4"), 0.45);
+});
+
+test("close-key reports a Serverless run's share, and the other task's next close-key its own", async () => {
+  const store = new MemoryStore();
+  await seedRuns(
+    store,
+    {
+      "300-1-7": serverlessRun("codeman", NOON - 60_000),
+      "310-1-4": serverlessRun("other", NOON + 4 * 60_000),
+      "350-1-7": {
+        repository: "codenergy/codeman",
+        status: "open",
+        limit: 1,
+        reservedAt: new Date(NOON),
+      },
+    },
+    "codenergy",
+    new Date(NOON),
+  );
+  await closeOnEndpoint(store, "300-1-7", "codeman", [minutes(0, 10)], NOON + 11 * 60_000);
+  const closeKeyOf = async (name: string, run: string, inference: FakeInference) => {
+    const runtime = new FakeRuntime({
+      inputs: { handle: "h", "ledger-run": run },
+      repository: { owner: "Codenergy", name },
+      runId: run.split("-")[0],
+    });
+    await closeKey(
+      fakeServices(new FakePlatform(), runtime, undefined, inference, undefined, store),
+    );
+    return runtime.outputs;
+  };
+  const busy = { endpoint: "ep1", pricePerSecond: 0.001, spans: [minutes(5, 15)] };
+  const other = await closeKeyOf(
+    "other",
+    "310-1-4",
+    new FakeInference({ usage: { cost: 0.6, busy } }),
+  );
+  assert.equal(other["run-cost"], "0.6000", "the gateway's estimate");
+  assert.equal(other["task-costs"], '{"310":0.45}');
+  assert.equal(other["task-total"], "0.4500");
+  // The first task's spend table gets its run's share at its next run's apply.
+  const next = await closeKeyOf("codeman", "350-1-7", new FakeInference({ usage: { cost: 0.1 } }));
+  assert.equal(next["task-costs"], '{"300":0.45,"350":0.1}');
+  assert.equal(next["task-total"], "0.5500");
 });
 
 test("a refused run says why, in its document and its event", async () => {

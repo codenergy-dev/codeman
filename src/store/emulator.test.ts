@@ -10,7 +10,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { PodRegistry } from "../inference/registry.ts";
 import { Ledger } from "../ledger.ts";
 import { FakeRuntime } from "../testing/fake-runtime.ts";
-import { seedRuns } from "../testing/ledger-runs.ts";
+import { closeOnEndpoint, minutes, NOON, seedRuns, serverlessRun } from "../testing/ledger-runs.ts";
 import { storeContract } from "./contract.ts";
 import { Firestore } from "./firestore.ts";
 
@@ -64,6 +64,29 @@ test("Firestore emulator: two runs that reserve at once near the monthly budget"
     where: [{ field: "status", op: "==", value: "open" }],
   });
   assert.equal(open.length, 1);
+});
+
+test("Firestore emulator: two Serverless runs that close at once split the time they shared", {
+  skip,
+}, async () => {
+  const store = Firestore.emulator(host, project());
+  await seedRuns(
+    store,
+    {
+      "300-1-7": serverlessRun("codeman", NOON - 60_000),
+      "310-1-4": serverlessRun("other", NOON + 4 * 60_000),
+    },
+    "codenergy",
+    new Date(NOON),
+  );
+  await Promise.all([
+    closeOnEndpoint(store, "300-1-7", "codeman", [minutes(0, 10)], NOON + 16 * 60_000),
+    closeOnEndpoint(store, "310-1-4", "other", [minutes(5, 15)], NOON + 16 * 60_000),
+  ]);
+  // Whichever split ran last saw both runs' times.
+  for (const run of ["300-1-7", "310-1-4"]) {
+    assert.equal((await store.get(`organizations/codenergy/runs/${run}`))?.fields.cost, 0.45);
+  }
 });
 
 test("Firestore emulator: tasks that claim a pod's settings at once get one creator", {

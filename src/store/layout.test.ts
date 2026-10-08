@@ -11,6 +11,10 @@ test("documents belong to the lowercase organization, runs by workflow run, atte
     LAYOUT.event("o", "300-2-7-key-opened"),
     "organizations/o/events/300-2-7-key-opened",
   );
+  assert.equal(
+    LAYOUT.endpointRun("Codenergy", "ep1", "300-2-7-1791000000000"),
+    "organizations/codenergy/endpoints/ep1/runs/300-2-7-1791000000000",
+  );
   assert.equal(repositoryName({ owner: "Codenergy", name: "Codeman.JS" }), "codenergy/codeman.js");
   assert.ok(isLedgerRunId("300-2-7"));
   assert.ok(!isLedgerRunId("300-2"));

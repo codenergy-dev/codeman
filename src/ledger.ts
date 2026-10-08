@@ -11,10 +11,18 @@ import {
   spentBy,
   usd,
 } from "./budget.ts";
-import type { PodEvent, PodLife, RunUsage } from "./inference/provider.ts";
+import { busyShares, type Span } from "./gateway/usage.ts";
+import type { BusyTime, PodEvent, PodLife, RunUsage } from "./inference/provider.ts";
 import type { Log, Runtime } from "./runtime/runtime.ts";
 import { isLedgerRunId, LAYOUT, ledgerMonth, repositoryName } from "./store/layout.ts";
-import type { Fields, Store, StoredDocument, StoreReader, Write } from "./store/store.ts";
+import type {
+  Fields,
+  Store,
+  StoredDocument,
+  StoreReader,
+  Transaction,
+  Write,
+} from "./store/store.ts";
 import { oneLine } from "./text.ts";
 
 /** What can happen to a run, as its events name it. */
@@ -93,6 +101,11 @@ const RETRY_MS = [1_000, 3_000, 9_000];
  * that open at once run their reservations again, one after another.
  */
 const RESERVE_ATTEMPTS = 20;
+/**
+ * Attempts of a Serverless split: closes on one endpoint at once run theirs again, one after
+ * another, and so do the reservations that read the runs it writes.
+ */
+const SPLIT_ATTEMPTS = 20;
 
 /**
  * Codeman's record of its runs, in the store (step 6 of the backend plan): a document for each
@@ -111,6 +124,8 @@ export class Ledger {
   #writes: Write[] = [];
   /** The pods the job terminated, with their lives: `flush` records their time no task counted. */
   #lives: { pod: string; life: PodLife }[] = [];
+  /** The Serverless runs the job closed, with their billed times: `flush` splits them. */
+  #splits: { run: string; busy: BusyTime }[] = [];
 
   constructor(
     store: Store,
@@ -354,7 +369,9 @@ export class Ledger {
       ...figures,
       ...(usage.pod ? { pod: usage.pod } : {}),
       ...(podCost === undefined ? {} : { podCost }),
+      ...(usage.busy ? { endpoint: usage.busy.endpoint } : {}),
     });
+    if (usage.busy) this.#splits.push({ run, busy: usage.busy });
     if (agentJob !== "" && agentJob !== "success") {
       this.#event(run, "run-stopped", { result: agentJob });
     }
@@ -384,6 +401,116 @@ export class Ledger {
     const lives = this.#lives;
     this.#lives = [];
     for (const { pod, life } of lives) await this.#untracked(pod, life, log);
+    const splits = this.#splits;
+    this.#splits = [];
+    for (const { run, busy } of splits) await this.#split(run, busy, log);
+  }
+
+  /**
+   * Splits the time a Serverless endpoint's worker was billed for a run with the endpoint's other
+   * runs, of any repository of the organization, that used it at the same times (decision 1 of
+   * the Serverless split plan). In one transaction, writes the run's billed times under the
+   * endpoint, and the share of each run that overlaps it as that run's cost, when the run is
+   * closed and the times are of its current reservation. Each later close on the endpoint does the
+   * same, so a run's cost only goes down as overlaps appear, and never below its share. Runs after
+   * the job's own writes, so the run is closed.
+   */
+  async #split(run: string, busy: BusyTime, log: Log): Promise<void> {
+    const { owner } = this.#source.runtime.repository;
+    const [first] = busy.spans;
+    const last = busy.spans.at(-1);
+    if (!first || !last) return;
+    const now = this.#now();
+    const split = await this.#retry(log, "split the endpoint's time in Codeman's ledger", () =>
+      this.#store.transaction(
+        async (tx) => {
+          const own = await tx.get(LAYOUT.run(owner, run));
+          const reservedAt = reservationOf(own);
+          const mine: EndpointRun = {
+            id: `${run}-${reservedAt}`,
+            run,
+            reservedAt,
+            busy: busy.spans,
+            pricePerSecond: busy.pricePerSecond,
+          };
+          // A run's billed times lie within its agent job, which ends before its reservation
+          // does: every run that overlaps one that overlaps this run ends after this.
+          const since = new Date(first[0] - RESERVATION_MS);
+          const found = endpointRuns(
+            await tx.query(LAYOUT.endpointRuns(owner, busy.endpoint), {
+              where: [{ field: "to", op: ">=", value: since }],
+            }),
+          );
+          const runs = [...found.filter((other) => other.id !== mine.id), mine];
+          const shares = busyShares(runs);
+          const others = runs.filter((other) => other !== mine && overlaps(other.busy, mine.busy));
+          const documents = await Promise.all(
+            others.map((other) => tx.get(LAYOUT.run(owner, other.run))),
+          );
+          const share = (one: EndpointRun) => round(shares.get(one.id) ?? 0);
+          const estimate = round(
+            (busy.spans.reduce((sum, [from, to]) => sum + to - from, 0) / 1000) *
+              busy.pricePerSecond,
+          );
+          tx.write({
+            op: "set",
+            path: LAYOUT.endpointRun(owner, busy.endpoint, mine.id),
+            fields: {
+              run,
+              repository: this.#repository(),
+              task: taskOf(run),
+              reservedAt: reservedAt === 0 ? null : new Date(reservedAt),
+              from: new Date(first[0]),
+              to: new Date(last[1]),
+              pricePerSecond: busy.pricePerSecond,
+              busy: JSON.stringify(busy.spans),
+              estimate,
+              share: share(mine),
+              splitAt: now,
+            },
+          });
+          let lowered = 0;
+          for (const [i, other] of others.entries()) {
+            if (other.share === undefined || Math.abs(other.share - share(other)) >= 1e-6) {
+              tx.write({
+                op: "set",
+                path: LAYOUT.endpointRun(owner, busy.endpoint, other.id),
+                fields: { share: share(other), splitAt: now },
+                merge: true,
+              });
+            }
+            if (this.#cost(tx, documents[i], other, share(other))) lowered++;
+          }
+          this.#cost(tx, own, mine, share(mine));
+          return { share: share(mine), estimate, others: others.length, lowered };
+        },
+        { attempts: SPLIT_ATTEMPTS },
+      ),
+    );
+    log.info(
+      split.others === 0
+        ? `Recorded the run's time on endpoint ${busy.endpoint}'s worker in Codeman's ledger; no other run used it at the same time so far.`
+        : `The run shared endpoint ${busy.endpoint}'s worker with ${split.others} other run(s) of the organization: it counts ${usd(split.share)} of its ${usd(split.estimate)} estimate, and ${split.lowered} other run(s) count less now.`,
+    );
+  }
+
+  /**
+   * Writes a run's share of an endpoint's worker as its cost, when the run is closed and its
+   * billed times are of its current reservation: an open run counts its limit, and a reopened
+   * run's earlier attempt counts in `spentBefore`. Tells whether it wrote.
+   */
+  #cost(
+    tx: Transaction,
+    document: StoredDocument | undefined,
+    run: EndpointRun,
+    share: number,
+  ): boolean {
+    if (document?.fields.status !== "closed") return false;
+    if (reservationOf(document) !== run.reservedAt) return false;
+    const { cost } = document.fields;
+    if (typeof cost === "number" && Math.abs(cost - share) < 1e-6) return false;
+    tx.write({ op: "set", path: document.path, fields: { cost: share }, merge: true });
+    return true;
   }
 
   /**
@@ -615,6 +742,69 @@ export function untrackedRuns(documents: readonly StoredDocument[]): LedgerRun[]
       },
     ];
   });
+}
+
+/** A run's billed times on a Serverless endpoint's worker, as the ledger keeps them. */
+interface EndpointRun {
+  /** The document's ID: the run's, and its reservation's time. */
+  id: string;
+  run: string;
+  /** When the run's reservation was made, in milliseconds since the epoch; 0 when unknown. */
+  reservedAt: number;
+  busy: readonly Span[];
+  pricePerSecond: number;
+  /** Its share as the last split computed it. */
+  share?: number | undefined;
+}
+
+/** The runs on an endpoint's worker; documents without valid billed times are left out. */
+function endpointRuns(documents: readonly StoredDocument[]): EndpointRun[] {
+  return documents.flatMap((document): EndpointRun[] => {
+    const { run, pricePerSecond, busy, share } = document.fields;
+    if (typeof run !== "string" || typeof pricePerSecond !== "number") return [];
+    if (typeof busy !== "string") return [];
+    let spans: unknown;
+    try {
+      spans = JSON.parse(busy);
+    } catch {
+      return [];
+    }
+    const valid = (span: unknown): span is Span =>
+      Array.isArray(span) &&
+      span.length === 2 &&
+      span.every((time) => typeof time === "number" && Number.isFinite(time));
+    if (!Array.isArray(spans) || !spans.every(valid)) return [];
+    return [
+      {
+        id: document.path.slice(document.path.lastIndexOf("/") + 1),
+        run,
+        reservedAt: reservationOf(document),
+        busy: spans,
+        pricePerSecond,
+        share: typeof share === "number" ? share : undefined,
+      },
+    ];
+  });
+}
+
+/** When a document's reservation was made, in milliseconds since the epoch; 0 when it has none. */
+function reservationOf(document: StoredDocument | undefined): number {
+  const at = document?.fields.reservedAt;
+  return at instanceof Date ? at.getTime() : 0;
+}
+
+/** Whether two runs' billed times, each in order, share any time. */
+function overlaps(a: readonly Span[], b: readonly Span[]): boolean {
+  let i = 0;
+  let j = 0;
+  while (i < a.length && j < b.length) {
+    const [aFrom, aTo] = a[i] as Span;
+    const [bFrom, bTo] = b[j] as Span;
+    if (Math.max(aFrom, bFrom) < Math.min(aTo, bTo)) return true;
+    if (aTo <= bTo) i++;
+    else j++;
+  }
+  return false;
 }
 
 /** Rounds an amount in USD as the ledger keeps it. */
