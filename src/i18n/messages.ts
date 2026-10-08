@@ -40,6 +40,7 @@ export interface Messages {
   of(part: string, whole: string): string;
 
   // Stages and runs.
+  /** A stage's name, as the spend table and the lists of routed stages show it. */
   stage(stage: Stage): string;
   /** What a run worked on and how it ended, such as "Design stage: skipped". */
   runTitle(run: {

@@ -169,6 +169,10 @@ test("the implementation prompt names the plan, the limits and the protected pat
     GITHUB,
   );
   assert.match(prompt, /code stage of issue #12/);
+  assert.match(
+    prompt,
+    /one stage at a time: planning, routing, then the stages the route chose among web, design, code, test and review/,
+  );
   assert.ok(prompt.includes(task.planPath));
   assert.ok(prompt.includes(OUTPUT_FILE));
   assert.match(prompt, /about 45 minutes/);
@@ -408,7 +412,9 @@ test("the routing agent learns the stages, why it runs, and the output's shape",
     GITHUB,
   );
   assert.match(prompt, /You are Codeman's routing agent/);
-  for (const stage of ["design", "code", "test", "review"]) {
+  assert.match(prompt, /you, the routing stage, choose which of the routed stages below/);
+  assert.match(prompt, /## The routed stages\n/);
+  for (const stage of ["web", "design", "code", "test", "review"]) {
     assert.match(prompt, new RegExp(`- \\*\\*${stage}\\*\\*: `));
   }
   assert.match(prompt, /Review always runs last: it has the last word/);

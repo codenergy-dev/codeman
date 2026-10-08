@@ -41,7 +41,7 @@ export interface WorkflowConventions {
   protect: string;
   /** One path under each rule of `protect`, to tell whether a repository still protects it. */
   probes: readonly string[];
-  /** The agent's rules for writing workflows, as Markdown list items, in a stage on `branch`. */
+  /** The agent's rules for writing workflows, as Markdown list items, in a routed stage on `branch`. */
   agentRules(branch: string): string;
   /** How review checks staged workflows: one numbered step's text. */
   reviewCheck: string;

@@ -92,7 +92,7 @@ function limitsText(limits: OutputLimits, stage?: RoutedStage): string {
   return `Limits, in characters: ${texts}; each decision's \`title\` up to ${limits.title} and \`question\` up to ${limits.question}; each option's \`label\` up to ${limits.label}, and all decisions together up to ${DECISIONS_TOTAL}. At most ${limits.decisions} decisions, with 2 to ${limits.options} options each. Keep each label to a short phrase: the context and each option's trade-offs belong in the question.`;
 }
 
-/** Which language the agent writes to the maintainers in, in a stage. */
+/** Which language the agent writes to the maintainers in, in a routed stage. */
 function outputLanguage(task: TaskContext): string {
   const tag = taskLanguage(task.settings.language, task.record?.language);
   return `Write \`summary\`, \`reason\` and any decisions in \`${OUTPUT_FILE}\` in ${languageName(tag)} (\`${tag}\`), the language of the conversation with the maintainers. Files, including the plan, code, comments and \`commitMessage\`, follow the rules for their own language.`;
@@ -178,7 +178,7 @@ ${issueSection(task, quote)}
 ${revision}`;
 }
 
-/** What each stage does, as the routing agent is told. */
+/** What each routed stage does, as the routing agent is told. */
 const STAGE_ROLES: Record<RoutedStage, string> = {
   web: "the documentation of the third-party services, APIs and tools the task relies on, recorded in `docs/web/` from their sources, when pages are missing or a maintainer asked to refresh them.",
   design:
@@ -200,7 +200,7 @@ const TRIGGERS: Record<RouteTrigger, string> = {
     "The task was blocked, and a maintainer asked to go on; their guidance is under Requests. Choose again.",
 };
 
-/** The routing agent's task: choose the stages that run next, each with a brief. */
+/** The routing stage's task: choose the routed stages that run next, each with a brief. */
 export function routePrompt(task: TaskContext, conventions: Conventions): string {
   const limits = outputLimits(task.settings);
   const quote = quoter();
@@ -212,7 +212,7 @@ export function routePrompt(task: TaskContext, conventions: Conventions): string
   const tag = taskLanguage(task.settings.language, task.record?.language);
   return `# Codeman task: choose the next stages of issue #${task.number}
 
-You are Codeman's routing agent. Codeman carries out an approved plan in stages, each run by a different agent, one run at a time. You choose which stages run next, in which order, and what each one must focus on. Review always runs last: it has the last word on whether the task is done. You do not do any stage's work, and you change nothing: every file change you make is discarded.
+You are Codeman's routing agent. Codeman works on a task in stages, each run by a different agent, one run at a time: planning wrote the approved plan, and you, the routing stage, choose which of the routed stages below carry it out next, in which order, and what each one must focus on. Review always runs last: it has the last word on whether the task is done. You do not do any other stage's work, and you change nothing: every file change you make is discarded.
 
 The plan at \`${task.planPath}\` is approved: its decisions are answered in its \`## Answers\` section. The current directory is the task branch \`${task.branch}\`, which may already hold work from earlier stages and runs. The default branch is \`${task.defaultBranch}\`, available as \`origin/${task.defaultBranch}\`.
 
@@ -222,7 +222,7 @@ ${RULES_RULE}
 ${untrustedRule(conventions)}
 - Never write secrets or environment variable values into any file.
 
-## The stages
+## The routed stages
 
 ${ROUTED_STAGES.map((stage) => `- **${stage}**: ${STAGE_ROLES[stage]}`).join("\n")}
 
@@ -233,7 +233,7 @@ ${TRIGGERS[trigger]}
 ## Steps
 
 1. Read the plan, the issue, the maintainer comments${requests ? ", the requests" : ""} and the notes below, if any, and what earlier runs did: the plan's progress notes, \`git log\` and \`git diff origin/${task.defaultBranch}...HEAD\`${task.history?.length ? ", and the reports under Earlier runs" : ""}.
-2. Decide, for each stage before review, whether it should run now. Each task has its own needs: none of them is required. Leave a stage out when it would have nothing to do, or nothing worth its cost, and say why. Stages that run keep the order above, and review always ends the route.
+2. Decide, for each routed stage before review, whether it should run now. Each task has its own needs: none of them is required. Leave a stage out when it would have nothing to do, or nothing worth its cost, and say why. Stages that run keep the order above, and review always ends the route.
 3. For each stage that runs, write a brief for its agent: what to focus on, and what earlier work it builds on. It does not repeat the plan.
 4. If no stage before review should run (the request is already done, it contradicts the plan, or it needs a decision the plan does not cover), the route is review alone. Say why in its brief, and what the maintainers could do, such as \`/codeman replan <what to change>\` or a \`/codeman fix\` with more detail: review decides.
 5. Write \`${OUTPUT_FILE}\` in this exact shape:
@@ -252,7 +252,7 @@ ${TRIGGERS[trigger]}
 }
 \`\`\`
 
-   Every stage appears once, in \`route\` or in \`skipped\`, and \`route\` ends with \`review\`.
+   Every routed stage appears once, in \`route\` or in \`skipped\`, and \`route\` ends with \`review\`.
 
    Limits, in characters: \`summary\`, each \`brief\` and each \`reason\` up to ${limits.summary} each.
 6. Write \`summary\`, the briefs and the reasons in ${languageName(tag)} (\`${tag}\`): Codeman shows them to the maintainers.
@@ -344,7 +344,7 @@ function outputShape(
 ${limitsText(limits, stage)}`;
 }
 
-/** A stage's task: plan, design, code, test or review, on the task branch. */
+/** A routed stage's task: web, design, code, test or review, on the task branch. */
 export function stagePrompt(task: TaskContext, minutes: number, conventions: Conventions): string {
   const stage = task.stage ?? "code";
   const quote = quoter();
@@ -362,7 +362,7 @@ export function stagePrompt(task: TaskContext, minutes: number, conventions: Con
     : "";
   return `# Codeman task: ${stage} stage of issue #${task.number}
 
-You are Codeman, an agent that carries out approved plans on the repository in the current directory, one stage at a time: plan, design, code, test and review. Each stage is a different agent. The plan at \`${task.planPath}\` is approved: its decisions are answered in its \`## Answers\` section. The current directory is the task branch \`${task.branch}\`, which may already hold work from earlier stages and runs. The default branch is \`${task.defaultBranch}\`, available as \`origin/${task.defaultBranch}\`.
+You are Codeman, an agent that works on the repository in the current directory one stage at a time: planning, routing, then the stages the route chose among web, design, code, test and review, which carry out the approved plan. Each stage is a different agent. The plan at \`${task.planPath}\` is approved: its decisions are answered in its \`## Answers\` section. The current directory is the task branch \`${task.branch}\`, which may already hold work from earlier stages and runs. The default branch is \`${task.defaultBranch}\`, available as \`origin/${task.defaultBranch}\`.
 
 ## Rules
 
