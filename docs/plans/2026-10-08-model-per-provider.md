@@ -1,7 +1,7 @@
 ---
-status: in progress
+status: completed
 created_at: 2026-10-08T16:29:39-03:00
-updated_at: 2026-10-08T16:33:49-03:00
+updated_at: 2026-10-08T16:34:00-03:00
 commit: 44485dc
 ---
 
@@ -40,9 +40,13 @@ A model set for one provider never reaches another: a layer or a profile that ch
 ## Steps
 
 1. Write this plan. Done when it is committed with status `pending`, then set `in progress`.
+   - **Done on 2026-10-08**: committed as `5812d4d` with status `pending`, then set `in progress`.
 2. Code (`src/settings.ts`): `serving` names each layer and refuses a change of provider without `model` when a model would carry over (choices 2 to 4); `resolveRun` applies a task's model only to runs on the top level's provider, and checks it against that provider (choice 5). Tests in `src/settings.test.ts`: a profile that changes provider without `model` stops the run, with `model` it runs; a profile with no provider or the same one inherits `model`; a repository file that changes the organization's provider (or the default `openrouter`, under an organization that sets only a model) without `model` stops the run; with no model below, it does not; neither a manual run's `model` nor a task's satisfies the requirement; a task's model applies to the top level's provider only. The four examples of [provider settings across layers](../settings/provider-settings-across-layers.md) follow the new rule. `src/steps/flow.test.ts`'s task model test follows choice 5. Done when the tests pass.
+   - **Done on 2026-10-08**: `serving` takes named layers (`layerSource` names the top-level ones as the log does; profiles as "Profile `x`") and returns an error when a layer or profile names another provider than the one below it, a model is set below, and it sets none: "Profile `planner` names `openrouter`, another provider than the `runpod-pod` below it, so it must set its own `model`, one for `openrouter`." `resolveRun` checks a task's model against the top level's provider ("The task's `model` is for `openrouter`, the top-level settings' provider. ...", which `select` reports as `settings-rejected`) and applies it only to runs on that provider. Tests in `settings.test.ts`: a new test for the rule (profile without and with `model`, no or the same provider, the file over the organization's provider and over the default `openrouter`, a manual run's and a task's model not making up for it, no model below); the task model test rewritten for choice 5; examples 2 and 4 now assert the new error. `flow.test.ts`: a task's OpenRouter model does not reach a pod profile, which keeps the task's GPU; a profile without `model` stops `select` before any output.
 3. Docs: [provider settings across layers](../settings/provider-settings-across-layers.md) (the rule, `#the-model`, examples 2 and 4, the summary table), [profiles](../settings/profiles.md) (layers and checks), [installation's profiles](../installation/profiles.md), [upgrading](../installation/upgrading.md) (what settings written before must change, and its line in `docs/README.md`), and the profiles comment of `templates/settings.yml`. Done when no file outside `docs/plans/` states the old rule and the docs link checker passes.
+   - **Done on 2026-10-08**: [provider settings across layers](../settings/provider-settings-across-layers.md): the rule's step 2, a rewritten [the model](../settings/provider-settings-across-layers.md#the-model), examples 2 and 4 with the new error, and the summary table's model column; [profiles](../settings/profiles.md): layers and checks; [installation's profiles](../installation/profiles.md); [upgrading](../installation/upgrading.md#a-model-per-provider) and its line in `docs/README.md`; `templates/settings.yml`'s profiles comment. The docs link checker passes.
 4. Rebuild `dist/` and run `npm run check`. Done when it passes and the working tree is clean.
+   - **Done on 2026-10-08**: 480 tests, 478 pass and 2 skipped (the sandbox's, Linux runners only). `dist/index.js` changed; `dist/gateway.js` did not, so no new pod image is needed.
 
 ## End-to-end test
 
