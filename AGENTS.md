@@ -22,6 +22,7 @@ Rules:
 
 - Do not create documentation outside `docs/` (except `README.md` and `AGENTS.md`).
 - Before writing, check whether the information already exists. Update or link to it; never duplicate it.
+- Give each subject its own file in `docs/`, grouped in directories by subject; when a file grows to cover several subjects, split it. Keep `docs/README.md`, the index of `docs/`, current when adding, moving or removing a file.
 - When code changes behavior described in `docs/`, update `docs/` in the same change.
 - Write objectively, clearly and without ambiguity. Prefer short sections and concrete statements. Do not be exhaustive: document what a reader needs to understand and act, and leave out what the code already says.
 
