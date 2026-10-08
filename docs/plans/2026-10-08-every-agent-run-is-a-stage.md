@@ -1,7 +1,7 @@
 ---
-status: in progress
+status: completed
 created_at: 2026-10-08T17:38:51-03:00
-updated_at: 2026-10-08T17:46:31-03:00
+updated_at: 2026-10-08T17:47:42-03:00
 commit: 3d6a0f9
 ---
 
@@ -46,6 +46,7 @@ The docs, the messages, the prompts and the code call every agent run a stage: s
 4. Docs: the stages page per choice 2; every page that sets planning or routing apart from the stages, or uses "stages" for the five where the distinction matters (`git grep -n -i stage` over `docs/` except `docs/plans/` and `docs/web/`, `README.md`, `AGENTS.md`, `templates/` and `action.yml`); `docs/README.md`'s lines. Done when that grep shows no such use and the docs link checker passes.
    - **Done on 2026-10-08**: [stages](../tasks/stages.md) opens with the table of the seven stages (name, routed or not, what each does), then Planning (moved from [task lifecycle](../tasks/lifecycle.md), which now keeps the states and links to it), Routing, "Running a routed stage" (was "Running a stage"; nothing linked to it) and Feedback; the routing sections say "routed stages" where the five are meant. `#agent-runs` is gone; [profiles](../settings/profiles.md) and [installation's profiles](../installation/profiles.md) link to the table and drop the "not stages" asides, as does `templates/settings.yml`. `README.md` (planning is the first stage, routing chooses among the routed stages), [setup](../installation/setup.md)'s "Try it" (which listed design, code, test and review only), [reference](../settings/reference.md)'s `max-runs` (runs in a row of a routed stage, or review rounds), `action.yml`'s `max-runs` and `stage` descriptions (the latter also lacked `web`), `templates/codeman.yml`'s `max-runs` input, [runs and jobs](../runs/runs-and-jobs.md) ("Each stage of a run is its own job" meant the jobs, now "Each part of a run"), [agent output](../runs/agent.md#agent-output) (routing's output), [comments](../tasks/comments.md) (planning does not read earlier run comments), [pods](../inference/pods.md), [self-hosted](../inference/self-hosted.md), [risks](../security/risks.md) and `docs/README.md`. `AGENTS.md` does not use the term. Kept: the state labels' rows, which describe task states, and "a stage" wherever it holds for all seven (such as "whichever stage runs" in [profiles](../settings/profiles.md)). The docs link checker passes.
 5. Rebuild `dist/` and run `npm run check`. Done when it passes, the working tree is clean, and whether `dist/gateway.js` changed is recorded.
+   - **Done on 2026-10-08**: `npm run check` passes: 480 tests, 478 pass and 2 skipped (the sandbox's, Linux runners only). `dist/index.js` changed; `dist/gateway.js` did not, so no new pod image is needed.
 
 ## End-to-end check
 

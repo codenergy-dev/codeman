@@ -28298,28 +28298,32 @@ function close(server) {
 }
 
 // src/stages.ts
-var STAGES = ["web", "design", "code", "test", "review"];
-var STAGE_STATE = {
+var ROUTED_STAGES = ["web", "design", "code", "test", "review"];
+var STAGES = ["plan", "route", ...ROUTED_STAGES];
+var ROUTED_STAGE_STATE = {
   web: "researching",
   design: "designing",
   code: "coding",
   test: "testing",
   review: "reviewing"
 };
-function stageOfState(state) {
+function routedStageOfState(state) {
   if (state === "in-progress") return "code";
-  return STAGES.find((stage) => STAGE_STATE[stage] === state);
+  return ROUTED_STAGES.find((stage) => ROUTED_STAGE_STATE[stage] === state);
 }
 function nextStage(stage) {
-  return STAGES[STAGES.indexOf(stage) + 1];
+  return ROUTED_STAGES[ROUTED_STAGES.indexOf(stage) + 1];
+}
+function isStage(value) {
+  return typeof value === "string" && STAGES.includes(value);
 }
 function nextInRoute(route, stage) {
   if (!route) return nextStage(stage);
-  const index = STAGES.indexOf(stage);
-  return route.stages.map((step) => step.stage).find((next) => STAGES.indexOf(next) > index);
+  const index = ROUTED_STAGES.indexOf(stage);
+  return route.stages.map((step) => step.stage).find((next) => ROUTED_STAGES.indexOf(next) > index);
 }
 function stagesFrom(first) {
-  return STAGES.slice(STAGES.indexOf(first));
+  return ROUTED_STAGES.slice(ROUTED_STAGES.indexOf(first));
 }
 
 // src/yaml.ts
@@ -28630,7 +28634,6 @@ function renamedSetting(name, value) {
       return void 0;
   }
 }
-var PROFILE_STAGES = ["plan", "route", ...STAGES];
 var PROFILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 function parseSettings(text, source = SETTINGS_FILE) {
   const tree = parseYaml(text);
@@ -28727,12 +28730,12 @@ function conditions(entry) {
     if (key === "stages") {
       const names = condition.kind === "list" ? condition.items : [];
       const stages = names.flatMap((item) => item.kind === "scalar" ? [item.text] : []);
-      const valid = stages.length === names.length && stages.every(isProfileStage);
+      const valid = stages.length === names.length && stages.every(isStage);
       if (names.length === 0 || !valid) {
         return {
           ok: false,
           line: line2,
-          error: `\`stages\` must list some of ${PROFILE_STAGES.map((stage) => `\`${stage}\``).join(", ")}, such as \`[plan, route]\`.`
+          error: `\`stages\` must list some of the stages ${STAGES.map((stage) => `\`${stage}\``).join(", ")}, such as \`[plan, route]\`.`
         };
       }
       when.stages = stages;
@@ -28755,9 +28758,6 @@ function conditions(entry) {
     }
   }
   return { ok: true, value: when };
-}
-function isProfileStage(value) {
-  return PROFILE_STAGES.includes(value);
 }
 function resolveRun(layers, run2) {
   const [own = {}] = layers;
@@ -29027,8 +29027,8 @@ function parseRouteOutput(text, limits) {
     const list2 = [];
     for (const [index, item] of value.entries()) {
       const where = `${name}[${index}]`;
-      if (!isObject(item) || !STAGES.includes(item.stage)) {
-        return { ok: false, error: `${where}.stage must be one of ${STAGES.join(", ")}.` };
+      if (!isObject(item) || !ROUTED_STAGES.includes(item.stage)) {
+        return { ok: false, error: `${where}.stage must be one of ${ROUTED_STAGES.join(", ")}.` };
       }
       const stage = item.stage;
       if (seen.has(stage)) return { ok: false, error: `${where}: ${stage} is listed twice.` };
@@ -29041,20 +29041,23 @@ function parseRouteOutput(text, limits) {
   };
   const route = steps(data.route, "route", "brief");
   if (!route.ok) return route;
-  const order = route.value.map((step) => STAGES.indexOf(step.stage));
+  const order = route.value.map((step) => ROUTED_STAGES.indexOf(step.stage));
   if (order.some((position, index) => index > 0 && position < (order[index - 1] ?? 0))) {
-    return { ok: false, error: `route must keep the order of stages: ${STAGES.join(", ")}.` };
+    return {
+      ok: false,
+      error: `route must keep the order of the routed stages: ${ROUTED_STAGES.join(", ")}.`
+    };
   }
   if (route.value.at(-1)?.stage !== "review") {
     return { ok: false, error: "route must end with review, which always runs." };
   }
   const skipped = steps(data.skipped ?? [], "skipped", "reason");
   if (!skipped.ok) return skipped;
-  const missing = STAGES.filter((stage) => !seen.has(stage));
+  const missing = ROUTED_STAGES.filter((stage) => !seen.has(stage));
   if (missing.length > 0) {
     return {
       ok: false,
-      error: `Every stage must be in route or in skipped; missing: ${missing.join(", ")}.`
+      error: `Every routed stage must be in route or in skipped; missing: ${missing.join(", ")}.`
     };
   }
   return {
@@ -30279,7 +30282,7 @@ ${quote(`${task.record.handoff.stage.toUpperCase()} NOTES`, task.record.handoff.
   const tag = taskLanguage(task.settings.language, task.record?.language);
   return `# Codeman task: choose the next stages of issue #${task.number}
 
-You are Codeman's routing agent. Codeman carries out an approved plan in stages, each run by a different agent, one run at a time. You choose which stages run next, in which order, and what each one must focus on. Review always runs last: it has the last word on whether the task is done. You do not do any stage's work, and you change nothing: every file change you make is discarded.
+You are Codeman's routing agent. Codeman works on a task in stages, each run by a different agent, one run at a time: planning wrote the approved plan, and you, the routing stage, choose which of the routed stages below carry it out next, in which order, and what each one must focus on. Review always runs last: it has the last word on whether the task is done. You do not do any other stage's work, and you change nothing: every file change you make is discarded.
 
 The plan at \`${task.planPath}\` is approved: its decisions are answered in its \`## Answers\` section. The current directory is the task branch \`${task.branch}\`, which may already hold work from earlier stages and runs. The default branch is \`${task.defaultBranch}\`, available as \`origin/${task.defaultBranch}\`.
 
@@ -30289,9 +30292,9 @@ ${RULES_RULE}
 ${untrustedRule(conventions)}
 - Never write secrets or environment variable values into any file.
 
-## The stages
+## The routed stages
 
-${STAGES.map((stage) => `- **${stage}**: ${STAGE_ROLES[stage]}`).join("\n")}
+${ROUTED_STAGES.map((stage) => `- **${stage}**: ${STAGE_ROLES[stage]}`).join("\n")}
 
 ## Why you run
 
@@ -30300,7 +30303,7 @@ ${TRIGGERS[trigger]}
 ## Steps
 
 1. Read the plan, the issue, the maintainer comments${requests ? ", the requests" : ""} and the notes below, if any, and what earlier runs did: the plan's progress notes, \`git log\` and \`git diff origin/${task.defaultBranch}...HEAD\`${task.history?.length ? ", and the reports under Earlier runs" : ""}.
-2. Decide, for each stage before review, whether it should run now. Each task has its own needs: none of them is required. Leave a stage out when it would have nothing to do, or nothing worth its cost, and say why. Stages that run keep the order above, and review always ends the route.
+2. Decide, for each routed stage before review, whether it should run now. Each task has its own needs: none of them is required. Leave a stage out when it would have nothing to do, or nothing worth its cost, and say why. Stages that run keep the order above, and review always ends the route.
 3. For each stage that runs, write a brief for its agent: what to focus on, and what earlier work it builds on. It does not repeat the plan.
 4. If no stage before review should run (the request is already done, it contradicts the plan, or it needs a decision the plan does not cover), the route is review alone. Say why in its brief, and what the maintainers could do, such as \`/codeman replan <what to change>\` or a \`/codeman fix\` with more detail: review decides.
 5. Write \`${OUTPUT_FILE}\` in this exact shape:
@@ -30319,7 +30322,7 @@ ${TRIGGERS[trigger]}
 }
 \`\`\`
 
-   Every stage appears once, in \`route\` or in \`skipped\`, and \`route\` ends with \`review\`.
+   Every routed stage appears once, in \`route\` or in \`skipped\`, and \`route\` ends with \`review\`.
 
    Limits, in characters: \`summary\`, each \`brief\` and each \`reason\` up to ${limits.summary} each.
 6. Write \`summary\`, the briefs and the reasons in ${languageName(tag)} (\`${tag}\`): Codeman shows them to the maintainers.
@@ -30422,7 +30425,7 @@ Maintainer ${task.record.accepted.by} read and accepted the workflows the agent 
 ` : "";
   return `# Codeman task: ${stage} stage of issue #${task.number}
 
-You are Codeman, an agent that carries out approved plans on the repository in the current directory, one stage at a time: plan, design, code, test and review. Each stage is a different agent. The plan at \`${task.planPath}\` is approved: its decisions are answered in its \`## Answers\` section. The current directory is the task branch \`${task.branch}\`, which may already hold work from earlier stages and runs. The default branch is \`${task.defaultBranch}\`, available as \`origin/${task.defaultBranch}\`.
+You are Codeman, an agent that works on the repository in the current directory one stage at a time: planning, routing, then the stages the route chose among web, design, code, test and review, which carry out the approved plan. Each stage is a different agent. The plan at \`${task.planPath}\` is approved: its decisions are answered in its \`## Answers\` section. The current directory is the task branch \`${task.branch}\`, which may already hold work from earlier stages and runs. The default branch is \`${task.defaultBranch}\`, available as \`origin/${task.defaultBranch}\`.
 
 ## Rules
 
@@ -31359,7 +31362,7 @@ function chooseTask(candidates) {
   );
   if (plan) return { number: plan.number, action: "plan" };
   const implement = sorted.find(
-    (task) => task.pending === "resume" && task.planned || (stageOfState(task.state) !== void 0 || task.state === "routing") && !task.pending || task.state === "awaiting-workflow" && task.workflowsDone && !task.pending
+    (task) => task.pending === "resume" && task.planned || (routedStageOfState(task.state) !== void 0 || task.state === "routing") && !task.pending || task.state === "awaiting-workflow" && task.workflowsDone && !task.pending
   ) ?? sorted.find((task) => task.state === "ready" && !task.pending);
   if (implement) return { number: implement.number, action: "implement" };
   return void 0;
@@ -31449,7 +31452,7 @@ function jobResults(runtime2) {
   };
 }
 function goesOn(state) {
-  return state === "ready" || state === "routing" || stageOfState(state) !== void 0;
+  return state === "ready" || state === "routing" || routedStageOfState(state) !== void 0;
 }
 function chains(action, keyJob, keyStatus) {
   return action === "record" || action === "accept" || keyJob === "success" && keyStatus === "opened";
@@ -31594,7 +31597,7 @@ async function applyStage(task, io) {
     awaiting: void 0,
     reviewRounds: fixed ? 0 : task.record.reviewRounds
   };
-  const unfinished = (outcome, message, report) => finish(io, task, runs >= maxRuns ? "blocked" : STAGE_STATE[stage], {
+  const unfinished = (outcome, message, report) => finish(io, task, runs >= maxRuns ? "blocked" : ROUTED_STAGE_STATE[stage], {
     outcome,
     record,
     message: runs >= maxRuns ? `${message} ${t.maxRuns(stage, runs, maxRuns)}` : message,
@@ -31742,7 +31745,7 @@ ${summary2}`, 4e3) }
     if (stage === "code") {
       updated.pullRequest = await openPullRequest(io, task, updated, "draft");
     }
-    return finish(io, task, STAGE_STATE[next], {
+    return finish(io, task, ROUTED_STAGE_STATE[next], {
       outcome,
       record: updated,
       message,
@@ -31807,7 +31810,7 @@ async function applyRoute(task, io) {
       stage: first,
       runs: 0
     };
-    return finish(io, task, STAGE_STATE[first], { ...view, record });
+    return finish(io, task, ROUTED_STAGE_STATE[first], { ...view, record });
   };
   const fallback = (error3) => {
     const stages2 = stagesFrom(task.route?.fallback ?? "design");
@@ -32022,7 +32025,7 @@ function afterAccept(t, state, record, by, workflows) {
   }
   if (state === "blocked" && record.stage) {
     return {
-      state: STAGE_STATE[record.stage],
+      state: ROUTED_STAGE_STATE[record.stage],
       record: { ...accepted, runs: 0 },
       message: t.acceptResumes(record.stage)
     };
@@ -32655,7 +32658,7 @@ async function select(services) {
       ...reviewCommands(windowReviews)
     ] : [];
     const requests = [...resumeRequests(windowSources), ...newRequests];
-    const stage = action !== "implement" ? void 0 : record?.stage ?? stageOfState(fromStateOf(task.labels)) ?? firstStage(task.labels);
+    const stage = action !== "implement" ? void 0 : record?.stage ?? routedStageOfState(fromStateOf(task.labels)) ?? firstStage(task.labels);
     const description = descriptionCommands(task.body);
     const problems = [
       ...description.commands,
@@ -32735,7 +32738,7 @@ async function select(services) {
     const start = async () => {
       if (needsAgent) {
         const t = messages(taskLanguage(settings.language, record?.language));
-        const state = stage ? STAGE_STATE[stage] : route ? "routing" : "planning";
+        const state = stage ? ROUTED_STAGE_STATE[stage] : route ? "routing" : "planning";
         await repo.setState(task.number, task.labels, state);
         context3.statusCommentId = await repo.upsertComment(
           task.number,
