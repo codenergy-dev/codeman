@@ -3378,9 +3378,9 @@ var require_data_url = __commonJS({
       }
       return serialized;
     }
-    function collectASequenceOfCodePoints(condition, input, position) {
+    function collectASequenceOfCodePoints(condition2, input, position) {
       let result = "";
-      while (position.position < input.length && condition(input[position.position])) {
+      while (position.position < input.length && condition2(input[position.position])) {
         result += input[position.position];
         position.position++;
       }
@@ -5399,9 +5399,9 @@ var require_formdata_parser = __commonJS({
       name = new TextDecoder().decode(name).replace(/%0A/ig, "\n").replace(/%0D/ig, "\r").replace(/%22/g, '"');
       return name;
     }
-    function collectASequenceOfBytes(condition, input, position) {
+    function collectASequenceOfBytes(condition2, input, position) {
       let start = position.position;
-      while (start < input.length && condition(input[start])) {
+      while (start < input.length && condition2(input[start])) {
         ++start;
       }
       return input.subarray(position.position, position.position = start);
@@ -20269,7 +20269,7 @@ function settingValues(name) {
   );
   return values.length > 0 ? [...new Set(values)] : void 0;
 }
-function providerProblem(settings) {
+function providerProblem(settings, serves = true) {
   const name = settings.provider;
   if (!isProviderName(name)) return `Unknown provider \`${name}\`.`;
   const provider = PROVIDERS[name];
@@ -20283,7 +20283,7 @@ function providerProblem(settings) {
     const value = settings[setting2];
     if (!spec) continue;
     if (value === void 0) {
-      if (spec.required) {
+      if (spec.required && serves) {
         return `\`${name}\` needs \`${setting2}\`${spec.example ? `, such as \`${spec.example}\`` : ""}.`;
       }
       continue;
@@ -20293,7 +20293,7 @@ function providerProblem(settings) {
       return setting2 === "engine" ? `\`${name}\` does not offer the engine \`${value}\`; it offers ${offered}.` : `With \`${name}\`, \`${setting2}\` must be one of ${offered}, not \`${value}\`.`;
     }
   }
-  return modelProblem(name, settings.model, settings.engine);
+  return serves ? modelProblem(name, settings.model, settings.engine) : void 0;
 }
 function withProviderDefaults(settings) {
   const provider = isProviderName(settings.provider) ? PROVIDERS[settings.provider] : void 0;
@@ -28500,8 +28500,7 @@ var DEFAULTS2 = {
   "max-label-chars": 150,
   "max-summary-chars": 2e3,
   language: "auto",
-  provider: "openrouter",
-  "parallel-tasks": 1
+  provider: "openrouter"
 };
 var LIMIT_BOUNDS = {
   "max-decisions": { min: 1, max: 10 },
@@ -28509,10 +28508,9 @@ var LIMIT_BOUNDS = {
   "max-title-chars": { min: 1, max: 200 },
   "max-question-chars": { min: 1, max: 1500 },
   "max-label-chars": { min: 1, max: 300 },
-  "max-summary-chars": { min: 1, max: 4e3 },
-  // Each task runs its own jobs, and may hold its own key or pod, at once.
-  "parallel-tasks": { min: 1, max: 10 }
+  "max-summary-chars": { min: 1, max: 4e3 }
 };
+var MAX_TASKS = 10;
 var TASK_SETTINGS = /* @__PURE__ */ new Set([
   "model",
   "task-budget",
@@ -28545,8 +28543,7 @@ var NAMES = [
   "max-summary-chars",
   "language",
   "provider",
-  ...PROVIDER_SETTINGS,
-  "parallel-tasks"
+  ...PROVIDER_SETTINGS
 ];
 function isModelName(text) {
   return isOpenRouterModel(text) || Object.values(ENGINES).some((engine) => engine.isModel(text));
@@ -28634,6 +28631,10 @@ function renamedSetting(name, value) {
       return void 0;
   }
 }
+var CONDITION_NAMES = ["stages", "tasks", "min-tasks", "max-tasks"];
+function isConditionName(name) {
+  return CONDITION_NAMES.includes(name);
+}
 var PROFILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 function parseSettings(text, source = SETTINGS_FILE) {
   const tree = parseYaml(text);
@@ -28654,9 +28655,10 @@ function parseSettings(text, source = SETTINGS_FILE) {
 }
 function setting(entry, what) {
   const { key: name, line, value } = entry;
-  const renamed = renamedSetting(name, value.kind === "scalar" ? value.text : void 0);
+  const text = value.kind === "scalar" ? value.text : void 0;
+  const renamed = renamedSetting(name, text);
   if (renamed) return { ok: false, line, error: renamed };
-  const misplaced = misplacedCondition(name, what);
+  const misplaced = misplacedCondition(name, what, text);
   if (misplaced) return { ok: false, line, error: misplaced };
   if (!isSettingName(name)) return { ok: false, line, error: `unknown setting \`${name}\`.` };
   if (what === "profile" && !PROFILE_SETTINGS.includes(name)) {
@@ -28672,15 +28674,16 @@ function setting(entry, what) {
   const parsed = parseSetting(name, value.text);
   return parsed.ok ? parsed : { ok: false, line, error: parsed.error };
 }
-function misplacedCondition(name, what) {
-  if (what === "setting" && name === "when") {
-    return "`when` is a profile's condition: write it in a profile, under `profiles`. The top-level settings apply when no profile does.";
+function misplacedCondition(name, what, value) {
+  const count3 = value !== void 0 && /^[1-9][0-9]*$/.test(value) ? value : "N";
+  if (name === "when") {
+    return what === "profile" ? "`when` is gone: write the profile's conditions (`stages`, `tasks`, `min-tasks`, `max-tasks`) directly in the profile, beside its `name`." : "`when` is gone, and conditions belong to profiles: write them in a profile, under `profiles`, beside its `name`. The top-level settings apply when no profile does.";
   }
-  if (what === "setting" && name === "stages") {
-    return "`stages` is a profile's condition: write it under a profile's `when`, in `profiles`. The top-level settings apply when no profile does.";
+  if (name === "parallel-tasks") {
+    return what === "profile" ? `\`parallel-tasks\` is no longer a condition: write \`min-tasks: ${count3}\` for at least ${count3} tasks in the run, or \`tasks: ${count3}\` for exactly ${count3}.` : `\`parallel-tasks\` is no longer a setting: a run takes as many tasks as its profiles' \`tasks\`, \`min-tasks\` and \`max-tasks\` allow, and one at a time when none sets them. For up to ${count3} tasks at once, write \`max-tasks: ${count3}\` in a profile.`;
   }
-  if (what === "profile" && (name === "stages" || name === "parallel-tasks")) {
-    return `\`${name}\` is a condition here: write it under the profile's \`when\`.`;
+  if (what === "setting" && isConditionName(name)) {
+    return `\`${name}\` is a profile's condition: write it in a profile, under \`profiles\`. The top-level settings apply when no profile does.`;
   }
   return void 0;
 }
@@ -28709,7 +28712,7 @@ function profiles(node) {
 }
 function profile(node) {
   if (node.kind !== "map") return { ok: false, line: node.line, error: "expected a profile." };
-  const result = { name: "", when: {}, settings: {} };
+  const result = { name: "", conditions: {}, settings: {} };
   for (const entry of node.entries) {
     const { key, line, value } = entry;
     if (key === "name") {
@@ -28721,10 +28724,10 @@ function profile(node) {
         };
       }
       result.name = value.text;
-    } else if (key === "when") {
-      const when = conditions(entry);
-      if (!when.ok) return when;
-      result.when = when.value;
+    } else if (isConditionName(key)) {
+      const parsed = condition(entry, key);
+      if (!parsed.ok) return parsed;
+      Object.assign(result.conditions, { [key]: parsed.value });
     } else {
       const parsed = setting(entry, "profile");
       if (!parsed.ok) return parsed;
@@ -28732,69 +28735,65 @@ function profile(node) {
     }
   }
   if (!result.name) return { ok: false, line: node.line, error: "a profile needs a `name`." };
-  return { ok: true, value: result };
-}
-function conditions(entry) {
-  const { line, value } = entry;
-  if (value.kind !== "map") {
-    return { ok: false, line, error: "`when` must be a block of conditions." };
-  }
-  const when = {};
-  for (const { key, line: line2, value: condition } of value.entries) {
-    if (key === "stages") {
-      const names = condition.kind === "list" ? condition.items : [];
-      const stages = names.flatMap((item) => item.kind === "scalar" ? [item.text] : []);
-      const valid = stages.length === names.length && stages.every(isStage);
-      if (names.length === 0 || !valid) {
-        return {
-          ok: false,
-          line: line2,
-          error: `\`stages\` must list some of the stages ${STAGES.map((stage) => `\`${stage}\``).join(", ")}, such as \`[plan, route]\`.`
-        };
-      }
-      when.stages = stages;
-    } else if (key === "parallel-tasks") {
-      const count3 = condition.kind === "scalar" && condition.text !== "" ? Number(condition.text) : Number.NaN;
-      if (!Number.isInteger(count3) || count3 < 1) {
-        return {
-          ok: false,
-          line: line2,
-          error: "`parallel-tasks` must be a positive whole number: the fewest tasks of the run."
-        };
-      }
-      when["parallel-tasks"] = count3;
-    } else {
-      return {
-        ok: false,
-        line: line2,
-        error: `unknown condition \`${key}\`; a profile's conditions are \`stages\` and \`parallel-tasks\`.`
-      };
-    }
-  }
-  return { ok: true, value: when };
-}
-function resolveRun(layers, run2) {
-  const [own = {}] = layers;
-  const { profiles: list2 = [], ...values } = merge3(layers);
-  if (values.model === void 0) {
+  const { tasks, "min-tasks": min, "max-tasks": max } = result.conditions;
+  if (tasks !== void 0 && (min !== void 0 || max !== void 0)) {
     return {
       ok: false,
-      error: `No model is configured. Set \`model\` in ${SETTINGS_FILE} or in the workflow's inputs.`
+      line: node.line,
+      error: "`tasks` is an exact count: write it alone, or `min-tasks` and `max-tasks` for a range."
     };
   }
+  if (min !== void 0 && max !== void 0 && min > max) {
+    return {
+      ok: false,
+      line: node.line,
+      error: "`min-tasks` must not be more than `max-tasks`."
+    };
+  }
+  return { ok: true, value: result };
+}
+function condition(entry, name) {
+  const { line, value } = entry;
+  if (name === "stages") {
+    const names = value.kind === "list" ? value.items : [];
+    const stages = names.flatMap((item) => item.kind === "scalar" ? [item.text] : []);
+    const valid = stages.length === names.length && stages.every(isStage);
+    if (names.length === 0 || !valid) {
+      return {
+        ok: false,
+        line,
+        error: `\`stages\` must list some of the stages ${STAGES.map((stage) => `\`${stage}\``).join(", ")}, such as \`[plan, route]\`.`
+      };
+    }
+    return { ok: true, value: stages };
+  }
+  const count3 = value.kind === "scalar" && value.text !== "" ? Number(value.text) : Number.NaN;
+  if (!Number.isInteger(count3) || count3 < 1 || count3 > MAX_TASKS) {
+    return {
+      ok: false,
+      line,
+      error: `\`${name}\` must be a whole number from 1 to ${MAX_TASKS}: the tasks of the run that run an agent.`
+    };
+  }
+  return { ok: true, value: count3 };
+}
+function resolveLayers(layers) {
+  const [own = {}] = layers;
+  const { profiles: list2 = [], ...values } = merge3(layers);
   const inherited = serving(
-    layers.slice(1).map((settings2, index) => ({
+    layers.slice(1).map((settings, index) => ({
       name: layerSource(index + 1),
       source: LAYER_BASES[index + 1] ?? `layer ${index + 2}`,
-      settings: settings2
+      settings
     })),
     { source: "Codeman's default", settings: { provider: DEFAULTS2.provider } }
   );
   if (!inherited.ok) return inherited;
+  const model = inherited.value.model ?? values.model;
   const top = {
     ...omit2(values, PROFILE_SETTINGS),
     ...inherited.value,
-    model: inherited.value.model ?? values.model
+    ...model === void 0 ? {} : { model }
   };
   const topError = settingsProblem(top);
   if (topError) return { ok: false, error: topError };
@@ -28806,25 +28805,29 @@ function resolveRun(layers, run2) {
       settings: top
     });
     if (!served.ok) return served;
-    const settings2 = { ...omit2(top, PROFILE_SETTINGS), ...served.value };
-    const error4 = settingsProblem(settings2);
-    if (error4) return { ok: false, error: `${name}: ${error4}` };
-    profiled.push({ profile: profile2, settings: settings2 });
+    const settings = { ...omit2(top, PROFILE_SETTINGS), ...served.value };
+    if (settings.model === void 0) {
+      return {
+        ok: false,
+        error: `${name} has no \`model\`, and the top-level settings have none to inherit: set one in the profile.`
+      };
+    }
+    const error3 = settingsProblem(settings);
+    if (error3) return { ok: false, error: `${name}: ${error3}` };
+    profiled.push({ profile: profile2, settings });
   }
   const forTask = pick(own, PROFILE_SETTINGS);
   if (forTask.model !== void 0) {
-    const error4 = settingsProblem({ ...top, model: forTask.model });
-    if (error4) {
+    const error3 = settingsProblem({ ...top, model: forTask.model });
+    if (error3) {
       return {
         ok: false,
-        error: `The task's \`model\` is for \`${top.provider}\`, the top-level settings' provider. ${error4}`
+        error: `The task's \`model\` is for \`${top.provider}\`, the top-level settings' provider. ${error3}`
       };
     }
   }
-  const chosen = run2 ? profiled.find(({ profile: profile2 }) => applies(profile2, run2)) : void 0;
-  const base = chosen?.settings ?? top;
-  const providers = [top, ...profiled.map(({ settings: settings2 }) => settings2)].map(
-    (settings2) => settings2.provider ?? DEFAULTS2.provider
+  const providers = [top, ...profiled.map(({ settings }) => settings)].map(
+    (settings) => settings.provider ?? DEFAULTS2.provider
   );
   for (const name of PROVIDER_SETTINGS) {
     if (forTask[name] !== void 0 && !providers.some((p) => PROVIDERS[p].settings[name])) {
@@ -28834,29 +28837,71 @@ function resolveRun(layers, run2) {
       };
     }
   }
+  return { ok: true, value: { top, profiled, forTask, providers } };
+}
+function servingRun(resolved, run2) {
+  const chosen = resolved.profiled.find(({ profile: profile2 }) => applies(profile2, run2));
+  if (chosen) return chosen;
+  return resolved.top.model === void 0 ? void 0 : { settings: resolved.top };
+}
+function resolveRun(layers, run2) {
+  const resolved = resolveLayers(layers);
+  if (!resolved.ok) return resolved;
+  const { top, forTask, providers } = resolved.value;
+  const served = run2 ? servingRun(resolved.value, run2) : { settings: top };
+  if (!served) {
+    return {
+      ok: false,
+      error: `No settings apply to the \`${run2?.stage}\` stage with ${run2?.tasks} task(s): no profile does, and the top-level settings have no \`model\`.`
+    };
+  }
+  const base = served.settings;
   const accepted = PROVIDERS[base.provider ?? DEFAULTS2.provider].settings;
   const taskServing = Object.fromEntries(
     Object.entries(forTask).filter(
       ([name]) => name === "model" ? base.provider === top.provider : name in accepted
     )
   );
-  const settings = withProviderDefaults({ ...base, ...taskServing });
+  const settings = withProviderDefaults({ model: "", ...base, ...taskServing });
   const error3 = settingsProblem(settings);
   if (error3) {
-    return { ok: false, error: chosen ? `Profile \`${chosen.profile.name}\`: ${error3}` : error3 };
+    return {
+      ok: false,
+      error: served.profile ? `Profile \`${served.profile.name}\`: ${error3}` : error3
+    };
   }
   return {
     ok: true,
     value: {
       settings,
-      profile: chosen?.profile.name,
+      profile: served.profile?.name,
       accounts: [...new Set(providers.map(accountOf))]
     }
   };
 }
 function applies(profile2, run2) {
-  const { stages, "parallel-tasks": tasks } = profile2.when;
-  return (!stages || stages.includes(run2.stage)) && (tasks === void 0 || run2.tasks >= tasks);
+  const { stages, tasks, "min-tasks": min, "max-tasks": max } = profile2.conditions;
+  return (!stages || stages.includes(run2.stage)) && (tasks === void 0 || run2.tasks === tasks) && (min === void 0 || run2.tasks >= min) && (max === void 0 || run2.tasks <= max);
+}
+function tasksPerRun(layers) {
+  const list2 = layers.find((layer) => layer.profiles !== void 0)?.profiles ?? [];
+  let most = 1;
+  for (const { conditions } of list2) {
+    const { tasks, "min-tasks": min, "max-tasks": max } = conditions;
+    const named = tasks ?? max ?? (min === void 0 ? void 0 : MAX_TASKS);
+    if (named !== void 0) most = Math.max(most, named);
+  }
+  return most;
+}
+function servedCounts(layers, stage) {
+  const resolved = resolveLayers(layers);
+  if (!resolved.ok) return resolved;
+  const counts = [];
+  for (let tasks = 1; tasks <= MAX_TASKS; tasks++) {
+    const served = servingRun(resolved.value, { stage, tasks });
+    if (served) counts.push({ tasks, profile: served.profile?.name });
+  }
+  return { ok: true, value: counts };
 }
 function serving(layers, base) {
   let result = pick(base.settings, PROFILE_SETTINGS);
@@ -28913,11 +28958,11 @@ function settingSources(layers) {
 }
 function settingsProblem(settings) {
   const values = pick(settings, PROVIDER_SETTINGS);
-  return providerProblem({
-    ...values,
-    provider: settings.provider ?? DEFAULTS2.provider,
-    model: settings.model ?? ""
-  });
+  const model = settings.model ?? "";
+  return providerProblem(
+    { ...values, provider: settings.provider ?? DEFAULTS2.provider, model },
+    model !== ""
+  );
 }
 
 // src/output.ts
@@ -29237,7 +29282,7 @@ var en = {
   spent: ({ run: run2, task, budget }) => `Spent: ${run2 ? `${run2} this run, ` : ""}${task} of ${budget} for the task`,
   refusedHeading: "Not a task",
   refused: "Codeman works only on issues opened by someone with write access to the repository. The agent reads the issue's title and body as its task, and whoever opened the issue can edit them at any time. To go on, a maintainer opens a new issue with this content, in their own words, and labels it `codeman`. Then remove the `codeman` label from this one.",
-  panelFooter: (model, runUrl, reportUrl2) => `<sub>Model: \`${model}\` (change it with \`/codeman set model <id>\`) \xB7 [Last run](${runUrl})${reportUrl2 ? ` \xB7 [Last report](${reportUrl2})` : ""}</sub>`,
+  panelFooter: (model, runUrl, reportUrl2) => `<sub>${model ? `Model: \`${model}\` (change it with \`/codeman set model <id>\`) \xB7 ` : ""}[Last run](${runUrl})${reportUrl2 ? ` \xB7 [Last report](${reportUrl2})` : ""}</sub>`,
   nextStepLabel: "Next step",
   nextStep: (state) => ({
     new: "Codeman tries again in a later run.",
@@ -29258,7 +29303,7 @@ var en = {
   report: "Report",
   problems: "Problems",
   costHeading: "Cost",
-  runFooter: (model, spent, runUrl) => `<sub>Model: \`${model}\`${spent ? ` \xB7 ${spent}` : ""} \xB7 [Run](${runUrl})</sub>`,
+  runFooter: (model, spent, runUrl) => `<sub>${[model ? `Model: \`${model}\`` : "", spent ?? "", `[Run](${runUrl})`].filter(Boolean).join(" \xB7 ")}</sub>`,
   tableHeader: [
     "Run",
     "Stage",
@@ -29315,6 +29360,8 @@ Tests: ${test ?? "(no report)"}`,
   stageBlockedHint: "Comment `/codeman continue <guidance>` to try again, or `/codeman replan <what to change>` to revise the plan, for example to widen its scope.",
   replanHint: "Comment `/codeman replan <what to change>` to try again.",
   removeLabelHint: "Remove the `codeman:blocked` label to try again.",
+  waitingForTasks: (tasks, profile2, ready) => `Waiting for ${tasks} tasks ready for profile \`${profile2}\`; ${ready} ${ready === 1 ? "is" : "are"}. Codeman checks again at every run.`,
+  noSettingsForStage: (stage) => `No settings apply to the ${STAGES2[stage]} stage: no profile serves it with any number of tasks, and the top-level settings have no \`model\`. Add the stage to a profile, or a top-level \`model\`, in \`.codeman/settings.yml\` or the organization's settings.`,
   noKey: "Codeman could not give this run access to its model (an OpenRouter key, or a GPU). See the run log.",
   missingCredentials: "Codeman could not give this run access to its model: the workflow does not pass the secret of a provider the run needs, its own or one whose billing counts in the organization's month.",
   taskBudgetSpent: (spent, budget, minimum) => `The task has spent ${spent} of its ${budget} budget, and a run needs at least ${minimum}. A maintainer can raise it with \`/codeman set task-budget <usd>\`, then comment \`/codeman continue\`.`,
@@ -29497,7 +29544,7 @@ var ptBR = {
   spent: ({ run: run2, task, budget }) => `Gasto: ${run2 ? `${run2} nesta rodada, ` : ""}${task} de ${budget} da tarefa`,
   refusedHeading: "N\xE3o \xE9 uma tarefa",
   refused: "O Codeman trabalha somente em issues abertas por quem tem acesso de escrita ao reposit\xF3rio. O agente l\xEA o t\xEDtulo e o corpo da issue como a sua tarefa, e quem abriu a issue pode edit\xE1-los a qualquer momento. Para seguir, um mantenedor abre uma nova issue com este conte\xFAdo, com as suas pr\xF3prias palavras, e aplica a label `codeman`. Depois, remova a label `codeman` desta.",
-  panelFooter: (model, runUrl, reportUrl2) => `<sub>Modelo: \`${model}\` (troque com \`/codeman set model <id>\`) \xB7 [\xDAltima rodada](${runUrl})${reportUrl2 ? ` \xB7 [\xDAltimo relat\xF3rio](${reportUrl2})` : ""}</sub>`,
+  panelFooter: (model, runUrl, reportUrl2) => `<sub>${model ? `Modelo: \`${model}\` (troque com \`/codeman set model <id>\`) \xB7 ` : ""}[\xDAltima rodada](${runUrl})${reportUrl2 ? ` \xB7 [\xDAltimo relat\xF3rio](${reportUrl2})` : ""}</sub>`,
   nextStepLabel: "Pr\xF3ximo passo",
   nextStep: (state) => ({
     new: "o Codeman tenta de novo numa pr\xF3xima rodada.",
@@ -29518,7 +29565,7 @@ var ptBR = {
   report: "Relat\xF3rio",
   problems: "Problemas",
   costHeading: "Custo",
-  runFooter: (model, spent, runUrl) => `<sub>Modelo: \`${model}\`${spent ? ` \xB7 ${spent}` : ""} \xB7 [Rodada](${runUrl})</sub>`,
+  runFooter: (model, spent, runUrl) => `<sub>${[model ? `Modelo: \`${model}\`` : "", spent ?? "", `[Rodada](${runUrl})`].filter(Boolean).join(" \xB7 ")}</sub>`,
   tableHeader: [
     "Rodada",
     "Etapa",
@@ -29575,6 +29622,8 @@ Testes: ${test ?? "(sem relat\xF3rio)"}`,
   stageBlockedHint: "Comente `/codeman continue <orienta\xE7\xE3o>` para tentar de novo, ou `/codeman replan <o que mudar>` para revisar o plano, por exemplo para ampliar o escopo.",
   replanHint: "Comente `/codeman replan <o que mudar>` para tentar de novo.",
   removeLabelHint: "Remova a label `codeman:blocked` para tentar de novo.",
+  waitingForTasks: (tasks, profile2, ready) => `Aguardando ${tasks} tarefas prontas para o perfil \`${profile2}\`; ${ready} ${ready === 1 ? "est\xE1" : "est\xE3o"}. O Codeman verifica de novo a cada rodada.`,
+  noSettingsForStage: (stage) => `Nenhuma configura\xE7\xE3o se aplica \xE0 ${OF_STAGE(stage)}: nenhum perfil a atende com qualquer n\xFAmero de tarefas, e as configura\xE7\xF5es de n\xEDvel superior n\xE3o t\xEAm \`model\`. Inclua a etapa num perfil, ou um \`model\` no n\xEDvel superior, em \`.codeman/settings.yml\` ou nas configura\xE7\xF5es da organiza\xE7\xE3o.`,
   noKey: "O Codeman n\xE3o conseguiu dar a esta rodada acesso ao modelo (uma chave do OpenRouter, ou uma GPU). Veja o log da rodada.",
   missingCredentials: "O Codeman n\xE3o conseguiu dar a esta rodada acesso ao modelo: o workflow n\xE3o passa o segredo de um provedor de que a rodada precisa, o dela ou um cuja cobran\xE7a conta no m\xEAs da organiza\xE7\xE3o.",
   taskBudgetSpent: (spent, budget, minimum) => `A tarefa gastou ${spent} do or\xE7amento de ${budget}, e uma rodada precisa de pelo menos ${minimum}. Um mantenedor pode aument\xE1-lo com \`/codeman set task-budget <usd>\` e depois comentar \`/codeman continue\`.`,
@@ -31392,6 +31441,38 @@ function chooseTasks(candidates, count3) {
   }
   return chosen;
 }
+function pickAgentTasks(candidates, cap, places) {
+  const servedAt = (tasks) => candidates.filter((candidate) => candidate.counts.some((count3) => count3.tasks === tasks));
+  let picked = [];
+  for (let tasks = Math.min(cap, places); tasks > 0; tasks--) {
+    const served = servedAt(tasks);
+    if (served.length >= tasks) {
+      picked = served.slice(0, tasks).map((candidate) => candidate.number);
+      break;
+    }
+  }
+  const waiting = [];
+  const unserved = [];
+  for (const candidate of candidates) {
+    if (picked.includes(candidate.number)) continue;
+    if (candidate.counts.length === 0) {
+      unserved.push(candidate.number);
+      continue;
+    }
+    const counts = candidate.counts.filter((count3) => count3.tasks <= cap);
+    if (counts.some((count3) => servedAt(count3.tasks).length >= count3.tasks)) continue;
+    const [first] = counts;
+    if (first) {
+      waiting.push({
+        number: candidate.number,
+        tasks: first.tasks,
+        profile: first.profile,
+        ready: servedAt(first.tasks).length
+      });
+    }
+  }
+  return { picked, tasks: picked.length, waiting, unserved };
+}
 var MAX_HISTORY = 2e4;
 function runHistory(comments, bot, max = MAX_HISTORY) {
   const runs = comments.filter((comment) => comment.author?.login === bot && isRunComment(comment.body)).sort((a, b) => b.id - a.id);
@@ -32623,19 +32704,19 @@ async function select(services) {
     candidates.push(candidate);
     runtime2.info(`${line} [${result.state}]${candidate.pending ? ` (${candidate.pending})` : ""}`);
   }
-  const parallel = firstSet([inputs, fileSettings.value, shared.value], "parallel-tasks");
-  const choices = chooseTasks(candidates, parallel ?? DEFAULTS2["parallel-tasks"]);
-  if (choices.length === 0) {
-    runtime2.output("action", "none");
-    runtime2.info("Nothing to do.");
-    return;
-  }
-  const agents = choices.filter((choice) => runsAgent(choice.action)).length;
-  if (choices.length > 1) {
-    const list2 = choices.map((choice) => `#${choice.number} (${choice.action})`).join(", ");
-    runtime2.info(`Picked ${choices.length} tasks, of up to ${parallel}: ${list2}.`);
-  }
-  const prepare = async (choice) => {
+  const inherited = [inputs, fileSettings.value, shared.value];
+  const cap = tasksPerRun(inherited);
+  const resolveOwn = (own, run2) => {
+    const resolved = resolveRun([own, ...inherited], run2);
+    if (resolved.ok) return { own, resolved: resolved.value };
+    if (own.model !== void 0 || own.gpu !== void 0) {
+      const { model: _model, gpu: _gpu, ...rest } = own;
+      const fallback = resolveRun([rest, ...inherited], run2);
+      if (fallback.ok) return { own: rest, resolved: fallback.value, rejected: resolved.error };
+    }
+    throw new Error(resolved.error);
+  };
+  const describe = async (choice) => {
     const task = tasks.find((candidate) => candidate.number === choice.number);
     if (!task) throw new Error(`Task #${choice.number} disappeared.`);
     const pending = candidates.find((candidate) => candidate.number === task.number)?.pending;
@@ -32652,12 +32733,60 @@ async function select(services) {
       record?.processedReviewId ?? 0
     );
     const sources = newCommands(talk, reviews);
-    const replan = choice.action === "plan" ? replanRequests(sources) : [];
-    const settled = choice.action === "plan" && record ? applyCommands(record, sources).record.decisions.filter((decision) => decision.answer) : [];
-    const resume = pending === "resume";
     const newRequests = choice.action === "implement" ? resumeRequests(sources) : [];
     const route = choice.action === "implement" ? routing(task.labels, record, newRequests) : void 0;
     const action = route ? "route" : choice.action;
+    const stage = action !== "implement" ? void 0 : record?.stage ?? routedStageOfState(fromStateOf(task.labels)) ?? firstStage(task.labels);
+    const description = descriptionCommands(task.body);
+    const settled = resolveOwn(taskSettings(maintainerComments, description.commands));
+    const agentStage = action === "plan" || action === "route" ? action : stage;
+    const served = agentStage ? servedCounts([settled.own, ...inherited], agentStage) : { ok: true, value: [] };
+    if (!served.ok) throw new Error(served.error);
+    return {
+      choice,
+      task,
+      pending,
+      talk,
+      record,
+      maintainerComments,
+      reviewComments,
+      reviews,
+      sources,
+      newRequests,
+      route,
+      action,
+      stage,
+      agentStage,
+      description,
+      own: settled.own,
+      rejected: settled.rejected,
+      language: settled.resolved.settings.language,
+      taskBudget: settled.resolved.settings["task-budget"],
+      counts: served.value
+    };
+  };
+  const ready = [];
+  for (const choice of chooseTasks(candidates, candidates.length)) {
+    ready.push(await describe(choice));
+  }
+  const withoutAgent = ready.filter((work) => !work.agentStage).slice(0, cap);
+  const agentWork = ready.filter((work) => work.agentStage);
+  const agentPick = pickAgentTasks(
+    agentWork.map((work) => ({ number: work.task.number, counts: work.counts })),
+    cap,
+    cap - withoutAgent.length
+  );
+  const picks = [
+    ...withoutAgent,
+    ...agentWork.filter((work) => agentPick.picked.includes(work.task.number))
+  ];
+  const workOf = (number3) => agentWork.find((work) => work.task.number === number3);
+  const prepare = async (work, agents) => {
+    const { choice, task, talk, record, maintainerComments, reviewComments, reviews } = work;
+    const { sources, newRequests, route, action, stage, description, pending } = work;
+    const replan = choice.action === "plan" ? replanRequests(sources) : [];
+    const settled = choice.action === "plan" && record ? applyCommands(record, sources).record.decisions.filter((decision) => decision.answer) : [];
+    const resume = pending === "resume";
     const window2 = action === "implement" ? record?.route?.requests : void 0;
     const windowReviews = window2 ? authorizedReviews(
       talk.reviews,
@@ -32672,8 +32801,6 @@ async function select(services) {
       ...reviewCommands(windowReviews)
     ] : [];
     const requests = [...resumeRequests(windowSources), ...newRequests];
-    const stage = action !== "implement" ? void 0 : record?.stage ?? routedStageOfState(fromStateOf(task.labels)) ?? firstStage(task.labels);
-    const description = descriptionCommands(task.body);
     const problems = [
       ...description.commands,
       ...sources.map(({ command }) => command)
@@ -32687,24 +32814,12 @@ async function select(services) {
     const branchSha = await repo.branchSha(branch);
     const baseSha = branchSha ?? await repo.branchSha(defaultBranch);
     if (!baseSha) throw new Error(`Branch ${defaultBranch} not found.`);
-    let own = taskSettings(maintainerComments, description.commands);
-    const inherited = [inputs, fileSettings.value, shared.value];
-    const agentWork = action === "plan" || action === "route" ? action : stage;
-    const runConditions = agentWork ? { stage: agentWork, tasks: agents } : void 0;
-    let resolved = resolveRun([own, ...inherited], runConditions);
-    if (!resolved.ok && (own.model !== void 0 || own.gpu !== void 0)) {
-      const { model: _model, gpu: _gpu, ...rest } = own;
-      const fallback = resolveRun([rest, ...inherited], runConditions);
-      if (fallback.ok) {
-        problems.push({ problem: { kind: "settings-rejected", error: resolved.error } });
-        resolved = fallback;
-        own = rest;
-      }
-    }
-    if (!resolved.ok) throw new Error(resolved.error);
+    const runConditions = work.agentStage ? { stage: work.agentStage, tasks: agents } : void 0;
+    const { own, resolved, rejected } = resolveOwn(work.own, runConditions);
+    const rejection = rejected ?? work.rejected;
+    if (rejection) problems.push({ problem: { kind: "settings-rejected", error: rejection } });
     for (const line of settingSources([own, ...inherited])) runtime2.info(line);
-    const { profile: profile2, accounts } = resolved.value;
-    const settings = resolved.value.settings;
+    const { profile: profile2, accounts, settings } = resolved;
     if (profile2) runtime2.info(`Profile \`${profile2}\` applies to this run.`);
     const model = settings.model;
     const context3 = {
@@ -32725,13 +32840,7 @@ async function select(services) {
       history: action === "implement" || route ? runHistory(talk.comments, bot) : void 0,
       stage,
       route,
-      processed: {
-        commentId: Math.max(
-          record?.processedCommentId ?? 0,
-          ...maintainerComments.map((comment) => comment.id)
-        ),
-        reviewId: Math.max(record?.processedReviewId ?? 0, ...reviews.map((review) => review.id))
-      },
+      processed: handled(work),
       problems,
       fromState: fromState.state,
       model,
@@ -32774,7 +32883,9 @@ async function select(services) {
       mkdirSync6(dirname(taskFile(runtime2, task.number)), { recursive: true });
       writeFileSync6(taskFile(runtime2, task.number), JSON.stringify(context3, null, 2));
     };
-    runtime2.info(`Selected #${task.number} to ${action}, with model ${model}.`);
+    runtime2.info(
+      model ? `Selected #${task.number} to ${action}, with model ${model}.` : `Selected #${task.number} to ${action}.`
+    );
     return {
       number: task.number,
       action,
@@ -32790,8 +32901,80 @@ async function select(services) {
       start
     };
   };
+  const panel = (work, state, message, model, record = work.record) => {
+    const t = messages(taskLanguage(work.language, record?.language));
+    return renderStatus({
+      t,
+      conventions,
+      state,
+      record,
+      model,
+      runUrl: runtime2.run.url,
+      message,
+      cost: { task: record?.spent, budget: work.taskBudget },
+      reportUrl: reportUrl(record, (id) => repo.commentUrl(work.task.url, id)),
+      decisionsUrl: decisionsUrl(record, (id) => repo.commentUrl(work.task.url, id))
+    });
+  };
+  const block = async (work) => {
+    const { task, talk, record } = work;
+    const t = messages(taskLanguage(work.language, record?.language));
+    const stage = work.agentStage ?? "plan";
+    const hint = record ? t.continueHint : t.removeLabelHint;
+    const processed = handled(work);
+    const updated = record ? {
+      ...record,
+      processedCommentId: Math.max(record.processedCommentId, processed.commentId),
+      processedReviewId: Math.max(record.processedReviewId ?? 0, processed.reviewId)
+    } : void 0;
+    runtime2.warning(
+      `#${task.number} ${oneLine(task.title)}: no settings apply to the ${stage} stage at any count; blocked.`
+    );
+    await repo.setState(task.number, task.labels, "blocked");
+    await repo.upsertComment(
+      task.number,
+      talk.status?.id ?? null,
+      panel(work, "blocked", `${t.noSettingsForStage(stage)} ${hint}`, "", updated)
+    );
+  };
+  const wait = async (work, waiting) => {
+    const { task, talk, record } = work;
+    const profile2 = waiting.profile ?? "";
+    runtime2.info(
+      `#${task.number} ${oneLine(task.title)}: waits for ${waiting.tasks} tasks ready for profile \`${profile2}\`; ${waiting.ready} ${waiting.ready === 1 ? "is" : "are"}.`
+    );
+    const t = messages(taskLanguage(work.language, record?.language));
+    const message = t.waitingForTasks(waiting.tasks, profile2, waiting.ready);
+    if (talk.status?.body.includes(message)) return;
+    const served = resolveOwn(work.own, {
+      stage: work.agentStage ?? "plan",
+      tasks: waiting.tasks
+    });
+    await repo.upsertComment(
+      task.number,
+      talk.status?.id ?? null,
+      panel(work, fromStateOf(task.labels), message, served.resolved.settings.model)
+    );
+  };
   const picked = [];
-  for (const choice of choices) picked.push(await prepare(choice));
+  for (const work of picks) picked.push(await prepare(work, agentPick.tasks));
+  for (const number3 of agentPick.unserved) {
+    const work = workOf(number3);
+    if (work) await block(work);
+  }
+  for (const waiting of agentPick.waiting) {
+    const work = workOf(waiting.number);
+    if (work) await wait(work, waiting);
+  }
+  if (picked.length === 0) {
+    runtime2.output("action", "none");
+    runtime2.info("Nothing to do.");
+    return;
+  }
+  const list2 = picked.map((one) => `#${one.number} (${one.action})`).join(", ");
+  runtime2.info(
+    `Picked ${picked.length} task(s), of up to ${cap}: ${list2}; ${agentPick.tasks} run an agent.`
+  );
   for (const one of picked) await one.start();
   const runOf = (one) => ledgerRunId(runtime2.run.id, runtime2.run.attempt, one.number);
   const outputs = picked.map((one) => taskOutputs(one, runOf(one)));
@@ -32815,6 +32998,18 @@ async function select(services) {
   }
   await ledger.flush(runtime2);
 }
+function handled(work) {
+  return {
+    commentId: Math.max(
+      work.record?.processedCommentId ?? 0,
+      ...work.maintainerComments.map((comment) => comment.id)
+    ),
+    reviewId: Math.max(
+      work.record?.processedReviewId ?? 0,
+      ...work.reviews.map((review) => review.id)
+    )
+  };
+}
 function taskOutputs(task, run2) {
   const choice = inferenceChoice(task.settings, task.record, {
     profile: task.profile,
@@ -32835,12 +33030,6 @@ function taskOutputs(task, run2) {
     "ledger-run": task.needsAgent ? run2 : ""
   };
 }
-function runsAgent(action) {
-  return action !== "record" && action !== "accept";
-}
-function firstSet(layers, name) {
-  return layers.find((layer) => layer[name] !== void 0)?.[name];
-}
 function routing(labels, record, requests) {
   const state = fromStateOf(labels);
   if (requests.some((request2) => request2.kind === "fix")) {
@@ -32848,6 +33037,9 @@ function routing(labels, record, requests) {
   }
   if (record?.route?.stages.length === 0) {
     return { trigger: "continue", fallback: record.stage ?? "design" };
+  }
+  if (state === "blocked" && record && !record.stage && !record.route) {
+    return { trigger: "continue", fallback: "design" };
   }
   if (state === "routing" && record?.handoff?.stage === "review") {
     return { trigger: "changes", fallback: "code" };

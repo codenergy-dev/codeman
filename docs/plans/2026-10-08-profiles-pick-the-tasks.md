@@ -1,7 +1,7 @@
 ---
-status: in progress
+status: completed
 created_at: 2026-10-08T22:54:33-03:00
-updated_at: 2026-10-08T23:09:59-03:00
+updated_at: 2026-10-08T23:12:04-03:00
 commit: aa3022d
 ---
 
@@ -70,6 +70,7 @@ Settled conservatively, as the responsible person asked.
 5. Docs: [settings](../settings/reference.md), [profiles](../settings/profiles.md), [provider settings across layers](../settings/provider-settings-across-layers.md) (examples without `when`, still asserted by the tests), [stages](../tasks/stages.md), [task lifecycle](../tasks/lifecycle.md) (the blocked and waiting tasks), [installation's profiles](../installation/profiles.md), [setup](../installation/setup.md), [upgrading](../installation/upgrading.md) (old → new), [runs and jobs](../runs/runs-and-jobs.md), [budget](../budget/budget.md), [Serverless](../inference/serverless.md) and `docs/README.md`. Done when `git grep -n "parallel-tasks\|when:"` over `docs/` (except `docs/plans/` and `docs/web/`), `README.md`, `templates/` and `action.yml` shows only the upgrading page's old names, and the docs link checker passes.
    - **Done on 2026-10-08**: [profiles](../settings/profiles.md) has sections for the conditions, how many tasks a run takes, which applies, layers, checks, budgets, and the example the tests read. [Settings](../settings/reference.md) lost the `parallel-tasks` row, and `model` has no default and is not required. [Provider settings across layers](../settings/provider-settings-across-layers.md)'s examples have `stages` beside the name; the tests still assert them. [Upgrading](../installation/upgrading.md#profiles-pick-the-tasks) has the table of old and new, with an example. [Installation's profiles](../installation/profiles.md) has a step for the counts; [setup](../installation/setup.md), [runs and jobs](../runs/runs-and-jobs.md), [budget](../budget/budget.md), [Serverless](../inference/serverless.md), [stages](../tasks/stages.md), [task lifecycle](../tasks/lifecycle.md), [providers](../settings/providers.md), [development](../development/guide.md) and `docs/README.md` follow. The grep shows `parallel-tasks` and `when:` only in the upgrading page's old settings, in the example profile named `parallel-tasks`, in the sentences that say they are gone, and in the file name of the parallel tasks plan; the link checker passes.
 6. Rebuild `dist/` and run `npm run check`. Done when it passes, the working tree is clean, and whether `dist/gateway.js` changed is recorded.
+   - **Done on 2026-10-08**: `npm run check` passes: 489 tests, 487 pass and 2 skipped (the sandbox's, Linux runners only). `dist/index.js` changed; `dist/gateway.js` did not, so no new pod image is needed.
 
 ## End-to-end test
 
