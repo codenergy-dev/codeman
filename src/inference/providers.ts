@@ -1,4 +1,5 @@
 import { ENGINES } from "./engines.ts";
+import { type OllamaSettings, ollamaEnvironment } from "./ollama.ts";
 
 /**
  * The providers a run's model can be served by, as the `provider` setting names them, and the
@@ -12,6 +13,19 @@ export type ProviderName = (typeof PROVIDER_NAMES)[number];
 /** The settings that only some providers accept; every provider takes `model`. */
 export const PROVIDER_SETTINGS = ["engine", "gpu", "endpoint", "pod-reuse"] as const;
 export type ProviderSettingName = (typeof PROVIDER_SETTINGS)[number];
+
+/**
+ * Blocks of settings that only some providers accept, each for one of their engines, such as
+ * `ollama` (the Ollama settings plan). Each key of a block is inherited like a setting.
+ */
+export const PROVIDER_BLOCKS = ["ollama"] as const;
+export type ProviderBlockName = (typeof PROVIDER_BLOCKS)[number];
+
+/** How a provider takes a block of settings. */
+export interface ProviderBlock {
+  /** The engine the block configures; the provider takes it only with that engine. */
+  engine: string;
+}
 
 /** How a provider takes one of its settings. */
 export interface ProviderSetting {
@@ -50,6 +64,8 @@ export interface Provider {
   account: string;
   /** The settings it accepts beside `model`; any other stops the run. */
   settings: Readonly<Partial<Record<ProviderSettingName, ProviderSetting>>>;
+  /** The blocks of settings it accepts; any other stops the run. */
+  blocks?: Readonly<Partial<Record<ProviderBlockName, ProviderBlock>>>;
   /** What its model IDs are: OpenRouter's, or its engine's. */
   model: "openrouter" | "engine";
   /** Secrets beside its account's key, and the job that uses each. */
@@ -65,6 +81,7 @@ export const PROVIDERS: Readonly<Record<ProviderName, Provider>> = {
       gpu: { required: true, example: '"NVIDIA RTX A6000"' },
       "pod-reuse": { values: ["task", "run"], default: "task" },
     },
+    blocks: { ollama: { engine: "ollama" } },
     model: "engine",
     secrets: [],
   },
@@ -86,6 +103,10 @@ export function isProviderName(name: string): name is ProviderName {
 
 export function isProviderSetting(name: string): name is ProviderSettingName {
   return (PROVIDER_SETTINGS as readonly string[]).includes(name);
+}
+
+export function isProviderBlock(name: string): name is ProviderBlockName {
+  return (PROVIDER_BLOCKS as readonly string[]).includes(name);
 }
 
 /**
@@ -112,7 +133,7 @@ export function settingValues(name: ProviderSettingName): string[] | undefined {
 /** The settings of one run on a provider, as `providerProblem` checks them. */
 export type ProviderSettings = { provider: string; model: string } & Partial<
   Record<ProviderSettingName, string>
->;
+> & { ollama?: OllamaSettings | undefined };
 
 /**
  * Why settings do not fit their provider: a setting it does not accept, a value it does not
@@ -125,8 +146,11 @@ export function providerProblem(settings: ProviderSettings, serves = true): stri
   const name = settings.provider;
   if (!isProviderName(name)) return `Unknown provider \`${name}\`.`;
   const provider = PROVIDERS[name];
-  for (const setting of PROVIDER_SETTINGS) {
-    if (settings[setting] !== undefined && !provider.settings[setting]) {
+  for (const setting of [...PROVIDER_SETTINGS, ...PROVIDER_BLOCKS]) {
+    const accepted = isProviderBlock(setting)
+      ? provider.blocks?.[setting]
+      : provider.settings[setting];
+    if (settings[setting] !== undefined && !accepted) {
       return `\`${name}\` does not accept \`${setting}\`; ${acceptedText(name)}`;
     }
   }
@@ -147,6 +171,19 @@ export function providerProblem(settings: ProviderSettings, serves = true): stri
         : `With \`${name}\`, \`${setting}\` must be one of ${offered}, not \`${value}\`.`;
     }
   }
+  const engine = settings.engine ?? provider.settings.engine?.default;
+  for (const block of PROVIDER_BLOCKS) {
+    const spec = provider.blocks?.[block];
+    if (!spec || settings[block] === undefined) continue;
+    if (engine !== spec.engine) {
+      return `With \`${name}\`, \`${block}\` configures the engine \`${spec.engine}\`, not \`${engine}\`.`;
+    }
+    try {
+      ollamaEnvironment(settings[block]);
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+  }
   return serves ? modelProblem(name, settings.model, settings.engine) : undefined;
 }
 
@@ -164,7 +201,10 @@ export function withProviderDefaults<T extends ProviderSettings>(settings: T): T
 
 /** `it takes only `model`.`, or the settings it takes beside it. */
 function acceptedText(name: ProviderName): string {
-  const accepted = Object.keys(PROVIDERS[name].settings).map((setting) => `\`${setting}\``);
+  const { settings, blocks = {} } = PROVIDERS[name];
+  const accepted = [...Object.keys(settings), ...Object.keys(blocks)].map(
+    (setting) => `\`${setting}\``,
+  );
   return accepted.length === 0
     ? "it takes only `model`."
     : `besides \`model\`, it takes ${list(accepted)}.`;

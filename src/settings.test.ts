@@ -555,7 +555,7 @@ test("rejects malformed profiles, naming the line", () => {
     ["profiles:\n  - model: a/b", "line 2: a profile needs a `name`."],
     [
       "profiles:\n  - name: a\n    task-budget: 5",
-      "line 3: a profile cannot set `task-budget`; it sets only `provider`, `model`, `engine`, `gpu`, `endpoint`, `pod-reuse`.",
+      "line 3: a profile cannot set `task-budget`; it sets only `provider`, `model`, `engine`, `gpu`, `endpoint`, `pod-reuse`, `ollama`.",
     ],
     ["profiles:\n  - name: a\n    secret: x", "line 3: unknown setting `secret`."],
     ["profiles:\n  - name: a\n    provider: spot", "line 3: `provider` must be one of"],
@@ -1152,5 +1152,215 @@ test("the example: planning on OpenRouter, 4 tasks on a full GPU or up to 3 on a
   assert.deepEqual(servedCounts([{}, {}, noReview.ok ? noReview.value : {}], "review"), {
     ok: true,
     value: [],
+  });
+});
+
+describe("Ollama settings on pods", () => {
+  const parse = (lines: string[], source?: string) => {
+    const parsed = parseSettings(lines.join("\n"), source);
+    assert.ok(parsed.ok, parsed.ok ? "" : parsed.error);
+    return parsed.ok ? parsed.value : {};
+  };
+  const pod = [
+    "provider: runpod-pod",
+    "model: qwen3.8:27b-mtp-q4_K_M",
+    'gpu: "NVIDIA RTX PRO 6000 Blackwell Server Edition"',
+  ];
+
+  test("reads an `ollama` block at the top level and in profiles, with values as Ollama takes them", () => {
+    const file = parse([
+      ...pod,
+      "ollama:",
+      "  num-parallel: 04",
+      "  kv-cache-type: q8_0",
+      "  flash-attention: true",
+      "profiles:",
+      "  - name: mig",
+      "    max-tasks: 3",
+      '    gpu: "NVIDIA RTX PRO 6000 Blackwell Server Edition MIG 2g.48gb"',
+      "    ollama:",
+      "      num-parallel: 3",
+      "      context-length: 32768",
+      "      load-timeout: 10m",
+    ]);
+    assert.equal(file.model, "qwen3.8:27b-mtp-q4_K_M", "an underscore needs no quotes");
+    assert.deepEqual(file.ollama, {
+      "num-parallel": "4",
+      "kv-cache-type": "q8_0",
+      "flash-attention": "true",
+    });
+    assert.deepEqual(file.profiles?.[0]?.settings.ollama, {
+      "num-parallel": "3",
+      "context-length": "32768",
+      "load-timeout": "10m",
+    });
+    const run = (tasks: number) => {
+      const resolved = resolveRun([{}, {}, file], { stage: "code", tasks });
+      assert.ok(resolved.ok, resolved.ok ? "" : resolved.error);
+      return resolved.ok ? resolved.value.settings.ollama : undefined;
+    };
+    // Each key is inherited on its own: the profile replaces `num-parallel` and keeps the others.
+    assert.deepEqual(run(2), {
+      "num-parallel": "3",
+      "kv-cache-type": "q8_0",
+      "flash-attention": "true",
+      "context-length": "32768",
+      "load-timeout": "10m",
+    });
+    assert.deepEqual(run(4), file.ollama, "no profile applies: the top level's");
+    assert.deepEqual(
+      settingSources([{}, {}, file])
+        .at(0)
+        ?.includes("ollama={num-parallel: 4, kv-cache-type: q8_0, flash-attention: true}"),
+      true,
+    );
+  });
+
+  test("errors name the line, the key and what to write", () => {
+    const cases: [string[], string][] = [
+      [
+        ["ollama:", "  num_parallel: 4"],
+        "line 2: `ollama` takes its keys in kebab-case, without `OLLAMA_`: write `num-parallel`, not `num_parallel`.",
+      ],
+      [
+        ["ollama:", "  OLLAMA_NUM_PARALLEL: 4"],
+        "line 2: `ollama` takes its keys in kebab-case, without `OLLAMA_`: write `num-parallel`, not `OLLAMA_NUM_PARALLEL`.",
+      ],
+      [
+        ["ollama:", "  host: 0.0.0.0"],
+        "line 2: `ollama` cannot set `host`: Codeman runs Ollama on the pod's loopback, where only its gateway reaches it.",
+      ],
+      [
+        ["ollama:", "  OLLAMA_KEEP_ALIVE: 5m"],
+        "line 2: `ollama` cannot set `keep-alive`: Codeman keeps the model loaded for as long as the pod lives.",
+      ],
+      [
+        ["ollama:", "  origins: x"],
+        "line 2: `ollama` cannot set `origins`: only Codeman's gateway",
+      ],
+      [["ollama:", "  models: /tmp"], "line 2: `ollama` cannot set `models`:"],
+      [["ollama:", "  remotes: x"], "line 2: `ollama` cannot set `remotes`:"],
+      [
+        ["ollama:", "  debug-log-requests: true"],
+        "line 2: `ollama` cannot set `debug-log-requests`:",
+      ],
+      [
+        ["ollama:", "  num-paralel: 4"],
+        "line 2: `ollama` does not accept `num-paralel`; it takes `context-length`, `num-parallel`, `max-queue`, `flash-attention`, `kv-cache-type`, `gpu-overhead`, `sched-spread` and `load-timeout` (docs/settings/ollama.md).",
+      ],
+      [["ollama:", "  debug: 1"], "line 2: `ollama` does not accept `debug`;"],
+      [
+        ["ollama:", "  num-parallel: four"],
+        "line 2: `ollama`'s `num-parallel` must be a whole number, at least 1.",
+      ],
+      [
+        ["ollama:", "  num-parallel: 0"],
+        "line 2: `ollama`'s `num-parallel` must be a whole number, at least 1.",
+      ],
+      [
+        ["ollama:", "  gpu-overhead: -1"],
+        "line 2: `ollama`'s `gpu-overhead` must be a whole number, at least 0.",
+      ],
+      [
+        ["ollama:", "  flash-attention: yes"],
+        "line 2: `ollama`'s `flash-attention` must be `true` or `false`.",
+      ],
+      [
+        ["ollama:", "  kv-cache-type: q5_0"],
+        "line 2: `ollama`'s `kv-cache-type` must be one of `f16`, `q8_0`, `q4_0`.",
+      ],
+      [
+        ["ollama:", "  load-timeout: soon"],
+        "line 2: `ollama`'s `load-timeout` must be a duration, such as `10m` or `1h30m`, or whole seconds.",
+      ],
+      [
+        ["ollama:", "  num-parallel: [4]"],
+        "line 2: the value of `ollama`'s `num-parallel` is not a plain value.",
+      ],
+      [
+        ["ollama:", "  num-parallel: 4", "  num-parallel: 2"],
+        "line 3: `num-parallel` appears twice.",
+      ],
+      [
+        ["ollama: 4"],
+        "line 1: `ollama` must be a block of Ollama's settings, one `name: value` per line, indented under it, such as `num-parallel: 4`.",
+      ],
+      [["ollama:"], "line 1: `ollama` must be a block of Ollama's settings"],
+      [
+        ["ollama: { num-parallel: 4 }"],
+        "line 1: the value of `ollama` is in braces, which the settings do not read: write each `name: value` on its own line, indented under `ollama:`.",
+      ],
+      [
+        ["profiles:", "  - name: a", "    ollama:", "      host: x"],
+        "line 4: `ollama` cannot set `host`:",
+      ],
+    ];
+    for (const [lines, error] of cases) {
+      const parsed = parseSettings(lines.join("\n"));
+      assert.ok(!parsed.ok, lines.join("\n"));
+      assert.ok(
+        !parsed.ok && parsed.error.startsWith(`.codeman/settings.yml, ${error}`),
+        `${lines.join("\n")}\n${parsed.ok ? "" : parsed.error}`,
+      );
+    }
+    assert.deepEqual(parseSetting("ollama", "4").ok, false, "not a value of commands or inputs");
+  });
+
+  test("only `runpod-pod` with Ollama takes it", () => {
+    const openrouter = resolveSettings(
+      {},
+      {},
+      parse(["model: a/b", "ollama:", "  num-parallel: 2"]),
+    );
+    assert.deepEqual(openrouter, {
+      ok: false,
+      error: "`openrouter` does not accept `ollama`; it takes only `model`.",
+    });
+    const serverless = parse([
+      ...pod,
+      "profiles:",
+      "  - name: review",
+      "    stages: [review]",
+      "    provider: runpod-serverless",
+      "    endpoint: abc123",
+      "    model: Qwen/Qwen3-Coder-30B-A3B-Instruct",
+      "    ollama:",
+      "      num-parallel: 2",
+    ]);
+    assert.deepEqual(resolveRun([{}, {}, serverless], { stage: "code", tasks: 1 }), {
+      ok: false,
+      error:
+        "Profile `review`: `runpod-serverless` does not accept `ollama`; besides `model`, it takes `engine` and `endpoint`.",
+    });
+  });
+
+  test("it goes with the provider across layers, key by key", () => {
+    const organization = parse([...pod, "ollama:", "  num-parallel: 4"], SHARED_SETTINGS);
+    const ollama = (...layers: PartialSettings[]) => {
+      const resolved = resolveSettings({}, {}, ...layers, organization);
+      assert.ok(resolved.ok, resolved.ok ? "" : resolved.error);
+      return resolved.ok ? resolved.value.ollama : undefined;
+    };
+    assert.deepEqual(ollama({}), { "num-parallel": "4" });
+    assert.deepEqual(ollama(parse(["ollama:", "  context-length: 65536"])), {
+      "num-parallel": "4",
+      "context-length": "65536",
+    });
+    assert.deepEqual(ollama(parse(["provider: runpod-pod", "ollama:", "  num-parallel: 2"])), {
+      "num-parallel": "2",
+    });
+    assert.equal(ollama(parse(["provider: openrouter", "model: a/b"])), undefined, "dropped");
+    // A profile on another provider drops it; one back on pods starts without it.
+    const file = parse([
+      "profiles:",
+      "  - name: planner",
+      "    stages: [plan]",
+      "    provider: openrouter",
+      "    model: a/b",
+    ]);
+    const plan = resolveRun([{}, {}, file, organization], { stage: "plan", tasks: 1 });
+    assert.ok(plan.ok && plan.value.settings.ollama === undefined);
+    const code = resolveRun([{}, {}, file, organization], { stage: "code", tasks: 1 });
+    assert.ok(code.ok && code.value.settings.ollama?.["num-parallel"] === "4");
   });
 });

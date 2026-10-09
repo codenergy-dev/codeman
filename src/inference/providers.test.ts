@@ -45,7 +45,7 @@ test("a pod needs a GPU, serves Ollama models, and keeps the pod for the task by
   assert.equal(providerProblem({ ...settings, "pod-reuse": "run" }), undefined);
   assert.equal(
     providerProblem({ ...settings, endpoint: "abc" }),
-    "`runpod-pod` does not accept `endpoint`; besides `model`, it takes `engine`, `gpu` and `pod-reuse`.",
+    "`runpod-pod` does not accept `endpoint`; besides `model`, it takes `engine`, `gpu`, `pod-reuse` and `ollama`.",
   );
   assert.equal(
     providerProblem({ ...settings, engine: "vllm" }),
@@ -173,4 +173,18 @@ test("the docs give each provider the settings, defaults and secrets of the regi
       name,
     );
   }
+});
+
+test("pods take an `ollama` block, checked against Ollama's list", () => {
+  const pod = { provider: "runpod-pod", model: "qwen3-coder:30b", gpu: "GPU" };
+  assert.equal(providerProblem({ ...pod, ollama: { "num-parallel": "4" } }), undefined);
+  assert.equal(
+    providerProblem({ ...pod, ollama: { host: "0.0.0.0" } }),
+    "`ollama` cannot set `host`: Codeman runs Ollama on the pod's loopback, where only its gateway reaches it.",
+  );
+  assert.equal(
+    providerProblem({ provider: "openrouter", model: "a/b", ollama: { "num-parallel": "4" } }),
+    "`openrouter` does not accept `ollama`; it takes only `model`.",
+  );
+  assert.deepEqual(PROVIDERS["runpod-pod"].blocks, { ollama: { engine: "ollama" } });
 });

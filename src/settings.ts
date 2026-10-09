@@ -1,8 +1,10 @@
 import { ENGINES } from "./inference/engines.ts";
+import { type OllamaSettings, ollamaSetting } from "./inference/ollama.ts";
 import {
   accountOf,
   endpointId,
   isOpenRouterModel,
+  PROVIDER_BLOCKS,
   PROVIDER_NAMES,
   PROVIDER_SETTINGS,
   PROVIDERS,
@@ -74,6 +76,11 @@ export interface Settings {
   endpoint?: string | undefined;
   /** `task`: a pod serves the task's next run too, while the task goes on; `run`: one run. */
   "pod-reuse"?: string | undefined;
+  /**
+   * The pod's Ollama settings, by key, such as `{ "num-parallel": "4" }`: each becomes a variable
+   * of its Ollama server (`OLLAMA_SETTINGS` in `src/inference/ollama.ts`).
+   */
+  ollama?: OllamaSettings | undefined;
 }
 
 export type SettingName = keyof Settings;
@@ -204,6 +211,7 @@ export function isSettingName(name: string): name is SettingName {
 
 /** Validates one value, given as text. */
 export function parseSetting(name: SettingName, text: string): Parsed<string | number> {
+  if (name === "ollama") return { ok: false, error: OLLAMA_BLOCK };
   if (name === "model") {
     return isModelName(text)
       ? { ok: true, value: text }
@@ -256,7 +264,18 @@ export function parseSetting(name: SettingName, text: string): Parsed<string | n
 }
 
 /** Settings a profile may change: where the model is served, and which model. */
-export const PROFILE_SETTINGS: readonly SettingName[] = ["provider", "model", ...PROVIDER_SETTINGS];
+export const PROFILE_SETTINGS: readonly SettingName[] = [
+  "provider",
+  "model",
+  ...PROVIDER_SETTINGS,
+  ...PROVIDER_BLOCKS,
+];
+
+/** The settings that go with a provider: dropped by a layer or profile that changes provider. */
+const PROVIDER_KEYS: readonly string[] = [...PROVIDER_SETTINGS, ...PROVIDER_BLOCKS];
+
+const OLLAMA_BLOCK =
+  "`ollama` must be a block of Ollama's settings, one `name: value` per line, indented under it, such as `num-parallel: 4`.";
 
 /**
  * Names settings had before the provider settings plan, and what to write instead (decision 7):
@@ -345,7 +364,12 @@ export function parseSettings(text: string, source = SETTINGS_FILE): Parsed<Sett
   if (!tree.ok) return { ok: false, error: `${source}, line ${tree.line}: ${tree.error}` };
   const settings: Record<string, unknown> = {};
   for (const entry of tree.value.entries) {
-    const parsed = entry.key === "profiles" ? profiles(entry.value) : setting(entry, "setting");
+    const parsed =
+      entry.key === "profiles"
+        ? profiles(entry.value)
+        : entry.key === "ollama"
+          ? ollamaBlock(entry)
+          : setting(entry, "setting");
     if (!parsed.ok) return { ok: false, error: `${source}, line ${parsed.line}: ${parsed.error}` };
     if (
       source !== SHARED_SETTINGS &&
@@ -364,6 +388,26 @@ export function parseSettings(text: string, source = SETTINGS_FILE): Parsed<Sett
 
 /** A parse result whose error names the line it is on. */
 type Read<T> = { ok: true; value: T } | { ok: false; line: number; error: string };
+
+/** `ollama`: a block of Ollama's settings, each checked against the list, on its own line. */
+function ollamaBlock(entry: YamlEntry): Read<OllamaSettings> {
+  const { line, value } = entry;
+  if (value.kind !== "map") return { ok: false, line, error: OLLAMA_BLOCK };
+  const settings: Record<string, string> = {};
+  for (const { key, line: keyLine, value: keyValue } of value.entries) {
+    if (keyValue.kind !== "scalar") {
+      return {
+        ok: false,
+        line: keyLine,
+        error: `the value of \`ollama\`'s \`${key}\` is not a plain value.`,
+      };
+    }
+    const checked = ollamaSetting(key, keyValue.text);
+    if (!checked.ok) return { ok: false, line: keyLine, error: checked.error };
+    settings[key] = checked.value;
+  }
+  return { ok: true, value: settings };
+}
 
 function setting(entry: YamlEntry, what: "setting" | "profile"): Read<string | number> {
   const { key: name, line, value } = entry;
@@ -459,6 +503,10 @@ function profile(node: YamlNode): Read<Profile> {
       const parsed = condition(entry, key);
       if (!parsed.ok) return parsed;
       Object.assign(result.conditions, { [key]: parsed.value });
+    } else if (key === "ollama") {
+      const parsed = ollamaBlock(entry);
+      if (!parsed.ok) return parsed;
+      result.settings.ollama = parsed.value;
     } else {
       const parsed = setting(entry, "profile");
       if (!parsed.ok) return parsed;
@@ -753,7 +801,8 @@ interface NamedLayer {
  * last one inherits): the provider, the model, and the provider's settings. A layer that names
  * another provider than the one it inherits starts that provider's settings afresh (decision 2
  * of the provider settings plan), and must set its own model when one would carry over (the
- * model per provider plan).
+ * model per provider plan). A block of settings, such as `ollama`, is inherited key by key: a
+ * layer replaces the keys it sets, and keeps the others (choice 6 of the Ollama settings plan).
  */
 function serving(
   layers: readonly NamedLayer[],
@@ -771,10 +820,12 @@ function serving(
           error: `${name} names \`${provider}\`, but inherits \`${result.provider}\` from ${from}, so it must set its own \`model\`, one for \`${provider}\`.`,
         };
       }
-      result = omit(result, PROVIDER_SETTINGS);
+      result = omit(result, PROVIDER_KEYS);
     }
     if (provider !== undefined) from = source;
-    Object.assign(result, pick(settings, PROFILE_SETTINGS));
+    const { ollama, ...values } = pick(settings, PROFILE_SETTINGS);
+    Object.assign(result, values);
+    if (ollama !== undefined) result.ollama = { ...result.ollama, ...ollama };
   }
   return { ok: true, value: result };
 }
@@ -818,7 +869,11 @@ export function settingSources(layers: readonly SettingsLayer[]): string[] {
   const show = (value: unknown) =>
     Array.isArray(value)
       ? `[${value.map((profile: Profile) => profile.name).join(", ")}]`
-      : String(value);
+      : typeof value === "object" && value !== null
+        ? `{${Object.entries(value)
+            .map(([key, text]) => `${key}: ${text}`)
+            .join(", ")}}`
+        : String(value);
   return layers.flatMap((layer, index) => {
     const values = Object.entries(layer).filter(
       ([name, value]) => value !== undefined && !named.has(name),
@@ -839,7 +894,12 @@ function settingsProblem(settings: PartialSettings): string | undefined {
   const values = pick(settings, PROVIDER_SETTINGS) as Partial<Record<ProviderSettingName, string>>;
   const model = settings.model ?? "";
   return providerProblem(
-    { ...values, provider: settings.provider ?? DEFAULTS.provider, model },
+    {
+      ...values,
+      ...(settings.ollama === undefined ? {} : { ollama: settings.ollama }),
+      provider: settings.provider ?? DEFAULTS.provider,
+      model,
+    },
     model !== "",
   );
 }

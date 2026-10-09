@@ -37,7 +37,8 @@ class YamlError extends Error {
   }
 }
 
-const KEY = /^([a-z][a-z0-9-]*):(?:\s+(.*))?$/;
+/** A key: letters, digits, `-` and `_`, so a key written as an environment variable reads. */
+const KEY = /^([A-Za-z][A-Za-z0-9_-]*):(?:\s+(.*))?$/;
 /** A list item: a dash, then a space or the end of the line. */
 const ITEM = /^-(?:\s|$)/;
 
@@ -111,6 +112,12 @@ class Reader {
       return { kind: "scalar", line: line.number, text: "" };
     }
     if (text.startsWith("[")) return flowList(key, line.number, text);
+    if (text.startsWith("{")) {
+      throw new YamlError(
+        line.number,
+        `the value of \`${key}\` is in braces, which the settings do not read: write each \`name: value\` on its own line, indented under \`${key}:\`.`,
+      );
+    }
     const value = scalar(text);
     if (value === undefined) {
       throw new YamlError(line.number, `the value of \`${key}\` is not a plain value.`);
@@ -181,7 +188,7 @@ export function scalar(text: string): string | undefined {
   return plainScalar(text.replace(/\s+#.*$/, "").trim());
 }
 
-const WORD = /^[A-Za-z0-9._~/:-]*$/;
+const WORD = /^[A-Za-z0-9._~/:_-]*$/;
 
 /**
  * A plain scalar: one word of safe characters, as before profiles, or several separated by
