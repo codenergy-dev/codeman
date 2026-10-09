@@ -117,9 +117,11 @@ export type ProviderSettings = { provider: string; model: string } & Partial<
 /**
  * Why settings do not fit their provider: a setting it does not accept, a value it does not
  * offer, a required setting missing, or a model that is not one of its model IDs. Undefined when
- * they fit. Defaults are not needed: a missing setting with one is fine.
+ * they fit. Defaults are not needed: a missing setting with one is fine. Settings that serve no
+ * run (`serves` false), such as a top level without a model, are checked only for what the
+ * provider accepts: neither its required settings nor the model.
  */
-export function providerProblem(settings: ProviderSettings): string | undefined {
+export function providerProblem(settings: ProviderSettings, serves = true): string | undefined {
   const name = settings.provider;
   if (!isProviderName(name)) return `Unknown provider \`${name}\`.`;
   const provider = PROVIDERS[name];
@@ -133,7 +135,7 @@ export function providerProblem(settings: ProviderSettings): string | undefined 
     const value = settings[setting];
     if (!spec) continue;
     if (value === undefined) {
-      if (spec.required) {
+      if (spec.required && serves) {
         return `\`${name}\` needs \`${setting}\`${spec.example ? `, such as \`${spec.example}\`` : ""}.`;
       }
       continue;
@@ -145,7 +147,7 @@ export function providerProblem(settings: ProviderSettings): string | undefined 
         : `With \`${name}\`, \`${setting}\` must be one of ${offered}, not \`${value}\`.`;
     }
   }
-  return modelProblem(name, settings.model, settings.engine);
+  return serves ? modelProblem(name, settings.model, settings.engine) : undefined;
 }
 
 /** The settings with the provider's defaults for those no layer set. */

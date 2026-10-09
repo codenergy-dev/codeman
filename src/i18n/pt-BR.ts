@@ -112,7 +112,7 @@ export const ptBR: Messages = {
   refused:
     "O Codeman trabalha somente em issues abertas por quem tem acesso de escrita ao repositório. O agente lê o título e o corpo da issue como a sua tarefa, e quem abriu a issue pode editá-los a qualquer momento. Para seguir, um mantenedor abre uma nova issue com este conteúdo, com as suas próprias palavras, e aplica a label `codeman`. Depois, remova a label `codeman` desta.",
   panelFooter: (model, runUrl, reportUrl) =>
-    `<sub>Modelo: \`${model}\` (troque com \`/codeman set model <id>\`) · [Última rodada](${runUrl})${reportUrl ? ` · [Último relatório](${reportUrl})` : ""}</sub>`,
+    `<sub>${model ? `Modelo: \`${model}\` (troque com \`/codeman set model <id>\`) · ` : ""}[Última rodada](${runUrl})${reportUrl ? ` · [Último relatório](${reportUrl})` : ""}</sub>`,
 
   nextStepLabel: "Próximo passo",
   nextStep: (state) =>
@@ -136,7 +136,7 @@ export const ptBR: Messages = {
   problems: "Problemas",
   costHeading: "Custo",
   runFooter: (model, spent, runUrl) =>
-    `<sub>Modelo: \`${model}\`${spent ? ` · ${spent}` : ""} · [Rodada](${runUrl})</sub>`,
+    `<sub>${[model ? `Modelo: \`${model}\`` : "", spent ?? "", `[Rodada](${runUrl})`].filter(Boolean).join(" · ")}</sub>`,
 
   tableHeader: [
     "Rodada",
@@ -209,6 +209,11 @@ export const ptBR: Messages = {
     "Comente `/codeman continue <orientação>` para tentar de novo, ou `/codeman replan <o que mudar>` para revisar o plano, por exemplo para ampliar o escopo.",
   replanHint: "Comente `/codeman replan <o que mudar>` para tentar de novo.",
   removeLabelHint: "Remova a label `codeman:blocked` para tentar de novo.",
+
+  waitingForTasks: (tasks, profile, ready) =>
+    `Aguardando ${tasks} tarefas prontas para o perfil \`${profile}\`; ${ready} ${ready === 1 ? "está" : "estão"}. O Codeman verifica de novo a cada rodada.`,
+  noSettingsForStage: (stage) =>
+    `Nenhuma configuração se aplica à ${OF_STAGE(stage)}: nenhum perfil a atende com qualquer número de tarefas, e as configurações de nível superior não têm \`model\`. Inclua a etapa num perfil, ou um \`model\` no nível superior, em \`.codeman/settings.yml\` ou nas configurações da organização.`,
 
   noKey:
     "O Codeman não conseguiu dar a esta rodada acesso ao modelo (uma chave do OpenRouter, ou uma GPU). Veja o log da rodada.",

@@ -4,32 +4,42 @@ import { descriptionCommands } from "../commands.ts";
 import { type Messages, messages, taskLanguage } from "../i18n/index.ts";
 import { inferenceChoice } from "../inference/index.ts";
 import type { WorkflowConventions } from "../platform/conventions.ts";
-import type { CiRun, Comment, Review } from "../platform/types.ts";
+import type { CiRun, Comment, Review, ReviewComment } from "../platform/types.ts";
 import { IGNORE_FILE, unprotected } from "../policy.ts";
 import type { CommandError } from "../problems.ts";
-import { applyCommands, type CommandSource, pendingDecisions, type TaskRecord } from "../record.ts";
+import {
+  applyCommands,
+  type CommandSource,
+  type Handled,
+  pendingDecisions,
+  type TaskRecord,
+} from "../record.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import type { Services } from "../services.ts";
 import {
-  DEFAULTS,
   isSettingName,
   type PartialSettings,
   parseSetting,
   parseSettings,
   type RunConditions,
+  type RunSettings,
   resolveRun,
   SETTINGS_FILE,
+  type ServedCount,
   type Settings,
   type SettingsLayer,
   SHARED_SETTINGS,
+  servedCounts,
   settingSources,
+  tasksPerRun,
 } from "../settings.ts";
-import { ROUTED_STAGE_STATE, type RoutedStage, routedStageOfState } from "../stages.ts";
+import { ROUTED_STAGE_STATE, type RoutedStage, routedStageOfState, type Stage } from "../stages.ts";
 import { type State, stateOf } from "../state.ts";
 import { decisionsUrl, renderRefused, renderStatus, reportUrl } from "../status.ts";
 import { ledgerRunId } from "../store/layout.ts";
 import {
   type Action,
+  type AgentPick,
   acceptRequest,
   authorizedComments,
   authorizedReviews,
@@ -40,13 +50,16 @@ import {
   findStatus,
   finishedRuns,
   openedByMaintainer,
+  type Pending,
   pendingWork,
+  pickAgentTasks,
   type Request,
   replanRequests,
   resumeRequests,
   reviewCommands,
   runHistory,
   type Task,
+  type TaskComment,
   type TaskContext,
   type TaskReview,
   taskSettings,
@@ -56,9 +69,9 @@ import { oneLine, slugify } from "../text.ts";
 import { taskFile } from "./common.ts";
 
 /**
- * Picks the tasks this run works on, up to `parallel-tasks`, and writes each one's context for
- * its jobs, and each run in the ledger. Runs no LLM, so it may hold a token that writes to
- * issues.
+ * Picks the tasks this run works on, as many as the profiles' counts allow, and writes each one's
+ * context for its jobs, and each run in the ledger; says on their panels why other tasks wait or
+ * are blocked. Runs no LLM, so it may hold a token that writes to issues.
  */
 export async function select(services: Services): Promise<void> {
   const { runtime, conventions } = services;
@@ -191,22 +204,32 @@ export async function select(services: Services): Promise<void> {
     runtime.info(`${line} [${result.state}]${candidate.pending ? ` (${candidate.pending})` : ""}`);
   }
 
-  const parallel = firstSet([inputs, fileSettings.value, shared.value], "parallel-tasks");
-  const choices = chooseTasks(candidates, parallel ?? DEFAULTS["parallel-tasks"]);
-  if (choices.length === 0) {
-    runtime.output("action", "none");
-    runtime.info("Nothing to do.");
-    return;
-  }
-  // A profile may depend on how many of the run's tasks run an agent at once.
-  const agents = choices.filter((choice) => runsAgent(choice.action)).length;
-  if (choices.length > 1) {
-    const list = choices.map((choice) => `#${choice.number} (${choice.action})`).join(", ");
-    runtime.info(`Picked ${choices.length} tasks, of up to ${parallel}: ${list}.`);
-  }
+  const inherited: SettingsLayer[] = [inputs, fileSettings.value, shared.value];
+  // How many tasks a run takes comes from the profiles' counts (decision 3 of the plan for
+  // profiles that pick the tasks).
+  const cap = tasksPerRun(inherited);
 
-  /** Reads one picked task and resolves its settings; `start` marks it as started. */
-  const prepare = async (choice: { number: number; action: Action }): Promise<Picked> => {
+  /**
+   * A task's own settings, and its resolved settings for a run: a task's model that does not fit
+   * the top level's provider, or a GPU that no provider accepts, stops this task only: it goes on
+   * without them, and says why.
+   */
+  const resolveOwn = (
+    own: PartialSettings,
+    run?: RunConditions,
+  ): { own: PartialSettings; resolved: RunSettings; rejected?: string } => {
+    const resolved = resolveRun([own, ...inherited], run);
+    if (resolved.ok) return { own, resolved: resolved.value };
+    if (own.model !== undefined || own.gpu !== undefined) {
+      const { model: _model, gpu: _gpu, ...rest } = own;
+      const fallback = resolveRun([rest, ...inherited], run);
+      if (fallback.ok) return { own: rest, resolved: fallback.value, rejected: resolved.error };
+    }
+    throw new Error(resolved.error);
+  };
+
+  /** What a ready task would do: its action, its stage, and what serves it. */
+  const describe = async (choice: { number: number; action: Action }): Promise<Work> => {
     const task = tasks.find((candidate) => candidate.number === choice.number);
     if (!task) throw new Error(`Task #${choice.number} disappeared.`);
     const pending = candidates.find((candidate) => candidate.number === task.number)?.pending;
@@ -225,6 +248,73 @@ export async function select(services: Services): Promise<void> {
       record?.processedReviewId ?? 0,
     );
     const sources = newCommands(talk, reviews);
+    const newRequests = choice.action === "implement" ? resumeRequests(sources) : [];
+    const route =
+      choice.action === "implement" ? routing(task.labels, record, newRequests) : undefined;
+    const action = route ? "route" : choice.action;
+    // Without a route, a stage goes on where the task was.
+    const stage: RoutedStage | undefined =
+      action !== "implement"
+        ? undefined
+        : (record?.stage ??
+          routedStageOfState(fromStateOf(task.labels)) ??
+          firstStage(task.labels));
+    // Settings may also come from the description, which the agent reads without command lines.
+    const description = descriptionCommands(task.body);
+    const settled = resolveOwn(taskSettings(maintainerComments, description.commands));
+    // The profile depends on the stage the agent works on, and on how many agents the run has.
+    const agentStage: Stage | undefined = action === "plan" || action === "route" ? action : stage;
+    const served = agentStage
+      ? servedCounts([settled.own, ...inherited], agentStage)
+      : { ok: true as const, value: [] };
+    if (!served.ok) throw new Error(served.error);
+    return {
+      choice,
+      task,
+      pending,
+      talk,
+      record,
+      maintainerComments,
+      reviewComments,
+      reviews,
+      sources,
+      newRequests,
+      route,
+      action,
+      stage,
+      agentStage,
+      description,
+      own: settled.own,
+      rejected: settled.rejected,
+      language: settled.resolved.settings.language,
+      taskBudget: settled.resolved.settings["task-budget"],
+      counts: served.value,
+    };
+  };
+
+  const ready: Work[] = [];
+  for (const choice of chooseTasks(candidates, candidates.length)) {
+    ready.push(await describe(choice));
+  }
+  // Recording answers and accepting workflows come first, take places of the run as before, and
+  // are not among the tasks the profiles count (choice 9).
+  const withoutAgent = ready.filter((work) => !work.agentStage).slice(0, cap);
+  const agentWork = ready.filter((work) => work.agentStage);
+  const agentPick = pickAgentTasks(
+    agentWork.map((work) => ({ number: work.task.number, counts: work.counts })),
+    cap,
+    cap - withoutAgent.length,
+  );
+  const picks = [
+    ...withoutAgent,
+    ...agentWork.filter((work) => agentPick.picked.includes(work.task.number)),
+  ];
+  const workOf = (number: number) => agentWork.find((work) => work.task.number === number);
+
+  /** Reads one picked task and resolves its settings; `start` marks it as started. */
+  const prepare = async (work: Work, agents: number): Promise<Picked> => {
+    const { choice, task, talk, record, maintainerComments, reviewComments, reviews } = work;
+    const { sources, newRequests, route, action, stage, description, pending } = work;
     // A new plan keeps the answers given so far and says what to change.
     const replan = choice.action === "plan" ? replanRequests(sources) : [];
     const settled =
@@ -232,10 +322,6 @@ export async function select(services: Services): Promise<void> {
         ? applyCommands(record, sources).record.decisions.filter((decision) => decision.answer)
         : [];
     const resume = pending === "resume";
-    const newRequests = choice.action === "implement" ? resumeRequests(sources) : [];
-    const route =
-      choice.action === "implement" ? routing(task.labels, record, newRequests) : undefined;
-    const action = route ? "route" : choice.action;
     // A route's stages read the requests its router handled, then any newer ones.
     const window = action === "implement" ? record?.route?.requests : undefined;
     const windowReviews = window
@@ -255,15 +341,6 @@ export async function select(services: Services): Promise<void> {
         ]
       : [];
     const requests = [...resumeRequests(windowSources), ...newRequests];
-    // Without a route, a stage goes on where the task was.
-    const stage: RoutedStage | undefined =
-      action !== "implement"
-        ? undefined
-        : (record?.stage ??
-          routedStageOfState(fromStateOf(task.labels)) ??
-          firstStage(task.labels));
-    // Settings may also come from the description, which the agent reads without command lines.
-    const description = descriptionCommands(task.body);
     // Problems in the description are reported in every run, until a maintainer fixes them.
     const problems: CommandError[] = [
       ...description.commands,
@@ -279,29 +356,14 @@ export async function select(services: Services): Promise<void> {
     const branchSha = await repo.branchSha(branch);
     const baseSha = branchSha ?? (await repo.branchSha(defaultBranch));
     if (!baseSha) throw new Error(`Branch ${defaultBranch} not found.`);
-    let own = taskSettings(maintainerComments, description.commands);
-    const inherited = [inputs, fileSettings.value, shared.value];
-    // The profile depends on what the agent works on, and on how many agents the run has.
-    const agentWork = action === "plan" || action === "route" ? action : stage;
-    const runConditions: RunConditions | undefined = agentWork
-      ? { stage: agentWork, tasks: agents }
+    const runConditions: RunConditions | undefined = work.agentStage
+      ? { stage: work.agentStage, tasks: agents }
       : undefined;
-    let resolved = resolveRun([own, ...inherited], runConditions);
-    if (!resolved.ok && (own.model !== undefined || own.gpu !== undefined)) {
-      // A task's model that does not fit the top level's provider, or a GPU that no provider
-      // accepts, stops this task only: the run goes on without them, and says why.
-      const { model: _model, gpu: _gpu, ...rest } = own;
-      const fallback = resolveRun([rest, ...inherited], runConditions);
-      if (fallback.ok) {
-        problems.push({ problem: { kind: "settings-rejected", error: resolved.error } });
-        resolved = fallback;
-        own = rest;
-      }
-    }
-    if (!resolved.ok) throw new Error(resolved.error);
+    const { own, resolved, rejected } = resolveOwn(work.own, runConditions);
+    const rejection = rejected ?? work.rejected;
+    if (rejection) problems.push({ problem: { kind: "settings-rejected", error: rejection } });
     for (const line of settingSources([own, ...inherited])) runtime.info(line);
-    const { profile, accounts } = resolved.value;
-    const settings = resolved.value.settings;
+    const { profile, accounts, settings } = resolved;
     if (profile) runtime.info(`Profile \`${profile}\` applies to this run.`);
     const model = settings.model;
 
@@ -326,13 +388,7 @@ export async function select(services: Services): Promise<void> {
       history: action === "implement" || route ? runHistory(talk.comments, bot) : undefined,
       stage,
       route,
-      processed: {
-        commentId: Math.max(
-          record?.processedCommentId ?? 0,
-          ...maintainerComments.map((comment) => comment.id),
-        ),
-        reviewId: Math.max(record?.processedReviewId ?? 0, ...reviews.map((review) => review.id)),
-      },
+      processed: handled(work),
       problems,
       fromState: fromState.state,
       model,
@@ -378,7 +434,11 @@ export async function select(services: Services): Promise<void> {
       mkdirSync(dirname(taskFile(runtime, task.number)), { recursive: true });
       writeFileSync(taskFile(runtime, task.number), JSON.stringify(context, null, 2));
     };
-    runtime.info(`Selected #${task.number} to ${action}, with model ${model}.`);
+    runtime.info(
+      model
+        ? `Selected #${task.number} to ${action}, with model ${model}.`
+        : `Selected #${task.number} to ${action}.`,
+    );
     return {
       number: task.number,
       action,
@@ -395,9 +455,102 @@ export async function select(services: Services): Promise<void> {
     };
   };
 
+  /** A task's panel, as `select` writes it for a task it does not start. */
+  const panel = (
+    work: Work,
+    state: State | "new",
+    message: string,
+    model: string,
+    record = work.record,
+  ) => {
+    const t = messages(taskLanguage(work.language, record?.language));
+    return renderStatus({
+      t,
+      conventions,
+      state,
+      record,
+      model,
+      runUrl: runtime.run.url,
+      message,
+      cost: { task: record?.spent, budget: work.taskBudget },
+      reportUrl: reportUrl(record, (id) => repo.commentUrl(work.task.url, id)),
+      decisionsUrl: decisionsUrl(record, (id) => repo.commentUrl(work.task.url, id)),
+    });
+  };
+
+  /**
+   * Blocks a task whose stage no settings serve at any count (decision 4), and marks what it saw
+   * as handled, as `apply` does whatever a run's outcome (choice 11).
+   */
+  const block = async (work: Work): Promise<void> => {
+    const { task, talk, record } = work;
+    const t = messages(taskLanguage(work.language, record?.language));
+    const stage = work.agentStage ?? "plan";
+    // `continue` needs a record; a task never planned goes on once its label is removed.
+    const hint = record ? t.continueHint : t.removeLabelHint;
+    const processed = handled(work);
+    const updated = record
+      ? {
+          ...record,
+          processedCommentId: Math.max(record.processedCommentId, processed.commentId),
+          processedReviewId: Math.max(record.processedReviewId ?? 0, processed.reviewId),
+        }
+      : undefined;
+    runtime.warning(
+      `#${task.number} ${oneLine(task.title)}: no settings apply to the ${stage} stage at any count; blocked.`,
+    );
+    await repo.setState(task.number, task.labels, "blocked");
+    await repo.upsertComment(
+      task.number,
+      talk.status?.id ?? null,
+      panel(work, "blocked", `${t.noSettingsForStage(stage)} ${hint}`, "", updated),
+    );
+  };
+
+  /**
+   * Says why a task waits (decision 3), on its panel; written only when the message changes, so
+   * the runs that find it still waiting leave it alone (choice 10).
+   */
+  const wait = async (work: Work, waiting: AgentPick["waiting"][number]): Promise<void> => {
+    const { task, talk, record } = work;
+    const profile = waiting.profile ?? "";
+    runtime.info(
+      `#${task.number} ${oneLine(task.title)}: waits for ${waiting.tasks} tasks ready for profile \`${profile}\`; ${waiting.ready} ${waiting.ready === 1 ? "is" : "are"}.`,
+    );
+    const t = messages(taskLanguage(work.language, record?.language));
+    const message = t.waitingForTasks(waiting.tasks, profile, waiting.ready);
+    if (talk.status?.body.includes(message)) return;
+    const served = resolveOwn(work.own, {
+      stage: work.agentStage ?? "plan",
+      tasks: waiting.tasks,
+    });
+    await repo.upsertComment(
+      task.number,
+      talk.status?.id ?? null,
+      panel(work, fromStateOf(task.labels), message, served.resolved.settings.model),
+    );
+  };
+
   // Every task first, so that a task whose settings stop the run leaves the others unmarked.
   const picked: Picked[] = [];
-  for (const choice of choices) picked.push(await prepare(choice));
+  for (const work of picks) picked.push(await prepare(work, agentPick.tasks));
+  for (const number of agentPick.unserved) {
+    const work = workOf(number);
+    if (work) await block(work);
+  }
+  for (const waiting of agentPick.waiting) {
+    const work = workOf(waiting.number);
+    if (work) await wait(work, waiting);
+  }
+  if (picked.length === 0) {
+    runtime.output("action", "none");
+    runtime.info("Nothing to do.");
+    return;
+  }
+  const list = picked.map((one) => `#${one.number} (${one.action})`).join(", ");
+  runtime.info(
+    `Picked ${picked.length} task(s), of up to ${cap}: ${list}; ${agentPick.tasks} run an agent.`,
+  );
   for (const one of picked) await one.start();
   const runOf = (one: Picked) => ledgerRunId(runtime.run.id, runtime.run.attempt, one.number);
   const outputs = picked.map((one) => taskOutputs(one, runOf(one)));
@@ -424,6 +577,51 @@ export async function select(services: Services): Promise<void> {
     });
   }
   await ledger.flush(runtime);
+}
+
+/** A ready task, as `select` reads it before choosing the tasks the run takes. */
+interface Work {
+  choice: { number: number; action: Action };
+  task: Task;
+  pending: Pending | undefined;
+  talk: Conversation;
+  record: TaskRecord | undefined;
+  /** Maintainer comments, oldest first. */
+  maintainerComments: TaskComment[];
+  reviewComments: ReviewComment[];
+  /** Maintainer reviews not handled yet. */
+  reviews: TaskReview[];
+  /** Commands not handled yet. */
+  sources: CommandSource[];
+  newRequests: Request[];
+  route: TaskContext["route"];
+  action: Action;
+  stage: RoutedStage | undefined;
+  /** The stage its agent works on; undefined for a run without an agent. */
+  agentStage: Stage | undefined;
+  description: ReturnType<typeof descriptionCommands>;
+  /** The settings its commands set, without those that do not fit. */
+  own: PartialSettings;
+  /** Why its own settings were left out, if they were. */
+  rejected: string | undefined;
+  language: string;
+  taskBudget: number;
+  /** The counts of the run's agent tasks that serve its stage. */
+  counts: ServedCount[];
+}
+
+/** The comments and reviews a run handles: every one up to the newest it read. */
+function handled(work: Work): Handled {
+  return {
+    commentId: Math.max(
+      work.record?.processedCommentId ?? 0,
+      ...work.maintainerComments.map((comment) => comment.id),
+    ),
+    reviewId: Math.max(
+      work.record?.processedReviewId ?? 0,
+      ...work.reviews.map((review) => review.id),
+    ),
+  };
 }
 
 /** A task `select` picked, as its jobs need it. */
@@ -469,23 +667,11 @@ function taskOutputs(task: Picked, run: string): Record<string, string> {
   };
 }
 
-/** Whether an action runs the agent: all but recording answers and accepting workflows. */
-function runsAgent(action: Action): boolean {
-  return action !== "record" && action !== "accept";
-}
-
-/** A value of the first layer that sets it. */
-function firstSet<Name extends keyof SettingsLayer>(
-  layers: readonly SettingsLayer[],
-  name: Name,
-): SettingsLayer[Name] | undefined {
-  return layers.find((layer) => layer[name] !== undefined)?.[name];
-}
-
 /**
  * Whether the routing agent runs instead of a routed stage, and why: after decisions are answered
  * (or a plan has none), which leaves the task ready; after a `fix` request, or review asking for
- * changes, which leaves it routing; and on `continue` after the router blocked the task. The
+ * changes, which leaves it routing; and on `continue` after the router blocked the task, or after
+ * the task was blocked between its plan and its first route. The
  * fallback is the first routed stage of the fixed order, for when its result cannot be used.
  */
 export function routing(
@@ -499,6 +685,10 @@ export function routing(
   }
   if (record?.route?.stages.length === 0) {
     return { trigger: "continue", fallback: record.stage ?? "design" };
+  }
+  // Blocked after its plan, before any route, as when no settings served routing: route it.
+  if (state === "blocked" && record && !record.stage && !record.route) {
+    return { trigger: "continue", fallback: "design" };
   }
   if (state === "routing" && record?.handoff?.stage === "review") {
     return { trigger: "changes", fallback: "code" };

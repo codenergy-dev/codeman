@@ -104,7 +104,7 @@ export const en: Messages = {
   refused:
     "Codeman works only on issues opened by someone with write access to the repository. The agent reads the issue's title and body as its task, and whoever opened the issue can edit them at any time. To go on, a maintainer opens a new issue with this content, in their own words, and labels it `codeman`. Then remove the `codeman` label from this one.",
   panelFooter: (model, runUrl, reportUrl) =>
-    `<sub>Model: \`${model}\` (change it with \`/codeman set model <id>\`) · [Last run](${runUrl})${reportUrl ? ` · [Last report](${reportUrl})` : ""}</sub>`,
+    `<sub>${model ? `Model: \`${model}\` (change it with \`/codeman set model <id>\`) · ` : ""}[Last run](${runUrl})${reportUrl ? ` · [Last report](${reportUrl})` : ""}</sub>`,
 
   nextStepLabel: "Next step",
   nextStep: (state) =>
@@ -128,7 +128,7 @@ export const en: Messages = {
   problems: "Problems",
   costHeading: "Cost",
   runFooter: (model, spent, runUrl) =>
-    `<sub>Model: \`${model}\`${spent ? ` · ${spent}` : ""} · [Run](${runUrl})</sub>`,
+    `<sub>${[model ? `Model: \`${model}\`` : "", spent ?? "", `[Run](${runUrl})`].filter(Boolean).join(" · ")}</sub>`,
 
   tableHeader: [
     "Run",
@@ -200,6 +200,11 @@ export const en: Messages = {
     "Comment `/codeman continue <guidance>` to try again, or `/codeman replan <what to change>` to revise the plan, for example to widen its scope.",
   replanHint: "Comment `/codeman replan <what to change>` to try again.",
   removeLabelHint: "Remove the `codeman:blocked` label to try again.",
+
+  waitingForTasks: (tasks, profile, ready) =>
+    `Waiting for ${tasks} tasks ready for profile \`${profile}\`; ${ready} ${ready === 1 ? "is" : "are"}. Codeman checks again at every run.`,
+  noSettingsForStage: (stage) =>
+    `No settings apply to the ${STAGES[stage]} stage: no profile serves it with any number of tasks, and the top-level settings have no \`model\`. Add the stage to a profile, or a top-level \`model\`, in \`.codeman/settings.yml\` or the organization's settings.`,
 
   noKey:
     "Codeman could not give this run access to its model (an OpenRouter key, or a GPU). See the run log.",

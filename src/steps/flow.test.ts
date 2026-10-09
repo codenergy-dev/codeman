@@ -8,6 +8,7 @@ import { decodeStatus, encodeStatus, isStatusComment } from "../record.ts";
 import { ROUTED_STAGES, type RoutedStage } from "../stages.ts";
 import { FakePlatform, fakeServices } from "../testing/fake-platform.ts";
 import { FakeRuntime } from "../testing/fake-runtime.ts";
+import { exampleSettings } from "../testing/settings-example.ts";
 import { apply } from "./apply.ts";
 import { readTask } from "./common.ts";
 import { select } from "./select.ts";
@@ -623,8 +624,7 @@ test("pods: select hands the task's pods to the key jobs, and apply takes the le
 
 test("a shared pod: apply marks it in the record, and its billing no longer reaches the key jobs", async () => {
   const platform = new FakePlatform({
-    ".codeman/settings.yml":
-      'provider: runpod-pod\nmodel: qwen3-coder:30b\ngpu: "GPU A"\nparallel-tasks: 2\n',
+    ".codeman/settings.yml": 'provider: runpod-pod\nmodel: qwen3-coder:30b\ngpu: "GPU A"\n',
   });
   platform.maintainers.add("alice");
   const issue = platform.openIssue("alice", "Add a cache", "Cache responses.");
@@ -724,12 +724,10 @@ test("profiles: a task planned on OpenRouter and coded on a pod adds up both pro
       "model: a/b",
       "profiles:",
       "  - name: planner",
-      "    when:",
-      "      stages: [plan]",
+      "    stages: [plan]",
       "    model: c/d",
       "  - name: small-pod",
-      "    when:",
-      "      stages: [code]",
+      "    stages: [code]",
       "    provider: runpod-pod",
       "    gpu: NVIDIA RTX A6000",
       "    model: qwen3-coder:30b",
@@ -863,8 +861,7 @@ test("profiles: a task's model is for the top level's provider, and is reported 
       "model: a/b",
       "profiles:",
       "  - name: small-pod",
-      "    when:",
-      "      stages: [plan]",
+      "    stages: [plan]",
       "    provider: runpod-pod",
       '    gpu: "NVIDIA RTX A6000"',
       "    model: qwen3-coder:30b",
@@ -901,8 +898,7 @@ test("profiles: a task's model is for the top level's provider, and is reported 
       "model: a/b",
       "profiles:",
       "  - name: small-pod",
-      "    when:",
-      "      stages: [code]",
+      "    stages: [code]",
       "    provider: runpod-pod",
       '    gpu: "NVIDIA RTX A6000"',
     ].join("\n"),
@@ -945,12 +941,10 @@ test("parallel tasks: one run plans two, each in its own jobs, and one that fail
   const platform = new FakePlatform({
     ".codeman/settings.yml": [
       "model: a/b",
-      "parallel-tasks: 2",
       "task-budget: 3",
       "profiles:",
       "  - name: crowded",
-      "    when:",
-      "      parallel-tasks: 2",
+      "    tasks: 2",
       "    model: c/d",
     ].join("\n"),
   });
@@ -968,7 +962,11 @@ test("parallel tasks: one run plans two, each in its own jobs, and one that fail
       ["2", "plan", "true", "plan"],
     ],
   );
-  assert.ok(selected.logged("info").includes("Picked 2 tasks, of up to 2: #1 (plan), #2 (plan)."));
+  assert.ok(
+    selected
+      .logged("info")
+      .includes("Picked 2 task(s), of up to 2: #1 (plan), #2 (plan); 2 run an agent."),
+  );
   // The first task's outputs, one each, for workflow files from before parallel tasks.
   assert.deepEqual(
     [selected.outputs.task, selected.outputs.action, selected.outputs.inference],
@@ -1024,7 +1022,7 @@ test("parallel tasks: one run plans two, each in its own jobs, and one that fail
 test("parallel tasks: next-run starts another run only when some task moved", async () => {
   clearMarks();
   const platform = new FakePlatform({
-    ".codeman/settings.yml": "model: a/b\nparallel-tasks: 3\n",
+    ".codeman/settings.yml": "model: a/b\nprofiles:\n  - name: three\n    max-tasks: 3\n",
   });
   platform.maintainers.add("alice");
   const asked = platform.openIssue("alice", "Add rate limiting", "Limit requests.");
@@ -1079,7 +1077,9 @@ test("parallel tasks: next-run starts another run only when some task moved", as
 
   // A run whose only task the month refuses moved nothing: no mark, so no other run.
   clearMarks();
-  const alone = new FakePlatform({ ".codeman/settings.yml": "model: a/b\nparallel-tasks: 2\n" });
+  const alone = new FakePlatform({
+    ".codeman/settings.yml": "model: a/b\nprofiles:\n  - name: two\n    max-tasks: 2\n",
+  });
   alone.maintainers.add("alice");
   alone.openIssue("alice", "Add a cache", "Cache responses.");
   await selectStep(alone);
@@ -1116,4 +1116,217 @@ test("parallel tasks: next-run starts another run only when some task moved", as
     status ?? "",
     /The organization's monthly budget is reached: US\$ 29\.50 used of US\$ 30\.00, and this run may use up to US\$ 2\.00\. Codeman will try again in a later run\./,
   );
+});
+
+/** Writes `.codeman/settings.yml` on the default branch, as a maintainer's commit does. */
+async function writeSettings(platform: FakePlatform, text: string): Promise<void> {
+  const main = await platform.branchSha("main");
+  assert.ok(main);
+  await platform.commit({
+    branch: "main",
+    baseSha: main,
+    createBranch: false,
+    changes: [{ path: ".codeman/settings.yml", content: Buffer.from(text) }],
+    message: "Change Codeman's settings",
+  });
+}
+
+/** Tasks ready to route, whose plans have no decisions. */
+function readyTasks(platform: FakePlatform, count: number): number[] {
+  platform.maintainers.add("alice");
+  return Array.from({ length: count }, (_, index) =>
+    platform.openIssue("alice", `Task ${index + 1}`, "Do it.", ["codeman", "codeman:ready"]),
+  );
+}
+
+/** Each picked task's number, action and profile. */
+function pickedTasks(runtime: FakeRuntime): [string, string, string][] {
+  const tasks = JSON.parse(runtime.outputs.tasks ?? "[]") as Record<string, string>[];
+  return tasks.map((task) => [
+    task.task ?? "",
+    task.action ?? "",
+    JSON.parse(task.inference ?? "{}").profile ?? "",
+  ]);
+}
+
+const withoutMig = () => exampleSettings().replace(/ {2}- name: mig\n[\s\S]*$/, "");
+
+test("profiles pick the tasks: 4 on the full GPU, up to 3 on the MIG partition", async () => {
+  const four = new FakePlatform({ ".codeman/settings.yml": exampleSettings() });
+  readyTasks(four, 5);
+  let selected = await selectStep(four);
+  assert.deepEqual(pickedTasks(selected), [
+    ["1", "route", "parallel-tasks"],
+    ["2", "route", "parallel-tasks"],
+    ["3", "route", "parallel-tasks"],
+    ["4", "route", "parallel-tasks"],
+  ]);
+  const gpu = JSON.parse(selected.outputs.inference ?? "").gpu;
+  assert.equal(gpu, "NVIDIA RTX PRO 6000 Blackwell Server Edition");
+  assert.ok(
+    selected
+      .logged("info")
+      .includes(
+        "Picked 4 task(s), of up to 4: #1 (route), #2 (route), #3 (route), #4 (route); 4 run an agent.",
+      ),
+  );
+  // The fifth is left for the next run, with no message.
+  assert.deepEqual(four.botComments(5), []);
+
+  const three = new FakePlatform({ ".codeman/settings.yml": exampleSettings() });
+  readyTasks(three, 3);
+  selected = await selectStep(three);
+  assert.deepEqual(
+    pickedTasks(selected).map(([, , profile]) => profile),
+    ["mig", "mig", "mig"],
+  );
+
+  // A planning task counts too: it plans on OpenRouter, and the three others take the full GPU.
+  const mixed = new FakePlatform({ ".codeman/settings.yml": exampleSettings() });
+  readyTasks(mixed, 3);
+  mixed.openIssue("alice", "A new task", "Plan it.");
+  selected = await selectStep(mixed);
+  assert.deepEqual(pickedTasks(selected), [
+    ["4", "plan", "planner"],
+    ["1", "route", "parallel-tasks"],
+    ["2", "route", "parallel-tasks"],
+    ["3", "route", "parallel-tasks"],
+  ]);
+});
+
+test("profiles pick the tasks: tasks served only with more than are ready wait, and say so once", async () => {
+  const platform = new FakePlatform({ ".codeman/settings.yml": withoutMig() });
+  const tasks = readyTasks(platform, 3);
+  const first = new FakeRuntime({ inputs: { workdir }, runId: "1" });
+  await select(fakeServices(platform, first));
+  assert.equal(first.outputs.action, "none", "no task job, and no next run");
+  for (const task of tasks) {
+    assert.deepEqual(stateLabels(platform, task), ["codeman:ready"], "the labels stay");
+    const [panel = ""] = platform.botComments(task);
+    assert.match(
+      panel,
+      /Waiting for 4 tasks ready for profile `parallel-tasks`; 3 are\. Codeman checks again at every run\./,
+    );
+    assert.match(panel, /Model: `qwen3-coder:30b`/);
+  }
+  assert.ok(
+    first
+      .logged("info")
+      .includes("#1 Task 1: waits for 4 tasks ready for profile `parallel-tasks`; 3 are."),
+  );
+  // The next run finds them still waiting, and leaves the panels alone.
+  const panels = tasks.map((task) => platform.botComments(task));
+  const second = new FakeRuntime({ inputs: { workdir }, runId: "2" });
+  await select(fakeServices(platform, second));
+  assert.deepEqual(
+    tasks.map((task) => platform.botComments(task)),
+    panels,
+  );
+  // A fourth makes 4: they run together.
+  readyTasks(platform, 1);
+  const third = await selectStep(platform);
+  assert.deepEqual(
+    pickedTasks(third).map(([task, , profile]) => [task, profile]),
+    [
+      ["1", "parallel-tasks"],
+      ["2", "parallel-tasks"],
+      ["3", "parallel-tasks"],
+      ["4", "parallel-tasks"],
+    ],
+  );
+});
+
+test("profiles pick the tasks: a stage nothing serves blocks the task, which continue resumes", async () => {
+  // A task never planned: no profile serves planning, and the top level has no model.
+  const unplanned = new FakePlatform({
+    ".codeman/settings.yml": exampleSettings().replace(/ {2}- name: planner\n.*\n.*\n/, ""),
+  });
+  unplanned.maintainers.add("alice");
+  const fresh = unplanned.openIssue("alice", "Add a limiter", "Limit requests.");
+  const stopped = await selectStep(unplanned);
+  assert.equal(stopped.outputs.action, "none");
+  assert.deepEqual(stateLabels(unplanned, fresh), ["codeman:blocked"]);
+  const [panel = ""] = unplanned.botComments(fresh);
+  assert.match(
+    panel,
+    /No settings apply to the plan stage: no profile serves it with any number of tasks, and the top-level settings have no `model`\./,
+  );
+  assert.match(panel, /Remove the `codeman:blocked` label to try again\./);
+  assert.ok(!panel.includes("Model:"), "no model to show");
+  assert.ok(
+    stopped
+      .logged("warning")
+      .includes("#1 Add a limiter: no settings apply to the plan stage at any count; blocked."),
+  );
+
+  // A planned task, whose settings no longer serve routing.
+  const platform = new FakePlatform({ ".codeman/settings.yml": "model: a/b\n" });
+  const { issue } = await plannedTask(platform);
+  await writeSettings(
+    platform,
+    "profiles:\n  - name: planner\n    stages: [plan]\n    model: a/b\n",
+  );
+  const asked = platform.say(issue, "alice", "/codeman continue");
+  let selected = await selectStep(platform);
+  assert.equal(selected.outputs.action, "none");
+  assert.deepEqual(stateLabels(platform, issue), ["codeman:blocked"]);
+  const blocked = platform.botComments(issue).find((body) => body.includes("codeman:status")) ?? "";
+  assert.match(blocked, /No settings apply to the routing stage/);
+  assert.match(blocked, /Comment `\/codeman continue <guidance>` to try again\./);
+  assert.equal(record(platform, issue)?.processedCommentId, asked, "the continue is handled");
+  // Nothing new: the task stays blocked, and no run starts.
+  selected = await selectStep(platform);
+  assert.equal(selected.outputs.action, "none");
+
+  // The settings fixed, `continue` routes it.
+  await writeSettings(platform, "model: a/b\n");
+  platform.say(issue, "alice", "/codeman continue");
+  selected = await selectStep(platform);
+  assert.deepEqual([selected.outputs.action, selected.outputs.stage], ["route", "route"]);
+  assert.deepEqual(readTask(selected).route, { trigger: "continue", fallback: "design" });
+});
+
+test("profiles pick the tasks: runs without an agent need no model, and go first", async () => {
+  const platform = new FakePlatform({ ".codeman/settings.yml": exampleSettings() });
+  platform.maintainers.add("alice");
+  const issue = platform.openIssue("alice", "Add a limiter", "Limit requests.");
+  const planned = await selectStep(platform);
+  assert.equal(planned.outputs.model, "deepseek/deepseek-v4.1-flash");
+  agentResult(
+    { [readTask(planned).planPath]: "# Plan\n" },
+    {
+      summary: "Adds a limiter.",
+      decisions: [
+        {
+          id: 1,
+          title: "Storage",
+          question: "Where do counters live?",
+          options: [
+            { key: "a", label: "Memory" },
+            { key: "b", label: "Redis" },
+          ],
+          recommendation: "a",
+        },
+      ],
+    },
+  );
+  await applyStep(platform);
+  assert.deepEqual(stateLabels(platform, issue), ["codeman:awaiting-decision"]);
+  // An answer to record, and three tasks ready: the answer takes one of the 4 places, and the
+  // three others run on the MIG partition.
+  platform.say(issue, "alice", "/codeman decide 1 b");
+  readyTasks(platform, 3);
+  const selected = await selectStep(platform);
+  assert.deepEqual(pickedTasks(selected), [
+    ["1", "record", ""],
+    ["2", "route", "mig"],
+    ["3", "route", "mig"],
+    ["4", "route", "mig"],
+  ]);
+  assert.equal(readTask(new FakeRuntime({ inputs: { workdir, task: "1" } })).model, "");
+  await applyLeg(platform, "1", { "key-job-result": "skipped", "agent-job-result": "skipped" });
+  assert.deepEqual(stateLabels(platform, issue), ["codeman:ready"]);
+  const run = platform.botComments(issue).at(-1) ?? "";
+  assert.match(run, /### Codeman · Answers recorded/);
+  assert.ok(!run.includes("Model:"), "a run without an agent and without a model shows none");
 });

@@ -37,6 +37,10 @@ const LAYER_BASES = [
 
 /** Values a repository can configure. Names match the workflow inputs. */
 export interface Settings {
+  /**
+   * The model ID, in the form the provider takes. Empty only in the settings of a run without an
+   * agent (recording answers, accepting workflows) when no layer sets one.
+   */
   model: string;
   "task-budget": number;
   "monthly-budget": number;
@@ -70,14 +74,12 @@ export interface Settings {
   endpoint?: string | undefined;
   /** `task`: a pod serves the task's next run too, while the task goes on; `run`: one run. */
   "pod-reuse"?: string | undefined;
-  /** How many tasks one run works on at once, each in its own jobs. */
-  "parallel-tasks": number;
 }
 
 export type SettingName = keyof Settings;
 export type PartialSettings = Partial<Settings>;
 
-/** Codeman's own defaults. There is no default model (see docs/settings/reference.md). */
+/** Codeman's own defaults. There is no default model: no setting is required (see docs/settings/reference.md). */
 export const DEFAULTS: Omit<Settings, "model"> = {
   "task-budget": 2,
   "monthly-budget": 20,
@@ -92,7 +94,6 @@ export const DEFAULTS: Omit<Settings, "model"> = {
   "max-summary-chars": 2000,
   language: "auto",
   provider: "openrouter",
-  "parallel-tasks": 1,
 };
 
 /**
@@ -106,9 +107,13 @@ export const LIMIT_BOUNDS: Readonly<Partial<Record<SettingName, { min: number; m
   "max-question-chars": { min: 1, max: 1500 },
   "max-label-chars": { min: 1, max: 300 },
   "max-summary-chars": { min: 1, max: 4000 },
-  // Each task runs its own jobs, and may hold its own key or pod, at once.
-  "parallel-tasks": { min: 1, max: 10 },
 };
+
+/**
+ * Codeman's cap on the tasks one run works on at once: each runs its own jobs, and may hold its
+ * own key or pod. A profile's counts are from 1 to this.
+ */
+export const MAX_TASKS = 10;
 
 /** Settings a maintainer can change for one task with `/codeman set`. */
 export const TASK_SETTINGS: ReadonlySet<SettingName> = new Set([
@@ -154,7 +159,6 @@ const NAMES: readonly SettingName[] = [
   "language",
   "provider",
   ...PROVIDER_SETTINGS,
-  "parallel-tasks",
 ];
 
 /** A model name of OpenRouter or of one of the engines; which one fits is checked once resolved. */
@@ -290,6 +294,27 @@ export function renamedSetting(name: string, value?: string): string | undefined
   }
 }
 
+/** A profile's conditions, written at its first level beside its `name`. */
+export const CONDITION_NAMES = ["stages", "tasks", "min-tasks", "max-tasks"] as const;
+
+export type ConditionName = (typeof CONDITION_NAMES)[number];
+
+function isConditionName(name: string): name is ConditionName {
+  return (CONDITION_NAMES as readonly string[]).includes(name);
+}
+
+/** What a profile's conditions require; an absent one holds for every run. */
+export interface Conditions {
+  /** The stages it applies to, any of `STAGES`. */
+  stages?: Stage[] | undefined;
+  /** The run works on exactly this many tasks that run an agent. */
+  tasks?: number | undefined;
+  /** The run works on at least this many tasks that run an agent. */
+  "min-tasks"?: number | undefined;
+  /** The run works on at most this many tasks that run an agent. */
+  "max-tasks"?: number | undefined;
+}
+
 /**
  * A rule that picks a provider, a model and that provider's settings for some runs: the first
  * profile whose conditions all hold applies.
@@ -297,12 +322,7 @@ export function renamedSetting(name: string, value?: string): string | undefined
 export interface Profile {
   name: string;
   /** Conditions that must all hold; a profile without any always applies. */
-  when: {
-    /** The stages it applies to, any of `STAGES`. */
-    stages?: Stage[] | undefined;
-    /** The run works on at least this many tasks at once. */
-    "parallel-tasks"?: number | undefined;
-  };
+  conditions: Conditions;
   /** The settings it changes, of `PROFILE_SETTINGS`. */
   settings: PartialSettings;
 }
@@ -347,9 +367,10 @@ type Read<T> = { ok: true; value: T } | { ok: false; line: number; error: string
 
 function setting(entry: YamlEntry, what: "setting" | "profile"): Read<string | number> {
   const { key: name, line, value } = entry;
-  const renamed = renamedSetting(name, value.kind === "scalar" ? value.text : undefined);
+  const text = value.kind === "scalar" ? value.text : undefined;
+  const renamed = renamedSetting(name, text);
   if (renamed) return { ok: false, line, error: renamed };
-  const misplaced = misplacedCondition(name, what);
+  const misplaced = misplacedCondition(name, what, text);
   if (misplaced) return { ok: false, line, error: misplaced };
   if (!isSettingName(name)) return { ok: false, line, error: `unknown setting \`${name}\`.` };
   if (what === "profile" && !PROFILE_SETTINGS.includes(name)) {
@@ -367,19 +388,29 @@ function setting(entry: YamlEntry, what: "setting" | "profile"): Read<string | n
 }
 
 /**
- * Where a profile's condition was written as a setting, what to write instead: `when` and its
- * conditions belong to a profile, since the top level applies when no profile does.
- * `parallel-tasks` is also a top-level setting, so only a profile's is misplaced.
+ * Where a condition, or a setting the profiles' conditions replaced, was written, what to write
+ * instead (decision 2 of the plan for profiles that pick the tasks): conditions belong to
+ * profiles, at their first level, since the top level applies when no profile does; `when` and
+ * `parallel-tasks` are gone.
  */
-function misplacedCondition(name: string, what: "setting" | "profile"): string | undefined {
-  if (what === "setting" && name === "when") {
-    return "`when` is a profile's condition: write it in a profile, under `profiles`. The top-level settings apply when no profile does.";
+function misplacedCondition(
+  name: string,
+  what: "setting" | "profile",
+  value: string | undefined,
+): string | undefined {
+  const count = value !== undefined && /^[1-9][0-9]*$/.test(value) ? value : "N";
+  if (name === "when") {
+    return what === "profile"
+      ? "`when` is gone: write the profile's conditions (`stages`, `tasks`, `min-tasks`, `max-tasks`) directly in the profile, beside its `name`."
+      : "`when` is gone, and conditions belong to profiles: write them in a profile, under `profiles`, beside its `name`. The top-level settings apply when no profile does.";
   }
-  if (what === "setting" && name === "stages") {
-    return "`stages` is a profile's condition: write it under a profile's `when`, in `profiles`. The top-level settings apply when no profile does.";
+  if (name === "parallel-tasks") {
+    return what === "profile"
+      ? `\`parallel-tasks\` is no longer a condition: write \`min-tasks: ${count}\` for at least ${count} tasks in the run, or \`tasks: ${count}\` for exactly ${count}.`
+      : `\`parallel-tasks\` is no longer a setting: a run takes as many tasks as its profiles' \`tasks\`, \`min-tasks\` and \`max-tasks\` allow, and one at a time when none sets them. For up to ${count} tasks at once, write \`max-tasks: ${count}\` in a profile.`;
   }
-  if (what === "profile" && (name === "stages" || name === "parallel-tasks")) {
-    return `\`${name}\` is a condition here: write it under the profile's \`when\`.`;
+  if (what === "setting" && isConditionName(name)) {
+    return `\`${name}\` is a profile's condition: write it in a profile, under \`profiles\`. The top-level settings apply when no profile does.`;
   }
   return undefined;
 }
@@ -411,7 +442,7 @@ function profiles(node: YamlNode): Read<Profile[]> {
 
 function profile(node: YamlNode): Read<Profile> {
   if (node.kind !== "map") return { ok: false, line: node.line, error: "expected a profile." };
-  const result: Profile = { name: "", when: {}, settings: {} };
+  const result: Profile = { name: "", conditions: {}, settings: {} };
   for (const entry of node.entries) {
     const { key, line, value } = entry;
     if (key === "name") {
@@ -424,10 +455,10 @@ function profile(node: YamlNode): Read<Profile> {
         };
       }
       result.name = value.text;
-    } else if (key === "when") {
-      const when = conditions(entry);
-      if (!when.ok) return when;
-      result.when = when.value;
+    } else if (isConditionName(key)) {
+      const parsed = condition(entry, key);
+      if (!parsed.ok) return parsed;
+      Object.assign(result.conditions, { [key]: parsed.value });
     } else {
       const parsed = setting(entry, "profile");
       if (!parsed.ok) return parsed;
@@ -435,53 +466,55 @@ function profile(node: YamlNode): Read<Profile> {
     }
   }
   if (!result.name) return { ok: false, line: node.line, error: "a profile needs a `name`." };
+  const { tasks, "min-tasks": min, "max-tasks": max } = result.conditions;
+  if (tasks !== undefined && (min !== undefined || max !== undefined)) {
+    return {
+      ok: false,
+      line: node.line,
+      error:
+        "`tasks` is an exact count: write it alone, or `min-tasks` and `max-tasks` for a range.",
+    };
+  }
+  if (min !== undefined && max !== undefined && min > max) {
+    return {
+      ok: false,
+      line: node.line,
+      error: "`min-tasks` must not be more than `max-tasks`.",
+    };
+  }
   return { ok: true, value: result };
 }
 
-function conditions(entry: YamlEntry): Read<Profile["when"]> {
+function condition(entry: YamlEntry, name: ConditionName): Read<Stage[] | number> {
   const { line, value } = entry;
-  if (value.kind !== "map") {
-    return { ok: false, line, error: "`when` must be a block of conditions." };
-  }
-  const when: Profile["when"] = {};
-  for (const { key, line, value: condition } of value.entries) {
-    if (key === "stages") {
-      const names = condition.kind === "list" ? condition.items : [];
-      const stages = names.flatMap((item) => (item.kind === "scalar" ? [item.text] : []));
-      const valid = stages.length === names.length && stages.every(isStage);
-      if (names.length === 0 || !valid) {
-        return {
-          ok: false,
-          line,
-          error: `\`stages\` must list some of the stages ${STAGES.map((stage) => `\`${stage}\``).join(", ")}, such as \`[plan, route]\`.`,
-        };
-      }
-      when.stages = stages as Stage[];
-    } else if (key === "parallel-tasks") {
-      const count =
-        condition.kind === "scalar" && condition.text !== "" ? Number(condition.text) : Number.NaN;
-      if (!Number.isInteger(count) || count < 1) {
-        return {
-          ok: false,
-          line,
-          error: "`parallel-tasks` must be a positive whole number: the fewest tasks of the run.",
-        };
-      }
-      when["parallel-tasks"] = count;
-    } else {
+  if (name === "stages") {
+    const names = value.kind === "list" ? value.items : [];
+    const stages = names.flatMap((item) => (item.kind === "scalar" ? [item.text] : []));
+    const valid = stages.length === names.length && stages.every(isStage);
+    if (names.length === 0 || !valid) {
       return {
         ok: false,
         line,
-        error: `unknown condition \`${key}\`; a profile's conditions are \`stages\` and \`parallel-tasks\`.`,
+        error: `\`stages\` must list some of the stages ${STAGES.map((stage) => `\`${stage}\``).join(", ")}, such as \`[plan, route]\`.`,
       };
     }
+    return { ok: true, value: stages as Stage[] };
   }
-  return { ok: true, value: when };
+  const count = value.kind === "scalar" && value.text !== "" ? Number(value.text) : Number.NaN;
+  if (!Number.isInteger(count) || count < 1 || count > MAX_TASKS) {
+    return {
+      ok: false,
+      line,
+      error: `\`${name}\` must be a whole number from 1 to ${MAX_TASKS}: the tasks of the run that run an agent.`,
+    };
+  }
+  return { ok: true, value: count };
 }
 
 /** What a run's profile depends on: its stage, and how many tasks it works on at once. */
 export interface RunConditions {
   stage: Stage;
+  /** The run's tasks that run an agent, whatever their stage. */
   tasks: number;
 }
 
@@ -497,33 +530,34 @@ export interface RunSettings {
   accounts: string[];
 }
 
+/** The top level and the profiles, each resolved and checked, with what the task sets. */
+interface Resolved {
+  /** The top-level settings; without a model, they serve no agent run. */
+  top: PartialSettings;
+  profiled: { profile: Profile; settings: PartialSettings }[];
+  /** The task's own provider, model and provider settings. */
+  forTask: PartialSettings;
+  /** The provider of the top level and of each profile. */
+  providers: ProviderName[];
+}
+
 /**
- * Resolves each setting from the first layer that sets it, then Codeman's defaults. The layers
- * are, in order: the task's commands, the workflow inputs, the repository's settings file and
- * the organization's (`LAYER_SOURCES`). The list of profiles is one value: the first layer that
- * has one gives it whole. Then, for a run, the first profile whose conditions hold replaces the
- * top-level values it sets, except those the task's own commands (the first layer) set.
+ * Resolves the top level from the first layer that sets each value, then Codeman's defaults, and
+ * each profile on it; checks them all. The layers are, in order: the task's commands, the
+ * workflow inputs, the repository's settings file and the organization's (`LAYER_SOURCES`). The
+ * list of profiles is one value: the first layer that has one gives it whole.
  *
  * A provider's settings go with it: a layer or a profile that names another provider than the
  * one it inherits leaves out the settings that were for that one, and must set its own model when
- * one would carry over. A task's own provider settings (`gpu`) apply to the runs whose provider
- * accepts them, and its model to the runs on the top level's provider.
+ * one would carry over. No setting is required: a top level without a model serves no agent run,
+ * so a profile that inherits no model must set one.
  *
  * The top-level settings and every profile must fit their providers on their own, without the
  * task's commands, so that a mistake shows on the first run and not when a stage reaches it.
  */
-export function resolveRun(
-  layers: readonly SettingsLayer[],
-  run?: RunConditions,
-): Parsed<RunSettings> {
+function resolveLayers(layers: readonly SettingsLayer[]): Parsed<Resolved> {
   const [own = {}] = layers;
   const { profiles: list = [], ...values } = merge(layers);
-  if (values.model === undefined) {
-    return {
-      ok: false,
-      error: `No model is configured. Set \`model\` in ${SETTINGS_FILE} or in the workflow's inputs.`,
-    };
-  }
   // The top level, as the layers the task's commands inherit set it; a task's model fills it only
   // when none of them sets one.
   const inherited = serving(
@@ -535,14 +569,15 @@ export function resolveRun(
     { source: "Codeman's default", settings: { provider: DEFAULTS.provider } },
   );
   if (!inherited.ok) return inherited;
-  const top = {
+  const model = inherited.value.model ?? values.model;
+  const top: PartialSettings = {
     ...omit(values, PROFILE_SETTINGS),
     ...inherited.value,
-    model: inherited.value.model ?? values.model,
+    ...(model === undefined ? {} : { model }),
   };
   const topError = settingsProblem(top);
   if (topError) return { ok: false, error: topError };
-  const profiled: { profile: Profile; settings: PartialSettings }[] = [];
+  const profiled: Resolved["profiled"] = [];
   for (const profile of list) {
     const name = `Profile \`${profile.name}\``;
     const served = serving([{ name, source: name, settings: profile.settings }], {
@@ -551,6 +586,12 @@ export function resolveRun(
     });
     if (!served.ok) return served;
     const settings = { ...omit(top, PROFILE_SETTINGS), ...served.value };
+    if (settings.model === undefined) {
+      return {
+        ok: false,
+        error: `${name} has no \`model\`, and the top-level settings have none to inherit: set one in the profile.`,
+      };
+    }
     const error = settingsProblem(settings);
     if (error) return { ok: false, error: `${name}: ${error}` };
     profiled.push({ profile, settings });
@@ -567,8 +608,6 @@ export function resolveRun(
       };
     }
   }
-  const chosen = run ? profiled.find(({ profile }) => applies(profile, run)) : undefined;
-  const base = chosen?.settings ?? top;
   const providers = [top, ...profiled.map(({ settings }) => settings)].map(
     (settings) => settings.provider ?? DEFAULTS.provider,
   );
@@ -580,28 +619,69 @@ export function resolveRun(
       };
     }
   }
+  return { ok: true, value: { top, profiled, forTask, providers } };
+}
+
+/**
+ * What serves a run: the first profile whose conditions hold, else the top level when it has a
+ * model; undefined when neither does.
+ */
+function servingRun(
+  resolved: Resolved,
+  run: RunConditions,
+): { profile?: Profile; settings: PartialSettings } | undefined {
+  const chosen = resolved.profiled.find(({ profile }) => applies(profile, run));
+  if (chosen) return chosen;
+  return resolved.top.model === undefined ? undefined : { settings: resolved.top };
+}
+
+/**
+ * The settings of a run: the profile that serves it (the first whose conditions hold, with the
+ * values it sets replacing the top level's, except those the task's own commands set), else the
+ * top level. Without `run`, as for a run without an agent, the top level, whose model may be
+ * empty. A task's own provider settings (`gpu`) apply to the runs whose provider accepts them,
+ * and its model to the runs on the top level's provider.
+ */
+export function resolveRun(
+  layers: readonly SettingsLayer[],
+  run?: RunConditions,
+): Parsed<RunSettings> {
+  const resolved = resolveLayers(layers);
+  if (!resolved.ok) return resolved;
+  const { top, forTask, providers } = resolved.value;
+  const served = run ? servingRun(resolved.value, run) : { settings: top };
+  if (!served) {
+    return {
+      ok: false,
+      error: `No settings apply to the \`${run?.stage}\` stage with ${run?.tasks} task(s): no profile does, and the top-level settings have no \`model\`.`,
+    };
+  }
+  const base = served.settings;
   const accepted = PROVIDERS[base.provider ?? DEFAULTS.provider].settings;
   const taskServing = Object.fromEntries(
     Object.entries(forTask).filter(([name]) =>
       name === "model" ? base.provider === top.provider : name in accepted,
     ),
   );
-  const settings = withProviderDefaults({ ...base, ...taskServing } as Settings);
+  const settings = withProviderDefaults({ model: "", ...base, ...taskServing } as Settings);
   const error = settingsProblem(settings);
   if (error) {
-    return { ok: false, error: chosen ? `Profile \`${chosen.profile.name}\`: ${error}` : error };
+    return {
+      ok: false,
+      error: served.profile ? `Profile \`${served.profile.name}\`: ${error}` : error,
+    };
   }
   return {
     ok: true,
     value: {
       settings,
-      profile: chosen?.profile.name,
+      profile: served.profile?.name,
       accounts: [...new Set(providers.map(accountOf))],
     },
   };
 }
 
-/** The top-level settings, as `resolveRun` resolves them when no profile applies. */
+/** The top-level settings, as `resolveRun` resolves them for a run without an agent. */
 export function resolveSettings(...layers: SettingsLayer[]): Parsed<Settings> {
   const resolved = resolveRun(layers);
   return resolved.ok ? { ok: true, value: resolved.value.settings } : resolved;
@@ -609,8 +689,54 @@ export function resolveSettings(...layers: SettingsLayer[]): Parsed<Settings> {
 
 /** Whether all of a profile's conditions hold for a run. */
 export function applies(profile: Profile, run: RunConditions): boolean {
-  const { stages, "parallel-tasks": tasks } = profile.when;
-  return (!stages || stages.includes(run.stage)) && (tasks === undefined || run.tasks >= tasks);
+  const { stages, tasks, "min-tasks": min, "max-tasks": max } = profile.conditions;
+  return (
+    (!stages || stages.includes(run.stage)) &&
+    (tasks === undefined || run.tasks === tasks) &&
+    (min === undefined || run.tasks >= min) &&
+    (max === undefined || run.tasks <= max)
+  );
+}
+
+/**
+ * The most tasks one run works on at once, from the profiles' counts (decision 3 of the plan for
+ * profiles that pick the tasks): the largest `tasks` or `max-tasks`; `min-tasks` without
+ * `max-tasks` allows up to `MAX_TASKS`; with no count anywhere, one.
+ */
+export function tasksPerRun(layers: readonly SettingsLayer[]): number {
+  const list = layers.find((layer) => layer.profiles !== undefined)?.profiles ?? [];
+  let most = 1;
+  for (const { conditions } of list) {
+    const { tasks, "min-tasks": min, "max-tasks": max } = conditions;
+    const named = tasks ?? max ?? (min === undefined ? undefined : MAX_TASKS);
+    if (named !== undefined) most = Math.max(most, named);
+  }
+  return most;
+}
+
+/** A count of the run's tasks at which a stage is served, and the profile that serves it. */
+export interface ServedCount {
+  tasks: number;
+  /** Undefined when the top level does. */
+  profile?: string | undefined;
+}
+
+/**
+ * The counts of the run's tasks, from 1 to `MAX_TASKS`, at which some profile or the top level
+ * serves a stage, each with what serves it. Empty when nothing does at any count.
+ */
+export function servedCounts(
+  layers: readonly SettingsLayer[],
+  stage: Stage,
+): Parsed<ServedCount[]> {
+  const resolved = resolveLayers(layers);
+  if (!resolved.ok) return resolved;
+  const counts: ServedCount[] = [];
+  for (let tasks = 1; tasks <= MAX_TASKS; tasks++) {
+    const served = servingRun(resolved.value, { stage, tasks });
+    if (served) counts.push({ tasks, profile: served.profile?.name });
+  }
+  return { ok: true, value: counts };
 }
 
 /** A layer of `serving`, and how its errors name it. */
@@ -704,12 +830,16 @@ export function settingSources(layers: readonly SettingsLayer[]): string[] {
   });
 }
 
-/** Why settings do not fit their provider; undefined when they do. */
+/**
+ * Why settings do not fit their provider; undefined when they do. Settings without a model serve
+ * no run, so only what their provider accepts is checked, not what it requires (choice 6 of the
+ * plan for profiles that pick the tasks).
+ */
 function settingsProblem(settings: PartialSettings): string | undefined {
   const values = pick(settings, PROVIDER_SETTINGS) as Partial<Record<ProviderSettingName, string>>;
-  return providerProblem({
-    ...values,
-    provider: settings.provider ?? DEFAULTS.provider,
-    model: settings.model ?? "",
-  });
+  const model = settings.model ?? "";
+  return providerProblem(
+    { ...values, provider: settings.provider ?? DEFAULTS.provider, model },
+    model !== "",
+  );
 }

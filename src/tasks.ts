@@ -323,8 +323,9 @@ export function chooseTask(
 }
 
 /**
- * Picks up to `count` tasks for one run, each as `chooseTask` would pick it from the tasks left,
- * so they come in its order. One run picks them all, so no two runs work on the same task.
+ * Picks up to `count` tasks, each as `chooseTask` would pick it from the tasks left, so they come
+ * in its order: the ready tasks, in priority order, of which `select` takes those a run works on.
+ * One run picks them all, so no two runs work on the same task.
  */
 export function chooseTasks(
   candidates: readonly Candidate[],
@@ -339,6 +340,74 @@ export function chooseTasks(
     left = left.filter((candidate) => candidate.number !== choice.number);
   }
   return chosen;
+}
+
+/** A ready task that runs an agent, with the counts of the run's agent tasks that serve it. */
+export interface AgentCandidate {
+  number: number;
+  /** Each count at which a profile, or the top level, serves the task's stage; none: nothing. */
+  counts: readonly { tasks: number; profile?: string | undefined }[];
+}
+
+/** Which agent tasks a run takes, and what becomes of the others. */
+export interface AgentPick {
+  /** The tasks the run takes, in priority order. */
+  picked: number[];
+  /** How many they are: the run's count, which the profiles' conditions see. */
+  tasks: number;
+  /**
+   * Tasks that no count serves now: the smallest count that serves each, the profile that does,
+   * and how many ready tasks that count serves.
+   */
+  waiting: { number: number; tasks: number; profile?: string | undefined; ready: number }[];
+  /** Tasks whose stage nothing serves at any count. */
+  unserved: number[];
+}
+
+/**
+ * Picks the agent tasks of a run (decision 3 of the plan for profiles that pick the tasks): the
+ * largest n, up to `places`, for which n of the ready tasks, in priority order, are served with n
+ * tasks; it takes the first n of them. A task that is not served with n is passed over for that
+ * n, so one that waits does not hold back those behind it (choice 8). A task waits when every
+ * count that serves it, up to `cap`, needs more tasks than that count serves (choice 10); the
+ * others the run does not take are left for a later run.
+ */
+export function pickAgentTasks(
+  candidates: readonly AgentCandidate[],
+  cap: number,
+  places: number,
+): AgentPick {
+  const servedAt = (tasks: number) =>
+    candidates.filter((candidate) => candidate.counts.some((count) => count.tasks === tasks));
+  let picked: number[] = [];
+  for (let tasks = Math.min(cap, places); tasks > 0; tasks--) {
+    const served = servedAt(tasks);
+    if (served.length >= tasks) {
+      picked = served.slice(0, tasks).map((candidate) => candidate.number);
+      break;
+    }
+  }
+  const waiting: AgentPick["waiting"] = [];
+  const unserved: number[] = [];
+  for (const candidate of candidates) {
+    if (picked.includes(candidate.number)) continue;
+    if (candidate.counts.length === 0) {
+      unserved.push(candidate.number);
+      continue;
+    }
+    const counts = candidate.counts.filter((count) => count.tasks <= cap);
+    if (counts.some((count) => servedAt(count.tasks).length >= count.tasks)) continue;
+    const [first] = counts;
+    if (first) {
+      waiting.push({
+        number: candidate.number,
+        tasks: first.tasks,
+        profile: first.profile,
+        ready: servedAt(first.tasks).length,
+      });
+    }
+  }
+  return { picked, tasks: picked.length, waiting, unserved };
 }
 
 /** Everything the later jobs need about the selected task. Written by `select`, a trusted job. */

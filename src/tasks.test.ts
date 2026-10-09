@@ -5,6 +5,8 @@ import { en } from "./i18n/en.ts";
 import { GITHUB } from "./platform/github/conventions.ts";
 import type { Comment, Issue, Review, ReviewVerdict } from "./platform/types.ts";
 import { encodeStatus, type TaskRecord } from "./record.ts";
+import { parseSettings, servedCounts } from "./settings.ts";
+import type { Stage } from "./stages.ts";
 import { renderRun } from "./status.ts";
 import {
   acceptRequest,
@@ -18,6 +20,7 @@ import {
   finishedRuns,
   openedByMaintainer,
   pendingWork,
+  pickAgentTasks,
   replanRequests,
   resumeRequests,
   reviewCommands,
@@ -25,6 +28,7 @@ import {
   taskSettings,
   toTask,
 } from "./tasks.ts";
+import { exampleSettings } from "./testing/settings-example.ts";
 
 const comment = (id: number, body: string, login = "alice", bot = false): Comment => ({
   id,
@@ -208,6 +212,110 @@ test("a run with several tasks picks them in the same order, each once", () => {
   assert.deepEqual(chooseTasks(candidates, 1), [chooseTask(candidates)]);
   assert.equal(chooseTasks(candidates, 10).length, 4, "the blocked task waits");
   assert.deepEqual(chooseTasks([{ number: 8, state: "blocked" }], 2), []);
+});
+
+/** The counts that serve a stage in the example of docs/settings/profiles.md: planning any. */
+function exampleCounts(stage: Stage) {
+  const file = parseSettings(exampleSettings());
+  assert.ok(file.ok);
+  const served = servedCounts([{}, {}, file.ok ? file.value : {}], stage);
+  assert.ok(served.ok);
+  return served.ok ? served.value : [];
+}
+
+test("a run takes the largest count that enough ready tasks are served with", () => {
+  const plan = exampleCounts("plan");
+  const code = exampleCounts("code");
+  const tasks = (...stages: ("plan" | "code")[]) =>
+    stages.map((stage, index) => ({
+      number: index + 1,
+      counts: stage === "plan" ? plan : code,
+    }));
+  // 5 ready: the first 4, on the full GPU; the fifth is left for the next run, with no message.
+  assert.deepEqual(pickAgentTasks(tasks("code", "code", "code", "code", "code"), 4, 4), {
+    picked: [1, 2, 3, 4],
+    tasks: 4,
+    waiting: [],
+    unserved: [],
+  });
+  // 3 ready: all 3, on the MIG partition.
+  assert.deepEqual(pickAgentTasks(tasks("code", "code", "code"), 4, 4).picked, [1, 2, 3]);
+  // A planning task counts too.
+  assert.deepEqual(pickAgentTasks(tasks("plan", "code", "code", "code"), 4, 4).tasks, 4);
+  // Places that tasks without an agent took: up to 3.
+  assert.deepEqual(pickAgentTasks(tasks("code", "code", "code", "code"), 4, 3).picked, [1, 2, 3]);
+  // With no count condition anywhere, one at a time.
+  const any = [{ tasks: 1 }];
+  assert.deepEqual(
+    pickAgentTasks(
+      [
+        { number: 1, counts: any },
+        { number: 2, counts: any },
+      ],
+      1,
+      1,
+    ),
+    { picked: [1], tasks: 1, waiting: [], unserved: [] },
+  );
+  assert.deepEqual(pickAgentTasks([], 4, 4), { picked: [], tasks: 0, waiting: [], unserved: [] });
+});
+
+test("a task served only with more tasks than are ready waits; one served at none is unserved", () => {
+  const four = [{ tasks: 4, profile: "parallel-tasks" }];
+  const plan = Array.from({ length: 10 }, (_, index) => ({ tasks: index + 1, profile: "planner" }));
+  // Three tasks served only with 4 wait, and say how many are ready.
+  const waiting = pickAgentTasks(
+    [1, 2, 3].map((number) => ({ number, counts: four })),
+    4,
+    4,
+  );
+  assert.deepEqual(waiting, {
+    picked: [],
+    tasks: 0,
+    waiting: [1, 2, 3].map((number) => ({
+      number,
+      tasks: 4,
+      profile: "parallel-tasks",
+      ready: 3,
+    })),
+    unserved: [],
+  });
+  // A waiting task does not hold back the planning task behind it; one nothing serves is unserved.
+  const mixed = pickAgentTasks(
+    [
+      { number: 1, counts: four },
+      { number: 2, counts: [] },
+      { number: 3, counts: plan },
+    ],
+    4,
+    4,
+  );
+  assert.deepEqual(mixed, {
+    picked: [3],
+    tasks: 1,
+    waiting: [{ number: 1, tasks: 4, profile: "parallel-tasks", ready: 2 }],
+    unserved: [2],
+  });
+  // Once 4 are served with 4, they run together, the planning task included.
+  const ready = pickAgentTasks(
+    [
+      { number: 1, counts: four },
+      { number: 2, counts: four },
+      { number: 3, counts: four },
+      { number: 4, counts: plan },
+    ],
+    4,
+    4,
+  );
+  assert.deepEqual([ready.picked, ready.waiting], [[1, 2, 3, 4], []]);
+  // With places for 2 only, the count of 4 cannot be reached this run, but enough tasks are ready
+  // for it: they are left for the next run, without a message.
+  const full = pickAgentTasks(
+    [1, 2, 3, 4].map((number) => ({ number, counts: four })),
+    4,
+    2,
+  );
+  assert.deepEqual([full.picked, full.waiting], [[], []]);
 });
 
 test("only the App's own comment counts as the status comment", () => {

@@ -78,6 +78,7 @@ export interface Messages {
   morePages(count: number): string;
   spending: string;
   spent(cost: { run?: string | undefined; task: string; budget: string }): string;
+  /** With an empty `model`, as for a task that has none, the footer leaves it out. */
   panelFooter(model: string, runUrl: string, reportUrl: string | undefined): string;
 
   /** For a labeled issue that a maintainer did not open. */
@@ -91,6 +92,7 @@ export interface Messages {
   report: string;
   problems: string;
   costHeading: string;
+  /** With an empty `model`, as for a run without an agent and without one, it is left out. */
   runFooter(model: string, spent: string | undefined, runUrl: string): string;
 
   // Spend table.
@@ -145,6 +147,12 @@ export interface Messages {
   stageBlockedHint: string;
   replanHint: string;
   removeLabelHint: string;
+
+  // Picking the tasks (the plan for profiles that pick the tasks).
+  /** A task that a profile serves only with `tasks` tasks in the run, of which `ready` are. */
+  waitingForTasks(tasks: number, profile: string, ready: number): string;
+  /** A task whose stage no profile, nor the top level, serves at any count. */
+  noSettingsForStage(stage: Stage): string;
 
   // Keys and budget.
   noKey: string;

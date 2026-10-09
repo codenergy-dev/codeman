@@ -4,8 +4,9 @@
 # override it.
 # Reference: https://github.com/codenergy-dev/codeman/blob/main/docs/settings/reference.md
 
-# Model ID, required here or as a workflow input, in the form the provider takes: OpenRouter's,
-# Ollama's on Runpod pods, or the Hugging Face ID the vLLM worker serves on Runpod Serverless.
+# Model ID, in the form the provider takes: OpenRouter's, Ollama's on Runpod pods, or the Hugging
+# Face ID the vLLM worker serves on Runpod Serverless. It serves the runs no profile serves; without
+# it, only profiles serve agent runs, and each profile sets its own.
 model: deepseek/deepseek-v4.1-flash
 
 # Where agent runs get their model: openrouter (the default), runpod-pod or runpod-serverless.
@@ -34,16 +35,20 @@ provider: openrouter
 # whose conditions all hold applies; the top-level settings apply when none does. A profile
 # inherits the top-level settings and sets only `provider`, `model` and the provider's settings;
 # one on another provider than the top level's inherits none of that one's settings, and must
-# set its own `model`. Conditions: `stages` (any of plan, route, web, design, code, test,
-# review: planning, routing and the routed stages), and `parallel-tasks` (at least that many of
-# the run's tasks run an agent).
+# set its own `model`, as must one that inherits none.
+# Conditions, beside the profile's name: `stages` (any of plan, route, web, design, code, test,
+# review: planning, routing and the routed stages; all without it), and how many of the run's
+# tasks run an agent: `tasks` (exactly), or `min-tasks` and `max-tasks` (a range).
+# The counts also say how many tasks a run takes at once: the largest `tasks` or `max-tasks`
+# (10 with `min-tasks` alone), and one when no profile has a count. Above one, the workflow needs
+# codeman-task.yml next to codeman.yml, and tasks on pods with the same settings share one.
 # Each provider a run uses needs its secret; with the organization's monthly budget, so does the
 # Runpod account of a Runpod provider named here, whose billing counts in the organization's
 # month.
 # profiles:
 #   - name: small-pod
-#     when:
-#       stages: [code, test]
+#     stages: [code, test]
+#     max-tasks: 2
 #     provider: runpod-pod
 #     gpu: "NVIDIA RTX A6000"
 #     model: qwen3-coder:30b
@@ -56,11 +61,6 @@ monthly-budget: 20
 
 # Consecutive implementation runs before a task is blocked.
 max-runs: 3
-
-# Tasks one run works on at once, from 1 to 10, each with its own key and agent. Above 1,
-# tasks on pods with the same settings share one, and the workflow needs codeman-task.yml
-# next to codeman.yml.
-parallel-tasks: 1
 
 # Limits on what one run may change.
 max-files: 300

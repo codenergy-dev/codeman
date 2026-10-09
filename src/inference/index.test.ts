@@ -80,10 +80,9 @@ test("the billing of shared pods is not read as the task's", () => {
     },
   };
   const pod = { provider: "runpod-pod" as const, model: "qwen3-coder:30b", gpu: "GPU A" };
-  const choice = inferenceChoice(settings({ ...pod, "parallel-tasks": 2 }), shared);
+  const choice = inferenceChoice(settings(pod), shared);
   assert.equal(choice.provider === "runpod-pod" && choice.pods.join(), "p1");
   assert.deepEqual(parseInferenceChoice(JSON.stringify(choice)), choice);
-  assert.deepEqual(choice, inferenceChoice(settings(pod), shared), "whatever parallel-tasks says");
 });
 
 test("an empty choice, from older workflow files, is OpenRouter; anything else must be whole", () => {
