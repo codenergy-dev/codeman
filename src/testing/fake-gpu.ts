@@ -11,6 +11,7 @@ import type {
   PodStatus,
   ServerlessHost,
 } from "../inference/gpu.ts";
+import { parseOllamaVariables } from "../inference/ollama.ts";
 
 /** A GPU cloud for tests: pods and endpoints in memory, and the calls made to it. */
 export class FakeGpu implements GpuProvider {
@@ -121,6 +122,8 @@ export interface FakeGatewayState {
   serving: boolean;
   lastActivity: number;
   contextLength?: number | undefined;
+  /** The admin API's version it reports; none, as gateways that serve one run at a time. */
+  version?: number | undefined;
   /** Whether it answers at all. */
   reachable: boolean;
   /** The last run it was given, and the usage `/admin/end` reports. */
@@ -156,9 +159,10 @@ export class FakeGateways {
     for (const { server } of this.#gateways.values()) server.close();
   }
 
-  async #serve(id: string, adminSha256: string | undefined) {
+  async #serve(id: string, pod: Pod) {
     let served = this.#gateways.get(id);
     if (!served) {
+      const adminSha256 = pod.env.CODEMAN_ADMIN_SHA256;
       const gateway = new Gateway({
         upstream: "http://127.0.0.1:9/v1",
         engine: fakeEngine,
@@ -166,6 +170,9 @@ export class FakeGateways {
         now: () => this.gpu.now().getTime(),
       });
       gateway.contextLength = 65536;
+      // As the pod's gateway applies them (src/gateway/main.ts).
+      const ollama = parseOllamaVariables(pod.env.CODEMAN_OLLAMA);
+      if (ollama.ok) gateway.ollama = ollama.value;
       const { server, url } = await gateway.listen();
       served = { gateway, url, server };
       this.#gateways.set(id, served);
@@ -197,7 +204,7 @@ export class FakeGateways {
     const state = this.state(id);
     if (!pod || !state.reachable) throw new TypeError("fetch failed");
     if (this.#real) {
-      const { gateway, url: base } = await this.#serve(id, pod.env.CODEMAN_ADMIN_SHA256);
+      const { gateway, url: base } = await this.#serve(id, pod);
       gateway.ready = state.ready;
       return fetch(`${base}${url.pathname}`, init);
     }
@@ -212,6 +219,7 @@ export class FakeGateways {
     if (hash !== pod.env.CODEMAN_ADMIN_SHA256) return json(401, {});
     if (url.pathname === "/admin/status") {
       return json(200, {
+        version: state.version,
         ready: state.ready,
         serving: state.serving,
         lastActivity: state.lastActivity,

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
-import { sha256 } from "../gateway/gateway.ts";
+import { GATEWAY_VERSION, sha256 } from "../gateway/gateway.ts";
 import { closeKey, openKey } from "../steps/keys.ts";
 import { MemoryStore } from "../store/memory.ts";
 import { FakeGateways, FakeGpu } from "../testing/fake-gpu.ts";
@@ -8,7 +8,7 @@ import { FakePlatform, fakeServices } from "../testing/fake-platform.ts";
 import { FakeRuntime } from "../testing/fake-runtime.ts";
 import { seedRuns } from "../testing/ledger-runs.ts";
 import type { PodSpec } from "./gpu.ts";
-import { ollama, SINGLE_RUN_IMAGES } from "./ollama.ts";
+import { IMAGES_WITHOUT_OLLAMA_SETTINGS, ollama, SINGLE_RUN_IMAGES } from "./ollama.ts";
 import { OpenFailure } from "./provider.ts";
 import { CREATE_LEASE_MS, PodRegistry } from "./registry.ts";
 import {
@@ -678,4 +678,61 @@ test("the image pinned before shared pods gives each task a pod of its own", asy
     gpu.created[0]?.env.CODEMAN_POD_SETTINGS,
     gpu.created[1]?.env.CODEMAN_POD_SETTINGS,
   );
+});
+
+test("Ollama settings are part of a pod's settings, only when there are some", () => {
+  const shared = { ...settings, image: SHARED_IMAGE };
+  // Without them, the hash pods had before Ollama settings: those pods are still found.
+  const before = sha256(["qwen3-coder:30b", "GPU-A", SHARED_IMAGE, "task"].join("\n")).slice(0, 16);
+  assert.equal(podSettingsKey(shared, "o/r#7"), before);
+  assert.equal(podSettingsKey({ ...shared, ollama: {} }, "o/r#7"), before);
+  const four = podSettingsKey({ ...shared, ollama: { OLLAMA_NUM_PARALLEL: "4" } }, "o/r#7");
+  assert.notEqual(four, before);
+  assert.notEqual(
+    four,
+    podSettingsKey({ ...shared, ollama: { OLLAMA_NUM_PARALLEL: "2" } }, "o/r#7"),
+  );
+});
+
+test("a pod gets its Ollama settings in its environment, and tasks with others get another pod", async () => {
+  const { gpu, open } = setup({ real: true, image: SHARED_IMAGE });
+  const variables = { OLLAMA_CONTEXT_LENGTH: "65536", OLLAMA_NUM_PARALLEL: "4" };
+  const a = await open("7", "300", { ollama: variables });
+  const b = await open("8", "300", { ollama: variables });
+  assert.equal(a.handle.podId, b.handle.podId, "the same settings share the pod");
+  assert.equal(
+    gpu.created[0]?.env.CODEMAN_OLLAMA,
+    '{"OLLAMA_CONTEXT_LENGTH":"65536","OLLAMA_NUM_PARALLEL":"4"}',
+  );
+  const c = await open("9", "300", { ollama: { OLLAMA_NUM_PARALLEL: "2" } });
+  const d = await open("10", "300");
+  assert.deepEqual([c.handle.podId, d.handle.podId], ["pod2", "pod3"]);
+  assert.equal(gpu.created[2]?.env.CODEMAN_OLLAMA, undefined, "none without settings");
+});
+
+test("an image that cannot apply Ollama settings is refused before any pod is created", async () => {
+  assert.equal(IMAGES_WITHOUT_OLLAMA_SETTINGS.size, 2);
+  for (const image of IMAGES_WITHOUT_OLLAMA_SETTINGS) {
+    const { gpu, open } = setup({ image, real: true });
+    await assert.rejects(
+      open("7", "300", { ollama: { OLLAMA_NUM_PARALLEL: "4" } }),
+      (error: unknown) =>
+        error instanceof OpenFailure &&
+        error.message ===
+          `The pod image ${image} cannot apply Ollama settings (\`OLLAMA_NUM_PARALLEL=4\`), so no pod was created: use a version of Codeman whose pod image can, or remove \`ollama\` from the settings. See docs/settings/ollama.md#pod-images.`,
+    );
+    assert.deepEqual(gpu.created, []);
+    // Without Ollama settings, the image serves as before.
+    assert.ok((await open("8", "300")).handle.podId);
+  }
+});
+
+test("a pod whose gateway does not apply the Ollama settings fails the run, and is terminated", async () => {
+  const { gpu, gateways, open } = setup({ image: SHARED_IMAGE });
+  gateways.state("pod1").version = GATEWAY_VERSION;
+  await assert.rejects(
+    open("7", "300", { ollama: { OLLAMA_NUM_PARALLEL: "4" } }),
+    /Pod pod1's gateway did not apply the Ollama settings \(`OLLAMA_NUM_PARALLEL=4`\): its image cannot\./,
+  );
+  assert.deepEqual(gpu.terminated, ["pod1"]);
 });

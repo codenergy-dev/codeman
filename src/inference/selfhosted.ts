@@ -18,7 +18,7 @@ import {
   type ServerlessHost,
   waitUntilReady,
 } from "./gpu.ts";
-import { SINGLE_RUN_IMAGES } from "./ollama.ts";
+import { IMAGES_WITHOUT_OLLAMA_SETTINGS, SINGLE_RUN_IMAGES } from "./ollama.ts";
 import {
   type InferenceProvider,
   type OpenedRun,
@@ -67,6 +67,11 @@ export interface PodSettings extends SelfHostedSettings {
   image: string;
   /** `task`: a pod serves the next runs on its settings too; `run`: it ends with its runs. */
   reuse: "task" | "run";
+  /**
+   * The Ollama server's variables from the `ollama` settings, such as `{ OLLAMA_NUM_PARALLEL:
+   * "4" }`, sorted (`ollamaEnvironment`); none when undefined or empty.
+   */
+  ollama?: Readonly<Record<string, string>> | undefined;
 }
 
 /** What `close` needs to find a pod run again. Travels in plain text between jobs. */
@@ -102,17 +107,38 @@ export function servesOneRun(image: string): boolean {
   return SINGLE_RUN_IMAGES.has(image);
 }
 
+/** The Ollama variables of pod settings, as `VARIABLE=value`; empty without any. */
+function ollamaVariables(settings: Pick<PodSettings, "ollama">): string[] {
+  return Object.entries(settings.ollama ?? {}).map(([name, value]) => `${name}=${value}`);
+}
+
+/** The Ollama variables of pod settings, for messages: `` `OLLAMA_NUM_PARALLEL=4` ``. */
+function quotedVariables(settings: Pick<PodSettings, "ollama">): string {
+  return ollamaVariables(settings)
+    .map((variable) => `\`${variable}\``)
+    .join(", ");
+}
+
 /**
  * The hash of the settings a pod serves, which the organization's tasks with the same settings
  * share it by. On an image that serves one run at a time, the task is one of them: it gets a pod
- * of its own.
+ * of its own. Ollama settings are part of them, only when there are some, so pods without any
+ * keep their hash (choice 9 of the Ollama settings plan).
  */
 export function podSettingsKey(
-  settings: Pick<PodSettings, "model" | "gpuType" | "image" | "reuse">,
+  settings: Pick<PodSettings, "model" | "gpuType" | "image" | "reuse" | "ollama">,
   holder: string,
 ): string {
   const { model, gpuType, image, reuse } = settings;
-  const parts = [model, gpuType, image, reuse, ...(servesOneRun(image) ? [holder] : [])];
+  const ollama = ollamaVariables(settings);
+  const parts = [
+    model,
+    gpuType,
+    image,
+    reuse,
+    ...(servesOneRun(image) ? [holder] : []),
+    ...(ollama.length > 0 ? [`ollama ${ollama.join(" ")}`] : []),
+  ];
   return sha256(parts.join("\n")).slice(0, 16);
 }
 
@@ -137,11 +163,15 @@ export function adminToken(accountKey: string, nonce: string): string {
     .digest("base64url");
 }
 
-/** What a pod's gateway says of itself, from `/admin/status`; older gateways lack the runs. */
+/**
+ * What a pod's gateway says of itself, from `/admin/status`; older gateways lack the runs, and
+ * the Ollama variables they applied.
+ */
 interface GatewayStatus {
   version?: number;
   ready?: boolean;
   contextLength?: number;
+  ollama?: Record<string, unknown>;
 }
 
 /** A pod's gateway, as the key jobs reach it: its URL and the nonce of its admin token. */
@@ -215,12 +245,26 @@ export class PodInference implements InferenceProvider {
     return this.#options.now?.() ?? new Date();
   }
 
+  /**
+   * Refuses, before any pod, an image known not to apply Ollama settings when the run has some:
+   * a requested setting is never dropped (choice 8 of the Ollama settings plan).
+   */
+  #checkImage(): void {
+    const ollama = ollamaVariables(this.#settings);
+    const { image } = this.#settings;
+    if (ollama.length === 0 || !IMAGES_WITHOUT_OLLAMA_SETTINGS.has(image)) return;
+    throw new Error(
+      `The pod image ${image} cannot apply Ollama settings (${quotedVariables(this.#settings)}), so no pod was created: use a version of Codeman whose pod image can, or remove \`ollama\` from the settings. See docs/settings/ollama.md#pod-images.`,
+    );
+  }
+
   async open(run: RunRequest, log: Log): Promise<OpenedRun> {
     const token = randomBytes(32).toString("base64url");
     const holder = leaseHolder(this.#options.repository, run.task);
     const settings = podSettingsKey(this.#settings, holder);
     let handle: PodHandle;
     try {
+      this.#checkImage();
       await this.#sweep(holder, settings, log);
       handle = await this.#claim(run, holder, settings, token, log);
     } catch (error) {
@@ -580,11 +624,18 @@ export class PodInference implements InferenceProvider {
       },
     );
     const shared = !servesOneRun(image);
-    if (shared) {
+    const ollama = this.#settings.ollama ?? {};
+    const configured = Object.keys(ollama).length > 0;
+    if (shared || configured) {
       const status = (await this.#admin(target, "GET", "/admin/status")) as GatewayStatus;
-      if ((status.version ?? 1) < GATEWAY_VERSION) {
+      if (shared && (status.version ?? 1) < GATEWAY_VERSION) {
         throw new Error(
           `Pod ${podId}'s gateway serves one run at a time: list its image in SINGLE_RUN_IMAGES (src/inference/ollama.ts) to give each task a pod of its own on it.`,
+        );
+      }
+      if (configured && !sameVariables(status.ollama, ollama)) {
+        throw new Error(
+          `Pod ${podId}'s gateway did not apply the Ollama settings (${quotedVariables(this.#settings)}): its image cannot. List the image in IMAGES_WITHOUT_OLLAMA_SETTINGS (src/inference/ollama.ts), or use one built since Ollama settings.`,
         );
       }
     }
@@ -637,6 +688,9 @@ export class PodInference implements InferenceProvider {
       name: `codeman-${owner}-${record.settings}`.slice(0, 100),
       image,
       env: {
+        ...(Object.keys(this.#settings.ollama ?? {}).length > 0
+          ? { CODEMAN_OLLAMA: JSON.stringify(this.#settings.ollama) }
+          : {}),
         CODEMAN_ORGANIZATION: owner,
         CODEMAN_POD_SETTINGS: record.settings,
         CODEMAN_NONCE: record.nonce,
@@ -662,6 +716,19 @@ export class PodInference implements InferenceProvider {
     const { fetch: fetchFn = fetch, accountKey } = this.#options;
     return callGateway(fetchFn, accountKey, target, method, path, body);
   }
+}
+
+/** Whether a gateway reported exactly the Ollama variables requested. */
+function sameVariables(
+  reported: Record<string, unknown> | undefined,
+  requested: Readonly<Record<string, string>>,
+): boolean {
+  if (typeof reported !== "object" || reported === null) return false;
+  const names = Object.keys(requested);
+  return (
+    Object.keys(reported).length === names.length &&
+    names.every((name) => reported[name] === requested[name])
+  );
 }
 
 /**

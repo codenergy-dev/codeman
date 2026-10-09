@@ -6,7 +6,7 @@ import type { Store } from "../store/store.ts";
 import type { ProviderAccounts } from "./budget.ts";
 import { ENGINES } from "./engines.ts";
 import type { GpuProvider } from "./gpu.ts";
-import { POD_IMAGE } from "./ollama.ts";
+import { type OllamaSettings, ollamaEnvironment, POD_IMAGE } from "./ollama.ts";
 import { OpenRouter, OpenRouterProvider } from "./openrouter.ts";
 import type { InferenceProvider } from "./provider.ts";
 import { ACCOUNTS, accountOf, isHourlyAccount, isProviderName } from "./providers.ts";
@@ -25,6 +25,8 @@ export type InferenceChoice = (
       provider: "runpod-pod";
       gpu: string;
       podReuse: "task" | "run";
+      /** The `ollama` settings, by key; absent without any. */
+      ollama?: OllamaSettings | undefined;
     })
   | (SelfHostedChoice & { provider: "runpod-serverless"; endpoint: string })
 ) &
@@ -85,6 +87,9 @@ export function inferenceChoice(
         provider: "runpod-pod",
         gpu: settings.gpu ?? "",
         podReuse: settings["pod-reuse"] === "run" ? "run" : "task",
+        ...(settings.ollama && Object.keys(settings.ollama).length > 0
+          ? { ollama: settings.ollama }
+          : {}),
       };
 }
 
@@ -111,6 +116,17 @@ export function parseInferenceChoice(text: string): InferenceChoice {
       ? typeof choice.gpu === "string"
       : typeof choice.endpoint === "string");
   if (!valid) throw new Error("The inference input is not a valid choice.");
+  if (choice.provider === "runpod-pod" && choice.ollama !== undefined) {
+    // The pod's environment comes from it: only the keys and values the list takes.
+    const ollama: unknown = choice.ollama;
+    const strings =
+      typeof ollama === "object" &&
+      ollama !== null &&
+      !Array.isArray(ollama) &&
+      Object.values(ollama).every((value) => typeof value === "string");
+    if (!strings) throw new Error("The inference input is not a valid choice.");
+    ollamaEnvironment(choice.ollama);
+  }
   return choice;
 }
 
@@ -193,6 +209,7 @@ export function selfHosted(
         gpuType: choice.gpu,
         image: inputs.image,
         reuse: choice.podReuse,
+        ollama: ollamaEnvironment(choice.ollama),
       },
       { repository, gpu, accountKey: inputs.accountKey, store: inputs.store() },
     );

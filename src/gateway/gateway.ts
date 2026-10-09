@@ -161,6 +161,8 @@ export class Gateway {
   lastActivity: number;
   ready = false;
   contextLength: number | undefined;
+  /** The Ollama variables from the pod's settings that it gave Ollama, which the status reports. */
+  ollama: Readonly<Record<string, string>> = {};
 
   constructor(options: GatewayOptions) {
     this.#options = options;
@@ -375,6 +377,7 @@ export class Gateway {
       version: GATEWAY_VERSION,
       ready: this.ready,
       contextLength: this.contextLength,
+      ollama: this.ollama,
       serving: this.serving,
       deadline: this.deadline,
       lastActivity: this.lastActivity,

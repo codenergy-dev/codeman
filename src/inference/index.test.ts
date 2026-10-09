@@ -107,3 +107,29 @@ test("builds the provider the choice names, with only the credentials it needs",
   const missing = new FakeRuntime({ inputs: { inference: JSON.stringify(choice) } });
   assert.throws(() => inferenceProvider(missing, store), /gpu-key/);
 });
+
+test("a pod's choice carries its Ollama settings, checked again when read", () => {
+  const choice = inferenceChoice(
+    settings({
+      provider: "runpod-pod",
+      model: "qwen3-coder:30b",
+      gpu: "GPU A",
+      ollama: { "num-parallel": "4" },
+    }),
+    null,
+  );
+  assert.deepEqual(choice.provider === "runpod-pod" && choice.ollama, { "num-parallel": "4" });
+  assert.deepEqual(parseInferenceChoice(JSON.stringify(choice)), choice);
+  const none = inferenceChoice(
+    settings({ provider: "runpod-pod", model: "qwen3-coder:30b", gpu: "GPU A" }),
+    null,
+  );
+  assert.equal("ollama" in none, false, "none without settings");
+  for (const ollama of [{ host: "0.0.0.0" }, { "num-parallel": 4 }, ["num-parallel"], "x"]) {
+    assert.throws(
+      () => parseInferenceChoice(JSON.stringify({ ...choice, ollama })),
+      /not a valid|cannot set/,
+      JSON.stringify(ollama),
+    );
+  }
+});
