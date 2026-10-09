@@ -1,7 +1,7 @@
 ---
-status: pending
+status: in progress
 created_at: 2026-10-08T22:54:33-03:00
-updated_at: 2026-10-08T22:54:33-03:00
+updated_at: 2026-10-08T22:56:38-03:00
 commit: aa3022d
 ---
 
@@ -59,6 +59,7 @@ Settled conservatively, as the responsible person asked.
 ## Steps
 
 1. Write this plan. Done when it is committed with status `pending`, then set `in progress`.
+   - **Done on 2026-10-08**: committed as `5435748` with status `pending`, then set `in progress`.
 2. Settings (`src/settings.ts`): profile conditions at the first level, with their validation and the errors of decision 2; the top level optional (choices 5, 6 and 13); the run's cap (`tasksPerRun`) and which counts serve a stage; `parallel-tasks` removed from `Settings`. Done when `src/settings.test.ts` covers each rule and error, including the responsible person's example as a fixture, and `npm run typecheck` passes.
 3. Picking (`src/tasks.ts`, `src/steps/select.ts`, `src/status.ts`, `src/i18n/`): the picker of decision 3 and choices 7 to 10, the waiting panel, the blocked panel (choice 11), the log lines (choice 16), footers without a model, English and Portuguese messages. Done when unit tests of the picker and flow tests through `select` cover: one task at a time without count conditions; a run of exactly 4; a run of up to 3 when 3 are ready; a task that waits, with its panel, written once; a task blocked with its panel and handled commands; answers recorded first; a waiting task leaves `action: none`; a top level without a model.
 4. Templates and action: `templates/settings.yml` (conditions at the first level, no `parallel-tasks`, `model` optional), `templates/codeman.yml`'s and `action.yml`'s wording. Done when the template test reads the template and its uncommented profiles, and no template or `action.yml` names `parallel-tasks` as a setting.
