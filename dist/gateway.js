@@ -21,7 +21,102 @@ function count(value) {
 }
 
 // src/inference/ollama.ts
+var SINGLE_RUN_IMAGES = /* @__PURE__ */ new Set([
+  "ghcr.io/codenergy-dev/codeman-pod@sha256:6a7617fc8772c43600349a971a424bc918982c6d38972e7d1802a1a607e76d27"
+]);
+var IMAGES_WITHOUT_OLLAMA_SETTINGS = /* @__PURE__ */ new Set([
+  ...SINGLE_RUN_IMAGES,
+  "ghcr.io/codenergy-dev/codeman-pod@sha256:3252d41775a230249490b5af79aec050151e49c4722bb62f9ce3d247d02f6ca3"
+]);
 var OLLAMA_URL = "http://127.0.0.1:11434";
+var OLLAMA_SETTINGS = {
+  "context-length": { variable: "OLLAMA_CONTEXT_LENGTH", value: { kind: "count", min: 1 } },
+  "num-parallel": { variable: "OLLAMA_NUM_PARALLEL", value: { kind: "count", min: 1 } },
+  "max-queue": { variable: "OLLAMA_MAX_QUEUE", value: { kind: "count", min: 1 } },
+  "flash-attention": { variable: "OLLAMA_FLASH_ATTENTION", value: { kind: "boolean" } },
+  "kv-cache-type": {
+    variable: "OLLAMA_KV_CACHE_TYPE",
+    value: { kind: "choice", values: ["f16", "q8_0", "q4_0"] }
+  },
+  "gpu-overhead": { variable: "OLLAMA_GPU_OVERHEAD", value: { kind: "count", min: 0 } },
+  "sched-spread": { variable: "OLLAMA_SCHED_SPREAD", value: { kind: "boolean" } },
+  "load-timeout": { variable: "OLLAMA_LOAD_TIMEOUT", value: { kind: "duration" } }
+};
+var REFUSED_OLLAMA_SETTINGS = {
+  host: "Codeman runs Ollama on the pod's loopback, where only its gateway reaches it",
+  origins: "only Codeman's gateway calls Ollama, from the pod's loopback",
+  "keep-alive": "Codeman keeps the model loaded for as long as the pod lives",
+  models: "Codeman pulls the model where the pod image keeps models, on the disk it sizes for it",
+  remotes: "remote models would send the runs' requests off the pod",
+  "debug-log-requests": "it writes the runs' requests, with the repository's code in them, to the pod's disk"
+};
+var DURATION = /^(?:[0-9]+|(?:[0-9]+(?:\.[0-9]+)?(?:h|m|s|ms))+)$/;
+function keyOf(written) {
+  return written.toLowerCase().replace(/^ollama_/, "").replaceAll("_", "-");
+}
+function ollamaSetting(key, text) {
+  const fail = (error2) => ({ ok: false, error: error2 });
+  const setting = OLLAMA_SETTINGS[key];
+  if (!setting) {
+    const kebab = keyOf(key);
+    const refused = REFUSED_OLLAMA_SETTINGS[kebab];
+    if (refused) return fail(`\`ollama\` cannot set \`${kebab}\`: ${refused}.`);
+    if (kebab !== key && OLLAMA_SETTINGS[kebab]) {
+      return fail(
+        `\`ollama\` takes its keys in kebab-case, without \`OLLAMA_\`: write \`${kebab}\`, not \`${key}\`.`
+      );
+    }
+    return fail(
+      `\`ollama\` does not accept \`${key}\`; it takes ${list(Object.keys(OLLAMA_SETTINGS).map((name) => `\`${name}\``))} (docs/settings/ollama.md).`
+    );
+  }
+  const { value } = setting;
+  switch (value.kind) {
+    case "count": {
+      const number = /^[0-9]+$/.test(text) ? Number(text) : Number.NaN;
+      return Number.isSafeInteger(number) && number >= value.min ? { ok: true, value: String(number) } : fail(`\`ollama\`'s \`${key}\` must be a whole number, at least ${value.min}.`);
+    }
+    case "boolean":
+      return text === "true" || text === "false" ? { ok: true, value: text } : fail(`\`ollama\`'s \`${key}\` must be \`true\` or \`false\`.`);
+    case "choice":
+      return value.values.includes(text) ? { ok: true, value: text } : fail(
+        `\`ollama\`'s \`${key}\` must be one of ${value.values.map((v) => `\`${v}\``).join(", ")}.`
+      );
+    case "duration":
+      return DURATION.test(text) ? { ok: true, value: text } : fail(
+        `\`ollama\`'s \`${key}\` must be a duration, such as \`10m\` or \`1h30m\`, or whole seconds.`
+      );
+  }
+}
+function parseOllamaVariables(text) {
+  if (text === void 0 || text.trim() === "") return { ok: true, value: {} };
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return { ok: false, error: "CODEMAN_OLLAMA is not JSON." };
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return { ok: false, error: "CODEMAN_OLLAMA is not an object of variables." };
+  }
+  const byVariable = new Map(
+    Object.entries(OLLAMA_SETTINGS).map(([key, { variable }]) => [variable, key])
+  );
+  const variables = {};
+  for (const [variable, value] of Object.entries(parsed)) {
+    const key = byVariable.get(variable);
+    if (!key || typeof value !== "string") {
+      return { ok: false, error: `CODEMAN_OLLAMA sets \`${variable}\`, which Codeman does not.` };
+    }
+    const checked = ollamaSetting(key, value);
+    if (!checked.ok) return { ok: false, error: `CODEMAN_OLLAMA: ${checked.error}` };
+    variables[variable] = checked.value;
+  }
+  return { ok: true, value: variables };
+}
+function list(items) {
+  return items.length < 2 ? items[0] ?? "" : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
+}
 var MODEL = /^[a-z0-9][a-z0-9._-]*(\/[a-z0-9][a-z0-9._-]*){0,2}(:[a-z0-9][a-z0-9._-]*)?$/i;
 var ollama = {
   name: "ollama",
@@ -423,6 +518,8 @@ var Gateway = class {
   lastActivity;
   ready = false;
   contextLength;
+  /** The Ollama variables from the pod's settings that it gave Ollama, which the status reports. */
+  ollama = {};
   constructor(options) {
     this.#options = options;
     this.#now = options.now ?? Date.now;
@@ -614,6 +711,7 @@ var Gateway = class {
       version: GATEWAY_VERSION,
       ready: this.ready,
       contextLength: this.contextLength,
+      ollama: this.ollama,
       serving: this.serving,
       deadline: this.deadline,
       lastActivity: this.lastActivity,
@@ -914,10 +1012,20 @@ function podSettings(env) {
     adminSha256,
     policy: { startBy, keptIdleMs: keptIdle * 6e4, runIdleMs: runIdle * 6e4 },
     podId: env.RUNPOD_POD_ID,
-    podKey: env.RUNPOD_API_KEY
+    podKey: env.RUNPOD_API_KEY,
+    ollama: parseOllamaVariables(env.CODEMAN_OLLAMA)
   };
 }
-async function prepareOllama(server, model, log) {
+function ollamaServeEnvironment(base, variables, contextLength) {
+  return {
+    ...base,
+    ...variables,
+    OLLAMA_HOST: "127.0.0.1:11434",
+    OLLAMA_KEEP_ALIVE: "-1",
+    ...contextLength ? { OLLAMA_CONTEXT_LENGTH: String(contextLength) } : {}
+  };
+}
+async function prepareOllama(server, model, log, configured) {
   const call = async (path, body) => {
     const response = await (server.fetch ?? fetch)(`${server.url}${path}`, {
       method: "POST",
@@ -930,6 +1038,11 @@ async function prepareOllama(server, model, log) {
   await untilUp(server);
   log(`Pulling ${model}.`);
   await pull(server, model);
+  if (configured) {
+    log(`Serving ${model} with a context length of ${configured}, from the pod's settings.`);
+    await call("/api/generate", { model, keep_alive: -1 });
+    return configured;
+  }
   const contextLength = ollamaContextLength(await call("/api/show", { model }));
   log(`Serving ${model} with a context length of ${contextLength ?? "Ollama's default"}.`);
   await server.restart(contextLength);
@@ -990,15 +1103,22 @@ async function main() {
     process.exit(0);
   };
   if (Date.now() >= settings.policy.startBy) await terminate("it started after its start limit");
+  if (!settings.ollama.ok) {
+    await terminate(`its Ollama settings cannot be applied: ${settings.ollama.error}`);
+  }
+  const variables = settings.ollama.ok ? settings.ollama.value : {};
+  const names = Object.entries(variables).map(([name, value]) => `${name}=${value}`);
+  if (names.length > 0) log(`Ollama settings: ${names.join(", ")}.`);
   const gateway = new Gateway({
     upstream: `${OLLAMA_URL}/v1`,
     engine: ollama,
     adminSha256: settings.adminSha256,
     log
   });
+  gateway.ollama = variables;
   await gateway.listen("0.0.0.0", GATEWAY_PORT);
   log(`Gateway listening on port ${GATEWAY_PORT}.`);
-  ollamaProcess = serve(void 0);
+  ollamaProcess = serve(variables, void 0);
   setInterval(() => {
     const reason = expiry(gateway, settings.policy, Date.now());
     if (reason) void terminate(reason);
@@ -1010,11 +1130,12 @@ async function main() {
         url: OLLAMA_URL,
         restart: async (contextLength) => {
           await stop(ollamaProcess);
-          ollamaProcess = serve(contextLength);
+          ollamaProcess = serve(variables, contextLength);
         }
       },
       settings.model,
-      log
+      log,
+      Number(variables.OLLAMA_CONTEXT_LENGTH) || void 0
     );
     gateway.ready = true;
     gateway.lastActivity = Date.now();
@@ -1025,15 +1146,10 @@ async function main() {
     );
   }
 }
-function serve(contextLength) {
+function serve(variables, contextLength) {
   return spawn("ollama", ["serve"], {
     stdio: "inherit",
-    env: {
-      ...process.env,
-      OLLAMA_HOST: "127.0.0.1:11434",
-      OLLAMA_KEEP_ALIVE: "-1",
-      ...contextLength ? { OLLAMA_CONTEXT_LENGTH: String(contextLength) } : {}
-    }
+    env: ollamaServeEnvironment(process.env, variables, contextLength)
   });
 }
 function stop(child) {

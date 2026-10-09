@@ -4873,8 +4873,8 @@ var require_util2 = __commonJS({
       }
       return values;
     }
-    function getDecodeSplit(name, list2) {
-      const value = list2.get(name, true);
+    function getDecodeSplit(name, list3) {
+      const value = list3.get(name, true);
       if (value === null) {
         return null;
       }
@@ -12243,9 +12243,9 @@ var require_headers = __commonJS({
       // https://fetch.spec.whatwg.org/#dom-headers-getsetcookie
       getSetCookie() {
         webidl.brandCheck(this, _Headers);
-        const list2 = this.#headersList.cookies;
-        if (list2) {
-          return [...list2];
+        const list3 = this.#headersList.cookies;
+        if (list3) {
+          return [...list3];
         }
         return [];
       }
@@ -12285,8 +12285,8 @@ var require_headers = __commonJS({
       static getHeadersList(o) {
         return o.#headersList;
       }
-      static setHeadersList(o, list2) {
-        o.#headersList = list2;
+      static setHeadersList(o, list3) {
+        o.#headersList = list3;
       }
     };
     var { getHeadersGuard, setHeadersGuard, getHeadersList, setHeadersList } = Headers2;
@@ -13254,13 +13254,13 @@ var require_request2 = __commonJS({
         if (this.signal.aborted) {
           ac.abort(this.signal.reason);
         } else {
-          let list2 = dependentControllerMap.get(this.signal);
-          if (list2 === void 0) {
-            list2 = /* @__PURE__ */ new Set();
-            dependentControllerMap.set(this.signal, list2);
+          let list3 = dependentControllerMap.get(this.signal);
+          if (list3 === void 0) {
+            list3 = /* @__PURE__ */ new Set();
+            dependentControllerMap.set(this.signal, list3);
           }
           const acRef = new WeakRef(ac);
-          list2.add(acRef);
+          list3.add(acRef);
           util.addAbortListener(
             ac.signal,
             buildAbort(acRef)
@@ -19789,6 +19789,80 @@ var POD_IMAGE = "ghcr.io/codenergy-dev/codeman-pod@sha256:3252d41775a230249490b5
 var SINGLE_RUN_IMAGES = /* @__PURE__ */ new Set([
   "ghcr.io/codenergy-dev/codeman-pod@sha256:6a7617fc8772c43600349a971a424bc918982c6d38972e7d1802a1a607e76d27"
 ]);
+var IMAGES_WITHOUT_OLLAMA_SETTINGS = /* @__PURE__ */ new Set([
+  ...SINGLE_RUN_IMAGES,
+  "ghcr.io/codenergy-dev/codeman-pod@sha256:3252d41775a230249490b5af79aec050151e49c4722bb62f9ce3d247d02f6ca3"
+]);
+var OLLAMA_SETTINGS = {
+  "context-length": { variable: "OLLAMA_CONTEXT_LENGTH", value: { kind: "count", min: 1 } },
+  "num-parallel": { variable: "OLLAMA_NUM_PARALLEL", value: { kind: "count", min: 1 } },
+  "max-queue": { variable: "OLLAMA_MAX_QUEUE", value: { kind: "count", min: 1 } },
+  "flash-attention": { variable: "OLLAMA_FLASH_ATTENTION", value: { kind: "boolean" } },
+  "kv-cache-type": {
+    variable: "OLLAMA_KV_CACHE_TYPE",
+    value: { kind: "choice", values: ["f16", "q8_0", "q4_0"] }
+  },
+  "gpu-overhead": { variable: "OLLAMA_GPU_OVERHEAD", value: { kind: "count", min: 0 } },
+  "sched-spread": { variable: "OLLAMA_SCHED_SPREAD", value: { kind: "boolean" } },
+  "load-timeout": { variable: "OLLAMA_LOAD_TIMEOUT", value: { kind: "duration" } }
+};
+var REFUSED_OLLAMA_SETTINGS = {
+  host: "Codeman runs Ollama on the pod's loopback, where only its gateway reaches it",
+  origins: "only Codeman's gateway calls Ollama, from the pod's loopback",
+  "keep-alive": "Codeman keeps the model loaded for as long as the pod lives",
+  models: "Codeman pulls the model where the pod image keeps models, on the disk it sizes for it",
+  remotes: "remote models would send the runs' requests off the pod",
+  "debug-log-requests": "it writes the runs' requests, with the repository's code in them, to the pod's disk"
+};
+var DURATION = /^(?:[0-9]+|(?:[0-9]+(?:\.[0-9]+)?(?:h|m|s|ms))+)$/;
+function keyOf(written) {
+  return written.toLowerCase().replace(/^ollama_/, "").replaceAll("_", "-");
+}
+function ollamaSetting(key, text) {
+  const fail = (error3) => ({ ok: false, error: error3 });
+  const setting2 = OLLAMA_SETTINGS[key];
+  if (!setting2) {
+    const kebab = keyOf(key);
+    const refused = REFUSED_OLLAMA_SETTINGS[kebab];
+    if (refused) return fail(`\`ollama\` cannot set \`${kebab}\`: ${refused}.`);
+    if (kebab !== key && OLLAMA_SETTINGS[kebab]) {
+      return fail(
+        `\`ollama\` takes its keys in kebab-case, without \`OLLAMA_\`: write \`${kebab}\`, not \`${key}\`.`
+      );
+    }
+    return fail(
+      `\`ollama\` does not accept \`${key}\`; it takes ${list(Object.keys(OLLAMA_SETTINGS).map((name) => `\`${name}\``))} (docs/settings/ollama.md).`
+    );
+  }
+  const { value } = setting2;
+  switch (value.kind) {
+    case "count": {
+      const number3 = /^[0-9]+$/.test(text) ? Number(text) : Number.NaN;
+      return Number.isSafeInteger(number3) && number3 >= value.min ? { ok: true, value: String(number3) } : fail(`\`ollama\`'s \`${key}\` must be a whole number, at least ${value.min}.`);
+    }
+    case "boolean":
+      return text === "true" || text === "false" ? { ok: true, value: text } : fail(`\`ollama\`'s \`${key}\` must be \`true\` or \`false\`.`);
+    case "choice":
+      return value.values.includes(text) ? { ok: true, value: text } : fail(
+        `\`ollama\`'s \`${key}\` must be one of ${value.values.map((v) => `\`${v}\``).join(", ")}.`
+      );
+    case "duration":
+      return DURATION.test(text) ? { ok: true, value: text } : fail(
+        `\`ollama\`'s \`${key}\` must be a duration, such as \`10m\` or \`1h30m\`, or whole seconds.`
+      );
+  }
+}
+function ollamaEnvironment(settings) {
+  const entries = Object.entries(settings ?? {}).map(([key, text]) => {
+    const checked = ollamaSetting(key, text);
+    if (!checked.ok) throw new Error(checked.error);
+    return [OLLAMA_SETTINGS[key]?.variable ?? key, checked.value];
+  });
+  return Object.fromEntries(entries.sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0));
+}
+function list(items) {
+  return items.length < 2 ? items[0] ?? "" : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
+}
 var MODEL = /^[a-z0-9][a-z0-9._-]*(\/[a-z0-9][a-z0-9._-]*){0,2}(:[a-z0-9][a-z0-9._-]*)?$/i;
 var ollama = {
   name: "ollama",
@@ -20223,6 +20297,7 @@ function sleep(ms) {
 // src/inference/providers.ts
 var PROVIDER_NAMES = ["openrouter", "runpod-pod", "runpod-serverless"];
 var PROVIDER_SETTINGS = ["engine", "gpu", "endpoint", "pod-reuse"];
+var PROVIDER_BLOCKS = ["ollama"];
 var ACCOUNTS = {
   openrouter: {
     input: "management-key",
@@ -20240,6 +20315,7 @@ var PROVIDERS = {
       gpu: { required: true, example: '"NVIDIA RTX A6000"' },
       "pod-reuse": { values: ["task", "run"], default: "task" }
     },
+    blocks: { ollama: { engine: "ollama" } },
     model: "engine",
     secrets: []
   },
@@ -20257,6 +20333,9 @@ var PROVIDERS = {
 function isProviderName(name) {
   return PROVIDER_NAMES.includes(name);
 }
+function isProviderBlock(name) {
+  return PROVIDER_BLOCKS.includes(name);
+}
 function accountOf(provider) {
   return isProviderName(provider) ? PROVIDERS[provider].account : provider;
 }
@@ -20273,8 +20352,9 @@ function providerProblem(settings, serves = true) {
   const name = settings.provider;
   if (!isProviderName(name)) return `Unknown provider \`${name}\`.`;
   const provider = PROVIDERS[name];
-  for (const setting2 of PROVIDER_SETTINGS) {
-    if (settings[setting2] !== void 0 && !provider.settings[setting2]) {
+  for (const setting2 of [...PROVIDER_SETTINGS, ...PROVIDER_BLOCKS]) {
+    const accepted = isProviderBlock(setting2) ? provider.blocks?.[setting2] : provider.settings[setting2];
+    if (settings[setting2] !== void 0 && !accepted) {
       return `\`${name}\` does not accept \`${setting2}\`; ${acceptedText(name)}`;
     }
   }
@@ -20293,6 +20373,19 @@ function providerProblem(settings, serves = true) {
       return setting2 === "engine" ? `\`${name}\` does not offer the engine \`${value}\`; it offers ${offered}.` : `With \`${name}\`, \`${setting2}\` must be one of ${offered}, not \`${value}\`.`;
     }
   }
+  const engine = settings.engine ?? provider.settings.engine?.default;
+  for (const block of PROVIDER_BLOCKS) {
+    const spec = provider.blocks?.[block];
+    if (!spec || settings[block] === void 0) continue;
+    if (engine !== spec.engine) {
+      return `With \`${name}\`, \`${block}\` configures the engine \`${spec.engine}\`, not \`${engine}\`.`;
+    }
+    try {
+      ollamaEnvironment(settings[block]);
+    } catch (error3) {
+      return error3 instanceof Error ? error3.message : String(error3);
+    }
+  }
   return serves ? modelProblem(name, settings.model, settings.engine) : void 0;
 }
 function withProviderDefaults(settings) {
@@ -20306,10 +20399,13 @@ function withProviderDefaults(settings) {
   return filled;
 }
 function acceptedText(name) {
-  const accepted = Object.keys(PROVIDERS[name].settings).map((setting2) => `\`${setting2}\``);
-  return accepted.length === 0 ? "it takes only `model`." : `besides \`model\`, it takes ${list(accepted)}.`;
+  const { settings, blocks = {} } = PROVIDERS[name];
+  const accepted = [...Object.keys(settings), ...Object.keys(blocks)].map(
+    (setting2) => `\`${setting2}\``
+  );
+  return accepted.length === 0 ? "it takes only `model`." : `besides \`model\`, it takes ${list2(accepted)}.`;
 }
-function list(items) {
+function list2(items) {
   return items.length < 2 ? items[0] ?? "" : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
 }
 function modelProblem(name, model, engine) {
@@ -20769,6 +20865,8 @@ var Gateway = class {
   lastActivity;
   ready = false;
   contextLength;
+  /** The Ollama variables from the pod's settings that it gave Ollama, which the status reports. */
+  ollama = {};
   constructor(options) {
     this.#options = options;
     this.#now = options.now ?? Date.now;
@@ -20960,6 +21058,7 @@ var Gateway = class {
       version: GATEWAY_VERSION,
       ready: this.ready,
       contextLength: this.contextLength,
+      ollama: this.ollama,
       serving: this.serving,
       deadline: this.deadline,
       lastActivity: this.lastActivity,
@@ -21583,9 +21682,23 @@ function leaseHolder(repository, task) {
 function servesOneRun(image) {
   return SINGLE_RUN_IMAGES.has(image);
 }
+function ollamaVariables(settings) {
+  return Object.entries(settings.ollama ?? {}).map(([name, value]) => `${name}=${value}`);
+}
+function quotedVariables(settings) {
+  return ollamaVariables(settings).map((variable) => `\`${variable}\``).join(", ");
+}
 function podSettingsKey(settings, holder) {
   const { model, gpuType, image, reuse } = settings;
-  const parts = [model, gpuType, image, reuse, ...servesOneRun(image) ? [holder] : []];
+  const ollama2 = ollamaVariables(settings);
+  const parts = [
+    model,
+    gpuType,
+    image,
+    reuse,
+    ...servesOneRun(image) ? [holder] : [],
+    ...ollama2.length > 0 ? [`ollama ${ollama2.join(" ")}`] : []
+  ];
   return sha256(parts.join("\n")).slice(0, 16);
 }
 function ofOrganization(pod, owner) {
@@ -21633,12 +21746,25 @@ var PodInference = class {
   #now() {
     return this.#options.now?.() ?? /* @__PURE__ */ new Date();
   }
+  /**
+   * Refuses, before any pod, an image known not to apply Ollama settings when the run has some:
+   * a requested setting is never dropped (choice 8 of the Ollama settings plan).
+   */
+  #checkImage() {
+    const ollama2 = ollamaVariables(this.#settings);
+    const { image } = this.#settings;
+    if (ollama2.length === 0 || !IMAGES_WITHOUT_OLLAMA_SETTINGS.has(image)) return;
+    throw new Error(
+      `The pod image ${image} cannot apply Ollama settings (${quotedVariables(this.#settings)}), so no pod was created: use a version of Codeman whose pod image can, or remove \`ollama\` from the settings. See docs/settings/ollama.md#pod-images.`
+    );
+  }
   async open(run2, log) {
     const token = randomBytes2(32).toString("base64url");
     const holder = leaseHolder(this.#options.repository, run2.task);
     const settings = podSettingsKey(this.#settings, holder);
     let handle;
     try {
+      this.#checkImage();
       await this.#sweep(holder, settings, log);
       handle = await this.#claim(run2, holder, settings, token, log);
     } catch (error3) {
@@ -21951,11 +22077,18 @@ var PodInference = class {
       }
     );
     const shared = !servesOneRun(image);
-    if (shared) {
+    const ollama2 = this.#settings.ollama ?? {};
+    const configured = Object.keys(ollama2).length > 0;
+    if (shared || configured) {
       const status2 = await this.#admin(target, "GET", "/admin/status");
-      if ((status2.version ?? 1) < GATEWAY_VERSION) {
+      if (shared && (status2.version ?? 1) < GATEWAY_VERSION) {
         throw new Error(
           `Pod ${podId}'s gateway serves one run at a time: list its image in SINGLE_RUN_IMAGES (src/inference/ollama.ts) to give each task a pod of its own on it.`
+        );
+      }
+      if (configured && !sameVariables(status2.ollama, ollama2)) {
+        throw new Error(
+          `Pod ${podId}'s gateway did not apply the Ollama settings (${quotedVariables(this.#settings)}): its image cannot. List the image in IMAGES_WITHOUT_OLLAMA_SETTINGS (src/inference/ollama.ts), or use one built since Ollama settings.`
         );
       }
     }
@@ -21997,6 +22130,7 @@ var PodInference = class {
       name: `codeman-${owner}-${record.settings}`.slice(0, 100),
       image,
       env: {
+        ...Object.keys(this.#settings.ollama ?? {}).length > 0 ? { CODEMAN_OLLAMA: JSON.stringify(this.#settings.ollama) } : {},
         CODEMAN_ORGANIZATION: owner,
         CODEMAN_POD_SETTINGS: record.settings,
         CODEMAN_NONCE: record.nonce,
@@ -22022,6 +22156,11 @@ var PodInference = class {
     return callGateway(fetchFn, accountKey, target, method, path, body);
   }
 };
+function sameVariables(reported, requested) {
+  if (typeof reported !== "object" || reported === null) return false;
+  const names = Object.keys(requested);
+  return Object.keys(reported).length === names.length && names.every((name) => reported[name] === requested[name]);
+}
 function sweepChange(pod, context3) {
   const { now, status: status2 } = context3;
   if (pod.status === "creating") {
@@ -22243,7 +22382,8 @@ function inferenceChoice(settings, record, options = {}) {
     ...common,
     provider: "runpod-pod",
     gpu: settings.gpu ?? "",
-    podReuse: settings["pod-reuse"] === "run" ? "run" : "task"
+    podReuse: settings["pod-reuse"] === "run" ? "run" : "task",
+    ...settings.ollama && Object.keys(settings.ollama).length > 0 ? { ollama: settings.ollama } : {}
   };
 }
 function parseInferenceChoice(text) {
@@ -22257,6 +22397,12 @@ function parseInferenceChoice(text) {
   if (choice.provider === "openrouter") return choice;
   const valid = typeof choice.model === "string" && ENGINES[choice.engine] !== void 0 && Array.isArray(choice.pods) && (choice.provider === "runpod-pod" ? typeof choice.gpu === "string" : typeof choice.endpoint === "string");
   if (!valid) throw new Error("The inference input is not a valid choice.");
+  if (choice.provider === "runpod-pod" && choice.ollama !== void 0) {
+    const ollama2 = choice.ollama;
+    const strings = typeof ollama2 === "object" && ollama2 !== null && !Array.isArray(ollama2) && Object.values(ollama2).every((value) => typeof value === "string");
+    if (!strings) throw new Error("The inference input is not a valid choice.");
+    ollamaEnvironment(choice.ollama);
+  }
   return choice;
 }
 function zero() {
@@ -22317,7 +22463,8 @@ function selfHosted(choice, repository, inputs) {
         ...common,
         gpuType: choice.gpu,
         image: inputs.image,
-        reuse: choice.podReuse
+        reuse: choice.podReuse,
+        ollama: ollamaEnvironment(choice.ollama)
       },
       { repository, gpu, accountKey: inputs.accountKey, store: inputs.store() }
     );
@@ -28334,7 +28481,7 @@ var YamlError = class extends Error {
     this.line = line;
   }
 };
-var KEY = /^([a-z][a-z0-9-]*):(?:\s+(.*))?$/;
+var KEY = /^([A-Za-z][A-Za-z0-9_-]*):(?:\s+(.*))?$/;
 var ITEM = /^-(?:\s|$)/;
 function parseYaml(text) {
   const lines = [];
@@ -28399,6 +28546,12 @@ var Reader = class {
       return { kind: "scalar", line: line.number, text: "" };
     }
     if (text.startsWith("[")) return flowList(key, line.number, text);
+    if (text.startsWith("{")) {
+      throw new YamlError(
+        line.number,
+        `the value of \`${key}\` is in braces, which the settings do not read: write each \`name: value\` on its own line, indented under \`${key}:\`.`
+      );
+    }
     const value = scalar(text);
     if (value === void 0) {
       throw new YamlError(line.number, `the value of \`${key}\` is not a plain value.`);
@@ -28407,7 +28560,7 @@ var Reader = class {
   }
   /** The `- item` lines at `indent`. An item is a scalar or a mapping that starts on its line. */
   #list(indent) {
-    const list2 = { kind: "list", line: this.peek()?.number ?? 1, items: [] };
+    const list3 = { kind: "list", line: this.peek()?.number ?? 1, items: [] };
     for (let line = this.peek(); line && line.indent >= indent; line = this.peek()) {
       if (line.indent > indent) throw new YamlError(line.number, "unexpected indentation.");
       if (!ITEM.test(line.text)) break;
@@ -28422,16 +28575,16 @@ var Reader = class {
       if (KEY.test(content)) {
         line.indent += 1 + after.length - content.length;
         line.text = content;
-        list2.items.push(this.mapping(line.indent));
+        list3.items.push(this.mapping(line.indent));
         continue;
       }
       this.#next++;
       const value = scalar(content);
       if (value === void 0)
         throw new YamlError(line.number, "a list item is not a plain value.");
-      list2.items.push({ kind: "scalar", line: line.number, text: value });
+      list3.items.push({ kind: "scalar", line: line.number, text: value });
     }
-    return list2;
+    return list3;
   }
 };
 function flowList(key, line, text) {
@@ -28462,7 +28615,7 @@ function scalar(text) {
   if (quoted) return quoted[2];
   return plainScalar(text.replace(/\s+#.*$/, "").trim());
 }
-var WORD = /^[A-Za-z0-9._~/:-]*$/;
+var WORD = /^[A-Za-z0-9._~/:_-]*$/;
 function plainScalar(text) {
   const words = text.split(/ +/);
   if (!words.every((word) => WORD.test(word))) return void 0;
@@ -28564,6 +28717,7 @@ function isSettingName(name) {
   return NAMES.includes(name);
 }
 function parseSetting(name, text) {
+  if (name === "ollama") return { ok: false, error: OLLAMA_BLOCK };
   if (name === "model") {
     return isModelName(text) ? { ok: true, value: text } : {
       ok: false,
@@ -28601,7 +28755,14 @@ function parseSetting(name, text) {
   }
   return { ok: true, value };
 }
-var PROFILE_SETTINGS = ["provider", "model", ...PROVIDER_SETTINGS];
+var PROFILE_SETTINGS = [
+  "provider",
+  "model",
+  ...PROVIDER_SETTINGS,
+  ...PROVIDER_BLOCKS
+];
+var PROVIDER_KEYS = [...PROVIDER_SETTINGS, ...PROVIDER_BLOCKS];
+var OLLAMA_BLOCK = "`ollama` must be a block of Ollama's settings, one `name: value` per line, indented under it, such as `num-parallel: 4`.";
 function renamedSetting(name, value) {
   const now = (text) => `\`${name}\` is now ${text}.`;
   switch (name) {
@@ -28641,7 +28802,7 @@ function parseSettings(text, source = SETTINGS_FILE) {
   if (!tree.ok) return { ok: false, error: `${source}, line ${tree.line}: ${tree.error}` };
   const settings = {};
   for (const entry of tree.value.entries) {
-    const parsed = entry.key === "profiles" ? profiles(entry.value) : setting(entry, "setting");
+    const parsed = entry.key === "profiles" ? profiles(entry.value) : entry.key === "ollama" ? ollamaBlock(entry) : setting(entry, "setting");
     if (!parsed.ok) return { ok: false, error: `${source}, line ${parsed.line}: ${parsed.error}` };
     if (source !== SHARED_SETTINGS && isSettingName(entry.key) && ORGANIZATION_SETTINGS.has(entry.key)) {
       return {
@@ -28650,6 +28811,24 @@ function parseSettings(text, source = SETTINGS_FILE) {
       };
     }
     settings[entry.key] = parsed.value;
+  }
+  return { ok: true, value: settings };
+}
+function ollamaBlock(entry) {
+  const { line, value } = entry;
+  if (value.kind !== "map") return { ok: false, line, error: OLLAMA_BLOCK };
+  const settings = {};
+  for (const { key, line: keyLine, value: keyValue } of value.entries) {
+    if (keyValue.kind !== "scalar") {
+      return {
+        ok: false,
+        line: keyLine,
+        error: `the value of \`ollama\`'s \`${key}\` is not a plain value.`
+      };
+    }
+    const checked = ollamaSetting(key, keyValue.text);
+    if (!checked.ok) return { ok: false, line: keyLine, error: checked.error };
+    settings[key] = checked.value;
   }
   return { ok: true, value: settings };
 }
@@ -28695,20 +28874,20 @@ function profiles(node) {
       error: "`profiles` must be a list of profiles, each a block of settings."
     };
   }
-  const list2 = [];
+  const list3 = [];
   for (const item of node.items) {
     const parsed = profile(item);
     if (!parsed.ok) return parsed;
-    if (list2.some((other) => other.name === parsed.value.name)) {
+    if (list3.some((other) => other.name === parsed.value.name)) {
       return {
         ok: false,
         line: item.line,
         error: `two profiles are named \`${parsed.value.name}\`.`
       };
     }
-    list2.push(parsed.value);
+    list3.push(parsed.value);
   }
-  return { ok: true, value: list2 };
+  return { ok: true, value: list3 };
 }
 function profile(node) {
   if (node.kind !== "map") return { ok: false, line: node.line, error: "expected a profile." };
@@ -28728,6 +28907,10 @@ function profile(node) {
       const parsed = condition(entry, key);
       if (!parsed.ok) return parsed;
       Object.assign(result.conditions, { [key]: parsed.value });
+    } else if (key === "ollama") {
+      const parsed = ollamaBlock(entry);
+      if (!parsed.ok) return parsed;
+      result.settings.ollama = parsed.value;
     } else {
       const parsed = setting(entry, "profile");
       if (!parsed.ok) return parsed;
@@ -28779,7 +28962,7 @@ function condition(entry, name) {
 }
 function resolveLayers(layers) {
   const [own = {}] = layers;
-  const { profiles: list2 = [], ...values } = merge3(layers);
+  const { profiles: list3 = [], ...values } = merge3(layers);
   const inherited = serving(
     layers.slice(1).map((settings, index) => ({
       name: layerSource(index + 1),
@@ -28798,7 +28981,7 @@ function resolveLayers(layers) {
   const topError = settingsProblem(top);
   if (topError) return { ok: false, error: topError };
   const profiled = [];
-  for (const profile2 of list2) {
+  for (const profile2 of list3) {
     const name = `Profile \`${profile2.name}\``;
     const served = serving([{ name, source: name, settings: profile2.settings }], {
       source: "the top level",
@@ -28884,9 +29067,9 @@ function applies(profile2, run2) {
   return (!stages || stages.includes(run2.stage)) && (tasks === void 0 || run2.tasks === tasks) && (min === void 0 || run2.tasks >= min) && (max === void 0 || run2.tasks <= max);
 }
 function tasksPerRun(layers) {
-  const list2 = layers.find((layer) => layer.profiles !== void 0)?.profiles ?? [];
+  const list3 = layers.find((layer) => layer.profiles !== void 0)?.profiles ?? [];
   let most = 1;
-  for (const { conditions } of list2) {
+  for (const { conditions } of list3) {
     const { tasks, "min-tasks": min, "max-tasks": max } = conditions;
     const named = tasks ?? max ?? (min === void 0 ? void 0 : MAX_TASKS);
     if (named !== void 0) most = Math.max(most, named);
@@ -28915,10 +29098,12 @@ function serving(layers, base) {
           error: `${name} names \`${provider}\`, but inherits \`${result.provider}\` from ${from}, so it must set its own \`model\`, one for \`${provider}\`.`
         };
       }
-      result = omit2(result, PROVIDER_SETTINGS);
+      result = omit2(result, PROVIDER_KEYS);
     }
     if (provider !== void 0) from = source;
-    Object.assign(result, pick(settings, PROFILE_SETTINGS));
+    const { ollama: ollama2, ...values } = pick(settings, PROFILE_SETTINGS);
+    Object.assign(result, values);
+    if (ollama2 !== void 0) result.ollama = { ...result.ollama, ...ollama2 };
   }
   return { ok: true, value: result };
 }
@@ -28945,7 +29130,7 @@ function omit2(layer, names) {
 }
 function settingSources(layers) {
   const named = /* @__PURE__ */ new Set();
-  const show = (value) => Array.isArray(value) ? `[${value.map((profile2) => profile2.name).join(", ")}]` : String(value);
+  const show = (value) => Array.isArray(value) ? `[${value.map((profile2) => profile2.name).join(", ")}]` : typeof value === "object" && value !== null ? `{${Object.entries(value).map(([key, text]) => `${key}: ${text}`).join(", ")}}` : String(value);
   return layers.flatMap((layer, index) => {
     const values = Object.entries(layer).filter(
       ([name, value]) => value !== void 0 && !named.has(name)
@@ -28960,7 +29145,12 @@ function settingsProblem(settings) {
   const values = pick(settings, PROVIDER_SETTINGS);
   const model = settings.model ?? "";
   return providerProblem(
-    { ...values, provider: settings.provider ?? DEFAULTS2.provider, model },
+    {
+      ...values,
+      ...settings.ollama === void 0 ? {} : { ollama: settings.ollama },
+      provider: settings.provider ?? DEFAULTS2.provider,
+      model
+    },
     model !== ""
   );
 }
@@ -29083,7 +29273,7 @@ function parseRouteOutput(text, limits) {
   const seen = /* @__PURE__ */ new Set();
   const steps = (value, name, field) => {
     if (!Array.isArray(value)) return { ok: false, error: `${name} must be a list.` };
-    const list2 = [];
+    const list3 = [];
     for (const [index, item] of value.entries()) {
       const where = `${name}[${index}]`;
       if (!isObject(item) || !ROUTED_STAGES.includes(item.stage)) {
@@ -29094,9 +29284,9 @@ function parseRouteOutput(text, limits) {
       seen.add(stage);
       const text2 = string(item[field], `${where}.${field}`, limits.summary, cuts);
       if (!text2.ok) return text2;
-      list2.push({ stage, [field]: text2.value });
+      list3.push({ stage, [field]: text2.value });
     }
-    return { ok: true, value: list2 };
+    return { ok: true, value: list3 };
   };
   const route = steps(data.route, "route", "brief");
   if (!route.ok) return route;
@@ -32971,9 +33161,9 @@ async function select(services) {
     runtime2.info("Nothing to do.");
     return;
   }
-  const list2 = picked.map((one) => `#${one.number} (${one.action})`).join(", ");
+  const list3 = picked.map((one) => `#${one.number} (${one.action})`).join(", ");
   runtime2.info(
-    `Picked ${picked.length} task(s), of up to ${cap}: ${list2}; ${agentPick.tasks} run an agent.`
+    `Picked ${picked.length} task(s), of up to ${cap}: ${list3}; ${agentPick.tasks} run an agent.`
   );
   for (const one of picked) await one.start();
   const runOf = (one) => ledgerRunId(runtime2.run.id, runtime2.run.attempt, one.number);
