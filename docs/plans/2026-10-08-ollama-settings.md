@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-10-08T23:20:05-03:00
-updated_at: 2026-10-08T23:28:17-03:00
+updated_at: 2026-10-08T23:31:28-03:00
 commit: b8843a0
 ---
 
@@ -74,6 +74,7 @@ Settled conservatively, within the decisions above.
 5. The gateway: reading `CODEMAN_OLLAMA`, the variables on every start of Ollama with its own winning, the configured context length, the log line, `/admin/status`, terminating on an unreadable value (`src/gateway/main.ts`, `src/gateway/pod.ts`, `src/gateway/gateway.ts`). Done when `src/gateway/pod.test.ts` covers the parsing and the context length.
    - **Done on 2026-10-08**: `podSettings` reads `CODEMAN_OLLAMA` (`parseOllamaVariables`); `main` terminates the pod when it cannot ("its Ollama settings cannot be applied: …"), logs "Ollama settings: OLLAMA_NUM_PARALLEL=4.", and starts Ollama with `ollamaServeEnvironment` (the gateway's environment, the variables, then `OLLAMA_HOST`, `OLLAMA_KEEP_ALIVE` and the restart's context length). `prepareOllama` takes the configured context length: no restart, and that one reported. The gateway's `/admin/status` has `ollama`. Tests in `src/gateway/pod.test.ts`.
 6. Docs and templates: a page for the Ollama settings with the table of accepted and refused keys (variable, type, Ollama's default, meaning, the version they come from), checked against the code by a test; [providers](../settings/providers.md) for `runpod-pod`; [settings](../settings/reference.md); [provider settings across layers](../settings/provider-settings-across-layers.md); [pods](../inference/pods.md); [Runpod's installation](../installation/runpod.md) with the GPU types page and an `ollama:` example; [development](../development/guide.md); `docs/README.md`; `templates/settings.yml`. Done when the docs tests and the template test pass.
+   - **Done on 2026-10-08**: [Ollama settings](../settings/ollama.md) has the example, the tables of accepted and refused keys (from Ollama 0.35.1), the errors, how they apply, memory, pod images and how to add a key; `src/inference/ollama.test.ts` checks its tables against the code, `OLLAMA_VERSION` against the Dockerfile, and that the source page is recorded. [Providers](../settings/providers.md) has the `ollama` row (its test now takes the registry's blocks) and the pod image; [settings](../settings/reference.md), [provider settings across layers](../settings/provider-settings-across-layers.md) (key by key), [pods](../inference/pods.md), [Runpod's installation](../installation/runpod.md) (the recorded GPU types page and an `ollama:` example), [development](../development/guide.md), [dependencies](../development/dependencies.md) and `docs/README.md` follow. `templates/settings.yml` has a commented `ollama:` block in `runpod-pod`'s, which the template test reads.
 7. Rebuild `dist/` and run `npm run check`. Done when it passes, the working tree is clean, and `dist/gateway.js` has changed, which needs a new pod image (the end-to-end test's first step).
 
 ## End-to-end test

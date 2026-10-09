@@ -624,7 +624,10 @@ test("today's flat files read the same, and the template is one", () => {
       Object.keys(block ?? {})
         .filter((setting) => setting !== "provider")
         .sort(),
-      Object.keys(PROVIDERS[name].settings).sort(),
+      [
+        ...Object.keys(PROVIDERS[name].settings),
+        ...Object.keys(PROVIDERS[name].blocks ?? {}),
+      ].sort(),
       name,
     );
   }

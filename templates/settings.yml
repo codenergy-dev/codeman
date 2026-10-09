@@ -23,6 +23,11 @@ provider: openrouter
 # pod-reuse: task
 # The engine: ollama, the only one on pods so far.
 # engine: ollama
+# The pod's Ollama server: each key becomes one of its variables (num-parallel: OLLAMA_NUM_PARALLEL).
+# Only the keys of docs/settings/ollama.md; memory grows with num-parallel x context-length.
+# ollama:
+#   num-parallel: 4
+#   context-length: 65536
 
 # runpod-serverless: the workers of a Serverless endpoint you created, running Runpod's vLLM worker.
 # provider: runpod-serverless

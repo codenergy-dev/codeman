@@ -18,10 +18,20 @@ Instead of OpenRouter, Codeman can serve the model itself on GPUs rented from [R
    gpu: "NVIDIA RTX A6000"       # the GPU ID, quoted; on Secure Cloud
    ```
 
-   `gpu` is the GPU ID in [Runpod's list of GPU types](https://docs.runpod.io/references/gpu-types) (first column), not its display name: `NVIDIA RTX PRO 6000 Blackwell Server Edition MIG 2g.48gb`, not `PRO 6000 MIG 48GB`. Choose a GPU with enough memory for the model at its full context length: Codeman loads it with the context length the model supports.
+   `gpu` is the GPU ID in [Runpod's list of GPU types](https://docs.runpod.io/references/gpu-types) (first column), not its display name: `NVIDIA RTX PRO 6000 Blackwell Server Edition MIG 2g.48gb`, not `PRO 6000 MIG 48GB` ([what Codeman relies on](../web/runpod/gpu-types.md)). Choose a GPU with enough memory for the model at its full context length: Codeman loads it with the context length the model supports, unless the Ollama settings give one.
+
+   To tune the pod's Ollama server, such as several requests at once for the tasks that share a pod, add an `ollama:` block, with keys on indented lines ([Ollama settings](../settings/ollama.md)):
+
+   ```yaml
+   ollama:
+     num-parallel: 4          # four requests at once
+     context-length: 65536    # per request; memory grows with both
+   ```
+
+   Only the documented keys are accepted; a typo, or a key Codeman controls such as `host`, stops the run with an error before any pod is created.
 2. Codeman runs its own pod image, `ghcr.io/codenergy-dev/codeman-pod`, public and pinned by digest in the version you use (`POD_IMAGE` in `src/inference/ollama.ts`); there is nothing to set up. To run an image of your own, set `pod-image: <image>@sha256:<digest>` on the `open-key` step.
 
-   The organization's tasks with the same pod settings (model, `gpu`, image and `pod-reuse`), in any of its repositories, share one pod, and a pod kept after a run serves the next run on its settings ([shared pods](../inference/pods.md#shared-pods)). That needs an image whose gateway serves several runs at once, built from Codeman's code since shared pods. The image pinned before them serves one run at a time, and Codeman gives each task a pod of its own on it; an image of your own must serve several runs, or be listed in `SINGLE_RUN_IMAGES`, or its runs fail.
+   The organization's tasks with the same pod settings (model, `gpu`, image, `pod-reuse` and Ollama settings), in any of its repositories, share one pod, and a pod kept after a run serves the next run on its settings ([shared pods](../inference/pods.md#shared-pods)). That needs an image whose gateway serves several runs at once, built from Codeman's code since shared pods. The image pinned before them serves one run at a time, and Codeman gives each task a pod of its own on it; an image of your own must serve several runs, or be listed in `SINGLE_RUN_IMAGES`, or its runs fail. Ollama settings need an image built since them, too: the images pinned before cannot apply them, and a run with Ollama settings stops on them before any pod is created ([pod images](../settings/ollama.md#pod-images)).
 3. Codeman keeps its pods in the [backend](setup.md#4-set-up-the-backend), and terminates the pods of the Runpod account that carry the organization's environment (`CODEMAN_ORGANIZATION`, or `CODEMAN_REPOSITORY` of one of its repositories) and that its registry does not hold. Create other pods of the account without those variables, or in another account; Codeman never touches them.
 
 ## Serverless

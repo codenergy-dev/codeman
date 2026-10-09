@@ -1,6 +1,6 @@
 # Providers
 
-`provider` chooses where a run's model is served. Each provider accepts its own settings beside `model`, and a setting it does not accept, a value it does not offer, or a required setting it lacks stops the run with an error that names the provider. A top level without a `model` serves no run, so it is checked only for what its provider accepts ([profiles](profiles.md#checks)). The registry in [`src/inference/providers.ts`](../../src/inference/providers.ts) holds them; a new provider is a new entry. The choices were made in the [provider settings plan](../plans/2026-10-08-provider-settings.md).
+`provider` chooses where a run's model is served. Each provider accepts its own settings beside `model`, and some a block of settings for their engine, and a setting it does not accept, a value it does not offer, or a required setting it lacks stops the run with an error that names the provider. A top level without a `model` serves no run, so it is checked only for what its provider accepts ([profiles](profiles.md#checks)). The registry in [`src/inference/providers.ts`](../../src/inference/providers.ts) holds them; a new provider is a new entry. The choices were made in the [provider settings plan](../plans/2026-10-08-provider-settings.md).
 
 What a [layer](reference.md) or a [profile](profiles.md) that names another provider keeps of the provider settings it inherits is in [provider settings across layers](provider-settings-across-layers.md).
 
@@ -23,10 +23,12 @@ A pod Codeman creates on Runpod's Secure Cloud, shared by the organization's tas
 | `gpu` | none; required | The pod's GPU type, by Runpod's GPU ID (not its display name), such as `"NVIDIA RTX A6000"` (quoted or not in the file; `/codeman set gpu` takes the rest of its line) |
 | `pod-reuse` | `task` | `task`: a pod is kept after a run for the next run on its settings, of any task; `run`: a pod ends with its runs |
 | `engine` | `ollama` | What serves the model; `ollama` is the only engine on pods so far |
+| `ollama` | none | The pod's Ollama settings, with the engine `ollama`: a block of keys, each one of the server's variables, such as `num-parallel: 4` for `OLLAMA_NUM_PARALLEL=4`; only the keys of [Ollama settings](ollama.md) |
 
 - **Model ID:** Ollama's, such as `qwen3-coder:30b`.
 - **Secrets:** `CODEMAN_RUNPOD_API_KEY`, in the key jobs.
 - **Cost:** the pod's time at its price, split among the runs on it ([spend](../budget/spend.md#self-hosted-runs)).
+- **Pod image:** Ollama settings need an image whose gateway applies them; a run with some on an image that cannot stops before any pod is created ([Ollama settings](ollama.md#pod-images)).
 
 ## `runpod-serverless`
 

@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
+import { existsSync, readFileSync } from "node:fs";
 import { test } from "node:test";
 import {
   OLLAMA_SETTINGS,
+  OLLAMA_VERSION,
+  type OllamaValue,
   ollamaEnvironment,
   ollamaSetting,
   parseOllamaVariables,
@@ -52,4 +55,54 @@ test("the gateway reads CODEMAN_OLLAMA: only the listed variables, with valid va
   });
   assert.equal(parseOllamaVariables("[]").ok, false);
   assert.equal(parseOllamaVariables("{").ok, false);
+});
+
+test("the docs list the accepted and refused keys of the code, for the pod image's Ollama", () => {
+  const docs = readFileSync("docs/settings/ollama.md", "utf8");
+  const section = (heading: string) => docs.split(`## ${heading}\n`)[1]?.split(/^## /m)[0] ?? "";
+  const rows = (text: string) =>
+    [...text.matchAll(/^\| `([a-z-]+)` \| `([A-Z_]+)` \| ([^|]+) \|/gm)].map((match) => [
+      match[1],
+      match[2],
+      (match[3] ?? "").trim(),
+    ]);
+  const described = (value: OllamaValue) => {
+    switch (value.kind) {
+      case "count":
+        return `Whole number, at least ${value.min}`;
+      case "boolean":
+        return "`true` or `false`";
+      case "choice":
+        return `${value.values
+          .slice(0, -1)
+          .map((v) => `\`${v}\``)
+          .join(", ")} or \`${value.values.at(-1)}\``;
+      case "duration":
+        return "A duration, such as `10m` or `1h30m`, or whole seconds";
+    }
+  };
+  assert.deepEqual(
+    rows(section("Accepted keys")),
+    Object.entries(OLLAMA_SETTINGS).map(([key, { variable, value }]) => [
+      key,
+      variable,
+      described(value),
+    ]),
+  );
+  assert.deepEqual(
+    rows(section("Refused keys")).map(([key, variable]) => [key, variable]),
+    Object.keys(REFUSED_OLLAMA_SETTINGS).map((key) => [
+      key,
+      `OLLAMA_${key.toUpperCase().replaceAll("-", "_")}`,
+    ]),
+  );
+  for (const [key, why] of Object.entries(REFUSED_OLLAMA_SETTINGS)) {
+    assert.ok(docs.includes(why.charAt(0).toUpperCase() + why.slice(1)), key);
+  }
+  assert.ok(section("Accepted keys").includes(`Ollama ${OLLAMA_VERSION}`));
+  const dockerfile = readFileSync("docker/pod/Dockerfile", "utf8");
+  assert.ok(dockerfile.includes(`FROM ollama/ollama:${OLLAMA_VERSION}@`), "the pod image's Ollama");
+  assert.ok(
+    existsSync(`docs/web/ollama/envconfig-config-go-at-v${OLLAMA_VERSION.replaceAll(".", "-")}.md`),
+  );
 });

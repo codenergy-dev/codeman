@@ -4,11 +4,11 @@ A run's settings come from [layers](reference.md) and, for some runs, a [profile
 
 ## The rule
 
-A provider's settings (`engine`, `gpu`, `endpoint`, `pod-reuse`) go with it.
+A provider's settings (`engine`, `gpu`, `endpoint`, `pod-reuse`, and the keys of the `ollama` block) go with it.
 
 1. Each layer inherits from its base, the layers before it ([settings](reference.md)): Codeman's default (`provider: openrouter`), the organization's settings, the repository's file, a manual run's inputs; then the run's profile, whose base is the top level; then the task's commands.
 2. A layer or profile that names another provider than the one it inherits starts with none of the inherited provider settings, and must set its own `model` ([the model](#the-model)).
-3. One that names the same provider, or none, keeps them, and replaces only those it sets.
+3. One that names the same provider, or none, keeps them, and replaces only those it sets. Each key of the `ollama` block counts as a setting of its own: a profile that sets `context-length` keeps the `num-parallel` it inherits ([Ollama settings](ollama.md#how-they-apply)).
 4. Then the provider's defaults fill what is left (`engine`; `pod-reuse: task`).
 
 Budgets and limits are not provider settings, and never drop.
@@ -111,7 +111,7 @@ The profile changes provider without `model`, so the first run, whatever its sta
 
 ## Summary
 
-| Where | Names a provider? | Inherited provider settings (`engine`, `gpu`, `endpoint`, `pod-reuse`) | Inherited `model` |
+| Where | Names a provider? | Inherited provider settings (`engine`, `gpu`, `endpoint`, `pod-reuse`, the `ollama` keys) | Inherited `model` |
 | --- | --- | --- | --- |
 | Organization's settings, repository's file, or a profile, without `provider` | No | Kept; those it sets replace them | Carries over, unless it sets one |
 | The same, with the same provider as its base | Yes, the same | Kept; those it sets replace them | Carries over, unless it sets one |

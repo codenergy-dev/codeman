@@ -156,10 +156,14 @@ test("the docs give each provider the settings, defaults and secrets of the regi
       match[1] ?? "",
       (match[2] ?? "").trim(),
     ]);
-    const expected = Object.entries(PROVIDERS[name].settings).map(([setting, spec]) => [
-      setting,
-      spec.required ? "none; required" : `\`${spec.default}\``,
-    ]);
+    const expected = [
+      ...Object.entries(PROVIDERS[name].settings).map(([setting, spec]) => [
+        setting,
+        spec.required ? "none; required" : `\`${spec.default}\``,
+      ]),
+      // A block has no default: without it, the engine's own.
+      ...Object.keys(PROVIDERS[name].blocks ?? {}).map((block) => [block, "none"]),
+    ];
     assert.deepEqual(rows.sort(), expected.sort(), name);
     const secrets = [
       ...(/^- \*\*Secrets:\*\* (.*)$/m.exec(section)?.[1] ?? "").matchAll(/`([A-Z_]+)`/g),
