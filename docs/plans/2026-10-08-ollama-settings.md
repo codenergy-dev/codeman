@@ -1,7 +1,7 @@
 ---
-status: pending
+status: in progress
 created_at: 2026-10-08T23:20:05-03:00
-updated_at: 2026-10-08T23:20:05-03:00
+updated_at: 2026-10-08T23:21:07-03:00
 commit: b8843a0
 ---
 
@@ -64,7 +64,9 @@ Settled conservatively, within the decisions above.
 ## Steps
 
 1. Record the third-party pages: Runpod's GPU types, and Ollama's `envconfig` at v0.35.1, with the Ollama tool saying how source files are fetched. Done when `src/webdocs.test.ts` and the link checker pass.
+   - **Done on 2026-10-08**: committed as `b8843a0`: [GPU types](../web/runpod/gpu-types.md), in Codeman's own words; [envconfig/config.go at v0.35.1](../web/ollama/envconfig-config-go-at-v0-35-1.md), a full copy (the tag's `LICENSE` is MIT); the [Ollama tool](../web/tools/ollama.md) has a "Source files" item. Both tests pass.
 2. Write this plan. Done when it is committed with status `pending`, then set `in progress`.
+   - **Done on 2026-10-08**: committed as `deb08bb` with status `pending`, then set `in progress`.
 3. The list and the settings: the keys, their variables, types and the refused keys in `src/inference/ollama.ts`; the `ollama` block in the registry, `src/settings.ts` (parsing at the top level and in profiles, per-key inheritance, dropping on a change of provider, errors with their lines, the log's settings line) and `src/yaml.ts` (choice 10). Done when `src/settings.test.ts` and `src/inference/providers.test.ts` cover each rule and error, and `npm run typecheck` passes.
 4. The run: the `inference` choice carries the block (checked again when read), the pod's settings key and environment, the refusal of known images and the check of the gateway's report (`src/inference/index.ts`, `src/inference/selfhosted.ts`). Done when tests cover: a key unchanged without settings and different with them; `CODEMAN_OLLAMA` in a new pod's environment; the pinned image refused before any pod is created; a gateway that does not report the settings failing the run.
 5. The gateway: reading `CODEMAN_OLLAMA`, the variables on every start of Ollama with its own winning, the configured context length, the log line, `/admin/status`, terminating on an unreadable value (`src/gateway/main.ts`, `src/gateway/pod.ts`, `src/gateway/gateway.ts`). Done when `src/gateway/pod.test.ts` covers the parsing and the context length.
