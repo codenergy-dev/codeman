@@ -1,4 +1,4 @@
-import { ollamaContextLength } from "../inference/ollama.ts";
+import { ollamaContextLength, parseOllamaVariables } from "../inference/ollama.ts";
 
 /** The port a pod exposes, to the gateway; Ollama's own port stays on the pod's loopback. */
 export const GATEWAY_PORT = 8080;
@@ -54,6 +54,11 @@ export interface PodSettings {
   /** The provider's ID of this pod, and a key that may terminate it. */
   podId: string | undefined;
   podKey: string | undefined;
+  /**
+   * The Ollama variables of `CODEMAN_OLLAMA`, from the pod's `ollama` settings, or why they
+   * cannot be read: the pod then terminates rather than serve without them.
+   */
+  ollama: ReturnType<typeof parseOllamaVariables>;
 }
 
 export function podSettings(env: Record<string, string | undefined>): PodSettings {
@@ -72,6 +77,26 @@ export function podSettings(env: Record<string, string | undefined>): PodSetting
     policy: { startBy, keptIdleMs: keptIdle * 60_000, runIdleMs: runIdle * 60_000 },
     podId: env.RUNPOD_POD_ID,
     podKey: env.RUNPOD_API_KEY,
+    ollama: parseOllamaVariables(env.CODEMAN_OLLAMA),
+  };
+}
+
+/**
+ * The environment of `ollama serve`: the gateway's, then the variables of the pod's Ollama
+ * settings, then those the gateway sets itself, which always win: Ollama on the pod's loopback,
+ * the model kept loaded, and the context length it was restarted with.
+ */
+export function ollamaServeEnvironment(
+  base: Readonly<Record<string, string | undefined>>,
+  variables: Readonly<Record<string, string>>,
+  contextLength: number | undefined,
+): Record<string, string | undefined> {
+  return {
+    ...base,
+    ...variables,
+    OLLAMA_HOST: "127.0.0.1:11434",
+    OLLAMA_KEEP_ALIVE: "-1",
+    ...(contextLength ? { OLLAMA_CONTEXT_LENGTH: String(contextLength) } : {}),
   };
 }
 
@@ -86,12 +111,14 @@ export interface OllamaServer {
 /**
  * Pulls the model, restarts Ollama with the model's own context length (its default depends on
  * the GPU's memory), and loads the model so the first request does not wait for it. Returns the
- * context length. See docs/web/ollama/.
+ * context length. With `configured`, the `context-length` of the pod's Ollama settings, which
+ * Ollama started with, it does not restart Ollama, and returns that one. See docs/web/ollama/.
  */
 export async function prepareOllama(
   server: OllamaServer,
   model: string,
   log: (message: string) => void,
+  configured?: number,
 ): Promise<number | undefined> {
   const call = async (path: string, body: unknown): Promise<unknown> => {
     const response = await (server.fetch ?? fetch)(`${server.url}${path}`, {
@@ -105,6 +132,11 @@ export async function prepareOllama(
   await untilUp(server);
   log(`Pulling ${model}.`);
   await pull(server, model);
+  if (configured) {
+    log(`Serving ${model} with a context length of ${configured}, from the pod's settings.`);
+    await call("/api/generate", { model, keep_alive: -1 });
+    return configured;
+  }
   const contextLength = ollamaContextLength(await call("/api/show", { model }));
   log(`Serving ${model} with a context length of ${contextLength ?? "Ollama's default"}.`);
   await server.restart(contextLength);

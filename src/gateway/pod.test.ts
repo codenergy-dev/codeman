@@ -2,7 +2,13 @@ import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { test } from "node:test";
-import { expiry, type PodPolicy, podSettings, prepareOllama } from "./pod.ts";
+import {
+  expiry,
+  ollamaServeEnvironment,
+  type PodPolicy,
+  podSettings,
+  prepareOllama,
+} from "./pod.ts";
 
 const policy: PodPolicy = { startBy: 1_000_000, keptIdleMs: 900_000, runIdleMs: 1_800_000 };
 
@@ -56,7 +62,45 @@ test("reads the pod's settings from its environment", () => {
   assert.equal(settings.policy.keptIdleMs, 900_000);
   assert.equal(settings.policy.runIdleMs, 1_800_000);
   assert.equal(settings.podId, "abc");
+  assert.deepEqual(settings.ollama, { ok: true, value: {} }, "no Ollama settings");
   assert.throws(() => podSettings({ CODEMAN_MODEL: "m" }), /required/);
+});
+
+test("reads the pod's Ollama settings, and never lets one replace the gateway's own", () => {
+  const env = {
+    CODEMAN_MODEL: "qwen3-coder:30b",
+    CODEMAN_ADMIN_SHA256: "a".repeat(64),
+    CODEMAN_START_BY: "2026-10-03T12:25:00Z",
+  };
+  const settings = podSettings({
+    ...env,
+    CODEMAN_OLLAMA: '{"OLLAMA_CONTEXT_LENGTH":"65536","OLLAMA_NUM_PARALLEL":"4"}',
+  });
+  assert.deepEqual(settings.ollama, {
+    ok: true,
+    value: { OLLAMA_CONTEXT_LENGTH: "65536", OLLAMA_NUM_PARALLEL: "4" },
+  });
+  assert.deepEqual(podSettings({ ...env, CODEMAN_OLLAMA: '{"OLLAMA_KEEP_ALIVE":"5m"}' }).ollama, {
+    ok: false,
+    error: "CODEMAN_OLLAMA sets `OLLAMA_KEEP_ALIVE`, which Codeman does not.",
+  });
+  const serve = ollamaServeEnvironment(
+    { PATH: "/bin", OLLAMA_HOST: "0.0.0.0:11434" },
+    { OLLAMA_NUM_PARALLEL: "4", OLLAMA_KEEP_ALIVE: "5m", OLLAMA_CONTEXT_LENGTH: "65536" },
+    undefined,
+  );
+  assert.deepEqual(serve, {
+    PATH: "/bin",
+    OLLAMA_HOST: "127.0.0.1:11434",
+    OLLAMA_KEEP_ALIVE: "-1",
+    OLLAMA_NUM_PARALLEL: "4",
+    OLLAMA_CONTEXT_LENGTH: "65536",
+  });
+  assert.equal(
+    ollamaServeEnvironment({}, {}, 262144).OLLAMA_CONTEXT_LENGTH,
+    "262144",
+    "the model's own, when restarted with it",
+  );
 });
 
 test("pulls the model, restarts Ollama with its context length and loads it", async () => {
@@ -100,6 +144,37 @@ test("pulls the model, restarts Ollama with its context length and loads it", as
   );
   assert.match(calls[1] ?? "", /"model":"qwen3-coder:30b","stream":true/);
   assert.match(calls[4] ?? "", /"keep_alive":-1/);
+});
+
+test("with a context length in the pod's settings, Ollama is not restarted with the model's", async () => {
+  const calls: string[] = [];
+  const server: Server = createServer(async (request, response) => {
+    for await (const _ of request) {
+      // Drain the body.
+    }
+    calls.push(`${request.method} ${request.url}`);
+    response.writeHead(200, { "Content-Type": "application/json" });
+    response.end(request.url === "/api/pull" ? '{"status":"success"}\n' : "{}");
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const restarts: (number | undefined)[] = [];
+  const logs: string[] = [];
+  const contextLength = await prepareOllama(
+    { url, restart: async (length) => void restarts.push(length) },
+    "qwen3-coder:30b",
+    (message) => logs.push(message),
+    65536,
+  );
+  server.close();
+  assert.equal(contextLength, 65536);
+  assert.deepEqual(restarts, []);
+  assert.deepEqual(calls, ["GET /api/version", "POST /api/pull", "POST /api/generate"]);
+  assert.ok(
+    logs.includes(
+      "Serving qwen3-coder:30b with a context length of 65536, from the pod's settings.",
+    ),
+  );
 });
 
 test("a pull that reports an error stops the pod's start", async () => {

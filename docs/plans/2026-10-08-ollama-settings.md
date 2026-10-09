@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-10-08T23:20:05-03:00
-updated_at: 2026-10-08T23:27:13-03:00
+updated_at: 2026-10-08T23:28:17-03:00
 commit: b8843a0
 ---
 
@@ -72,6 +72,7 @@ Settled conservatively, within the decisions above.
 4. The run: the `inference` choice carries the block (checked again when read), the pod's settings key and environment, the refusal of known images and the check of the gateway's report (`src/inference/index.ts`, `src/inference/selfhosted.ts`). Done when tests cover: a key unchanged without settings and different with them; `CODEMAN_OLLAMA` in a new pod's environment; the pinned image refused before any pod is created; a gateway that does not report the settings failing the run.
    - **Done on 2026-10-08**: the `runpod-pod` choice has `ollama` (by key) only when there are some, and `parseInferenceChoice` checks it again; `selfHosted` gives `PodInference` the variables (`ollamaEnvironment`). `podSettingsKey` adds them only when there are some; `#launch` sets `CODEMAN_OLLAMA`; `open` refuses an image of `IMAGES_WITHOUT_OLLAMA_SETTINGS` before the sweep (`#checkImage`); `#attach` reads the gateway's status when the run has Ollama settings, and fails unless its `ollama` is exactly the variables. The fake gateway reports a `version`, and its real gateway the pod's variables. Tests in `src/inference/selfhosted.test.ts` and `src/inference/index.test.ts`.
 5. The gateway: reading `CODEMAN_OLLAMA`, the variables on every start of Ollama with its own winning, the configured context length, the log line, `/admin/status`, terminating on an unreadable value (`src/gateway/main.ts`, `src/gateway/pod.ts`, `src/gateway/gateway.ts`). Done when `src/gateway/pod.test.ts` covers the parsing and the context length.
+   - **Done on 2026-10-08**: `podSettings` reads `CODEMAN_OLLAMA` (`parseOllamaVariables`); `main` terminates the pod when it cannot ("its Ollama settings cannot be applied: …"), logs "Ollama settings: OLLAMA_NUM_PARALLEL=4.", and starts Ollama with `ollamaServeEnvironment` (the gateway's environment, the variables, then `OLLAMA_HOST`, `OLLAMA_KEEP_ALIVE` and the restart's context length). `prepareOllama` takes the configured context length: no restart, and that one reported. The gateway's `/admin/status` has `ollama`. Tests in `src/gateway/pod.test.ts`.
 6. Docs and templates: a page for the Ollama settings with the table of accepted and refused keys (variable, type, Ollama's default, meaning, the version they come from), checked against the code by a test; [providers](../settings/providers.md) for `runpod-pod`; [settings](../settings/reference.md); [provider settings across layers](../settings/provider-settings-across-layers.md); [pods](../inference/pods.md); [Runpod's installation](../installation/runpod.md) with the GPU types page and an `ollama:` example; [development](../development/guide.md); `docs/README.md`; `templates/settings.yml`. Done when the docs tests and the template test pass.
 7. Rebuild `dist/` and run `npm run check`. Done when it passes, the working tree is clean, and `dist/gateway.js` has changed, which needs a new pod image (the end-to-end test's first step).
 

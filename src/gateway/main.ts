@@ -2,7 +2,7 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { OLLAMA_URL, ollama } from "../inference/ollama.ts";
 import { Runpod } from "../inference/runpod.ts";
 import { Gateway } from "./gateway.ts";
-import { expiry, GATEWAY_PORT, podSettings, prepareOllama } from "./pod.ts";
+import { expiry, GATEWAY_PORT, ollamaServeEnvironment, podSettings, prepareOllama } from "./pod.ts";
 
 /**
  * The pod's entry point, in Codeman's pod image: serves the model through the gateway, and
@@ -26,6 +26,13 @@ async function main(): Promise<void> {
 
   // A pod restarted after its first start must not serve again, nor pull the model again.
   if (Date.now() >= settings.policy.startBy) await terminate("it started after its start limit");
+  // A requested setting is never dropped: a pod that cannot read them does not serve.
+  if (!settings.ollama.ok) {
+    await terminate(`its Ollama settings cannot be applied: ${settings.ollama.error}`);
+  }
+  const variables = settings.ollama.ok ? settings.ollama.value : {};
+  const names = Object.entries(variables).map(([name, value]) => `${name}=${value}`);
+  if (names.length > 0) log(`Ollama settings: ${names.join(", ")}.`);
 
   const gateway = new Gateway({
     upstream: `${OLLAMA_URL}/v1`,
@@ -33,10 +40,11 @@ async function main(): Promise<void> {
     adminSha256: settings.adminSha256,
     log,
   });
+  gateway.ollama = variables;
   await gateway.listen("0.0.0.0", GATEWAY_PORT);
   log(`Gateway listening on port ${GATEWAY_PORT}.`);
 
-  ollamaProcess = serve(undefined);
+  ollamaProcess = serve(variables, undefined);
   setInterval(() => {
     const reason = expiry(gateway, settings.policy, Date.now());
     if (reason) void terminate(reason);
@@ -50,11 +58,12 @@ async function main(): Promise<void> {
         url: OLLAMA_URL,
         restart: async (contextLength) => {
           await stop(ollamaProcess);
-          ollamaProcess = serve(contextLength);
+          ollamaProcess = serve(variables, contextLength);
         },
       },
       settings.model,
       log,
+      Number(variables.OLLAMA_CONTEXT_LENGTH) || undefined,
     );
     gateway.ready = true;
     gateway.lastActivity = Date.now();
@@ -66,16 +75,14 @@ async function main(): Promise<void> {
   }
 }
 
-/** Starts `ollama serve` on the loopback, keeping models loaded. */
-function serve(contextLength: number | undefined): ChildProcess {
+/** Starts `ollama serve` on the loopback, keeping models loaded, with the pod's Ollama settings. */
+function serve(
+  variables: Readonly<Record<string, string>>,
+  contextLength: number | undefined,
+): ChildProcess {
   return spawn("ollama", ["serve"], {
     stdio: "inherit",
-    env: {
-      ...process.env,
-      OLLAMA_HOST: "127.0.0.1:11434",
-      OLLAMA_KEEP_ALIVE: "-1",
-      ...(contextLength ? { OLLAMA_CONTEXT_LENGTH: String(contextLength) } : {}),
-    },
+    env: ollamaServeEnvironment(process.env, variables, contextLength),
   });
 }
 
