@@ -14,7 +14,7 @@ Every agent run is a stage: one run, one agent. A task goes through up to seven 
 
 The routed stages are the five the routing stage chooses among. Review always runs, last, and has the last word on whether the task is done; the others run only when the route chooses them. Every task therefore goes through planning, routing and review, at least.
 
-The name is how the settings and Codeman's outputs refer to a stage: a [profile](../settings/profiles.md)'s `stages` condition takes any of them. Each stage that works on a task sets its state label, from `codeman:planning` to `codeman:reviewing` ([states](lifecycle.md#tasks-and-states)). Recording the maintainers' answers and accepting workflows run no agent, so they are not stages, and no profile applies to them.
+The name is how the settings and Codeman's outputs refer to a stage: a [profile](../settings/profiles.md)'s `stages` condition takes any of them. A stage that no profile serves, at any count of the run's tasks, and that the top level cannot serve for want of a `model`, blocks the task when it reaches it ([how many tasks a run takes](../settings/profiles.md#how-many-tasks-a-run-takes)). Each stage that works on a task sets its state label, from `codeman:planning` to `codeman:reviewing` ([states](lifecycle.md#tasks-and-states)). Recording the maintainers' answers and accepting workflows run no agent, so they are not stages, and no profile applies to them.
 
 ## Planning
 

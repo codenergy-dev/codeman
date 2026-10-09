@@ -1,6 +1,6 @@
 # Providers
 
-`provider` chooses where a run's model is served. Each provider accepts its own settings beside `model`, and a setting it does not accept, a value it does not offer, or a required setting it lacks stops the run with an error that names the provider. The registry in [`src/inference/providers.ts`](../../src/inference/providers.ts) holds them; a new provider is a new entry. The choices were made in the [provider settings plan](../plans/2026-10-08-provider-settings.md).
+`provider` chooses where a run's model is served. Each provider accepts its own settings beside `model`, and a setting it does not accept, a value it does not offer, or a required setting it lacks stops the run with an error that names the provider. A top level without a `model` serves no run, so it is checked only for what its provider accepts ([profiles](profiles.md#checks)). The registry in [`src/inference/providers.ts`](../../src/inference/providers.ts) holds them; a new provider is a new entry. The choices were made in the [provider settings plan](../plans/2026-10-08-provider-settings.md).
 
 What a [layer](reference.md) or a [profile](profiles.md) that names another provider keeps of the provider settings it inherits is in [provider settings across layers](provider-settings-across-layers.md).
 

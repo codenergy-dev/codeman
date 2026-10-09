@@ -19,9 +19,11 @@ Each task has at most one state label. A task without one has not started yet (`
 | `codeman:reviewing` | The review stage is working. |
 | `codeman:in-progress` | Left from before the routed stages: the task goes on in the code stage. |
 | `codeman:awaiting-workflow` | Waiting for workflows the agent asked for; see [on-demand workflows](../runs/changes.md#on-demand-workflows). |
-| `codeman:blocked` | Needs human attention; the status comment says how to go on (usually `/codeman continue`), and the last run comment says why. |
+| `codeman:blocked` | Needs human attention; the status comment says how to go on (usually `/codeman continue`), and the last run comment says why. When no settings serve the task's next stage, `select` blocks it before any run, and the status comment says why. |
 | `codeman:done` | Reviewed; the pull request is ready for a human review. |
 
 A task with more than one state label is invalid: Codeman reports a warning and leaves it alone.
+
+A task that its [profiles](../settings/profiles.md#how-many-tasks-a-run-takes) serve only with more tasks than are ready waits: it keeps its label, and its status comment says how many tasks it waits for. Every run checks it again.
 
 Each agent run is a stage; what each one does, from planning to review, is in [stages](stages.md).

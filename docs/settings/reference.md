@@ -6,7 +6,7 @@ Settings come in layers. Each layer **inherits** from its **base**, the settings
 2. The organization's settings: the `settings` input of the `select` step, which the template fills from the `CODEMAN_SETTINGS` variable, in the file's format. They are defaults that several repositories share. Empty, or not passed by an older workflow file, means none. Only they set `organization-monthly-budget`: a repository's file or profile that sets it stops the run with an error, and neither commands nor a manual run's inputs take it. See [installation](../installation/shared-settings.md).
 3. `.codeman/settings.yml` on the default branch.
 4. The workflow's inputs, in a manual run.
-5. The [profile](profiles.md) that applies to the run, if any. It overrides only the provider, the model and the provider's settings.
+5. The [profile](profiles.md) that applies to the run, if any. It overrides only the provider, the model and the provider's settings. Profiles also have conditions, which decide when each applies and how many tasks a run takes.
 6. A `/codeman set` command on the task, in a comment or in the issue's description (only `model`, `task-budget`, `max-runs`, `language` and `gpu`). Its `model` is for the top level's provider, and overrides a profile only on that provider; its `gpu` applies to the runs whose provider accepts it ([the model](provider-settings-across-layers.md#the-model)).
 
 So a value comes from the last layer that sets it. The **top level** is the settings outside `profiles`: in a file, its keys outside `profiles`; for a run, what layers 1 to 4 resolve to, which is a profile's base. A layer that names another provider than the one it inherits keeps none of the inherited provider's settings ([provider settings across layers](provider-settings-across-layers.md)).
@@ -15,7 +15,7 @@ When `select` picks a task, its log has a line per layer, naming the values that
 
 | Name | Default | Meaning |
 | --- | --- | --- |
-| `model` | none; required | Model ID, in the form the provider takes ([providers](providers.md)) |
+| `model` | none | Model ID, in the form the provider takes ([providers](providers.md)). At the top level, the model of the runs no profile serves; without one, only profiles serve agent runs, and each sets its own. No setting is required |
 | `task-budget` | `2` | Spending limit of each task, across all its runs, in USD |
 | `monthly-budget` | `20` | Spending limit per calendar month for the repository, in USD |
 | `organization-monthly-budget` | none | Spending limit per calendar month for all the organization's repositories together, in USD, with the GPU accounts' billing; only the organization's settings set it. See [budget](../budget/budget.md) |
@@ -30,10 +30,9 @@ When `select` picks a task, its log has a line per layer, naming the values that
 | `max-summary-chars` | `2000` | Characters of the agent's summary and reason, at most 4,000 |
 | `language` | `auto` | The language Codeman talks to maintainers in, as a BCP 47 tag such as `pt-BR`; `auto` uses the conversation's. See [conversation language](../tasks/comments.md#conversation-language) |
 | `provider` | `openrouter` | Where agent runs get their model: `openrouter`, `runpod-pod` or `runpod-serverless`. Each provider accepts only its own settings; see [providers](providers.md) |
-| `profiles` | none | A provider, a model and that provider's settings for some runs; see [profiles](profiles.md) |
-| `parallel-tasks` | `1` | Tasks one run works on at once, from 1 to 10, each in its own jobs; see [runs](../runs/runs-and-jobs.md#runs). Tasks on pods with the same settings share one, whatever this says ([shared pods](../inference/pods.md#shared-pods)) |
+| `profiles` | none | A provider, a model and that provider's settings for some runs, with conditions: the stages and the run's count of tasks. The counts also decide how many tasks a run works on at once, one without them; see [profiles](profiles.md) |
 
-The settings that only some providers accept (`engine`, `gpu`, `endpoint`, `pod-reuse`) are in [providers](providers.md). Some settings had other names before the [provider settings plan](../plans/2026-10-08-provider-settings.md); an old name stops the run with an error that gives the new one, and [upgrading](../installation/upgrading.md#old-setting-names) lists them.
+The settings that only some providers accept (`engine`, `gpu`, `endpoint`, `pod-reuse`) are in [providers](providers.md). Some settings had other names before the [provider settings plan](../plans/2026-10-08-provider-settings.md); an old name stops the run with an error that gives the new one, and [upgrading](../installation/upgrading.md#old-setting-names) lists them. `parallel-tasks` and a profile's `when` are gone too, for the profiles' conditions; their errors say what to write ([upgrading](../installation/upgrading.md#profiles-pick-the-tasks)).
 
 The `max-*-chars` and count limits are what the agent is told; see [agent output](../runs/agent.md#agent-output) for the margin.
 

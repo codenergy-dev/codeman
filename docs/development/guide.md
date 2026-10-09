@@ -24,7 +24,7 @@ npm run check   # lint, type check, test and build
   - `src/gateway/`: the gateway in front of a self-hosted engine, which runs in Codeman's pod image (`docker/pod/Dockerfile`) and in the agent job. It uses Node's modules only.
   - `src/platform/`: the `Platform`, `CiResults` and `Conventions` interfaces and the types they share. Adapters live in a directory each, such as `src/platform/github/`; see [platforms](platforms.md) for what they must guarantee.
   - `src/runtime/`: the `Runtime` interface and its adapters, such as `src/runtime/github-actions.ts`. Only runtime adapters import `@actions/core`.
-  - `src/testing/`: fakes for tests: an in-memory platform unlike GitHub, its CI, a runtime that keeps what steps report, an inference provider, and a GPU cloud with its pods' gateways.
+  - `src/testing/`: fakes for tests: an in-memory platform unlike GitHub, its CI, a runtime that keeps what steps report, an inference provider, and a GPU cloud with its pods' gateways; and the example settings of [profiles](../settings/profiles.md#example), which the tests read.
   - `src/harness/`: the `Harness` interface and its adapters. To add a harness, implement `install` and `command` and register it in `src/harness/index.ts`.
   - `src/store/`: the `Store` interface of the [backend](../backend/backend.md), on Firestore and in memory, with the contract tests both pass; Google's authentication; the data layout. `src/ledger.ts` records runs in it.
 - `dist/`: the bundled action. Committed, because GitHub runs actions straight from the repository. CI fails when it does not match the source, so run `npm run build` before committing.

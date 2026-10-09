@@ -8,13 +8,13 @@ One subject per file, grouped by what the reader wants to do. The [root README](
 - [Shared settings](installation/shared-settings.md): settings an organization gives all its repositories.
 - [Self-hosted inference on Runpod](installation/runpod.md): the Runpod account, pods and a Serverless endpoint.
 - [Profiles](installation/profiles.md): how to use different providers and models for different runs.
-- [Upgrading](installation/upgrading.md): old setting names, a model per provider, and workflow files copied before the backend.
+- [Upgrading](installation/upgrading.md): old setting names, a model per provider, profiles that pick the tasks, and workflow files copied before the backend.
 
 ## Using it
 
 - [Settings](settings/reference.md): where settings come from, every setting, and the file's format.
 - [Providers](settings/providers.md): each provider's settings, model IDs, secrets and cost.
-- [Profiles](settings/profiles.md): conditions, which profile applies, layers and checks.
+- [Profiles](settings/profiles.md): conditions, how many tasks a run takes, which profile applies, layers and checks, with an example.
 - [Provider settings across layers](settings/provider-settings-across-layers.md): what a layer or profile that changes provider keeps, with worked examples.
 - [Commands](tasks/commands.md): every `/codeman` command.
 - [Comments](tasks/comments.md): the status, decisions and run comments, and the conversation's language.
@@ -23,7 +23,7 @@ One subject per file, grouped by what the reader wants to do. The [root README](
 
 - [Task lifecycle](tasks/lifecycle.md): a task's states and their labels.
 - [Stages](tasks/stages.md): the seven stages, one per agent run, and which are routed; planning, routing, running a routed stage, and feedback.
-- [Runs and jobs](runs/runs-and-jobs.md): what starts a run, parallel tasks, and each job with its credentials.
+- [Runs and jobs](runs/runs-and-jobs.md): what starts a run, how many tasks it takes, and each job with its credentials.
 - [The agent](runs/agent.md): its sandbox, its working rules, and its output and limits.
 - [What the agent may change](runs/changes.md): the change policy, on-demand workflows, and third-party documentation.
 - [Budget](budget/budget.md): the task's, the month's and the organization's budgets; reservations, expiry and refusals.

@@ -61,7 +61,7 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
 
-  # Picks the tasks, up to the parallel-tasks setting, and decides what to do. No LLM.
+  # Picks the tasks, as many as the profiles' counts allow, and decides what to do. No LLM.
   select:
     name: Select tasks
     # Comments only start a run when they mention /codeman and are not from a bot. Whether the

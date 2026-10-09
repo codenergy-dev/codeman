@@ -41,8 +41,7 @@ model: qwen3-coder:30b
 gpu: "NVIDIA RTX A6000"
 profiles:
   - name: serverless-review
-    when:
-      stages: [review]
+    stages: [review]
     provider: runpod-serverless
     endpoint: abc123xyz
     model: Qwen/Qwen3-Coder-30B-A3B-Instruct
@@ -86,12 +85,10 @@ gpu: "NVIDIA RTX A6000"
 pod-reuse: run
 profiles:
   - name: bigger-gpu
-    when:
-      stages: [code]
+    stages: [code]
     gpu: "NVIDIA H100 80GB HBM3"
   - name: other-model
-    when:
-      stages: [test]
+    stages: [test]
     provider: runpod-pod
     model: qwen2.5-coder:32b
 ```
@@ -106,8 +103,7 @@ model: qwen3-coder:30b
 gpu: "NVIDIA RTX A6000"
 profiles:
   - name: planner
-    when:
-      stages: [plan, route]
+    stages: [plan, route]
     provider: openrouter
 ```
 

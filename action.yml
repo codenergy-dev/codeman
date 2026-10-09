@@ -22,7 +22,7 @@ inputs:
   ledger-run:
     description: "(open-key, close-key, release-pod) The run's ID in Codeman's ledger, from select's tasks."
   model:
-    description: "(select) Model ID, in the form the provider takes: OpenRouter's, or the engine's on Runpod. Empty uses .codeman/settings.yml. Maintainers can override it per task with /codeman set."
+    description: "(select) Model ID, in the form the provider takes: OpenRouter's, or the engine's on Runpod; the top level's, for the runs no profile serves. Empty uses .codeman/settings.yml, or none. Maintainers can override it per task with /codeman set."
   task-budget:
     description: "(select, open-key) Spending limit of each task, across all its runs, in USD. In select, empty uses .codeman/settings.yml or 2."
   monthly-budget:
@@ -106,7 +106,7 @@ inputs:
     description: "Directory for Codeman's files. Defaults to RUNNER_TEMP/codeman."
 outputs:
   tasks:
-    description: "(select) The tasks this run works on, up to parallel-tasks, as a JSON list: for each, its task, action, needs-agent, stage, base-sha, task-budget, monthly-budget and inference, as the outputs of those names describe them, organization-monthly-budget (empty when the organization's settings set none), and ledger-run, the run's ID in Codeman's ledger (empty without an agent). Empty when there is nothing to do."
+    description: "(select) The tasks this run works on, as many as the profiles' counts allow (one without them), as a JSON list: for each, its task, action, needs-agent, stage, base-sha, task-budget, monthly-budget and inference, as the outputs of those names describe them, organization-monthly-budget (empty when the organization's settings set none), and ledger-run, the run's ID in Codeman's ledger (empty without an agent). Empty when there is nothing to do."
   action:
     description: "(select) What this run does for its first task: plan, route, implement, record, accept; none when there is nothing to do."
   needs-agent:
@@ -116,7 +116,7 @@ outputs:
   task:
     description: "(select) Issue number of the first task."
   model:
-    description: "(select) Model for the first task."
+    description: "(select) Model for the first task; empty for a run without an agent when no setting names one."
   base-sha:
     description: "(select) Commit the agent starts from. The first task's."
   task-budget:
