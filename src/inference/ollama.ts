@@ -33,6 +33,25 @@ export const OLLAMA_URL = "http://127.0.0.1:11434";
 /** The Ollama of the pod image (`docker/pod/Dockerfile`), whose variables `OLLAMA_SETTINGS` lists. */
 export const OLLAMA_VERSION = "0.35.1";
 
+/**
+ * Model families that `OLLAMA_VERSION` serves one request at a time, whatever
+ * `OLLAMA_NUM_PARALLEL` says (`load` in `server/sched.go`, docs/web/ollama/): the gateway fits
+ * them for one request, and says so (choice 11 of the plan for fitting Ollama to the GPU).
+ */
+export const OLLAMA_SERIAL_FAMILIES: ReadonlySet<string> = new Set([
+  "mllama",
+  "qwen3vl",
+  "qwen3vlmoe",
+  "qwen35",
+  "qwen35moe",
+  "qwen3next",
+  "lfm2",
+  "lfm2moe",
+  "nemotron_h",
+  "nemotron_h_moe",
+  "nemotron_h_omni",
+]);
+
 /** What an Ollama setting's value is. */
 export type OllamaValue =
   | { kind: "count"; min: number }

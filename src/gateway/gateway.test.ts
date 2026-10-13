@@ -477,3 +477,35 @@ test("the admin routes start, end and release the runs of tasks, and report the 
   assert.deepEqual(released.active, ["8"]);
   assert.equal((await admin("/admin/release", { task: "../7" })).status, 400);
 });
+
+test("a start that failed shows in /health without its reason, which /admin/status gives", async () => {
+  const { instance, url } = await gateway({ upstream: "http://127.0.0.1:1/v1" });
+  instance.ready = false;
+  instance.failure =
+    "`m` does not fit the GPU with 4 parallel requests and a context of 64000 tokens.";
+  assert.deepEqual(await (await fetch(`${url}/health`)).json(), { ready: false, failed: true });
+  const status = (await (
+    await fetch(`${url}/admin/status`, { headers: { Authorization: "Bearer admin" } })
+  ).json()) as Record<string, unknown>;
+  assert.equal(status.failure, instance.failure);
+  assert.equal(status.fit, undefined);
+  instance.failure = undefined;
+  instance.ready = true;
+  instance.fit = {
+    contextLength: 131072,
+    modelContextLength: 262144,
+    requestedParallel: 4,
+    parallel: 4,
+    source: "search",
+    loads: 5,
+    digest: "d",
+    size: 1,
+    sizeVram: 1,
+    family: "qwen3moe",
+  };
+  const fitted = (await (
+    await fetch(`${url}/admin/status`, { headers: { Authorization: "Bearer admin" } })
+  ).json()) as Record<string, unknown>;
+  assert.deepEqual(fitted.fit, instance.fit);
+  assert.deepEqual(await (await fetch(`${url}/health`)).json(), { ready: true });
+});

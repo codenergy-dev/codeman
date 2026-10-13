@@ -1,7 +1,29 @@
-import { ollamaContextLength, parseOllamaVariables } from "../inference/ollama.ts";
+import {
+  OLLAMA_SERIAL_FAMILIES,
+  OLLAMA_VERSION,
+  ollamaContextLength,
+  parseOllamaVariables,
+} from "../inference/ollama.ts";
+import {
+  contextCandidates,
+  estimateContext,
+  explicitMessage,
+  floorMessage,
+  onGpu,
+  type Placement,
+  placementOf,
+  searchContext,
+} from "./fit.ts";
 
 /** The port a pod exposes, to the gateway; Ollama's own port stays on the pod's loopback. */
 export const GATEWAY_PORT = 8080;
+
+/**
+ * How long a gateway whose model could not be served keeps answering, so the key jobs that wait
+ * for the pod read why from its status, before it terminates the pod (choice 12 of the plan for
+ * fitting Ollama to the GPU).
+ */
+export const FAILURE_GRACE_MS = 2 * 60_000;
 
 /** When a pod terminates itself. See docs/inference/pods.md. */
 export interface PodPolicy {
@@ -59,6 +81,10 @@ export interface PodSettings {
    * cannot be read: the pod then terminates rather than serve without them.
    */
   ollama: ReturnType<typeof parseOllamaVariables>;
+  /** A context that fitted the same settings before, from the cache (`CODEMAN_FIT`). */
+  fitHint: FitHint | undefined;
+  /** The GPU type's memory, in GB, as the provider gives it (`CODEMAN_GPU_MEMORY_GB`). */
+  gpuMemoryGb: number | undefined;
 }
 
 export function podSettings(env: Record<string, string | undefined>): PodSettings {
@@ -78,6 +104,47 @@ export function podSettings(env: Record<string, string | undefined>): PodSetting
     podId: env.RUNPOD_POD_ID,
     podKey: env.RUNPOD_API_KEY,
     ollama: parseOllamaVariables(env.CODEMAN_OLLAMA),
+    fitHint: parseFitHint(env.CODEMAN_FIT),
+    gpuMemoryGb: positive(Number(env.CODEMAN_GPU_MEMORY_GB ?? "")),
+  };
+}
+
+/** A positive, finite number, or undefined. */
+function positive(value: number): number | undefined {
+  return Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+/**
+ * The cached fit a pod's `CODEMAN_FIT` gives, as JSON: `{"contextLength":131072,"digest":"…"}`.
+ * Undefined when unset or unreadable: the gateway then searches, so a broken hint costs time only.
+ */
+export function parseFitHint(text: string | undefined): FitHint | undefined {
+  if (!text) return undefined;
+  try {
+    const { contextLength, digest } = JSON.parse(text) as Partial<FitHint>;
+    return Number.isSafeInteger(contextLength) &&
+      (contextLength ?? 0) > 0 &&
+      typeof digest === "string" &&
+      digest !== ""
+      ? { contextLength: contextLength as number, digest }
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** What the gateway fits the model with, from the pod's Ollama variables and environment. */
+export function fitOptions(
+  variables: Readonly<Record<string, string>>,
+  settings: Pick<PodSettings, "fitHint" | "gpuMemoryGb">,
+): FitOptions {
+  return {
+    configured: positive(Number(variables.OLLAMA_CONTEXT_LENGTH ?? "")),
+    parallel: positive(Number(variables.OLLAMA_NUM_PARALLEL ?? "")) ?? 1,
+    kvCacheType: variables.OLLAMA_KV_CACHE_TYPE,
+    gpuOverhead: Number(variables.OLLAMA_GPU_OVERHEAD ?? "") || 0,
+    gpuMemoryGb: settings.gpuMemoryGb,
+    hint: settings.fitHint,
   };
 }
 
@@ -108,41 +175,209 @@ export interface OllamaServer {
   wait?: (ms: number) => Promise<void>;
 }
 
+/** What the gateway fits the model with, from the pod's settings and environment. */
+export interface FitOptions {
+  /** The `context-length` of the pod's Ollama settings, which Ollama started with. */
+  configured?: number | undefined;
+  /** `OLLAMA_NUM_PARALLEL`, 1 when unset. */
+  parallel: number;
+  kvCacheType?: string | undefined;
+  /** `OLLAMA_GPU_OVERHEAD`, in bytes. */
+  gpuOverhead?: number | undefined;
+  /** The GPU type's memory, as the provider gives it (`CODEMAN_GPU_MEMORY_GB`). */
+  gpuMemoryGb?: number | undefined;
+  /** A context that fitted the same settings before (`CODEMAN_FIT`), for the model's digest. */
+  hint?: FitHint | undefined;
+}
+
+/** A context from the cache of fits, and the digest of the model it was found for. */
+export interface FitHint {
+  contextLength: number;
+  digest: string;
+}
+
 /**
- * Pulls the model, restarts Ollama with the model's own context length (its default depends on
- * the GPU's memory), and loads the model so the first request does not wait for it. Returns the
- * context length. With `configured`, the `context-length` of the pod's Ollama settings, which
- * Ollama started with, it does not restart Ollama, and returns that one. See docs/web/ollama/.
+ * How the gateway fitted the model to the GPU, which `/admin/status` reports as `fit` (choice 14
+ * of the plan for fitting Ollama to the GPU).
+ */
+export interface FitReport {
+  /** One request's context, as Ollama serves it. */
+  contextLength: number;
+  /** The model's own context length; undefined when it does not say. */
+  modelContextLength: number | undefined;
+  /** The parallel requests asked, and those Ollama serves. */
+  requestedParallel: number;
+  parallel: number;
+  /** Where the context came from: the pod's settings, the cache of fits, or a search. */
+  source: "settings" | "cache" | "search";
+  /** How many times the gateway loaded the model. */
+  loads: number;
+  digest: string | undefined;
+  /** Bytes of memory the model uses, all of them on the GPU. */
+  size: number;
+  sizeVram: number;
+  family: string | undefined;
+}
+
+/** The model's start failed for a reason its settings can fix; `message` says how. */
+export class FitFailure extends Error {}
+
+/**
+ * Pulls the model, then loads it with the context the pod serves, checking with `/api/ps` that
+ * Ollama put it wholly on the GPU (decision 1 of the plan for fitting Ollama to the GPU). With
+ * `configured`, the `context-length` of the pod's settings, Ollama already started with it. Without
+ * it, the gateway restarts Ollama with each context it tries: the cached one when its digest
+ * matches, else the estimate, else the model's own; then, when that does not fit, smaller ones,
+ * down to the floor (decision 3). Throws `FitFailure` when nothing fits. See docs/web/ollama/.
  */
 export async function prepareOllama(
   server: OllamaServer,
   model: string,
   log: (message: string) => void,
-  configured?: number,
-): Promise<number | undefined> {
-  const call = async (path: string, body: unknown): Promise<unknown> => {
-    const response = await (server.fetch ?? fetch)(`${server.url}${path}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+  options: FitOptions = { parallel: 1 },
+): Promise<FitReport> {
+  const fetchFn = server.fetch ?? fetch;
+  const call = async (path: string, body?: unknown): Promise<unknown> => {
+    const response = await fetchFn(`${server.url}${path}`, {
+      method: body === undefined ? "GET" : "POST",
+      ...(body === undefined
+        ? {}
+        : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
     });
-    if (!response.ok) throw new Error(`Ollama ${path} failed with ${response.status}.`);
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      const error = /"error"\s*:\s*"([^"]*)"/.exec(text)?.[1];
+      throw new Error(`Ollama ${path} failed with ${response.status}${error ? `: ${error}` : ""}.`);
+    }
     return response.json();
   };
   await untilUp(server);
   log(`Pulling ${model}.`);
   await pull(server, model);
-  if (configured) {
-    log(`Serving ${model} with a context length of ${configured}, from the pod's settings.`);
-    await call("/api/generate", { model, keep_alive: -1 });
-    return configured;
+  const show = (await call("/api/show", { model })) as {
+    model_info?: Record<string, unknown>;
+    details?: { family?: unknown };
+  } | null;
+  const modelContext = ollamaContextLength(show);
+  const family = typeof show?.details?.family === "string" ? show.details.family : undefined;
+  const listed = modelEntry(await call("/api/tags"), model);
+  const parallel = family && OLLAMA_SERIAL_FAMILIES.has(family) ? 1 : options.parallel;
+  if (parallel < options.parallel) {
+    log(
+      `Warning: Ollama ${OLLAMA_VERSION} serves the ${family} family one request at a time, whatever num-parallel says: the requests of the runs on this pod wait for each other.`,
+    );
   }
-  const contextLength = ollamaContextLength(await call("/api/show", { model }));
-  log(`Serving ${model} with a context length of ${contextLength ?? "Ollama's default"}.`);
-  await server.restart(contextLength);
-  await untilUp(server);
-  await call("/api/generate", { model, keep_alive: -1 });
-  return contextLength;
+
+  let current = options.configured;
+  let loads = 0;
+  const placements = new Map<number, { placement: Placement | undefined; error?: string }>();
+  /** Loads the model with a context, restarting Ollama when it runs with another. */
+  const load = async (context: number): Promise<Placement | undefined> => {
+    if (current !== context) {
+      await server.restart(context);
+      current = context;
+      await untilUp(server);
+    }
+    loads++;
+    let error: string | undefined;
+    try {
+      await call("/api/generate", { model, keep_alive: -1 });
+    } catch (failure) {
+      error = failure instanceof Error ? failure.message : String(failure);
+    }
+    const placement =
+      error === undefined ? placementOf(await call("/api/ps"), model, listed.digest) : undefined;
+    placements.set(context, { placement, ...(error ? { error } : {}) });
+    const off = placement ? placement.size - placement.sizeVram : 0;
+    const outcome = !placement
+      ? `not loaded${error ? ` (${error})` : ""}`
+      : onGpu(placement)
+        ? "wholly on the GPU"
+        : `${(off / 1e9).toFixed(1)} GB off the GPU`;
+    log(
+      `Loaded ${model} with ${parallel} parallel request(s) and a context of ${context} tokens: ${outcome}.`,
+    );
+    return placement;
+  };
+  const report = (
+    context: number,
+    placement: Placement,
+    source: FitReport["source"],
+  ): FitReport => ({
+    contextLength: placement.contextLength ?? context,
+    modelContextLength: modelContext,
+    requestedParallel: options.parallel,
+    parallel,
+    source,
+    loads,
+    digest: listed.digest,
+    size: placement.size,
+    sizeVram: placement.sizeVram,
+    family,
+  });
+
+  if (options.configured) {
+    const context = options.configured;
+    const placement = await load(context);
+    if (!onGpu(placement)) {
+      const { error } = placements.get(context) ?? {};
+      throw new FitFailure(explicitMessage(model, parallel, context, placement, error));
+    }
+    log(`Serving ${model} with a context length of ${context}, from the pod's settings.`);
+    return report(context, placement, "settings");
+  }
+
+  const candidates = contextCandidates(modelContext);
+  const top = candidates.at(-1) as number;
+  const { hint } = options;
+  const cached =
+    hint && hint.digest === listed.digest && hint.contextLength <= top
+      ? Math.max(hint.contextLength, candidates[0] as number)
+      : undefined;
+  const estimate = estimateContext(candidates, {
+    info: show?.model_info ?? {},
+    size: listed.size,
+    gpuMemoryGb: options.gpuMemoryGb,
+    parallel,
+    kvCacheType: options.kvCacheType,
+    gpuOverhead: options.gpuOverhead ?? 0,
+  });
+  const start = cached ?? estimate ?? top;
+  log(
+    cached
+      ? `Trying the context that fitted these settings before: ${cached} tokens.`
+      : `Fitting ${model} to the GPU, from ${start} tokens (the model's own is ${modelContext ?? "unknown"}).`,
+  );
+  const best = await searchContext(candidates, start, async (context) =>
+    onGpu(await load(context)),
+  );
+  if (best === undefined) {
+    const floor = candidates[0] as number;
+    const { placement, error } = placements.get(floor) ?? { placement: undefined };
+    throw new FitFailure(floorMessage(model, parallel, floor, placement, error));
+  }
+  // The last load may have tried a larger context: serve the best one, and check it again.
+  const placement = current === best ? placements.get(best)?.placement : await load(best);
+  if (!onGpu(placement)) {
+    const { error } = placements.get(best) ?? {};
+    throw new FitFailure(explicitMessage(model, parallel, best, placement, error));
+  }
+  log(`Serving ${model} with a context length of ${best}.`);
+  return report(best, placement, cached === best && loads === 1 ? "cache" : "search");
+}
+
+/** The model's digest and size on disk, from `GET /api/tags` (docs/web/ollama/list-models.md). */
+function modelEntry(tags: unknown, model: string): { digest?: string; size?: number } {
+  const models = (tags as { models?: unknown } | null)?.models;
+  if (!Array.isArray(models)) return {};
+  const names = [model, `${model}:latest`];
+  const entry = (
+    models as { name?: unknown; model?: unknown; digest?: unknown; size?: unknown }[]
+  ).find((one) => names.some((name) => one.name === name || one.model === name));
+  return {
+    ...(typeof entry?.digest === "string" ? { digest: entry.digest } : {}),
+    ...(typeof entry?.size === "number" ? { size: entry.size } : {}),
+  };
 }
 
 /**

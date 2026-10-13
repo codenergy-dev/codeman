@@ -2,7 +2,15 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { OLLAMA_URL, ollama } from "../inference/ollama.ts";
 import { Runpod } from "../inference/runpod.ts";
 import { Gateway } from "./gateway.ts";
-import { expiry, GATEWAY_PORT, ollamaServeEnvironment, podSettings, prepareOllama } from "./pod.ts";
+import {
+  expiry,
+  FAILURE_GRACE_MS,
+  fitOptions,
+  GATEWAY_PORT,
+  ollamaServeEnvironment,
+  podSettings,
+  prepareOllama,
+} from "./pod.ts";
 
 /**
  * The pod's entry point, in Codeman's pod image: serves the model through the gateway, and
@@ -53,7 +61,7 @@ async function main(): Promise<void> {
   }, 15_000).unref();
 
   try {
-    gateway.contextLength = await prepareOllama(
+    const fit = await prepareOllama(
       {
         url: OLLAMA_URL,
         restart: async (contextLength) => {
@@ -63,15 +71,22 @@ async function main(): Promise<void> {
       },
       settings.model,
       log,
-      Number(variables.OLLAMA_CONTEXT_LENGTH) || undefined,
+      fitOptions(variables, settings),
     );
+    gateway.fit = fit;
+    gateway.contextLength = fit.contextLength;
     gateway.ready = true;
     gateway.lastActivity = Date.now();
     log("Ready.");
   } catch (error) {
-    await terminate(
-      `the model could not be served: ${error instanceof Error ? error.message : error}`,
-    );
+    // The key jobs read why from the gateway's status while they wait for the pod, then
+    // terminate it; it terminates itself in a while, should none of them.
+    const message = error instanceof Error ? error.message : String(error);
+    const reason = `the model could not be served: ${message}`;
+    gateway.failure = message;
+    log(`Not serving ${settings.model}: ${message}`);
+    await new Promise((resolve) => setTimeout(resolve, FAILURE_GRACE_MS));
+    await terminate(reason);
   }
 }
 

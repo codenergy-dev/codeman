@@ -9,6 +9,7 @@ import {
 import { request as httpsRequest } from "node:https";
 import type { AddressInfo } from "node:net";
 import type { InferenceEngine } from "../inference/engine.ts";
+import type { FitReport } from "./pod.ts";
 import {
   EventReader,
   type GatewayUsage,
@@ -163,6 +164,13 @@ export class Gateway {
   contextLength: number | undefined;
   /** The Ollama variables from the pod's settings that it gave Ollama, which the status reports. */
   ollama: Readonly<Record<string, string>> = {};
+  /** How the pod's model was fitted to its GPU, once it serves; the status reports it. */
+  fit: FitReport | undefined;
+  /**
+   * Why the model could not be served, which `/admin/status` reports; `/health` says only that
+   * it failed, since it takes no token.
+   */
+  failure: string | undefined;
 
   constructor(options: GatewayOptions) {
     this.#options = options;
@@ -378,6 +386,8 @@ export class Gateway {
       ready: this.ready,
       contextLength: this.contextLength,
       ollama: this.ollama,
+      fit: this.fit,
+      failure: this.failure,
       serving: this.serving,
       deadline: this.deadline,
       lastActivity: this.lastActivity,
@@ -405,7 +415,9 @@ export class Gateway {
   async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const path = (request.url ?? "/").split("?")[0] ?? "/";
     const route = `${request.method} ${path}`;
-    if (route === "GET /health") return send(response, 200, { ready: this.ready });
+    if (route === "GET /health") {
+      return send(response, 200, { ready: this.ready, ...(this.failure ? { failed: true } : {}) });
+    }
     if (path.startsWith("/admin/") || path === "/usage")
       return this.#admin(route, request, response);
     if (!ROUTES.has(route)) return send(response, 404, error("Not found."));

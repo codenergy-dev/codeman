@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { test } from "node:test";
 import {
+  OLLAMA_SERIAL_FAMILIES,
   OLLAMA_SETTINGS,
   OLLAMA_VERSION,
   type OllamaValue,
@@ -105,4 +106,16 @@ test("the docs list the accepted and refused keys of the code, for the pod image
   assert.ok(
     existsSync(`docs/web/ollama/envconfig-config-go-at-v${OLLAMA_VERSION.replaceAll(".", "-")}.md`),
   );
+});
+
+test("the families Ollama serves one request at a time are those of its recorded source", () => {
+  const page = readFileSync(
+    `docs/web/ollama/server-sched-go-at-v${OLLAMA_VERSION.replaceAll(".", "-")}.md`,
+    "utf8",
+  );
+  const section = page.split("## Parallel requests\n")[1]?.split(/^## /m)[0] ?? "";
+  const listed = [...section.matchAll(/`([a-z0-9_]+)`/g)]
+    .map((match) => match[1])
+    .filter((name) => name !== "load");
+  assert.deepEqual(new Set(listed), OLLAMA_SERIAL_FAMILIES);
 });
