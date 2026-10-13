@@ -1,7 +1,7 @@
 ---
-status: in progress
+status: completed
 created_at: 2026-10-13T13:24:11-03:00
-updated_at: 2026-10-13T13:43:30-03:00
+updated_at: 2026-10-13T13:44:20-03:00
 commit: 0257810
 ---
 
@@ -73,6 +73,7 @@ Settled conservatively, within the decisions above.
 6. Docs and templates: [Ollama settings](../settings/ollama.md) (the defaults now derived and computed, the GPU check, memory, pod images), [pods](../inference/pods.md) (how a pod starts), [data layout](../backend/data-layout.md) and [backend](../backend/backend.md) (the cache, its cost), [profiles](../settings/profiles.md), [providers](../settings/providers.md), [Runpod's installation](../installation/runpod.md), [dependencies](../development/dependencies.md) (llama.cpp in Ollama), [development](../development/guide.md), `docs/README.md`, `templates/settings.yml`. Done when the docs tests, the template test and the link checker pass.
    - **Done on 2026-10-13**: [Ollama settings](../settings/ollama.md) has the derived and computed defaults in its table, a section on parallel requests (the rules of choice 5, and the families Ollama serves one at a time), memory rewritten (the check, the margin, the computed context, the floor, the cache, what the run shows, with both messages), and pod images. [Pods](../inference/pods.md) has the pod's environment, how it starts, and its failed start; [data layout](../backend/data-layout.md) the `contexts` collection; [backend](../backend/backend.md) its cost. [Profiles](../settings/profiles.md), [providers](../settings/providers.md), [Runpod's installation](../installation/runpod.md), [upgrading](../installation/upgrading.md#pods-fit-the-gpu) (a section of its own), [dependencies](../development/dependencies.md) (llama.cpp), [development](../development/guide.md), `docs/README.md` and `templates/settings.yml` follow. The docs tests, the template test and the link checker pass.
 7. Rebuild `dist/` and run `npm run check`. Done when it passes, the working tree is clean, and the change of `dist/gateway.js` is recorded: a new image is needed, covering both plans.
+   - **Done on 2026-10-13**: `npm run check` passes: 527 tests, 525 pass and 2 skipped (the sandbox's, Linux runners only). `dist/index.js` and `dist/gateway.js` changed: a new pod image is needed, and its digest pinned in `POD_IMAGE`, with the image pinned now kept in `IMAGES_WITHOUT_OLLAMA_SETTINGS` (end-to-end test, step 2). That one image covers the Ollama settings plan too, whose image was never published. Until then, runs on the pinned image serve as before.
 
 ## End-to-end test
 

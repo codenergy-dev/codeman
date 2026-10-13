@@ -19739,35 +19739,6 @@ var require_lib = __commonJS({
   }
 });
 
-// src/steps/common.ts
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-function positiveNumber(runtime2, name) {
-  const value = Number(runtime2.input(name, { required: true }));
-  if (!Number.isFinite(value) || value <= 0)
-    throw new Error(`Input ${name} must be a positive number.`);
-  return value;
-}
-function workdir(runtime2) {
-  return runtime2.input("workdir") || join(runtime2.tempDir, "codeman");
-}
-function taskFile(runtime2, task) {
-  return join(workdir(runtime2), "task", task === void 0 ? "task.json" : `${task}.json`);
-}
-var resultDir = (runtime2) => join(workdir(runtime2), "result");
-var chainDir = (runtime2) => join(workdir(runtime2), "chain");
-function readTask(runtime2) {
-  const input = runtime2.input("task");
-  if (input !== "" && !/^\d+$/.test(input)) throw new Error("Input task must be an issue number.");
-  const number3 = input === "" ? void 0 : Number(input);
-  const task = JSON.parse(readFileSync(taskFile(runtime2, number3), "utf8"));
-  if (task.version !== 1) throw new Error("The task file has an unknown version.");
-  if (number3 !== void 0 && task.number !== number3) {
-    throw new Error(`The task file of #${number3} holds #${task.number}.`);
-  }
-  return task;
-}
-
 // src/inference/engine.ts
 function openAiUsage(body, cachedApart = false) {
   if (typeof body !== "object" || body === null) return void 0;
@@ -19793,6 +19764,7 @@ var IMAGES_WITHOUT_OLLAMA_SETTINGS = /* @__PURE__ */ new Set([
   ...SINGLE_RUN_IMAGES,
   "ghcr.io/codenergy-dev/codeman-pod@sha256:3252d41775a230249490b5af79aec050151e49c4722bb62f9ce3d247d02f6ca3"
 ]);
+var OLLAMA_VERSION = "0.35.1";
 var OLLAMA_SETTINGS = {
   "context-length": { variable: "OLLAMA_CONTEXT_LENGTH", value: { kind: "count", min: 1 } },
   "num-parallel": { variable: "OLLAMA_NUM_PARALLEL", value: { kind: "count", min: 1 } },
@@ -19906,6 +19878,910 @@ function vllmContextLength(env) {
 
 // src/inference/engines.ts
 var ENGINES = { ollama, vllm };
+
+// src/inference/providers.ts
+var PROVIDER_NAMES = ["openrouter", "runpod-pod", "runpod-serverless"];
+var PROVIDER_SETTINGS = ["engine", "gpu", "endpoint", "pod-reuse"];
+var PROVIDER_BLOCKS = ["ollama"];
+var ACCOUNTS = {
+  openrouter: {
+    input: "management-key",
+    secret: "CODEMAN_OPENROUTER_MANAGEMENT_KEY",
+    hourly: false
+  },
+  runpod: { input: "gpu-key", secret: "CODEMAN_RUNPOD_API_KEY", hourly: true }
+};
+var PROVIDERS = {
+  openrouter: { account: "openrouter", settings: {}, model: "openrouter", secrets: [] },
+  "runpod-pod": {
+    account: "runpod",
+    settings: {
+      engine: { values: ["ollama"], default: "ollama" },
+      gpu: { required: true, example: '"NVIDIA RTX A6000"' },
+      "pod-reuse": { values: ["task", "run"], default: "task" }
+    },
+    blocks: { ollama: { engine: "ollama" } },
+    model: "engine",
+    secrets: []
+  },
+  "runpod-serverless": {
+    account: "runpod",
+    settings: {
+      engine: { values: ["vllm"], default: "vllm" },
+      endpoint: { required: true, example: "abc123xyz" }
+    },
+    model: "engine",
+    // The endpoint's key, restricted to it: only the agent job's gateway holds it.
+    secrets: [{ secret: "CODEMAN_RUNPOD_SERVERLESS_KEY", input: "serverless-key", job: "agent" }]
+  }
+};
+function isProviderName(name) {
+  return PROVIDER_NAMES.includes(name);
+}
+function isProviderBlock(name) {
+  return PROVIDER_BLOCKS.includes(name);
+}
+function accountOf(provider) {
+  return isProviderName(provider) ? PROVIDERS[provider].account : provider;
+}
+function isHourlyAccount(name) {
+  return ACCOUNTS[name]?.hourly ?? false;
+}
+function settingValues(name) {
+  const values = Object.values(PROVIDERS).flatMap(
+    (provider) => provider.settings[name]?.values ?? []
+  );
+  return values.length > 0 ? [...new Set(values)] : void 0;
+}
+function providerProblem(settings, serves = true) {
+  const name = settings.provider;
+  if (!isProviderName(name)) return `Unknown provider \`${name}\`.`;
+  const provider = PROVIDERS[name];
+  for (const setting2 of [...PROVIDER_SETTINGS, ...PROVIDER_BLOCKS]) {
+    const accepted = isProviderBlock(setting2) ? provider.blocks?.[setting2] : provider.settings[setting2];
+    if (settings[setting2] !== void 0 && !accepted) {
+      return `\`${name}\` does not accept \`${setting2}\`; ${acceptedText(name)}`;
+    }
+  }
+  for (const setting2 of PROVIDER_SETTINGS) {
+    const spec = provider.settings[setting2];
+    const value = settings[setting2];
+    if (!spec) continue;
+    if (value === void 0) {
+      if (spec.required && serves) {
+        return `\`${name}\` needs \`${setting2}\`${spec.example ? `, such as \`${spec.example}\`` : ""}.`;
+      }
+      continue;
+    }
+    if (spec.values && !spec.values.includes(value)) {
+      const offered = spec.values.map((v) => `\`${v}\``).join(", ");
+      return setting2 === "engine" ? `\`${name}\` does not offer the engine \`${value}\`; it offers ${offered}.` : `With \`${name}\`, \`${setting2}\` must be one of ${offered}, not \`${value}\`.`;
+    }
+  }
+  const engine = settings.engine ?? provider.settings.engine?.default;
+  for (const block of PROVIDER_BLOCKS) {
+    const spec = provider.blocks?.[block];
+    if (!spec || settings[block] === void 0) continue;
+    if (engine !== spec.engine) {
+      return `With \`${name}\`, \`${block}\` configures the engine \`${spec.engine}\`, not \`${engine}\`.`;
+    }
+    try {
+      ollamaEnvironment(settings[block]);
+    } catch (error3) {
+      return error3 instanceof Error ? error3.message : String(error3);
+    }
+  }
+  return serves ? modelProblem(name, settings.model, settings.engine) : void 0;
+}
+function withProviderDefaults(settings) {
+  const provider = isProviderName(settings.provider) ? PROVIDERS[settings.provider] : void 0;
+  const filled = { ...settings };
+  for (const [setting2, spec] of Object.entries(provider?.settings ?? {})) {
+    if (spec.default !== void 0 && filled[setting2] === void 0) {
+      Object.assign(filled, { [setting2]: spec.default });
+    }
+  }
+  return filled;
+}
+function acceptedText(name) {
+  const { settings, blocks = {} } = PROVIDERS[name];
+  const accepted = [...Object.keys(settings), ...Object.keys(blocks)].map(
+    (setting2) => `\`${setting2}\``
+  );
+  return accepted.length === 0 ? "it takes only `model`." : `besides \`model\`, it takes ${list2(accepted)}.`;
+}
+function list2(items) {
+  return items.length < 2 ? items[0] ?? "" : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
+}
+function modelProblem(name, model, engine) {
+  const provider = PROVIDERS[name];
+  if (provider.model === "openrouter") {
+    return isOpenRouterModel(model) ? void 0 : `With \`${name}\`, \`model\` must be an OpenRouter model ID, such as \`provider/model\`, not \`${model}\`.`;
+  }
+  const engineName = engine ?? provider.settings.engine?.default ?? "";
+  const served = ENGINES[engineName];
+  if (!served) return `\`${name}\` has no engine \`${engineName}\`.`;
+  return served.isModel(model) ? void 0 : `With \`${name}\`, \`model\` must be a model name of the engine \`${engineName}\`, such as \`${served.example}\`, not \`${model}\`.`;
+}
+var OPENROUTER_MODEL = /^~?[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._:-]*$/i;
+function isOpenRouterModel(text) {
+  return text.length <= 100 && OPENROUTER_MODEL.test(text);
+}
+var ENDPOINT_ID = /^[a-z0-9]{1,64}$/i;
+var RUNPOD_API_HOST = "api.runpod.ai";
+function endpointId(text) {
+  if (ENDPOINT_ID.test(text)) return { ok: true, value: text };
+  let url;
+  try {
+    url = new URL(text);
+  } catch {
+    return {
+      ok: false,
+      error: `\`endpoint\` must be an endpoint's ID, letters and digits, or its URL, such as \`https://${RUNPOD_API_HOST}/v2/abc123xyz/run\`.`
+    };
+  }
+  if (url.protocol !== "https:" || url.hostname !== RUNPOD_API_HOST || url.port !== "") {
+    return {
+      ok: false,
+      error: `\`endpoint\` takes only URLs of \`https://${RUNPOD_API_HOST}\`, where the endpoint's key goes, not \`${url.protocol}//${url.host}\`.`
+    };
+  }
+  const [, version, id = ""] = url.pathname.split("/");
+  if (url.username || url.password || version !== "v2" || !ENDPOINT_ID.test(id)) {
+    return {
+      ok: false,
+      error: `\`endpoint\`'s URL must be the endpoint's, such as \`https://${RUNPOD_API_HOST}/v2/abc123xyz/run\`.`
+    };
+  }
+  return { ok: true, value: id };
+}
+
+// src/stages.ts
+var ROUTED_STAGES = ["web", "design", "code", "test", "review"];
+var STAGES = ["plan", "route", ...ROUTED_STAGES];
+var ROUTED_STAGE_STATE = {
+  web: "researching",
+  design: "designing",
+  code: "coding",
+  test: "testing",
+  review: "reviewing"
+};
+function routedStageOfState(state) {
+  if (state === "in-progress") return "code";
+  return ROUTED_STAGES.find((stage) => ROUTED_STAGE_STATE[stage] === state);
+}
+function nextStage(stage) {
+  return ROUTED_STAGES[ROUTED_STAGES.indexOf(stage) + 1];
+}
+function isStage(value) {
+  return typeof value === "string" && STAGES.includes(value);
+}
+function nextInRoute(route, stage) {
+  if (!route) return nextStage(stage);
+  const index = ROUTED_STAGES.indexOf(stage);
+  return route.stages.map((step) => step.stage).find((next) => ROUTED_STAGES.indexOf(next) > index);
+}
+function stagesFrom(first) {
+  return ROUTED_STAGES.slice(ROUTED_STAGES.indexOf(first));
+}
+
+// src/yaml.ts
+var YamlError = class extends Error {
+  line;
+  constructor(line, message) {
+    super(message);
+    this.line = line;
+  }
+};
+var KEY = /^([A-Za-z][A-Za-z0-9_-]*):(?:\s+(.*))?$/;
+var ITEM = /^-(?:\s|$)/;
+function parseYaml(text) {
+  const lines = [];
+  for (const [index, raw] of text.split(/\r?\n/).entries()) {
+    const line = raw.trimEnd();
+    const content = line.trimStart();
+    if (content === "" || content.startsWith("#")) continue;
+    const indentation = line.slice(0, line.length - content.length);
+    if (indentation.includes("	")) {
+      return { ok: false, line: index + 1, error: "indent with spaces, not tabs." };
+    }
+    lines.push({ number: index + 1, indent: indentation.length, text: content });
+  }
+  try {
+    const reader = new Reader(lines);
+    const value = reader.mapping(0);
+    const rest = reader.peek();
+    if (rest) throw new YamlError(rest.number, "unexpected indentation.");
+    return { ok: true, value };
+  } catch (error3) {
+    if (error3 instanceof YamlError) return { ok: false, line: error3.line, error: error3.message };
+    throw error3;
+  }
+}
+var Reader = class {
+  #lines;
+  #next = 0;
+  constructor(lines) {
+    this.#lines = lines;
+  }
+  peek() {
+    return this.#lines[this.#next];
+  }
+  /** The `key: value` lines at `indent`, and what is nested under them. */
+  mapping(indent) {
+    const map = { kind: "map", line: this.peek()?.number ?? 1, entries: [] };
+    for (let line = this.peek(); line && line.indent >= indent; line = this.peek()) {
+      if (line.indent > indent) throw new YamlError(line.number, "unexpected indentation.");
+      const match = KEY.exec(line.text);
+      if (!match?.[1] || ITEM.test(line.text)) {
+        throw new YamlError(line.number, "expected `name: value`.");
+      }
+      const key = match[1];
+      if (map.entries.some((entry) => entry.key === key)) {
+        throw new YamlError(line.number, `\`${key}\` appears twice.`);
+      }
+      this.#next++;
+      map.entries.push({ key, line: line.number, value: this.#value(key, line, match[2] ?? "") });
+    }
+    return map;
+  }
+  /** A key's value: on its line, or the block nested under it. */
+  #value(key, line, text) {
+    if (text === "" || text.startsWith("#")) {
+      const child = this.peek();
+      if (child && child.indent > line.indent) {
+        return ITEM.test(child.text) ? this.#list(child.indent) : this.mapping(child.indent);
+      }
+      if (child && child.indent === line.indent && ITEM.test(child.text)) {
+        return this.#list(child.indent);
+      }
+      return { kind: "scalar", line: line.number, text: "" };
+    }
+    if (text.startsWith("[")) return flowList(key, line.number, text);
+    if (text.startsWith("{")) {
+      throw new YamlError(
+        line.number,
+        `the value of \`${key}\` is in braces, which the settings do not read: write each \`name: value\` on its own line, indented under \`${key}:\`.`
+      );
+    }
+    const value = scalar(text);
+    if (value === void 0) {
+      throw new YamlError(line.number, `the value of \`${key}\` is not a plain value.`);
+    }
+    return { kind: "scalar", line: line.number, text: value };
+  }
+  /** The `- item` lines at `indent`. An item is a scalar or a mapping that starts on its line. */
+  #list(indent) {
+    const list3 = { kind: "list", line: this.peek()?.number ?? 1, items: [] };
+    for (let line = this.peek(); line && line.indent >= indent; line = this.peek()) {
+      if (line.indent > indent) throw new YamlError(line.number, "unexpected indentation.");
+      if (!ITEM.test(line.text)) break;
+      const after = line.text.slice(1);
+      const content = after.trimStart();
+      if (content === "" || content.startsWith("#")) {
+        throw new YamlError(line.number, "expected a value after `-`, on the same line.");
+      }
+      if (ITEM.test(content) || content.startsWith("[")) {
+        throw new YamlError(line.number, "a list item cannot be a list.");
+      }
+      if (KEY.test(content)) {
+        line.indent += 1 + after.length - content.length;
+        line.text = content;
+        list3.items.push(this.mapping(line.indent));
+        continue;
+      }
+      this.#next++;
+      const value = scalar(content);
+      if (value === void 0)
+        throw new YamlError(line.number, "a list item is not a plain value.");
+      list3.items.push({ kind: "scalar", line: line.number, text: value });
+    }
+    return list3;
+  }
+};
+function flowList(key, line, text) {
+  const items = [];
+  let rest = text.slice(1).trimStart();
+  if (rest.startsWith("]")) {
+    rest = rest.slice(1);
+  } else {
+    for (; ; ) {
+      const match = /^(?:"([^"\\]*)"|'([^'\\]*)'|([^,[\]{}"'#]*?))\s*([,\]])\s*/.exec(rest);
+      const plain = match?.[3];
+      const value = plain === void 0 ? match?.[1] ?? match?.[2] : plainScalar(plain);
+      if (!match || value === void 0 || plain !== void 0 && plain === "") {
+        throw new YamlError(line, `an item of \`${key}\` is not a plain value.`);
+      }
+      items.push({ kind: "scalar", line, text: value });
+      rest = rest.slice(match[0].length);
+      if (match[4] === "]") break;
+    }
+  }
+  if (!/^\s*(?:#.*)?$/.test(rest)) {
+    throw new YamlError(line, `expected only a comment after the list of \`${key}\`.`);
+  }
+  return { kind: "list", line, items };
+}
+function scalar(text) {
+  const quoted = /^(["'])([^"'\\]*)\1\s*(?:#.*)?$/.exec(text);
+  if (quoted) return quoted[2];
+  return plainScalar(text.replace(/\s+#.*$/, "").trim());
+}
+var WORD = /^[A-Za-z0-9._~/:_-]*$/;
+function plainScalar(text) {
+  const words = text.split(/ +/);
+  if (!words.every((word) => WORD.test(word))) return void 0;
+  if (words.length > 1 && (words[0] === "-" || words.some((word) => word.endsWith(":")))) {
+    return void 0;
+  }
+  return text;
+}
+
+// src/settings.ts
+var SETTINGS_FILE = ".codeman/settings.yml";
+var SHARED_SETTINGS = "the `settings` input (organization variable CODEMAN_SETTINGS)";
+var LAYER_SOURCES = [
+  "the task's commands",
+  "the workflow's inputs",
+  SETTINGS_FILE,
+  SHARED_SETTINGS
+];
+var LAYER_BASES = [
+  "the task's commands",
+  "the workflow's inputs",
+  SETTINGS_FILE,
+  "the organization's settings"
+];
+var DEFAULTS = {
+  "task-budget": 2,
+  "monthly-budget": 20,
+  "max-runs": 3,
+  "max-files": 300,
+  "max-file-bytes": 1024 * 1024,
+  "max-decisions": 10,
+  "max-options": 4,
+  "max-title-chars": 80,
+  "max-question-chars": 600,
+  "max-label-chars": 150,
+  "max-summary-chars": 2e3,
+  language: "auto",
+  provider: "openrouter"
+};
+var LIMIT_BOUNDS = {
+  "max-decisions": { min: 1, max: 10 },
+  "max-options": { min: 2, max: 6 },
+  "max-title-chars": { min: 1, max: 200 },
+  "max-question-chars": { min: 1, max: 1500 },
+  "max-label-chars": { min: 1, max: 300 },
+  "max-summary-chars": { min: 1, max: 4e3 }
+};
+var MAX_TASKS = 10;
+var TASK_SETTINGS = /* @__PURE__ */ new Set([
+  "model",
+  "task-budget",
+  "max-runs",
+  "language",
+  "gpu"
+]);
+var RENAMED_TASK_SETTINGS = { "gpu-type": "gpu" };
+var ORGANIZATION_SETTINGS = /* @__PURE__ */ new Set([
+  "organization-monthly-budget"
+]);
+var CHOICES = {
+  provider: PROVIDER_NAMES,
+  engine: settingValues("engine"),
+  "pod-reuse": settingValues("pod-reuse")
+};
+var NAMES = [
+  "model",
+  "task-budget",
+  "monthly-budget",
+  "organization-monthly-budget",
+  "max-runs",
+  "max-files",
+  "max-file-bytes",
+  "max-decisions",
+  "max-options",
+  "max-title-chars",
+  "max-question-chars",
+  "max-label-chars",
+  "max-summary-chars",
+  "language",
+  "provider",
+  ...PROVIDER_SETTINGS
+];
+function isModelName(text) {
+  return isOpenRouterModel(text) || Object.values(ENGINES).some((engine) => engine.isModel(text));
+}
+var GPU_TYPE = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,78}[A-Za-z0-9]$/;
+var LANGUAGE_TAG = /^[a-z]{2,3}(-[a-z0-9]{2,8}){0,3}$/i;
+function isLanguageTag(text) {
+  return LANGUAGE_TAG.test(text);
+}
+function settingKind(name) {
+  if (name === "model" || name === "language" || name === "gpu" || name === "endpoint") {
+    return name;
+  }
+  if (CHOICES[name]) return "choice";
+  return name === "task-budget" || name === "monthly-budget" || name === "organization-monthly-budget" ? "number" : "integer";
+}
+function isSettingName(name) {
+  return NAMES.includes(name);
+}
+function parseSetting(name, text) {
+  if (name === "ollama") return { ok: false, error: OLLAMA_BLOCK };
+  if (name === "model") {
+    return isModelName(text) ? { ok: true, value: text } : {
+      ok: false,
+      error: `\`${name}\` must be a model ID, such as \`provider/model\` on OpenRouter.`
+    };
+  }
+  const choices = CHOICES[name];
+  if (choices) {
+    return choices.includes(text) ? { ok: true, value: text } : {
+      ok: false,
+      error: `\`${name}\` must be one of ${choices.map((c) => `\`${c}\``).join(", ")}.`
+    };
+  }
+  if (name === "gpu") {
+    return GPU_TYPE.test(text) ? { ok: true, value: text } : { ok: false, error: `\`${name}\` must be a GPU type, such as \`NVIDIA RTX A6000\`.` };
+  }
+  if (name === "endpoint") return endpointId(text);
+  if (name === "language") {
+    return text === "auto" || isLanguageTag(text) ? { ok: true, value: text } : {
+      ok: false,
+      error: `\`${name}\` must be \`auto\` or a language tag, such as \`pt-BR\`.`
+    };
+  }
+  const value = Number(text);
+  const integer = settingKind(name) === "integer";
+  if (text === "" || !Number.isFinite(value) || value <= 0 || integer && !Number.isInteger(value)) {
+    return {
+      ok: false,
+      error: `\`${name}\` must be a positive ${integer ? "whole number" : "number"}.`
+    };
+  }
+  const bounds = LIMIT_BOUNDS[name];
+  if (bounds && (value < bounds.min || value > bounds.max)) {
+    return { ok: false, error: `\`${name}\` must be from ${bounds.min} to ${bounds.max}.` };
+  }
+  return { ok: true, value };
+}
+var PROFILE_SETTINGS = [
+  "provider",
+  "model",
+  ...PROVIDER_SETTINGS,
+  ...PROVIDER_BLOCKS
+];
+var PROVIDER_KEYS = [...PROVIDER_SETTINGS, ...PROVIDER_BLOCKS];
+var OLLAMA_BLOCK = "`ollama` must be a block of Ollama's settings, one `name: value` per line, indented under it, such as `num-parallel: 4`.";
+function renamedSetting(name, value) {
+  const now = (text) => `\`${name}\` is now ${text}.`;
+  switch (name) {
+    case "inference":
+      if (value === "openrouter") return now("`provider`: write `provider: openrouter`");
+      return now(
+        value === "self-hosted" ? "`provider`: write `provider: runpod-pod` or `provider: runpod-serverless`" : `\`provider\`: ${PROVIDER_NAMES.map((provider) => `\`${provider}\``).join(", ")}`
+      );
+    case "gpu-provider":
+      return now(
+        "part of `provider`: write `provider: runpod-pod` or `provider: runpod-serverless`"
+      );
+    case "gpu-mode":
+      if (value === "pod" || value === "serverless") {
+        return now(`part of \`provider\`: write \`provider: runpod-${value}\``);
+      }
+      return now(
+        "part of `provider`: write `provider: runpod-pod` or `provider: runpod-serverless`"
+      );
+    case "gpu-type":
+      return now("`gpu`");
+    case "serverless-endpoint":
+      return now("`endpoint`, with `provider: runpod-serverless`");
+    case "inference-profiles":
+      return now("`profiles`");
+    default:
+      return void 0;
+  }
+}
+var CONDITION_NAMES = ["stages", "tasks", "min-tasks", "max-tasks"];
+function isConditionName(name) {
+  return CONDITION_NAMES.includes(name);
+}
+var PROFILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+function parseSettings(text, source = SETTINGS_FILE) {
+  const tree = parseYaml(text);
+  if (!tree.ok) return { ok: false, error: `${source}, line ${tree.line}: ${tree.error}` };
+  const settings = {};
+  for (const entry of tree.value.entries) {
+    const parsed = entry.key === "profiles" ? profiles(entry.value) : entry.key === "ollama" ? ollamaBlock(entry) : setting(entry, "setting");
+    if (!parsed.ok) return { ok: false, error: `${source}, line ${parsed.line}: ${parsed.error}` };
+    if (source !== SHARED_SETTINGS && isSettingName(entry.key) && ORGANIZATION_SETTINGS.has(entry.key)) {
+      return {
+        ok: false,
+        error: `${source}, line ${entry.line}: \`${entry.key}\` can be set only in the organization's settings, the CODEMAN_SETTINGS variable.`
+      };
+    }
+    settings[entry.key] = parsed.value;
+  }
+  return { ok: true, value: settings };
+}
+function ollamaBlock(entry) {
+  const { line, value } = entry;
+  if (value.kind !== "map") return { ok: false, line, error: OLLAMA_BLOCK };
+  const settings = {};
+  for (const { key, line: keyLine, value: keyValue } of value.entries) {
+    if (keyValue.kind !== "scalar") {
+      return {
+        ok: false,
+        line: keyLine,
+        error: `the value of \`ollama\`'s \`${key}\` is not a plain value.`
+      };
+    }
+    const checked = ollamaSetting(key, keyValue.text);
+    if (!checked.ok) return { ok: false, line: keyLine, error: checked.error };
+    settings[key] = checked.value;
+  }
+  return { ok: true, value: settings };
+}
+function setting(entry, what) {
+  const { key: name, line, value } = entry;
+  const text = value.kind === "scalar" ? value.text : void 0;
+  const renamed = renamedSetting(name, text);
+  if (renamed) return { ok: false, line, error: renamed };
+  const misplaced = misplacedCondition(name, what, text);
+  if (misplaced) return { ok: false, line, error: misplaced };
+  if (!isSettingName(name)) return { ok: false, line, error: `unknown setting \`${name}\`.` };
+  if (what === "profile" && !PROFILE_SETTINGS.includes(name)) {
+    return {
+      ok: false,
+      line,
+      error: `a profile cannot set \`${name}\`; it sets only ${PROFILE_SETTINGS.map((n) => `\`${n}\``).join(", ")}.`
+    };
+  }
+  if (value.kind !== "scalar") {
+    return { ok: false, line, error: `the value of \`${name}\` is not a plain value.` };
+  }
+  const parsed = parseSetting(name, value.text);
+  return parsed.ok ? parsed : { ok: false, line, error: parsed.error };
+}
+function misplacedCondition(name, what, value) {
+  const count3 = value !== void 0 && /^[1-9][0-9]*$/.test(value) ? value : "N";
+  if (name === "when") {
+    return what === "profile" ? "`when` is gone: write the profile's conditions (`stages`, `tasks`, `min-tasks`, `max-tasks`) directly in the profile, beside its `name`." : "`when` is gone, and conditions belong to profiles: write them in a profile, under `profiles`, beside its `name`. The top-level settings apply when no profile does.";
+  }
+  if (name === "parallel-tasks") {
+    return what === "profile" ? `\`parallel-tasks\` is no longer a condition: write \`min-tasks: ${count3}\` for at least ${count3} tasks in the run, or \`tasks: ${count3}\` for exactly ${count3}.` : `\`parallel-tasks\` is no longer a setting: a run takes as many tasks as its profiles' \`tasks\`, \`min-tasks\` and \`max-tasks\` allow, and one at a time when none sets them. For up to ${count3} tasks at once, write \`max-tasks: ${count3}\` in a profile.`;
+  }
+  if (what === "setting" && isConditionName(name)) {
+    return `\`${name}\` is a profile's condition: write it in a profile, under \`profiles\`. The top-level settings apply when no profile does.`;
+  }
+  return void 0;
+}
+function profiles(node) {
+  if (node.kind !== "list" || node.items.some((item) => item.kind !== "map")) {
+    return {
+      ok: false,
+      line: node.kind === "list" ? node.items[0]?.line ?? node.line : node.line,
+      error: "`profiles` must be a list of profiles, each a block of settings."
+    };
+  }
+  const list3 = [];
+  for (const item of node.items) {
+    const parsed = profile(item);
+    if (!parsed.ok) return parsed;
+    if (list3.some((other) => other.name === parsed.value.name)) {
+      return {
+        ok: false,
+        line: item.line,
+        error: `two profiles are named \`${parsed.value.name}\`.`
+      };
+    }
+    list3.push(parsed.value);
+  }
+  return { ok: true, value: list3 };
+}
+function profile(node) {
+  if (node.kind !== "map") return { ok: false, line: node.line, error: "expected a profile." };
+  const result = { name: "", conditions: {}, settings: {} };
+  for (const entry of node.entries) {
+    const { key, line, value } = entry;
+    if (key === "name") {
+      if (value.kind !== "scalar" || !PROFILE_NAME.test(value.text)) {
+        return {
+          ok: false,
+          line,
+          error: "a profile's `name` must be letters, digits, `.`, `_` or `-`, such as `small-pod`."
+        };
+      }
+      result.name = value.text;
+    } else if (isConditionName(key)) {
+      const parsed = condition(entry, key);
+      if (!parsed.ok) return parsed;
+      Object.assign(result.conditions, { [key]: parsed.value });
+    } else if (key === "ollama") {
+      const parsed = ollamaBlock(entry);
+      if (!parsed.ok) return parsed;
+      result.settings.ollama = parsed.value;
+    } else {
+      const parsed = setting(entry, "profile");
+      if (!parsed.ok) return parsed;
+      Object.assign(result.settings, { [key]: parsed.value });
+    }
+  }
+  if (!result.name) return { ok: false, line: node.line, error: "a profile needs a `name`." };
+  const { tasks, "min-tasks": min, "max-tasks": max } = result.conditions;
+  if (tasks !== void 0 && (min !== void 0 || max !== void 0)) {
+    return {
+      ok: false,
+      line: node.line,
+      error: "`tasks` is an exact count: write it alone, or `min-tasks` and `max-tasks` for a range."
+    };
+  }
+  if (min !== void 0 && max !== void 0 && min > max) {
+    return {
+      ok: false,
+      line: node.line,
+      error: "`min-tasks` must not be more than `max-tasks`."
+    };
+  }
+  return { ok: true, value: result };
+}
+function condition(entry, name) {
+  const { line, value } = entry;
+  if (name === "stages") {
+    const names = value.kind === "list" ? value.items : [];
+    const stages = names.flatMap((item) => item.kind === "scalar" ? [item.text] : []);
+    const valid = stages.length === names.length && stages.every(isStage);
+    if (names.length === 0 || !valid) {
+      return {
+        ok: false,
+        line,
+        error: `\`stages\` must list some of the stages ${STAGES.map((stage) => `\`${stage}\``).join(", ")}, such as \`[plan, route]\`.`
+      };
+    }
+    return { ok: true, value: stages };
+  }
+  const count3 = value.kind === "scalar" && value.text !== "" ? Number(value.text) : Number.NaN;
+  if (!Number.isInteger(count3) || count3 < 1 || count3 > MAX_TASKS) {
+    return {
+      ok: false,
+      line,
+      error: `\`${name}\` must be a whole number from 1 to ${MAX_TASKS}: the tasks of the run that run an agent.`
+    };
+  }
+  return { ok: true, value: count3 };
+}
+function resolveLayers(layers) {
+  const [own = {}] = layers;
+  const { profiles: list3 = [], ...values } = merge(layers);
+  const inherited = serving(
+    layers.slice(1).map((settings, index) => ({
+      name: layerSource(index + 1),
+      source: LAYER_BASES[index + 1] ?? `layer ${index + 2}`,
+      settings
+    })),
+    { source: "Codeman's default", settings: { provider: DEFAULTS.provider } }
+  );
+  if (!inherited.ok) return inherited;
+  const model = inherited.value.model ?? values.model;
+  const top = {
+    ...omit(values, PROFILE_SETTINGS),
+    ...inherited.value,
+    ...model === void 0 ? {} : { model }
+  };
+  const topError = settingsProblem(top);
+  if (topError) return { ok: false, error: topError };
+  const profiled = [];
+  for (const profile2 of list3) {
+    const name = `Profile \`${profile2.name}\``;
+    const served = serving([{ name, source: name, settings: profile2.settings }], {
+      source: "the top level",
+      settings: top
+    });
+    if (!served.ok) return served;
+    const settings = { ...omit(top, PROFILE_SETTINGS), ...served.value };
+    if (settings.model === void 0) {
+      return {
+        ok: false,
+        error: `${name} has no \`model\`, and the top-level settings have none to inherit: set one in the profile.`
+      };
+    }
+    const error3 = settingsProblem(settings);
+    if (error3) return { ok: false, error: `${name}: ${error3}` };
+    profiled.push({ profile: profile2, settings });
+  }
+  const forTask = pick(own, PROFILE_SETTINGS);
+  if (forTask.model !== void 0) {
+    const error3 = settingsProblem({ ...top, model: forTask.model });
+    if (error3) {
+      return {
+        ok: false,
+        error: `The task's \`model\` is for \`${top.provider}\`, the top-level settings' provider. ${error3}`
+      };
+    }
+  }
+  const providers = [top, ...profiled.map(({ settings }) => settings)].map(
+    (settings) => settings.provider ?? DEFAULTS.provider
+  );
+  for (const name of PROVIDER_SETTINGS) {
+    if (forTask[name] !== void 0 && !providers.some((p) => PROVIDERS[p].settings[name])) {
+      return {
+        ok: false,
+        error: `No provider of the settings accepts \`${name}\`: they name ${[...new Set(providers)].map((p) => `\`${p}\``).join(", ")}.`
+      };
+    }
+  }
+  return { ok: true, value: { top, profiled, forTask, providers } };
+}
+function servingRun(resolved, run2) {
+  const chosen = resolved.profiled.find(({ profile: profile2 }) => applies(profile2, run2));
+  if (chosen) return chosen;
+  return resolved.top.model === void 0 ? void 0 : { settings: resolved.top };
+}
+function resolveRun(layers, run2) {
+  const resolved = resolveLayers(layers);
+  if (!resolved.ok) return resolved;
+  const { top, forTask, providers } = resolved.value;
+  const served = run2 ? servingRun(resolved.value, run2) : { settings: top };
+  if (!served) {
+    return {
+      ok: false,
+      error: `No settings apply to the \`${run2?.stage}\` stage with ${run2?.tasks} task(s): no profile does, and the top-level settings have no \`model\`.`
+    };
+  }
+  const base = served.settings;
+  const accepted = PROVIDERS[base.provider ?? DEFAULTS.provider].settings;
+  const taskServing = Object.fromEntries(
+    Object.entries(forTask).filter(
+      ([name]) => name === "model" ? base.provider === top.provider : name in accepted
+    )
+  );
+  const settings = withProviderDefaults({ model: "", ...base, ...taskServing });
+  const error3 = settingsProblem(settings);
+  if (error3) {
+    return {
+      ok: false,
+      error: served.profile ? `Profile \`${served.profile.name}\`: ${error3}` : error3
+    };
+  }
+  return {
+    ok: true,
+    value: {
+      settings,
+      profile: served.profile?.name,
+      accounts: [...new Set(providers.map(accountOf))]
+    }
+  };
+}
+function applies(profile2, run2) {
+  const { stages, tasks, "min-tasks": min, "max-tasks": max } = profile2.conditions;
+  return (!stages || stages.includes(run2.stage)) && (tasks === void 0 || run2.tasks === tasks) && (min === void 0 || run2.tasks >= min) && (max === void 0 || run2.tasks <= max);
+}
+function tasksPerRun(layers) {
+  const list3 = layers.find((layer) => layer.profiles !== void 0)?.profiles ?? [];
+  let most = 1;
+  for (const { conditions } of list3) {
+    const { tasks, "min-tasks": min, "max-tasks": max } = conditions;
+    const named = tasks ?? max ?? (min === void 0 ? void 0 : MAX_TASKS);
+    if (named !== void 0) most = Math.max(most, named);
+  }
+  return most;
+}
+function mostTasks(layers, profile2) {
+  const cap = tasksPerRun(layers);
+  if (profile2 === void 0) return cap;
+  const list3 = layers.find((layer) => layer.profiles !== void 0)?.profiles ?? [];
+  const { tasks, "max-tasks": max } = list3.find(({ name }) => name === profile2)?.conditions ?? {};
+  return tasks ?? max ?? cap;
+}
+function servedCounts(layers, stage) {
+  const resolved = resolveLayers(layers);
+  if (!resolved.ok) return resolved;
+  const counts = [];
+  for (let tasks = 1; tasks <= MAX_TASKS; tasks++) {
+    const served = servingRun(resolved.value, { stage, tasks });
+    if (served) counts.push({ tasks, profile: served.profile?.name });
+  }
+  return { ok: true, value: counts };
+}
+function serving(layers, base) {
+  let result = pick(base.settings, PROFILE_SETTINGS);
+  let from = base.source;
+  for (const { name, source, settings } of [...layers].reverse()) {
+    const { provider } = settings;
+    if (provider !== void 0 && provider !== result.provider) {
+      if (result.model !== void 0 && settings.model === void 0) {
+        return {
+          ok: false,
+          error: `${name} names \`${provider}\`, but inherits \`${result.provider}\` from ${from}, so it must set its own \`model\`, one for \`${provider}\`.`
+        };
+      }
+      result = omit(result, PROVIDER_KEYS);
+    }
+    if (provider !== void 0) from = source;
+    const { ollama: ollama2, ...values } = pick(settings, PROFILE_SETTINGS);
+    Object.assign(result, values);
+    if (ollama2 !== void 0) result.ollama = { ...result.ollama, ...ollama2 };
+  }
+  return { ok: true, value: result };
+}
+function layerSource(index) {
+  const source = LAYER_SOURCES[index] ?? `layer ${index + 1}`;
+  return source.charAt(0).toUpperCase() + source.slice(1);
+}
+function merge(layers, defaults2 = DEFAULTS) {
+  const merged = { ...defaults2 };
+  for (const layer of [...layers].reverse()) {
+    for (const [name, value] of Object.entries(layer)) {
+      if (value !== void 0) Object.assign(merged, { [name]: value });
+    }
+  }
+  return merged;
+}
+function pick(layer, names) {
+  return Object.fromEntries(
+    Object.entries(layer).filter(([name, value]) => value !== void 0 && names.includes(name))
+  );
+}
+function omit(layer, names) {
+  return Object.fromEntries(Object.entries(layer).filter(([name]) => !names.includes(name)));
+}
+function settingSources(layers) {
+  const named = /* @__PURE__ */ new Set();
+  const show = (value) => Array.isArray(value) ? `[${value.map((profile2) => profile2.name).join(", ")}]` : typeof value === "object" && value !== null ? `{${Object.entries(value).map(([key, text]) => `${key}: ${text}`).join(", ")}}` : String(value);
+  return layers.flatMap((layer, index) => {
+    const values = Object.entries(layer).filter(
+      ([name, value]) => value !== void 0 && !named.has(name)
+    );
+    if (values.length === 0) return [];
+    for (const [name] of values) named.add(name);
+    const source = LAYER_SOURCES[index] ?? `layer ${index + 1}`;
+    return [`Settings from ${source}: ${values.map(([n, v]) => `${n}=${show(v)}`).join(", ")}.`];
+  });
+}
+function settingsProblem(settings) {
+  const values = pick(settings, PROVIDER_SETTINGS);
+  const model = settings.model ?? "";
+  return providerProblem(
+    {
+      ...values,
+      ...settings.ollama === void 0 ? {} : { ollama: settings.ollama },
+      provider: settings.provider ?? DEFAULTS.provider,
+      model
+    },
+    model !== ""
+  );
+}
+
+// src/steps/common.ts
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+function positiveNumber(runtime2, name) {
+  const value = Number(runtime2.input(name, { required: true }));
+  if (!Number.isFinite(value) || value <= 0)
+    throw new Error(`Input ${name} must be a positive number.`);
+  return value;
+}
+function workdir(runtime2) {
+  return runtime2.input("workdir") || join(runtime2.tempDir, "codeman");
+}
+function taskFile(runtime2, task) {
+  return join(workdir(runtime2), "task", task === void 0 ? "task.json" : `${task}.json`);
+}
+var resultDir = (runtime2) => join(workdir(runtime2), "result");
+var chainDir = (runtime2) => join(workdir(runtime2), "chain");
+function readTask(runtime2) {
+  const input = runtime2.input("task");
+  if (input !== "" && !/^\d+$/.test(input)) throw new Error("Input task must be an issue number.");
+  const number3 = input === "" ? void 0 : Number(input);
+  const task = JSON.parse(readFileSync(taskFile(runtime2, number3), "utf8"));
+  if (task.version !== 1) throw new Error("The task file has an unknown version.");
+  if (number3 !== void 0 && task.number !== number3) {
+    throw new Error(`The task file of #${number3} holds #${task.number}.`);
+  }
+  return task;
+}
 
 // src/budget.ts
 var MIN_RUN_BUDGET = 0.1;
@@ -20294,163 +21170,6 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// src/inference/providers.ts
-var PROVIDER_NAMES = ["openrouter", "runpod-pod", "runpod-serverless"];
-var PROVIDER_SETTINGS = ["engine", "gpu", "endpoint", "pod-reuse"];
-var PROVIDER_BLOCKS = ["ollama"];
-var ACCOUNTS = {
-  openrouter: {
-    input: "management-key",
-    secret: "CODEMAN_OPENROUTER_MANAGEMENT_KEY",
-    hourly: false
-  },
-  runpod: { input: "gpu-key", secret: "CODEMAN_RUNPOD_API_KEY", hourly: true }
-};
-var PROVIDERS = {
-  openrouter: { account: "openrouter", settings: {}, model: "openrouter", secrets: [] },
-  "runpod-pod": {
-    account: "runpod",
-    settings: {
-      engine: { values: ["ollama"], default: "ollama" },
-      gpu: { required: true, example: '"NVIDIA RTX A6000"' },
-      "pod-reuse": { values: ["task", "run"], default: "task" }
-    },
-    blocks: { ollama: { engine: "ollama" } },
-    model: "engine",
-    secrets: []
-  },
-  "runpod-serverless": {
-    account: "runpod",
-    settings: {
-      engine: { values: ["vllm"], default: "vllm" },
-      endpoint: { required: true, example: "abc123xyz" }
-    },
-    model: "engine",
-    // The endpoint's key, restricted to it: only the agent job's gateway holds it.
-    secrets: [{ secret: "CODEMAN_RUNPOD_SERVERLESS_KEY", input: "serverless-key", job: "agent" }]
-  }
-};
-function isProviderName(name) {
-  return PROVIDER_NAMES.includes(name);
-}
-function isProviderBlock(name) {
-  return PROVIDER_BLOCKS.includes(name);
-}
-function accountOf(provider) {
-  return isProviderName(provider) ? PROVIDERS[provider].account : provider;
-}
-function isHourlyAccount(name) {
-  return ACCOUNTS[name]?.hourly ?? false;
-}
-function settingValues(name) {
-  const values = Object.values(PROVIDERS).flatMap(
-    (provider) => provider.settings[name]?.values ?? []
-  );
-  return values.length > 0 ? [...new Set(values)] : void 0;
-}
-function providerProblem(settings, serves = true) {
-  const name = settings.provider;
-  if (!isProviderName(name)) return `Unknown provider \`${name}\`.`;
-  const provider = PROVIDERS[name];
-  for (const setting2 of [...PROVIDER_SETTINGS, ...PROVIDER_BLOCKS]) {
-    const accepted = isProviderBlock(setting2) ? provider.blocks?.[setting2] : provider.settings[setting2];
-    if (settings[setting2] !== void 0 && !accepted) {
-      return `\`${name}\` does not accept \`${setting2}\`; ${acceptedText(name)}`;
-    }
-  }
-  for (const setting2 of PROVIDER_SETTINGS) {
-    const spec = provider.settings[setting2];
-    const value = settings[setting2];
-    if (!spec) continue;
-    if (value === void 0) {
-      if (spec.required && serves) {
-        return `\`${name}\` needs \`${setting2}\`${spec.example ? `, such as \`${spec.example}\`` : ""}.`;
-      }
-      continue;
-    }
-    if (spec.values && !spec.values.includes(value)) {
-      const offered = spec.values.map((v) => `\`${v}\``).join(", ");
-      return setting2 === "engine" ? `\`${name}\` does not offer the engine \`${value}\`; it offers ${offered}.` : `With \`${name}\`, \`${setting2}\` must be one of ${offered}, not \`${value}\`.`;
-    }
-  }
-  const engine = settings.engine ?? provider.settings.engine?.default;
-  for (const block of PROVIDER_BLOCKS) {
-    const spec = provider.blocks?.[block];
-    if (!spec || settings[block] === void 0) continue;
-    if (engine !== spec.engine) {
-      return `With \`${name}\`, \`${block}\` configures the engine \`${spec.engine}\`, not \`${engine}\`.`;
-    }
-    try {
-      ollamaEnvironment(settings[block]);
-    } catch (error3) {
-      return error3 instanceof Error ? error3.message : String(error3);
-    }
-  }
-  return serves ? modelProblem(name, settings.model, settings.engine) : void 0;
-}
-function withProviderDefaults(settings) {
-  const provider = isProviderName(settings.provider) ? PROVIDERS[settings.provider] : void 0;
-  const filled = { ...settings };
-  for (const [setting2, spec] of Object.entries(provider?.settings ?? {})) {
-    if (spec.default !== void 0 && filled[setting2] === void 0) {
-      Object.assign(filled, { [setting2]: spec.default });
-    }
-  }
-  return filled;
-}
-function acceptedText(name) {
-  const { settings, blocks = {} } = PROVIDERS[name];
-  const accepted = [...Object.keys(settings), ...Object.keys(blocks)].map(
-    (setting2) => `\`${setting2}\``
-  );
-  return accepted.length === 0 ? "it takes only `model`." : `besides \`model\`, it takes ${list2(accepted)}.`;
-}
-function list2(items) {
-  return items.length < 2 ? items[0] ?? "" : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
-}
-function modelProblem(name, model, engine) {
-  const provider = PROVIDERS[name];
-  if (provider.model === "openrouter") {
-    return isOpenRouterModel(model) ? void 0 : `With \`${name}\`, \`model\` must be an OpenRouter model ID, such as \`provider/model\`, not \`${model}\`.`;
-  }
-  const engineName = engine ?? provider.settings.engine?.default ?? "";
-  const served = ENGINES[engineName];
-  if (!served) return `\`${name}\` has no engine \`${engineName}\`.`;
-  return served.isModel(model) ? void 0 : `With \`${name}\`, \`model\` must be a model name of the engine \`${engineName}\`, such as \`${served.example}\`, not \`${model}\`.`;
-}
-var OPENROUTER_MODEL = /^~?[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._:-]*$/i;
-function isOpenRouterModel(text) {
-  return text.length <= 100 && OPENROUTER_MODEL.test(text);
-}
-var ENDPOINT_ID = /^[a-z0-9]{1,64}$/i;
-var RUNPOD_API_HOST = "api.runpod.ai";
-function endpointId(text) {
-  if (ENDPOINT_ID.test(text)) return { ok: true, value: text };
-  let url;
-  try {
-    url = new URL(text);
-  } catch {
-    return {
-      ok: false,
-      error: `\`endpoint\` must be an endpoint's ID, letters and digits, or its URL, such as \`https://${RUNPOD_API_HOST}/v2/abc123xyz/run\`.`
-    };
-  }
-  if (url.protocol !== "https:" || url.hostname !== RUNPOD_API_HOST || url.port !== "") {
-    return {
-      ok: false,
-      error: `\`endpoint\` takes only URLs of \`https://${RUNPOD_API_HOST}\`, where the endpoint's key goes, not \`${url.protocol}//${url.host}\`.`
-    };
-  }
-  const [, version, id = ""] = url.pathname.split("/");
-  if (url.username || url.password || version !== "v2" || !ENDPOINT_ID.test(id)) {
-    return {
-      ok: false,
-      error: `\`endpoint\`'s URL must be the endpoint's, such as \`https://${RUNPOD_API_HOST}/v2/abc123xyz/run\`.`
-    };
-  }
-  return { ok: true, value: id };
-}
-
 // src/inference/runpod.ts
 var API2 = "https://api.runpod.io/v2";
 var HOUR_MS2 = 36e5;
@@ -20469,12 +21188,18 @@ var Runpod = class {
   #apiKey;
   #fetch;
   #now;
+  /** The catalog's GPU types, by ID, as read so far. */
+  #gpus = /* @__PURE__ */ new Map();
   constructor(apiKey, fetchFn = fetch, now = () => /* @__PURE__ */ new Date()) {
     this.#apiKey = apiKey;
     this.#fetch = fetchFn;
     this.#now = now;
     this.pods = {
       price: (gpuType) => this.#podPrice(gpuType),
+      memory: async (gpuType) => {
+        const memory = (await this.#gpu(gpuType))?.memory;
+        return typeof memory === "number" && memory > 0 ? memory : void 0;
+      },
       create: (spec) => this.#createPod(spec),
       get: (id) => this.#getPod(id),
       list: (env) => this.#listPods(env),
@@ -20505,13 +21230,23 @@ var Runpod = class {
     }
     return hours;
   }
+  /** A GPU type from Runpod's catalog, read once per type; undefined when Runpod has none. */
+  #gpu(gpuType) {
+    let gpu = this.#gpus.get(gpuType);
+    if (!gpu) {
+      gpu = this.#request(
+        `/catalog/gpus/${encodeURIComponent(gpuType)}`,
+        "GET",
+        void 0,
+        [404]
+      );
+      gpu.catch(() => this.#gpus.delete(gpuType));
+      this.#gpus.set(gpuType, gpu);
+    }
+    return gpu;
+  }
   async #podPrice(gpuType) {
-    const gpu = await this.#request(
-      `/catalog/gpus/${encodeURIComponent(gpuType)}`,
-      "GET",
-      void 0,
-      [404]
-    );
+    const gpu = await this.#gpu(gpuType);
     if (!gpu) {
       throw new Error(
         `Runpod has no GPU type "${gpuType}". \`gpu\` takes the GPU's ID, such as "NVIDIA RTX A6000", not its display name; see https://docs.runpod.io/references/gpu-types.`
@@ -20680,19 +21415,19 @@ import { request as httpsRequest } from "node:https";
 
 // src/gateway/usage.ts
 function busySpans(records, idleMs, now, samples = []) {
-  const spans = merge(records.map((record) => [record.start, (record.end ?? now) + idleMs]));
+  const spans = merge2(records.map((record) => [record.start, (record.end ?? now) + idleMs]));
   const unbilledSpans = [];
   for (let i = 1; i < samples.length; i++) {
     const a = samples[i - 1];
     const b = samples[i];
     if (unbilled(a) && unbilled(b)) unbilledSpans.push([a.at, b.at]);
   }
-  return subtract(spans, merge(unbilledSpans));
+  return subtract(spans, merge2(unbilledSpans));
 }
 function busyMs(records, idleMs, now, samples = []) {
   return busySpans(records, idleMs, now, samples).reduce((sum, [from, to]) => sum + to - from, 0);
 }
-function merge(spans) {
+function merge2(spans) {
   const merged = [];
   for (const [from, to] of [...spans].sort((a, b) => a[0] - b[0])) {
     const last = merged[merged.length - 1];
@@ -20867,6 +21602,13 @@ var Gateway = class {
   contextLength;
   /** The Ollama variables from the pod's settings that it gave Ollama, which the status reports. */
   ollama = {};
+  /** How the pod's model was fitted to its GPU, once it serves; the status reports it. */
+  fit;
+  /**
+   * Why the model could not be served, which `/admin/status` reports; `/health` says only that
+   * it failed, since it takes no token.
+   */
+  failure;
   constructor(options) {
     this.#options = options;
     this.#now = options.now ?? Date.now;
@@ -21059,6 +21801,8 @@ var Gateway = class {
       ready: this.ready,
       contextLength: this.contextLength,
       ollama: this.ollama,
+      fit: this.fit,
+      failure: this.failure,
       serving: this.serving,
       deadline: this.deadline,
       lastActivity: this.lastActivity,
@@ -21084,7 +21828,9 @@ var Gateway = class {
   async handle(request2, response) {
     const path = (request2.url ?? "/").split("?")[0] ?? "/";
     const route = `${request2.method} ${path}`;
-    if (route === "GET /health") return send(response, 200, { ready: this.ready });
+    if (route === "GET /health") {
+      return send(response, 200, { ready: this.ready, ...this.failure ? { failed: true } : {} });
+    }
     if (path.startsWith("/admin/") || path === "/usage")
       return this.#admin(route, request2, response);
     if (!ROUTES.has(route)) return send(response, 404, error("Not found."));
@@ -21328,8 +22074,13 @@ function runSettings(body) {
   };
 }
 
+// src/gateway/fit.ts
+var FIT_MARGIN_BYTES = 1024 * 1024 * 1024;
+var KV_BYTES = { f16: 2, q8_0: 34 / 32, q4_0: 18 / 32 };
+
 // src/gateway/pod.ts
 var GATEWAY_PORT = 8080;
+var FAILURE_GRACE_MS = 2 * 6e4;
 
 // src/store/layout.ts
 var LAYOUT = {
@@ -21346,6 +22097,13 @@ var LAYOUT = {
    */
   pods: (owner) => `${LAYOUT.organization(owner)}/pods`,
   pod: (owner, nonce) => `${LAYOUT.pods(owner)}/${documentId(nonce)}`,
+  /**
+   * The cache of fits: the context a pod's model fitted its GPU with, for one combination of
+   * image, model, GPU type and Ollama settings, named by their hash (decision 4 of the plan for
+   * fitting Ollama to the GPU).
+   */
+  contexts: (owner) => `${LAYOUT.organization(owner)}/contexts`,
+  context: (owner, key) => `${LAYOUT.contexts(owner)}/${documentId(key)}`,
   /**
    * A Serverless endpoint of the organization's GPU account, by its ID; under it, each run's
    * billed times on the endpoint's worker, named by the run and its reservation, which the ledger
@@ -21403,6 +22161,8 @@ function endpointProblems(endpoint2) {
 function podCost(start, end, pricePerSecond) {
   return Math.max(0, end.getTime() - start.getTime()) / 1e3 * pricePerSecond;
 }
+var PodStartFailure = class extends Error {
+};
 async function waitUntilReady(host, id, ready, options) {
   const wait = options.wait ?? sleep2;
   const interval = options.intervalMs ?? 1e4;
@@ -21412,7 +22172,13 @@ async function waitUntilReady(host, id, ready, options) {
     if (pod.status === "failed" || pod.status === "stopped" || pod.status === "terminated") {
       throw new Error(`Pod ${id} is ${pod.status}.`);
     }
-    if (pod.status === "running" && await ready().catch(() => false)) return pod;
+    if (pod.status === "running") {
+      const served = await ready().catch((error3) => {
+        if (error3 instanceof PodStartFailure) throw error3;
+        return false;
+      });
+      if (served) return pod;
+    }
     if (waited >= options.timeoutMs) {
       throw new Error(
         `Pod ${id} was not ready within ${Math.round(options.timeoutMs / 6e4)} minutes.`
@@ -21682,6 +22448,26 @@ function leaseHolder(repository, task) {
 function servesOneRun(image) {
   return SINGLE_RUN_IMAGES.has(image);
 }
+function fitsTheGpu(image) {
+  return !IMAGES_WITHOUT_OLLAMA_SETTINGS.has(image);
+}
+function podOllama(settings) {
+  const own = settings.ollama ?? {};
+  const derived = fitsTheGpu(settings.image) && settings.parallel !== void 0 ? { OLLAMA_NUM_PARALLEL: String(settings.parallel) } : {};
+  const variables = { ...derived, ...own };
+  return Object.fromEntries(
+    Object.entries(variables).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
+  );
+}
+function fitKey(settings) {
+  const variables = ollamaVariables(settings).filter(
+    (variable) => !variable.startsWith("OLLAMA_CONTEXT_LENGTH=")
+  );
+  return sha256([settings.image, settings.model, settings.gpuType, ...variables].join("\n")).slice(
+    0,
+    32
+  );
+}
 function ollamaVariables(settings) {
   return Object.entries(settings.ollama ?? {}).map(([name, value]) => `${name}=${value}`);
 }
@@ -21724,6 +22510,8 @@ async function callGateway(fetchFn, accountKey, target, method, path, body) {
 var PodInference = class {
   name;
   #settings;
+  /** The `ollama` settings' own variables, without the derived ones. */
+  #own;
   #options;
   #host;
   #registry;
@@ -21732,7 +22520,8 @@ var PodInference = class {
   constructor(settings, options) {
     if (!options.gpu.pods) throw new Error(`${options.gpu.name} has no pods.`);
     this.name = `${options.gpu.name} pods`;
-    this.#settings = settings;
+    this.#own = settings.ollama ?? {};
+    this.#settings = { ...settings, ollama: podOllama(settings) };
     this.#options = options;
     this.#host = options.gpu.pods;
     this.#registry = new PodRegistry(options.store, options.repository.owner, () => this.#now());
@@ -21750,13 +22539,20 @@ var PodInference = class {
    * Refuses, before any pod, an image known not to apply Ollama settings when the run has some:
    * a requested setting is never dropped (choice 8 of the Ollama settings plan).
    */
-  #checkImage() {
-    const ollama2 = ollamaVariables(this.#settings);
-    const { image } = this.#settings;
-    if (ollama2.length === 0 || !IMAGES_WITHOUT_OLLAMA_SETTINGS.has(image)) return;
-    throw new Error(
-      `The pod image ${image} cannot apply Ollama settings (${quotedVariables(this.#settings)}), so no pod was created: use a version of Codeman whose pod image can, or remove \`ollama\` from the settings. See docs/settings/ollama.md#pod-images.`
-    );
+  #checkImage(log) {
+    const own = { ollama: this.#own };
+    const { image, parallel } = this.#settings;
+    if (fitsTheGpu(image)) return;
+    if (ollamaVariables(own).length > 0) {
+      throw new Error(
+        `The pod image ${image} cannot apply Ollama settings (${quotedVariables(own)}), so no pod was created: use a version of Codeman whose pod image can, or remove \`ollama\` from the settings. See docs/settings/ollama.md#pod-images.`
+      );
+    }
+    if (parallel !== void 0) {
+      log.info(
+        `The pod image ${image} predates Ollama settings: its pods serve one request at a time, with the model's own context length, and nothing checks that the model fits the GPU. See docs/settings/ollama.md#pod-images.`
+      );
+    }
   }
   async open(run2, log) {
     const token = randomBytes2(32).toString("base64url");
@@ -21764,7 +22560,7 @@ var PodInference = class {
     const settings = podSettingsKey(this.#settings, holder);
     let handle;
     try {
-      this.#checkImage();
+      this.#checkImage(log);
       await this.#sweep(holder, settings, log);
       handle = await this.#claim(run2, holder, settings, token, log);
     } catch (error3) {
@@ -21993,6 +22789,7 @@ var PodInference = class {
             })
           );
         }
+        if (error3 instanceof PodStartFailure) throw error3;
       }
     }
     throw new Error(
@@ -22067,7 +22864,16 @@ var PodInference = class {
       podId,
       async () => {
         const response = await (this.#options.fetch ?? fetch)(`${target.url}/health`);
-        const ready = response.ok && (await response.json()).ready === true;
+        const health = response.ok ? await response.json() : {};
+        if (health.failed) {
+          const status2 = await this.#admin(target, "GET", "/admin/status").catch(
+            () => ({})
+          );
+          throw new PodStartFailure(
+            `Pod ${podId} did not serve ${model}: ${status2.failure ?? "its gateway reported a failure"}`
+          );
+        }
+        const ready = health.ready === true;
         if (checks++ === 0) startedBefore = ready;
         return ready;
       },
@@ -22079,7 +22885,8 @@ var PodInference = class {
     const shared = !servesOneRun(image);
     const ollama2 = this.#settings.ollama ?? {};
     const configured = Object.keys(ollama2).length > 0;
-    if (shared || configured) {
+    const fits = fitsTheGpu(image);
+    if (shared || configured || fits) {
       const status2 = await this.#admin(target, "GET", "/admin/status");
       if (shared && (status2.version ?? 1) < GATEWAY_VERSION) {
         throw new Error(
@@ -22091,6 +22898,12 @@ var PodInference = class {
           `Pod ${podId}'s gateway did not apply the Ollama settings (${quotedVariables(this.#settings)}): its image cannot. List the image in IMAGES_WITHOUT_OLLAMA_SETTINGS (src/inference/ollama.ts), or use one built since Ollama settings.`
         );
       }
+      if (fits && !status2.fit) {
+        throw new Error(
+          `Pod ${podId}'s gateway did not report how ${model} fits the GPU: its image cannot check it. List the image in IMAGES_WITHOUT_OLLAMA_SETTINGS (src/inference/ollama.ts), or use one built since the fit to the GPU.`
+        );
+      }
+      if (fits && status2.fit) await this.#reportFit(status2.fit, podId, own, log);
     }
     const handle = {
       mode: "pod",
@@ -22124,6 +22937,9 @@ var PodInference = class {
     const { model, gpuType, image, engine } = this.#settings;
     if (!image) throw new Error("No pod image is pinned; see docs/installation/runpod.md#pods.");
     const listed = await this.#host.price(gpuType);
+    const fits = fitsTheGpu(image);
+    const memory = fits ? await this.#host.memory?.(gpuType).catch(() => void 0) : void 0;
+    const cached = fits ? await this.#cachedFit(log) : void 0;
     const owner = this.#options.repository.owner.toLowerCase();
     const now = this.#now();
     const pod = await this.#host.create({
@@ -22131,6 +22947,8 @@ var PodInference = class {
       image,
       env: {
         ...Object.keys(this.#settings.ollama ?? {}).length > 0 ? { CODEMAN_OLLAMA: JSON.stringify(this.#settings.ollama) } : {},
+        ...memory ? { CODEMAN_GPU_MEMORY_GB: String(memory) } : {},
+        ...cached ? { CODEMAN_FIT: JSON.stringify(cached) } : {},
         CODEMAN_ORGANIZATION: owner,
         CODEMAN_POD_SETTINGS: record.settings,
         CODEMAN_NONCE: record.nonce,
@@ -22150,6 +22968,76 @@ var PodInference = class {
       `Created pod ${pod.id} with ${gpuType}, at ${usd(listed * 3600)} per hour; waiting for ${model}.`
     );
     return { pod, listed };
+  }
+  /**
+   * The context that fitted these settings before, from the cache of fits, with its model's
+   * digest; none with a context length in the settings, or when the cache cannot be read.
+   */
+  async #cachedFit(log) {
+    if (this.#settings.ollama?.OLLAMA_CONTEXT_LENGTH) return void 0;
+    const path = LAYOUT.context(this.#options.repository.owner, fitKey(this.#settings));
+    try {
+      const fields = (await this.#options.store.get(path))?.fields;
+      const { contextLength, digest } = fields ?? {};
+      if (!Number.isSafeInteger(contextLength) || typeof digest !== "string") return void 0;
+      log.info(`The cache of fits gives these settings a context of ${contextLength} tokens.`);
+      return { contextLength, digest };
+    } catch (error3) {
+      log.warning(
+        `Could not read the cache of fits (${error3 instanceof Error ? error3.message : error3}); the pod searches for the context that fits.`
+      );
+      return void 0;
+    }
+  }
+  /**
+   * Logs how the pod's model fits its GPU, warns when Ollama serves fewer requests at once than
+   * asked, and records in the cache of fits what the pod that this task created found by
+   * searching.
+   */
+  async #reportFit(fit, podId, own, log) {
+    const { model } = this.#settings;
+    const how = fit.source === "settings" ? "from the settings" : fit.source === "cache" ? "from the cache of fits" : `found in ${fit.loads} load(s)`;
+    const theirs = fit.modelContextLength ? ` (the model's own is ${fit.modelContextLength})` : "";
+    log.info(
+      `Pod ${podId} serves ${model} with ${fit.parallel} parallel request(s) and a context of ${fit.contextLength} tokens${theirs}, wholly on the GPU; ${how}.`
+    );
+    if (fit.parallel < fit.requestedParallel) {
+      log.warning(
+        `Ollama ${OLLAMA_VERSION} serves ${model}'s family (${fit.family ?? "unknown"}) one request at a time, whatever num-parallel says: the runs that share pod ${podId} wait for each other's requests.`
+      );
+    }
+    if (!own || fit.source !== "search" || !fit.digest) return;
+    const variables = Object.fromEntries(
+      Object.entries(this.#settings.ollama ?? {}).filter(
+        ([name]) => name !== "OLLAMA_CONTEXT_LENGTH"
+      )
+    );
+    const { image, gpuType } = this.#settings;
+    try {
+      await this.#options.store.write([
+        {
+          op: "set",
+          path: LAYOUT.context(this.#options.repository.owner, fitKey(this.#settings)),
+          fields: {
+            image,
+            model,
+            digest: fit.digest,
+            gpuType,
+            ollama: variables,
+            contextLength: fit.contextLength,
+            ...fit.modelContextLength ? { modelContextLength: fit.modelContextLength } : {},
+            parallel: fit.parallel,
+            loads: fit.loads,
+            pod: podId,
+            recordedAt: this.#now()
+          }
+        }
+      ]);
+    } catch (error3) {
+      log.warning(
+        `Could not record the fit in the cache of fits (${error3 instanceof Error ? error3.message : error3}); the next pod searches again.`
+      );
+    }
   }
   #admin(target, method, path, body) {
     const { fetch: fetchFn = fetch, accountKey } = this.#options;
@@ -22383,7 +23271,8 @@ function inferenceChoice(settings, record, options = {}) {
     provider: "runpod-pod",
     gpu: settings.gpu ?? "",
     podReuse: settings["pod-reuse"] === "run" ? "run" : "task",
-    ...settings.ollama && Object.keys(settings.ollama).length > 0 ? { ollama: settings.ollama } : {}
+    ...settings.ollama && Object.keys(settings.ollama).length > 0 ? { ollama: settings.ollama } : {},
+    ...options.parallel === void 0 ? {} : { parallel: options.parallel }
   };
 }
 function parseInferenceChoice(text) {
@@ -22402,6 +23291,12 @@ function parseInferenceChoice(text) {
     const strings = typeof ollama2 === "object" && ollama2 !== null && !Array.isArray(ollama2) && Object.values(ollama2).every((value) => typeof value === "string");
     if (!strings) throw new Error("The inference input is not a valid choice.");
     ollamaEnvironment(choice.ollama);
+  }
+  if (choice.provider === "runpod-pod" && choice.parallel !== void 0) {
+    const { parallel } = choice;
+    if (!Number.isInteger(parallel) || parallel < 1 || parallel > MAX_TASKS) {
+      throw new Error("The inference input is not a valid choice.");
+    }
   }
   return choice;
 }
@@ -22464,7 +23359,8 @@ function selfHosted(choice, repository, inputs) {
         gpuType: choice.gpu,
         image: inputs.image,
         reuse: choice.podReuse,
-        ollama: ollamaEnvironment(choice.ollama)
+        ollama: ollamaEnvironment(choice.ollama),
+        parallel: choice.parallel
       },
       { repository, gpu, accountKey: inputs.accountKey, store: inputs.store() }
     );
@@ -23470,7 +24366,7 @@ var before_after_hook_default = { Singular, Collection };
 // node_modules/@octokit/endpoint/dist-bundle/index.js
 var VERSION = "0.0.0-development";
 var userAgent = `octokit-endpoint.js/${VERSION} ${getUserAgent()}`;
-var DEFAULTS = {
+var DEFAULTS2 = {
   method: "GET",
   baseUrl: "https://api.github.com",
   headers: {
@@ -23518,7 +24414,7 @@ function removeUndefinedProperties(obj) {
   }
   return obj;
 }
-function merge2(defaults2, route, options) {
+function merge3(defaults2, route, options) {
   if (typeof route === "string") {
     let [method, url] = route.split(" ");
     options = Object.assign(url ? { method, url } : { url: method }, options);
@@ -23563,7 +24459,7 @@ function extractUrlVariableNames(url) {
   }
   return matches2.map(removeNonChars).reduce((a, b) => a.concat(b), []);
 }
-function omit(object, keysToOmit) {
+function omit2(object, keysToOmit) {
   const result = { __proto__: null };
   for (const key of Object.keys(object)) {
     if (keysToOmit.indexOf(key) === -1) {
@@ -23707,7 +24603,7 @@ function parse(options) {
   let url = (options.url || "/").replace(/:([a-z]\w+)/g, "{$1}");
   let headers = Object.assign({}, options.headers);
   let body;
-  let parameters = omit(options, [
+  let parameters = omit2(options, [
     "method",
     "baseUrl",
     "url",
@@ -23721,7 +24617,7 @@ function parse(options) {
     url = options.baseUrl + url;
   }
   const omittedParameters = Object.keys(options).filter((option) => urlVariableNames.includes(option)).concat("baseUrl");
-  const remainingParameters = omit(parameters, omittedParameters);
+  const remainingParameters = omit2(parameters, omittedParameters);
   const isBinaryRequest = /application\/octet-stream/i.test(headers.accept);
   if (!isBinaryRequest) {
     if (options.mediaType.format) {
@@ -23766,19 +24662,19 @@ function parse(options) {
   );
 }
 function endpointWithDefaults(defaults2, route, options) {
-  return parse(merge2(defaults2, route, options));
+  return parse(merge3(defaults2, route, options));
 }
 function withDefaults(oldDefaults, newDefaults) {
-  const DEFAULTS22 = merge2(oldDefaults, newDefaults);
+  const DEFAULTS22 = merge3(oldDefaults, newDefaults);
   const endpoint2 = endpointWithDefaults.bind(null, DEFAULTS22);
   return Object.assign(endpoint2, {
     DEFAULTS: DEFAULTS22,
     defaults: withDefaults.bind(null, DEFAULTS22),
-    merge: merge2.bind(null, DEFAULTS22),
+    merge: merge3.bind(null, DEFAULTS22),
     parse
   });
 }
-var endpoint = withDefaults(null, DEFAULTS);
+var endpoint = withDefaults(null, DEFAULTS2);
 
 // node_modules/content-type/dist/index.js
 var SP = 32;
@@ -28444,717 +29340,6 @@ function close(server) {
   });
 }
 
-// src/stages.ts
-var ROUTED_STAGES = ["web", "design", "code", "test", "review"];
-var STAGES = ["plan", "route", ...ROUTED_STAGES];
-var ROUTED_STAGE_STATE = {
-  web: "researching",
-  design: "designing",
-  code: "coding",
-  test: "testing",
-  review: "reviewing"
-};
-function routedStageOfState(state) {
-  if (state === "in-progress") return "code";
-  return ROUTED_STAGES.find((stage) => ROUTED_STAGE_STATE[stage] === state);
-}
-function nextStage(stage) {
-  return ROUTED_STAGES[ROUTED_STAGES.indexOf(stage) + 1];
-}
-function isStage(value) {
-  return typeof value === "string" && STAGES.includes(value);
-}
-function nextInRoute(route, stage) {
-  if (!route) return nextStage(stage);
-  const index = ROUTED_STAGES.indexOf(stage);
-  return route.stages.map((step) => step.stage).find((next) => ROUTED_STAGES.indexOf(next) > index);
-}
-function stagesFrom(first) {
-  return ROUTED_STAGES.slice(ROUTED_STAGES.indexOf(first));
-}
-
-// src/yaml.ts
-var YamlError = class extends Error {
-  line;
-  constructor(line, message) {
-    super(message);
-    this.line = line;
-  }
-};
-var KEY = /^([A-Za-z][A-Za-z0-9_-]*):(?:\s+(.*))?$/;
-var ITEM = /^-(?:\s|$)/;
-function parseYaml(text) {
-  const lines = [];
-  for (const [index, raw] of text.split(/\r?\n/).entries()) {
-    const line = raw.trimEnd();
-    const content = line.trimStart();
-    if (content === "" || content.startsWith("#")) continue;
-    const indentation = line.slice(0, line.length - content.length);
-    if (indentation.includes("	")) {
-      return { ok: false, line: index + 1, error: "indent with spaces, not tabs." };
-    }
-    lines.push({ number: index + 1, indent: indentation.length, text: content });
-  }
-  try {
-    const reader = new Reader(lines);
-    const value = reader.mapping(0);
-    const rest = reader.peek();
-    if (rest) throw new YamlError(rest.number, "unexpected indentation.");
-    return { ok: true, value };
-  } catch (error3) {
-    if (error3 instanceof YamlError) return { ok: false, line: error3.line, error: error3.message };
-    throw error3;
-  }
-}
-var Reader = class {
-  #lines;
-  #next = 0;
-  constructor(lines) {
-    this.#lines = lines;
-  }
-  peek() {
-    return this.#lines[this.#next];
-  }
-  /** The `key: value` lines at `indent`, and what is nested under them. */
-  mapping(indent) {
-    const map = { kind: "map", line: this.peek()?.number ?? 1, entries: [] };
-    for (let line = this.peek(); line && line.indent >= indent; line = this.peek()) {
-      if (line.indent > indent) throw new YamlError(line.number, "unexpected indentation.");
-      const match = KEY.exec(line.text);
-      if (!match?.[1] || ITEM.test(line.text)) {
-        throw new YamlError(line.number, "expected `name: value`.");
-      }
-      const key = match[1];
-      if (map.entries.some((entry) => entry.key === key)) {
-        throw new YamlError(line.number, `\`${key}\` appears twice.`);
-      }
-      this.#next++;
-      map.entries.push({ key, line: line.number, value: this.#value(key, line, match[2] ?? "") });
-    }
-    return map;
-  }
-  /** A key's value: on its line, or the block nested under it. */
-  #value(key, line, text) {
-    if (text === "" || text.startsWith("#")) {
-      const child = this.peek();
-      if (child && child.indent > line.indent) {
-        return ITEM.test(child.text) ? this.#list(child.indent) : this.mapping(child.indent);
-      }
-      if (child && child.indent === line.indent && ITEM.test(child.text)) {
-        return this.#list(child.indent);
-      }
-      return { kind: "scalar", line: line.number, text: "" };
-    }
-    if (text.startsWith("[")) return flowList(key, line.number, text);
-    if (text.startsWith("{")) {
-      throw new YamlError(
-        line.number,
-        `the value of \`${key}\` is in braces, which the settings do not read: write each \`name: value\` on its own line, indented under \`${key}:\`.`
-      );
-    }
-    const value = scalar(text);
-    if (value === void 0) {
-      throw new YamlError(line.number, `the value of \`${key}\` is not a plain value.`);
-    }
-    return { kind: "scalar", line: line.number, text: value };
-  }
-  /** The `- item` lines at `indent`. An item is a scalar or a mapping that starts on its line. */
-  #list(indent) {
-    const list3 = { kind: "list", line: this.peek()?.number ?? 1, items: [] };
-    for (let line = this.peek(); line && line.indent >= indent; line = this.peek()) {
-      if (line.indent > indent) throw new YamlError(line.number, "unexpected indentation.");
-      if (!ITEM.test(line.text)) break;
-      const after = line.text.slice(1);
-      const content = after.trimStart();
-      if (content === "" || content.startsWith("#")) {
-        throw new YamlError(line.number, "expected a value after `-`, on the same line.");
-      }
-      if (ITEM.test(content) || content.startsWith("[")) {
-        throw new YamlError(line.number, "a list item cannot be a list.");
-      }
-      if (KEY.test(content)) {
-        line.indent += 1 + after.length - content.length;
-        line.text = content;
-        list3.items.push(this.mapping(line.indent));
-        continue;
-      }
-      this.#next++;
-      const value = scalar(content);
-      if (value === void 0)
-        throw new YamlError(line.number, "a list item is not a plain value.");
-      list3.items.push({ kind: "scalar", line: line.number, text: value });
-    }
-    return list3;
-  }
-};
-function flowList(key, line, text) {
-  const items = [];
-  let rest = text.slice(1).trimStart();
-  if (rest.startsWith("]")) {
-    rest = rest.slice(1);
-  } else {
-    for (; ; ) {
-      const match = /^(?:"([^"\\]*)"|'([^'\\]*)'|([^,[\]{}"'#]*?))\s*([,\]])\s*/.exec(rest);
-      const plain = match?.[3];
-      const value = plain === void 0 ? match?.[1] ?? match?.[2] : plainScalar(plain);
-      if (!match || value === void 0 || plain !== void 0 && plain === "") {
-        throw new YamlError(line, `an item of \`${key}\` is not a plain value.`);
-      }
-      items.push({ kind: "scalar", line, text: value });
-      rest = rest.slice(match[0].length);
-      if (match[4] === "]") break;
-    }
-  }
-  if (!/^\s*(?:#.*)?$/.test(rest)) {
-    throw new YamlError(line, `expected only a comment after the list of \`${key}\`.`);
-  }
-  return { kind: "list", line, items };
-}
-function scalar(text) {
-  const quoted = /^(["'])([^"'\\]*)\1\s*(?:#.*)?$/.exec(text);
-  if (quoted) return quoted[2];
-  return plainScalar(text.replace(/\s+#.*$/, "").trim());
-}
-var WORD = /^[A-Za-z0-9._~/:_-]*$/;
-function plainScalar(text) {
-  const words = text.split(/ +/);
-  if (!words.every((word) => WORD.test(word))) return void 0;
-  if (words.length > 1 && (words[0] === "-" || words.some((word) => word.endsWith(":")))) {
-    return void 0;
-  }
-  return text;
-}
-
-// src/settings.ts
-var SETTINGS_FILE = ".codeman/settings.yml";
-var SHARED_SETTINGS = "the `settings` input (organization variable CODEMAN_SETTINGS)";
-var LAYER_SOURCES = [
-  "the task's commands",
-  "the workflow's inputs",
-  SETTINGS_FILE,
-  SHARED_SETTINGS
-];
-var LAYER_BASES = [
-  "the task's commands",
-  "the workflow's inputs",
-  SETTINGS_FILE,
-  "the organization's settings"
-];
-var DEFAULTS2 = {
-  "task-budget": 2,
-  "monthly-budget": 20,
-  "max-runs": 3,
-  "max-files": 300,
-  "max-file-bytes": 1024 * 1024,
-  "max-decisions": 10,
-  "max-options": 4,
-  "max-title-chars": 80,
-  "max-question-chars": 600,
-  "max-label-chars": 150,
-  "max-summary-chars": 2e3,
-  language: "auto",
-  provider: "openrouter"
-};
-var LIMIT_BOUNDS = {
-  "max-decisions": { min: 1, max: 10 },
-  "max-options": { min: 2, max: 6 },
-  "max-title-chars": { min: 1, max: 200 },
-  "max-question-chars": { min: 1, max: 1500 },
-  "max-label-chars": { min: 1, max: 300 },
-  "max-summary-chars": { min: 1, max: 4e3 }
-};
-var MAX_TASKS = 10;
-var TASK_SETTINGS = /* @__PURE__ */ new Set([
-  "model",
-  "task-budget",
-  "max-runs",
-  "language",
-  "gpu"
-]);
-var RENAMED_TASK_SETTINGS = { "gpu-type": "gpu" };
-var ORGANIZATION_SETTINGS = /* @__PURE__ */ new Set([
-  "organization-monthly-budget"
-]);
-var CHOICES = {
-  provider: PROVIDER_NAMES,
-  engine: settingValues("engine"),
-  "pod-reuse": settingValues("pod-reuse")
-};
-var NAMES = [
-  "model",
-  "task-budget",
-  "monthly-budget",
-  "organization-monthly-budget",
-  "max-runs",
-  "max-files",
-  "max-file-bytes",
-  "max-decisions",
-  "max-options",
-  "max-title-chars",
-  "max-question-chars",
-  "max-label-chars",
-  "max-summary-chars",
-  "language",
-  "provider",
-  ...PROVIDER_SETTINGS
-];
-function isModelName(text) {
-  return isOpenRouterModel(text) || Object.values(ENGINES).some((engine) => engine.isModel(text));
-}
-var GPU_TYPE = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,78}[A-Za-z0-9]$/;
-var LANGUAGE_TAG = /^[a-z]{2,3}(-[a-z0-9]{2,8}){0,3}$/i;
-function isLanguageTag(text) {
-  return LANGUAGE_TAG.test(text);
-}
-function settingKind(name) {
-  if (name === "model" || name === "language" || name === "gpu" || name === "endpoint") {
-    return name;
-  }
-  if (CHOICES[name]) return "choice";
-  return name === "task-budget" || name === "monthly-budget" || name === "organization-monthly-budget" ? "number" : "integer";
-}
-function isSettingName(name) {
-  return NAMES.includes(name);
-}
-function parseSetting(name, text) {
-  if (name === "ollama") return { ok: false, error: OLLAMA_BLOCK };
-  if (name === "model") {
-    return isModelName(text) ? { ok: true, value: text } : {
-      ok: false,
-      error: `\`${name}\` must be a model ID, such as \`provider/model\` on OpenRouter.`
-    };
-  }
-  const choices = CHOICES[name];
-  if (choices) {
-    return choices.includes(text) ? { ok: true, value: text } : {
-      ok: false,
-      error: `\`${name}\` must be one of ${choices.map((c) => `\`${c}\``).join(", ")}.`
-    };
-  }
-  if (name === "gpu") {
-    return GPU_TYPE.test(text) ? { ok: true, value: text } : { ok: false, error: `\`${name}\` must be a GPU type, such as \`NVIDIA RTX A6000\`.` };
-  }
-  if (name === "endpoint") return endpointId(text);
-  if (name === "language") {
-    return text === "auto" || isLanguageTag(text) ? { ok: true, value: text } : {
-      ok: false,
-      error: `\`${name}\` must be \`auto\` or a language tag, such as \`pt-BR\`.`
-    };
-  }
-  const value = Number(text);
-  const integer = settingKind(name) === "integer";
-  if (text === "" || !Number.isFinite(value) || value <= 0 || integer && !Number.isInteger(value)) {
-    return {
-      ok: false,
-      error: `\`${name}\` must be a positive ${integer ? "whole number" : "number"}.`
-    };
-  }
-  const bounds = LIMIT_BOUNDS[name];
-  if (bounds && (value < bounds.min || value > bounds.max)) {
-    return { ok: false, error: `\`${name}\` must be from ${bounds.min} to ${bounds.max}.` };
-  }
-  return { ok: true, value };
-}
-var PROFILE_SETTINGS = [
-  "provider",
-  "model",
-  ...PROVIDER_SETTINGS,
-  ...PROVIDER_BLOCKS
-];
-var PROVIDER_KEYS = [...PROVIDER_SETTINGS, ...PROVIDER_BLOCKS];
-var OLLAMA_BLOCK = "`ollama` must be a block of Ollama's settings, one `name: value` per line, indented under it, such as `num-parallel: 4`.";
-function renamedSetting(name, value) {
-  const now = (text) => `\`${name}\` is now ${text}.`;
-  switch (name) {
-    case "inference":
-      if (value === "openrouter") return now("`provider`: write `provider: openrouter`");
-      return now(
-        value === "self-hosted" ? "`provider`: write `provider: runpod-pod` or `provider: runpod-serverless`" : `\`provider\`: ${PROVIDER_NAMES.map((provider) => `\`${provider}\``).join(", ")}`
-      );
-    case "gpu-provider":
-      return now(
-        "part of `provider`: write `provider: runpod-pod` or `provider: runpod-serverless`"
-      );
-    case "gpu-mode":
-      if (value === "pod" || value === "serverless") {
-        return now(`part of \`provider\`: write \`provider: runpod-${value}\``);
-      }
-      return now(
-        "part of `provider`: write `provider: runpod-pod` or `provider: runpod-serverless`"
-      );
-    case "gpu-type":
-      return now("`gpu`");
-    case "serverless-endpoint":
-      return now("`endpoint`, with `provider: runpod-serverless`");
-    case "inference-profiles":
-      return now("`profiles`");
-    default:
-      return void 0;
-  }
-}
-var CONDITION_NAMES = ["stages", "tasks", "min-tasks", "max-tasks"];
-function isConditionName(name) {
-  return CONDITION_NAMES.includes(name);
-}
-var PROFILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
-function parseSettings(text, source = SETTINGS_FILE) {
-  const tree = parseYaml(text);
-  if (!tree.ok) return { ok: false, error: `${source}, line ${tree.line}: ${tree.error}` };
-  const settings = {};
-  for (const entry of tree.value.entries) {
-    const parsed = entry.key === "profiles" ? profiles(entry.value) : entry.key === "ollama" ? ollamaBlock(entry) : setting(entry, "setting");
-    if (!parsed.ok) return { ok: false, error: `${source}, line ${parsed.line}: ${parsed.error}` };
-    if (source !== SHARED_SETTINGS && isSettingName(entry.key) && ORGANIZATION_SETTINGS.has(entry.key)) {
-      return {
-        ok: false,
-        error: `${source}, line ${entry.line}: \`${entry.key}\` can be set only in the organization's settings, the CODEMAN_SETTINGS variable.`
-      };
-    }
-    settings[entry.key] = parsed.value;
-  }
-  return { ok: true, value: settings };
-}
-function ollamaBlock(entry) {
-  const { line, value } = entry;
-  if (value.kind !== "map") return { ok: false, line, error: OLLAMA_BLOCK };
-  const settings = {};
-  for (const { key, line: keyLine, value: keyValue } of value.entries) {
-    if (keyValue.kind !== "scalar") {
-      return {
-        ok: false,
-        line: keyLine,
-        error: `the value of \`ollama\`'s \`${key}\` is not a plain value.`
-      };
-    }
-    const checked = ollamaSetting(key, keyValue.text);
-    if (!checked.ok) return { ok: false, line: keyLine, error: checked.error };
-    settings[key] = checked.value;
-  }
-  return { ok: true, value: settings };
-}
-function setting(entry, what) {
-  const { key: name, line, value } = entry;
-  const text = value.kind === "scalar" ? value.text : void 0;
-  const renamed = renamedSetting(name, text);
-  if (renamed) return { ok: false, line, error: renamed };
-  const misplaced = misplacedCondition(name, what, text);
-  if (misplaced) return { ok: false, line, error: misplaced };
-  if (!isSettingName(name)) return { ok: false, line, error: `unknown setting \`${name}\`.` };
-  if (what === "profile" && !PROFILE_SETTINGS.includes(name)) {
-    return {
-      ok: false,
-      line,
-      error: `a profile cannot set \`${name}\`; it sets only ${PROFILE_SETTINGS.map((n) => `\`${n}\``).join(", ")}.`
-    };
-  }
-  if (value.kind !== "scalar") {
-    return { ok: false, line, error: `the value of \`${name}\` is not a plain value.` };
-  }
-  const parsed = parseSetting(name, value.text);
-  return parsed.ok ? parsed : { ok: false, line, error: parsed.error };
-}
-function misplacedCondition(name, what, value) {
-  const count3 = value !== void 0 && /^[1-9][0-9]*$/.test(value) ? value : "N";
-  if (name === "when") {
-    return what === "profile" ? "`when` is gone: write the profile's conditions (`stages`, `tasks`, `min-tasks`, `max-tasks`) directly in the profile, beside its `name`." : "`when` is gone, and conditions belong to profiles: write them in a profile, under `profiles`, beside its `name`. The top-level settings apply when no profile does.";
-  }
-  if (name === "parallel-tasks") {
-    return what === "profile" ? `\`parallel-tasks\` is no longer a condition: write \`min-tasks: ${count3}\` for at least ${count3} tasks in the run, or \`tasks: ${count3}\` for exactly ${count3}.` : `\`parallel-tasks\` is no longer a setting: a run takes as many tasks as its profiles' \`tasks\`, \`min-tasks\` and \`max-tasks\` allow, and one at a time when none sets them. For up to ${count3} tasks at once, write \`max-tasks: ${count3}\` in a profile.`;
-  }
-  if (what === "setting" && isConditionName(name)) {
-    return `\`${name}\` is a profile's condition: write it in a profile, under \`profiles\`. The top-level settings apply when no profile does.`;
-  }
-  return void 0;
-}
-function profiles(node) {
-  if (node.kind !== "list" || node.items.some((item) => item.kind !== "map")) {
-    return {
-      ok: false,
-      line: node.kind === "list" ? node.items[0]?.line ?? node.line : node.line,
-      error: "`profiles` must be a list of profiles, each a block of settings."
-    };
-  }
-  const list3 = [];
-  for (const item of node.items) {
-    const parsed = profile(item);
-    if (!parsed.ok) return parsed;
-    if (list3.some((other) => other.name === parsed.value.name)) {
-      return {
-        ok: false,
-        line: item.line,
-        error: `two profiles are named \`${parsed.value.name}\`.`
-      };
-    }
-    list3.push(parsed.value);
-  }
-  return { ok: true, value: list3 };
-}
-function profile(node) {
-  if (node.kind !== "map") return { ok: false, line: node.line, error: "expected a profile." };
-  const result = { name: "", conditions: {}, settings: {} };
-  for (const entry of node.entries) {
-    const { key, line, value } = entry;
-    if (key === "name") {
-      if (value.kind !== "scalar" || !PROFILE_NAME.test(value.text)) {
-        return {
-          ok: false,
-          line,
-          error: "a profile's `name` must be letters, digits, `.`, `_` or `-`, such as `small-pod`."
-        };
-      }
-      result.name = value.text;
-    } else if (isConditionName(key)) {
-      const parsed = condition(entry, key);
-      if (!parsed.ok) return parsed;
-      Object.assign(result.conditions, { [key]: parsed.value });
-    } else if (key === "ollama") {
-      const parsed = ollamaBlock(entry);
-      if (!parsed.ok) return parsed;
-      result.settings.ollama = parsed.value;
-    } else {
-      const parsed = setting(entry, "profile");
-      if (!parsed.ok) return parsed;
-      Object.assign(result.settings, { [key]: parsed.value });
-    }
-  }
-  if (!result.name) return { ok: false, line: node.line, error: "a profile needs a `name`." };
-  const { tasks, "min-tasks": min, "max-tasks": max } = result.conditions;
-  if (tasks !== void 0 && (min !== void 0 || max !== void 0)) {
-    return {
-      ok: false,
-      line: node.line,
-      error: "`tasks` is an exact count: write it alone, or `min-tasks` and `max-tasks` for a range."
-    };
-  }
-  if (min !== void 0 && max !== void 0 && min > max) {
-    return {
-      ok: false,
-      line: node.line,
-      error: "`min-tasks` must not be more than `max-tasks`."
-    };
-  }
-  return { ok: true, value: result };
-}
-function condition(entry, name) {
-  const { line, value } = entry;
-  if (name === "stages") {
-    const names = value.kind === "list" ? value.items : [];
-    const stages = names.flatMap((item) => item.kind === "scalar" ? [item.text] : []);
-    const valid = stages.length === names.length && stages.every(isStage);
-    if (names.length === 0 || !valid) {
-      return {
-        ok: false,
-        line,
-        error: `\`stages\` must list some of the stages ${STAGES.map((stage) => `\`${stage}\``).join(", ")}, such as \`[plan, route]\`.`
-      };
-    }
-    return { ok: true, value: stages };
-  }
-  const count3 = value.kind === "scalar" && value.text !== "" ? Number(value.text) : Number.NaN;
-  if (!Number.isInteger(count3) || count3 < 1 || count3 > MAX_TASKS) {
-    return {
-      ok: false,
-      line,
-      error: `\`${name}\` must be a whole number from 1 to ${MAX_TASKS}: the tasks of the run that run an agent.`
-    };
-  }
-  return { ok: true, value: count3 };
-}
-function resolveLayers(layers) {
-  const [own = {}] = layers;
-  const { profiles: list3 = [], ...values } = merge3(layers);
-  const inherited = serving(
-    layers.slice(1).map((settings, index) => ({
-      name: layerSource(index + 1),
-      source: LAYER_BASES[index + 1] ?? `layer ${index + 2}`,
-      settings
-    })),
-    { source: "Codeman's default", settings: { provider: DEFAULTS2.provider } }
-  );
-  if (!inherited.ok) return inherited;
-  const model = inherited.value.model ?? values.model;
-  const top = {
-    ...omit2(values, PROFILE_SETTINGS),
-    ...inherited.value,
-    ...model === void 0 ? {} : { model }
-  };
-  const topError = settingsProblem(top);
-  if (topError) return { ok: false, error: topError };
-  const profiled = [];
-  for (const profile2 of list3) {
-    const name = `Profile \`${profile2.name}\``;
-    const served = serving([{ name, source: name, settings: profile2.settings }], {
-      source: "the top level",
-      settings: top
-    });
-    if (!served.ok) return served;
-    const settings = { ...omit2(top, PROFILE_SETTINGS), ...served.value };
-    if (settings.model === void 0) {
-      return {
-        ok: false,
-        error: `${name} has no \`model\`, and the top-level settings have none to inherit: set one in the profile.`
-      };
-    }
-    const error3 = settingsProblem(settings);
-    if (error3) return { ok: false, error: `${name}: ${error3}` };
-    profiled.push({ profile: profile2, settings });
-  }
-  const forTask = pick(own, PROFILE_SETTINGS);
-  if (forTask.model !== void 0) {
-    const error3 = settingsProblem({ ...top, model: forTask.model });
-    if (error3) {
-      return {
-        ok: false,
-        error: `The task's \`model\` is for \`${top.provider}\`, the top-level settings' provider. ${error3}`
-      };
-    }
-  }
-  const providers = [top, ...profiled.map(({ settings }) => settings)].map(
-    (settings) => settings.provider ?? DEFAULTS2.provider
-  );
-  for (const name of PROVIDER_SETTINGS) {
-    if (forTask[name] !== void 0 && !providers.some((p) => PROVIDERS[p].settings[name])) {
-      return {
-        ok: false,
-        error: `No provider of the settings accepts \`${name}\`: they name ${[...new Set(providers)].map((p) => `\`${p}\``).join(", ")}.`
-      };
-    }
-  }
-  return { ok: true, value: { top, profiled, forTask, providers } };
-}
-function servingRun(resolved, run2) {
-  const chosen = resolved.profiled.find(({ profile: profile2 }) => applies(profile2, run2));
-  if (chosen) return chosen;
-  return resolved.top.model === void 0 ? void 0 : { settings: resolved.top };
-}
-function resolveRun(layers, run2) {
-  const resolved = resolveLayers(layers);
-  if (!resolved.ok) return resolved;
-  const { top, forTask, providers } = resolved.value;
-  const served = run2 ? servingRun(resolved.value, run2) : { settings: top };
-  if (!served) {
-    return {
-      ok: false,
-      error: `No settings apply to the \`${run2?.stage}\` stage with ${run2?.tasks} task(s): no profile does, and the top-level settings have no \`model\`.`
-    };
-  }
-  const base = served.settings;
-  const accepted = PROVIDERS[base.provider ?? DEFAULTS2.provider].settings;
-  const taskServing = Object.fromEntries(
-    Object.entries(forTask).filter(
-      ([name]) => name === "model" ? base.provider === top.provider : name in accepted
-    )
-  );
-  const settings = withProviderDefaults({ model: "", ...base, ...taskServing });
-  const error3 = settingsProblem(settings);
-  if (error3) {
-    return {
-      ok: false,
-      error: served.profile ? `Profile \`${served.profile.name}\`: ${error3}` : error3
-    };
-  }
-  return {
-    ok: true,
-    value: {
-      settings,
-      profile: served.profile?.name,
-      accounts: [...new Set(providers.map(accountOf))]
-    }
-  };
-}
-function applies(profile2, run2) {
-  const { stages, tasks, "min-tasks": min, "max-tasks": max } = profile2.conditions;
-  return (!stages || stages.includes(run2.stage)) && (tasks === void 0 || run2.tasks === tasks) && (min === void 0 || run2.tasks >= min) && (max === void 0 || run2.tasks <= max);
-}
-function tasksPerRun(layers) {
-  const list3 = layers.find((layer) => layer.profiles !== void 0)?.profiles ?? [];
-  let most = 1;
-  for (const { conditions } of list3) {
-    const { tasks, "min-tasks": min, "max-tasks": max } = conditions;
-    const named = tasks ?? max ?? (min === void 0 ? void 0 : MAX_TASKS);
-    if (named !== void 0) most = Math.max(most, named);
-  }
-  return most;
-}
-function servedCounts(layers, stage) {
-  const resolved = resolveLayers(layers);
-  if (!resolved.ok) return resolved;
-  const counts = [];
-  for (let tasks = 1; tasks <= MAX_TASKS; tasks++) {
-    const served = servingRun(resolved.value, { stage, tasks });
-    if (served) counts.push({ tasks, profile: served.profile?.name });
-  }
-  return { ok: true, value: counts };
-}
-function serving(layers, base) {
-  let result = pick(base.settings, PROFILE_SETTINGS);
-  let from = base.source;
-  for (const { name, source, settings } of [...layers].reverse()) {
-    const { provider } = settings;
-    if (provider !== void 0 && provider !== result.provider) {
-      if (result.model !== void 0 && settings.model === void 0) {
-        return {
-          ok: false,
-          error: `${name} names \`${provider}\`, but inherits \`${result.provider}\` from ${from}, so it must set its own \`model\`, one for \`${provider}\`.`
-        };
-      }
-      result = omit2(result, PROVIDER_KEYS);
-    }
-    if (provider !== void 0) from = source;
-    const { ollama: ollama2, ...values } = pick(settings, PROFILE_SETTINGS);
-    Object.assign(result, values);
-    if (ollama2 !== void 0) result.ollama = { ...result.ollama, ...ollama2 };
-  }
-  return { ok: true, value: result };
-}
-function layerSource(index) {
-  const source = LAYER_SOURCES[index] ?? `layer ${index + 1}`;
-  return source.charAt(0).toUpperCase() + source.slice(1);
-}
-function merge3(layers, defaults2 = DEFAULTS2) {
-  const merged = { ...defaults2 };
-  for (const layer of [...layers].reverse()) {
-    for (const [name, value] of Object.entries(layer)) {
-      if (value !== void 0) Object.assign(merged, { [name]: value });
-    }
-  }
-  return merged;
-}
-function pick(layer, names) {
-  return Object.fromEntries(
-    Object.entries(layer).filter(([name, value]) => value !== void 0 && names.includes(name))
-  );
-}
-function omit2(layer, names) {
-  return Object.fromEntries(Object.entries(layer).filter(([name]) => !names.includes(name)));
-}
-function settingSources(layers) {
-  const named = /* @__PURE__ */ new Set();
-  const show = (value) => Array.isArray(value) ? `[${value.map((profile2) => profile2.name).join(", ")}]` : typeof value === "object" && value !== null ? `{${Object.entries(value).map(([key, text]) => `${key}: ${text}`).join(", ")}}` : String(value);
-  return layers.flatMap((layer, index) => {
-    const values = Object.entries(layer).filter(
-      ([name, value]) => value !== void 0 && !named.has(name)
-    );
-    if (values.length === 0) return [];
-    for (const [name] of values) named.add(name);
-    const source = LAYER_SOURCES[index] ?? `layer ${index + 1}`;
-    return [`Settings from ${source}: ${values.map(([n, v]) => `${n}=${show(v)}`).join(", ")}.`];
-  });
-}
-function settingsProblem(settings) {
-  const values = pick(settings, PROVIDER_SETTINGS);
-  const model = settings.model ?? "";
-  return providerProblem(
-    {
-      ...values,
-      ...settings.ollama === void 0 ? {} : { ollama: settings.ollama },
-      provider: settings.provider ?? DEFAULTS2.provider,
-      model
-    },
-    model !== ""
-  );
-}
-
 // src/output.ts
 var MARGIN = 2;
 var DECISIONS_TOTAL = 25e3;
@@ -33011,6 +33196,7 @@ async function select(services) {
     for (const line of settingSources([own, ...inherited])) runtime2.info(line);
     const { profile: profile2, accounts, settings } = resolved;
     if (profile2) runtime2.info(`Profile \`${profile2}\` applies to this run.`);
+    const parallel = mostTasks([own, ...inherited], profile2);
     const model = settings.model;
     const context3 = {
       version: 1,
@@ -33087,6 +33273,7 @@ async function select(services) {
       record: record ?? null,
       profile: profile2,
       accounts,
+      parallel,
       context: context3,
       start
     };
@@ -33203,7 +33390,8 @@ function handled(work) {
 function taskOutputs(task, run2) {
   const choice = inferenceChoice(task.settings, task.record, {
     profile: task.profile,
-    accounts: task.accounts
+    accounts: task.accounts,
+    parallel: task.parallel
   });
   return {
     task: String(task.number),

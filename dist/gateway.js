@@ -29,6 +29,20 @@ var IMAGES_WITHOUT_OLLAMA_SETTINGS = /* @__PURE__ */ new Set([
   "ghcr.io/codenergy-dev/codeman-pod@sha256:3252d41775a230249490b5af79aec050151e49c4722bb62f9ce3d247d02f6ca3"
 ]);
 var OLLAMA_URL = "http://127.0.0.1:11434";
+var OLLAMA_VERSION = "0.35.1";
+var OLLAMA_SERIAL_FAMILIES = /* @__PURE__ */ new Set([
+  "mllama",
+  "qwen3vl",
+  "qwen3vlmoe",
+  "qwen35",
+  "qwen35moe",
+  "qwen3next",
+  "lfm2",
+  "lfm2moe",
+  "nemotron_h",
+  "nemotron_h_moe",
+  "nemotron_h_omni"
+]);
 var OLLAMA_SETTINGS = {
   "context-length": { variable: "OLLAMA_CONTEXT_LENGTH", value: { kind: "count", min: 1 } },
   "num-parallel": { variable: "OLLAMA_NUM_PARALLEL", value: { kind: "count", min: 1 } },
@@ -151,12 +165,18 @@ var Runpod = class {
   #apiKey;
   #fetch;
   #now;
+  /** The catalog's GPU types, by ID, as read so far. */
+  #gpus = /* @__PURE__ */ new Map();
   constructor(apiKey, fetchFn = fetch, now = () => /* @__PURE__ */ new Date()) {
     this.#apiKey = apiKey;
     this.#fetch = fetchFn;
     this.#now = now;
     this.pods = {
       price: (gpuType) => this.#podPrice(gpuType),
+      memory: async (gpuType) => {
+        const memory = (await this.#gpu(gpuType))?.memory;
+        return typeof memory === "number" && memory > 0 ? memory : void 0;
+      },
       create: (spec) => this.#createPod(spec),
       get: (id) => this.#getPod(id),
       list: (env) => this.#listPods(env),
@@ -187,13 +207,23 @@ var Runpod = class {
     }
     return hours;
   }
+  /** A GPU type from Runpod's catalog, read once per type; undefined when Runpod has none. */
+  #gpu(gpuType) {
+    let gpu = this.#gpus.get(gpuType);
+    if (!gpu) {
+      gpu = this.#request(
+        `/catalog/gpus/${encodeURIComponent(gpuType)}`,
+        "GET",
+        void 0,
+        [404]
+      );
+      gpu.catch(() => this.#gpus.delete(gpuType));
+      this.#gpus.set(gpuType, gpu);
+    }
+    return gpu;
+  }
   async #podPrice(gpuType) {
-    const gpu = await this.#request(
-      `/catalog/gpus/${encodeURIComponent(gpuType)}`,
-      "GET",
-      void 0,
-      [404]
-    );
+    const gpu = await this.#gpu(gpuType);
     if (!gpu) {
       throw new Error(
         `Runpod has no GPU type "${gpuType}". \`gpu\` takes the GPU's ID, such as "NVIDIA RTX A6000", not its display name; see https://docs.runpod.io/references/gpu-types.`
@@ -520,6 +550,13 @@ var Gateway = class {
   contextLength;
   /** The Ollama variables from the pod's settings that it gave Ollama, which the status reports. */
   ollama = {};
+  /** How the pod's model was fitted to its GPU, once it serves; the status reports it. */
+  fit;
+  /**
+   * Why the model could not be served, which `/admin/status` reports; `/health` says only that
+   * it failed, since it takes no token.
+   */
+  failure;
   constructor(options) {
     this.#options = options;
     this.#now = options.now ?? Date.now;
@@ -712,6 +749,8 @@ var Gateway = class {
       ready: this.ready,
       contextLength: this.contextLength,
       ollama: this.ollama,
+      fit: this.fit,
+      failure: this.failure,
       serving: this.serving,
       deadline: this.deadline,
       lastActivity: this.lastActivity,
@@ -737,7 +776,9 @@ var Gateway = class {
   async handle(request, response) {
     const path = (request.url ?? "/").split("?")[0] ?? "/";
     const route = `${request.method} ${path}`;
-    if (route === "GET /health") return send(response, 200, { ready: this.ready });
+    if (route === "GET /health") {
+      return send(response, 200, { ready: this.ready, ...this.failure ? { failed: true } : {} });
+    }
     if (path.startsWith("/admin/") || path === "/usage")
       return this.#admin(route, request, response);
     if (!ROUTES.has(route)) return send(response, 404, error("Not found."));
@@ -960,9 +1001,9 @@ function parseJson(text) {
 function runSettings(body) {
   if (typeof body !== "object" || body === null) return void 0;
   const { tokenSha256, limit, start, pricePerSecond, idleSeconds, task, group } = body;
-  const positive = (value) => typeof value === "number" && Number.isFinite(value) && value > 0;
+  const positive2 = (value) => typeof value === "number" && Number.isFinite(value) && value > 0;
   if (typeof tokenSha256 !== "string" || !/^[0-9a-f]{64}$/.test(tokenSha256)) return void 0;
-  if (!positive(limit) || !positive(start) || !positive(pricePerSecond)) return void 0;
+  if (!positive2(limit) || !positive2(start) || !positive2(pricePerSecond)) return void 0;
   if (task !== void 0 && (typeof task !== "string" || !TASK.test(task))) return void 0;
   if (group !== void 0 && (typeof group !== "string" || !GROUP.test(group))) return void 0;
   const named = { ...task ? { task } : {}, ...group ? { group } : {} };
@@ -981,8 +1022,109 @@ function runSettings(body) {
   };
 }
 
+// src/gateway/fit.ts
+var FLOOR_CONTEXT = 64e3;
+var CONTEXT_STEP = 4096;
+var FIT_MARGIN_BYTES = 1024 * 1024 * 1024;
+var KV_BYTES = { f16: 2, q8_0: 34 / 32, q4_0: 18 / 32 };
+function floorContext(modelContext) {
+  return Math.min(FLOOR_CONTEXT, modelContext ?? FLOOR_CONTEXT);
+}
+function contextCandidates(modelContext) {
+  const floor = floorContext(modelContext);
+  const top = modelContext ?? floor;
+  const contexts = [floor];
+  for (let context = (Math.floor(floor / CONTEXT_STEP) + 1) * CONTEXT_STEP; context < top; ) {
+    contexts.push(context);
+    context += CONTEXT_STEP;
+  }
+  if (top > floor) contexts.push(top);
+  return contexts;
+}
+function kvBytesPerToken(info, kvCacheType) {
+  const architecture = info["general.architecture"];
+  if (typeof architecture !== "string") return void 0;
+  const field = (name) => info[`${architecture}.${name}`];
+  const number = (value) => typeof value === "number" && Number.isFinite(value) && value > 0 ? value : void 0;
+  const numbers = (value) => Array.isArray(value) && value.every((item) => typeof item === "number" && item >= 0) ? value : void 0;
+  if (field("attention.sliding_window") !== void 0) return void 0;
+  const headsKv = field("attention.head_count_kv");
+  const headCount = field("attention.head_count");
+  const heads = number(headCount) ?? Math.max(0, ...numbers(headCount) ?? []);
+  const embedding = number(field("embedding_length"));
+  const keyLength = number(field("attention.key_length")) ?? (embedding && heads > 0 ? embedding / heads : void 0);
+  const valueLength = number(field("attention.value_length")) ?? keyLength;
+  if (!keyLength || !valueLength) return void 0;
+  let kvHeads;
+  const perLayer = numbers(headsKv);
+  if (perLayer) kvHeads = perLayer.reduce((sum, count2) => sum + count2, 0);
+  else {
+    const blocks = number(field("block_count"));
+    const each = number(headsKv);
+    const interval = number(field("full_attention_interval"));
+    if (blocks && each) kvHeads = Math.floor(blocks / (interval ?? 1)) * each;
+  }
+  if (!kvHeads) return void 0;
+  return kvHeads * (keyLength + valueLength) * (KV_BYTES[kvCacheType ?? "f16"] ?? 2);
+}
+function estimateContext(candidates, facts) {
+  const perToken = kvBytesPerToken(facts.info, facts.kvCacheType);
+  if (!perToken || !facts.size || !facts.gpuMemoryGb) return void 0;
+  const free = facts.gpuMemoryGb * 2 ** 30 - facts.size - FIT_MARGIN_BYTES - facts.gpuOverhead;
+  const tokens = free / (perToken * Math.max(1, facts.parallel));
+  return candidates.findLast((context) => context <= tokens) ?? candidates[0];
+}
+async function searchContext(candidates, start, fits) {
+  if (await fits(start)) return start;
+  let low = 0;
+  let high = candidates.findLastIndex((context) => context < start);
+  let best;
+  while (low <= high) {
+    const middle = low + high >> 1;
+    const context = candidates[middle];
+    if (await fits(context)) {
+      best = context;
+      low = middle + 1;
+    } else high = middle - 1;
+  }
+  return best;
+}
+function placementOf(ps, model, digest) {
+  const models = ps?.models;
+  if (!Array.isArray(models)) return void 0;
+  const entries = models;
+  const named = (entry2) => [model, `${model}:latest`].some((name) => entry2.name === name || entry2.model === name);
+  const entry = (digest ? entries.find((one) => one.digest === digest) : void 0) ?? entries.find(named) ?? (entries.length === 1 ? entries[0] : void 0);
+  if (!entry || typeof entry.size !== "number" || typeof entry.size_vram !== "number") {
+    return void 0;
+  }
+  return {
+    size: entry.size,
+    sizeVram: entry.size_vram,
+    contextLength: typeof entry.context_length === "number" ? entry.context_length : void 0
+  };
+}
+function onGpu(placement) {
+  return placement !== void 0 && placement.sizeVram > 0 && placement.sizeVram >= placement.size;
+}
+function requests(parallel) {
+  return `${parallel} parallel request${parallel === 1 ? "" : "s"}`;
+}
+function where(placement, error2) {
+  if (!placement) return `Ollama could not load it${error2 ? ` (${error2})` : ""}`;
+  const gb = (bytes) => (bytes / 1e9).toFixed(1);
+  return `Ollama put ${gb(placement.size - placement.sizeVram)} of its ${gb(placement.size)} GB off the GPU, which runs much slower`;
+}
+function explicitMessage(model, parallel, context, placement, error2) {
+  return `\`${model}\` does not fit the GPU with ${requests(parallel)} and a context of ${context} tokens: ${where(placement, error2)}. Lower \`context-length\` or \`num-parallel\` in the \`ollama\` settings, set \`kv-cache-type: q8_0\`, or use a GPU with more memory.`;
+}
+function floorMessage(model, parallel, context, placement, error2) {
+  return `\`${model}\` does not fit the GPU with ${requests(parallel)} and a context of ${context} tokens, the least Codeman gives an agent: ${where(placement, error2)}. Give the profile fewer tasks (\`tasks\` or \`max-tasks\`) or set a smaller \`num-parallel\`, set \`kv-cache-type: q8_0\` in the \`ollama\` settings, or use a GPU with more memory.`;
+}
+
 // src/gateway/pod.ts
 var GATEWAY_PORT = 8080;
+var FAILURE_GRACE_MS = 2 * 6e4;
 function expiry(state, policy, now) {
   if (!state.ready) {
     return now >= policy.startBy ? "the model was not served in time" : void 0;
@@ -1013,7 +1155,31 @@ function podSettings(env) {
     policy: { startBy, keptIdleMs: keptIdle * 6e4, runIdleMs: runIdle * 6e4 },
     podId: env.RUNPOD_POD_ID,
     podKey: env.RUNPOD_API_KEY,
-    ollama: parseOllamaVariables(env.CODEMAN_OLLAMA)
+    ollama: parseOllamaVariables(env.CODEMAN_OLLAMA),
+    fitHint: parseFitHint(env.CODEMAN_FIT),
+    gpuMemoryGb: positive(Number(env.CODEMAN_GPU_MEMORY_GB ?? ""))
+  };
+}
+function positive(value) {
+  return Number.isFinite(value) && value > 0 ? value : void 0;
+}
+function parseFitHint(text) {
+  if (!text) return void 0;
+  try {
+    const { contextLength, digest } = JSON.parse(text);
+    return Number.isSafeInteger(contextLength) && (contextLength ?? 0) > 0 && typeof digest === "string" && digest !== "" ? { contextLength, digest } : void 0;
+  } catch {
+    return void 0;
+  }
+}
+function fitOptions(variables, settings) {
+  return {
+    configured: positive(Number(variables.OLLAMA_CONTEXT_LENGTH ?? "")),
+    parallel: positive(Number(variables.OLLAMA_NUM_PARALLEL ?? "")) ?? 1,
+    kvCacheType: variables.OLLAMA_KV_CACHE_TYPE,
+    gpuOverhead: Number(variables.OLLAMA_GPU_OVERHEAD ?? "") || 0,
+    gpuMemoryGb: settings.gpuMemoryGb,
+    hint: settings.fitHint
   };
 }
 function ollamaServeEnvironment(base, variables, contextLength) {
@@ -1025,30 +1191,125 @@ function ollamaServeEnvironment(base, variables, contextLength) {
     ...contextLength ? { OLLAMA_CONTEXT_LENGTH: String(contextLength) } : {}
   };
 }
-async function prepareOllama(server, model, log, configured) {
+var FitFailure = class extends Error {
+};
+async function prepareOllama(server, model, log, options = { parallel: 1 }) {
+  const fetchFn = server.fetch ?? fetch;
   const call = async (path, body) => {
-    const response = await (server.fetch ?? fetch)(`${server.url}${path}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body)
+    const response = await fetchFn(`${server.url}${path}`, {
+      method: body === void 0 ? "GET" : "POST",
+      ...body === void 0 ? {} : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }
     });
-    if (!response.ok) throw new Error(`Ollama ${path} failed with ${response.status}.`);
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      const error2 = /"error"\s*:\s*"([^"]*)"/.exec(text)?.[1];
+      throw new Error(`Ollama ${path} failed with ${response.status}${error2 ? `: ${error2}` : ""}.`);
+    }
     return response.json();
   };
   await untilUp(server);
   log(`Pulling ${model}.`);
   await pull(server, model);
-  if (configured) {
-    log(`Serving ${model} with a context length of ${configured}, from the pod's settings.`);
-    await call("/api/generate", { model, keep_alive: -1 });
-    return configured;
+  const show = await call("/api/show", { model });
+  const modelContext = ollamaContextLength(show);
+  const family = typeof show?.details?.family === "string" ? show.details.family : void 0;
+  const listed = modelEntry(await call("/api/tags"), model);
+  const parallel = family && OLLAMA_SERIAL_FAMILIES.has(family) ? 1 : options.parallel;
+  if (parallel < options.parallel) {
+    log(
+      `Warning: Ollama ${OLLAMA_VERSION} serves the ${family} family one request at a time, whatever num-parallel says: the requests of the runs on this pod wait for each other.`
+    );
   }
-  const contextLength = ollamaContextLength(await call("/api/show", { model }));
-  log(`Serving ${model} with a context length of ${contextLength ?? "Ollama's default"}.`);
-  await server.restart(contextLength);
-  await untilUp(server);
-  await call("/api/generate", { model, keep_alive: -1 });
-  return contextLength;
+  let current = options.configured;
+  let loads = 0;
+  const placements = /* @__PURE__ */ new Map();
+  const load = async (context) => {
+    if (current !== context) {
+      await server.restart(context);
+      current = context;
+      await untilUp(server);
+    }
+    loads++;
+    let error2;
+    try {
+      await call("/api/generate", { model, keep_alive: -1 });
+    } catch (failure) {
+      error2 = failure instanceof Error ? failure.message : String(failure);
+    }
+    const placement2 = error2 === void 0 ? placementOf(await call("/api/ps"), model, listed.digest) : void 0;
+    placements.set(context, { placement: placement2, ...error2 ? { error: error2 } : {} });
+    const off = placement2 ? placement2.size - placement2.sizeVram : 0;
+    const outcome = !placement2 ? `not loaded${error2 ? ` (${error2})` : ""}` : onGpu(placement2) ? "wholly on the GPU" : `${(off / 1e9).toFixed(1)} GB off the GPU`;
+    log(
+      `Loaded ${model} with ${parallel} parallel request(s) and a context of ${context} tokens: ${outcome}.`
+    );
+    return placement2;
+  };
+  const report = (context, placement2, source) => ({
+    contextLength: placement2.contextLength ?? context,
+    modelContextLength: modelContext,
+    requestedParallel: options.parallel,
+    parallel,
+    source,
+    loads,
+    digest: listed.digest,
+    size: placement2.size,
+    sizeVram: placement2.sizeVram,
+    family
+  });
+  if (options.configured) {
+    const context = options.configured;
+    const placement2 = await load(context);
+    if (!onGpu(placement2)) {
+      const { error: error2 } = placements.get(context) ?? {};
+      throw new FitFailure(explicitMessage(model, parallel, context, placement2, error2));
+    }
+    log(`Serving ${model} with a context length of ${context}, from the pod's settings.`);
+    return report(context, placement2, "settings");
+  }
+  const candidates = contextCandidates(modelContext);
+  const top = candidates.at(-1);
+  const { hint } = options;
+  const cached = hint && hint.digest === listed.digest && hint.contextLength <= top ? Math.max(hint.contextLength, candidates[0]) : void 0;
+  const estimate = estimateContext(candidates, {
+    info: show?.model_info ?? {},
+    size: listed.size,
+    gpuMemoryGb: options.gpuMemoryGb,
+    parallel,
+    kvCacheType: options.kvCacheType,
+    gpuOverhead: options.gpuOverhead ?? 0
+  });
+  const start = cached ?? estimate ?? top;
+  log(
+    cached ? `Trying the context that fitted these settings before: ${cached} tokens.` : `Fitting ${model} to the GPU, from ${start} tokens (the model's own is ${modelContext ?? "unknown"}).`
+  );
+  const best = await searchContext(
+    candidates,
+    start,
+    async (context) => onGpu(await load(context))
+  );
+  if (best === void 0) {
+    const floor = candidates[0];
+    const { placement: placement2, error: error2 } = placements.get(floor) ?? { placement: void 0 };
+    throw new FitFailure(floorMessage(model, parallel, floor, placement2, error2));
+  }
+  const placement = current === best ? placements.get(best)?.placement : await load(best);
+  if (!onGpu(placement)) {
+    const { error: error2 } = placements.get(best) ?? {};
+    throw new FitFailure(explicitMessage(model, parallel, best, placement, error2));
+  }
+  log(`Serving ${model} with a context length of ${best}.`);
+  return report(best, placement, cached === best && loads === 1 ? "cache" : "search");
+}
+function modelEntry(tags, model) {
+  const models = tags?.models;
+  if (!Array.isArray(models)) return {};
+  const names = [model, `${model}:latest`];
+  const entry = models.find((one) => names.some((name) => one.name === name || one.model === name));
+  return {
+    ...typeof entry?.digest === "string" ? { digest: entry.digest } : {},
+    ...typeof entry?.size === "number" ? { size: entry.size } : {}
+  };
 }
 async function pull(server, model) {
   const response = await (server.fetch ?? fetch)(`${server.url}/api/pull`, {
@@ -1125,7 +1386,7 @@ async function main() {
     else gateway.expireRuns(settings.policy.runIdleMs);
   }, 15e3).unref();
   try {
-    gateway.contextLength = await prepareOllama(
+    const fit = await prepareOllama(
       {
         url: OLLAMA_URL,
         restart: async (contextLength) => {
@@ -1135,15 +1396,20 @@ async function main() {
       },
       settings.model,
       log,
-      Number(variables.OLLAMA_CONTEXT_LENGTH) || void 0
+      fitOptions(variables, settings)
     );
+    gateway.fit = fit;
+    gateway.contextLength = fit.contextLength;
     gateway.ready = true;
     gateway.lastActivity = Date.now();
     log("Ready.");
   } catch (error2) {
-    await terminate(
-      `the model could not be served: ${error2 instanceof Error ? error2.message : error2}`
-    );
+    const message = error2 instanceof Error ? error2.message : String(error2);
+    const reason = `the model could not be served: ${message}`;
+    gateway.failure = message;
+    log(`Not serving ${settings.model}: ${message}`);
+    await new Promise((resolve) => setTimeout(resolve, FAILURE_GRACE_MS));
+    await terminate(reason);
   }
 }
 function serve(variables, contextLength) {
