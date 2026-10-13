@@ -8,7 +8,7 @@ One subject per file, grouped by what the reader wants to do. The [root README](
 - [Shared settings](installation/shared-settings.md): settings an organization gives all its repositories.
 - [Self-hosted inference on Runpod](installation/runpod.md): the Runpod account, pods and a Serverless endpoint.
 - [Profiles](installation/profiles.md): how to use different providers and models for different runs.
-- [Upgrading](installation/upgrading.md): old setting names, a model per provider, profiles that pick the tasks, and workflow files copied before the backend.
+- [Upgrading](installation/upgrading.md): old setting names, a model per provider, profiles that pick the tasks, pods that fit the GPU, and workflow files copied before the backend.
 
 ## Using it
 
@@ -16,7 +16,7 @@ One subject per file, grouped by what the reader wants to do. The [root README](
 - [Providers](settings/providers.md): each provider's settings, model IDs, secrets and cost.
 - [Profiles](settings/profiles.md): conditions, how many tasks a run takes, which profile applies, layers and checks, with an example.
 - [Provider settings across layers](settings/provider-settings-across-layers.md): what a layer or profile that changes provider keeps, with worked examples.
-- [Ollama settings](settings/ollama.md): the `ollama` block of a pod's settings: the keys accepted and refused, how they reach the pod, memory, and pod images.
+- [Ollama settings](settings/ollama.md): the `ollama` block of a pod's settings: the keys accepted and refused, how they reach the pod, parallel requests from the profile's count, the context that fits the GPU, and pod images.
 - [Commands](tasks/commands.md): every `/codeman` command.
 - [Comments](tasks/comments.md): the status, decisions and run comments, and the conversation's language.
 

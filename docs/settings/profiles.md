@@ -40,6 +40,8 @@ The profiles' counts also decide how many tasks a run works on at once, each in 
 
 `select`'s log says what it picked, of how many, which tasks wait and which are blocked.
 
+On a pod, the most tasks a profile serves is also how many requests its Ollama serves at once, unless its `ollama` settings give `num-parallel` ([parallel requests](ollama.md#parallel-requests)): 4 for `tasks: 4`, 3 for `max-tasks: 3`.
+
 ## Which applies
 
 - `select` takes the first profile, in the list's order, whose conditions all hold for the run, and its values replace the top-level ones; with none, the top-level settings apply when they have a `model`. What a profile that names another provider than the top level's keeps of its provider settings is in [provider settings across layers](provider-settings-across-layers.md).

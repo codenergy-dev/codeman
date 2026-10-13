@@ -59,6 +59,13 @@ profiles:
 
 Behind the change: a task that its profiles serve only with more tasks than are ready now waits, and its panel says so; one whose stage nothing serves at any count is blocked ([profiles](../settings/profiles.md#how-many-tasks-a-run-takes)). The workflow files need no change: the run's matrix already follows what `select` picks.
 
+## Pods fit the GPU
+
+Since the [plan for fitting Ollama to the GPU](../plans/2026-10-13-fit-ollama-to-the-gpu.md), once Codeman's pinned pod image is one built since it, a pod serves as many requests at once as its profile's tasks, with the largest context that fits its GPU instead of the model's own, and fails to start when the model does not fit wholly on the GPU ([memory](../settings/ollama.md#memory)). Settings need no change, but check two things:
+
+- An `ollama:` block written only to match the profile's count, such as `num-parallel: 4` in a `tasks: 4` profile, can go.
+- A pod profile with `min-tasks` alone, or none of the counts while another profile has `min-tasks` alone, serves up to 10 requests at once ([parallel requests](../settings/ollama.md#parallel-requests)); give it a `max-tasks`, or `num-parallel` in its `ollama:` block, when its GPU cannot hold their caches.
+
 ## Workflow files copied before the backend
 
 To update workflow files copied before the backend, copy both templates again, and move any steps you added to the `agent` job into the new `codeman-task.yml`: the jobs that record runs need their new permissions, variables and the run's ID in the ledger. Older workflow files fail in `select`, before they mark any task, since they pass none of the backend's variables. Workflow files copied before the budgets came from the ledger pass neither the organization's monthly budget nor the task's spend from `close-key` to `apply`: copy both templates again, too. With pods, update every repository of the organization at once to a version with the pod registry: its `open-key` terminates the organization's pods created by older versions, which the registry does not hold, and older versions cannot share the newer pods.

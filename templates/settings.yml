@@ -24,7 +24,9 @@ provider: openrouter
 # The engine: ollama, the only one on pods so far.
 # engine: ollama
 # The pod's Ollama server: each key becomes one of its variables (num-parallel: OLLAMA_NUM_PARALLEL).
-# Only the keys of docs/settings/ollama.md; memory grows with num-parallel x context-length.
+# Only the keys of docs/settings/ollama.md. Without them, num-parallel is the profile's count of
+# tasks, and context-length the largest that fits the GPU with them (64000 at least, or the pod
+# fails to start); the model always runs wholly on the GPU.
 # ollama:
 #   num-parallel: 4
 #   context-length: 65536
