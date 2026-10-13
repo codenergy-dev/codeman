@@ -1,7 +1,7 @@
 ---
-status: pending
+status: in progress
 created_at: 2026-10-13T13:24:11-03:00
-updated_at: 2026-10-13T13:28:19-03:00
+updated_at: 2026-10-13T13:28:30-03:00
 commit: 0257810
 ---
 
@@ -63,6 +63,7 @@ Settled conservatively, within the decisions above.
 1. Record the third-party pages: Ollama's `/api/ps` and `/api/tags` pages, the pinned llama.cpp version, what Codeman relies on in `server/sched.go`, `server/routes.go` and `llm/llama_server.go` at v0.35.1, and llama.cpp's `common/fit.h` (full), `common/fit.cpp`, `common/arg.cpp` and `common/common.h` at `b11232`, with a llama.cpp tool and a size rule in the Ollama tool. Done when `src/webdocs.test.ts` and the link checker pass.
    - **Done on 2026-10-13**: committed as `0257810`: [list running models](../web/ollama/list-running-models.md), [list models](../web/ollama/list-models.md), [LLAMA_CPP_VERSION at v0.35.1](../web/ollama/llama-cpp-version-at-v0-35-1.md) and [common/fit.h](../web/llama-cpp/common-fit-h-at-b11232.md) in full (MIT); [server/sched.go](../web/ollama/server-sched-go-at-v0-35-1.md), [server/routes.go](../web/ollama/server-routes-go-at-v0-35-1.md), [llm/llama_server.go](../web/ollama/llm-llama-server-go-at-v0-35-1.md), [common/fit.cpp](../web/llama-cpp/common-fit-cpp-at-b11232.md), [common/arg.cpp](../web/llama-cpp/common-arg-cpp-at-b11232.md) and [common/common.h](../web/llama-cpp/common-common-h-at-b11232.md) in Codeman's own words, being 52 to 221 KB; the [llama.cpp tool](../web/tools/llama-cpp.md), and a size rule in the [Ollama tool](../web/tools/ollama.md). Both tests pass.
 2. Write this plan. Done when it is committed with status `pending`, then set `in progress`.
+   - **Done on 2026-10-13**: committed as `12a3059` with status `pending`, then set `in progress`.
 3. Settings and the choice: the most tasks the run's profile serves (choice 5) in `src/settings.ts`, carried by `select` into the `inference` choice as `parallel`, checked by `parseInferenceChoice`. Done when tests cover `tasks`, `max-tasks`, `min-tasks` alone, a profile without counts, and the top level, and the choice's `parallel`.
 4. The gateway: the fit in a module of its own (`src/gateway/fit.ts`: candidates, estimate, search, the check of `/api/ps`, the messages), `prepareOllama` using it with the pod's settings, hint and GPU memory, the families Ollama serves one at a time, the failure reported in `/health` and `/admin/status`, the 2 minutes before terminating, and `fit` in the status. Done when tests with a fake Ollama cover: the off-GPU check with an explicit context; the estimate kept when it fits; the search finding the largest context that fits; the floor's failure and its message; the cached context used when its digest matches, ignored when not, searched when it no longer fits; a family served one request at a time.
 5. The run: the derived `num-parallel` on capable images only (choice 6), the GPU's memory from Runpod, the cache's read and write (choice 9), `CODEMAN_FIT` and `CODEMAN_GPU_MEMORY_GB` in a new pod's environment, the fit required in a capable image's status, the failure's message read while waiting and not retried by joiners, the log lines. Done when tests cover: an old image with neither derived settings nor cache, its settings key unchanged; the derived `num-parallel` in the key and environment, an explicit one winning; the cache read into the environment and written after a search, not after a cached start; a gateway without a fit report failing the run; a fit failure's message failing the run, and a joiner not creating another pod.
