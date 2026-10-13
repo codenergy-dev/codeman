@@ -244,3 +244,13 @@ test("reports what a failure's problem says, and nothing of another body", async
   });
   await assert.rejects(runpod.pods.get("x"), { message: "Runpod GET /pods/x failed with 502." });
 });
+
+test("reads a GPU type's memory from the catalog, once with its price", async () => {
+  const gpu = { id: "NVIDIA RTX PRO 6000 Blackwell Server Edition", memory: 96, secure: true };
+  const { fetch, calls } = fakeFetch([{ ...gpu, price: { secure: 1.8 } }, { id: "Y" }]);
+  const runpod = new Runpod("rk", fetch);
+  near(await runpod.pods.price(gpu.id), 0.0005);
+  assert.equal(await runpod.pods.memory?.(gpu.id), 96);
+  assert.equal(calls.length, 1, "the catalog is read once per GPU type");
+  assert.equal(await runpod.pods.memory?.("Y"), undefined, "a type that does not say");
+});

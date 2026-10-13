@@ -225,6 +225,7 @@ export function selfHosted(
         image: inputs.image,
         reuse: choice.podReuse,
         ollama: ollamaEnvironment(choice.ollama),
+        parallel: choice.parallel,
       },
       { repository, gpu, accountKey: inputs.accountKey, store: inputs.store() },
     );

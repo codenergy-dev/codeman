@@ -36,6 +36,8 @@ interface RunpodPod {
 
 interface RunpodGpu {
   id: string;
+  /** VRAM, in GB. */
+  memory?: number;
   pool?: string | null;
   secure?: boolean;
   price?: { secure?: number; community?: number; serverless?: number };
@@ -60,6 +62,8 @@ export class Runpod implements GpuProvider {
   readonly #apiKey: string;
   readonly #fetch: Fetch;
   readonly #now: () => Date;
+  /** The catalog's GPU types, by ID, as read so far. */
+  readonly #gpus = new Map<string, Promise<RunpodGpu | undefined>>();
 
   constructor(apiKey: string, fetchFn: Fetch = fetch, now: () => Date = () => new Date()) {
     this.#apiKey = apiKey;
@@ -67,6 +71,10 @@ export class Runpod implements GpuProvider {
     this.#now = now;
     this.pods = {
       price: (gpuType) => this.#podPrice(gpuType),
+      memory: async (gpuType) => {
+        const memory = (await this.#gpu(gpuType))?.memory;
+        return typeof memory === "number" && memory > 0 ? memory : undefined;
+      },
       create: (spec) => this.#createPod(spec),
       get: (id) => this.#getPod(id),
       list: (env) => this.#listPods(env),
@@ -101,13 +109,25 @@ export class Runpod implements GpuProvider {
     return hours;
   }
 
+  /** A GPU type from Runpod's catalog, read once per type; undefined when Runpod has none. */
+  #gpu(gpuType: string): Promise<RunpodGpu | undefined> {
+    let gpu = this.#gpus.get(gpuType);
+    if (!gpu) {
+      gpu = this.#request(
+        `/catalog/gpus/${encodeURIComponent(gpuType)}`,
+        "GET",
+        undefined,
+        [404],
+      ) as Promise<RunpodGpu | undefined>;
+      // A failed read is not kept: the next call reads again.
+      gpu.catch(() => this.#gpus.delete(gpuType));
+      this.#gpus.set(gpuType, gpu);
+    }
+    return gpu;
+  }
+
   async #podPrice(gpuType: string): Promise<number> {
-    const gpu = (await this.#request(
-      `/catalog/gpus/${encodeURIComponent(gpuType)}`,
-      "GET",
-      undefined,
-      [404],
-    )) as RunpodGpu | undefined;
+    const gpu = await this.#gpu(gpuType);
     if (!gpu) {
       throw new Error(
         `Runpod has no GPU type "${gpuType}". \`gpu\` takes the GPU's ID, such as "NVIDIA RTX A6000", not its display name; see https://docs.runpod.io/references/gpu-types.`,

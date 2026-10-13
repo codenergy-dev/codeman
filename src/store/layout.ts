@@ -24,6 +24,13 @@ export const LAYOUT = {
   pods: (owner: string) => `${LAYOUT.organization(owner)}/pods`,
   pod: (owner: string, nonce: string) => `${LAYOUT.pods(owner)}/${documentId(nonce)}`,
   /**
+   * The cache of fits: the context a pod's model fitted its GPU with, for one combination of
+   * image, model, GPU type and Ollama settings, named by their hash (decision 4 of the plan for
+   * fitting Ollama to the GPU).
+   */
+  contexts: (owner: string) => `${LAYOUT.organization(owner)}/contexts`,
+  context: (owner: string, key: string) => `${LAYOUT.contexts(owner)}/${documentId(key)}`,
+  /**
    * A Serverless endpoint of the organization's GPU account, by its ID; under it, each run's
    * billed times on the endpoint's worker, named by the run and its reservation, which the ledger
    * splits among the runs that used the worker at once.

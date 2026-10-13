@@ -46,6 +46,11 @@ export interface Pod {
 export interface PodHost {
   /** The price of one GPU of this type on a pod, in USD per second. Throws when not offered. */
   price(gpuType: string): Promise<number>;
+  /**
+   * The memory of one GPU of this type, in GB, as the provider lists it; undefined when it does
+   * not say. The gateway starts its search for the context that fits from it.
+   */
+  memory?(gpuType: string): Promise<number | undefined>;
   create(spec: PodSpec): Promise<Pod>;
   /** The pod, or undefined when it does not exist (terminated pods included). */
   get(id: string): Promise<Pod | undefined>;
@@ -131,6 +136,13 @@ export function podCost(start: Date, end: Date, pricePerSecond: number): number 
  * Waits until the pod runs and `ready` says its service answers, polling every `interval`.
  * Throws when the pod fails, stops or disappears, or `timeoutMs` passes.
  */
+/**
+ * A pod's gateway says its model could not be served, and why, such as a model that does not fit
+ * the GPU: waiting longer would not help, and another pod of the same settings would fail the
+ * same way.
+ */
+export class PodStartFailure extends Error {}
+
 export async function waitUntilReady(
   host: Pick<PodHost, "get">,
   id: string,
@@ -145,7 +157,13 @@ export async function waitUntilReady(
     if (pod.status === "failed" || pod.status === "stopped" || pod.status === "terminated") {
       throw new Error(`Pod ${id} is ${pod.status}.`);
     }
-    if (pod.status === "running" && (await ready().catch(() => false))) return pod;
+    if (pod.status === "running") {
+      const served = await ready().catch((error: unknown) => {
+        if (error instanceof PodStartFailure) throw error;
+        return false;
+      });
+      if (served) return pod;
+    }
     if (waited >= options.timeoutMs) {
       throw new Error(
         `Pod ${id} was not ready within ${Math.round(options.timeoutMs / 60_000)} minutes.`,

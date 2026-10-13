@@ -1,11 +1,11 @@
 import { createHmac, randomBytes } from "node:crypto";
 import { usd } from "../budget.ts";
 import { type EndedRun, GATEWAY_VERSION, sha256 } from "../gateway/gateway.ts";
-import { GATEWAY_PORT } from "../gateway/pod.ts";
+import { type FitReport, GATEWAY_PORT } from "../gateway/pod.ts";
 import type { GatewayUsage, Span } from "../gateway/usage.ts";
 import type { RepositoryRef } from "../platform/types.ts";
 import type { Log } from "../runtime/runtime.ts";
-import { repositoryName } from "../store/layout.ts";
+import { LAYOUT, repositoryName } from "../store/layout.ts";
 import type { Store } from "../store/store.ts";
 import type { InferenceEngine } from "./engine.ts";
 import {
@@ -13,12 +13,13 @@ import {
   type GpuProvider,
   type Pod,
   type PodHost,
+  PodStartFailure,
   type PodStatus,
   podCost,
   type ServerlessHost,
   waitUntilReady,
 } from "./gpu.ts";
-import { IMAGES_WITHOUT_OLLAMA_SETTINGS, SINGLE_RUN_IMAGES } from "./ollama.ts";
+import { IMAGES_WITHOUT_OLLAMA_SETTINGS, OLLAMA_VERSION, SINGLE_RUN_IMAGES } from "./ollama.ts";
 import {
   type InferenceProvider,
   type OpenedRun,
@@ -72,6 +73,11 @@ export interface PodSettings extends SelfHostedSettings {
    * "4" }`, sorted (`ollamaEnvironment`); none when undefined or empty.
    */
   ollama?: Readonly<Record<string, string>> | undefined;
+  /**
+   * The most tasks the run's profile serves at once, which `num-parallel` defaults to on images
+   * that fit the model to the GPU (choices 5 and 6 of the plan for fitting Ollama to the GPU).
+   */
+  parallel?: number | undefined;
 }
 
 /** What `close` needs to find a pod run again. Travels in plain text between jobs. */
@@ -105,6 +111,50 @@ export function leaseHolder(repository: RepositoryRef, task: string): string {
 /** Whether the image's gateway serves one run at a time, as before shared pods. */
 export function servesOneRun(image: string): boolean {
   return SINGLE_RUN_IMAGES.has(image);
+}
+
+/**
+ * Whether the image's gateway applies Ollama settings and fits the model to the GPU: every image
+ * but those pinned before Ollama settings (choice 6 of the plan for fitting Ollama to the GPU).
+ */
+export function fitsTheGpu(image: string): boolean {
+  return !IMAGES_WITHOUT_OLLAMA_SETTINGS.has(image);
+}
+
+/**
+ * The Ollama variables a pod gets: on an image that fits the model to the GPU, `num-parallel`
+ * defaults to the most tasks the run's profile serves, and the settings' own win; on an older
+ * image, the settings' own only, which it refuses. Sorted by variable.
+ */
+export function podOllama(
+  settings: Pick<PodSettings, "ollama" | "parallel" | "image">,
+): Record<string, string> {
+  const own = settings.ollama ?? {};
+  const derived =
+    fitsTheGpu(settings.image) && settings.parallel !== undefined
+      ? { OLLAMA_NUM_PARALLEL: String(settings.parallel) }
+      : {};
+  const variables = { ...derived, ...own };
+  return Object.fromEntries(
+    Object.entries(variables).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+  );
+}
+
+/**
+ * The key of a pod's settings in the cache of fits (choice 9 of the plan for fitting Ollama to
+ * the GPU): the image, the model, the GPU type, and every Ollama variable but the context
+ * length, which the cache stands in for.
+ */
+export function fitKey(
+  settings: Pick<PodSettings, "image" | "model" | "gpuType" | "ollama">,
+): string {
+  const variables = ollamaVariables(settings).filter(
+    (variable) => !variable.startsWith("OLLAMA_CONTEXT_LENGTH="),
+  );
+  return sha256([settings.image, settings.model, settings.gpuType, ...variables].join("\n")).slice(
+    0,
+    32,
+  );
 }
 
 /** The Ollama variables of pod settings, as `VARIABLE=value`; empty without any. */
@@ -172,6 +222,10 @@ interface GatewayStatus {
   ready?: boolean;
   contextLength?: number;
   ollama?: Record<string, unknown>;
+  /** How the model fits the GPU, from gateways that check it. */
+  fit?: FitReport;
+  /** Why the model could not be served. */
+  failure?: string;
 }
 
 /** A pod's gateway, as the key jobs reach it: its URL and the nonce of its admin token. */
@@ -219,6 +273,8 @@ export interface SelfHostedOptions {
 export class PodInference implements InferenceProvider {
   readonly name: string;
   readonly #settings: PodSettings;
+  /** The `ollama` settings' own variables, without the derived ones. */
+  readonly #own: Readonly<Record<string, string>>;
   readonly #options: SelfHostedOptions;
   readonly #host: PodHost;
   readonly #registry: PodRegistry;
@@ -228,7 +284,8 @@ export class PodInference implements InferenceProvider {
   constructor(settings: PodSettings, options: SelfHostedOptions) {
     if (!options.gpu.pods) throw new Error(`${options.gpu.name} has no pods.`);
     this.name = `${options.gpu.name} pods`;
-    this.#settings = settings;
+    this.#own = settings.ollama ?? {};
+    this.#settings = { ...settings, ollama: podOllama(settings) };
     this.#options = options;
     this.#host = options.gpu.pods;
     this.#registry = new PodRegistry(options.store, options.repository.owner, () => this.#now());
@@ -249,13 +306,20 @@ export class PodInference implements InferenceProvider {
    * Refuses, before any pod, an image known not to apply Ollama settings when the run has some:
    * a requested setting is never dropped (choice 8 of the Ollama settings plan).
    */
-  #checkImage(): void {
-    const ollama = ollamaVariables(this.#settings);
-    const { image } = this.#settings;
-    if (ollama.length === 0 || !IMAGES_WITHOUT_OLLAMA_SETTINGS.has(image)) return;
-    throw new Error(
-      `The pod image ${image} cannot apply Ollama settings (${quotedVariables(this.#settings)}), so no pod was created: use a version of Codeman whose pod image can, or remove \`ollama\` from the settings. See docs/settings/ollama.md#pod-images.`,
-    );
+  #checkImage(log: Log): void {
+    const own = { ollama: this.#own };
+    const { image, parallel } = this.#settings;
+    if (fitsTheGpu(image)) return;
+    if (ollamaVariables(own).length > 0) {
+      throw new Error(
+        `The pod image ${image} cannot apply Ollama settings (${quotedVariables(own)}), so no pod was created: use a version of Codeman whose pod image can, or remove \`ollama\` from the settings. See docs/settings/ollama.md#pod-images.`,
+      );
+    }
+    if (parallel !== undefined) {
+      log.info(
+        `The pod image ${image} predates Ollama settings: its pods serve one request at a time, with the model's own context length, and nothing checks that the model fits the GPU. See docs/settings/ollama.md#pod-images.`,
+      );
+    }
   }
 
   async open(run: RunRequest, log: Log): Promise<OpenedRun> {
@@ -264,7 +328,7 @@ export class PodInference implements InferenceProvider {
     const settings = podSettingsKey(this.#settings, holder);
     let handle: PodHandle;
     try {
-      this.#checkImage();
+      this.#checkImage(log);
       await this.#sweep(holder, settings, log);
       handle = await this.#claim(run, holder, settings, token, log);
     } catch (error) {
@@ -523,6 +587,8 @@ export class PodInference implements InferenceProvider {
             }),
           );
         }
+        // Another pod of the same settings would fail the same way (choice 12).
+        if (error instanceof PodStartFailure) throw error;
       }
     }
     throw new Error(
@@ -613,8 +679,20 @@ export class PodInference implements InferenceProvider {
       podId,
       async () => {
         const response = await (this.#options.fetch ?? fetch)(`${target.url}/health`);
-        const ready =
-          response.ok && ((await response.json()) as { ready?: boolean }).ready === true;
+        const health = (response.ok ? await response.json() : {}) as {
+          ready?: boolean;
+          failed?: boolean;
+        };
+        if (health.failed) {
+          // Only the admin route says why: `/health` takes no token.
+          const status = (await this.#admin(target, "GET", "/admin/status").catch(
+            () => ({}),
+          )) as GatewayStatus;
+          throw new PodStartFailure(
+            `Pod ${podId} did not serve ${model}: ${status.failure ?? "its gateway reported a failure"}`,
+          );
+        }
+        const ready = health.ready === true;
         if (checks++ === 0) startedBefore = ready;
         return ready;
       },
@@ -626,7 +704,8 @@ export class PodInference implements InferenceProvider {
     const shared = !servesOneRun(image);
     const ollama = this.#settings.ollama ?? {};
     const configured = Object.keys(ollama).length > 0;
-    if (shared || configured) {
+    const fits = fitsTheGpu(image);
+    if (shared || configured || fits) {
       const status = (await this.#admin(target, "GET", "/admin/status")) as GatewayStatus;
       if (shared && (status.version ?? 1) < GATEWAY_VERSION) {
         throw new Error(
@@ -638,6 +717,12 @@ export class PodInference implements InferenceProvider {
           `Pod ${podId}'s gateway did not apply the Ollama settings (${quotedVariables(this.#settings)}): its image cannot. List the image in IMAGES_WITHOUT_OLLAMA_SETTINGS (src/inference/ollama.ts), or use one built since Ollama settings.`,
         );
       }
+      if (fits && !status.fit) {
+        throw new Error(
+          `Pod ${podId}'s gateway did not report how ${model} fits the GPU: its image cannot check it. List the image in IMAGES_WITHOUT_OLLAMA_SETTINGS (src/inference/ollama.ts), or use one built since the fit to the GPU.`,
+        );
+      }
+      if (fits && status.fit) await this.#reportFit(status.fit, podId, own, log);
     }
     const handle: PodHandle = {
       mode: "pod",
@@ -682,6 +767,9 @@ export class PodInference implements InferenceProvider {
     const { model, gpuType, image, engine } = this.#settings;
     if (!image) throw new Error("No pod image is pinned; see docs/installation/runpod.md#pods.");
     const listed = await this.#host.price(gpuType);
+    const fits = fitsTheGpu(image);
+    const memory = fits ? await this.#host.memory?.(gpuType).catch(() => undefined) : undefined;
+    const cached = fits ? await this.#cachedFit(log) : undefined;
     const owner = this.#options.repository.owner.toLowerCase();
     const now = this.#now();
     const pod = await this.#host.create({
@@ -691,6 +779,8 @@ export class PodInference implements InferenceProvider {
         ...(Object.keys(this.#settings.ollama ?? {}).length > 0
           ? { CODEMAN_OLLAMA: JSON.stringify(this.#settings.ollama) }
           : {}),
+        ...(memory ? { CODEMAN_GPU_MEMORY_GB: String(memory) } : {}),
+        ...(cached ? { CODEMAN_FIT: JSON.stringify(cached) } : {}),
         CODEMAN_ORGANIZATION: owner,
         CODEMAN_POD_SETTINGS: record.settings,
         CODEMAN_NONCE: record.nonce,
@@ -710,6 +800,83 @@ export class PodInference implements InferenceProvider {
       `Created pod ${pod.id} with ${gpuType}, at ${usd(listed * 3600)} per hour; waiting for ${model}.`,
     );
     return { pod, listed };
+  }
+
+  /**
+   * The context that fitted these settings before, from the cache of fits, with its model's
+   * digest; none with a context length in the settings, or when the cache cannot be read.
+   */
+  async #cachedFit(log: Log): Promise<{ contextLength: number; digest: string } | undefined> {
+    if (this.#settings.ollama?.OLLAMA_CONTEXT_LENGTH) return undefined;
+    const path = LAYOUT.context(this.#options.repository.owner, fitKey(this.#settings));
+    try {
+      const fields = (await this.#options.store.get(path))?.fields;
+      const { contextLength, digest } = fields ?? {};
+      if (!Number.isSafeInteger(contextLength) || typeof digest !== "string") return undefined;
+      log.info(`The cache of fits gives these settings a context of ${contextLength} tokens.`);
+      return { contextLength: contextLength as number, digest };
+    } catch (error) {
+      log.warning(
+        `Could not read the cache of fits (${error instanceof Error ? error.message : error}); the pod searches for the context that fits.`,
+      );
+      return undefined;
+    }
+  }
+
+  /**
+   * Logs how the pod's model fits its GPU, warns when Ollama serves fewer requests at once than
+   * asked, and records in the cache of fits what the pod that this task created found by
+   * searching.
+   */
+  async #reportFit(fit: FitReport, podId: string, own: boolean, log: Log): Promise<void> {
+    const { model } = this.#settings;
+    const how =
+      fit.source === "settings"
+        ? "from the settings"
+        : fit.source === "cache"
+          ? "from the cache of fits"
+          : `found in ${fit.loads} load(s)`;
+    const theirs = fit.modelContextLength ? ` (the model's own is ${fit.modelContextLength})` : "";
+    log.info(
+      `Pod ${podId} serves ${model} with ${fit.parallel} parallel request(s) and a context of ${fit.contextLength} tokens${theirs}, wholly on the GPU; ${how}.`,
+    );
+    if (fit.parallel < fit.requestedParallel) {
+      log.warning(
+        `Ollama ${OLLAMA_VERSION} serves ${model}'s family (${fit.family ?? "unknown"}) one request at a time, whatever num-parallel says: the runs that share pod ${podId} wait for each other's requests.`,
+      );
+    }
+    if (!own || fit.source !== "search" || !fit.digest) return;
+    const variables = Object.fromEntries(
+      Object.entries(this.#settings.ollama ?? {}).filter(
+        ([name]) => name !== "OLLAMA_CONTEXT_LENGTH",
+      ),
+    );
+    const { image, gpuType } = this.#settings;
+    try {
+      await this.#options.store.write([
+        {
+          op: "set",
+          path: LAYOUT.context(this.#options.repository.owner, fitKey(this.#settings)),
+          fields: {
+            image,
+            model,
+            digest: fit.digest,
+            gpuType,
+            ollama: variables,
+            contextLength: fit.contextLength,
+            ...(fit.modelContextLength ? { modelContextLength: fit.modelContextLength } : {}),
+            parallel: fit.parallel,
+            loads: fit.loads,
+            pod: podId,
+            recordedAt: this.#now(),
+          },
+        },
+      ]);
+    } catch (error) {
+      log.warning(
+        `Could not record the fit in the cache of fits (${error instanceof Error ? error.message : error}); the next pod searches again.`,
+      );
+    }
   }
 
   #admin(target: GatewayTarget, method: string, path: string, body?: unknown): Promise<unknown> {

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import { GATEWAY_VERSION, sha256 } from "../gateway/gateway.ts";
 import { closeKey, openKey } from "../steps/keys.ts";
+import { LAYOUT } from "../store/layout.ts";
 import { MemoryStore } from "../store/memory.ts";
 import { FakeGateways, FakeGpu } from "../testing/fake-gpu.ts";
 import { FakePlatform, fakeServices } from "../testing/fake-platform.ts";
@@ -13,6 +14,7 @@ import { OpenFailure } from "./provider.ts";
 import { CREATE_LEASE_MS, PodRegistry } from "./registry.ts";
 import {
   adminToken,
+  fitKey,
   ofOrganization,
   type PodHandle,
   PodInference,
@@ -735,4 +737,157 @@ test("a pod whose gateway does not apply the Ollama settings fails the run, and 
     /Pod pod1's gateway did not apply the Ollama settings \(`OLLAMA_NUM_PARALLEL=4`\): its image cannot\./,
   );
   assert.deepEqual(gpu.terminated, ["pod1"]);
+});
+
+test("on an image that fits the GPU, num-parallel defaults to the profile's count; the settings' own wins", async () => {
+  const { gpu, open } = setup({ real: true, image: SHARED_IMAGE });
+  const a = await open("7", "300", { parallel: 4 });
+  const pod = gpu.created[0];
+  assert.equal(pod?.env.CODEMAN_OLLAMA, '{"OLLAMA_NUM_PARALLEL":"4"}');
+  assert.equal(pod?.env.CODEMAN_GPU_MEMORY_GB, "48", "the GPU type's memory, for the estimate");
+  assert.equal(pod?.env.CODEMAN_FIT, undefined, "nothing cached yet");
+  const shared = { ...settings, image: SHARED_IMAGE };
+  const key = podSettingsKey({ ...shared, ollama: { OLLAMA_NUM_PARALLEL: "4" } }, "o/r#7");
+  assert.equal(pod?.name, `codeman-o-${key}`, "the derived value is part of the settings key");
+  assert.ok(
+    a.runtime
+      .logged("info")
+      .includes(
+        "Pod pod1 serves qwen3-coder:30b with 4 parallel request(s) and a context of 65536 tokens (the model's own is 262144), wholly on the GPU; found in 5 load(s).",
+      ),
+  );
+  assert.equal(a.opened.contextLength, 65536, "the agent is told the context served");
+  const b = await open("8", "300", { parallel: 4, ollama: { OLLAMA_NUM_PARALLEL: "2" } });
+  assert.equal(b.handle.podId, "pod2");
+  assert.equal(gpu.created[1]?.env.CODEMAN_OLLAMA, '{"OLLAMA_NUM_PARALLEL":"2"}');
+  const c = await open("9", "300", { parallel: 4 });
+  assert.equal(c.handle.podId, "pod1", "the same derived settings share the pod");
+});
+
+test("an image pinned before Ollama settings gets no derived settings, no cache, and keeps its key", async () => {
+  for (const image of IMAGES_WITHOUT_OLLAMA_SETTINGS) {
+    const { gpu, store, open } = setup({ image, real: true });
+    const { runtime } = await open("7", "300", { parallel: 4 });
+    const env = gpu.created[0]?.env ?? {};
+    assert.equal(env.CODEMAN_OLLAMA, undefined);
+    assert.equal(env.CODEMAN_FIT, undefined);
+    assert.equal(env.CODEMAN_GPU_MEMORY_GB, undefined);
+    const key = podSettingsKey({ ...settings, image }, "o/r#7");
+    assert.equal(gpu.created[0]?.name, `codeman-o-${key}`, "the key it had before");
+    assert.ok(
+      runtime
+        .logged("info")
+        .includes(
+          `The pod image ${image} predates Ollama settings: its pods serve one request at a time, with the model's own context length, and nothing checks that the model fits the GPU. See docs/settings/ollama.md#pod-images.`,
+        ),
+    );
+    assert.deepEqual(await store.query(LAYOUT.contexts("o")), []);
+  }
+});
+
+test("the cache of fits: written after a search by the pod's creator, read into the next pod", async () => {
+  const { gpu, store, open } = setup({ real: true, image: SHARED_IMAGE });
+  await open("7", "300", { parallel: 4 });
+  await open("8", "300", { parallel: 4 });
+  const variables = { OLLAMA_NUM_PARALLEL: "4" };
+  const key = fitKey({ ...settings, image: SHARED_IMAGE, ollama: variables });
+  const path = LAYOUT.context("o", key);
+  const cached = await store.get(path);
+  const { recordedAt, ...fields } = cached?.fields ?? {};
+  assert.deepEqual(fields, {
+    image: SHARED_IMAGE,
+    model: "qwen3-coder:30b",
+    digest: "digest-1",
+    gpuType: "GPU-A",
+    ollama: variables,
+    contextLength: 65536,
+    modelContextLength: 262144,
+    parallel: 4,
+    loads: 5,
+    pod: "pod1",
+  });
+  assert.ok(recordedAt instanceof Date);
+  assert.equal(
+    fitKey({
+      ...settings,
+      image: SHARED_IMAGE,
+      ollama: { ...variables, OLLAMA_CONTEXT_LENGTH: "9" },
+    }),
+    key,
+    "the context length is not part of the key",
+  );
+  assert.notEqual(
+    fitKey({
+      ...settings,
+      image: SHARED_IMAGE,
+      ollama: { ...variables, OLLAMA_KV_CACHE_TYPE: "q8_0" },
+    }),
+    key,
+  );
+
+  // The next pod of these settings starts from the cached context; nothing is written again.
+  gpu.setStatus("pod1", "terminated");
+  const { runtime } = await open("9", "301", { parallel: 4 });
+  assert.equal(gpu.created[1]?.env.CODEMAN_FIT, '{"contextLength":65536,"digest":"digest-1"}');
+  assert.ok(
+    runtime
+      .logged("info")
+      .some((line) => line.endsWith("wholly on the GPU; from the cache of fits.")),
+  );
+  assert.equal((await store.get(path))?.version, cached?.version);
+
+  // A context in the settings needs no cache.
+  await open("10", "302", { parallel: 4, ollama: { OLLAMA_CONTEXT_LENGTH: "32768" } });
+  assert.equal(gpu.created[2]?.env.CODEMAN_FIT, undefined);
+  assert.equal((await store.query(LAYOUT.contexts("o"))).length, 1);
+});
+
+test("a cache of fits that cannot be read leaves the pod to search", async () => {
+  const { gpu, store, open } = setup({ real: true, image: SHARED_IMAGE });
+  const get = store.get.bind(store);
+  store.get = async (path: string) => {
+    if (path.includes("/contexts/")) throw new Error("unavailable");
+    return get(path);
+  };
+  const { runtime } = await open("7", "300", { parallel: 4 });
+  assert.equal(gpu.created[0]?.env.CODEMAN_FIT, undefined);
+  assert.ok(
+    runtime
+      .logged("warning")
+      .includes(
+        "Could not read the cache of fits (unavailable); the pod searches for the context that fits.",
+      ),
+  );
+});
+
+test("a gateway that applies Ollama settings but does not report the fit fails the run", async () => {
+  const { gpu, gateways, open } = setup({ image: SHARED_IMAGE });
+  gateways.state("pod1").version = GATEWAY_VERSION;
+  await assert.rejects(
+    open("7", "300"),
+    /Pod pod1's gateway did not report how qwen3-coder:30b fits the GPU: its image cannot check it\. List the image in IMAGES_WITHOUT_OLLAMA_SETTINGS/,
+  );
+  assert.deepEqual(gpu.terminated, ["pod1"]);
+});
+
+test("a model that does not fit fails the run with the gateway's reason, and no other pod is tried", async () => {
+  const reason =
+    "`qwen3-coder:30b` does not fit the GPU with 4 parallel requests and a context of 64000 tokens, the least Codeman gives an agent: Ollama put 3.2 of its 43.6 GB off the GPU, which runs much slower.";
+  const failing = setup({ real: true, image: SHARED_IMAGE });
+  failing.gateways.state("pod1").ready = false;
+  failing.gateways.state("pod1").failure = reason;
+  await assert.rejects(
+    failing.open("7", "300", { parallel: 4 }),
+    (error: Error) => error.message === `Pod pod1 did not serve qwen3-coder:30b: ${reason}`,
+  );
+  assert.deepEqual(failing.gpu.terminated, ["pod1"]);
+  assert.equal(failing.gpu.created.length, 1);
+
+  // A task that joins a pod whose start failed fails too, without creating another.
+  const joining = setup({ real: true, image: SHARED_IMAGE });
+  await joining.open("7", "300", { parallel: 4 });
+  joining.gateways.state("pod1").ready = false;
+  joining.gateways.state("pod1").failure = reason;
+  await assert.rejects(joining.open("8", "300", { parallel: 4 }), /did not serve/);
+  assert.equal(joining.gpu.created.length, 1);
 });

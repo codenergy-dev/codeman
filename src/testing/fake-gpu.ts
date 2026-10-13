@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Server } from "node:http";
 import { Gateway } from "../gateway/gateway.ts";
+import { type FitReport, parseFitHint } from "../gateway/pod.ts";
 import { type InferenceEngine, openAiUsage } from "../inference/engine.ts";
 import type {
   Endpoint,
@@ -24,6 +25,8 @@ export class FakeGpu implements GpuProvider {
   readonly terminated: string[] = [];
   /** USD per second, by GPU type; types not listed are not offered. */
   readonly prices: Record<string, number>;
+  /** GB of memory, by GPU type; types not listed do not say. */
+  readonly memories: Record<string, number> = { "GPU-A": 48 };
   /** What each pod was billed, by ID, terminated pods included. */
   readonly billed: Record<string, number> = {};
   readonly endpoints = new Map<string, Endpoint>();
@@ -45,6 +48,7 @@ export class FakeGpu implements GpuProvider {
         if (price === undefined) throw new Error(`No ${gpuType} on Secure Cloud.`);
         return price;
       },
+      memory: async (gpuType) => this.memories[gpuType],
       create: async (spec) => {
         this.created.push(spec);
         const pod: Pod = {
@@ -129,6 +133,8 @@ export interface FakeGatewayState {
   /** The last run it was given, and the usage `/admin/end` reports. */
   run?: Record<string, unknown> | undefined;
   usage: Record<string, unknown>;
+  /** Why the model could not be served, as a real gateway reports it. */
+  failure?: string | undefined;
 }
 
 /**
@@ -169,10 +175,11 @@ export class FakeGateways {
         adminSha256,
         now: () => this.gpu.now().getTime(),
       });
-      gateway.contextLength = 65536;
-      // As the pod's gateway applies them (src/gateway/main.ts).
+      // As the pod's gateway applies them (src/gateway/main.ts), and fits the model to the GPU.
       const ollama = parseOllamaVariables(pod.env.CODEMAN_OLLAMA);
       if (ollama.ok) gateway.ollama = ollama.value;
+      gateway.fit = fakeFit(gateway.ollama, pod);
+      gateway.contextLength = gateway.fit.contextLength;
       const { server, url } = await gateway.listen();
       served = { gateway, url, server };
       this.#gateways.set(id, served);
@@ -206,6 +213,7 @@ export class FakeGateways {
     if (this.#real) {
       const { gateway, url: base } = await this.#serve(id, pod);
       gateway.ready = state.ready;
+      gateway.failure = state.failure;
       return fetch(`${base}${url.pathname}`, init);
     }
     const json = (status: number, body: unknown) =>
@@ -238,4 +246,26 @@ export class FakeGateways {
     }
     return json(404, {});
   }) as typeof fetch;
+}
+
+/**
+ * How a pod's real gateway would fit the model, for tests: the settings' context, else the cached
+ * one, else 65536 tokens found by a search of 5 loads; for the parallel requests asked.
+ */
+export function fakeFit(variables: Readonly<Record<string, string>>, pod: Pod): FitReport {
+  const configured = Number(variables.OLLAMA_CONTEXT_LENGTH) || undefined;
+  const hint = parseFitHint(pod.env.CODEMAN_FIT);
+  const parallel = Number(variables.OLLAMA_NUM_PARALLEL) || 1;
+  return {
+    contextLength: configured ?? hint?.contextLength ?? 65536,
+    modelContextLength: 262144,
+    requestedParallel: parallel,
+    parallel,
+    source: configured ? "settings" : hint ? "cache" : "search",
+    loads: configured || hint ? 1 : 5,
+    digest: "digest-1",
+    size: 30_000_000_000,
+    sizeVram: 30_000_000_000,
+    family: "qwen3moe",
+  };
 }
