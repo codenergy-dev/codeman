@@ -1,6 +1,6 @@
 import type { RepositoryRef } from "../platform/types.ts";
 import type { Runtime } from "../runtime/runtime.ts";
-import type { Settings } from "../settings.ts";
+import { MAX_TASKS, type Settings } from "../settings.ts";
 import { positiveNumber } from "../steps/common.ts";
 import type { Store } from "../store/store.ts";
 import type { ProviderAccounts } from "./budget.ts";
@@ -27,6 +27,12 @@ export type InferenceChoice = (
       podReuse: "task" | "run";
       /** The `ollama` settings, by key; absent without any. */
       ollama?: OllamaSettings | undefined;
+      /**
+       * The most tasks the run's profile serves at once, which `num-parallel` defaults to on
+       * images that apply Ollama settings (choices 5 and 6 of the plan for fitting Ollama to the
+       * GPU); absent from older choices.
+       */
+      parallel?: number | undefined;
     })
   | (SelfHostedChoice & { provider: "runpod-serverless"; endpoint: string })
 ) &
@@ -66,6 +72,8 @@ export function inferenceChoice(
   options: {
     profile?: string | undefined;
     accounts?: readonly string[];
+    /** The most tasks the run's profile serves at once (`mostTasks`). */
+    parallel?: number | undefined;
   } = {},
 ): InferenceChoice {
   const budgeted: Budgeted = {
@@ -90,6 +98,7 @@ export function inferenceChoice(
         ...(settings.ollama && Object.keys(settings.ollama).length > 0
           ? { ollama: settings.ollama }
           : {}),
+        ...(options.parallel === undefined ? {} : { parallel: options.parallel }),
       };
 }
 
@@ -126,6 +135,12 @@ export function parseInferenceChoice(text: string): InferenceChoice {
       Object.values(ollama).every((value) => typeof value === "string");
     if (!strings) throw new Error("The inference input is not a valid choice.");
     ollamaEnvironment(choice.ollama);
+  }
+  if (choice.provider === "runpod-pod" && choice.parallel !== undefined) {
+    const { parallel } = choice;
+    if (!Number.isInteger(parallel) || parallel < 1 || parallel > MAX_TASKS) {
+      throw new Error("The inference input is not a valid choice.");
+    }
   }
   return choice;
 }

@@ -762,6 +762,20 @@ export function tasksPerRun(layers: readonly SettingsLayer[]): number {
   return most;
 }
 
+/**
+ * The most tasks a run's profile serves at once, which a pod's `num-parallel` defaults to (choice
+ * 5 of the plan for fitting Ollama to the GPU): its `tasks`, else its `max-tasks`, else the run's
+ * cap (`tasksPerRun`), as for `min-tasks` alone, a profile without counts, and the top level
+ * (`profile` undefined).
+ */
+export function mostTasks(layers: readonly SettingsLayer[], profile: string | undefined): number {
+  const cap = tasksPerRun(layers);
+  if (profile === undefined) return cap;
+  const list = layers.find((layer) => layer.profiles !== undefined)?.profiles ?? [];
+  const { tasks, "max-tasks": max } = list.find(({ name }) => name === profile)?.conditions ?? {};
+  return tasks ?? max ?? cap;
+}
+
 /** A count of the run's tasks at which a stage is served, and the profile that serves it. */
 export interface ServedCount {
   tasks: number;

@@ -133,3 +133,19 @@ test("a pod's choice carries its Ollama settings, checked again when read", () =
     );
   }
 });
+
+test("a pod's choice carries the most tasks its profile serves, for num-parallel", () => {
+  const pod = settings({ provider: "runpod-pod", model: "qwen3-coder:30b", gpu: "GPU A" });
+  const choice = inferenceChoice(pod, null, { profile: "parallel-tasks", parallel: 4 });
+  assert.equal(choice.provider === "runpod-pod" && choice.parallel, 4);
+  assert.deepEqual(parseInferenceChoice(JSON.stringify(choice)), choice);
+  const openrouter = inferenceChoice(settings({ model: "a/b" }), null, { parallel: 4 });
+  assert.equal("parallel" in openrouter, false, "only pods take it");
+  for (const parallel of [0, 11, 2.5, "4"]) {
+    assert.throws(
+      () => parseInferenceChoice(JSON.stringify({ ...choice, parallel })),
+      /not a valid/,
+      JSON.stringify(parallel),
+    );
+  }
+});

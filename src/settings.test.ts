@@ -7,6 +7,7 @@ import {
   DEFAULTS,
   isSettingName,
   MAX_TASKS,
+  mostTasks,
   type PartialSettings,
   parseSetting,
   parseSettings,
@@ -219,6 +220,33 @@ test("a run takes as many tasks as the profiles' counts allow, and one without t
   const organization = shared.ok ? shared.value : {};
   assert.equal(tasksPerRun([{}, {}, organization]), 8);
   assert.equal(tasksPerRun([{}, {}, { profiles: [] }, organization]), 1);
+});
+
+test("a profile serves at most its count of tasks, which pods' num-parallel defaults to", () => {
+  const most = (profile: string | undefined, ...profiles: string[]) => {
+    const file = parseSettings(["model: a/b", "profiles:", ...profiles].join("\n"));
+    assert.ok(file.ok, file.ok ? "" : file.error);
+    return mostTasks([{}, {}, file.ok ? file.value : {}], profile);
+  };
+  const exact = ["  - name: four", "    tasks: 4", "    model: a/b"];
+  const range = ["  - name: range", "    min-tasks: 2", "    max-tasks: 3", "    model: a/b"];
+  const upTo = ["  - name: up-to", "    max-tasks: 3", "    model: a/b"];
+  const atLeast = ["  - name: at-least", "    min-tasks: 2", "    model: a/b"];
+  const any = ["  - name: any", "    stages: [code]", "    model: a/b"];
+  assert.equal(most("four", ...exact, ...upTo), 4, "`tasks`");
+  assert.equal(most("up-to", ...exact, ...upTo), 3, "`max-tasks`");
+  assert.equal(most("range", ...exact, ...range), 3, "`max-tasks` with `min-tasks`");
+  assert.equal(most("at-least", ...exact, ...atLeast), MAX_TASKS, "`min-tasks` alone: the cap");
+  assert.equal(most("any", ...exact, ...any), 4, "no counts: the run's cap");
+  assert.equal(most(undefined, ...exact, ...upTo), 4, "the top level: the run's cap");
+  assert.equal(most("any", ...any), 1, "no count anywhere: one at a time");
+  assert.equal(mostTasks([{}, {}, { model: "a/b" }], undefined), 1, "no profiles");
+  // The responsible person's example: 4 on the full GPU, up to 3 on the MIG partition.
+  const example = parseSettings(exampleSettings());
+  assert.ok(example.ok);
+  const layers = [{}, {}, example.ok ? example.value : {}];
+  assert.equal(mostTasks(layers, "parallel-tasks"), 4);
+  assert.equal(mostTasks(layers, "mig"), 3);
 });
 
 test("conditions sit at the profile's first level, and hold for the run's count", () => {

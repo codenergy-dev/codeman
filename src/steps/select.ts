@@ -18,6 +18,7 @@ import type { Runtime } from "../runtime/runtime.ts";
 import type { Services } from "../services.ts";
 import {
   isSettingName,
+  mostTasks,
   type PartialSettings,
   parseSetting,
   parseSettings,
@@ -365,6 +366,8 @@ export async function select(services: Services): Promise<void> {
     for (const line of settingSources([own, ...inherited])) runtime.info(line);
     const { profile, accounts, settings } = resolved;
     if (profile) runtime.info(`Profile \`${profile}\` applies to this run.`);
+    // A pod's `num-parallel` defaults to it (choice 5 of the plan for fitting Ollama to the GPU).
+    const parallel = mostTasks([own, ...inherited], profile);
     const model = settings.model;
 
     const context: TaskContext = {
@@ -450,6 +453,7 @@ export async function select(services: Services): Promise<void> {
       record: record ?? null,
       profile,
       accounts,
+      parallel,
       context,
       start,
     };
@@ -638,6 +642,8 @@ interface Picked {
   profile: string | undefined;
   /** The account of every provider the settings name. */
   accounts: string[];
+  /** The most tasks its profile serves at once. */
+  parallel: number;
   context: TaskContext;
   start: () => Promise<void>;
 }
@@ -650,6 +656,7 @@ function taskOutputs(task: Picked, run: string): Record<string, string> {
   const choice = inferenceChoice(task.settings, task.record, {
     profile: task.profile,
     accounts: task.accounts,
+    parallel: task.parallel,
   });
   return {
     task: String(task.number),

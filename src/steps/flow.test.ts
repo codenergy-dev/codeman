@@ -576,6 +576,8 @@ test("pods: select hands the task's pods to the key jobs, and apply takes the le
     recorded: { spent: 0 },
     gpu: "GPU A",
     podReuse: "task",
+    // One task at a time without counts: `num-parallel` defaults to 1.
+    parallel: 1,
   });
   const task = readTask(selected);
   agentResult({ [task.planPath]: "# Plan\n" }, { summary: "Plan.", language: "en", decisions: [] });
@@ -1149,6 +1151,12 @@ function pickedTasks(runtime: FakeRuntime): [string, string, string][] {
   ]);
 }
 
+/** Each picked task's `parallel`, the most tasks its profile serves at once. */
+function parallels(runtime: FakeRuntime): (number | undefined)[] {
+  const tasks = JSON.parse(runtime.outputs.tasks ?? "[]") as Record<string, string>[];
+  return tasks.map((task) => JSON.parse(task.inference ?? "{}").parallel);
+}
+
 const withoutMig = () => exampleSettings().replace(/ {2}- name: mig\n[\s\S]*$/, "");
 
 test("profiles pick the tasks: 4 on the full GPU, up to 3 on the MIG partition", async () => {
@@ -1163,6 +1171,8 @@ test("profiles pick the tasks: 4 on the full GPU, up to 3 on the MIG partition",
   ]);
   const gpu = JSON.parse(selected.outputs.inference ?? "").gpu;
   assert.equal(gpu, "NVIDIA RTX PRO 6000 Blackwell Server Edition");
+  // Its pods serve 4 requests at once, unless its `ollama` settings say otherwise.
+  assert.deepEqual(parallels(selected), [4, 4, 4, 4]);
   assert.ok(
     selected
       .logged("info")
@@ -1180,6 +1190,7 @@ test("profiles pick the tasks: 4 on the full GPU, up to 3 on the MIG partition",
     pickedTasks(selected).map(([, , profile]) => profile),
     ["mig", "mig", "mig"],
   );
+  assert.deepEqual(parallels(selected), [3, 3, 3], "up to 3 on the MIG partition");
 
   // A planning task counts too: it plans on OpenRouter, and the three others take the full GPU.
   const mixed = new FakePlatform({ ".codeman/settings.yml": exampleSettings() });
