@@ -1,7 +1,7 @@
 ---
-status: pending
+status: in progress
 created_at: 2026-10-13T20:57:43-03:00
-updated_at: 2026-10-13T20:57:43-03:00
+updated_at: 2026-10-13T21:33:37-03:00
 commit: 95962c0
 ---
 
@@ -54,7 +54,7 @@ No new npm dependency. Every image pinned by digest. Firestore holds no secrets;
 
 ## Decisions
 
-Open: each needs an answer from the responsible person before work starts.
+Answered by the responsible person on 2026-10-13: every decision takes its recommendation, but decision 8, changed.
 
 1. **vLLM's version and the image's base.**
    - (a) v0.31.0, CUDA 13.0: `FROM vllm/vllm-openai:v0.31.0@sha256:c1c9f6fd5c109ba7f0546a59f5b2f15fb87f64c77782e90a27b648b42a8e67c3` (the index, as for Ollama), 9.04 GB. The build vLLM tests most, with the Qwen3.5 MTP fixes.
@@ -64,7 +64,7 @@ Open: each needs an answer from the responsible person before work starts.
 
    Recommendation: (a), pinned as `VLLM_VERSION` beside the image with a test that checks it against the Dockerfile, as for Ollama; (b) is the fallback if the end-to-end test finds no capacity for CUDA 13.0 on the GPU types used. Upgrades follow the Ollama rule: check the keys, parsers and messages against the new version's recorded source.
 
-   **Answer:** (pending)
+   **Answer:** (a): v0.31.0, CUDA 13.0, pinned by the index's digest, with `VLLM_VERSION` checked against the Dockerfile. (b) stays the fallback.
 
 2. **The CUDA floor, and how pods require it.**
    - (a) vLLM pods are created with `gpu.minCudaVersion` set to the image's CUDA (`VLLM_MIN_CUDA`, `"13.0"`), and before creating one, `open-key` reads the GPU type's `cudaVersions` with that floor and stops the run, before paying anything, when none has capacity ("No host with `<gpu>` offers CUDA 13.0 or newer now, which vLLM's image needs."). The pod's `cudaVersion` is logged. Ollama pods stay unconstrained.
@@ -73,7 +73,7 @@ Open: each needs an answer from the responsible person before work starts.
 
    Recommendation: (a).
 
-   **Answer:** (pending)
+   **Answer:** (a): `minCudaVersion` from `VLLM_MIN_CUDA` for vLLM pods only, the catalog's `cudaVersions` read before creating one, and the pod's `cudaVersion` logged.
 
 3. **The `vllm:` keys and their defaults.** Each key becomes one argument of `vllm serve`, from v0.31.0's [arg_utils.py](../web/vllm/vllm-engine-arg-utils-py-at-v0-31-0.md) and [cli_args.py](../web/vllm/vllm-entrypoints-launchers-cli-args-py-at-v0-31-0.md); a key not listed stops the run, as with `ollama:`. Proposed:
 
@@ -102,7 +102,7 @@ Open: each needs an answer from the responsible person before work starts.
 
    Recommendation: (a): it covers the responsible person's Serverless endpoint and vLLM's recipe for the test model, and each key is checked like `ollama:`'s.
 
-   **Answer:** (pending)
+   **Answer:** (a): this list.
 
 4. **Fitting `max-model-len`.**
    - (a) vLLM's auto-fit (`-1`): one start; the largest context for **one** request. With `max-num-seqs` requests near it, vLLM preempts and recomputes them: slower, never off the GPU. The gateway reports the cache's concurrency and warns when it is below `max-num-seqs`.
@@ -111,7 +111,7 @@ Open: each needs an answer from the responsible person before work starts.
 
    With an explicit `max-model-len`, vLLM refuses a context whose cache cannot hold one request, and the gateway relays its message; under (b) or (c), the start also fails when the cache holds fewer than `max-num-seqs` requests of it, as with Ollama's explicit `context-length`. Recommendation: (b): each task gets the context the agent is told, the start never fails silently slower, and only the first pod of a combination pays a second start.
 
-   **Answer:** (pending)
+   **Answer:** (b): a context for `max-num-seqs` requests, from vLLM's own figures, cached.
 
 5. **Guaranteeing tool calls,** as `open-key` checks `ENABLE_AUTO_TOOL_CHOICE` and `TOOL_CALL_PARSER` for Serverless.
    - (a) `tool-call-parser` is required with `engine: vllm`, checked against v0.31.0's parsers before any pod is created ("`vllm` needs `tool-call-parser`, the one that matches the model, such as `qwen3_xml` for Qwen3 models; see the model's card or vLLM's recipe."); the gateway always adds `--enable-auto-tool-choice`.
@@ -120,7 +120,7 @@ Open: each needs an answer from the responsible person before work starts.
 
    Recommendation: (c). `reasoning-parser` stays optional, without a probe.
 
-   **Answer:** (pending)
+   **Answer:** (c): `tool-call-parser` required and checked, `--enable-auto-tool-choice` always, and the probe once vLLM serves.
 
 6. **Caching models and compilations across pods.**
    - (a) None: each new pod downloads the model (30 to 60 s for the test model) and compiles (about 60 s), some US$ 0.04 to 0.07 of the full GPU per new pod; the cache of fits (decision 4) is in Firestore.
@@ -129,7 +129,7 @@ Open: each needs an answer from the responsible person before work starts.
 
    Recommendation: (a) now; the end-to-end test measures each phase of the start, and a later plan revisits (b) with those numbers.
 
-   **Answer:** (pending)
+   **Answer:** (a): no volume now; the end-to-end test measures the start.
 
 7. **Start time against decoding speed.**
    - (a) vLLM's defaults (compilation and CUDA graphs, `-O2`), with `enforce-eager` as a key for whoever prefers starts.
@@ -137,7 +137,7 @@ Open: each needs an answer from the responsible person before work starts.
 
    Recommendation: (a): pods are kept and shared, so starts are rarer than requests.
 
-   **Answer:** (pending)
+   **Answer:** (a): vLLM's defaults, with `enforce-eager` as a key.
 
 8. **Building, publishing and pinning an image per engine.**
    - (a) One Dockerfile with targets `ollama` and `vllm` (sharing the Node stage); the workflow builds both in a matrix on every change, pushes `ghcr.io/<owner>/codeman-pod:<sha>-<engine>` to the existing public package, frees runner disk first (removing preinstalled toolchains with `rm`, no new action) and allows 60 minutes; its summary lists both digests. `POD_IMAGES`, by engine, replaces `POD_IMAGE`, in a module of its own, each pinned by digest in a reviewed commit. The `pod-image` input keeps overriding the Ollama image only; a vLLM override is out of scope.
@@ -146,7 +146,7 @@ Open: each needs an answer from the responsible person before work starts.
 
    Recommendation: (a). After the first push, GHCR holds vLLM's base layers, so later pushes upload only Codeman's.
 
-   **Answer:** (pending)
+   **Answer:** (a), with one change: instead of tags `<sha>-<engine>` in the `codeman-pod` package, **one package per engine, named `codeman-<engine>`**: `ghcr.io/codenergy-dev/codeman-ollama` and `ghcr.io/codenergy-dev/codeman-vllm`, without "pod" in the name, tagged `<sha>`. The older `ghcr.io/codenergy-dev/codeman-pod@sha256:…` digests stay wherever the code lists older images (`SINGLE_RUN_IMAGES`, `IMAGES_WITHOUT_OLLAMA_SETTINGS`), since pods on them may still exist. A new GHCR package is private by default: after the first publish of each, the responsible person makes it public (Runpod pulls without credentials), as the installation and development docs say. Until both are published and their digests sent, `POD_IMAGES` keeps the pinned Ollama image (`codeman-pod@sha256:3252d4…`) and has no vLLM image: a run with `engine: vllm` stops before any pod, at no cost, saying so. Pinning each new digest is a one-line change.
 
 9. **The pod's settings key, and the cache of fits.**
    - (a) For vLLM pods only, the key adds `engine vllm` and the vLLM arguments, sorted, the derived `max-num-seqs` included, as Ollama's variables are added; Ollama pods keep theirs. The cache of fits keeps its collection, keyed by image, model, GPU type and the arguments but `max-model-len`, with an `engine` field.
@@ -154,7 +154,7 @@ Open: each needs an answer from the responsible person before work starts.
 
    Recommendation: (a).
 
-   **Answer:** (pending)
+   **Answer:** (a).
 
 10. **Checking the model, and the pod's disk.**
     - (a) Before creating a vLLM pod, `open-key` asks Hugging Face's API for the model (`GET https://huggingface.co/api/models/<id>`): it must exist, be public and not gated, and have safetensors; the run stops otherwise, before paying for a pod. Its size sets the container disk: the model, the image and caches (about 40 GB), with room to spare, at least 80 GB.
@@ -162,13 +162,15 @@ Open: each needs an answer from the responsible person before work starts.
 
     Recommendation: (a). Hugging Face's API is free and needs no key; it is recorded and audited in step 1.
 
-    **Answer:** (pending)
+    **Answer:** (a). Hugging Face's API is approved as a new external service: public, unauthenticated, read-only calls, no token; audited in [dependencies](../development/dependencies.md).
 
 ## Steps
 
 1. Record the third-party pages and audit. Done when `src/webdocs.test.ts` and the link checker pass, and [dependencies](../development/dependencies.md) has the audit of vLLM, its image and Hugging Face.
    - **Started on 2026-10-13, while writing this plan** (not committed): the [vLLM tool](../web/tools/vllm.md) and the [Docker Hub tool](../web/tools/docker-hub.md); vLLM's pages in full (Apache-2.0): [conserving memory](../web/vllm/conserving-memory.md), [using Docker](../web/vllm/using-docker.md), [MTP](../web/vllm/mtp-multi-token-prediction.md), [optimization levels](../web/vllm/optimization-levels.md), [optimization and tuning](../web/vllm/optimization-and-tuning.md), [`torch.compile` integration](../web/vllm/torch-compile-integration.md), [quantized K/V cache](../web/vllm/quantized-kv-cache.md), [tool calling](../web/vllm/tool-calling.md), [reasoning outputs](../web/vllm/reasoning-outputs.md), [OpenAI-compatible server](../web/vllm/openai-compatible-server.md); source files in full: [installation](../web/vllm/docs-getting-started-installation-gpu-cuda-inc-md-at-v0-31-0.md), [tool parsers](../web/vllm/vllm-tool-parsers-init-py-at-v0-31-0.md), [reasoning parsers](../web/vllm/vllm-reasoning-init-py-at-v0-31-0.md), [cli_args.py](../web/vllm/vllm-entrypoints-launchers-cli-args-py-at-v0-31-0.md), [cache.py](../web/vllm/vllm-config-cache-py-at-v0-31-0.md), [usage_lib.py](../web/vllm/vllm-usage-usage-lib-py-at-v0-31-0.md), and the [Qwen3.8-27B recipe](../web/vllm/models-qwen-qwen3-8-27b-yaml-at-d0f2838.md); in Codeman's words: [v0.31.0](../web/vllm/v0-31-0.md), [kv_cache_utils.py](../web/vllm/vllm-v1-core-kv-cache-utils-py-at-v0-31-0.md), [arg_utils.py](../web/vllm/vllm-engine-arg-utils-py-at-v0-31-0.md), [model.py](../web/vllm/vllm-config-model-py-at-v0-31-0.md), [speculative.py](../web/vllm/vllm-config-speculative-py-at-v0-31-0.md), [envs.py](../web/vllm/vllm-envs-py-at-v0-31-0.md), [loggers.py](../web/vllm/vllm-v1-metrics-loggers-py-at-v0-31-0.md); the images [vllm/vllm-openai:v0.31.0](../web/docker-hub/vllm-vllm-openai-v0-31-0.md) and [ollama/ollama:0.35.1](../web/docker-hub/ollama-ollama-0-35-1.md); Runpod's [storage options](../web/runpod/storage-options.md), [network volumes](../web/runpod/network-volumes.md) and [global volumes for pods](../web/runpod/global-volumes-for-pods.md), and [create a pod](../web/runpod/create-a-pod.md) refreshed for its CUDA constraints and mounts. Both tests pass. Left: Hugging Face's model API (decision 10), Runpod's [get a GPU type](../web/runpod/get-a-gpu-type.md) refreshed for `cudaVersions` (decision 2), and the audit.
+   - **Done on 2026-10-13**: the rest committed with the answers: the [Hugging Face tool](../web/tools/hugging-face.md); the Hub's [rate limits](../web/hugging-face/hub-rate-limits.md) in full (Apache-2.0); the model's route, which the Hub's OpenAPI document leaves out, from its official client in Codeman's words: [hf_api.py](../web/hugging-face/src-huggingface-hub-hf-api-py-at-v2-2-0.md) and [_http.py](../web/hugging-face/src-huggingface-hub-utils-http-py-at-v2-2-0.md) at v2.2.0; [get a GPU type](../web/runpod/get-a-gpu-type.md) refreshed for `include=AVAILABILITY`, `minCudaVersion` and `cudaVersions`; and the audit of vLLM, its image and Hugging Face in [dependencies](../development/dependencies.md). Both tests pass.
 2. Write this plan. Done when it is committed with status `pending`, the decisions are answered, and it is set `in progress`.
+   - **Done on 2026-10-13**: committed as `800f9f6` with status `pending`; the answers recorded (decision 8 changed: a package per engine), and set `in progress`.
 3. Settings: `engine: vllm` on `runpod-pod`, the `vllm` block (`PROVIDER_BLOCKS`, `src/settings.ts`), `VLLM_SETTINGS`, `REFUSED_VLLM_SETTINGS` and the parser lists in `src/inference/vllm.ts` (decision 3), Hugging Face IDs for pods, the required parser (decision 5), the `vllm` block in the `inference` choice and `parseInferenceChoice`. Done when tests cover each key and value, each refusal and its message, kebab-case and unknown keys, layering, a block for another engine or provider, and the choice.
 4. Images: the Dockerfile's targets, the workflow (decision 8), `POD_IMAGES`, `VLLM_VERSION` and `VLLM_MIN_CUDA` with their test against the Dockerfile; `VLLM_NO_USAGE_STATS=1` and `DO_NOT_TRACK=1` set in the vLLM target. Done when both targets build in CI and the tests pass.
 5. Runpod and Hugging Face: `minCudaVersion` and the catalog check for vLLM pods (decision 2), the pod's `cudaVersion` logged, the model check and the disk (decision 10). Done when tests with fakes cover a floor sent only for vLLM, no capacity stopping the run before creating, a missing, gated or non-safetensors model stopping it, and the disk's size.

@@ -2,7 +2,7 @@
 
 Every dependency is audited before it is added (see `AGENTS.md`). This page records what is used, why, and the result of the last audit. Update it whenever a dependency is added, removed or upgraded.
 
-Last audit: 2026-09-23; self-hosted inference: 2026-10-03; backend: 2026-10-07. `npm audit` reported no known vulnerabilities.
+Last audit: 2026-09-23; self-hosted inference: 2026-10-03; backend: 2026-10-07; vLLM on pods and Hugging Face: 2026-10-13. `npm audit` reported no known vulnerabilities.
 
 ## Runtime
 
@@ -53,6 +53,8 @@ Codeman calls these APIs with `fetch` or through the packages above. Their docum
 | Runpod REST API v2 | Self-hosted inference: pods (create, get, list, terminate), Serverless endpoints (get; and the job queue: run, stream, cancel), GPU prices, and billing (account, pods) | [`docs/web/runpod/`](../web/runpod/) |
 | Ollama | The engine in Codeman's pod image: pulling a model, its context length, where it loads it, and its OpenAI-compatible API | [`docs/web/ollama/`](../web/ollama/) |
 | llama.cpp | The server Ollama runs for a model in the pod image: how it fits a model to the GPU | [`docs/web/llama-cpp/`](../web/llama-cpp/) |
+| vLLM | The engine in Codeman's vLLM pod image: its arguments, how it sizes the K/V cache and refuses a context that does not fit, what it reports, tool calling and reasoning parsers | [`docs/web/vllm/`](../web/vllm/), [`docs/web/docker-hub/`](../web/docker-hub/) |
+| Hugging Face Hub API | Before creating a vLLM pod: whether its model exists, is public and not gated, has safetensors weights, and how large they are; vLLM, in the pod, downloads the model from the Hub | [`docs/web/hugging-face/`](../web/hugging-face/) |
 | Cloud Firestore REST API v1 | The backend: documents read (`batchGet`, `runQuery`), written (`commit`) and in transactions (`beginTransaction`, `rollback`); its emulator, in tests; security rules, quotas and billing | [`docs/web/google-cloud/`](../web/google-cloud/), [`docs/web/firebase/`](../web/firebase/) |
 | Google's Security Token Service and IAM Credentials | The backend's access: the job's OIDC token exchanged for a federated token (`token`), then for the service account's (`generateAccessToken`), through Workload Identity Federation | [`docs/web/google-cloud/`](../web/google-cloud/) |
 | GitHub Actions' OIDC provider | Each backend job's OIDC token, through `getIDToken` of `@actions/core` | [`docs/web/github/`](../web/github/) |
@@ -94,6 +96,28 @@ Audited on 2026-10-03 for the [self-hosted inference plan](../plans/2026-10-02-s
 - **Version:** 0.35.1, from its official image `ollama/ollama`, pinned by digest (`sha256:292ee7945dfc3d5840a181f3ab86fedb1e66703e02c8af98b50f4da56b7e278c`, the multi-platform index) in [`docker/pod/Dockerfile`](../../docker/pod/Dockerfile). The server variables the [Ollama settings](../settings/ollama.md) give it come from this version's source ([`envconfig/config.go` at v0.35.1](../web/ollama/envconfig-config-go-at-v0-35-1.md)); an upgrade checks that list against the new version's, and changes `OLLAMA_VERSION` in `src/inference/ollama.ts`. It runs llama.cpp's `llama-server` at the tag it pins, `b11232` ([LLAMA_CPP_VERSION at v0.35.1](../web/ollama/llama-cpp-version-at-v0-35-1.md)), and how both fit a model to the GPU is recorded for these versions ([fitting Ollama to the GPU](../plans/2026-10-13-fit-ollama-to-the-gpu.md#context)): an upgrade checks it again, with `OLLAMA_SERIAL_FAMILIES`.
 - **Known vulnerabilities** (OSV, 2026-10-03): path traversal (CVE-2024-37032, fixed in 0.1.34; CVE-2026-7020, reported up to 0.20.2), file deletion and archive extraction outside its directory (fixed in 0.1.34 and 0.1.47), out-of-bounds reads in model loading (CVE-2026-7482, fixed in 0.17.1), several denials of service, a token leak to a malicious registry during `pull` (CVE-2025-51471, reported up to 0.9.6), and an API without authentication (CVE-2025-63389). Accepted for 0.35.1: its API listens only on the pod's loopback, behind Codeman's gateway, which forwards only the OpenAI-compatible routes, and Codeman pulls models only from Ollama's own registry.
 - **Permissions:** it runs as root in the pod's container, which holds nothing but the model and the gateway.
+
+### vLLM, in Codeman's vLLM pod image
+
+Audited on 2026-10-13 for the [plan for vLLM on pods](../plans/2026-10-13-vllm-on-pods.md).
+
+- **What and why:** an inference engine that serves Hugging Face models with an OpenAI-compatible API and batches concurrent requests whatever the model, which Ollama does not for some families ([Ollama settings](../settings/ollama.md#parallel-requests)). It refuses to start rather than move a model or its cache off the GPU ([kv_cache_utils.py](../web/vllm/vllm-v1-core-kv-cache-utils-py-at-v0-31-0.md)). A small in-house replacement is not possible. Apache-2.0, [vllm-project/vllm](https://github.com/vllm-project/vllm), very active: a release about every two weeks ([v0.31.0](../web/vllm/v0-31-0.md)).
+- **Version:** 0.31.0, from its official image `vllm/vllm-openai:v0.31.0`, CUDA 13.0, pinned by the index's digest (`sha256:c1c9f6fd5c109ba7f0546a59f5b2f15fb87f64c77782e90a27b648b42a8e67c3`) in [`docker/pod/Dockerfile`](../../docker/pod/Dockerfile): 9.04 GB compressed for linux/amd64, running as root, its entry point replaced by the gateway's ([the image](../web/docker-hub/vllm-vllm-openai-v0-31-0.md)). Its CUDA needs hosts whose driver supports CUDA 13.0, which Codeman requires when it creates a vLLM pod (`VLLM_MIN_CUDA`). The vLLM settings and the parsers come from this version's source; an upgrade checks them against the new version's, and changes `VLLM_VERSION` in `src/inference/vllm.ts`, which a test compares with the Dockerfile.
+- **Transitive code:** the image holds PyTorch, CUDA's libraries, FlashInfer, Transformers, XGrammar and their Python dependencies, all from vLLM's build ([v0.31.0](../web/vllm/v0-31-0.md#images-and-cuda)). Codeman installs nothing in it but Node's binary and the gateway.
+- **Known vulnerabilities** (GitHub's advisories for vllm-project/vllm, 2026-10-13): over 100 published, mostly denials of service from crafted requests, many through multimodal inputs, and some remote code execution through a model's or a request's code (`trust_remote_code`, `mm_processor_kwargs`); each lists a fix at or before 0.31.0, which itself fixes several high ones. Accepted for 0.31.0: vLLM listens only on the pod's loopback, behind Codeman's gateway, which forwards only the OpenAI-compatible routes and only for the runs' tokens; `trust-remote-code`, plugins and chat templates are refused.
+- **What it sends out:** anonymous usage statistics to `https://stats.vllm.ai` by default; the image sets `VLLM_NO_USAGE_STATS=1` and `DO_NOT_TRACK=1`, and the gateway sets them again ([envs.py](../web/vllm/vllm-envs-py-at-v0-31-0.md)). Arguments that send the cache, events, traces or requests elsewhere are refused. It downloads the model from Hugging Face.
+- **Permissions:** it runs as root in the pod's container, which holds nothing but the model, vLLM's caches and the gateway.
+
+### Hugging Face
+
+Audited on 2026-10-13 for the [plan for vLLM on pods](../plans/2026-10-13-vllm-on-pods.md), decision 10.
+
+- **What:** the Hub where vLLM's models are published, by ID (`namespace/name`). Codeman's key job calls one route of its API, `GET https://huggingface.co/api/models/<id>?blobs=true`, with `fetch` ([hf_api.py](../web/hugging-face/src-huggingface-hub-hf-api-py-at-v2-2-0.md)); vLLM, in the pod, downloads the model's files from the Hub.
+- **Why:** before paying for a pod, a model that does not exist, is private or gated, or has no safetensors weights stops the run, and the weights' size sets the pod's container disk. A small in-house check is what Codeman does: no client library is added (`huggingface_hub` is Python, and the call is one request).
+- **Maintenance:** the Hub is Hugging Face's service; its route is described by its official client, [huggingface/huggingface_hub](https://github.com/huggingface/huggingface_hub) (Apache-2.0, v2.2.0 of 2026-10-08), since its OpenAPI document leaves it out ([tool](../web/tools/hugging-face.md)). A change to the route's response would show as a refused model, with the Hub's answer in the message.
+- **Credentials and permissions:** none. The calls are public, unauthenticated and read-only, and Codeman holds no Hugging Face token: gated and private models are out of scope. The request carries only the model's ID.
+- **Limits and cost:** free. Anonymous calls count against the Hub's API limit per IP address, 500 per 5 minutes, and downloads against its resolver limit, 3,000 per 5 minutes ([rate limits](../web/hugging-face/hub-rate-limits.md)); Codeman makes one call per vLLM pod it creates.
+- **Terms:** Hugging Face's terms of service apply to the Hub; each model has its own license, which the person who chooses it is responsible for.
 
 ### Runpod's vLLM worker
 
