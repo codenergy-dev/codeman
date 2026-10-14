@@ -91,11 +91,11 @@ test("each job keeps the secrets it had before parallel tasks, and the agent job
 
   const expected: Record<string, string[]> = {
     "open-key": [
-      "CODEMAN_OPENROUTER_KEY_ENCRYPTION_SECRET",
+      "CODEMAN_KEY_ENCRYPTION_SECRET",
       "CODEMAN_OPENROUTER_MANAGEMENT_KEY",
       "CODEMAN_RUNPOD_API_KEY",
     ],
-    agent: ["CODEMAN_OPENROUTER_KEY_ENCRYPTION_SECRET", "CODEMAN_RUNPOD_SERVERLESS_KEY"],
+    agent: ["CODEMAN_KEY_ENCRYPTION_SECRET", "CODEMAN_RUNPOD_SERVERLESS_KEY"],
     "close-key": ["CODEMAN_OPENROUTER_MANAGEMENT_KEY", "CODEMAN_RUNPOD_API_KEY"],
     apply: ["CODEMAN_GITHUB_APP_PRIVATE_KEY"],
     "release-pod": ["CODEMAN_RUNPOD_API_KEY"],

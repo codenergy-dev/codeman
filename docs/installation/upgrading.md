@@ -12,6 +12,10 @@ Settings written before the [provider settings plan](../plans/2026-10-08-provide
 
 A task that changed its GPU with `/codeman set gpu-type` needs `/codeman set gpu` instead: the old command is reported as a problem that gives the new name.
 
+## Secret renamed
+
+`CODEMAN_OPENROUTER_KEY_ENCRYPTION_SECRET` is now `CODEMAN_KEY_ENCRYPTION_SECRET`, since it also protects the gateway tokens of self-hosted runs. Add the secret under the new name (the same value will do) where the old one is, copy the templates again, then remove the old one. Workflow files copied before keep passing the old name, and work until they are replaced.
+
 ## A model per provider
 
 Since the [model per provider plan](../plans/2026-10-08-model-per-provider.md), a repository's file or a profile that names another provider than the one it inherits must set its own `model`; the first run stops with an error that names it otherwise. Add the model the new provider serves, such as `model: qwen3-coder:30b` to a profile with `provider: runpod-pod` that inherits OpenRouter from the top level. A task's `/codeman set model` now applies only to the runs on the top level's provider ([the model](../settings/provider-settings-across-layers.md#the-model)).

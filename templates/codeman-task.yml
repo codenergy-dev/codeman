@@ -46,7 +46,7 @@ on:
         required: false
       CODEMAN_OPENROUTER_MANAGEMENT_KEY:
         required: false
-      CODEMAN_OPENROUTER_KEY_ENCRYPTION_SECRET:
+      CODEMAN_KEY_ENCRYPTION_SECRET:
         required: false
       CODEMAN_RUNPOD_API_KEY:
         required: false
@@ -101,7 +101,7 @@ jobs:
           service-account: ${{ vars.CODEMAN_SERVICE_ACCOUNT }}
           management-key: ${{ secrets.CODEMAN_OPENROUTER_MANAGEMENT_KEY }}
           gpu-key: ${{ secrets.CODEMAN_RUNPOD_API_KEY }}
-          encryption-secret: ${{ secrets.CODEMAN_OPENROUTER_KEY_ENCRYPTION_SECRET }}
+          encryption-secret: ${{ secrets.CODEMAN_KEY_ENCRYPTION_SECRET }}
 
   # Runs the agent with read-only access. Its result is an artifact for the apply job, even when
   # the agent fails or runs out of time, so unfinished work is kept. It never gets an OIDC token:
@@ -143,7 +143,7 @@ jobs:
           task: ${{ inputs.task }}
           github-token: ${{ github.token }}
           encrypted-key: ${{ needs.open-key.outputs.encrypted-key }}
-          encryption-secret: ${{ secrets.CODEMAN_OPENROUTER_KEY_ENCRYPTION_SECRET }}
+          encryption-secret: ${{ secrets.CODEMAN_KEY_ENCRYPTION_SECRET }}
           handle: ${{ needs.open-key.outputs.handle }}
           base-url: ${{ needs.open-key.outputs.base-url }}
           context-length: ${{ needs.open-key.outputs.context-length }}

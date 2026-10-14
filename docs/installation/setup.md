@@ -43,7 +43,7 @@ Add these under **Settings → Secrets and variables → Actions**, either in th
 | Variable | `CODEMAN_GITHUB_APP_CLIENT_ID` | The App's Client ID |
 | Secret | `CODEMAN_GITHUB_APP_PRIVATE_KEY` | The full contents of the private key file |
 | Secret | `CODEMAN_OPENROUTER_MANAGEMENT_KEY` | The OpenRouter management key; not needed when neither the settings nor a [profile](profiles.md) use the `openrouter` provider |
-| Secret | `CODEMAN_OPENROUTER_KEY_ENCRYPTION_SECRET` | A random value of at least 32 characters |
+| Secret | `CODEMAN_KEY_ENCRYPTION_SECRET` | A random value of at least 32 characters. It encrypts each run's key or gateway token between `open-key` and `agent`, within one workflow run, so the organizations of a pool need not share it |
 | Secret | `CODEMAN_RUNPOD_API_KEY` | The `runpod-pod` and `runpod-serverless` providers only, in the settings or a profile: the Runpod account's API key |
 | Secret | `CODEMAN_RUNPOD_SERVERLESS_KEY` | The `runpod-serverless` provider only: a key restricted to the endpoint |
 | Variable | `CODEMAN_SETTINGS` | Optional, in the organization: settings its repositories share; see [shared settings](shared-settings.md) |
