@@ -21217,10 +21217,10 @@ function readTask(runtime2) {
 
 // src/inference/images.ts
 var POD_IMAGES = {
-  // Published from 5e733d1, before the image per engine; it predates Ollama settings.
-  ollama: "ghcr.io/codenergy-dev/codeman-pod@sha256:3252d41775a230249490b5af79aec050151e49c4722bb62f9ce3d247d02f6ca3",
-  // Not published yet.
-  vllm: ""
+  // Published from 6b861d6.
+  ollama: "ghcr.io/codenergy-dev/codeman-ollama@sha256:dd48e69dd1d29a4651cd52bcd820a6127bc5285898a82e67dfbe830d31d896cb",
+  // Published from 6b861d6: vLLM 0.31.0.
+  vllm: "ghcr.io/codenergy-dev/codeman-vllm@sha256:73f6419404c8c419cb8381c3cb593db0325aa6d813beb7f2a31b52923d8a0d30"
 };
 function podImage(engine, override = "") {
   if (engine === "ollama" && override !== "") return override;
