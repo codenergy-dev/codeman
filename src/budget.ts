@@ -142,19 +142,53 @@ export type BilledHours = ReadonlyMap<number, number>;
  * counts the higher of its bill and the runs' estimate, so a pod's time no run accounts for still
  * counts, and each other hour counts the estimate, so a run counts as soon as it ends. Open
  * reservations count whole: their runs may still spend.
+ *
+ * With a pool that shares the account (decision 14 of the plan for GPU batches across
+ * repositories), `pool` gives the other members' runs and how many members there are: each hour
+ * counts the organization's estimate plus its share of what the bill exceeds the pool's
+ * estimate, in proportion to its estimate, or an even share when the pool estimated nothing. So
+ * every billed cent counts once, in the organizations that used the account then.
  */
 export function reconciledMonth(
   runs: readonly LedgerRun[],
   billed: ReadonlyMap<string, BilledHours>,
   now: Date,
+  pool: { others: readonly LedgerRun[]; members: number } = { others: [], members: 1 },
 ): number {
-  let total = 0;
+  const own = estimated(runs, billed, now);
+  const others = estimated(pool.others, billed, now);
+  let total = own.whole;
+  const members = Math.max(1, pool.members);
+  for (const [provider, hours] of billed) {
+    const mine = own.estimates.get(provider) ?? new Map<number, number>();
+    const theirs = others.estimates.get(provider) ?? new Map<number, number>();
+    for (const hour of new Set([...hours.keys(), ...mine.keys()])) {
+      const bill = hours.get(hour) ?? 0;
+      const estimate = mine.get(hour) ?? 0;
+      const all = estimate + (theirs.get(hour) ?? 0);
+      const excess = Math.max(0, bill - all);
+      total += estimate + (all > 0 ? (excess * estimate) / all : excess / members);
+    }
+  }
+  return total;
+}
+
+/**
+ * Runs as the reconciliation reads them: what counts whole (runs of no billed account, and open
+ * reservations), and each billed account's estimate by the hour.
+ */
+function estimated(
+  runs: readonly LedgerRun[],
+  billed: ReadonlyMap<string, BilledHours>,
+  now: Date,
+): { whole: number; estimates: Map<string, Map<number, number>> } {
+  let whole = 0;
   const estimates = new Map<string, Map<number, number>>();
   for (const group of counted(runs)) {
     const [first] = group.runs;
     const hours = first && billed.get(first.account);
     if (!first || !hours || group.runs.some((run) => reserving(run, now))) {
-      total += group.amount;
+      whole += group.amount;
       continue;
     }
     const start = Math.min(...group.runs.map((run) => run.start.getTime()));
@@ -166,14 +200,7 @@ export function reconciledMonth(
     }
     spread(estimate, group.amount, start, end);
   }
-  for (const [provider, hours] of billed) {
-    const estimate = estimates.get(provider) ?? new Map<number, number>();
-    for (const hour of new Set([...hours.keys(), ...estimate.keys()])) {
-      const bill = hours.get(hour) ?? 0;
-      total += Math.max(bill, estimate.get(hour) ?? 0);
-    }
-  }
-  return total;
+  return { whole, estimates };
 }
 
 /** When a run stopped costing: its close, or its reservation's expiry when it never closed. */

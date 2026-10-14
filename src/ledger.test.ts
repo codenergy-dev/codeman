@@ -576,3 +576,84 @@ test("runs picked before providers read with their account, as new ones do", () 
     ],
   );
 });
+
+test("a pod two organizations of a pool shared: its untracked time splits by what each counted", async () => {
+  const store = new MemoryStore();
+  const pool = { id: "codenergy+other", members: ["codenergy", "other"] };
+  const on = { provider: "runpod", mode: "pod", status: "closed", pod: "pod1" };
+  const at = new Date("2026-10-07T12:00:00Z");
+  await seedRuns(
+    store,
+    { "290-1-7": { ...on, repository: "codenergy/codeman", cost: 0.2 } },
+    "codenergy",
+    at,
+  );
+  await seedRuns(store, { "295-1-3": { ...on, repository: "other/site", cost: 0.1 } }, "other", at);
+  const of = (owner: string, job: string, when: string) => {
+    const runtime = new FakeRuntime({ repository: { owner, name: "x" }, runId: "300" });
+    const now = new Date(when);
+    return {
+      runtime,
+      ledger: new Ledger(
+        store,
+        { runtime, job, pool },
+        { now: () => now, wait: async () => undefined },
+      ),
+    };
+  };
+  const release = of("codenergy", "release-pod", "2026-10-07T12:30:00Z");
+  release.ledger.release("290-1-7", [
+    {
+      pod: "pod1",
+      event: "terminated",
+      life: {
+        record: "n1",
+        provider: "runpod",
+        from: Date.parse("2026-10-07T12:00:00Z"),
+        to: Date.parse("2026-10-07T12:30:00Z"),
+        pricePerSecond: 0.0002,
+      },
+    },
+  ]);
+  await release.ledger.flush(release.runtime);
+  // US$ 0.36 of life, 0.3 counted: 0.06 untracked, two thirds to codenergy.
+  const pod = (await store.get("pools/codenergy+other/pods/n1"))?.fields;
+  assert.deepEqual(
+    [pod?.counted, pod?.untracked, pod?.untrackedBy],
+    [0.3, 0.06, { codenergy: 0.04, other: 0.02 }],
+  );
+  const budgets = {
+    task: 9,
+    taskBudget: 1,
+    monthlyBudget: 20,
+    organizationBudget: 100,
+    recorded: 0,
+    billed: new Map(),
+  };
+  const mine = await of("codenergy", "open-key", "2026-10-07T13:00:00Z").ledger.reserve(
+    "300-1-9",
+    budgets,
+  );
+  assert.ok(Math.abs((mine.organization ?? 0) - 0.24) < 1e-9, `${mine.organization}`);
+  const theirs = await of("other", "open-key", "2026-10-07T13:00:00Z").ledger.reserve(
+    "300-1-9",
+    budgets,
+  );
+  assert.ok(Math.abs((theirs.organization ?? 0) - 0.12) < 1e-9, `${theirs.organization}`);
+  // A billed hour above the pool's estimate splits between them, each counting its share.
+  const hour = Date.parse("2026-10-07T12:00:00Z");
+  const billed = new Map([["runpod", new Map([[hour, 0.6]])]]);
+  const a = await of("codenergy", "open-key", "2026-10-07T13:00:00Z").ledger.reserve("300-1-9", {
+    ...budgets,
+    billed,
+  });
+  const b = await of("other", "open-key", "2026-10-07T13:00:00Z").ledger.reserve("300-1-9", {
+    ...budgets,
+    billed,
+  });
+  assert.ok(
+    Math.abs((a.organization ?? 0) + (b.organization ?? 0) - 0.6) < 1e-9,
+    `${a.organization} ${b.organization}`,
+  );
+  assert.ok(Math.abs((a.organization ?? 0) - 0.4) < 1e-9, `${a.organization}`);
+});

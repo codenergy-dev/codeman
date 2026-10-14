@@ -152,3 +152,27 @@ test("the organization's month: open runs count whole, other providers' runs as 
   // Without the account's billing, the ledger's figures alone.
   assert.ok(Math.abs(reconciledMonth([open, openRouter, expired], new Map(), NOW) - 3.9) < 1e-9);
 });
+
+test("a pool on one Runpod account: each billed hour's excess splits by what each organization estimated", () => {
+  const hour = Date.parse("2026-10-07T13:00:00Z");
+  // Organization A's run counts US$ 0.3 in the hour, organization B's US$ 0.1; Runpod billed 0.6.
+  const ours = run("100-1-7", "2026-10-07T13:00:00Z", { cost: 0.3, pod: "a" }, 30);
+  const theirs = run(
+    "200-1-3",
+    "2026-10-07T13:00:00Z",
+    { cost: 0.1, pod: "a", repository: "b/s" },
+    30,
+  );
+  const billed = new Map([["runpod", new Map([[hour, 0.6]])]]);
+  const pool = { others: [theirs], members: 2 };
+  // A counts 0.3 and three quarters of the 0.2 the bill exceeds the pool's 0.4: 0.45.
+  assert.ok(Math.abs(reconciledMonth([ours], billed, NOW, pool) - 0.45) < 1e-9);
+  // B counts the other quarter: together, the bill once.
+  const forB = reconciledMonth([theirs], billed, NOW, { others: [ours], members: 2 });
+  assert.ok(Math.abs(forB - 0.15) < 1e-9);
+  // An hour billed with no estimate in the pool splits evenly.
+  const idle = new Map([["runpod", new Map([[hour - 5 * HOUR, 0.2]])]]);
+  assert.ok(Math.abs(reconciledMonth([], idle, NOW, { others: [], members: 2 }) - 0.1) < 1e-9);
+  // Alone, an organization counts the higher of the bill and its estimate, as before pools.
+  assert.ok(Math.abs(reconciledMonth([ours], billed, NOW) - 0.6) < 1e-9);
+});

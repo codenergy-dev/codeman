@@ -259,7 +259,9 @@ export class Ledger {
     return this.#store.transaction(
       async (tx) => {
         const organization = budgets.organizationBudget !== undefined;
-        const [task, month, untracked] = await Promise.all([
+        const pool = this.#pool();
+        const otherMembers = pool.members.filter((member) => member !== owner.toLowerCase());
+        const [task, month, untracked, poolRuns] = await Promise.all([
           taskQuery(tx, owner, repository, budgets.task).then(ledgerRuns),
           monthQuery(tx, owner, ledgerMonth(now), organization ? undefined : repository).then(
             ledgerRuns,
@@ -267,7 +269,17 @@ export class Ledger {
           // Pods' time no task counted belongs to the organization's month alone (decision 4 of
           // the pod registry plan).
           organization
-            ? untrackedQuery(tx, this.#pool(), owner, ledgerMonth(now))
+            ? untrackedQuery(tx, pool, owner, ledgerMonth(now))
+            : Promise.resolve([]),
+          // With a pool on one GPU account, its other members' runs share each billed hour
+          // (decision 14 of the plan for GPU batches across repositories).
+          organization && budgets.billed.size > 0
+            ? Promise.all(
+                otherMembers.map(async (member) => [
+                  ...ledgerRuns(await monthQuery(tx, member, ledgerMonth(now))),
+                  ...(await untrackedQuery(tx, pool, member, ledgerMonth(now))),
+                ]),
+              ).then((lists) => lists.flat())
             : Promise.resolve([]),
         ]);
         const own = task.find((other) => other.id === run);
@@ -294,7 +306,10 @@ export class Ledger {
           organization:
             budgets.organizationBudget === undefined
               ? undefined
-              : reconciledMonth([...monthRuns, ...untracked], budgets.billed, now) + before,
+              : reconciledMonth([...monthRuns, ...untracked], budgets.billed, now, {
+                  others: poolRuns,
+                  members: pool.members.length,
+                }) + before,
         };
         const { limit } = reservation;
         if (limit === undefined) return { ...reservation, outcome: "task-budget-spent" };
@@ -534,19 +549,36 @@ export class Ledger {
    */
   async #untracked(pod: string, life: PodLife, log: Log): Promise<void> {
     const { owner } = this.#source.runtime.repository;
+    const pool = this.#pool();
+    const path = LAYOUT.pod(pool.id, life.record);
     await this.#retry(log, "write to Codeman's ledger", async () => {
-      const runs = ledgerRuns(
-        await this.#store.query(LAYOUT.runs(owner), {
-          where: [{ field: "pod", op: "==", value: pod }],
-        }),
+      // The pool's organizations may all have runs on it, each under its own.
+      const members = [...new Set([owner.toLowerCase(), ...pool.members])];
+      const byMember = await Promise.all(
+        members.map(async (member) =>
+          spentBy(
+            ledgerRuns(
+              await this.#store.query(LAYOUT.runs(member), {
+                where: [{ field: "pod", op: "==", value: pod }],
+              }),
+            ),
+          ),
+        ),
       );
       const lifeCost = (Math.max(0, life.to - life.from) / 1000) * life.pricePerSecond;
-      const counted = spentBy(runs);
+      const counted = byMember.reduce((sum, amount) => sum + amount, 0);
       const untracked = Math.max(0, lifeCost - counted);
+      const creator = (await this.#store.get(path))?.fields.organization;
+      const shares = untrackedShares(
+        members,
+        byMember,
+        untracked,
+        typeof creator === "string" ? creator : owner.toLowerCase(),
+      );
       await this.#store.write([
         {
           op: "set",
-          path: LAYOUT.pod(this.#pool().id, life.record),
+          path,
           fields: {
             pod,
             provider: life.provider,
@@ -557,6 +589,9 @@ export class Ledger {
             lifeCost: round(lifeCost),
             counted: round(counted),
             untracked: round(untracked),
+            untrackedBy: Object.fromEntries(
+              Object.entries(shares).map(([member, share]) => [member, round(share)]),
+            ),
           },
           merge: true,
         },
@@ -738,7 +773,28 @@ async function untrackedQuery(
     store.query(LAYOUT.pods(pool.id), { where }),
     store.query(LAYOUT.organizationPods(owner), { where }),
   ]);
-  return untrackedRuns([...pooled, ...older]);
+  return [...untrackedRuns(pooled, owner), ...untrackedRuns(older)];
+}
+
+/**
+ * How a pod's untracked time splits among the pool's organizations (decision 14 of the plan for
+ * GPU batches across repositories): in proportion to what their runs counted on it, or all to the
+ * organization that created it when none did.
+ */
+export function untrackedShares(
+  members: readonly string[],
+  counted: readonly number[],
+  untracked: number,
+  creator: string,
+): Record<string, number> {
+  const total = counted.reduce((sum, amount) => sum + amount, 0);
+  if (total <= 0) return { [creator.toLowerCase()]: untracked };
+  const shares: Record<string, number> = {};
+  for (const [index, member] of members.entries()) {
+    const amount = counted[index] ?? 0;
+    if (amount > 0) shares[member] = (untracked * amount) / total;
+  }
+  return shares;
 }
 
 /** The owner of a repository named `owner/name`. */
@@ -748,14 +804,28 @@ function ownerOf(repository: string | undefined): string | undefined {
 }
 
 /**
+ * An organization's share of a pool's pod's untracked time: its part of `untrackedBy`; all of it
+ * when the document has no split and the organization created it, or names no creator.
+ */
+function shareOf(fields: Fields, owner: string): unknown {
+  const own = owner.toLowerCase();
+  const { untrackedBy, untracked, organization } = fields;
+  if (typeof untrackedBy === "object" && untrackedBy !== null && !Array.isArray(untrackedBy)) {
+    return (untrackedBy as Record<string, unknown>)[own] ?? 0;
+  }
+  return typeof organization !== "string" || organization === own ? untracked : 0;
+}
+
+/**
  * Pods' time no task counted, as runs of no repository or task that the organization's month
  * counts: each spreads over its pod's life.
  */
-export function untrackedRuns(documents: readonly StoredDocument[]): LedgerRun[] {
+export function untrackedRuns(documents: readonly StoredDocument[], owner?: string): LedgerRun[] {
   return documents.flatMap((document): LedgerRun[] => {
     const { fields } = document;
-    const { pod, provider, untracked, createdAt, terminatedAt } = fields;
+    const { pod, provider, createdAt, terminatedAt } = fields;
     if (typeof pod !== "string" || typeof provider !== "string") return [];
+    const untracked = owner === undefined ? fields.untracked : shareOf(fields, owner);
     if (typeof untracked !== "number" || !Number.isFinite(untracked) || untracked <= 0) return [];
     if (!(createdAt instanceof Date) || !(terminatedAt instanceof Date)) return [];
     return [
