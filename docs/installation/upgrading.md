@@ -88,6 +88,15 @@ Since the [plan for GPU batches across repositories](../plans/2026-10-13-gpu-bat
 4. **Counts.** A planning task and code tasks are no longer counted together: in the [profiles' example](../settings/profiles.md#example), 1 planning task and 3 code tasks now run the code tasks on `mig` (3), not on `parallel-tasks` (4). A profile whose count was meant as the whole run's needs another look.
 5. **A pool of organizations**, optionally: [setup](setup.md#a-pool-of-organizations).
 
+## Codeman's commit from a variable
+
+Since the [plan for Codeman's commit from a variable](../plans/2026-10-14-commit-from-a-variable.md), the workflow files name no commit of Codeman: each job that runs it checks it out at the commit in the `CODEMAN_COMMIT_SHA` variable. Once, in each repository:
+
+1. Add `CODEMAN_COMMIT_SHA`, in the organization or the repository: a full commit SHA of Codeman's `main` branch, at or after that plan ([setup](setup.md#5-add-the-workflow-and-settings)).
+2. Copy both templates again from that commit, keeping the steps you added to the `agent` job. Until then, the files keep running the commit written in them; pointed by hand at a commit since the plan, they fail at once, saying they pass no template version.
+
+From then on, a new version of Codeman is a change of the variable. Copy the templates again only when a job fails saying the files' template version is not the one Codeman expects.
+
 ## Workflow files copied before the backend
 
 To update workflow files copied before the backend, copy both templates again, and move any steps you added to the `agent` job into the new `codeman-task.yml`: the jobs that record runs need their new permissions, variables and the run's ID in the ledger. Older workflow files fail in `select`, before they mark any task, since they pass none of the backend's variables. Workflow files copied before the budgets came from the ledger pass neither the organization's monthly budget nor the task's spend from `close-key` to `apply`: copy both templates again, too. With pods, update every repository of the organization at once to a version with the pod registry: its `open-key` terminates the organization's pods created by older versions, which the registry does not hold, and older versions cannot share the newer pods.

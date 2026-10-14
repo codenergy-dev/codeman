@@ -4,11 +4,11 @@ One subject per file, grouped by what the reader wants to do. The [root README](
 
 ## Setting it up
 
-- [Installation](installation/setup.md): the GitHub App, OpenRouter, the credentials, the backend and the workflow, step by step, and a pool of organizations; then trying it.
+- [Installation](installation/setup.md): the GitHub App, OpenRouter, the credentials, the backend and the workflow with the commit of Codeman it runs, step by step, and a pool of organizations; then trying it.
 - [Shared settings](installation/shared-settings.md): settings an organization gives all its repositories.
 - [Self-hosted inference on Runpod](installation/runpod.md): the Runpod account, pods and a Serverless endpoint.
 - [Profiles](installation/profiles.md): how to use different providers and models for different runs.
-- [Upgrading](installation/upgrading.md): old setting names, a model per provider, profiles that pick the tasks, pods that fit the GPU, vLLM on pods, GPU batches across repositories, and workflow files copied before the backend.
+- [Upgrading](installation/upgrading.md): old setting names, a model per provider, profiles that pick the tasks, pods that fit the GPU, vLLM on pods, GPU batches across repositories, Codeman's commit from a variable, and workflow files copied before the backend.
 
 ## Using it
 
@@ -46,7 +46,7 @@ One subject per file, grouped by what the reader wants to do. The [root README](
 
 ## Working on Codeman
 
-- [Development](development/guide.md): scripts, the source layout, publishing and pinning the pod images, Firestore's emulator and conventions.
+- [Development](development/guide.md): scripts, the source layout, the templates' version, publishing and pinning the pod images, Firestore's emulator and conventions.
 - [Platforms](development/platforms.md): the platform interfaces, and what an adapter must guarantee.
 - [Dependencies](development/dependencies.md): what Codeman depends on, why, and the last audit.
 - [Plans](plans/): one file per piece of work, with its decisions; the project's history.

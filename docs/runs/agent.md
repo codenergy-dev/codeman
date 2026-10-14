@@ -11,6 +11,7 @@ The agent reads text that may be hostile (see [security](../security/risks.md)) 
 - Its credential (the run's OpenRouter key, or its token for a self-hosted gateway) reaches it only through its environment. It is the only credential the agent holds: a Serverless endpoint's key stays in Codeman's step, outside the sandbox.
 - When the harness exits or reaches its time limit, every process of that user is killed.
 - Codeman finds changes with `git status`, using the original checkout's `.git` against the agent's copy; the agent's `.git` is never used. Changed files are copied without following symlinks.
+- Codeman's own checkout, which the `agent` job puts in the workspace (`.codeman/action`, after the repository's checkout), is left out of the agent's copy and of the changes Codeman collects, wherever the workflow puts it inside the workspace. The original, which runs, is in the runner's home, out of the agent's reach, and no Codeman code runs after the agent in that job (the action has no post step). Under `.codeman/`, it would never reach the task branch anyway: `apply` drops every change there ([change policy](changes.md#change-policy)).
 
 ## Agent rules
 

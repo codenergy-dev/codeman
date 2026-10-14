@@ -34,7 +34,7 @@ Pinned to full commit SHAs.
 
 | Action | Version | Used in |
 | --- | --- | --- |
-| `actions/checkout` | v7.0.1 | CI, pod image, target repository workflow |
+| `actions/checkout` | v7.0.1 | CI, pod image, target repository workflow (the repository in `agent`, and Codeman at `CODEMAN_COMMIT_SHA` in each job that runs it) |
 | `actions/setup-node` | v7.0.0 | CI |
 | `actions/create-github-app-token` | v3.2.0 | Target repository workflow |
 | `actions/upload-artifact` | v7.0.1 | Target repository workflow |

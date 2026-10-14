@@ -1,6 +1,6 @@
 # Installation
 
-Setting up Codeman on a repository takes five parts: a GitHub App, an OpenRouter account, credentials in the repository or organization, a backend where Codeman records its runs, and a workflow. To serve models on your own rented GPUs instead of OpenRouter, see [self-hosted inference on Runpod](runpod.md). Before the first task, go through the [security checklist](../security/overview.md#checklist).
+Setting up Codeman on a repository takes five parts: a GitHub App, an OpenRouter account, credentials in the repository or organization, a backend where Codeman records its runs, and a workflow, which runs the commit of Codeman a variable names. To serve models on your own rented GPUs instead of OpenRouter, see [self-hosted inference on Runpod](runpod.md). Before the first task, go through the [security checklist](../security/overview.md#checklist).
 
 ## 1. Register the GitHub App
 
@@ -46,6 +46,7 @@ Add these under **Settings → Secrets and variables → Actions**, either in th
 | Secret | `CODEMAN_KEY_ENCRYPTION_SECRET` | A random value of at least 32 characters. It encrypts each run's key or gateway token between `open-key` and `agent`, within one workflow run, so the organizations of a pool need not share it |
 | Secret | `CODEMAN_RUNPOD_API_KEY` | The `runpod-pod` and `runpod-serverless` providers only, in the settings or a profile: the Runpod account's API key |
 | Secret | `CODEMAN_RUNPOD_SERVERLESS_KEY` | The `runpod-serverless` provider only: a key restricted to the endpoint |
+| Variable | `CODEMAN_COMMIT_SHA` | The commit of Codeman the workflow runs; see [the workflow](#5-add-the-workflow-and-settings) |
 | Variable | `CODEMAN_SETTINGS` | Optional, in the organization: settings its repositories share; see [shared settings](shared-settings.md) |
 | Variable | `CODEMAN_FIREBASE_PROJECT`, `CODEMAN_WORKLOAD_IDENTITY_PROVIDER`, `CODEMAN_SERVICE_ACCOUNT` | The backend; see [the next part](#4-set-up-the-backend) |
 
@@ -65,7 +66,7 @@ Firestore's free quota covers Codeman's use by far ([cost](../backend/backend.md
 
 1. **Create the project.** In the [Firebase console](https://console.firebase.google.com), **Create a project**, named for instance `codeman-ops`; Google Analytics is not needed. Note its **project ID** (Project settings), which may differ from its name.
 2. **Create the database.** Under **Build → Firestore Database**, **Create database**: **Standard edition**, the database ID `(default)`, a location near GitHub's runners (such as `nam5` or `us-east1`; it cannot be changed later), and **production mode**.
-3. **Publish the rules.** Under **Firestore Database → Rules**, replace the rules with the contents of [`firebase/firestore.rules`](../../firebase/firestore.rules), at the commit you pin, and **Publish**. They deny every client: only Codeman's service account, which the rules do not apply to, reaches the data.
+3. **Publish the rules.** Under **Firestore Database → Rules**, replace the rules with the contents of [`firebase/firestore.rules`](../../firebase/firestore.rules), at the commit in [`CODEMAN_COMMIT_SHA`](#5-add-the-workflow-and-settings), and **Publish**. They deny every client: only Codeman's service account, which the rules do not apply to, reaches the data.
 4. **Enable the APIs** that Workload Identity Federation uses, and **create the service account**, with the role that reads and writes Firestore's documents (Cloud Datastore User) and nothing else:
 
    ```sh
@@ -122,7 +123,7 @@ The workflow templates pass these variables to the jobs that record runs, and gi
 Organizations that share one Runpod account can batch tasks on the same pods ([batches across repositories](../runs/batches.md)). For each organization of the pool:
 
 1. Install the same App, made public, by its link (**Public page → Install**), with **Only select repositories**.
-2. Add the same secrets and variables as the first: the App's client ID and private key, the Runpod key of the same account, the OpenRouter keys, an encryption secret, and the backend's three variables, which name the same project, provider and service account.
+2. Add the same secrets and variables as the first: the App's client ID and private key, the Runpod key of the same account, the OpenRouter keys, an encryption secret, the backend's three variables, which name the same project, provider and service account, and `CODEMAN_COMMIT_SHA`, the same commit in every member: their runs share pods, the board and the batches, whose format a version may change.
 3. Add its ID to the provider's condition: `assertion.repository_owner_id in ['<ID of A>', '<ID of B>']` (`gcloud iam workload-identity-pools providers update-oidc github --location=global --workload-identity-pool=codeman --project="$PROJECT_ID" --attribute-condition=...`). The condition is the pool's real boundary: only the owners it admits reach the board, the batches and the registry.
 4. Set `pool` to the same list in its `CODEMAN_SETTINGS`, such as `pool: [organization-a, organization-b]` ([shared settings](shared-settings.md)).
 5. Copy the same workflow files into each repository that runs Codeman.
@@ -132,11 +133,13 @@ A pool is mutual trust: whoever can change `codeman.yml` on a default branch of 
 ## 5. Add the workflow and settings
 
 1. Copy [`templates/codeman.yml`](../../templates/codeman.yml) to `.github/workflows/codeman.yml` in the target repository, and [`templates/codeman-task.yml`](../../templates/codeman-task.yml), which runs each task's jobs, to `.github/workflows/codeman-task.yml`.
-2. Replace every `COMMIT_SHA` in both with a full commit SHA of this repository. If you copy `codeman.yml` under another name, change the backend's [attribute condition](#4-set-up-the-backend) to match it. Pin a SHA, not a branch or tag, so the code that runs cannot change without a review.
+2. Add the variable `CODEMAN_COMMIT_SHA`, in the organization (visible to the repositories that use Codeman) or in the repository, which overrides it: a full commit SHA of this repository's `main` branch, 40 lowercase hexadecimal characters. Copy the templates from that same commit. Each job that runs Codeman checks the value, checks Codeman out at it into `.codeman/action` and runs it from there; a job fails when the variable is unset or is not a full SHA, since a branch or tag would let the code change by itself. Nothing in the templates needs replacing. If you copy `codeman.yml` under another name, change the backend's [attribute condition](#4-set-up-the-backend) to match it.
 3. If the agent needs tools that the runner image lacks, set them up in the `agent` job of `codeman-task.yml`, where the template marks the place (for example `actions/setup-node`). Tools installed inside the runner's home, such as Rust through `rustup`, are out of the agent's reach; install them system-wide instead. Add only steps that install tools: a step that runs repository code, such as `npm ci`, runs code the agent wrote outside its sandbox, where it can read the job's secrets. See [security](../security/risks.md#3-steps-added-to-the-agent-job-run-outside-the-sandbox).
 4. Copy [`templates/settings.yml`](../../templates/settings.yml) to `.codeman/settings.yml` and choose the model, unless the organization's [shared settings](shared-settings.md) choose it. See [settings](../settings/reference.md) for every value.
 5. Optionally, add a `.codemanignore` with the paths the agent may not change; see [change policy](../runs/changes.md#change-policy). Without one, Codeman uses its own rules and proposes them in its first pull request. Those rules keep the agent out of `.github/`, including workflows; see [on-demand workflows](../runs/changes.md#on-demand-workflows) to allow them.
 6. Create a `codeman` label in the target repository.
+
+To move to another version of Codeman, change `CODEMAN_COMMIT_SHA`; a change made during a run reaches the jobs that start after it, so change it between runs. Copy the templates again only when Codeman asks: each Codeman step passes the version of the templates it was copied from (`template-version`), and a commit that expects another version fails at its first job, with a link to the templates at that commit. Copy both files then, keeping the steps you added to the `agent` job. Before moving, read what changed ([security](../security/risks.md#7-codemans-own-code-and-dependencies)).
 
 Codeman reads `.codeman/settings.yml` and `.codemanignore` from the default branch. A manual run (**Actions → Codeman → Run workflow**) can override the model and the budgets for that run.
 

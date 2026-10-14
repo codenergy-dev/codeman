@@ -28,10 +28,18 @@ npm run check   # lint, type check, test and build
   - `src/harness/`: the `Harness` interface and its adapters. To add a harness, implement `install` and `command` and register it in `src/harness/index.ts`.
   - `src/store/`: the `Store` interface of the [backend](../backend/backend.md), on Firestore and in memory, with the contract tests both pass; Google's authentication; the data layout. `src/ledger.ts` records runs in it.
 - `dist/`: the bundled action. Committed, because GitHub runs actions straight from the repository. CI fails when it does not match the source, so run `npm run build` before committing.
-- `templates/`: files that target repositories copy.
+- `templates/`: files that target repositories copy; see [template version](#template-version).
 - `firebase/firestore.rules`: the backend's security rules, which deny every client; [installation](../installation/setup.md#4-set-up-the-backend) publishes them.
 - `docker/pod/`: Codeman's pod images, one target per engine ([pod images](#pod-images)).
 - `docs/web/`: the documentation of the third-party services Codeman uses, one page per file under `docs/web/<third-party>/`, and in `docs/web/tools/` how each kind of page is fetched. The format is in `AGENTS.md` ("Third-party documentation"). Pages are copies only where their license allows; the others hold what Codeman relies on, in our own words.
+
+## Template version
+
+Repositories run the Codeman commit their `CODEMAN_COMMIT_SHA` variable names, with workflow files copied from `templates/` at some commit, maybe an older one. Every Codeman step of both templates passes `template-version`, and `TEMPLATE_VERSION` in [`src/action.ts`](../../src/action.ts) is the version the code expects: on any other, every step fails before it starts, saying to copy the templates from the variable's commit ([installation](../installation/setup.md#5-add-the-workflow-and-settings)).
+
+- **Bump it** (add one, and write the new value in every `template-version:` of both templates) when the code comes to depend on something in the templates that older copies lack or do differently: an input or an output it reads, a job, a permission, a secret, a step, or the checkout's path. Say what changed in [upgrading](../installation/upgrading.md).
+- **Keep it** for comments, and for changes the code does not depend on, such as a step a repository may do without. Each bump makes every repository copy its files again.
+- `src/templates.test.ts` fails when a template's value differs from `TEMPLATE_VERSION`, but cannot tell whether a change needed a bump: the reviewer of a change to `templates/` decides.
 
 ## Pod images
 

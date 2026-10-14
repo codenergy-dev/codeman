@@ -66,9 +66,20 @@ How to protect: keep secrets out of the repository, as you would anyway. On priv
 
 *Public and private repositories.*
 
-The workflow runs Codeman, third-party actions and the OpenCode harness with the permissions above. The template pins Codeman and every action to a full commit SHA. OpenCode is pinned to a version and checked against its npm integrity hash. Codeman's pod images, one with Ollama and one with vLLM, are pinned by digest. See [dependencies](../development/dependencies.md).
+The workflow runs Codeman, third-party actions and the OpenCode harness with the permissions above. Each job that runs Codeman checks it out at the commit in the `CODEMAN_COMMIT_SHA` variable, after a step that fails unless the value is a full commit SHA, so the code cannot change by itself as a branch or tag would; the templates pin every other action to a full commit SHA. OpenCode is pinned to a version and checked against its npm integrity hash. Codeman's pod images, one with Ollama and one with vLLM, are pinned by digest. See [dependencies](../development/dependencies.md).
 
-How to protect: pin Codeman to a SHA, as [installation](../installation/setup.md) says, and read the changes before moving to a new one.
+The variable is the trade-off of the [plan for Codeman's commit from a variable](../plans/2026-10-14-commit-from-a-variable.md): one change moves every repository to another version, but **whoever can change the variable changes the code that runs with Codeman's secrets**, with no commit and no review.
+
+- An organization variable is changed by the organization's owners. A repository variable of the same name overrides it, and anyone with write access to the repository can create one ([variables](../web/github/store-information-in-variables.md#creating-configuration-variables-for-a-repository), [precedence](../web/github/variables-reference.md#configuration-variable-precedence)).
+- Such a person could already read Codeman's secrets, with a workflow of their own on any branch ([secrets](secrets.md)). What the variable adds: their code runs in `codeman.yml` on the default branch, so its jobs get the OIDC token that the backend's [attribute condition](../installation/setup.md#4-set-up-the-backend) admits, and reach the backend, with a [pool](overview.md#a-public-app-and-a-pool)'s board, batches and pod registry. Before, only a change to `codeman.yml` on the default branch, which a ruleset can make go through a reviewed pull request, could do that.
+- GitHub also serves the commits of forks of `codenergy-dev/codeman` under its name, so a full SHA does not prove the commit is Codeman's: anyone can push one to a fork. Writing the SHA in the workflow file had the same gap, behind a review.
+- The change leaves no trace in the repository's history; GitHub records it only in the organization's audit log.
+
+How to protect:
+
+- Set `CODEMAN_COMMIT_SHA` once, in the organization, to a commit of Codeman's `main` branch, and read the changes before moving to a new one.
+- Give write access to the repositories that run Codeman, and to every repository of a pool, only to people you would let change `codeman.yml` on the default branch.
+- Check from time to time that no repository has a variable of that name of its own (**Settings → Secrets and variables → Actions → Variables**), and read the audit log for changes to it.
 
 With a [pool of organizations](../runs/batches.md#pools), each member trusts the others: whoever changes `codeman.yml` on a default branch of one member holds the App's key, which reaches every member's installed repositories. A pool's members also read each other's ready tasks' numbers and stages on the board, and each other's runs' costs in the backend, which hold no secret. Pool only organizations whose maintainers you trust as your own ([security](overview.md#a-public-app-and-a-pool)).
 

@@ -14,8 +14,9 @@ Before running Codeman on a repository:
 4. Check which secrets the workflows that run on `codeman/*` branches expose. Move secrets that deploy or publish to an Environment with required reviewers ([risk 1](risks.md#1-code-the-agent-wrote-runs-with-the-repositorys-secrets)).
 5. In the `agent` job, add only steps that install tools ([risk 3](risks.md#3-steps-added-to-the-agent-job-run-outside-the-sandbox)).
 6. Keep `task-budget` and `monthly-budget` low ([risk 4](risks.md#4-the-agent-can-send-its-task-key-out)), and with several repositories, set `organization-monthly-budget` in the organization's settings. A repository's admins can still replace those settings, with a repository variable `CODEMAN_SETTINGS` or by changing its workflow file, so the organization's budget holds as far as they are trusted. With self-hosted inference, use a Runpod account dedicated to Codeman, with prepaid credits and no auto-pay.
-7. Give the backend a Firebase project of its own, with the rules and the attribute condition of [installation](../installation/setup.md#4-set-up-the-backend), and grant its service account only Cloud Datastore User.
-8. Label only issues you opened, written in your own words.
+7. Set `CODEMAN_COMMIT_SHA` in the organization to a commit of Codeman's `main` branch, and give write access to the repositories that run Codeman only to people you would let change `codeman.yml`: a repository variable of that name runs whatever commit it names, with Codeman's secrets ([risk 7](risks.md#7-codemans-own-code-and-dependencies)).
+8. Give the backend a Firebase project of its own, with the rules and the attribute condition of [installation](../installation/setup.md#4-set-up-the-backend), and grant its service account only Cloud Datastore User.
+9. Label only issues you opened, written in your own words.
 
 ## A public App and a pool
 

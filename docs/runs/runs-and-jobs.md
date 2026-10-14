@@ -23,6 +23,8 @@ codeman-task.yml:  open-key ──▶ agent ──▶ close-key ──▶ apply 
 
 `codeman.yml` calls `codeman-task.yml`, a reusable workflow, once per task `select` picked, as a matrix (`fail-fast: false`). A task's jobs pass their outputs to each other as one workflow's jobs do; GitHub keeps only one value per output of a matrix, so nothing passes between tasks that way. `select` gives each task its inputs (its `tasks` output) and writes each task's context to the `codeman-task` artifact (`task/<number>.json`); each task's agent uploads its result as `codeman-result-<number>`.
 
+Each job that runs Codeman first checks that the `CODEMAN_COMMIT_SHA` variable is a full commit SHA, then checks Codeman out at that commit into `.codeman/action` and runs it from there; the `agent` job does so after checking out the repository. Every Codeman step passes the version of the templates its file was copied from, and fails before doing anything when the commit expects another one ([installation](../installation/setup.md#5-add-the-workflow-and-settings)).
+
 Jobs that do not apply to a task are skipped: a task that only records answers goes straight to `apply`, and `release-pod` runs only after a run whose task kept its pod; see [self-hosted inference](../inference/self-hosted.md).
 
 | Job | Does | Credentials |
