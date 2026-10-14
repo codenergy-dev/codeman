@@ -9,13 +9,13 @@ Codeman runs an AI agent that reads text and runs shell commands. Read everythin
 Before running Codeman on a repository:
 
 1. Install the App on selected repositories only. With a [pool](#a-public-app-and-a-pool), install it in each member, and check its installations in the App's settings from time to time: suspend any you do not know.
-2. Make Codeman's secrets visible only to the repositories that use it.
+2. Give Codeman's organization secrets and variables the policy **Selected repositories**, listing only the repositories that use it ([repository access](../installation/setup.md#repository-access)), so a new repository of the organization or a fork inside it receives none of them.
 3. Add a ruleset on the default branch that requires a reviewed pull request.
 4. Check which secrets the workflows that run on `codeman/*` branches expose. Move secrets that deploy or publish to an Environment with required reviewers ([risk 1](risks.md#1-code-the-agent-wrote-runs-with-the-repositorys-secrets)).
 5. In the `agent` job, add only steps that install tools ([risk 3](risks.md#3-steps-added-to-the-agent-job-run-outside-the-sandbox)).
 6. Keep `task-budget` and `monthly-budget` low ([risk 4](risks.md#4-the-agent-can-send-its-task-key-out)), and with several repositories, set `organization-monthly-budget` in the organization's settings. A repository's admins can still replace those settings, with a repository variable `CODEMAN_SETTINGS` or by changing its workflow file, so the organization's budget holds as far as they are trusted. With self-hosted inference, use a Runpod account dedicated to Codeman, with prepaid credits and no auto-pay.
 7. Set `CODEMAN_COMMIT_SHA` in the organization to a commit of Codeman's `main` branch, which each job checks, and give write access to the repositories that run Codeman only to people you would let choose Codeman's version: a repository variable of that name overrides the organization's ([risk 7](risks.md#7-codemans-own-code-and-dependencies)).
-8. Give the backend a Firebase project of its own, with the rules and the attribute condition of [installation](../installation/setup.md#4-set-up-the-backend), and grant its service account only Cloud Datastore User.
+8. Give the backend a Firebase project of its own, with the rules and one of the attribute conditions of [installation](../installation/setup.md#4-set-up-the-backend), and grant its service account only Cloud Datastore User. Prefer the condition that lists repositories for a pool and for public repositories; with the one that admits any repository of the organization, restrict repository creation and forking in it ([forks](forks.md#what-a-fork-cannot-reach)). Read them back from time to time ([backend maintenance](../installation/backend-maintenance.md)).
 9. Label only issues you opened, written in your own words.
 10. Require approval for fork pull request workflows from all external contributors; on private repositories, keep sending secrets and write tokens to fork pull requests off; and use `pull_request_target` in no workflow that runs the pull request's code ([forks](forks.md#recommendations)).
 

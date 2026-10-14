@@ -4,7 +4,8 @@ One subject per file, grouped by what the reader wants to do. The [root README](
 
 ## Setting it up
 
-- [Installation](installation/setup.md): the GitHub App, OpenRouter, the credentials, the backend and the workflow with the commit of Codeman it runs, step by step, and a pool of organizations; then trying it.
+- [Installation](installation/setup.md): the GitHub App, OpenRouter, the credentials and their repository access, the backend with its two attribute conditions, and the workflow with the commit of Codeman it runs, step by step, and a pool of organizations; then trying it.
+- [Backend maintenance](installation/backend-maintenance.md): reading, changing, deleting and restoring the backend's pool, provider and attribute condition, service account and roles, APIs and Firestore, and seeing who changed them.
 - [Shared settings](installation/shared-settings.md): settings an organization gives all its repositories.
 - [Self-hosted inference on Runpod](installation/runpod.md): the Runpod account, pods and a Serverless endpoint.
 - [Profiles](installation/profiles.md): how to use different providers and models for different runs.

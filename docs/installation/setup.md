@@ -36,7 +36,7 @@ A management key can create keys without limits, so only the two key jobs of the
 
 ## 3. Add the credentials
 
-Add these under **Settings → Secrets and variables → Actions**, either in the repository or in the organization. At organization level, make them visible only to the repositories that use Codeman.
+Add these under **Settings → Secrets and variables → Actions**, either in the repository or in the organization. At organization level, make them visible only to the repositories that use Codeman ([repository access](#repository-access)).
 
 | Type | Name | Value |
 | --- | --- | --- |
@@ -58,6 +58,38 @@ openssl rand -base64 32
 
 It encrypts each task key, or self-hosted run token, while it travels from the job that creates it to the agent job; see [OpenRouter](../inference/openrouter.md). Self-hosted inference needs it too.
 
+### Repository access
+
+An organization secret or variable reaches the repositories its access policy names ([secrets](../web/github/using-secrets-in-github-actions.md#creating-secrets-for-an-organization), [variables](../web/github/store-information-in-variables.md#creating-configuration-variables-for-an-organization)). Give every Codeman secret and variable of the organization the policy **Selected repositories**, listing only the repositories that run Codeman. With **All repositories** or **Private repositories**, a repository created later in the organization, or a fork created inside it, receives the App's private key, the Runpod and OpenRouter keys and the encryption secret as soon as it exists ([forks](../security/forks.md#what-a-fork-gets)).
+
+- **In the organization's settings**, **Secrets and variables → Actions**, the **Repository access** list of a new secret or variable chooses its policy; the list of secrets shows each one's policy, and its **Update** button the details ([reviewing access](../web/github/using-secrets-in-github-actions.md#reviewing-access-to-organization-level-secrets)).
+- **With `gh`**, which needs the `admin:org` scope (`gh auth login --scopes "admin:org"`), `--visibility selected` with `--repos`, the organization's repositories separated by commas ([gh secret set](../web/github-cli/gh-secret-set.md), [gh variable set](../web/github-cli/gh-variable-set.md)). Without `--body`, `gh secret set` reads the value from standard input; without `--repos`, `gh` gives the policy **Private repositories**.
+
+  ```sh
+  ORG=<organization>
+  REPOS=<repository-a>,<repository-b>   # the repositories that run Codeman
+  gh secret set CODEMAN_GITHUB_APP_PRIVATE_KEY --org "$ORG" --visibility selected --repos "$REPOS" < private-key.pem
+  gh secret set CODEMAN_KEY_ENCRYPTION_SECRET --org "$ORG" --visibility selected --repos "$REPOS"
+  gh variable set CODEMAN_COMMIT_SHA --org "$ORG" --visibility selected --repos "$REPOS" --body <commit SHA>
+  ```
+
+  Each command sets the value and the list of repositories together, replacing the previous list.
+- **To add a repository later** without setting the values again, add its ID to each secret and variable, once per name ([secrets](../web/github/rest-api-endpoints-for-github-actions-secrets.md#add-selected-repository-to-an-organization-secret), [variables](../web/github/rest-api-endpoints-for-github-actions-variables.md#add-selected-repository-to-an-organization-variable), [gh api](../web/github-cli/gh-api.md)). With the [listed-repositories condition](#4-set-up-the-backend), add the ID to the backend's condition too.
+
+  ```sh
+  REPO_ID=$(gh api repos/$ORG/<repository> --jq .id)
+  gh api --method PUT orgs/$ORG/actions/secrets/CODEMAN_GITHUB_APP_PRIVATE_KEY/repositories/$REPO_ID
+  gh api --method PUT orgs/$ORG/actions/variables/CODEMAN_COMMIT_SHA/repositories/$REPO_ID
+  ```
+
+- **To check them**, the policy and number of repositories of each, and the repositories of one ([gh secret list](../web/github-cli/gh-secret-list.md), [gh variable list](../web/github-cli/gh-variable-list.md), [list selected repositories](../web/github/rest-api-endpoints-for-github-actions-secrets.md#list-selected-repositories-for-an-organization-secret)):
+
+  ```sh
+  gh secret list --org "$ORG" --json name,visibility,numSelectedRepos
+  gh variable list --org "$ORG" --json name,visibility,numSelectedRepos
+  gh api orgs/$ORG/actions/secrets/CODEMAN_GITHUB_APP_PRIVATE_KEY/repositories --jq '.repositories[].full_name'
+  ```
+
 ## 4. Set up the backend
 
 Codeman records each run, what it cost and what its jobs did, in [Cloud Firestore](https://firebase.google.com/docs/firestore), in a Firebase project of its own; see [backend](../backend/backend.md). Its jobs reach it as a service account, with the OIDC token GitHub gives each job, so no key is stored anywhere. One project serves every repository of the organization, and several organizations if you like. The backend is required: without its variables, every run fails in `select`, saying which to set.
@@ -65,8 +97,8 @@ Codeman records each run, what it cost and what its jobs did, in [Cloud Firestor
 Firestore's free quota covers Codeman's use by far ([cost](../backend/backend.md)), so the project needs no billing account. You need a Google account; the commands below run in [Cloud Shell](https://shell.cloud.google.com), which has `gcloud`, or anywhere `gcloud` is installed.
 
 1. **Create the project.** In the [Firebase console](https://console.firebase.google.com), **Create a project**, named for instance `codeman-ops`; Google Analytics is not needed. Note its **project ID** (Project settings), which may differ from its name.
-2. **Create the database.** Under **Build → Firestore Database**, **Create database**: **Standard edition**, the database ID `(default)`, a location near GitHub's runners (such as `nam5` or `us-east1`; it cannot be changed later), and **production mode**.
-3. **Publish the rules.** Under **Firestore Database → Rules**, replace the rules with the contents of [`firebase/firestore.rules`](../../firebase/firestore.rules), at the commit in [`CODEMAN_COMMIT_SHA`](#5-add-the-workflow-and-settings), and **Publish**. They deny every client: only Codeman's service account, which the rules do not apply to, reaches the data.
+2. **Create the database.** Under **Databases & Storage → Firestore**, **Create database** ([manage databases](../web/firebase/manage-databases.md#create-a-database)): **Standard edition**, the database ID `(default)`, a location near GitHub's runners (such as `nam5` or `us-east1`; it cannot be changed later), and **production mode**.
+3. **Publish the rules.** Under **Databases & Storage → Firestore → Rules**, replace the rules with the contents of [`firebase/firestore.rules`](../../firebase/firestore.rules), at the commit in [`CODEMAN_COMMIT_SHA`](#5-add-the-workflow-and-settings), and **Publish**. They deny every client: only Codeman's service account, which the rules do not apply to, reaches the data.
 4. **Enable the APIs** that Workload Identity Federation uses, and **create the service account**, with the role that reads and writes Firestore's documents (Cloud Datastore User) and nothing else:
 
    ```sh
@@ -78,22 +110,32 @@ Firestore's free quota covers Codeman's use by far ([cost](../backend/backend.md
      --member="serviceAccount:codeman@$PROJECT_ID.iam.gserviceaccount.com"
    ```
 
-5. **Create the Workload Identity pool and provider**, which admit GitHub's OIDC tokens of your organization's repositories, from Codeman's workflow on their default branch only:
+5. **Create the Workload Identity pool and provider**, which admit GitHub's OIDC tokens from Codeman's workflow on the default branch, of the repositories the attribute condition admits. Choose the condition first:
+
+   - **Any repository of the organization.** The condition checks the owner: every repository of the organization whose `codeman.yml` on `main` asks for a token gets in, those created later included, and nothing needs updating when a repository starts using Codeman. But anyone who can create a repository in the organization, or fork one into it, reaches the backend without any secret ([forks](../security/forks.md#what-a-fork-cannot-reach)): restrict repository creation and forking in the organization to people you trust as maintainers.
+   - **Only listed repositories.** The condition also checks `assertion.repository_id` against the numeric IDs of the repositories that run Codeman. IDs are unique and never reused, unlike names ([Google's advice](../web/google-cloud/configure-workload-identity-federation-with-deployment-pipelines.md#github-actions-1)). A new repository or fork gets nothing until its ID is added; the cost is that update, for each repository that starts using Codeman ([change the condition](backend-maintenance.md#change-the-attribute-condition)). Recommended for a [pool](#a-pool-of-organizations) and for public repositories.
 
    ```sh
    ORG_ID=123456789   # your organization's numeric ID: gh api orgs/<organization> --jq .id
+   # Any repository of the organization:
+   CONDITION="assertion.repository_owner_id == '$ORG_ID' && assertion.workflow_ref == assertion.repository + '/.github/workflows/codeman.yml@refs/heads/main'"
+   # Or only listed repositories, by ID: gh api repos/<organization>/<repository> --jq .id
+   CONDITION="assertion.repository_owner_id == '$ORG_ID' && assertion.repository_id in ['111111111', '222222222'] && assertion.workflow_ref == assertion.repository + '/.github/workflows/codeman.yml@refs/heads/main'"
+
    gcloud iam workload-identity-pools create codeman --project="$PROJECT_ID" \
      --location=global --display-name="Codeman"
    gcloud iam workload-identity-pools providers create-oidc github --project="$PROJECT_ID" \
      --location=global --workload-identity-pool=codeman --display-name="GitHub" \
      --issuer-uri="https://token.actions.githubusercontent.com" \
-     --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.repository_owner_id=assertion.repository_owner_id,attribute.workflow_ref=assertion.workflow_ref" \
-     --attribute-condition="assertion.repository_owner_id == '$ORG_ID' && assertion.workflow_ref == assertion.repository + '/.github/workflows/codeman.yml@refs/heads/main'"
+     --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.repository_id=assertion.repository_id,attribute.repository_owner_id=assertion.repository_owner_id,attribute.workflow_ref=assertion.workflow_ref" \
+     --attribute-condition="$CONDITION"
    ```
 
-   - The condition uses the organization's ID, not its name, which someone else could take if the organization were renamed or deleted ([Google's advice](../web/google-cloud/configure-workload-identity-federation-with-deployment-pipelines.md#github-actions-1)). A user account has an ID too: `gh api users/<login> --jq .id`.
+   - The condition uses IDs, not names, which someone else could take if the organization or repository were renamed or deleted. A user account has an ID too: `gh api users/<login> --jq .id`. GitHub's token carries the IDs as strings ([OpenID Connect](../web/github/openid-connect.md)), so the condition quotes them.
    - `workflow_ref` names the workflow that runs the job, the caller's for the jobs of `codeman-task.yml`, at its branch: only `codeman.yml` on `main` gets in, which only a reviewed pull request changes. No other workflow of your repositories can reach the backend, not even one that runs code the agent wrote on a task branch. If your default branch has another name, change `main`.
-   - For several organizations, use `assertion.repository_owner_id in ['<ID>', '<ID>']`.
+   - The condition reads the token's claims as `assertion.<claim>`, and the mapping maps each of them, as Google's guide asks ([attribute condition](../web/google-cloud/configure-workload-identity-federation-with-deployment-pipelines.md#define-an-attribute-condition)). It maps `repository_id` in both variants, so moving from one to the other changes only the condition.
+   - A condition is at most 4096 characters ([update-oidc](../web/google-cloud/gcloud-iam-workload-identity-pools-providers-update-oidc.md)), about 280 repository IDs; beyond that, see [many repositories](backend-maintenance.md#change-the-attribute-condition).
+   - For several organizations, use `assertion.repository_owner_id in ['<ID>', '<ID>']`, in either variant.
 
 6. **Let the pool's identities act as the service account:**
 
@@ -106,7 +148,7 @@ Firestore's free quota covers Codeman's use by far ([cost](../backend/backend.md
    echo "projects/$PROJECT_NUMBER/locations/global/workloadIdentityPools/codeman/providers/github"
    ```
 
-7. **Add the variables**, in the organization (visible to the repositories that use Codeman) or in each repository. They are not secrets.
+7. **Add the variables**, in the organization (visible to the repositories that use Codeman: [repository access](#repository-access)) or in each repository. They are not secrets.
 
    | Variable | Value |
    | --- | --- |
@@ -116,7 +158,9 @@ Firestore's free quota covers Codeman's use by far ([cost](../backend/backend.md
 
    On GitHub Free, private repositories cannot read organization variables: add them to each repository.
 
-The workflow templates pass these variables to the jobs that record runs, and give those jobs, and only those, the `id-token: write` permission. The first run that finds a task writes the first documents: **Firestore Database → Data** shows `organizations/<owner>/runs` and `events`.
+To read, change, delete or restore any of this later, and to see who changed it, see [backend maintenance](backend-maintenance.md).
+
+The workflow templates pass these variables to the jobs that record runs, and give those jobs, and only those, the `id-token: write` permission. The first run that finds a task writes the first documents: **Databases & Storage → Firestore → Data** shows `organizations/<owner>/runs` and `events`.
 
 ### A pool of organizations
 
@@ -124,7 +168,7 @@ Organizations that share one Runpod account can batch tasks on the same pods ([b
 
 1. Install the same App, made public, by its link (**Public page → Install**), with **Only select repositories**.
 2. Add the same secrets and variables as the first: the App's client ID and private key, the Runpod key of the same account, the OpenRouter keys, an encryption secret, the backend's three variables, which name the same project, provider and service account, and `CODEMAN_COMMIT_SHA`, the same commit in every member: their runs share pods, the board and the batches, whose format a version may change.
-3. Add its ID to the provider's condition: `assertion.repository_owner_id in ['<ID of A>', '<ID of B>']` (`gcloud iam workload-identity-pools providers update-oidc github --location=global --workload-identity-pool=codeman --project="$PROJECT_ID" --attribute-condition=...`). The condition is the pool's real boundary: only the owners it admits reach the board, the batches and the registry.
+3. Add its ID to the provider's condition, `assertion.repository_owner_id in ['<ID of A>', '<ID of B>']`, and with the listed-repositories condition the IDs of its repositories that run Codeman ([change the condition](backend-maintenance.md#change-the-attribute-condition)). The condition is the pool's real boundary: only the owners and repositories it admits reach the board, the batches and the registry.
 4. Set `pool` to the same list in its `CODEMAN_SETTINGS`, such as `pool: [organization-a, organization-b]` ([shared settings](shared-settings.md)).
 5. Copy the same workflow files into each repository that runs Codeman.
 
