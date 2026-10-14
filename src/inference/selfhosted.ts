@@ -39,6 +39,7 @@ import {
   type PodDescription,
   PodRegistry,
   type RegisteredPod,
+  registered,
 } from "./registry.ts";
 import { VLLM_MIN_CUDA } from "./vllm.ts";
 
@@ -92,6 +93,8 @@ export interface PodSettings extends SelfHostedSettings {
    * `max-num-seqs` with vLLM.
    */
   parallel?: number | undefined;
+  /** The batch the task runs in, whose pod it joins first. */
+  batch?: string | undefined;
 }
 
 /** Whether pod settings serve their model with vLLM. */
@@ -265,6 +268,48 @@ export function ofOrganization(pod: Pick<Pod, "env">, owner: string): boolean {
 }
 
 /**
+ * Whether a pod is the pool's: it carries the pool's `CODEMAN_POOL`, or, from before pools, no
+ * pool and the organization's environment (decision 15 of the plan for GPU batches across
+ * repositories).
+ */
+export function ofPool(pod: Pick<Pod, "env">, pool: string, owner: string): boolean {
+  const named = pod.env.CODEMAN_POOL;
+  return named ? named.toLowerCase() === pool.toLowerCase() : ofOrganization(pod, owner);
+}
+
+/** The pool of another pod the organization created, which only that pool's registry holds. */
+export function otherPoolOf(
+  pod: Pick<Pod, "env">,
+  pool: string,
+  owner: string,
+): string | undefined {
+  const named = pod.env.CODEMAN_POOL?.toLowerCase();
+  if (!named || named === pool.toLowerCase()) return undefined;
+  return pod.env.CODEMAN_ORGANIZATION?.toLowerCase() === owner.toLowerCase() ? named : undefined;
+}
+
+/**
+ * The GPU account's fingerprint, which a pod's document and environment carry so that a task
+ * joins only pods its account runs: an HMAC of a fixed label with the account key, never the key.
+ */
+export function accountFingerprint(accountKey: string): string {
+  return createHmac("sha256", accountKey)
+    .update("codeman-account-fingerprint")
+    .digest("hex")
+    .slice(0, 16);
+}
+
+/**
+ * How many runs a pod of these settings serves at once: the parallel requests its engine gets,
+ * when it gets some; undefined (no limit) on images that get neither.
+ */
+export function podCapacity(settings: Pick<PodSettings, "ollama" | "vllm">): number | undefined {
+  const text = settings.ollama?.OLLAMA_NUM_PARALLEL ?? settings.vllm?.["max-num-seqs"];
+  const value = Number(text);
+  return text !== undefined && Number.isInteger(value) && value > 0 ? value : undefined;
+}
+
+/**
  * The token that manages a pod's gateway. It is derived from the account key, so only the jobs
  * that hold that key (open-key, close-key, release-pod) can manage pods, and the pod keeps only
  * its hash.
@@ -346,6 +391,8 @@ export class PodInference implements InferenceProvider {
   readonly #options: SelfHostedOptions;
   readonly #host: PodHost;
   readonly #registry: PodRegistry;
+  readonly #pool: Pool;
+  readonly #account: string;
   /** What this provider did with pods since `open` or `close` last reported it. */
   #events: PodEvent[] = [];
 
@@ -358,8 +405,9 @@ export class PodInference implements InferenceProvider {
       : { ...settings, ollama: podOllama(settings), vllm: undefined };
     this.#options = options;
     this.#host = options.gpu.pods;
-    const pool = options.pool ?? soloPool(options.repository.owner);
-    this.#registry = new PodRegistry(options.store, pool.id, () => this.#now());
+    this.#pool = options.pool ?? soloPool(options.repository.owner);
+    this.#account = accountFingerprint(options.accountKey);
+    this.#registry = new PodRegistry(options.store, this.#pool.id, () => this.#now());
   }
 
   /** The pod events so far, which the caller reports. */
@@ -549,12 +597,14 @@ export class PodInference implements InferenceProvider {
    */
   async #sweep(holder: string, settings: string, log: Log): Promise<void> {
     const owner = this.#options.repository.owner;
-    const listed = (await this.#host.list({})).filter((pod) => ofOrganization(pod, owner));
+    const pool = this.#pool.id;
+    const all = await this.#host.list({});
+    const listed = all.filter((pod) => ofPool(pod, pool, owner));
     const statuses = new Map<string, PodStatus | "missing">();
     for (const pod of listed) statuses.set(pod.id, pod.status);
     const held = new Map<string, RegisteredPod>();
     const terminated = new Set<string>();
-    for (const record of await this.#registry.live()) {
+    for (const record of await this.#registry.live(this.#account)) {
       if (record.pod && !statuses.has(record.pod)) {
         statuses.set(record.pod, (await this.#host.get(record.pod))?.status ?? "missing");
       }
@@ -608,6 +658,30 @@ export class PodInference implements InferenceProvider {
         }),
       );
     }
+    // Pods this organization created for another pool, such as one it declared before: only
+    // when that pool's registry does not hold them either.
+    for (const pod of all) {
+      const other = otherPoolOf(pod, pool, owner);
+      if (!other || terminated.has(pod.id) || pod.status === "terminated") continue;
+      const nonce = pod.env.CODEMAN_NONCE ?? "";
+      const document = nonce ? await this.#options.store.get(LAYOUT.pod(other, nonce)) : undefined;
+      if (document && registered(document).live) continue;
+      this.#events.push(
+        await terminatePod(this.#host, pod.id, undefined, {
+          reason: `this organization created it for pool ${other}, whose pod registry does not hold it`,
+          log,
+          life: pod.pricePerSecond
+            ? {
+                record: nonce || pod.id,
+                provider: this.#options.gpu.name,
+                from: pod.createdAt.getTime(),
+                to: this.#now().getTime(),
+                pricePerSecond: pod.pricePerSecond,
+              }
+            : undefined,
+        }),
+      );
+    }
   }
 
   /**
@@ -623,6 +697,8 @@ export class PodInference implements InferenceProvider {
     log: Log,
   ): Promise<PodHandle> {
     const { model, gpuType, image, reuse } = this.#settings;
+    const capacity = podCapacity(this.#settings);
+    const { batch } = this.#settings;
     const description: PodDescription = {
       settings,
       model,
@@ -630,6 +706,10 @@ export class PodInference implements InferenceProvider {
       image,
       reuse,
       provider: this.#options.gpu.name,
+      account: this.#account,
+      organization: this.#options.repository.owner.toLowerCase(),
+      ...(capacity === undefined ? {} : { capacity }),
+      ...(batch === undefined ? {} : { batch }),
     };
     let waiting = false;
     for (let claims = 0; claims < CLAIMS; claims++) {
@@ -880,6 +960,8 @@ export class PodInference implements InferenceProvider {
         ...(memory ? { CODEMAN_GPU_MEMORY_GB: String(memory) } : {}),
         ...(cached ? { CODEMAN_FIT: JSON.stringify(cached) } : {}),
         CODEMAN_ORGANIZATION: owner,
+        CODEMAN_POOL: this.#pool.id,
+        CODEMAN_ACCOUNT: this.#account,
         CODEMAN_POD_SETTINGS: record.settings,
         CODEMAN_NONCE: record.nonce,
         CODEMAN_MODEL: model,

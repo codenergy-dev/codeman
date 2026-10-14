@@ -309,6 +309,7 @@ export function selfHosted(
         ollama: ollamaEnvironment(choice.ollama),
         ...(choice.engine === "vllm" ? { vllm: checkedVllm(choice.vllm) } : {}),
         parallel: choice.parallel,
+        batch: choice.batch,
       },
       {
         repository,

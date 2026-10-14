@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { storedBatch } from "../board.ts";
 import { RESERVATION_MS } from "../budget.ts";
 import { LAYOUT } from "../store/layout.ts";
 import type { Fields, Store, StoredDocument, Value } from "../store/store.ts";
@@ -52,6 +53,12 @@ export interface RegisteredPod {
   leases: Lease[];
   /** The tasks that joined the pod, in order: a task's seat is its position, from 1. */
   seats: string[];
+  /** The fingerprint of the GPU account that runs it; undefined in tests and older documents. */
+  account: string | undefined;
+  /** How many runs it serves at once; undefined: no limit, as before batches. */
+  capacity: number | undefined;
+  /** The batch of the task that created it, whose tasks it waits for. */
+  batch: string | undefined;
 }
 
 /** The settings a pod serves, as its document shows them; `settings` is their hash. */
@@ -63,6 +70,17 @@ export interface PodDescription {
   reuse: string;
   /** The GPU cloud that runs and bills the pod: `runpod`. */
   provider: string;
+  /**
+   * The fingerprint of the GPU account (decision 15 of the plan for GPU batches across
+   * repositories): a task joins only pods of its own account.
+   */
+  account?: string;
+  /** The organization of the task that creates it. */
+  organization?: string;
+  /** How many runs it serves at once: its parallel requests (decision 13). */
+  capacity?: number;
+  /** The task's batch. */
+  batch?: string;
 }
 
 /**
@@ -108,9 +126,12 @@ export class PodRegistry {
 
   /**
    * Finds the pod of `description`'s settings for the task `holder` of workflow run `run`: joins
-   * the oldest serving one with a run lease; waits for another task's unexpired creation lease;
-   * or takes the creation lease, with a run lease. A creation lease that expired ends, so the
-   * task takes it over.
+   * the oldest serving one that has room, with a run lease; waits for another task's unexpired
+   * creation lease on a pod that will have room; or takes the creation lease, with a run lease. A
+   * creation lease that expired ends, so the task takes it over. A pod has room while its
+   * unexpired run leases and the tasks its batch reserved that have not joined are fewer than
+   * its capacity; a task of its batch always has room (decision 13 of the plan for GPU batches
+   * across repositories).
    */
   claim(description: PodDescription, holder: string, run: string): Promise<Claim> {
     return this.#store.transaction(
@@ -125,7 +146,28 @@ export class PodRegistry {
           })
         )
           .map(registered)
+          .filter((pod) => sameAccount(pod.account, description.account))
           .sort(byAge);
+        const hasRoom = async (pod: RegisteredPod): Promise<boolean> => {
+          if (pod.capacity === undefined || pod.seats.includes(holder)) return true;
+          if (description.batch !== undefined && pod.batch === description.batch) return true;
+          const runs = new Set(
+            pod.leases
+              .filter((one) => one.kind === "run" && one.until > now && one.holder !== holder)
+              .map((one) => one.holder),
+          );
+          let pending = 0;
+          if (pod.batch) {
+            const document = await tx.get(LAYOUT.batch(this.#pool, pod.batch));
+            const batch = document && storedBatch(document);
+            for (const member of batch?.members ?? []) {
+              const of = `${member.repository}#${member.number}`;
+              if (member.status === "dropped" || of === holder) continue;
+              if (!pod.seats.includes(of) && !runs.has(of)) pending++;
+            }
+          }
+          return runs.size + pending < pod.capacity;
+        };
         const lease: Lease = {
           holder,
           run,
@@ -141,7 +183,13 @@ export class PodRegistry {
             merge: true,
           });
         }
-        const serving = pods.find((pod) => pod.status === "serving");
+        let serving: RegisteredPod | undefined;
+        for (const pod of pods) {
+          if (pod.status === "serving" && (await hasRoom(pod))) {
+            serving = pod;
+            break;
+          }
+        }
         if (serving) {
           const seats = serving.seats.includes(holder) ? serving.seats : [...serving.seats, holder];
           const leases = [...serving.leases.filter((one) => one.holder !== holder), lease];
@@ -157,10 +205,10 @@ export class PodRegistry {
             seat: seats.indexOf(holder) + 1,
           };
         }
-        const creating = pods.find(
-          (pod) => pod.status === "creating" && (pod.creatingUntil ?? now) > now,
-        );
-        if (creating) return { kind: "wait", pod: creating };
+        for (const pod of pods) {
+          if (pod.status !== "creating" || (pod.creatingUntil ?? now) <= now) continue;
+          if (await hasRoom(pod)) return { kind: "wait", pod };
+        }
         const pod: RegisteredPod = {
           nonce: randomBytes(16).toString("hex"),
           settings: description.settings,
@@ -172,6 +220,9 @@ export class PodRegistry {
           creatingUntil: new Date(now.getTime() + CREATE_LEASE_MS),
           leases: [lease],
           seats: [holder],
+          account: description.account,
+          capacity: description.capacity,
+          batch: description.batch,
         };
         tx.write({
           op: "create",
@@ -259,12 +310,18 @@ export class PodRegistry {
     await this.change(nonce, () => ({ end: reason }));
   }
 
-  /** The pool's pods that the registry holds, oldest first. */
-  async live(): Promise<RegisteredPod[]> {
+  /**
+   * The pool's pods that the registry holds, oldest first; with `account`, only that GPU
+   * account's, which its key can see and terminate.
+   */
+  async live(account?: string): Promise<RegisteredPod[]> {
     const documents = await this.#store.query(LAYOUT.pods(this.#pool), {
       where: [{ field: "live", op: "==", value: true }],
     });
-    return documents.map(registered).sort(byAge);
+    return documents
+      .map(registered)
+      .filter((pod) => sameAccount(pod.account, account))
+      .sort(byAge);
   }
 
   /**
@@ -305,6 +362,14 @@ export class PodRegistry {
   }
 }
 
+/**
+ * Whether a pod runs on the account: documents always name it, but tests may leave it out on
+ * either side.
+ */
+function sameAccount(pod: string | undefined, account: string | undefined): boolean {
+  return pod === undefined || account === undefined || pod === account;
+}
+
 /** The holders of the leases that have not expired at `now`. */
 export function heldBy(leases: readonly Lease[], now: Date): string[] {
   return [...new Set(leases.filter((one) => one.until > now).map((one) => one.holder))];
@@ -342,6 +407,7 @@ export function registered(document: StoredDocument): RegisteredPod {
     ];
   });
   const price = fields.pricePerSecond;
+  const capacity = fields.capacity;
   return {
     nonce: document.path.slice(document.path.lastIndexOf("/") + 1),
     settings: text(fields.settings) ?? "",
@@ -355,5 +421,11 @@ export function registered(document: StoredDocument): RegisteredPod {
     seats: (Array.isArray(fields.seats) ? fields.seats : []).filter(
       (seat): seat is string => typeof seat === "string",
     ),
+    account: text(fields.account),
+    capacity:
+      typeof capacity === "number" && Number.isInteger(capacity) && capacity > 0
+        ? capacity
+        : undefined,
+    batch: text(fields.batch),
   };
 }

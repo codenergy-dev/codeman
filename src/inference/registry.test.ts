@@ -188,3 +188,65 @@ test("pods of other settings or organizations are apart", async () => {
   const elsewhere = new PodRegistry(store, "x");
   assert.equal((await elsewhere.claim(description, "x/r#7", "1")).kind, "create");
 });
+
+test("a pod takes runs up to its capacity, its batch's reserved tasks included; then another is created", async () => {
+  const { store, registry } = setup();
+  // A batch of 2 of o/r and 2 of o/s, whose first task creates the pod.
+  await store.write([
+    {
+      op: "create",
+      path: "pools/o/batches/300-1-0",
+      fields: {
+        key: "k",
+        size: 4,
+        formedAt: new Date("2026-10-07T12:00:00Z"),
+        expiresAt: new Date("2026-10-07T12:30:00Z"),
+        members: [
+          { repository: "o/r", number: 1, status: "started" },
+          { repository: "o/r", number: 2, status: "started" },
+          { repository: "o/s", number: 3, status: "reserved" },
+          { repository: "o/s", number: 4, status: "dropped" },
+        ],
+      },
+    },
+  ]);
+  const sized = { ...description, account: "acc", capacity: 3, batch: "300-1-0" };
+  const first = await registry.claim(sized, "o/r#1", "300");
+  assert.equal(first.kind, "create");
+  await registry.register(first.pod.nonce, {
+    pod: "pod1",
+    createdAt: new Date("2026-10-07T12:00:00Z"),
+    pricePerSecond: 0.0002,
+  });
+  // A task of no batch finds it full: #1 runs, #2 and #3 are reserved (#4 was dropped).
+  const outsider = { ...description, account: "acc", capacity: 3 };
+  const other = await registry.claim(outsider, "o/t#9", "301");
+  assert.equal(other.kind, "create", "it creates another pod");
+  // The batch's own tasks always join their pod.
+  for (const holder of ["o/r#2", "o/s#3"]) {
+    const join = await registry.claim(sized, holder, "302");
+    assert.equal(join.kind === "join" && join.pod.nonce, first.pod.nonce, holder);
+  }
+  // A pod of another account is never joined.
+  const elsewhere = await registry.claim({ ...sized, account: "other" }, "o/r#5", "303");
+  assert.equal(elsewhere.kind, "create");
+  assert.deepEqual(
+    (await registry.live("acc")).map((pod) => pod.nonce).sort(),
+    [first.pod.nonce, other.pod.nonce].sort(),
+  );
+});
+
+test("a pod with room takes a task of no batch, and its document records what sizes it", async () => {
+  const { store, registry } = setup();
+  const sized = { ...description, account: "acc", capacity: 2 };
+  const first = await registry.claim(sized, "o/r#1", "300");
+  await registry.register(first.pod.nonce, {
+    pod: "pod1",
+    createdAt: new Date("2026-10-07T12:00:00Z"),
+    pricePerSecond: 0.0002,
+  });
+  const fields = (await store.get(`pools/o/pods/${first.pod.nonce}`))?.fields;
+  assert.deepEqual([fields?.account, fields?.capacity, fields?.batch], ["acc", 2, undefined]);
+  assert.equal((await registry.claim(sized, "o/s#2", "301")).kind, "join");
+  assert.equal((await registry.claim(sized, "o/t#3", "302")).kind, "create", "full at 2");
+});

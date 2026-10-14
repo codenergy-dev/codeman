@@ -14,12 +14,14 @@ import { IMAGES_WITHOUT_OLLAMA_SETTINGS, ollama, SINGLE_RUN_IMAGES } from "./oll
 import { OpenFailure } from "./provider.ts";
 import { CREATE_LEASE_MS, PodRegistry } from "./registry.ts";
 import {
+  accountFingerprint,
   adminToken,
   fitKey,
   ofOrganization,
   type PodHandle,
   PodInference,
   type PodSettings,
+  podCapacity,
   podSettingsKey,
   podVllm,
   releasePod,
@@ -1111,4 +1113,93 @@ test("a vLLM pod whose gateway does not report vLLM's settings and fit fails the
     /Pod pod1's gateway did not apply the vLLM settings \(`kv-cache-dtype=fp8`, `max-num-seqs=4`, `tool-call-parser=qwen3_xml`\): its image cannot\./,
   );
   assert.deepEqual(gpu.terminated, ["pod1"]);
+});
+
+test("a pod carries its pool and its account's fingerprint, never the key; its document its capacity", async () => {
+  const { gpu, store, open } = setup({ image: SHARED_IMAGE });
+  await open("7", "300", { parallel: 4, ollama: { OLLAMA_NUM_PARALLEL: "4" } }).catch(
+    () => undefined,
+  );
+  const env = gpu.created[0]?.env ?? {};
+  assert.equal(env.CODEMAN_POOL, "o");
+  assert.equal(env.CODEMAN_ACCOUNT, accountFingerprint("account-key"));
+  assert.match(env.CODEMAN_ACCOUNT ?? "", /^[0-9a-f]{16}$/);
+  assert.notEqual(accountFingerprint("account-key"), accountFingerprint("another-key"));
+  const [pod] = await store.query("pools/o/pods");
+  assert.deepEqual(
+    [pod?.fields.account, pod?.fields.capacity, pod?.fields.organization],
+    [accountFingerprint("account-key"), 4, "o"],
+  );
+  assert.equal(podCapacity({ ollama: { OLLAMA_NUM_PARALLEL: "3" } }), 3);
+  assert.equal(podCapacity({ vllm: { "max-num-seqs": "2" } }), 2);
+  assert.equal(podCapacity({ ollama: {} }), undefined, "no limit, as before batches");
+});
+
+test("the sweep ends the pool's pods and this organization's older ones that no registry holds", async () => {
+  const { gpu, store, open } = setup();
+  const spec: PodSpec = {
+    image: ONE_RUN_IMAGE,
+    port: 8080,
+    gpuType: "GPU-A",
+    diskGb: 1,
+    name: "n",
+    env: {},
+  };
+  const create = async (env: Record<string, string>) =>
+    (await gpu.pods.create({ ...spec, env })).id;
+  const pool = await create({ CODEMAN_POOL: "o", CODEMAN_ORGANIZATION: "o", CODEMAN_NONCE: "a" });
+  const older = await create({ CODEMAN_ORGANIZATION: "o", CODEMAN_NONCE: "b" });
+  const heldElsewhere = await create({
+    CODEMAN_POOL: "o+z",
+    CODEMAN_ORGANIZATION: "o",
+    CODEMAN_NONCE: "c",
+  });
+  const leftElsewhere = await create({
+    CODEMAN_POOL: "o+z",
+    CODEMAN_ORGANIZATION: "o",
+    CODEMAN_NONCE: "d",
+  });
+  const othersInPool = await create({
+    CODEMAN_POOL: "o+z",
+    CODEMAN_ORGANIZATION: "z",
+    CODEMAN_NONCE: "e",
+  });
+  const anotherPool = await create({
+    CODEMAN_POOL: "q",
+    CODEMAN_ORGANIZATION: "q",
+    CODEMAN_NONCE: "f",
+  });
+  await store.write([
+    { op: "create", path: "pools/o+z/pods/c", fields: { live: true, status: "serving" } },
+    { op: "create", path: "pools/o+z/pods/d", fields: { live: false, status: "ended" } },
+  ]);
+  await open("7", "300");
+  assert.deepEqual(gpu.terminated.sort(), [pool, older, leftElsewhere].sort());
+  for (const id of [heldElsewhere, othersInPool, anotherPool]) assert.ok(gpu.live.has(id), id);
+});
+
+test("a registered pod of another account is neither joined nor swept", async () => {
+  const { gpu, registry, open } = setup();
+  const claim = await registry.claim(
+    {
+      settings: podSettingsKey(settings, "o/r#7"),
+      model: settings.model,
+      gpuType: "GPU-A",
+      image: ONE_RUN_IMAGE,
+      reuse: "task",
+      provider: "fake",
+      account: "another-account",
+    },
+    "o/s#1",
+    "200",
+  );
+  await registry.register(claim.pod.nonce, {
+    pod: "elsewhere",
+    createdAt: new Date("2026-10-03T11:00:00Z"),
+    pricePerSecond: 0.0002,
+  });
+  const { handle } = await open("7", "300");
+  assert.notEqual(handle.nonce, claim.pod.nonce, "a pod of its own account");
+  assert.ok(!gpu.terminated.includes("elsewhere"));
+  assert.ok((await registry.live()).some((pod) => pod.nonce === claim.pod.nonce));
 });
