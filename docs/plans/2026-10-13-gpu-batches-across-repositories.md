@@ -1,7 +1,7 @@
 ---
-status: in progress
+status: completed
 created_at: 2026-10-13T20:52:00-03:00
-updated_at: 2026-10-14T12:52:16-03:00
+updated_at: 2026-10-14T12:54:36-03:00
 commit: 95962c0
 ---
 
@@ -181,6 +181,17 @@ Settled conservatively, within the decisions above, on 2026-10-13; the plans for
 30. **The workflow's file.** The board records the file of the workflow that ran `select`, from `GITHUB_WORKFLOW_REF`, which the `dispatch` leg starts.
 31. **Untracked time.** "In proportion to the time their runs counted on it" is read as what their runs counted on the pod, which is their time on it at their share of its price.
 
+### Choices made while implementing
+
+Settled conservatively on 2026-10-14, within the decisions above.
+
+32. **Older pods.** A pod without `CODEMAN_POOL` that carries the organization's environment is swept like the pool's: terminated unless the pool's registry holds it, which it never does, as decision 15 says.
+33. **Documents without an account.** Every pod document under a pool has `account`; one without (only tests write such) matches any account, so the registry's tests keep their descriptions.
+34. **Another pool's orphans.** A pod the organization created for another pool, which that pool's registry does not hold, is terminated with its life recorded as untracked time in this pool's record, so it counts in the organization's month rather than nowhere.
+35. **The `dispatch` job** runs whatever `select`'s action is, since a run may form batches of other repositories' tasks alone; `select` logs its `batch` input, at most 200 characters, and trusts only the store.
+36. **The concurrency group** repeats `select`'s condition; `src/templates.test.ts` checks that both are the same text.
+37. **Reading other members' runs.** `open-key` reads the other members' runs and untracked shares of the month only with an organization's budget and a billed account, the only case the reconciliation needs them.
+
 ## Steps
 
 Each step ends with `npm run check` passing, unless it says otherwise.
@@ -208,6 +219,7 @@ Each step ends with `npm run check` passing, unless it says otherwise.
 11. **Docs**: [runs and jobs](../runs/runs-and-jobs.md), [profiles](../settings/profiles.md) (its example), [settings](../settings/reference.md), [task lifecycle](../tasks/lifecycle.md), [pods](../inference/pods.md), [budget](../budget/budget.md), [spend](../budget/spend.md), [backend](../backend/backend.md), [data layout](../backend/data-layout.md), [security](../security/overview.md) with the analysis of decision 6, [secrets](../security/secrets.md) (the key in `dispatch`, Actions write), [risks](../security/risks.md), [setup](../installation/setup.md) (a public App, installing it in each organization, the secrets in each, the condition), [shared settings](../installation/shared-settings.md) (`pool`), [upgrading](../installation/upgrading.md) (counts as batches, the layout, approving the App's new permission, every repository at once) and `docs/README.md`. Done when the docs test and the link checker pass.
    - **Done on 2026-10-14**: [Batches across repositories](../runs/batches.md) is the page of its own for pools, the handshake, the board, forming, reservations, waking and the pod; [runs and jobs](../runs/runs-and-jobs.md) has the `issues` trigger, the group of skipped runs and the `dispatch` job; [profiles](../settings/profiles.md) counts as batches and the example's new outcome; [settings](../settings/reference.md) and [shared settings](../installation/shared-settings.md) have `pool`; [task lifecycle](../tasks/lifecycle.md) the waiting message and reservations; [pods](../inference/pods.md) the pool's registry, the account, the sweep and capacity; [budget](../budget/budget.md) and [spend](../budget/spend.md) the pool's reconciliation and the untracked split; [backend](../backend/backend.md) and [data layout](../backend/data-layout.md) the new paths, documents and reads; [security](../security/overview.md) the analysis of decision 6, [secrets](../security/secrets.md) the key in `dispatch`, [risks](../security/risks.md) the pool's trust; [setup](../installation/setup.md) Actions read and write, a public App and a section for a pool of organizations; [upgrading](../installation/upgrading.md) a section in order; [providers](../settings/providers.md), [Runpod's installation](../installation/runpod.md), `templates/settings.yml` and `docs/README.md` follow. The docs test and the link checker pass.
 12. **Build.** Rebuild `dist/`. Done when `npm run check` passes, the tree is clean, and whether `dist/gateway.js` changed is recorded (a new pod environment variable may need a new image).
+   - **Done on 2026-10-14**: `npm run check` passes: 601 tests, 599 pass and 2 skipped (the sandbox's, Linux runners only); the emulator's tests ran on the local emulator. `dist/index.js` changed; `dist/gateway.js` did not: the pod's new variables (`CODEMAN_POOL`, `CODEMAN_ACCOUNT`) are read from Runpod's listing by the key jobs, not by the gateway, so the images of the vLLM plan need nothing more.
 
 ## End-to-end test
 

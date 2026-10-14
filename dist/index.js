@@ -8159,8 +8159,8 @@ var require_pool_stats = __commonJS({
     var { kFree, kConnected, kPending, kQueued, kRunning, kSize } = require_symbols();
     var kPool = /* @__PURE__ */ Symbol("pool");
     var PoolStats = class {
-      constructor(pool) {
-        this[kPool] = pool;
+      constructor(pool2) {
+        this[kPool] = pool2;
       }
       get connected() {
         return this[kPool][kConnected];
@@ -8211,35 +8211,35 @@ var require_pool_base = __commonJS({
         this[kQueue] = new FixedQueue();
         this[kClients] = [];
         this[kQueued] = 0;
-        const pool = this;
+        const pool2 = this;
         this[kOnDrain] = function onDrain(origin, targets) {
-          const queue = pool[kQueue];
+          const queue = pool2[kQueue];
           let needDrain = false;
           while (!needDrain) {
             const item = queue.shift();
             if (!item) {
               break;
             }
-            pool[kQueued]--;
+            pool2[kQueued]--;
             needDrain = !this.dispatch(item.opts, item.handler);
           }
           this[kNeedDrain] = needDrain;
-          if (!this[kNeedDrain] && pool[kNeedDrain]) {
-            pool[kNeedDrain] = false;
-            pool.emit("drain", origin, [pool, ...targets]);
+          if (!this[kNeedDrain] && pool2[kNeedDrain]) {
+            pool2[kNeedDrain] = false;
+            pool2.emit("drain", origin, [pool2, ...targets]);
           }
-          if (pool[kClosedResolve] && queue.isEmpty()) {
-            Promise.all(pool[kClients].map((c) => c.close())).then(pool[kClosedResolve]);
+          if (pool2[kClosedResolve] && queue.isEmpty()) {
+            Promise.all(pool2[kClients].map((c) => c.close())).then(pool2[kClosedResolve]);
           }
         };
         this[kOnConnect] = (origin, targets) => {
-          pool.emit("connect", origin, [pool, ...targets]);
+          pool2.emit("connect", origin, [pool2, ...targets]);
         };
         this[kOnDisconnect] = (origin, targets, err) => {
-          pool.emit("disconnect", origin, [pool, ...targets], err);
+          pool2.emit("disconnect", origin, [pool2, ...targets], err);
         };
         this[kOnConnectionError] = (origin, targets, err) => {
-          pool.emit("connectionError", origin, [pool, ...targets], err);
+          pool2.emit("connectionError", origin, [pool2, ...targets], err);
         };
         this[kStats] = new PoolStats(this);
       }
@@ -8493,22 +8493,22 @@ var require_balanced_pool = __commonJS({
       }
       addUpstream(upstream) {
         const upstreamOrigin = parseOrigin(upstream).origin;
-        if (this[kClients].find((pool2) => pool2[kUrl].origin === upstreamOrigin && pool2.closed !== true && pool2.destroyed !== true)) {
+        if (this[kClients].find((pool3) => pool3[kUrl].origin === upstreamOrigin && pool3.closed !== true && pool3.destroyed !== true)) {
           return this;
         }
-        const pool = this[kFactory](upstreamOrigin, Object.assign({}, this[kOptions]));
-        this[kAddClient](pool);
-        pool.on("connect", () => {
-          pool[kWeight] = Math.min(this[kMaxWeightPerServer], pool[kWeight] + this[kErrorPenalty]);
+        const pool2 = this[kFactory](upstreamOrigin, Object.assign({}, this[kOptions]));
+        this[kAddClient](pool2);
+        pool2.on("connect", () => {
+          pool2[kWeight] = Math.min(this[kMaxWeightPerServer], pool2[kWeight] + this[kErrorPenalty]);
         });
-        pool.on("connectionError", () => {
-          pool[kWeight] = Math.max(1, pool[kWeight] - this[kErrorPenalty]);
+        pool2.on("connectionError", () => {
+          pool2[kWeight] = Math.max(1, pool2[kWeight] - this[kErrorPenalty]);
           this._updateBalancedPoolStats();
         });
-        pool.on("disconnect", (...args) => {
+        pool2.on("disconnect", (...args) => {
           const err = args[2];
           if (err && err.code === "UND_ERR_SOCKET") {
-            pool[kWeight] = Math.max(1, pool[kWeight] - this[kErrorPenalty]);
+            pool2[kWeight] = Math.max(1, pool2[kWeight] - this[kErrorPenalty]);
             this._updateBalancedPoolStats();
           }
         });
@@ -8527,9 +8527,9 @@ var require_balanced_pool = __commonJS({
       }
       removeUpstream(upstream) {
         const upstreamOrigin = parseOrigin(upstream).origin;
-        const pool = this[kClients].find((pool2) => pool2[kUrl].origin === upstreamOrigin && pool2.closed !== true && pool2.destroyed !== true);
-        if (pool) {
-          this[kRemoveClient](pool);
+        const pool2 = this[kClients].find((pool3) => pool3[kUrl].origin === upstreamOrigin && pool3.closed !== true && pool3.destroyed !== true);
+        if (pool2) {
+          this[kRemoveClient](pool2);
         }
         return this;
       }
@@ -8544,16 +8544,16 @@ var require_balanced_pool = __commonJS({
         if (!dispatcher) {
           return;
         }
-        const allClientsBusy = this[kClients].map((pool) => pool[kNeedDrain]).reduce((a, b) => a && b, true);
+        const allClientsBusy = this[kClients].map((pool2) => pool2[kNeedDrain]).reduce((a, b) => a && b, true);
         if (allClientsBusy) {
           return;
         }
         let counter = 0;
-        let maxWeightIndex = this[kClients].findIndex((pool) => !pool[kNeedDrain]);
+        let maxWeightIndex = this[kClients].findIndex((pool2) => !pool2[kNeedDrain]);
         while (counter++ < this[kClients].length) {
           this[kIndex] = (this[kIndex] + 1) % this[kClients].length;
-          const pool = this[kClients][this[kIndex]];
-          if (pool[kWeight] > this[kClients][maxWeightIndex][kWeight] && !pool[kNeedDrain]) {
+          const pool2 = this[kClients][this[kIndex]];
+          if (pool2[kWeight] > this[kClients][maxWeightIndex][kWeight] && !pool2[kNeedDrain]) {
             maxWeightIndex = this[kIndex];
           }
           if (this[kIndex] === 0) {
@@ -8562,8 +8562,8 @@ var require_balanced_pool = __commonJS({
               this[kCurrentWeight] = this[kMaxWeightPerServer];
             }
           }
-          if (pool[kWeight] >= this[kCurrentWeight] && !pool[kNeedDrain]) {
-            return pool;
+          if (pool2[kWeight] >= this[kCurrentWeight] && !pool2[kNeedDrain]) {
+            return pool2;
           }
         }
         this[kCurrentWeight] = this[kClients][maxWeightIndex][kWeight];
@@ -19739,6 +19739,76 @@ var require_lib = __commonJS({
   }
 });
 
+// src/pool.ts
+var MAX_POOL_MEMBERS = 10;
+var LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/;
+function isLogin(text) {
+  return LOGIN.test(text);
+}
+function poolId(members) {
+  return sortedLogins(members).join("+");
+}
+function sortedLogins(members) {
+  return [...new Set(members.map((member) => member.toLowerCase()))].sort();
+}
+function isPoolId(text) {
+  const members = text.split("+");
+  return members.length <= MAX_POOL_MEMBERS && members.every((member) => isLogin(member) && member === member.toLowerCase()) && poolId(members) === text;
+}
+function poolSetting(items) {
+  const error3 = `\`pool\` must list the logins of the organizations that share pods, ${MAX_POOL_MEMBERS} at most, this one included, such as \`[organization-a, organization-b]\`.`;
+  if (!items || items.length === 0 || items.length > MAX_POOL_MEMBERS) {
+    return { ok: false, error: error3 };
+  }
+  if (!items.every(isLogin)) return { ok: false, error: error3 };
+  const lower = items.map((item) => item.toLowerCase());
+  if (new Set(lower).size !== lower.length) {
+    return { ok: false, error: "`pool` lists an organization twice." };
+  }
+  return { ok: true, value: [...items] };
+}
+function declaredPool(owner, members) {
+  const own = owner.toLowerCase();
+  const list4 = sortedLogins(members && members.length > 0 ? members : [own]);
+  if (!list4.includes(own)) {
+    return {
+      ok: false,
+      error: `\`pool\` in the organization's settings must include the organization itself, \`${own}\`.`
+    };
+  }
+  return { ok: true, value: { id: list4.join("+"), members: list4 } };
+}
+function soloPool(owner) {
+  const own = owner.toLowerCase();
+  return { id: own, members: [own] };
+}
+function agreement(pool2, owner, declarations) {
+  const own = owner.toLowerCase();
+  const members = [];
+  const notes2 = [];
+  for (const member of pool2.members) {
+    if (member === own) {
+      members.push(member);
+      continue;
+    }
+    const declared = declarations.get(member)?.pool;
+    if (declared === pool2.id) members.push(member);
+    else if (declared === void 0) {
+      notes2.push(
+        `Organization ${member} has declared no pool yet (none of its repositories ran this version of Codeman): its repositories are not batched with this one's.`
+      );
+    } else {
+      notes2.push(
+        `Organization ${member} declares pool \`${declared}\`, not \`${pool2.id}\`: its repositories are not batched with this one's.`
+      );
+    }
+  }
+  return { pool: { id: pool2.id, members }, notes: notes2 };
+}
+
+// src/settings.ts
+import { createHash } from "node:crypto";
+
 // src/inference/engine.ts
 function openAiUsage(body, cachedApart = false) {
   if (typeof body !== "object" || body === null) return void 0;
@@ -20710,9 +20780,9 @@ function parseSettings(text, source = SETTINGS_FILE) {
   if (!tree.ok) return { ok: false, error: `${source}, line ${tree.line}: ${tree.error}` };
   const settings = {};
   for (const entry of tree.value.entries) {
-    const parsed = entry.key === "profiles" ? profiles(entry.value) : isBlockName(entry.key) ? block(entry, entry.key) : setting(entry, "setting");
+    const parsed = entry.key === "profiles" ? profiles(entry.value) : entry.key === "pool" ? pool(entry) : isBlockName(entry.key) ? block(entry, entry.key) : setting(entry, "setting");
     if (!parsed.ok) return { ok: false, error: `${source}, line ${parsed.line}: ${parsed.error}` };
-    if (source !== SHARED_SETTINGS && isSettingName(entry.key) && ORGANIZATION_SETTINGS.has(entry.key)) {
+    if (source !== SHARED_SETTINGS && (entry.key === "pool" || isSettingName(entry.key) && ORGANIZATION_SETTINGS.has(entry.key))) {
       return {
         ok: false,
         error: `${source}, line ${entry.line}: \`${entry.key}\` can be set only in the organization's settings, the CODEMAN_SETTINGS variable.`
@@ -20721,6 +20791,13 @@ function parseSettings(text, source = SETTINGS_FILE) {
     settings[entry.key] = parsed.value;
   }
   return { ok: true, value: settings };
+}
+function pool(entry) {
+  const { line, value } = entry;
+  const items = value.kind === "list" ? value.items : void 0;
+  const texts = items?.flatMap((item) => item.kind === "scalar" ? [item.text] : []);
+  const parsed = poolSetting(texts && texts.length === items?.length ? texts : void 0);
+  return parsed.ok ? parsed : { ok: false, line, error: parsed.error };
 }
 function block(entry, name) {
   const { line, value } = entry;
@@ -20864,14 +20941,14 @@ function condition(entry, name) {
     return {
       ok: false,
       line,
-      error: `\`${name}\` must be a whole number from 1 to ${MAX_TASKS}: the tasks of the run that run an agent.`
+      error: `\`${name}\` must be a whole number from 1 to ${MAX_TASKS}: the tasks of a batch, which run at once with the same settings.`
     };
   }
   return { ok: true, value: count3 };
 }
 function resolveLayers(layers) {
   const [own = {}] = layers;
-  const { profiles: list4 = [], ...values } = merge(layers);
+  const { profiles: list4 = [], pool: _pool, ...values } = merge(layers);
   const inherited = serving(
     layers.slice(1).map((settings, index) => ({
       name: layerSource(index + 1),
@@ -20997,10 +21074,35 @@ function servedCounts(layers, stage) {
   if (!resolved.ok) return resolved;
   const counts = [];
   for (let tasks = 1; tasks <= MAX_TASKS; tasks++) {
-    const served = servingRun(resolved.value, { stage, tasks });
-    if (served) counts.push({ tasks, profile: served.profile?.name });
+    if (!servingRun(resolved.value, { stage, tasks })) continue;
+    const run2 = resolveRun(layers, { stage, tasks });
+    if (!run2.ok) return run2;
+    const { settings, profile: profile2 } = run2.value;
+    counts.push({
+      tasks,
+      profile: profile2,
+      key: batchKey(settings, profile2, mostTasks(layers, profile2)),
+      pod: settings.provider === "runpod-pod"
+    });
   }
   return { ok: true, value: counts };
+}
+function batchKey(settings, profile2, parallel) {
+  const sorted = (block2) => block2 === void 0 ? null : Object.fromEntries(Object.entries(block2).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0));
+  const pod = settings.provider === "runpod-pod";
+  const serving2 = {
+    profile: profile2 ?? null,
+    provider: settings.provider,
+    model: settings.model,
+    engine: settings.engine ?? null,
+    gpu: settings.gpu ?? null,
+    endpoint: settings.endpoint ?? null,
+    reuse: settings["pod-reuse"] ?? null,
+    ollama: sorted(settings.ollama),
+    vllm: sorted(settings.vllm),
+    parallel: pod ? parallel : null
+  };
+  return createHash("sha256").update(JSON.stringify(serving2)).digest("hex").slice(0, 16);
 }
 function serving(layers, base) {
   let result = pick(base.settings, PROFILE_SETTINGS);
@@ -21058,7 +21160,7 @@ function omit(layer, names) {
 }
 function settingSources(layers) {
   const named = /* @__PURE__ */ new Set();
-  const show = (value) => Array.isArray(value) ? `[${value.map((profile2) => profile2.name).join(", ")}]` : typeof value === "object" && value !== null ? `{${Object.entries(value).map(([key, text]) => `${key}: ${text}`).join(", ")}}` : String(value);
+  const show = (value) => Array.isArray(value) ? `[${value.map((item) => typeof item === "string" ? item : item.name).join(", ")}]` : typeof value === "object" && value !== null ? `{${Object.entries(value).map(([key, text]) => `${key}: ${text}`).join(", ")}}` : String(value);
   return layers.flatMap((layer, index) => {
     const values = Object.entries(layer).filter(
       ([name, value]) => value !== void 0 && !named.has(name)
@@ -21184,14 +21286,32 @@ function costsByWorkflowRun(runs) {
     Object.entries(costs).map(([run2, cost]) => [run2, Number(cost.toFixed(4))])
   );
 }
-function reconciledMonth(runs, billed, now) {
-  let total = 0;
+function reconciledMonth(runs, billed, now, pool2 = { others: [], members: 1 }) {
+  const own = estimated(runs, billed, now);
+  const others = estimated(pool2.others, billed, now);
+  let total = own.whole;
+  const members = Math.max(1, pool2.members);
+  for (const [provider, hours] of billed) {
+    const mine = own.estimates.get(provider) ?? /* @__PURE__ */ new Map();
+    const theirs = others.estimates.get(provider) ?? /* @__PURE__ */ new Map();
+    for (const hour of /* @__PURE__ */ new Set([...hours.keys(), ...mine.keys()])) {
+      const bill = hours.get(hour) ?? 0;
+      const estimate = mine.get(hour) ?? 0;
+      const all = estimate + (theirs.get(hour) ?? 0);
+      const excess = Math.max(0, bill - all);
+      total += estimate + (all > 0 ? excess * estimate / all : excess / members);
+    }
+  }
+  return total;
+}
+function estimated(runs, billed, now) {
+  let whole = 0;
   const estimates = /* @__PURE__ */ new Map();
   for (const group of counted(runs)) {
     const [first] = group.runs;
     const hours = first && billed.get(first.account);
     if (!first || !hours || group.runs.some((run2) => reserving(run2, now))) {
-      total += group.amount;
+      whole += group.amount;
       continue;
     }
     const start = Math.min(...group.runs.map((run2) => run2.start.getTime()));
@@ -21203,14 +21323,7 @@ function reconciledMonth(runs, billed, now) {
     }
     spread(estimate, group.amount, start, end);
   }
-  for (const [provider, hours] of billed) {
-    const estimate = estimates.get(provider) ?? /* @__PURE__ */ new Map();
-    for (const hour of /* @__PURE__ */ new Set([...hours.keys(), ...estimate.keys()])) {
-      const bill = hours.get(hour) ?? 0;
-      total += Math.max(bill, estimate.get(hour) ?? 0);
-    }
-  }
-  return total;
+  return { whole, estimates };
 }
 function endOf(run2, now) {
   return run2.closedAt ?? (run2.expiresAt < now ? run2.expiresAt : now);
@@ -21770,7 +21883,7 @@ function amount(value) {
 import { createHmac, randomBytes as randomBytes2 } from "node:crypto";
 
 // src/gateway/gateway.ts
-import { createHash, timingSafeEqual } from "node:crypto";
+import { createHash as createHash2, timingSafeEqual } from "node:crypto";
 import {
   createServer,
   request as httpRequest
@@ -21939,7 +22052,7 @@ var GROUP = /^[\w.-]{1,100}$/;
 var MAX_BODY_BYTES = 32 * 1024 * 1024;
 var KEEP_ALIVE_MS = 2e4;
 function sha256(text) {
-  return createHash("sha256").update(text).digest("hex");
+  return createHash2("sha256").update(text).digest("hex");
 }
 function matches(token, hash) {
   if (!token || !hash) return false;
@@ -22460,26 +22573,42 @@ var LAYOUT = {
   events: (owner) => `${LAYOUT.organization(owner)}/events`,
   event: (owner, event) => `${LAYOUT.events(owner)}/${documentId(event)}`,
   /**
+   * The pod registry of an organization before pools, kept as history: the organization's month
+   * still counts the time its pods' tasks did not.
+   */
+  organizationPods: (owner) => `${LAYOUT.organization(owner)}/pods`,
+  /** A pool, by its ID: its members' logins joined by `+`. */
+  pool: (pool2) => `pools/${documentId(pool2.toLowerCase())}`,
+  /**
    * The pod registry: a pod Codeman created, named by the nonce of its admin token, which the
    * task that creates it draws first; with the leases of the tasks that use or keep it.
    */
-  pods: (owner) => `${LAYOUT.organization(owner)}/pods`,
-  pod: (owner, nonce) => `${LAYOUT.pods(owner)}/${documentId(nonce)}`,
+  pods: (pool2) => `${LAYOUT.pool(pool2)}/pods`,
+  pod: (pool2, nonce) => `${LAYOUT.pods(pool2)}/${documentId(nonce)}`,
+  /**
+   * The board: each repository's ready tasks that a pod could serve, as its last `select` saw
+   * them, named by the repository (`owner/name`).
+   */
+  board: (pool2) => `${LAYOUT.pool(pool2)}/board`,
+  boardEntry: (pool2, repository) => `${LAYOUT.board(pool2)}/${documentId(repository.toLowerCase())}`,
+  /** A batch: the tasks, of any repository of the pool, that one pod serves at once. */
+  batches: (pool2) => `${LAYOUT.pool(pool2)}/batches`,
+  batch: (pool2, id) => `${LAYOUT.batches(pool2)}/${documentId(id)}`,
   /**
    * The cache of fits: the context a pod's model fitted its GPU with, for one combination of
-   * image, model, GPU type and Ollama settings, named by their hash (decision 4 of the plan for
-   * fitting Ollama to the GPU).
+   * image, model, GPU type and engine settings, named by their hash (decision 4 of the plan for
+   * fitting Ollama to the GPU). It depends on nothing an organization owns.
    */
-  contexts: (owner) => `${LAYOUT.organization(owner)}/contexts`,
-  context: (owner, key) => `${LAYOUT.contexts(owner)}/${documentId(key)}`,
+  contexts: () => "contexts",
+  context: (key) => `${LAYOUT.contexts()}/${documentId(key)}`,
   /**
-   * A Serverless endpoint of the organization's GPU account, by its ID; under it, each run's
-   * billed times on the endpoint's worker, named by the run and its reservation, which the ledger
-   * splits among the runs that used the worker at once.
+   * A Serverless endpoint of the pool's GPU account, by its ID; under it, each run's billed times
+   * on the endpoint's worker, named by the run and its reservation, which the ledger splits among
+   * the runs that used the worker at once.
    */
-  endpoint: (owner, endpoint2) => `${LAYOUT.organization(owner)}/endpoints/${documentId(endpoint2)}`,
-  endpointRuns: (owner, endpoint2) => `${LAYOUT.endpoint(owner, endpoint2)}/runs`,
-  endpointRun: (owner, endpoint2, id) => `${LAYOUT.endpointRuns(owner, endpoint2)}/${documentId(id)}`
+  endpoint: (pool2, endpoint2) => `${LAYOUT.pool(pool2)}/endpoints/${documentId(endpoint2)}`,
+  endpointRuns: (pool2, endpoint2) => `${LAYOUT.endpoint(pool2, endpoint2)}/runs`,
+  endpointRun: (pool2, endpoint2, id) => `${LAYOUT.endpointRuns(pool2, endpoint2)}/${documentId(id)}`
 };
 function ledgerRunId(workflowRun, attempt, task) {
   return `${workflowRun}-${attempt}-${task}`;
@@ -22635,33 +22764,415 @@ var OpenFailure = class extends Error {
 
 // src/inference/registry.ts
 import { randomBytes } from "node:crypto";
-var CREATE_LEASE_MS = 5 * 6e4;
+
+// src/batches.ts
+function byPriority(a, b) {
+  return a.since - b.since || (a.repository < b.repository ? -1 : a.repository > b.repository ? 1 : 0) || a.rank - b.rank;
+}
+function formBatches(candidates, options) {
+  const ordered = [...candidates].sort(byPriority);
+  const taken = /* @__PURE__ */ new Set();
+  const used = /* @__PURE__ */ new Map();
+  let places = options.places;
+  const offering = (offer, from) => ordered.filter(
+    (other) => !taken.has(other) && (offer.pod || from.own && other.own) && other.offers.some((one) => one.tasks === offer.tasks && one.key === offer.key)
+  );
+  const batches = [];
+  for (const candidate of ordered) {
+    if (taken.has(candidate)) continue;
+    const offers = [...candidate.offers].sort((a, b) => b.tasks - a.tasks);
+    for (const offer of offers) {
+      if (!offer.pod && !candidate.own) continue;
+      const eligible = offering(offer, candidate);
+      if (eligible.length < offer.tasks) continue;
+      const tasks = eligible.slice(0, offer.tasks);
+      const own = tasks.filter((task) => task.own).length;
+      if (own > places) continue;
+      const counts = /* @__PURE__ */ new Map();
+      for (const task of tasks) {
+        if (!task.own) counts.set(task.repository, (counts.get(task.repository) ?? 0) + 1);
+      }
+      const fits = [...counts].every(
+        ([repository, count3]) => (used.get(repository) ?? 0) + count3 <= options.limit(repository)
+      );
+      if (!fits) continue;
+      for (const task of tasks) taken.add(task);
+      for (const [repository, count3] of counts) {
+        used.set(repository, (used.get(repository) ?? 0) + count3);
+      }
+      places -= own;
+      batches.push({
+        size: offer.tasks,
+        key: offer.key,
+        profile: offer.profile,
+        pod: offer.pod,
+        tasks: tasks.map(({ repository, number: number3 }) => ({ repository, number: number3 }))
+      });
+      break;
+    }
+  }
+  const waiting = [];
+  const unserved = [];
+  for (const candidate of ordered) {
+    if (!candidate.own || taken.has(candidate)) continue;
+    if (candidate.offers.length === 0) {
+      unserved.push(candidate.number);
+      continue;
+    }
+    const offers = [...candidate.offers].sort((a, b) => a.tasks - b.tasks);
+    const ready = offers.map((offer) => offering(offer, candidate));
+    if (offers.some((offer, index) => (ready[index]?.length ?? 0) >= offer.tasks)) continue;
+    const [first] = offers;
+    const those = ready[0] ?? [];
+    if (first) {
+      waiting.push({
+        number: candidate.number,
+        tasks: first.tasks,
+        profile: first.profile,
+        ready: those.length,
+        repositories: new Set(those.map((task) => task.repository)).size
+      });
+    }
+  }
+  return { batches, waiting, unserved };
+}
+
+// src/board.ts
+var BOARD_TTL_MS = 25 * 36e5;
+var RESERVATION_TTL_MS = 30 * 6e4;
 var ATTEMPTS = 20;
+async function handshake(store, owner, pool2, now) {
+  const own = owner.toLowerCase();
+  const path = LAYOUT.organization(own);
+  const current = (await store.get(path))?.fields;
+  const members = pool2.members;
+  const same = current?.pool === pool2.id && Array.isArray(current.members) && JSON.stringify(current.members) === JSON.stringify(members);
+  if (!same) {
+    await store.write([
+      { op: "set", path, fields: { pool: pool2.id, members, declaredAt: now }, merge: true }
+    ]);
+  }
+  const declarations = /* @__PURE__ */ new Map();
+  await Promise.all(
+    pool2.members.filter((member) => member !== own).map(async (member) => {
+      const pool3 = (await store.get(LAYOUT.organization(member)))?.fields.pool;
+      declarations.set(member, typeof pool3 === "string" ? { pool: pool3 } : void 0);
+    })
+  );
+  return agreement(pool2, own, declarations);
+}
+function exchange(store, input) {
+  const { pool: pool2, now } = input;
+  const repository = input.repository.toLowerCase();
+  return store.transaction(
+    async (tx) => {
+      const [boardDocuments, batchDocuments] = await Promise.all([
+        tx.query(LAYOUT.board(pool2.id)),
+        tx.query(LAYOUT.batches(pool2.id), {
+          where: [{ field: "expiresAt", op: ">", value: now }]
+        })
+      ]);
+      const entries = boardDocuments.flatMap((document) => boardEntry(document) ?? []);
+      const batches = batchDocuments.flatMap((document) => storedBatch(document) ?? []);
+      const ownTask = new Map(input.own.map((task) => [task.number, task]));
+      const honored = [];
+      const dropped = [];
+      for (const batch of batches) {
+        let changed = false;
+        const members2 = batch.members.map((member) => {
+          if (member.repository !== repository || member.status !== "reserved") return member;
+          const task = ownTask.get(member.number);
+          const ready = task?.offers.some((offer) => offer.tasks === batch.size && offer.key === batch.key) && !honored.some((one) => one.number === member.number) && honored.length < MAX_TASKS;
+          changed = true;
+          if (ready) {
+            honored.push({
+              number: member.number,
+              size: batch.size,
+              key: batch.key,
+              profile: batch.profile,
+              batch: batch.id
+            });
+            return { ...member, status: "started" };
+          }
+          dropped.push({ number: member.number, batch: batch.id });
+          return { ...member, status: "dropped" };
+        });
+        if (changed) {
+          tx.write({
+            op: "set",
+            path: LAYOUT.batch(pool2.id, batch.id),
+            fields: { members: members2.map(memberFields) },
+            merge: true
+          });
+        }
+        batch.members = members2;
+      }
+      const held = /* @__PURE__ */ new Set();
+      const reserved = /* @__PURE__ */ new Map();
+      for (const batch of batches) {
+        for (const member of batch.members) {
+          if (member.status === "dropped") continue;
+          held.add(`${member.repository}#${member.number}`);
+          if (member.status === "reserved") {
+            reserved.set(member.repository, (reserved.get(member.repository) ?? 0) + 1);
+          }
+        }
+      }
+      const previous = entries.find((entry) => entry.repository === repository);
+      const sinceOf = (number3) => previous?.tasks.find((task) => task.number === number3)?.since ?? now;
+      const candidates = [];
+      for (const [rank, task] of input.own.entries()) {
+        if (held.has(`${repository}#${task.number}`)) continue;
+        candidates.push({
+          repository,
+          number: task.number,
+          since: sinceOf(task.number).getTime(),
+          rank,
+          offers: task.offers,
+          own: true
+        });
+      }
+      const members = new Set(pool2.members);
+      const live = entries.filter(
+        (entry) => entry.repository !== repository && entry.expiresAt > now && members.has(ownerOf(entry.repository))
+      );
+      for (const entry of live) {
+        for (const [rank, task] of entry.tasks.entries()) {
+          if (held.has(`${entry.repository}#${task.number}`)) continue;
+          candidates.push({
+            repository: entry.repository,
+            number: task.number,
+            since: task.since.getTime(),
+            rank,
+            offers: task.offers.filter((offer) => offer.pod),
+            own: false
+          });
+        }
+      }
+      const formation = formBatches(candidates, {
+        places: Math.max(0, input.places - honored.length),
+        limit: (other) => Math.max(0, MAX_TASKS - (reserved.get(other) ?? 0))
+      });
+      const formed = [];
+      const named = [];
+      const targets = /* @__PURE__ */ new Map();
+      let index = 0;
+      for (const batch of formation.batches) {
+        const id = batch.pod ? `${input.run.id}-${input.run.attempt}-${index++}` : void 0;
+        named.push({ ...batch, id });
+        for (const task of batch.tasks) {
+          if (task.repository === repository) {
+            formed.push({
+              number: task.number,
+              size: batch.size,
+              key: batch.key,
+              profile: batch.profile,
+              batch: id
+            });
+          } else if (id) {
+            const ids = targets.get(task.repository) ?? [];
+            if (!ids.includes(id)) targets.set(task.repository, [...ids, id]);
+          }
+        }
+        if (!id) continue;
+        tx.write({
+          op: "create",
+          path: LAYOUT.batch(pool2.id, id),
+          fields: {
+            key: batch.key,
+            profile: batch.profile ?? null,
+            size: batch.size,
+            formedBy: { repository, workflowRun: input.run.id, attempt: input.run.attempt },
+            formedAt: now,
+            expiresAt: new Date(now.getTime() + RESERVATION_TTL_MS),
+            members: batch.tasks.map(
+              (task) => memberFields({
+                ...task,
+                status: task.repository === repository ? "started" : "reserved"
+              })
+            )
+          }
+        });
+      }
+      const starting = new Set([...honored, ...formed].map((task) => task.number));
+      const listed = input.own.filter(
+        (task) => !starting.has(task.number) && task.offers.some((offer) => offer.pod)
+      );
+      tx.write({
+        op: "set",
+        path: LAYOUT.boardEntry(pool2.id, repository),
+        fields: {
+          repository,
+          branch: input.branch,
+          workflow: input.workflow,
+          updatedAt: now,
+          expiresAt: new Date(now.getTime() + BOARD_TTL_MS),
+          tasks: listed.map((task) => ({
+            number: task.number,
+            stage: task.stage,
+            ...task.updatedAt ? { updatedAt: task.updatedAt } : {},
+            since: sinceOf(task.number),
+            // Arrays may not hold arrays: the offers are text.
+            offers: JSON.stringify(task.offers.filter((offer) => offer.pod))
+          }))
+        }
+      });
+      const dispatches = [];
+      for (const [target, ids] of targets) {
+        const entry = live.find((one) => one.repository === target);
+        const owner = ownerOf(target);
+        if (!entry || !members.has(owner)) continue;
+        dispatches.push({
+          owner,
+          repository: target.slice(owner.length + 1),
+          workflow: entry.workflow,
+          ref: entry.branch,
+          batches: ids.join(" ")
+        });
+      }
+      return {
+        honored,
+        formed,
+        dropped,
+        batches: named,
+        waiting: formation.waiting,
+        unserved: formation.unserved,
+        dispatches
+      };
+    },
+    { attempts: ATTEMPTS }
+  );
+}
+function ownerOf(repository) {
+  return repository.slice(0, repository.indexOf("/"));
+}
+function memberFields(member) {
+  return { repository: member.repository, number: member.number, status: member.status };
+}
+function boardEntry(document) {
+  const { fields } = document;
+  const { repository, branch, workflow, updatedAt, expiresAt: expiresAt2, tasks } = fields;
+  if (typeof repository !== "string" || !repository.includes("/")) return void 0;
+  if (typeof branch !== "string" || typeof workflow !== "string") return void 0;
+  if (!(updatedAt instanceof Date) || !(expiresAt2 instanceof Date)) return void 0;
+  const list4 = Array.isArray(tasks) ? tasks : [];
+  return {
+    repository,
+    branch,
+    workflow,
+    updatedAt,
+    expiresAt: expiresAt2,
+    tasks: list4.flatMap((value) => {
+      const task = value;
+      if (typeof task?.number !== "number" || !(task.since instanceof Date)) return [];
+      const offers = parseOffers(task.offers);
+      if (!offers) return [];
+      return [
+        {
+          number: task.number,
+          stage: typeof task.stage === "string" ? task.stage : "",
+          updatedAt: typeof task.updatedAt === "string" ? task.updatedAt : void 0,
+          since: task.since,
+          offers
+        }
+      ];
+    })
+  };
+}
+function parseOffers(value) {
+  if (typeof value !== "string") return void 0;
+  let parsed;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    return void 0;
+  }
+  if (!Array.isArray(parsed)) return void 0;
+  const offers = parsed.flatMap((item) => {
+    const offer = item;
+    const valid = Number.isInteger(offer?.tasks) && (offer?.tasks ?? 0) >= 1 && (offer?.tasks ?? 0) <= MAX_TASKS && typeof offer?.key === "string" && (offer.profile === void 0 || typeof offer.profile === "string");
+    return valid && offer ? [
+      {
+        tasks: offer.tasks,
+        profile: offer.profile,
+        key: offer.key,
+        pod: offer.pod === true
+      }
+    ] : [];
+  });
+  return offers;
+}
+function storedBatch(document) {
+  const { key, profile: profile2, size, formedAt, expiresAt: expiresAt2, members } = document.fields;
+  if (typeof key !== "string" || typeof size !== "number") return void 0;
+  if (!(formedAt instanceof Date) || !(expiresAt2 instanceof Date)) return void 0;
+  const statuses = ["reserved", "started", "dropped"];
+  return {
+    id: document.path.slice(document.path.lastIndexOf("/") + 1),
+    key,
+    profile: typeof profile2 === "string" ? profile2 : void 0,
+    size,
+    formedAt,
+    expiresAt: expiresAt2,
+    members: (Array.isArray(members) ? members : []).flatMap((value) => {
+      const member = value;
+      if (typeof member?.repository !== "string" || typeof member.number !== "number") return [];
+      const status2 = typeof member.status === "string" ? member.status : "";
+      return statuses.includes(status2) ? [{ repository: member.repository, number: member.number, status: status2 }] : [];
+    })
+  };
+}
+
+// src/inference/registry.ts
+var CREATE_LEASE_MS = 5 * 6e4;
+var ATTEMPTS2 = 20;
 var PodRegistry = class {
   #store;
-  #owner;
+  /** The pool's ID, whose registry this is. */
+  #pool;
   #now;
-  constructor(store, owner, now = () => /* @__PURE__ */ new Date()) {
+  constructor(store, pool2, now = () => /* @__PURE__ */ new Date()) {
     this.#store = store;
-    this.#owner = owner;
+    this.#pool = pool2;
     this.#now = now;
   }
   /**
    * Finds the pod of `description`'s settings for the task `holder` of workflow run `run`: joins
-   * the oldest serving one with a run lease; waits for another task's unexpired creation lease;
-   * or takes the creation lease, with a run lease. A creation lease that expired ends, so the
-   * task takes it over.
+   * the oldest serving one that has room, with a run lease; waits for another task's unexpired
+   * creation lease on a pod that will have room; or takes the creation lease, with a run lease. A
+   * creation lease that expired ends, so the task takes it over. A pod has room while its
+   * unexpired run leases and the tasks its batch reserved that have not joined are fewer than
+   * its capacity; a task of its batch always has room (decision 13 of the plan for GPU batches
+   * across repositories).
    */
   claim(description, holder, run2) {
     return this.#store.transaction(
       async (tx) => {
         const now = this.#now();
-        const pods = (await tx.query(LAYOUT.pods(this.#owner), {
+        const pods = (await tx.query(LAYOUT.pods(this.#pool), {
           where: [
             { field: "settings", op: "==", value: description.settings },
             { field: "live", op: "==", value: true }
           ]
-        })).map(registered).sort(byAge);
+        })).map(registered).filter((pod2) => sameAccount(pod2.account, description.account)).sort(byAge);
+        const hasRoom = async (pod2) => {
+          if (pod2.capacity === void 0 || pod2.seats.includes(holder)) return true;
+          if (description.batch !== void 0 && pod2.batch === description.batch) return true;
+          const runs = new Set(
+            pod2.leases.filter((one) => one.kind === "run" && one.until > now && one.holder !== holder).map((one) => one.holder)
+          );
+          let pending = 0;
+          if (pod2.batch) {
+            const document = await tx.get(LAYOUT.batch(this.#pool, pod2.batch));
+            const batch = document && storedBatch(document);
+            for (const member of batch?.members ?? []) {
+              const of = `${member.repository}#${member.number}`;
+              if (member.status === "dropped" || of === holder) continue;
+              if (!pod2.seats.includes(of) && !runs.has(of)) pending++;
+            }
+          }
+          return runs.size + pending < pod2.capacity;
+        };
         const lease = {
           holder,
           run: run2,
@@ -22677,7 +23188,13 @@ var PodRegistry = class {
             merge: true
           });
         }
-        const serving2 = pods.find((pod2) => pod2.status === "serving");
+        let serving2;
+        for (const pod2 of pods) {
+          if (pod2.status === "serving" && await hasRoom(pod2)) {
+            serving2 = pod2;
+            break;
+          }
+        }
         if (serving2) {
           const seats = serving2.seats.includes(holder) ? serving2.seats : [...serving2.seats, holder];
           const leases = [...serving2.leases.filter((one) => one.holder !== holder), lease];
@@ -22693,10 +23210,10 @@ var PodRegistry = class {
             seat: seats.indexOf(holder) + 1
           };
         }
-        const creating = pods.find(
-          (pod2) => pod2.status === "creating" && (pod2.creatingUntil ?? now) > now
-        );
-        if (creating) return { kind: "wait", pod: creating };
+        for (const pod2 of pods) {
+          if (pod2.status !== "creating" || (pod2.creatingUntil ?? now) <= now) continue;
+          if (await hasRoom(pod2)) return { kind: "wait", pod: pod2 };
+        }
         const pod = {
           nonce: randomBytes(16).toString("hex"),
           settings: description.settings,
@@ -22707,7 +23224,10 @@ var PodRegistry = class {
           pricePerSecond: void 0,
           creatingUntil: new Date(now.getTime() + CREATE_LEASE_MS),
           leases: [lease],
-          seats: [holder]
+          seats: [holder],
+          account: description.account,
+          capacity: description.capacity,
+          batch: description.batch
         };
         tx.write({
           op: "create",
@@ -22725,7 +23245,7 @@ var PodRegistry = class {
         });
         return { kind: "create", pod, seat: 1 };
       },
-      { attempts: ATTEMPTS }
+      { attempts: ATTEMPTS2 }
     );
   }
   /**
@@ -22746,7 +23266,7 @@ var PodRegistry = class {
         });
         return { ...pod, status: "serving", ...created, creatingUntil: void 0 };
       },
-      { attempts: ATTEMPTS }
+      { attempts: ATTEMPTS2 }
     );
   }
   /**
@@ -22782,12 +23302,15 @@ var PodRegistry = class {
   async end(nonce, reason) {
     await this.change(nonce, () => ({ end: reason }));
   }
-  /** The organization's pods that the registry holds, oldest first. */
-  async live() {
-    const documents = await this.#store.query(LAYOUT.pods(this.#owner), {
+  /**
+   * The pool's pods that the registry holds, oldest first; with `account`, only that GPU
+   * account's, which its key can see and terminate.
+   */
+  async live(account) {
+    const documents = await this.#store.query(LAYOUT.pods(this.#pool), {
       where: [{ field: "live", op: "==", value: true }]
     });
-    return documents.map(registered).sort(byAge);
+    return documents.map(registered).filter((pod) => sameAccount(pod.account, account)).sort(byAge);
   }
   /**
    * Changes a live pod as `decide` says, in a transaction that reads it again: nothing when it
@@ -22815,13 +23338,16 @@ var PodRegistry = class {
         });
         return { pod: { ...pod, leases, status: status2, live: !change.end }, change };
       },
-      { attempts: ATTEMPTS }
+      { attempts: ATTEMPTS2 }
     );
   }
   #path(nonce) {
-    return LAYOUT.pod(this.#owner, nonce);
+    return LAYOUT.pod(this.#pool, nonce);
   }
 };
+function sameAccount(pod, account) {
+  return pod === void 0 || account === void 0 || pod === account;
+}
 function heldBy(leases, now) {
   return [...new Set(leases.filter((one) => one.until > now).map((one) => one.holder))];
 }
@@ -22851,6 +23377,7 @@ function registered(document) {
     ];
   });
   const price = fields.pricePerSecond;
+  const capacity = fields.capacity;
   return {
     nonce: document.path.slice(document.path.lastIndexOf("/") + 1),
     settings: text(fields.settings) ?? "",
@@ -22863,7 +23390,10 @@ function registered(document) {
     leases,
     seats: (Array.isArray(fields.seats) ? fields.seats : []).filter(
       (seat) => typeof seat === "string"
-    )
+    ),
+    account: text(fields.account),
+    capacity: typeof capacity === "number" && Number.isInteger(capacity) && capacity > 0 ? capacity : void 0,
+    batch: text(fields.batch)
   };
 }
 
@@ -22951,6 +23481,23 @@ function ofOrganization(pod, owner) {
   const organization = pod.env.CODEMAN_ORGANIZATION ?? pod.env.CODEMAN_REPOSITORY?.split("/")[0];
   return organization !== void 0 && organization.toLowerCase() === owner.toLowerCase();
 }
+function ofPool(pod, pool2, owner) {
+  const named = pod.env.CODEMAN_POOL;
+  return named ? named.toLowerCase() === pool2.toLowerCase() : ofOrganization(pod, owner);
+}
+function otherPoolOf(pod, pool2, owner) {
+  const named = pod.env.CODEMAN_POOL?.toLowerCase();
+  if (!named || named === pool2.toLowerCase()) return void 0;
+  return pod.env.CODEMAN_ORGANIZATION?.toLowerCase() === owner.toLowerCase() ? named : void 0;
+}
+function accountFingerprint(accountKey) {
+  return createHmac("sha256", accountKey).update("codeman-account-fingerprint").digest("hex").slice(0, 16);
+}
+function podCapacity(settings) {
+  const text = settings.ollama?.OLLAMA_NUM_PARALLEL ?? settings.vllm?.["max-num-seqs"];
+  const value = Number(text);
+  return text !== void 0 && Number.isInteger(value) && value > 0 ? value : void 0;
+}
 function adminToken(accountKey, nonce) {
   return createHmac("sha256", accountKey).update(`codeman-gateway-admin:${nonce}`).digest("base64url");
 }
@@ -22975,6 +23522,8 @@ var PodInference = class {
   #options;
   #host;
   #registry;
+  #pool;
+  #account;
   /** What this provider did with pods since `open` or `close` last reported it. */
   #events = [];
   constructor(settings, options) {
@@ -22984,7 +23533,9 @@ var PodInference = class {
     this.#settings = onVllm(settings) ? { ...settings, ollama: {}, vllm: podVllm(settings) } : { ...settings, ollama: podOllama(settings), vllm: void 0 };
     this.#options = options;
     this.#host = options.gpu.pods;
-    this.#registry = new PodRegistry(options.store, options.repository.owner, () => this.#now());
+    this.#pool = options.pool ?? soloPool(options.repository.owner);
+    this.#account = accountFingerprint(options.accountKey);
+    this.#registry = new PodRegistry(options.store, this.#pool.id, () => this.#now());
   }
   /** The pod events so far, which the caller reports. */
   #takeEvents() {
@@ -23146,19 +23697,22 @@ var PodInference = class {
     });
   }
   /**
-   * Terminates the organization's pods that nothing holds (step 3 of the pod registry plan), and
+   * Terminates the pool's pods that nothing holds (step 3 of the pod registry plan), and
    * drops this task's keep leases on pods of other settings. Pods are listed before the registry
    * is read, and a task writes a pod's document before it creates the pod, so a pod being created
-   * is always held. A pod without the organization's environment is never touched.
+   * is always held. A pod without Codeman's environment, of another pool and organization, or of
+   * another account is never touched (decision 15 of the plan for GPU batches across repositories).
    */
   async #sweep(holder, settings, log) {
     const owner = this.#options.repository.owner;
-    const listed = (await this.#host.list({})).filter((pod) => ofOrganization(pod, owner));
+    const pool2 = this.#pool.id;
+    const all = await this.#host.list({});
+    const listed = all.filter((pod) => ofPool(pod, pool2, owner));
     const statuses = /* @__PURE__ */ new Map();
     for (const pod of listed) statuses.set(pod.id, pod.status);
     const held = /* @__PURE__ */ new Map();
     const terminated = /* @__PURE__ */ new Set();
-    for (const record of await this.#registry.live()) {
+    for (const record of await this.#registry.live(this.#account)) {
       if (record.pod && !statuses.has(record.pod)) {
         statuses.set(record.pod, (await this.#host.get(record.pod))?.status ?? "missing");
       }
@@ -23207,6 +23761,26 @@ var PodInference = class {
         })
       );
     }
+    for (const pod of all) {
+      const other = otherPoolOf(pod, pool2, owner);
+      if (!other || terminated.has(pod.id) || pod.status === "terminated") continue;
+      const nonce = pod.env.CODEMAN_NONCE ?? "";
+      const document = nonce ? await this.#options.store.get(LAYOUT.pod(other, nonce)) : void 0;
+      if (document && registered(document).live) continue;
+      this.#events.push(
+        await terminatePod(this.#host, pod.id, void 0, {
+          reason: `this organization created it for pool ${other}, whose pod registry does not hold it`,
+          log,
+          life: pod.pricePerSecond ? {
+            record: nonce || pod.id,
+            provider: this.#options.gpu.name,
+            from: pod.createdAt.getTime(),
+            to: this.#now().getTime(),
+            pricePerSecond: pod.pricePerSecond
+          } : void 0
+        })
+      );
+    }
   }
   /**
    * Gives the run the pod of its settings: joins the one serving them, or creates it, or waits
@@ -23215,13 +23789,19 @@ var PodInference = class {
    */
   async #claim(run2, holder, settings, token, log) {
     const { model, gpuType, image, reuse } = this.#settings;
+    const capacity = podCapacity(this.#settings);
+    const { batch } = this.#settings;
     const description = {
       settings,
       model,
       gpuType,
       image,
       reuse,
-      provider: this.#options.gpu.name
+      provider: this.#options.gpu.name,
+      account: this.#account,
+      organization: this.#options.repository.owner.toLowerCase(),
+      ...capacity === void 0 ? {} : { capacity },
+      ...batch === void 0 ? {} : { batch }
     };
     let waiting = false;
     for (let claims = 0; claims < CLAIMS; claims++) {
@@ -23437,6 +24017,8 @@ var PodInference = class {
         ...memory ? { CODEMAN_GPU_MEMORY_GB: String(memory) } : {},
         ...cached ? { CODEMAN_FIT: JSON.stringify(cached) } : {},
         CODEMAN_ORGANIZATION: owner,
+        CODEMAN_POOL: this.#pool.id,
+        CODEMAN_ACCOUNT: this.#account,
         CODEMAN_POD_SETTINGS: record.settings,
         CODEMAN_NONCE: record.nonce,
         CODEMAN_MODEL: model,
@@ -23484,7 +24066,7 @@ var PodInference = class {
   /** The context that served a vLLM pod's settings before, from the cache of fits. */
   async #cachedContext(log) {
     if (this.#settings.vllm?.["max-model-len"]) return void 0;
-    const path = LAYOUT.context(this.#options.repository.owner, fitKey(this.#settings));
+    const path = LAYOUT.context(fitKey(this.#settings));
     try {
       const contextLength = (await this.#options.store.get(path))?.fields.contextLength;
       if (!Number.isSafeInteger(contextLength)) return void 0;
@@ -23516,7 +24098,7 @@ var PodInference = class {
       await this.#options.store.write([
         {
           op: "set",
-          path: LAYOUT.context(this.#options.repository.owner, fitKey(this.#settings)),
+          path: LAYOUT.context(fitKey(this.#settings)),
           fields: {
             engine: "vllm",
             image,
@@ -23546,7 +24128,7 @@ var PodInference = class {
    */
   async #cachedFit(log) {
     if (this.#settings.ollama?.OLLAMA_CONTEXT_LENGTH) return void 0;
-    const path = LAYOUT.context(this.#options.repository.owner, fitKey(this.#settings));
+    const path = LAYOUT.context(fitKey(this.#settings));
     try {
       const fields = (await this.#options.store.get(path))?.fields;
       const { contextLength, digest } = fields ?? {};
@@ -23588,7 +24170,7 @@ var PodInference = class {
       await this.#options.store.write([
         {
           op: "set",
-          path: LAYOUT.context(this.#options.repository.owner, fitKey(this.#settings)),
+          path: LAYOUT.context(fitKey(this.#settings)),
           fields: {
             image,
             model,
@@ -23831,7 +24413,8 @@ function inferenceChoice(settings, record, options = {}) {
   const budgeted = {
     ...options.profile ? { profile: options.profile } : {},
     accounts: [.../* @__PURE__ */ new Set([accountOf(settings.provider), ...options.accounts ?? []])],
-    recorded: { spent: record?.spent ?? 0 }
+    recorded: { spent: record?.spent ?? 0 },
+    ...options.pool ? { pool: options.pool } : {}
   };
   if (settings.provider === "openrouter") return { provider: "openrouter", ...budgeted };
   const common = {
@@ -23847,8 +24430,19 @@ function inferenceChoice(settings, record, options = {}) {
     podReuse: settings["pod-reuse"] === "run" ? "run" : "task",
     ...settings.ollama && Object.keys(settings.ollama).length > 0 ? { ollama: settings.ollama } : {},
     ...settings.vllm && Object.keys(settings.vllm).length > 0 ? { vllm: settings.vllm } : {},
-    ...options.parallel === void 0 ? {} : { parallel: options.parallel }
+    ...options.parallel === void 0 ? {} : { parallel: options.parallel },
+    ...options.batch === void 0 ? {} : { batch: options.batch }
   };
+}
+function isBatchId(text) {
+  return /^\d+-\d+-\d+$/.test(text);
+}
+function choicePool(choice, owner) {
+  const pool2 = choice.pool ?? soloPool(owner);
+  if (!pool2.members.includes(owner.toLowerCase())) {
+    throw new Error(`The inference input names pool ${pool2.id}, without ${owner.toLowerCase()}.`);
+  }
+  return pool2;
 }
 function parseInferenceChoice(text) {
   if (text.trim() === "") {
@@ -23856,7 +24450,7 @@ function parseInferenceChoice(text) {
   }
   const choice = JSON.parse(text);
   const amount2 = (value) => typeof value === "number" && Number.isFinite(value);
-  const budgeted = isProviderName(choice.provider) && Array.isArray(choice.accounts) && choice.accounts.every((name) => typeof name === "string" && name !== "") && amount2(choice.recorded?.spent) && (choice.profile === void 0 || typeof choice.profile === "string");
+  const budgeted = isProviderName(choice.provider) && Array.isArray(choice.accounts) && choice.accounts.every((name) => typeof name === "string" && name !== "") && amount2(choice.recorded?.spent) && (choice.profile === void 0 || typeof choice.profile === "string") && (choice.pool === void 0 || validPool(choice.pool));
   if (!budgeted) throw new Error("The inference input is not a valid choice.");
   if (choice.provider === "openrouter") return choice;
   const valid = typeof choice.model === "string" && ENGINES[choice.engine] !== void 0 && Array.isArray(choice.pods) && (choice.provider === "runpod-pod" ? typeof choice.gpu === "string" : typeof choice.endpoint === "string");
@@ -23873,6 +24467,9 @@ function parseInferenceChoice(text) {
       check(block2);
     }
   }
+  if (choice.provider === "runpod-pod" && choice.batch !== void 0 && (typeof choice.batch !== "string" || !isBatchId(choice.batch))) {
+    throw new Error("The inference input is not a valid choice.");
+  }
   if (choice.provider === "runpod-pod" && choice.parallel !== void 0) {
     const { parallel } = choice;
     if (!Number.isInteger(parallel) || parallel < 1 || parallel > MAX_TASKS) {
@@ -23880,6 +24477,13 @@ function parseInferenceChoice(text) {
     }
   }
   return choice;
+}
+function validPool(value) {
+  const pool2 = value;
+  const members = pool2?.members;
+  return typeof pool2?.id === "string" && isPoolId(pool2.id) && Array.isArray(members) && members.length > 0 && members.length <= MAX_POOL_MEMBERS && members.every(
+    (member) => typeof member === "string" && isLogin(member) && member === member.toLowerCase() && pool2.id?.split("+").includes(member)
+  );
 }
 function zero() {
   return { spent: 0 };
@@ -23942,13 +24546,15 @@ function selfHosted(choice, repository, inputs) {
         reuse: choice.podReuse,
         ollama: ollamaEnvironment(choice.ollama),
         ...choice.engine === "vllm" ? { vllm: checkedVllm(choice.vllm) } : {},
-        parallel: choice.parallel
+        parallel: choice.parallel,
+        batch: choice.batch
       },
       {
         repository,
         gpu,
         accountKey: inputs.accountKey,
         store: inputs.store(),
+        pool: choicePool(choice, repository.owner),
         ...inputs.fetch ? { fetch: inputs.fetch } : {},
         ...inputs.hub ? { hub: inputs.hub } : {}
       }
@@ -24089,7 +24695,8 @@ var Ledger = class {
         stage: picked.stage,
         model: picked.model,
         provider: picked.provider,
-        profile: picked.profile ?? null
+        profile: picked.profile ?? null,
+        ...picked.batch ? { batch: picked.batch } : {}
       });
     }
     this.#event(run2, "task-picked", { action: picked.action, stage: picked.stage });
@@ -24112,7 +24719,7 @@ var Ledger = class {
     const month = ledgerMonth(this.#now());
     return this.#retry(log, "read Codeman's ledger", async () => [
       ...ledgerRuns(await monthQuery(this.#store, owner, month)),
-      ...untrackedRuns(await untrackedQuery(this.#store, owner, month))
+      ...await untrackedQuery(this.#store, this.#pool(), owner, month)
     ]);
   }
   /**
@@ -24170,14 +24777,24 @@ var Ledger = class {
     return this.#store.transaction(
       async (tx) => {
         const organization = budgets.organizationBudget !== void 0;
-        const [task, month, untracked] = await Promise.all([
+        const pool2 = this.#pool();
+        const otherMembers = pool2.members.filter((member) => member !== owner.toLowerCase());
+        const [task, month, untracked, poolRuns] = await Promise.all([
           taskQuery(tx, owner, repository, budgets.task).then(ledgerRuns),
           monthQuery(tx, owner, ledgerMonth(now), organization ? void 0 : repository).then(
             ledgerRuns
           ),
           // Pods' time no task counted belongs to the organization's month alone (decision 4 of
           // the pod registry plan).
-          organization ? untrackedQuery(tx, owner, ledgerMonth(now)).then(untrackedRuns) : Promise.resolve([])
+          organization ? untrackedQuery(tx, pool2, owner, ledgerMonth(now)) : Promise.resolve([]),
+          // With a pool on one GPU account, its other members' runs share each billed hour
+          // (decision 14 of the plan for GPU batches across repositories).
+          organization && budgets.billed.size > 0 ? Promise.all(
+            otherMembers.map(async (member) => [
+              ...ledgerRuns(await monthQuery(tx, member, ledgerMonth(now))),
+              ...await untrackedQuery(tx, pool2, member, ledgerMonth(now))
+            ])
+          ).then((lists) => lists.flat()) : Promise.resolve([])
         ]);
         const own = task.find((other) => other.id === run2);
         const before = own && own.status !== "open" ? runAmount(own) : 0;
@@ -24194,7 +24811,10 @@ var Ledger = class {
           task: spent,
           month: spentBy(ours) + before,
           reserved: { amount: spentBy(open3), runs: open3.length },
-          organization: budgets.organizationBudget === void 0 ? void 0 : reconciledMonth([...monthRuns, ...untracked], budgets.billed, now) + before
+          organization: budgets.organizationBudget === void 0 ? void 0 : reconciledMonth([...monthRuns, ...untracked], budgets.billed, now, {
+            others: poolRuns,
+            members: pool2.members.length
+          }) + before
         };
         const { limit } = reservation;
         if (limit === void 0) return { ...reservation, outcome: "task-budget-spent" };
@@ -24310,6 +24930,7 @@ var Ledger = class {
    */
   async #split(run2, busy, log) {
     const { owner } = this.#source.runtime.repository;
+    const pool2 = this.#pool().id;
     const [first] = busy.spans;
     const last = busy.spans.at(-1);
     if (!first || !last) return;
@@ -24324,13 +24945,14 @@ var Ledger = class {
           const mine = {
             id: `${run2}-${reservedAt}`,
             run: run2,
+            repository: this.#repository(),
             reservedAt,
             busy: busy.spans,
             pricePerSecond: busy.pricePerSecond
           };
           const since = new Date(first[0] - RESERVATION_MS);
           const found = endpointRuns(
-            await tx.query(LAYOUT.endpointRuns(owner, busy.endpoint), {
+            await tx.query(LAYOUT.endpointRuns(pool2, busy.endpoint), {
               where: [{ field: "to", op: ">=", value: since }]
             })
           );
@@ -24338,7 +24960,9 @@ var Ledger = class {
           const shares = busyShares(runs);
           const others = runs.filter((other) => other !== mine && overlaps(other.busy, mine.busy));
           const documents = await Promise.all(
-            others.map((other) => tx.get(LAYOUT.run(owner, other.run)))
+            others.map(
+              (other) => tx.get(LAYOUT.run(ownerOf2(other.repository) ?? owner, other.run))
+            )
           );
           const share = (one) => round(shares.get(one.id) ?? 0);
           const estimate = round(
@@ -24346,7 +24970,7 @@ var Ledger = class {
           );
           tx.write({
             op: "set",
-            path: LAYOUT.endpointRun(owner, busy.endpoint, mine.id),
+            path: LAYOUT.endpointRun(pool2, busy.endpoint, mine.id),
             fields: {
               run: run2,
               repository: this.#repository(),
@@ -24366,7 +24990,7 @@ var Ledger = class {
             if (other.share === void 0 || Math.abs(other.share - share(other)) >= 1e-6) {
               tx.write({
                 op: "set",
-                path: LAYOUT.endpointRun(owner, busy.endpoint, other.id),
+                path: LAYOUT.endpointRun(pool2, busy.endpoint, other.id),
                 fields: { share: share(other), splitAt: now },
                 merge: true
               });
@@ -24404,19 +25028,35 @@ var Ledger = class {
    */
   async #untracked(pod, life, log) {
     const { owner } = this.#source.runtime.repository;
+    const pool2 = this.#pool();
+    const path = LAYOUT.pod(pool2.id, life.record);
     await this.#retry(log, "write to Codeman's ledger", async () => {
-      const runs = ledgerRuns(
-        await this.#store.query(LAYOUT.runs(owner), {
-          where: [{ field: "pod", op: "==", value: pod }]
-        })
+      const members = [.../* @__PURE__ */ new Set([owner.toLowerCase(), ...pool2.members])];
+      const byMember = await Promise.all(
+        members.map(
+          async (member) => spentBy(
+            ledgerRuns(
+              await this.#store.query(LAYOUT.runs(member), {
+                where: [{ field: "pod", op: "==", value: pod }]
+              })
+            )
+          )
+        )
       );
       const lifeCost = Math.max(0, life.to - life.from) / 1e3 * life.pricePerSecond;
-      const counted2 = spentBy(runs);
+      const counted2 = byMember.reduce((sum, amount2) => sum + amount2, 0);
       const untracked = Math.max(0, lifeCost - counted2);
+      const creator = (await this.#store.get(path))?.fields.organization;
+      const shares = untrackedShares(
+        members,
+        byMember,
+        untracked,
+        typeof creator === "string" ? creator : owner.toLowerCase()
+      );
       await this.#store.write([
         {
           op: "set",
-          path: LAYOUT.pod(owner, life.record),
+          path,
           fields: {
             pod,
             provider: life.provider,
@@ -24426,7 +25066,10 @@ var Ledger = class {
             month: ledgerMonth(new Date(life.to)),
             lifeCost: round(lifeCost),
             counted: round(counted2),
-            untracked: round(untracked)
+            untracked: round(untracked),
+            untrackedBy: Object.fromEntries(
+              Object.entries(shares).map(([member, share]) => [member, round(share)])
+            )
           },
           merge: true
         }
@@ -24438,6 +25081,9 @@ var Ledger = class {
   }
   #repository() {
     return repositoryName(this.#source.runtime.repository);
+  }
+  #pool() {
+    return this.#source.pool ?? soloPool(this.#source.runtime.repository.owner);
   }
   /** Adds fields to a run's document, which replace those of the same name. */
   #update(run2, fields) {
@@ -24556,16 +25202,42 @@ function ledgerRuns(documents) {
   });
   return runs.sort((a, b) => a.start.getTime() - b.start.getTime() || (a.id < b.id ? -1 : 1));
 }
-function untrackedQuery(store, owner, month) {
-  return store.query(LAYOUT.pods(owner), {
-    where: [{ field: "month", op: "==", value: month }]
-  });
+async function untrackedQuery(store, pool2, owner, month) {
+  const where = [{ field: "month", op: "==", value: month }];
+  const [pooled, older] = await Promise.all([
+    store.query(LAYOUT.pods(pool2.id), { where }),
+    store.query(LAYOUT.organizationPods(owner), { where })
+  ]);
+  return [...untrackedRuns(pooled, owner), ...untrackedRuns(older)];
 }
-function untrackedRuns(documents) {
+function untrackedShares(members, counted2, untracked, creator) {
+  const total = counted2.reduce((sum, amount2) => sum + amount2, 0);
+  if (total <= 0) return { [creator.toLowerCase()]: untracked };
+  const shares = {};
+  for (const [index, member] of members.entries()) {
+    const amount2 = counted2[index] ?? 0;
+    if (amount2 > 0) shares[member] = untracked * amount2 / total;
+  }
+  return shares;
+}
+function ownerOf2(repository) {
+  const owner = repository?.split("/")[0];
+  return owner ? owner : void 0;
+}
+function shareOf(fields, owner) {
+  const own = owner.toLowerCase();
+  const { untrackedBy, untracked, organization } = fields;
+  if (typeof untrackedBy === "object" && untrackedBy !== null && !Array.isArray(untrackedBy)) {
+    return untrackedBy[own] ?? 0;
+  }
+  return typeof organization !== "string" || organization === own ? untracked : 0;
+}
+function untrackedRuns(documents, owner) {
   return documents.flatMap((document) => {
     const { fields } = document;
-    const { pod, provider, untracked, createdAt, terminatedAt } = fields;
+    const { pod, provider, createdAt, terminatedAt } = fields;
     if (typeof pod !== "string" || typeof provider !== "string") return [];
+    const untracked = owner === void 0 ? fields.untracked : shareOf(fields, owner);
     if (typeof untracked !== "number" || !Number.isFinite(untracked) || untracked <= 0) return [];
     if (!(createdAt instanceof Date) || !(terminatedAt instanceof Date)) return [];
     return [
@@ -24587,7 +25259,7 @@ function untrackedRuns(documents) {
 }
 function endpointRuns(documents) {
   return documents.flatMap((document) => {
-    const { run: run2, pricePerSecond, busy, share } = document.fields;
+    const { run: run2, pricePerSecond, busy, share, repository } = document.fields;
     if (typeof run2 !== "string" || typeof pricePerSecond !== "number") return [];
     if (typeof busy !== "string") return [];
     let spans;
@@ -24602,6 +25274,7 @@ function endpointRuns(documents) {
       {
         id: document.path.slice(document.path.lastIndexOf("/") + 1),
         run: run2,
+        repository: typeof repository === "string" ? repository : void 0,
         reservedAt: reservationOf(document),
         busy: spans,
         pricePerSecond,
@@ -28927,7 +29600,8 @@ function toIssue(issue2) {
     body: issue2.body ?? "",
     url: issue2.html_url,
     labels: labelNames(issue2.labels),
-    author: toUser(issue2.user)
+    author: toUser(issue2.user),
+    ...issue2.updated_at ? { updatedAt: issue2.updated_at } : {}
   };
 }
 function toComment(comment) {
@@ -29503,7 +30177,7 @@ function deriveKey(secret, salt) {
 
 // src/harness/opencode.ts
 import { spawnSync as spawnSync2 } from "node:child_process";
-import { createHash as createHash2 } from "node:crypto";
+import { createHash as createHash3 } from "node:crypto";
 import { chmodSync, mkdirSync as mkdirSync2, writeFileSync } from "node:fs";
 import { join as join3 } from "node:path";
 var OPENCODE_VERSION = "1.18.32";
@@ -29570,7 +30244,7 @@ var openCode = {
     const response = await fetch(url);
     if (!response.ok) throw new Error(`Downloading ${url} failed with ${response.status}.`);
     const tarball = Buffer.from(await response.arrayBuffer());
-    const integrity = `sha512-${createHash2("sha512").update(tarball).digest("base64")}`;
+    const integrity = `sha512-${createHash3("sha512").update(tarball).digest("base64")}`;
     if (integrity !== pkg.integrity) {
       throw new Error(`${pkg.name}@${OPENCODE_VERSION} does not match its pinned integrity.`);
     }
@@ -30324,7 +30998,7 @@ Tests: ${test ?? "(no report)"}`,
   stageBlockedHint: "Comment `/codeman continue <guidance>` to try again, or `/codeman replan <what to change>` to revise the plan, for example to widen its scope.",
   replanHint: "Comment `/codeman replan <what to change>` to try again.",
   removeLabelHint: "Remove the `codeman:blocked` label to try again.",
-  waitingForTasks: (tasks, profile2, ready) => `Waiting for ${tasks} tasks ready for profile \`${profile2}\`; ${ready} ${ready === 1 ? "is" : "are"}. Codeman checks again at every run.`,
+  waitingForTasks: (tasks, profile2, ready, repositories) => `Waiting for ${tasks} tasks ready for profile \`${profile2}\`; ${ready} ${ready === 1 ? "is" : "are"}, in ${repositories} ${repositories === 1 ? "repository" : "repositories"}. Codeman checks again at every run.`,
   noSettingsForStage: (stage) => `No settings apply to the ${STAGES2[stage]} stage: no profile serves it with any number of tasks, and the top-level settings have no \`model\`. Add the stage to a profile, or a top-level \`model\`, in \`.codeman/settings.yml\` or the organization's settings.`,
   noKey: "Codeman could not give this run access to its model (an OpenRouter key, or a GPU). See the run log.",
   missingCredentials: "Codeman could not give this run access to its model: the workflow does not pass the secret of a provider the run needs, its own or one whose billing counts in the organization's month.",
@@ -30586,7 +31260,7 @@ Testes: ${test ?? "(sem relat\xF3rio)"}`,
   stageBlockedHint: "Comente `/codeman continue <orienta\xE7\xE3o>` para tentar de novo, ou `/codeman replan <o que mudar>` para revisar o plano, por exemplo para ampliar o escopo.",
   replanHint: "Comente `/codeman replan <o que mudar>` para tentar de novo.",
   removeLabelHint: "Remova a label `codeman:blocked` para tentar de novo.",
-  waitingForTasks: (tasks, profile2, ready) => `Aguardando ${tasks} tarefas prontas para o perfil \`${profile2}\`; ${ready} ${ready === 1 ? "est\xE1" : "est\xE3o"}. O Codeman verifica de novo a cada rodada.`,
+  waitingForTasks: (tasks, profile2, ready, repositories) => `Aguardando ${tasks} tarefas prontas para o perfil \`${profile2}\`; ${ready} ${ready === 1 ? "est\xE1" : "est\xE3o"}, em ${repositories} ${repositories === 1 ? "reposit\xF3rio" : "reposit\xF3rios"}. O Codeman verifica de novo a cada rodada.`,
   noSettingsForStage: (stage) => `Nenhuma configura\xE7\xE3o se aplica \xE0 ${OF_STAGE(stage)}: nenhum perfil a atende com qualquer n\xFAmero de tarefas, e as configura\xE7\xF5es de n\xEDvel superior n\xE3o t\xEAm \`model\`. Inclua a etapa num perfil, ou um \`model\` no n\xEDvel superior, em \`.codeman/settings.yml\` ou nas configura\xE7\xF5es da organiza\xE7\xE3o.`,
   noKey: "O Codeman n\xE3o conseguiu dar a esta rodada acesso ao modelo (uma chave do OpenRouter, ou uma GPU). Veja o log da rodada.",
   missingCredentials: "O Codeman n\xE3o conseguiu dar a esta rodada acesso ao modelo: o workflow n\xE3o passa o segredo de um provedor de que a rodada precisa, o dela ou um cuja cobran\xE7a conta no m\xEAs da organiza\xE7\xE3o.",
@@ -32271,7 +32945,8 @@ function toTask(issue2) {
     body: issue2.body,
     url: issue2.url,
     labels: issue2.labels,
-    author: issue2.author && !issue2.author.bot ? issue2.author.login : void 0
+    author: issue2.author && !issue2.author.bot ? issue2.author.login : void 0,
+    ...issue2.updatedAt ? { updatedAt: issue2.updatedAt } : {}
   };
 }
 function openedByMaintainer(task, maintainers) {
@@ -32404,38 +33079,6 @@ function chooseTasks(candidates, count3) {
     left = left.filter((candidate) => candidate.number !== choice.number);
   }
   return chosen;
-}
-function pickAgentTasks(candidates, cap, places) {
-  const servedAt = (tasks) => candidates.filter((candidate) => candidate.counts.some((count3) => count3.tasks === tasks));
-  let picked = [];
-  for (let tasks = Math.min(cap, places); tasks > 0; tasks--) {
-    const served = servedAt(tasks);
-    if (served.length >= tasks) {
-      picked = served.slice(0, tasks).map((candidate) => candidate.number);
-      break;
-    }
-  }
-  const waiting = [];
-  const unserved = [];
-  for (const candidate of candidates) {
-    if (picked.includes(candidate.number)) continue;
-    if (candidate.counts.length === 0) {
-      unserved.push(candidate.number);
-      continue;
-    }
-    const counts = candidate.counts.filter((count3) => count3.tasks <= cap);
-    if (counts.some((count3) => servedAt(count3.tasks).length >= count3.tasks)) continue;
-    const [first] = counts;
-    if (first) {
-      waiting.push({
-        number: candidate.number,
-        tasks: first.tasks,
-        profile: first.profile,
-        ready: servedAt(first.tasks).length
-      });
-    }
-  }
-  return { picked, tasks: picked.length, waiting, unserved };
 }
 var MAX_HISTORY = 2e4;
 function runHistory(comments, bot, max = MAX_HISTORY) {
@@ -33373,7 +34016,8 @@ function readJson(file) {
 async function openKey(services) {
   const { runtime: runtime2 } = services;
   const run2 = ledgerRun(runtime2);
-  const ledger = services.ledger("open-key");
+  const choice = parseInferenceChoice(runtime2.input("inference"));
+  const ledger = services.ledger("open-key", choicePool(choice, runtime2.repository.owner));
   await ledger.check(runtime2);
   const outcome = await open(services, ledger, run2);
   if (outcome.status === "opened") ledger.open(run2, outcome.limit, outcome.pods);
@@ -33522,7 +34166,8 @@ async function closeKey(services) {
   if (usage.pod) runtime2.output("pod", usage.pod);
   if (usage.podShared) runtime2.output("pod-shared", "true");
   if (usage.keptPod) runtime2.output("kept-pod", usage.keptPod);
-  const ledger = services.ledger("close-key");
+  const choice = parseInferenceChoice(runtime2.input("inference"));
+  const ledger = services.ledger("close-key", choicePool(choice, runtime2.repository.owner));
   const run2 = ledgerRun(runtime2);
   ledger.close(run2, usage, runtime2.input("agent-job-result"));
   await ledger.flush(runtime2);
@@ -33547,12 +34192,13 @@ async function release(services) {
   const gpu = gpuProvider(accountOf(choice.provider), accountKey);
   if (!gpu.pods) throw new Error(`${gpu.name} has no pods.`);
   const handle = runtime2.input("handle", { required: true });
-  const registry = new PodRegistry(services.store(), runtime2.repository.owner);
+  const pool2 = choicePool(choice, runtime2.repository.owner);
+  const registry = new PodRegistry(services.store(), pool2.id);
   const pods = await releasePod(gpu.pods, registry, handle, runtime2, {
     provider: gpu.name,
     gateway: { accountKey }
   });
-  const ledger = services.ledger("release-pod");
+  const ledger = services.ledger("release-pod", pool2);
   ledger.release(ledgerRun(runtime2), pods);
   await ledger.flush(runtime2);
 }
@@ -33570,6 +34216,14 @@ async function select(services) {
   const inputs = inputSettings(runtime2);
   const shared = parseSettings(runtime2.input("settings"), SHARED_SETTINGS);
   if (!shared.ok) throw new Error(shared.error);
+  const declared = declaredPool(repo.repository.owner, shared.value.pool);
+  if (!declared.ok) throw new Error(`${SHARED_SETTINGS}: ${declared.error}`);
+  const batchInput = runtime2.input("batch");
+  if (batchInput !== "") {
+    runtime2.info(
+      `This run was started for batch ${oneLine(batchInput).slice(0, 200)}; the tasks it starts come from Codeman's store, not from this input.`
+    );
+  }
   const defaultBranch = await repo.defaultBranch();
   const settingsText = await repo.readFile(defaultBranch, SETTINGS_FILE);
   const fileSettings = settingsText === void 0 ? { ok: true, value: {} } : parseSettings(settingsText);
@@ -33670,11 +34324,11 @@ async function select(services) {
   }
   const inherited = [inputs, fileSettings.value, shared.value];
   const cap = tasksPerRun(inherited);
-  const resolveOwn = (own, run2) => {
-    const resolved = resolveRun([own, ...inherited], run2);
-    if (resolved.ok) return { own, resolved: resolved.value };
-    if (own.model !== void 0 || own.gpu !== void 0) {
-      const { model: _model, gpu: _gpu, ...rest } = own;
+  const resolveOwn = (own2, run2) => {
+    const resolved = resolveRun([own2, ...inherited], run2);
+    if (resolved.ok) return { own: own2, resolved: resolved.value };
+    if (own2.model !== void 0 || own2.gpu !== void 0) {
+      const { model: _model, gpu: _gpu, ...rest } = own2;
       const fallback = resolveRun([rest, ...inherited], run2);
       if (fallback.ok) return { own: rest, resolved: fallback.value, rejected: resolved.error };
     }
@@ -33735,17 +34389,53 @@ async function select(services) {
   }
   const withoutAgent = ready.filter((work) => !work.agentStage).slice(0, cap);
   const agentWork = ready.filter((work) => work.agentStage);
-  const agentPick = pickAgentTasks(
-    agentWork.map((work) => ({ number: work.task.number, counts: work.counts })),
-    cap,
-    cap - withoutAgent.length
-  );
-  const picks = [
-    ...withoutAgent,
-    ...agentWork.filter((work) => agentPick.picked.includes(work.task.number))
-  ];
   const workOf = (number3) => agentWork.find((work) => work.task.number === number3);
-  const prepare = async (work, agents) => {
+  const store = services.store();
+  const now = /* @__PURE__ */ new Date();
+  const agreed = await handshake(store, repo.repository.owner, declared.value, now);
+  for (const note of agreed.notes) runtime2.warning(note);
+  const pool2 = agreed.pool;
+  if (pool2.members.length > 1 || declared.value.members.length > 1) {
+    runtime2.info(`Pool ${pool2.id}: batches with the repositories of ${pool2.members.join(", ")}.`);
+  }
+  const own = agentWork.map((work) => ({
+    number: work.task.number,
+    stage: work.agentStage ?? "",
+    updatedAt: work.task.updatedAt,
+    offers: work.counts.filter((count3) => count3.tasks <= cap)
+  }));
+  const board = await exchange(store, {
+    pool: pool2,
+    repository: repositoryName(repo.repository),
+    branch: defaultBranch,
+    workflow: runtime2.workflow,
+    run: { id: runtime2.run.id, attempt: runtime2.run.attempt },
+    now,
+    own,
+    places: cap - withoutAgent.length
+  });
+  for (const { number: number3, batch } of board.dropped) {
+    runtime2.info(
+      `#${number3} was reserved by batch ${batch}, but is no longer ready for it; released.`
+    );
+  }
+  for (const one of board.honored) {
+    runtime2.info(
+      `#${one.number} was reserved by batch ${one.batch}, of ${one.size} task(s) for profile \`${one.profile ?? ""}\`; it starts now.`
+    );
+  }
+  for (const batch of board.batches) {
+    if (!batch.id) continue;
+    runtime2.info(
+      `Formed batch ${batch.id}: ${batch.size} task(s) for profile \`${batch.profile ?? ""}\`, ${batch.tasks.map((task) => `${task.repository}#${task.number}`).join(", ")}.`
+    );
+  }
+  const starting = [];
+  for (const started of [...board.honored, ...board.formed]) {
+    const work = workOf(started.number);
+    if (work) starting.push({ work, started });
+  }
+  const prepare = async (work, started) => {
     const { choice, task, talk, record, maintainerComments, reviewComments, reviews } = work;
     const { sources, newRequests, route, action, stage, description, pending } = work;
     const replan = choice.action === "plan" ? replanRequests(sources) : [];
@@ -33778,14 +34468,14 @@ async function select(services) {
     const branchSha = await repo.branchSha(branch);
     const baseSha = branchSha ?? await repo.branchSha(defaultBranch);
     if (!baseSha) throw new Error(`Branch ${defaultBranch} not found.`);
-    const runConditions = work.agentStage ? { stage: work.agentStage, tasks: agents } : void 0;
-    const { own, resolved, rejected } = resolveOwn(work.own, runConditions);
+    const runConditions = work.agentStage && started ? { stage: work.agentStage, tasks: started.size } : void 0;
+    const { own: own2, resolved, rejected } = resolveOwn(work.own, runConditions);
     const rejection = rejected ?? work.rejected;
     if (rejection) problems.push({ problem: { kind: "settings-rejected", error: rejection } });
-    for (const line of settingSources([own, ...inherited])) runtime2.info(line);
+    for (const line of settingSources([own2, ...inherited])) runtime2.info(line);
     const { profile: profile2, accounts, settings } = resolved;
     if (profile2) runtime2.info(`Profile \`${profile2}\` applies to this run.`);
-    const parallel = mostTasks([own, ...inherited], profile2);
+    const parallel = mostTasks([own2, ...inherited], profile2);
     const model = settings.model;
     const context3 = {
       version: 1,
@@ -33863,6 +34553,7 @@ async function select(services) {
       profile: profile2,
       accounts,
       parallel,
+      batch: started?.batch,
       context: context3,
       start
     };
@@ -33906,11 +34597,12 @@ async function select(services) {
   const wait = async (work, waiting) => {
     const { task, talk, record } = work;
     const profile2 = waiting.profile ?? "";
+    const { ready: ready2, repositories } = waiting;
     runtime2.info(
-      `#${task.number} ${oneLine(task.title)}: waits for ${waiting.tasks} tasks ready for profile \`${profile2}\`; ${waiting.ready} ${waiting.ready === 1 ? "is" : "are"}.`
+      `#${task.number} ${oneLine(task.title)}: waits for ${waiting.tasks} tasks ready for profile \`${profile2}\`; ${ready2} ${ready2 === 1 ? "is" : "are"}, in ${repositories} ${repositories === 1 ? "repository" : "repositories"}.`
     );
     const t = messages(taskLanguage(work.language, record?.language));
-    const message = t.waitingForTasks(waiting.tasks, profile2, waiting.ready);
+    const message = t.waitingForTasks(waiting.tasks, profile2, ready2, repositories);
     if (talk.status?.body.includes(message)) return;
     const served = resolveOwn(work.own, {
       stage: work.agentStage ?? "plan",
@@ -33923,14 +34615,21 @@ async function select(services) {
     );
   };
   const picked = [];
-  for (const work of picks) picked.push(await prepare(work, agentPick.tasks));
-  for (const number3 of agentPick.unserved) {
+  for (const work of withoutAgent) picked.push(await prepare(work));
+  for (const { work, started } of starting) picked.push(await prepare(work, started));
+  for (const number3 of board.unserved) {
     const work = workOf(number3);
     if (work) await block2(work);
   }
-  for (const waiting of agentPick.waiting) {
+  for (const waiting of board.waiting) {
     const work = workOf(waiting.number);
     if (work) await wait(work, waiting);
+  }
+  runtime2.output("dispatches", JSON.stringify(board.dispatches));
+  for (const one of board.dispatches) {
+    runtime2.info(
+      `Starts ${one.owner}/${one.repository}'s ${one.workflow} for batch ${one.batches}.`
+    );
   }
   if (picked.length === 0) {
     runtime2.output("action", "none");
@@ -33938,12 +34637,13 @@ async function select(services) {
     return;
   }
   const list4 = picked.map((one) => `#${one.number} (${one.action})`).join(", ");
+  const agents = picked.filter((one) => one.needsAgent).length;
   runtime2.info(
-    `Picked ${picked.length} task(s), of up to ${cap}: ${list4}; ${agentPick.tasks} run an agent.`
+    `Picked ${picked.length} task(s), of up to ${cap}: ${list4}; ${agents} run an agent.`
   );
   for (const one of picked) await one.start();
   const runOf = (one) => ledgerRunId(runtime2.run.id, runtime2.run.attempt, one.number);
-  const outputs = picked.map((one) => taskOutputs(one, runOf(one)));
+  const outputs = picked.map((one) => taskOutputs(one, runOf(one), pool2));
   runtime2.output("tasks", JSON.stringify(outputs));
   const [first] = outputs;
   const [firstPicked] = picked;
@@ -33959,7 +34659,8 @@ async function select(services) {
       agent: one.needsAgent,
       model: one.model,
       provider: one.settings.provider,
-      profile: one.profile
+      profile: one.profile,
+      batch: one.batch
     });
   }
   await ledger.flush(runtime2);
@@ -33976,11 +34677,13 @@ function handled(work) {
     )
   };
 }
-function taskOutputs(task, run2) {
+function taskOutputs(task, run2, pool2) {
   const choice = inferenceChoice(task.settings, task.record, {
     profile: task.profile,
     accounts: task.accounts,
-    parallel: task.parallel
+    parallel: task.parallel,
+    pool: pool2,
+    batch: task.batch
   });
   return {
     task: String(task.number),
@@ -34463,7 +35166,7 @@ function gitHubServices(runtime2) {
     inference,
     accounts: () => providerAccounts(runtime2),
     store: theStore,
-    ledger: (job) => new Ledger(theStore(), { runtime: runtime2, job })
+    ledger: (job, pool2) => new Ledger(theStore(), { runtime: runtime2, job, pool: pool2 })
   };
 }
 async function run(services) {
@@ -35872,6 +36575,10 @@ var GitHubActionsRuntime = class {
   runIdOf(url) {
     return /\/actions\/runs\/(\d+)$/.exec(url)?.[1];
   }
+  /** From `GITHUB_WORKFLOW_REF`: `owner/repo/.github/workflows/codeman.yml@refs/heads/main`. */
+  get workflow() {
+    return workflowFile(process.env.GITHUB_WORKFLOW_REF ?? "");
+  }
   /** As `@actions/github`'s context reads it. */
   get repository() {
     const [owner = "", name = ""] = (process.env.GITHUB_REPOSITORY ?? "").split("/");
@@ -35881,6 +36588,11 @@ var GitHubActionsRuntime = class {
     return { owner, name };
   }
 };
+function workflowFile(ref) {
+  const path = ref.split("@")[0] ?? "";
+  const file = path.slice(path.lastIndexOf("/") + 1);
+  return /^[\w.-]+\.ya?ml$/.test(file) ? file : "codeman.yml";
+}
 
 // src/index.ts
 var runtime = new GitHubActionsRuntime();
