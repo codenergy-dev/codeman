@@ -254,7 +254,12 @@ test("the dispatch job wakes each repository with a token for it alone, that may
   assert.match(job, /include: \$\{\{ fromJSON\(needs\.select\.outputs\.dispatches\) \}\}/);
   // Untrusted-looking values reach the shell through the environment only.
   assert.ok(!/\$\{\{ matrix\.[a-z]+ \}\}"/.test(job));
-  assert.match(job, /gh workflow run "\$WORKFLOW" --repo "\$OWNER\/\$REPOSITORY" --ref "\$REF"/);
+  // Always Codeman's workflow on the default branch: nothing from the board picks the file or ref.
+  assert.match(
+    job,
+    /gh workflow run codeman\.yml --repo "\$OWNER\/\$REPOSITORY" -f batch="\$BATCHES"/,
+  );
+  assert.ok(!/--ref|matrix\.(workflow|ref)/.test(job));
   // The agent's permissions stay as they were.
   assert.deepEqual(
     entries(task, ["jobs", "agent", "permissions"]),

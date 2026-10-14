@@ -119,8 +119,6 @@ test("Firestore emulator: two selects at once reserve each task of the board onc
     exchange(store, {
       pool: { id: "o", members: ["o"] },
       repository,
-      branch: "main",
-      workflow: "codeman.yml",
       run: { id, attempt: 1 },
       now,
       own: tasks.map((number) => ({ number, stage: "code", offers })),

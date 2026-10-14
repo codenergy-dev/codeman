@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { GitHubActionsRuntime, workflowFile } from "./github-actions.ts";
+import { GitHubActionsRuntime } from "./github-actions.ts";
 
 test("a run's ID comes from the end of its link", () => {
   const runtime = new GitHubActionsRuntime();
@@ -40,10 +40,4 @@ test("without GitHub's OIDC variables, the job is told it needs id-token: write"
   } finally {
     process.env = env;
   }
-});
-
-test("the workflow's file comes from its ref, which a dispatch starts", () => {
-  assert.equal(workflowFile("o/r/.github/workflows/codeman.yml@refs/heads/main"), "codeman.yml");
-  assert.equal(workflowFile("o/r/.github/workflows/ai.yaml@refs/heads/x"), "ai.yaml");
-  assert.equal(workflowFile(""), "codeman.yml");
 });

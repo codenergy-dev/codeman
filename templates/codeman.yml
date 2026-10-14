@@ -199,13 +199,13 @@ jobs:
             echo "Its codeman group is busy; the run waits for it, and the reservation lasts 30 minutes:"
             echo "$busy"
           fi
-          gh workflow run "$WORKFLOW" --repo "$OWNER/$REPOSITORY" --ref "$REF" -f batch="$BATCHES"
+          # Always Codeman's workflow on the default branch, the only one Workload Identity
+          # admits: given no ref, gh takes the repository's default branch.
+          gh workflow run codeman.yml --repo "$OWNER/$REPOSITORY" -f batch="$BATCHES"
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           OWNER: ${{ matrix.owner }}
           REPOSITORY: ${{ matrix.repository }}
-          WORKFLOW: ${{ matrix.workflow }}
-          REF: ${{ matrix.ref }}
           BATCHES: ${{ matrix.batches }}
 
   # Runs each task select picked in its own jobs, from key to apply, in codeman-task.yml: one

@@ -40,9 +40,6 @@ export interface BoardTask {
 export interface BoardEntry {
   /** `owner/name`, lowercase. */
   repository: string;
-  /** Its default branch, and the file of its Codeman workflow, which a dispatch starts. */
-  branch: string;
-  workflow: string;
   updatedAt: Date;
   expiresAt: Date;
   /** In the repository's order of priority. */
@@ -88,12 +85,14 @@ export interface Started {
   batch?: string | undefined;
 }
 
-/** A run of another repository to start, for the batches that reserved its tasks. */
+/**
+ * A run of another repository to start, for the batches that reserved its tasks: always its
+ * `codeman.yml` on its default branch, the only workflow Workload Identity admits, so nothing on
+ * the board, which any member's run may write, chooses what a dispatch starts.
+ */
 export interface Dispatch {
   owner: string;
   repository: string;
-  workflow: string;
-  ref: string;
   batches: string;
 }
 
@@ -157,8 +156,6 @@ export function exchange(
   input: {
     pool: Pool;
     repository: string;
-    branch: string;
-    workflow: string;
     run: { id: string; attempt: number };
     now: Date;
     /** In the repository's order of priority. */
@@ -322,8 +319,6 @@ export function exchange(
         path: LAYOUT.boardEntry(pool.id, repository),
         fields: {
           repository,
-          branch: input.branch,
-          workflow: input.workflow,
           updatedAt: now,
           expiresAt: new Date(now.getTime() + BOARD_TTL_MS),
           tasks: listed.map((task) => ({
@@ -341,16 +336,11 @@ export function exchange(
       for (const [target, ids] of targets) {
         const entry = live.find((one) => one.repository === target);
         const owner = ownerOf(target);
-        // Never another owner than the pool's members that agree, nor another workflow than
-        // Codeman's: the token may start any workflow of the target, so the entry, which any
-        // member's run may write, cannot choose it.
+        // Never another owner than the pool's members that agree.
         if (!entry || !members.has(owner)) continue;
-        if (entry.workflow !== DISPATCHED_WORKFLOW || !isBranchName(entry.branch)) continue;
         dispatches.push({
           owner,
           repository: target.slice(owner.length + 1),
-          workflow: entry.workflow,
-          ref: entry.branch,
           batches: ids.join(" "),
         });
       }
@@ -368,17 +358,6 @@ export function exchange(
   );
 }
 
-/**
- * The only workflow a dispatch starts: the one Workload Identity admits, so another could not
- * reach the store anyway.
- */
-const DISPATCHED_WORKFLOW = "codeman.yml";
-
-/** A branch name `gh workflow run --ref` takes as it is: no option, no `..`, no odd characters. */
-function isBranchName(branch: string): boolean {
-  return /^[\w.][\w./-]{0,254}$/.test(branch) && !branch.includes("..");
-}
-
 function ownerOf(repository: string): string {
   return repository.slice(0, repository.indexOf("/"));
 }
@@ -390,15 +369,14 @@ function memberFields(member: BatchMember): Fields {
 /** A snapshot as the board reads it; undefined when it is not one. */
 export function boardEntry(document: StoredDocument): BoardEntry | undefined {
   const { fields } = document;
-  const { repository, branch, workflow, updatedAt, expiresAt, tasks } = fields;
+  // Snapshots written before dispatches took only the default branch also hold `branch` and
+  // `workflow`, which nothing reads.
+  const { repository, updatedAt, expiresAt, tasks } = fields;
   if (typeof repository !== "string" || !repository.includes("/")) return undefined;
-  if (typeof branch !== "string" || typeof workflow !== "string") return undefined;
   if (!(updatedAt instanceof Date) || !(expiresAt instanceof Date)) return undefined;
   const list = Array.isArray(tasks) ? tasks : [];
   return {
     repository,
-    branch,
-    workflow,
     updatedAt,
     expiresAt,
     tasks: list.flatMap((value): BoardTask[] => {

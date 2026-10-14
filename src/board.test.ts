@@ -39,19 +39,11 @@ function run(
   repository: string,
   tasks: OwnTask[],
   now: Date,
-  options: {
-    runId?: string;
-    places?: number;
-    members?: string[];
-    workflow?: string;
-    branch?: string;
-  } = {},
+  options: { runId?: string; places?: number; members?: string[] } = {},
 ) {
   return exchange(store, {
     pool: { id: pool.id, members: options.members ?? pool.members },
     repository,
-    branch: options.branch ?? "main",
-    workflow: options.workflow ?? "codeman.yml",
     run: { id: options.runId ?? String(now.getTime() / 60_000), attempt: 1 },
     now,
     own: tasks,
@@ -102,9 +94,7 @@ test("2 and 2 across two repositories form a batch of 4; the other repository's 
       [8, 4, "200-1-0"],
     ],
   );
-  assert.deepEqual(formed.dispatches, [
-    { owner: "a", repository: "x", workflow: "codeman.yml", ref: "main", batches: "200-1-0" },
-  ]);
+  assert.deepEqual(formed.dispatches, [{ owner: "a", repository: "x", batches: "200-1-0" }]);
   const batch = await readBatch(store, pool.id, "200-1-0");
   assert.deepEqual(
     batch?.members.map((member) => [member.repository, member.number, member.status]),
@@ -164,18 +154,22 @@ test("a reserved task no longer ready is dropped and released; an expired reserv
   );
 });
 
-test("a dispatch starts only Codeman's workflow, on a plain branch name", async () => {
-  for (const [options, why] of [
-    [{ workflow: "release.yml" }, "another workflow of the target"],
-    [{ branch: "--ref=x" }, "an option for a branch"],
-    [{ branch: "a/../b" }, "a branch with .."],
-  ] as const) {
-    const store = new MemoryStore();
-    await run(store, "a/x", own([1, 2]), at(0), options);
-    const formed = await run(store, "b/y", own([7, 8]), at(5), { runId: "200" });
-    assert.equal(formed.formed.length, 2, why);
-    assert.deepEqual(formed.dispatches, [], why);
-  }
+test("a snapshot from before dispatches took the default branch still reads, and names no workflow", async () => {
+  const store = new MemoryStore();
+  await run(store, "a/x", own([1, 2]), at(0));
+  const path = LAYOUT.boardEntry(pool.id, "a/x");
+  const written = await store.get(path);
+  assert.ok(written);
+  // Older snapshots also held the branch and the workflow, which a member's run could choose.
+  await store.write([
+    {
+      op: "set",
+      path,
+      fields: { ...written.fields, branch: "--ref=x", workflow: "release.yml" },
+    },
+  ]);
+  const formed = await run(store, "b/y", own([7, 8]), at(5), { runId: "200" });
+  assert.deepEqual(formed.dispatches, [{ owner: "a", repository: "x", batches: "200-1-0" }]);
 });
 
 test("a snapshot expires, and a repository outside the pool is never batched nor dispatched", async () => {
@@ -292,7 +286,7 @@ test("select: tasks of two organizations of a pool form a batch, which the other
     ["2", "four", "200-1-0"],
   ]);
   assert.deepEqual(JSON.parse(second.outputs.dispatches ?? ""), [
-    { owner: "org-a", repository: "x", workflow: "codeman.yml", ref: "main", batches: "200-1-0" },
+    { owner: "org-a", repository: "x", batches: "200-1-0" },
   ]);
   const choice = JSON.parse(JSON.parse(second.outputs.tasks ?? "")[0].inference);
   assert.deepEqual(choice.pool, { id: "org-a+org-b", members: ["org-a", "org-b"] });

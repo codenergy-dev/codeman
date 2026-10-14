@@ -18,7 +18,6 @@ A pool is a closed list of organizations that share the board, the batches, the 
 
 Each `select` rewrites its repository's snapshot whole (`pools/{pool}/board/{owner%2Fname}`), in one transaction with the batches:
 
-- its default branch and its Codeman workflow's file, which a dispatch starts;
 - its ready tasks that a pod profile could serve, in its own order of priority, each with its stage, the issue's last update, `since` (when the board first listed it ready, carried from the previous snapshot), and its offers: each count at which a profile serves it, with the profile and a key of the settings that serve it there;
 - `expiresAt`, 25 hours later: the daily schedule rewrites it, and the `issues` triggers rewrite it whenever the `codeman` label changes or a task closes or reopens.
 
@@ -44,7 +43,7 @@ A task that no batch of its count completes waits; its panel says how many are r
 
 ## Waking the other repositories
 
-`select` outputs `dispatches`: one entry per other repository with tasks in a batch it formed, only for owners in the pool that agree, and only to start `codeman.yml` on a plain branch name: the token may start any of the target's workflows, and the board entry that names the workflow can be written by any member's run, so a dispatch never takes another file from it. Without a dispatch, the reservation waits for that repository's next run. The `dispatch` job, one leg each, mints a token for that owner limited to that repository and `actions: write`, logs whether that repository's `codeman` group is busy, and starts its workflow with `workflow_dispatch`, the batch IDs as its `batch` input, which the started run only logs. The dispatched run waits in that repository's `codeman` group like any other.
+`select` outputs `dispatches`: one entry per other repository with tasks in a batch it formed, only for owners in the pool that agree. A dispatch always starts the target's `codeman.yml` on its default branch, the only workflow Workload Identity admits: the token may start any of the target's workflows, so nothing on the board, which any member's run may write, chooses what a dispatch starts. The `dispatch` job, one leg each, mints a token for that owner limited to that repository and `actions: write`, logs whether that repository's `codeman` group is busy, and starts its workflow with `workflow_dispatch`, the batch IDs as its `batch` input, which the started run only logs. The dispatched run waits in that repository's `codeman` group like any other.
 
 A dispatch that is refused (the App is not installed on the repository, its permission is not approved, the installation is suspended, the workflow is missing or disabled) fails its leg, visibly in the forming run; the reservation expires after 30 minutes, and the forming repository's tasks run on their pod meanwhile.
 

@@ -334,8 +334,6 @@ export async function select(services: Services): Promise<void> {
   const board = await exchange(store, {
     pool,
     repository: repositoryName(repo.repository),
-    branch: defaultBranch,
-    workflow: runtime.workflow,
     run: { id: runtime.run.id, attempt: runtime.run.attempt },
     now,
     own,
@@ -607,7 +605,7 @@ export async function select(services: Services): Promise<void> {
   runtime.output("dispatches", JSON.stringify(board.dispatches satisfies Dispatch[]));
   for (const one of board.dispatches) {
     runtime.info(
-      `Starts ${one.owner}/${one.repository}'s ${one.workflow} for batch ${one.batches}.`,
+      `Starts ${one.owner}/${one.repository}'s codeman.yml, on its default branch, for batch ${one.batches}.`,
     );
   }
   if (picked.length === 0) {

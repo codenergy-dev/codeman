@@ -23003,8 +23003,6 @@ function exchange(store, input) {
         path: LAYOUT.boardEntry(pool2.id, repository),
         fields: {
           repository,
-          branch: input.branch,
-          workflow: input.workflow,
           updatedAt: now,
           expiresAt: new Date(now.getTime() + BOARD_TTL_MS),
           tasks: listed.map((task) => ({
@@ -23022,12 +23020,9 @@ function exchange(store, input) {
         const entry = live.find((one) => one.repository === target);
         const owner = ownerOf(target);
         if (!entry || !members.has(owner)) continue;
-        if (entry.workflow !== DISPATCHED_WORKFLOW || !isBranchName(entry.branch)) continue;
         dispatches.push({
           owner,
           repository: target.slice(owner.length + 1),
-          workflow: entry.workflow,
-          ref: entry.branch,
           batches: ids.join(" ")
         });
       }
@@ -23044,10 +23039,6 @@ function exchange(store, input) {
     { attempts: ATTEMPTS }
   );
 }
-var DISPATCHED_WORKFLOW = "codeman.yml";
-function isBranchName(branch) {
-  return /^[\w.][\w./-]{0,254}$/.test(branch) && !branch.includes("..");
-}
 function ownerOf(repository) {
   return repository.slice(0, repository.indexOf("/"));
 }
@@ -23056,15 +23047,12 @@ function memberFields(member) {
 }
 function boardEntry(document) {
   const { fields } = document;
-  const { repository, branch, workflow, updatedAt, expiresAt: expiresAt2, tasks } = fields;
+  const { repository, updatedAt, expiresAt: expiresAt2, tasks } = fields;
   if (typeof repository !== "string" || !repository.includes("/")) return void 0;
-  if (typeof branch !== "string" || typeof workflow !== "string") return void 0;
   if (!(updatedAt instanceof Date) || !(expiresAt2 instanceof Date)) return void 0;
   const list4 = Array.isArray(tasks) ? tasks : [];
   return {
     repository,
-    branch,
-    workflow,
     updatedAt,
     expiresAt: expiresAt2,
     tasks: list4.flatMap((value) => {
@@ -34412,8 +34400,6 @@ async function select(services) {
   const board = await exchange(store, {
     pool: pool2,
     repository: repositoryName(repo.repository),
-    branch: defaultBranch,
-    workflow: runtime2.workflow,
     run: { id: runtime2.run.id, attempt: runtime2.run.attempt },
     now,
     own,
@@ -34633,7 +34619,7 @@ async function select(services) {
   runtime2.output("dispatches", JSON.stringify(board.dispatches));
   for (const one of board.dispatches) {
     runtime2.info(
-      `Starts ${one.owner}/${one.repository}'s ${one.workflow} for batch ${one.batches}.`
+      `Starts ${one.owner}/${one.repository}'s codeman.yml, on its default branch, for batch ${one.batches}.`
     );
   }
   if (picked.length === 0) {
@@ -36580,10 +36566,6 @@ var GitHubActionsRuntime = class {
   runIdOf(url) {
     return /\/actions\/runs\/(\d+)$/.exec(url)?.[1];
   }
-  /** From `GITHUB_WORKFLOW_REF`: `owner/repo/.github/workflows/codeman.yml@refs/heads/main`. */
-  get workflow() {
-    return workflowFile(process.env.GITHUB_WORKFLOW_REF ?? "");
-  }
   /** As `@actions/github`'s context reads it. */
   get repository() {
     const [owner = "", name = ""] = (process.env.GITHUB_REPOSITORY ?? "").split("/");
@@ -36593,11 +36575,6 @@ var GitHubActionsRuntime = class {
     return { owner, name };
   }
 };
-function workflowFile(ref) {
-  const path = ref.split("@")[0] ?? "";
-  const file = path.slice(path.lastIndexOf("/") + 1);
-  return /^[\w.-]+\.ya?ml$/.test(file) ? file : "codeman.yml";
-}
 
 // src/index.ts
 var runtime = new GitHubActionsRuntime();

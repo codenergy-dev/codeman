@@ -1,7 +1,7 @@
 ---
 status: completed
 created_at: 2026-10-13T20:52:00-03:00
-updated_at: 2026-10-14T12:54:36-03:00
+updated_at: 2026-10-14T14:31:07-03:00
 commit: 95962c0
 ---
 
@@ -255,6 +255,10 @@ By the responsible person, with Codeman installed from the plan's last commit. C
 14. With the profiles' example (`tasks: 4` on the full GPU, `mig` up to 3), two tasks ready in the test repository and two in the B repository: one batch of 4 on one full-GPU pod, two in each repository's run.
 
 Total: about US$ 3 to 5 on Runpod, a few cents on OpenRouter, and Firestore within its free quota.
+
+## Notes
+
+- 2026-10-14, after the plan was completed, at the responsible person's request: a dispatch always starts the target's `codeman.yml` on its default branch (`gh workflow run codeman.yml` with no ref), the only workflow and branch Workload Identity admits. The board no longer holds a repository's branch and workflow file, and `Runtime.workflow` is gone, so nothing a member's run writes on the board chooses what a dispatch starts. Snapshots written before still read; their extra fields are ignored.
 
 ## Out of scope
 
