@@ -4,11 +4,11 @@ One subject per file, grouped by what the reader wants to do. The [root README](
 
 ## Setting it up
 
-- [Installation](installation/setup.md): the GitHub App, OpenRouter, the credentials, the backend and the workflow, step by step; then trying it.
+- [Installation](installation/setup.md): the GitHub App, OpenRouter, the credentials, the backend and the workflow, step by step, and a pool of organizations; then trying it.
 - [Shared settings](installation/shared-settings.md): settings an organization gives all its repositories.
 - [Self-hosted inference on Runpod](installation/runpod.md): the Runpod account, pods and a Serverless endpoint.
 - [Profiles](installation/profiles.md): how to use different providers and models for different runs.
-- [Upgrading](installation/upgrading.md): old setting names, a model per provider, profiles that pick the tasks, pods that fit the GPU, vLLM on pods, and workflow files copied before the backend.
+- [Upgrading](installation/upgrading.md): old setting names, a model per provider, profiles that pick the tasks, pods that fit the GPU, vLLM on pods, GPU batches across repositories, and workflow files copied before the backend.
 
 ## Using it
 
@@ -33,14 +33,14 @@ One subject per file, grouped by what the reader wants to do. The [root README](
 - [Spend](budget/spend.md): the spend table, and how self-hosted runs count.
 - [OpenRouter](inference/openrouter.md): per-run keys, usage, analytics and key encryption.
 - [Self-hosted inference](inference/self-hosted.md): Runpod's providers compared, the interfaces, and the gateway.
-- [Pods](inference/pods.md): the pod registry, leases, and shared pods.
+- [Pods](inference/pods.md): the pod registry, leases, shared pods and their capacity.
 - [Serverless](inference/serverless.md): the endpoint's checks, the job queue, and worker-time estimates and splits.
 - [Backend](backend/backend.md): Firestore's access, client, rules and cost; the store; the ledger.
 - [Data layout](backend/data-layout.md): the backend's collections, documents, IDs, events and queries.
 
 ## Security
 
-- [Security](security/overview.md): whom it is for, the checklist, and the roadmap.
+- [Security](security/overview.md): whom it is for, the checklist, a public App and a pool, and the roadmap.
 - [Secrets](security/secrets.md): each secret, who uses it, why it is safe, its gaps and mitigations.
 - [Risks](security/risks.md): the risks, from most to least severe, and untrusted input.
 

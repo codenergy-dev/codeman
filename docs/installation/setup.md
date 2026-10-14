@@ -6,7 +6,7 @@ Setting up Codeman on a repository takes five parts: a GitHub App, an OpenRouter
 
 Codeman acts as a GitHub App, not with the workflow's `GITHUB_TOKEN`. The `GITHUB_TOKEN` cannot push changes under `.github/workflows/`, and events it creates do not trigger other workflows.
 
-Register one App per owner (user or organization) under **Settings → Developer settings → GitHub Apps → New GitHub App**:
+Register the App once, under the owner (user or organization) that runs Codeman, in **Settings → Developer settings → GitHub Apps → New GitHub App**:
 
 - **Webhook:** disabled. Codeman runs from workflows, not webhooks.
 - **Repository permissions:**
@@ -14,9 +14,9 @@ Register one App per owner (user or organization) under **Settings → Developer
   - Issues: read and write
   - Pull requests: read and write
   - Workflows: read and write
-  - Actions: read-only
+  - Actions: read and write. Read for the results of workflows the agent asked for; write only in the `dispatch` job, which starts another repository's Codeman run for a [batch](../runs/batches.md#waking-the-other-repositories), with a token for that repository alone.
   - Metadata: read-only (mandatory)
-- **Where can this GitHub App be installed:** only on this account.
+- **Where can this GitHub App be installed:** only on this account, for one organization; any account, for a [pool of organizations](#a-pool-of-organizations), which then installs it by its link. Making it public does not list it in the Marketplace.
 
 After creating it:
 
@@ -25,6 +25,8 @@ After creating it:
 3. Install the App on the repositories where Codeman should run, choosing **Only select repositories**.
 
 Each job requests a token scoped down to the permissions it needs.
+
+An App created before batches has Actions read-only: change it to read and write, then approve the new permission in each installation (**Settings → GitHub Apps → Codeman → Review request**); until then, a `dispatch` leg fails, and the batch runs smaller.
 
 ## 2. Prepare OpenRouter
 
@@ -115,6 +117,18 @@ Firestore's free quota covers Codeman's use by far ([cost](../backend/backend.md
 
 The workflow templates pass these variables to the jobs that record runs, and give those jobs, and only those, the `id-token: write` permission. The first run that finds a task writes the first documents: **Firestore Database → Data** shows `organizations/<owner>/runs` and `events`.
 
+### A pool of organizations
+
+Organizations that share one Runpod account can batch tasks on the same pods ([batches across repositories](../runs/batches.md)). For each organization of the pool:
+
+1. Install the same App, made public, by its link (**Public page → Install**), with **Only select repositories**.
+2. Add the same secrets and variables as the first: the App's client ID and private key, the Runpod key of the same account, the OpenRouter keys, an encryption secret, and the backend's three variables, which name the same project, provider and service account.
+3. Add its ID to the provider's condition: `assertion.repository_owner_id in ['<ID of A>', '<ID of B>']` (`gcloud iam workload-identity-pools providers update-oidc github --location=global --workload-identity-pool=codeman --project="$PROJECT_ID" --attribute-condition=...`). The condition is the pool's real boundary: only the owners it admits reach the board, the batches and the registry.
+4. Set `pool` to the same list in its `CODEMAN_SETTINGS`, such as `pool: [organization-a, organization-b]` ([shared settings](shared-settings.md)).
+5. Copy the same workflow files into each repository that runs Codeman.
+
+A pool is mutual trust: whoever can change `codeman.yml` on a default branch of any member holds the App's key, and so reaches every member's installed repositories with the App's permissions ([security](../security/overview.md#a-public-app-and-a-pool)).
+
 ## 5. Add the workflow and settings
 
 1. Copy [`templates/codeman.yml`](../../templates/codeman.yml) to `.github/workflows/codeman.yml` in the target repository, and [`templates/codeman-task.yml`](../../templates/codeman-task.yml), which runs each task's jobs, to `.github/workflows/codeman-task.yml`.
@@ -128,7 +142,7 @@ Codeman reads `.codeman/settings.yml` and `.codemanignore` from the default bran
 
 The agent job needs a Linux runner (x64 or arm64).
 
-A run works on one task by default. A [profile](profiles.md) with a count of tasks, such as `max-tasks: 2` (up to 10), in `.codeman/settings.yml` lets a run work on that many at once, each with its own key and agent; the run ends when its slowest task does. On OpenRouter, it only finishes tasks sooner: each pays for its own tokens. On pods, tasks with the same pod settings share one pod and split its cost by the second, as tasks of other runs and repositories do, once the pod image supports it (see [pods](runpod.md#pods)); on Serverless, each task counts the worker time its requests used, and time that tasks of any of the organization's repositories used the worker at once is split among them as they close (a run's own limit still counts it whole while it runs; see [Serverless](../inference/serverless.md)). The budgets hold across them: each run's limit is reserved in Codeman's ledger before it opens, so tasks that open at once never pass a budget together; see [budget](../budget/budget.md).
+A run works on one task by default. A [profile](profiles.md) with a count of tasks, such as `max-tasks: 2` (up to 10), in `.codeman/settings.yml` lets a run work on that many at once, each with its own key and agent; the run ends when its slowest task does. On OpenRouter, it only finishes tasks sooner: each pays for its own tokens. On pods, a count is a batch's: tasks with the same pod settings, of this and the pool's other repositories, share one pod and split its cost by the second, once the pod image supports it (see [pods](runpod.md#pods) and [batches across repositories](../runs/batches.md)); on Serverless, each task counts the worker time its requests used, and time that tasks of any of the organization's repositories used the worker at once is split among them as they close (a run's own limit still counts it whole while it runs; see [Serverless](../inference/serverless.md)). The budgets hold across them: each run's limit is reserved in Codeman's ledger before it opens, so tasks that open at once never pass a budget together; see [budget](../budget/budget.md).
 
 ## Try it
 

@@ -8,7 +8,7 @@ Codeman runs an AI agent that reads text and runs shell commands. Read everythin
 
 Before running Codeman on a repository:
 
-1. Install the App on selected repositories only.
+1. Install the App on selected repositories only. With a [pool](#a-public-app-and-a-pool), install it in each member, and check its installations in the App's settings from time to time: suspend any you do not know.
 2. Make Codeman's secrets visible only to the repositories that use it.
 3. Add a ruleset on the default branch that requires a reviewed pull request.
 4. Check which secrets the workflows that run on `codeman/*` branches expose. Move secrets that deploy or publish to an Environment with required reviewers ([risk 1](risks.md#1-code-the-agent-wrote-runs-with-the-repositorys-secrets)).
@@ -16,6 +16,17 @@ Before running Codeman on a repository:
 6. Keep `task-budget` and `monthly-budget` low ([risk 4](risks.md#4-the-agent-can-send-its-task-key-out)), and with several repositories, set `organization-monthly-budget` in the organization's settings. A repository's admins can still replace those settings, with a repository variable `CODEMAN_SETTINGS` or by changing its workflow file, so the organization's budget holds as far as they are trusted. With self-hosted inference, use a Runpod account dedicated to Codeman, with prepaid credits and no auto-pay.
 7. Give the backend a Firebase project of its own, with the rules and the attribute condition of [installation](../installation/setup.md#4-set-up-the-backend), and grant its service account only Cloud Datastore User.
 8. Label only issues you opened, written in your own words.
+
+## A public App and a pool
+
+A [pool of organizations](../runs/batches.md#pools) installs one App, made public so each organization can install it by its link, with the same private key in each organization's secrets. The analysis of decision 6 of the [plan for GPU batches across repositories](../plans/2026-10-13-gpu-batches-across-repositories.md):
+
+- **A stranger who installs the App gains nothing.** Without the private key they mint no token, and Codeman never acts on owners outside its pool: it mints tokens only for the members its organization's `pool` names and that declare the same pool, and never lists the App's installations.
+- **Whoever holds the key reaches a stranger's installation too**, with the App's permissions; Codeman ignores it, but a person with the key does not have to. The App's owner sees every installation in the App's settings, and can suspend any of them.
+- **A leaked key reaches every installation**, the pool's and any stranger's: rotate it (an App may hold several keys; delete the leaked one) and suspend installations while doing so.
+- **A pool is mutual trust.** Anyone who can change `codeman.yml` on a default branch of any member holds the key, and so reaches every member's installed repositories with the App's permissions (Contents and Workflows write already). Inside one organization this was already true. The backend's attribute condition, which lists the pool's owner IDs, is the boundary of what reaches the board, the batches and the registry.
+- **The `dispatch` job** holds the key only to mint, for one repository of another member, a token limited to `actions: write`, which its step revokes when it ends; it checks out nothing, runs no Codeman step, and has no OIDC token. Actions write also lets that token cancel, re-run and delete runs, and disable workflows, of that repository, for one hour at most.
+- *Alternative considered:* one private App per organization, each key also in the other organizations' secrets: the same trust, more upkeep.
 
 ## Roadmap
 

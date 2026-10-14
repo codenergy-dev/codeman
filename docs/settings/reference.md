@@ -3,7 +3,7 @@
 Settings come in layers. Each layer **inherits** from its **base**, the settings that the layers before it resolve to, and may **override** any of its values: a value it sets replaces the base's, and a value it does not set is the base's. The layers, in order:
 
 1. Codeman's default, the table's `Default` column.
-2. The organization's settings: the `settings` input of the `select` step, which the template fills from the `CODEMAN_SETTINGS` variable, in the file's format. They are defaults that several repositories share. Empty, or not passed by an older workflow file, means none. Only they set `organization-monthly-budget`: a repository's file or profile that sets it stops the run with an error, and neither commands nor a manual run's inputs take it. See [installation](../installation/shared-settings.md).
+2. The organization's settings: the `settings` input of the `select` step, which the template fills from the `CODEMAN_SETTINGS` variable, in the file's format. They are defaults that several repositories share. Empty, or not passed by an older workflow file, means none. Only they set `organization-monthly-budget` and `pool`: a repository's file or profile that sets either stops the run with an error, and neither commands nor a manual run's inputs take them. See [installation](../installation/shared-settings.md).
 3. `.codeman/settings.yml` on the default branch.
 4. The workflow's inputs, in a manual run.
 5. The [profile](profiles.md) that applies to the run, if any. It overrides only the provider, the model and the provider's settings. Profiles also have conditions, which decide when each applies and how many tasks a run takes.
@@ -19,6 +19,7 @@ When `select` picks a task, its log has a line per layer, naming the values that
 | `task-budget` | `2` | Spending limit of each task, across all its runs, in USD |
 | `monthly-budget` | `20` | Spending limit per calendar month for the repository, in USD |
 | `organization-monthly-budget` | none | Spending limit per calendar month for all the organization's repositories together, in USD, with the GPU accounts' billing; only the organization's settings set it. See [budget](../budget/budget.md) |
+| `pool` | none | The organizations whose repositories batch tasks on shared pods, as a list of logins that includes this one, such as `[organization-a, organization-b]`; only the organization's settings set it; without it, the organization alone. See [batches across repositories](../runs/batches.md#pools) |
 | `max-runs` | `3` | Runs in a row of a routed stage without finishing, or review rounds asking for changes, before a task is blocked |
 | `max-files` | `300` | Files one run may change |
 | `max-file-bytes` | `1048576` | Size limit of each changed file |
@@ -30,7 +31,7 @@ When `select` picks a task, its log has a line per layer, naming the values that
 | `max-summary-chars` | `2000` | Characters of the agent's summary and reason, at most 4,000 |
 | `language` | `auto` | The language Codeman talks to maintainers in, as a BCP 47 tag such as `pt-BR`; `auto` uses the conversation's. See [conversation language](../tasks/comments.md#conversation-language) |
 | `provider` | `openrouter` | Where agent runs get their model: `openrouter`, `runpod-pod` or `runpod-serverless`. Each provider accepts only its own settings; see [providers](providers.md) |
-| `profiles` | none | A provider, a model and that provider's settings for some runs, with conditions: the stages and the run's count of tasks. The counts also decide how many tasks a run works on at once, one without them; see [profiles](profiles.md) |
+| `profiles` | none | A provider, a model and that provider's settings for some runs, with conditions: the stages and the batch's count of tasks, the tasks that run at once with the same settings. The counts also decide how many tasks a run works on at once, one without them; see [profiles](profiles.md) |
 
 The settings that only some providers accept (`engine`, `gpu`, `endpoint`, `pod-reuse`, and the `ollama` and `vllm` blocks of a pod's [Ollama settings](ollama.md) and [vLLM settings](vllm.md)) are in [providers](providers.md). Some settings had other names before the [provider settings plan](../plans/2026-10-08-provider-settings.md); an old name stops the run with an error that gives the new one, and [upgrading](../installation/upgrading.md#old-setting-names) lists them. `parallel-tasks` and a profile's `when` are gone too, for the profiles' conditions; their errors say what to write ([upgrading](../installation/upgrading.md#profiles-pick-the-tasks)).
 

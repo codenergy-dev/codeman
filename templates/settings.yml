@@ -53,8 +53,10 @@ provider: openrouter
 # one on another provider than the top level's inherits none of that one's settings, and must
 # set its own `model`, as must one that inherits none.
 # Conditions, beside the profile's name: `stages` (any of plan, route, web, design, code, test,
-# review: planning, routing and the routed stages; all without it), and how many of the run's
-# tasks run an agent: `tasks` (exactly), or `min-tasks` and `max-tasks` (a range).
+# review: planning, routing and the routed stages; all without it), and the size of the run's
+# batch, the tasks that run at once with the same settings: `tasks` (exactly), or `min-tasks` and
+# `max-tasks` (a range). On a pod, a batch may take tasks of the organization's other
+# repositories, and of its pool's (`pool`, in the organization's settings only).
 # The counts also say how many tasks a run takes at once: the largest `tasks` or `max-tasks`
 # (10 with `min-tasks` alone), and one when no profile has a count. Above one, the workflow needs
 # codeman-task.yml next to codeman.yml, and tasks on pods with the same settings share one.

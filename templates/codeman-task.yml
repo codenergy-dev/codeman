@@ -59,7 +59,7 @@ jobs:
   # Gives this run access to its model, limited to what remains of the task's budget: an
   # OpenRouter key, or a token for a self-hosted model's gateway, on a pod the organization's
   # tasks with the same pod settings share, which it finds or creates in Codeman's pod registry;
-  # it first terminates the organization's pods that nothing holds. Only the key jobs (this one,
+  # it first terminates the pool's pods that nothing holds. Only the key jobs (this one,
   # close-key and release-pod) hold the management and GPU account keys. The budgets come from
   # Codeman's ledger, where this job reserves the run's limit; with an
   # organization-monthly-budget, it also reads each GPU account's billing. An unset secret is

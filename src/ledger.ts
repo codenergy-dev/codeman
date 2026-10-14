@@ -268,9 +268,7 @@ export class Ledger {
           ),
           // Pods' time no task counted belongs to the organization's month alone (decision 4 of
           // the pod registry plan).
-          organization
-            ? untrackedQuery(tx, pool, owner, ledgerMonth(now))
-            : Promise.resolve([]),
+          organization ? untrackedQuery(tx, pool, owner, ledgerMonth(now)) : Promise.resolve([]),
           // With a pool on one GPU account, its other members' runs share each billed hour
           // (decision 14 of the plan for GPU batches across repositories).
           organization && budgets.billed.size > 0

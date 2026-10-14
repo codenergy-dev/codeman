@@ -74,6 +74,16 @@ Since the [plan for vLLM on pods](../plans/2026-10-13-vllm-on-pods.md), a pod ca
 - **Layers that change engine.** A layer or profile that names another `engine` leaves out the block of the engine it inherits, as one that names another provider leaves out its settings ([provider settings across layers](../settings/provider-settings-across-layers.md)).
 - **The model.** With `engine: vllm`, `model` is a Hugging Face ID of a public model, not gated, with safetensors weights, such as `unsloth/Qwen3.8-27B-NVFP4`, not an Ollama name; and the `vllm` block needs the model's `tool-call-parser`.
 
+## GPU batches across repositories
+
+Since the [plan for GPU batches across repositories](../plans/2026-10-13-gpu-batches-across-repositories.md), a profile's count is the size of a batch, which on a pod may take tasks of the organization's other repositories, and of a [pool](../runs/batches.md#pools)'s organizations. Upgrade in this order:
+
+1. **Every repository at once, with no live pod.** Pods, Serverless endpoints' runs, the board and the batches move to `pools/{pool}/` in the backend, and the cache of fits to `contexts/`; runs and events stay under `organizations/{owner}`. The older `pods`, `contexts` and `endpoints` of each organization stay as history, unread, except that the organization's month still counts its older pods' untracked time. An upgraded `open-key` terminates the organization's pods created by older versions, which no registry reads any more: wait until no pod runs (Runpod's console shows none) before the first upgraded run, and upgrade every repository of every member of the pool together. The first pod of each settings searches its context again.
+2. **The App's Actions permission**: read and write, approved in each installation ([setup](setup.md#1-register-the-github-app)).
+3. **Both workflow files**, copied again in each repository: `codeman.yml` gains the `issues` trigger, the concurrency group of skipped runs, the `batch` input and the `dispatch` job. Create the `codeman` label if a repository lacks it.
+4. **Counts.** A planning task and code tasks are no longer counted together: in the [profiles' example](../settings/profiles.md#example), 1 planning task and 3 code tasks now run the code tasks on `mig` (3), not on `parallel-tasks` (4). A profile whose count was meant as the whole run's needs another look.
+5. **A pool of organizations**, optionally: [setup](setup.md#a-pool-of-organizations).
+
 ## Workflow files copied before the backend
 
 To update workflow files copied before the backend, copy both templates again, and move any steps you added to the `agent` job into the new `codeman-task.yml`: the jobs that record runs need their new permissions, variables and the run's ID in the ledger. Older workflow files fail in `select`, before they mark any task, since they pass none of the backend's variables. Workflow files copied before the budgets came from the ledger pass neither the organization's monthly budget nor the task's spend from `close-key` to `apply`: copy both templates again, too. With pods, update every repository of the organization at once to a version with the pod registry: its `open-key` terminates the organization's pods created by older versions, which the registry does not hold, and older versions cannot share the newer pods.

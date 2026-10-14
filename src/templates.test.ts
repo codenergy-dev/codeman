@@ -232,7 +232,7 @@ test("issue events start select only for the codeman label, and skipped runs nev
   assert.equal(entries(caller, ["concurrency"]).get("cancel-in-progress"), "false");
   // A dispatched run's batch reaches select, for its log only.
   assert.ok(entries(caller, ["on", "workflow_dispatch", "inputs"]).has("batch"));
-  assert.equal(stepInput(caller, "select", "batch"), "${{ inputs.batch }}");
+  assert.equal(stepInput(caller, "select", "batch"), `\${{ inputs.batch }}`);
 });
 
 test("the dispatch job wakes each repository with a token for it alone, that may only start workflows", () => {
@@ -248,8 +248,8 @@ test("the dispatch job wakes each repository with a token for it alone, that may
     ["permission-actions"],
   );
   assert.equal(token.get("permission-actions"), "write");
-  assert.equal(token.get("owner"), "${{ matrix.owner }}");
-  assert.equal(token.get("repositories"), "${{ matrix.repository }}");
+  assert.equal(token.get("owner"), `\${{ matrix.owner }}`);
+  assert.equal(token.get("repositories"), `\${{ matrix.repository }}`);
   assert.match(job, /uses: actions\/create-github-app-token@[0-9a-f]{40} # v3\.2\.0/);
   assert.match(job, /include: \$\{\{ fromJSON\(needs\.select\.outputs\.dispatches\) \}\}/);
   // Untrusted-looking values reach the shell through the environment only.
@@ -265,6 +265,6 @@ test("the dispatch job wakes each repository with a token for it alone, that may
   );
   assert.equal(
     entries(caller, ["jobs", "select", "outputs"]).get("dispatches"),
-    "${{ steps.codeman.outputs.dispatches }}",
+    `\${{ steps.codeman.outputs.dispatches }}`,
   );
 });

@@ -231,7 +231,7 @@ function quotedVariables(settings: Pick<PodSettings, "ollama">): string {
 }
 
 /**
- * The hash of the settings a pod serves, which the organization's tasks with the same settings
+ * The hash of the settings a pod serves, which the pool's tasks with the same settings
  * share it by. On an image that serves one run at a time, the task is one of them: it gets a pod
  * of its own. Ollama settings are part of them, only when there are some, so pods without any
  * keep their hash (choice 9 of the Ollama settings plan); a vLLM pod's has its engine and its
@@ -379,7 +379,7 @@ export interface SelfHostedOptions {
 
 /**
  * Self-hosted inference on pods: each run gets a token for a gateway in a pod that serves the
- * task's model. The organization's tasks with the same pod settings share one pod, which they
+ * task's model. The pool's tasks with the same pod settings share one pod, which they
  * find, create, keep and leave through the pod registry, each with its own run and share of the
  * pod. See docs/inference/pods.md.
  */
@@ -590,10 +590,11 @@ export class PodInference implements InferenceProvider {
   }
 
   /**
-   * Terminates the organization's pods that nothing holds (step 3 of the pod registry plan), and
+   * Terminates the pool's pods that nothing holds (step 3 of the pod registry plan), and
    * drops this task's keep leases on pods of other settings. Pods are listed before the registry
    * is read, and a task writes a pod's document before it creates the pod, so a pod being created
-   * is always held. A pod without the organization's environment is never touched.
+   * is always held. A pod without Codeman's environment, of another pool and organization, or of
+   * another account is never touched (decision 15 of the plan for GPU batches across repositories).
    */
   async #sweep(holder: string, settings: string, log: Log): Promise<void> {
     const owner = this.#options.repository.owner;

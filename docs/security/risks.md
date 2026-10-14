@@ -70,6 +70,8 @@ The workflow runs Codeman, third-party actions and the OpenCode harness with the
 
 How to protect: pin Codeman to a SHA, as [installation](../installation/setup.md) says, and read the changes before moving to a new one.
 
+With a [pool of organizations](../runs/batches.md#pools), each member trusts the others: whoever changes `codeman.yml` on a default branch of one member holds the App's key, which reaches every member's installed repositories. A pool's members also read each other's ready tasks' numbers and stages on the board, and each other's runs' costs in the backend, which hold no secret. Pool only organizations whose maintainers you trust as your own ([security](overview.md#a-public-app-and-a-pool)).
+
 ## Untrusted input
 
 Repositories may be public, so text from people who are not maintainers is untrusted, and so is everything the agent produces. A maintainer is a user with write access to the repository; see [commands](../tasks/commands.md).

@@ -24,6 +24,6 @@ Each task has at most one state label. A task without one has not started yet (`
 
 A task with more than one state label is invalid: Codeman reports a warning and leaves it alone.
 
-A task that its [profiles](../settings/profiles.md#how-many-tasks-a-run-takes) serve only with more tasks than are ready waits: it keeps its label, and its status comment says how many tasks it waits for. Every run checks it again.
+A task that its [profiles](../settings/profiles.md#how-many-tasks-a-run-takes) serve only in a batch of more tasks than are ready, in its repository or, on a pod, in its pool's, waits: it keeps its label, and its status comment says how many tasks it waits for, how many are ready and in how many repositories. Every run checks it again. A task another repository's batch reserved runs in this repository's next run, which checks it is still ready first ([reservations](../runs/batches.md#reservations)).
 
 Each agent run is a stage; what each one does, from planning to review, is in [stages](stages.md).

@@ -18,6 +18,8 @@ These are defaults: a repository's `.codeman/settings.yml` inherits them and ove
 
 `organization-monthly-budget` is the exception: only this variable sets it. It limits what all the organization's repositories spend in a calendar month together, every provider included, with the Runpod account's whole billing; without it, only each repository's `monthly-budget` holds. A repository's `.codeman/settings.yml` that sets it stops its runs with an error. See [budget](../budget/budget.md).
 
+`pool` is the other: only this variable sets it. It names the organizations whose repositories batch tasks on shared pods, this one included, such as `pool: [organization-a, organization-b]`; each must declare the same list in its own `CODEMAN_SETTINGS`, use the same Runpod account and the same backend, and have the App installed. Without it, the organization's repositories batch only with each other. See [batches across repositories](../runs/batches.md#pools) and [setup](setup.md#a-pool-of-organizations).
+
 - On GitHub Free, private repositories cannot read organization variables.
 - A repository variable named `CODEMAN_SETTINGS` replaces the organization's whole, not value by value: GitHub gives the repository's variable precedence. Use `.codeman/settings.yml` to override single values.
 - A variable holds at most 48 KB.

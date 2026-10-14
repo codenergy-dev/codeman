@@ -16,7 +16,7 @@ The default. It accepts no setting beside `model`.
 
 ## `runpod-pod`
 
-A pod Codeman creates on Runpod's Secure Cloud, shared by the organization's tasks with the same pod settings ([pods](../inference/pods.md)).
+A pod Codeman creates on Runpod's Secure Cloud, shared by the pool's tasks with the same pod settings, up to its capacity ([pods](../inference/pods.md)).
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
