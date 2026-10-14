@@ -43,6 +43,7 @@ One subject per file, grouped by what the reader wants to do. The [root README](
 - [Security](security/overview.md): whom it is for, the checklist, a public App and a pool, and the roadmap.
 - [Secrets](security/secrets.md): each secret, who uses it, why it is safe, its gaps and mitigations.
 - [Risks](security/risks.md): the risks, from most to least severe, and untrusted input.
+- [Forks](security/forks.md): what a fork of a public or private repository gets, what it cannot reach, what others can start, variables, and the settings to choose.
 
 ## Working on Codeman
 

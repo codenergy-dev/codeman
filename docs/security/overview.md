@@ -1,6 +1,6 @@
 # Security
 
-These pages tell you whether Codeman is safe to run on your repository. [Secrets](secrets.md) covers which secrets Codeman uses and why each one is safe; [risks](risks.md), the real risks, from most to least severe, and how to protect against them. This page has the checklist, and lists what is planned to make Codeman safer. The mechanisms themselves are described in [the other docs](../README.md).
+These pages tell you whether Codeman is safe to run on your repository. [Secrets](secrets.md) covers which secrets Codeman uses and why each one is safe; [risks](risks.md), the real risks, from most to least severe, and how to protect against them; [forks](forks.md), what someone who forks your repository gets and can start in it. This page has the checklist, and lists what is planned to make Codeman safer. The mechanisms themselves are described in [the other docs](../README.md).
 
 Codeman runs an AI agent that reads text and runs shell commands. Read everything below assuming the agent can be manipulated: whatever the agent can reach, an attacker who controls text it reads can reach too.
 
@@ -17,6 +17,7 @@ Before running Codeman on a repository:
 7. Set `CODEMAN_COMMIT_SHA` in the organization to a commit of Codeman's `main` branch, which each job checks, and give write access to the repositories that run Codeman only to people you would let choose Codeman's version: a repository variable of that name overrides the organization's ([risk 7](risks.md#7-codemans-own-code-and-dependencies)).
 8. Give the backend a Firebase project of its own, with the rules and the attribute condition of [installation](../installation/setup.md#4-set-up-the-backend), and grant its service account only Cloud Datastore User.
 9. Label only issues you opened, written in your own words.
+10. Require approval for fork pull request workflows from all external contributors; on private repositories, keep sending secrets and write tokens to fork pull requests off; and use `pull_request_target` in no workflow that runs the pull request's code ([forks](forks.md#recommendations)).
 
 ## A public App and a pool
 
