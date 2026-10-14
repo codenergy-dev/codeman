@@ -44,7 +44,7 @@ A task that no batch of its count completes waits; its panel says how many are r
 
 ## Waking the other repositories
 
-`select` outputs `dispatches`: one entry per other repository with tasks in a batch it formed, only for owners in the pool that agree. The `dispatch` job, one leg each, mints a token for that owner limited to that repository and `actions: write`, logs whether that repository's `codeman` group is busy, and starts its workflow with `workflow_dispatch`, the batch IDs as its `batch` input, which the started run only logs. The dispatched run waits in that repository's `codeman` group like any other.
+`select` outputs `dispatches`: one entry per other repository with tasks in a batch it formed, only for owners in the pool that agree, and only to start `codeman.yml` on a plain branch name: the token may start any of the target's workflows, and the board entry that names the workflow can be written by any member's run, so a dispatch never takes another file from it. Without a dispatch, the reservation waits for that repository's next run. The `dispatch` job, one leg each, mints a token for that owner limited to that repository and `actions: write`, logs whether that repository's `codeman` group is busy, and starts its workflow with `workflow_dispatch`, the batch IDs as its `batch` input, which the started run only logs. The dispatched run waits in that repository's `codeman` group like any other.
 
 A dispatch that is refused (the App is not installed on the repository, its permission is not approved, the installation is suspended, the workflow is missing or disabled) fails its leg, visibly in the forming run; the reservation expires after 30 minutes, and the forming repository's tasks run on their pod meanwhile.
 

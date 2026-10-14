@@ -341,8 +341,11 @@ export function exchange(
       for (const [target, ids] of targets) {
         const entry = live.find((one) => one.repository === target);
         const owner = ownerOf(target);
-        // Never another owner than the pool's members that agree.
+        // Never another owner than the pool's members that agree, nor another workflow than
+        // Codeman's: the token may start any workflow of the target, so the entry, which any
+        // member's run may write, cannot choose it.
         if (!entry || !members.has(owner)) continue;
+        if (entry.workflow !== DISPATCHED_WORKFLOW || !isBranchName(entry.branch)) continue;
         dispatches.push({
           owner,
           repository: target.slice(owner.length + 1),
@@ -363,6 +366,17 @@ export function exchange(
     },
     { attempts: ATTEMPTS },
   );
+}
+
+/**
+ * The only workflow a dispatch starts: the one Workload Identity admits, so another could not
+ * reach the store anyway.
+ */
+const DISPATCHED_WORKFLOW = "codeman.yml";
+
+/** A branch name `gh workflow run --ref` takes as it is: no option, no `..`, no odd characters. */
+function isBranchName(branch: string): boolean {
+  return /^[\w.][\w./-]{0,254}$/.test(branch) && !branch.includes("..");
 }
 
 function ownerOf(repository: string): string {

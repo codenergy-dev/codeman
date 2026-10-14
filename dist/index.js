@@ -23022,6 +23022,7 @@ function exchange(store, input) {
         const entry = live.find((one) => one.repository === target);
         const owner = ownerOf(target);
         if (!entry || !members.has(owner)) continue;
+        if (entry.workflow !== DISPATCHED_WORKFLOW || !isBranchName(entry.branch)) continue;
         dispatches.push({
           owner,
           repository: target.slice(owner.length + 1),
@@ -23042,6 +23043,10 @@ function exchange(store, input) {
     },
     { attempts: ATTEMPTS }
   );
+}
+var DISPATCHED_WORKFLOW = "codeman.yml";
+function isBranchName(branch) {
+  return /^[\w.][\w./-]{0,254}$/.test(branch) && !branch.includes("..");
 }
 function ownerOf(repository) {
   return repository.slice(0, repository.indexOf("/"));

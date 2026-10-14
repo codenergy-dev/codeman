@@ -39,13 +39,19 @@ function run(
   repository: string,
   tasks: OwnTask[],
   now: Date,
-  options: { runId?: string; places?: number; members?: string[] } = {},
+  options: {
+    runId?: string;
+    places?: number;
+    members?: string[];
+    workflow?: string;
+    branch?: string;
+  } = {},
 ) {
   return exchange(store, {
     pool: { id: pool.id, members: options.members ?? pool.members },
     repository,
-    branch: "main",
-    workflow: "codeman.yml",
+    branch: options.branch ?? "main",
+    workflow: options.workflow ?? "codeman.yml",
     run: { id: options.runId ?? String(now.getTime() / 60_000), attempt: 1 },
     now,
     own: tasks,
@@ -156,6 +162,20 @@ test("a reserved task no longer ready is dropped and released; an expired reserv
     later.batches[0]?.tasks.map((task) => `${task.repository}#${task.number}`),
     ["a/x#3", "a/x#4", "b/y#11", "b/y#12"],
   );
+});
+
+test("a dispatch starts only Codeman's workflow, on a plain branch name", async () => {
+  for (const [options, why] of [
+    [{ workflow: "release.yml" }, "another workflow of the target"],
+    [{ branch: "--ref=x" }, "an option for a branch"],
+    [{ branch: "a/../b" }, "a branch with .."],
+  ] as const) {
+    const store = new MemoryStore();
+    await run(store, "a/x", own([1, 2]), at(0), options);
+    const formed = await run(store, "b/y", own([7, 8]), at(5), { runId: "200" });
+    assert.equal(formed.formed.length, 2, why);
+    assert.deepEqual(formed.dispatches, [], why);
+  }
 });
 
 test("a snapshot expires, and a repository outside the pool is never batched nor dispatched", async () => {
