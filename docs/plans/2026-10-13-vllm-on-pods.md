@@ -1,7 +1,7 @@
 ---
-status: in progress
+status: completed
 created_at: 2026-10-13T20:57:43-03:00
-updated_at: 2026-10-13T21:58:43-03:00
+updated_at: 2026-10-13T22:02:17-03:00
 commit: 95962c0
 ---
 
@@ -200,6 +200,7 @@ Settled conservatively, within the decisions above.
 8. Docs and templates: `docs/settings/vllm.md` (the keys' table naming v0.31.0, refusals, errors, defaults, the fit, the probe, the CUDA floor, images), [providers](../settings/providers.md), [pods](../inference/pods.md), [self-hosted inference](../inference/self-hosted.md), [Runpod's installation](../installation/runpod.md), [dependencies](../development/dependencies.md), [development](../development/guide.md), [data layout](../backend/data-layout.md), [risks](../security/risks.md), [settings reference](../settings/reference.md), [profiles](../settings/profiles.md), [provider settings across layers](../settings/provider-settings-across-layers.md), [upgrading](../installation/upgrading.md), `docs/README.md` and `templates/settings.yml`. Done when the docs tests, the template test and the link checker pass.
    - **Done on 2026-10-13**: [vLLM settings](../settings/vllm.md), with its table checked against the code; the other pages listed, the `pod-image` input's description, and [development](../development/guide.md#pod-images) on publishing, making each package public and pinning. The docs tests, the template test and the link checker pass.
 9. Rebuild `dist/` and run `npm run check`. Done when it passes and the working tree is clean; both images then need publishing and pinning (end-to-end test, step 1).
+   - **Done on 2026-10-13**: `npm run check` passes: 571 tests, 569 pass and 2 skipped (the sandbox's, Linux runners only). `dist/index.js` and `dist/gateway.js` changed: both images need publishing, making public and pinning (end-to-end test, step 1). Until then, Ollama pods run the image pinned now, as before, and a run with `engine: vllm` stops in `open-key` before any pod.
 
 ## End-to-end test
 

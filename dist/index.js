@@ -4873,8 +4873,8 @@ var require_util2 = __commonJS({
       }
       return values;
     }
-    function getDecodeSplit(name, list3) {
-      const value = list3.get(name, true);
+    function getDecodeSplit(name, list4) {
+      const value = list4.get(name, true);
       if (value === null) {
         return null;
       }
@@ -12243,9 +12243,9 @@ var require_headers = __commonJS({
       // https://fetch.spec.whatwg.org/#dom-headers-getsetcookie
       getSetCookie() {
         webidl.brandCheck(this, _Headers);
-        const list3 = this.#headersList.cookies;
-        if (list3) {
-          return [...list3];
+        const list4 = this.#headersList.cookies;
+        if (list4) {
+          return [...list4];
         }
         return [];
       }
@@ -12285,8 +12285,8 @@ var require_headers = __commonJS({
       static getHeadersList(o) {
         return o.#headersList;
       }
-      static setHeadersList(o, list3) {
-        o.#headersList = list3;
+      static setHeadersList(o, list4) {
+        o.#headersList = list4;
       }
     };
     var { getHeadersGuard, setHeadersGuard, getHeadersList, setHeadersList } = Headers2;
@@ -13254,13 +13254,13 @@ var require_request2 = __commonJS({
         if (this.signal.aborted) {
           ac.abort(this.signal.reason);
         } else {
-          let list3 = dependentControllerMap.get(this.signal);
-          if (list3 === void 0) {
-            list3 = /* @__PURE__ */ new Set();
-            dependentControllerMap.set(this.signal, list3);
+          let list4 = dependentControllerMap.get(this.signal);
+          if (list4 === void 0) {
+            list4 = /* @__PURE__ */ new Set();
+            dependentControllerMap.set(this.signal, list4);
           }
           const acRef = new WeakRef(ac);
-          list3.add(acRef);
+          list4.add(acRef);
           util.addAbortListener(
             ac.signal,
             buildAbort(acRef)
@@ -19756,7 +19756,6 @@ function count(value) {
 }
 
 // src/inference/ollama.ts
-var POD_IMAGE = "ghcr.io/codenergy-dev/codeman-pod@sha256:3252d41775a230249490b5af79aec050151e49c4722bb62f9ce3d247d02f6ca3";
 var SINGLE_RUN_IMAGES = /* @__PURE__ */ new Set([
   "ghcr.io/codenergy-dev/codeman-pod@sha256:6a7617fc8772c43600349a971a424bc918982c6d38972e7d1802a1a607e76d27"
 ]);
@@ -19826,9 +19825,9 @@ function ollamaSetting(key, text) {
 }
 function ollamaEnvironment(settings) {
   const entries = Object.entries(settings ?? {}).map(([key, text]) => {
-    const checked = ollamaSetting(key, text);
-    if (!checked.ok) throw new Error(checked.error);
-    return [OLLAMA_SETTINGS[key]?.variable ?? key, checked.value];
+    const checked2 = ollamaSetting(key, text);
+    if (!checked2.ok) throw new Error(checked2.error);
+    return [OLLAMA_SETTINGS[key]?.variable ?? key, checked2.value];
   });
   return Object.fromEntries(entries.sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0));
 }
@@ -19851,6 +19850,11 @@ var vllm = {
   isModel: (model) => model.length <= 100 && MODEL2.test(model),
   usage: (body) => openAiUsage(body)
 };
+var HUB_NAME = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,94}[A-Za-z0-9])?$/;
+function isHuggingFaceId(text) {
+  const [namespace = "", name = "", ...rest] = text.split("/");
+  return rest.length === 0 && [namespace, name].every((part) => HUB_NAME.test(part) && !/--|\.\./.test(part));
+}
 function servedModels(env) {
   return [env.OPENAI_SERVED_MODEL_NAME_OVERRIDE, env.MODEL_NAME].filter(
     (name) => typeof name === "string" && name !== ""
@@ -19875,6 +19879,294 @@ function vllmContextLength(env) {
   const value = Number(env.MAX_MODEL_LEN);
   return Number.isInteger(value) && value > 0 ? value : void 0;
 }
+var VLLM_VERSION = "0.31.0";
+var VLLM_MIN_CUDA = "13.0";
+var VLLM_PORT = 8e3;
+var VLLM_URL = `http://127.0.0.1:${VLLM_PORT}`;
+var VLLM_TOOL_PARSERS = [
+  "dots",
+  "deepseek_v3",
+  "deepseek_v31",
+  "deepseek_v32",
+  "deepseek_v4",
+  "deepseek_v41",
+  "cohere_command3",
+  "cohere_command4",
+  "ernie45",
+  "glm45",
+  "glm47",
+  "ling3",
+  "granite-20b-fc",
+  "granite",
+  "granite4",
+  "hermes",
+  "poolside_v1",
+  "hunyuan_a13b",
+  "hy_v3",
+  "hy_v4",
+  "internlm",
+  "jamba",
+  "lfm2",
+  "kimi_k2",
+  "kimi_k3",
+  "k2_horizon",
+  "llama3_json",
+  "llama4_json",
+  "llama4_pythonic",
+  "longcat",
+  "mimo",
+  "minimax_m2",
+  "minimax_m3",
+  "minicpm5",
+  "mistral",
+  "olmo3",
+  "muse_glimmer",
+  "openai",
+  "phi4_mini_json",
+  "pythonic",
+  "qwen3_coder",
+  "qwen3_xml",
+  "seed_oss",
+  "step3",
+  "step3p5",
+  "inkling",
+  "xlam",
+  "gigachat3",
+  "functiongemma",
+  "gemma4",
+  "apertus"
+];
+var VLLM_REASONING_PARSERS = [
+  "deepseek_r1",
+  "deepseek_v3",
+  "deepseek_v4",
+  "deepseek_v41",
+  "poolside_v1",
+  "cohere_command3",
+  "cohere_command4",
+  "ernie45",
+  "gemma4",
+  "glm45",
+  "glm47",
+  "ling3",
+  "openai_gptoss",
+  "granite",
+  "granite_thinking_parser",
+  "holo2",
+  "hunyuan_a13b",
+  "hy_v3",
+  "hy_v4",
+  "kimi_k2",
+  "kimi_k3",
+  "k2_horizon",
+  "mimo",
+  "minimax_m2",
+  "minimax_m2_append_think",
+  "minimax_m3",
+  "mistral",
+  "nemotron_v3",
+  "olmo3",
+  "muse_glimmer",
+  "qwen3",
+  "seed_oss",
+  "step3",
+  "step3p5",
+  "inkling"
+];
+var VLLM_SPECULATIVE_METHODS = [
+  "mtp",
+  "ngram",
+  "eagle3",
+  "dflash",
+  "dspark",
+  "draft_model"
+];
+var DRAFT_MODEL_METHODS = /* @__PURE__ */ new Set([
+  "eagle3",
+  "dflash",
+  "dspark",
+  "draft_model"
+]);
+var VLLM_SETTINGS = {
+  "max-model-len": { argument: "--max-model-len", value: { kind: "count", min: 1 } },
+  "max-num-seqs": { argument: "--max-num-seqs", value: { kind: "count", min: 1 } },
+  "gpu-memory-utilization": { argument: "--gpu-memory-utilization", value: { kind: "fraction" } },
+  "kv-cache-dtype": {
+    argument: "--kv-cache-dtype",
+    value: {
+      kind: "choice",
+      values: ["auto", "bfloat16", "float16", "fp8", "fp8_e4m3", "fp8_e5m2"]
+    }
+  },
+  "enable-prefix-caching": { argument: "--enable-prefix-caching", value: { kind: "boolean" } },
+  "max-num-batched-tokens": {
+    argument: "--max-num-batched-tokens",
+    value: { kind: "count", min: 1 }
+  },
+  "tool-call-parser": {
+    argument: "--tool-call-parser",
+    value: { kind: "choice", values: VLLM_TOOL_PARSERS }
+  },
+  "reasoning-parser": {
+    argument: "--reasoning-parser",
+    value: { kind: "choice", values: VLLM_REASONING_PARSERS }
+  },
+  "speculative-method": {
+    argument: "method",
+    value: { kind: "choice", values: VLLM_SPECULATIVE_METHODS }
+  },
+  "speculative-tokens": { argument: "num_speculative_tokens", value: { kind: "count", min: 1 } },
+  "speculative-model": { argument: "model", value: { kind: "model" } },
+  "language-model-only": { argument: "--language-model-only", value: { kind: "boolean" } },
+  "enforce-eager": { argument: "--enforce-eager", value: { kind: "boolean" } },
+  "async-scheduling": { argument: "--async-scheduling", value: { kind: "boolean" } }
+};
+var SPECULATIVE_KEYS = ["speculative-method", "speculative-tokens", "speculative-model"];
+var SERVED = "Codeman serves the run's model on the pod's loopback, behind its gateway";
+var LOOPBACK = "only Codeman's gateway calls vLLM, from the pod's loopback";
+var CODE = "it loads code or files that Codeman does not ship in the pod image";
+var DOWNLOADS = "Codeman has vLLM download public models from Hugging Face, onto the pod's disk";
+var ONE_GPU = "a pod has one GPU";
+var OFF_GPU = "it moves weights or the cache off the GPU, which runs much slower";
+var SENDS = "it sends the runs' data, with the repository's code in it, off the pod";
+var WRITES = "it writes the runs' requests, with the repository's code in them, to the pod's log";
+var REFUSED_VLLM_SETTINGS = {
+  host: SERVED,
+  port: SERVED,
+  uds: SERVED,
+  "api-key": SERVED,
+  "served-model-name": SERVED,
+  model: SERVED,
+  "enable-auto-tool-choice": "Codeman always turns it on: its agents work through tool calls",
+  "allowed-origins": LOOPBACK,
+  "ssl-keyfile": LOOPBACK,
+  "root-path": LOOPBACK,
+  middleware: CODE,
+  "tool-parser-plugin": CODE,
+  "reasoning-parser-plugin": CODE,
+  "chat-template": CODE,
+  "trust-remote-code": "it runs the model repository's code beside the runs' requests",
+  "download-dir": DOWNLOADS,
+  "load-format": DOWNLOADS,
+  "hf-token": DOWNLOADS,
+  "tensor-parallel-size": ONE_GPU,
+  "pipeline-parallel-size": ONE_GPU,
+  "data-parallel-size": ONE_GPU,
+  "cpu-offload-gb": OFF_GPU,
+  "kv-offloading-size": OFF_GPU,
+  "kv-offloading-backend": OFF_GPU,
+  "kv-transfer-config": SENDS,
+  "kv-events-config": SENDS,
+  "otlp-traces-endpoint": SENDS,
+  "enable-log-requests": WRITES,
+  "enable-log-outputs": WRITES
+};
+function refusal(key) {
+  return REFUSED_VLLM_SETTINGS[key.startsWith("ssl-") ? "ssl-keyfile" : key];
+}
+function keyOf2(written) {
+  return written.toLowerCase().replace(/^--/, "").replaceAll("_", "-");
+}
+var FRACTION = /^(?:0?\.[0-9]+|0|1|[01]\.[0-9]+)$/;
+function vllmSetting(key, text) {
+  const fail = (error3) => ({ ok: false, error: error3 });
+  const setting2 = VLLM_SETTINGS[key];
+  if (!setting2) {
+    const kebab = keyOf2(key);
+    const refused = refusal(kebab);
+    if (refused) return fail(`\`vllm\` cannot set \`${kebab}\`: ${refused}.`);
+    if (kebab !== key && VLLM_SETTINGS[kebab]) {
+      return fail(
+        `\`vllm\` takes its keys in kebab-case, without \`--\`: write \`${kebab}\`, not \`${key}\`.`
+      );
+    }
+    if (kebab === "speculative-config") {
+      return fail(
+        "`vllm` takes speculative decoding as keys of their own, since the settings file holds no JSON: `speculative-method`, `speculative-tokens` and `speculative-model`."
+      );
+    }
+    return fail(
+      `\`vllm\` does not accept \`${key}\`; it takes ${list2(Object.keys(VLLM_SETTINGS).map((name) => `\`${name}\``))} (docs/settings/vllm.md).`
+    );
+  }
+  const { value } = setting2;
+  switch (value.kind) {
+    case "count": {
+      const number3 = /^[0-9]+$/.test(text) ? Number(text) : Number.NaN;
+      return Number.isSafeInteger(number3) && number3 >= value.min ? { ok: true, value: String(number3) } : fail(`\`vllm\`'s \`${key}\` must be a whole number, at least ${value.min}.`);
+    }
+    case "fraction": {
+      const number3 = FRACTION.test(text) ? Number(text) : Number.NaN;
+      return number3 > 0 && number3 <= 1 ? { ok: true, value: String(number3) } : fail(`\`vllm\`'s \`${key}\` must be a number above 0 and at most 1, such as \`0.9\`.`);
+    }
+    case "boolean":
+      return text === "true" || text === "false" ? { ok: true, value: text } : fail(`\`vllm\`'s \`${key}\` must be \`true\` or \`false\`.`);
+    case "choice":
+      if (value.values.includes(text)) return { ok: true, value: text };
+      return fail(
+        value.values.length > 10 ? `\`vllm\`'s \`${key}\` must be one of vLLM ${VLLM_VERSION}'s, such as \`${value.values.includes("qwen3_xml") ? "qwen3_xml" : "qwen3"}\`, not \`${text}\` (docs/settings/vllm.md).` : `\`vllm\`'s \`${key}\` must be one of ${value.values.map((v) => `\`${v}\``).join(", ")}.`
+      );
+    case "model":
+      return isHuggingFaceId(text) ? { ok: true, value: text } : fail(
+        `\`vllm\`'s \`${key}\` must be a Hugging Face model ID, such as \`Qwen/Qwen3-0.6B\`.`
+      );
+  }
+}
+var TOOL_CALL_PARSER_NEEDED = "`vllm` needs `tool-call-parser`, the one that matches the model, such as `qwen3_xml` for Qwen3 models; see the model's card or vLLM's recipe for it (docs/settings/vllm.md).";
+function vllmBlockProblem(settings) {
+  const method = settings?.["speculative-method"];
+  const tokens2 = settings?.["speculative-tokens"];
+  const model = settings?.["speculative-model"];
+  if (method === void 0) {
+    return tokens2 !== void 0 || model !== void 0 ? "`vllm`'s `speculative-tokens` and `speculative-model` go with `speculative-method`." : void 0;
+  }
+  if (tokens2 === void 0) {
+    return `\`vllm\`'s \`speculative-method\` needs \`speculative-tokens\`, the tokens drafted per step, such as \`3\`.`;
+  }
+  if (DRAFT_MODEL_METHODS.has(method) && model === void 0) {
+    return `\`vllm\`'s \`speculative-method: ${method}\` needs \`speculative-model\`, its draft model's Hugging Face ID.`;
+  }
+  if (!DRAFT_MODEL_METHODS.has(method) && model !== void 0) {
+    return `\`vllm\`'s \`speculative-method: ${method}\` takes no \`speculative-model\`.`;
+  }
+  return void 0;
+}
+function vllmArguments(settings) {
+  const checked2 = checkedVllm(settings);
+  const problem2 = vllmBlockProblem(checked2);
+  if (problem2) throw new Error(problem2);
+  const args = [];
+  const speculative = {};
+  for (const [key, value] of Object.entries(checked2)) {
+    const setting2 = VLLM_SETTINGS[key];
+    if (SPECULATIVE_KEYS.includes(key)) {
+      speculative[setting2.argument] = setting2.value.kind === "count" ? Number(value) : value;
+    } else if (setting2.value.kind === "boolean") {
+      args.push(value === "true" ? setting2.argument : setting2.argument.replace(/^--/, "--no-"));
+    } else {
+      args.push(setting2.argument, value);
+    }
+  }
+  if (Object.keys(speculative).length > 0) {
+    const { method, num_speculative_tokens, model } = speculative;
+    args.push(
+      "--speculative-config",
+      JSON.stringify({ method, num_speculative_tokens, ...model ? { model } : {} })
+    );
+  }
+  return args;
+}
+function checkedVllm(settings) {
+  const entries = Object.entries(settings ?? {}).map(([key, text]) => {
+    const checked2 = vllmSetting(key, text);
+    if (!checked2.ok) throw new Error(checked2.error);
+    return [key, checked2.value];
+  });
+  return Object.fromEntries(entries.sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0));
+}
+function list2(items) {
+  return items.length < 2 ? items[0] ?? "" : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
+}
 
 // src/inference/engines.ts
 var ENGINES = { ollama, vllm };
@@ -19882,7 +20174,12 @@ var ENGINES = { ollama, vllm };
 // src/inference/providers.ts
 var PROVIDER_NAMES = ["openrouter", "runpod-pod", "runpod-serverless"];
 var PROVIDER_SETTINGS = ["engine", "gpu", "endpoint", "pod-reuse"];
-var PROVIDER_BLOCKS = ["ollama"];
+var PROVIDER_BLOCKS = ["ollama", "vllm"];
+var BLOCK_CHECKS = { ollama: ollamaEnvironment, vllm: vllmArguments };
+var BLOCK_ENGINES = {
+  ollama: "ollama",
+  vllm: "vllm"
+};
 var ACCOUNTS = {
   openrouter: {
     input: "management-key",
@@ -19896,11 +20193,11 @@ var PROVIDERS = {
   "runpod-pod": {
     account: "runpod",
     settings: {
-      engine: { values: ["ollama"], default: "ollama" },
+      engine: { values: ["ollama", "vllm"], default: "ollama" },
       gpu: { required: true, example: '"NVIDIA RTX A6000"' },
       "pod-reuse": { values: ["task", "run"], default: "task" }
     },
-    blocks: { ollama: { engine: "ollama" } },
+    blocks: { ollama: { engine: "ollama" }, vllm: { engine: "vllm" } },
     model: "engine",
     secrets: []
   },
@@ -19959,19 +20256,23 @@ function providerProblem(settings, serves = true) {
     }
   }
   const engine = settings.engine ?? provider.settings.engine?.default;
-  for (const block of PROVIDER_BLOCKS) {
-    const spec = provider.blocks?.[block];
-    if (!spec || settings[block] === void 0) continue;
+  for (const block2 of PROVIDER_BLOCKS) {
+    const spec = provider.blocks?.[block2];
+    if (!spec || settings[block2] === void 0) continue;
     if (engine !== spec.engine) {
-      return `With \`${name}\`, \`${block}\` configures the engine \`${spec.engine}\`, not \`${engine}\`.`;
+      return `With \`${name}\`, \`${block2}\` configures the engine \`${spec.engine}\`, not \`${engine}\`.`;
     }
     try {
-      ollamaEnvironment(settings[block]);
+      BLOCK_CHECKS[block2](settings[block2] ?? {});
     } catch (error3) {
       return error3 instanceof Error ? error3.message : String(error3);
     }
   }
-  return serves ? modelProblem(name, settings.model, settings.engine) : void 0;
+  if (!serves) return void 0;
+  if (provider.blocks?.vllm && engine === "vllm" && !settings.vllm?.["tool-call-parser"]) {
+    return TOOL_CALL_PARSER_NEEDED;
+  }
+  return modelProblem(name, settings.model, settings.engine);
 }
 function withProviderDefaults(settings) {
   const provider = isProviderName(settings.provider) ? PROVIDERS[settings.provider] : void 0;
@@ -19988,9 +20289,9 @@ function acceptedText(name) {
   const accepted = [...Object.keys(settings), ...Object.keys(blocks)].map(
     (setting2) => `\`${setting2}\``
   );
-  return accepted.length === 0 ? "it takes only `model`." : `besides \`model\`, it takes ${list2(accepted)}.`;
+  return accepted.length === 0 ? "it takes only `model`." : `besides \`model\`, it takes ${list3(accepted)}.`;
 }
-function list2(items) {
+function list3(items) {
   return items.length < 2 ? items[0] ?? "" : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
 }
 function modelProblem(name, model, engine) {
@@ -20001,6 +20302,9 @@ function modelProblem(name, model, engine) {
   const engineName = engine ?? provider.settings.engine?.default ?? "";
   const served = ENGINES[engineName];
   if (!served) return `\`${name}\` has no engine \`${engineName}\`.`;
+  if (provider.blocks?.vllm && engineName === "vllm") {
+    return isHuggingFaceId(model) ? void 0 : `With \`${name}\` and the engine \`vllm\`, \`model\` must be a Hugging Face model ID, \`namespace/name\`, such as \`${served.example}\`, not \`${model}\`.`;
+  }
   return served.isModel(model) ? void 0 : `With \`${name}\`, \`model\` must be a model name of the engine \`${engineName}\`, such as \`${served.example}\`, not \`${model}\`.`;
 }
 var OPENROUTER_MODEL = /^~?[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._:-]*$/i;
@@ -20152,7 +20456,7 @@ var Reader = class {
   }
   /** The `- item` lines at `indent`. An item is a scalar or a mapping that starts on its line. */
   #list(indent) {
-    const list3 = { kind: "list", line: this.peek()?.number ?? 1, items: [] };
+    const list4 = { kind: "list", line: this.peek()?.number ?? 1, items: [] };
     for (let line = this.peek(); line && line.indent >= indent; line = this.peek()) {
       if (line.indent > indent) throw new YamlError(line.number, "unexpected indentation.");
       if (!ITEM.test(line.text)) break;
@@ -20167,16 +20471,16 @@ var Reader = class {
       if (KEY.test(content)) {
         line.indent += 1 + after.length - content.length;
         line.text = content;
-        list3.items.push(this.mapping(line.indent));
+        list4.items.push(this.mapping(line.indent));
         continue;
       }
       this.#next++;
       const value = scalar(content);
       if (value === void 0)
         throw new YamlError(line.number, "a list item is not a plain value.");
-      list3.items.push({ kind: "scalar", line: line.number, text: value });
+      list4.items.push({ kind: "scalar", line: line.number, text: value });
     }
-    return list3;
+    return list4;
   }
 };
 function flowList(key, line, text) {
@@ -20309,7 +20613,7 @@ function isSettingName(name) {
   return NAMES.includes(name);
 }
 function parseSetting(name, text) {
-  if (name === "ollama") return { ok: false, error: OLLAMA_BLOCK };
+  if (isBlockName(name)) return { ok: false, error: BLOCKS[name].error };
   if (name === "model") {
     return isModelName(text) ? { ok: true, value: text } : {
       ok: false,
@@ -20354,7 +20658,19 @@ var PROFILE_SETTINGS = [
   ...PROVIDER_BLOCKS
 ];
 var PROVIDER_KEYS = [...PROVIDER_SETTINGS, ...PROVIDER_BLOCKS];
-var OLLAMA_BLOCK = "`ollama` must be a block of Ollama's settings, one `name: value` per line, indented under it, such as `num-parallel: 4`.";
+var BLOCKS = {
+  ollama: {
+    error: "`ollama` must be a block of Ollama's settings, one `name: value` per line, indented under it, such as `num-parallel: 4`.",
+    check: ollamaSetting
+  },
+  vllm: {
+    error: "`vllm` must be a block of vLLM's settings, one `name: value` per line, indented under it, such as `tool-call-parser: qwen3_xml`.",
+    check: vllmSetting
+  }
+};
+function isBlockName(name) {
+  return PROVIDER_BLOCKS.includes(name);
+}
 function renamedSetting(name, value) {
   const now = (text) => `\`${name}\` is now ${text}.`;
   switch (name) {
@@ -20394,7 +20710,7 @@ function parseSettings(text, source = SETTINGS_FILE) {
   if (!tree.ok) return { ok: false, error: `${source}, line ${tree.line}: ${tree.error}` };
   const settings = {};
   for (const entry of tree.value.entries) {
-    const parsed = entry.key === "profiles" ? profiles(entry.value) : entry.key === "ollama" ? ollamaBlock(entry) : setting(entry, "setting");
+    const parsed = entry.key === "profiles" ? profiles(entry.value) : isBlockName(entry.key) ? block(entry, entry.key) : setting(entry, "setting");
     if (!parsed.ok) return { ok: false, error: `${source}, line ${parsed.line}: ${parsed.error}` };
     if (source !== SHARED_SETTINGS && isSettingName(entry.key) && ORGANIZATION_SETTINGS.has(entry.key)) {
       return {
@@ -20406,21 +20722,22 @@ function parseSettings(text, source = SETTINGS_FILE) {
   }
   return { ok: true, value: settings };
 }
-function ollamaBlock(entry) {
+function block(entry, name) {
   const { line, value } = entry;
-  if (value.kind !== "map") return { ok: false, line, error: OLLAMA_BLOCK };
+  const { error: error3, check } = BLOCKS[name];
+  if (value.kind !== "map") return { ok: false, line, error: error3 };
   const settings = {};
   for (const { key, line: keyLine, value: keyValue } of value.entries) {
     if (keyValue.kind !== "scalar") {
       return {
         ok: false,
         line: keyLine,
-        error: `the value of \`ollama\`'s \`${key}\` is not a plain value.`
+        error: `the value of \`${name}\`'s \`${key}\` is not a plain value.`
       };
     }
-    const checked = ollamaSetting(key, keyValue.text);
-    if (!checked.ok) return { ok: false, line: keyLine, error: checked.error };
-    settings[key] = checked.value;
+    const checked2 = check(key, keyValue.text);
+    if (!checked2.ok) return { ok: false, line: keyLine, error: checked2.error };
+    settings[key] = checked2.value;
   }
   return { ok: true, value: settings };
 }
@@ -20466,20 +20783,20 @@ function profiles(node) {
       error: "`profiles` must be a list of profiles, each a block of settings."
     };
   }
-  const list3 = [];
+  const list4 = [];
   for (const item of node.items) {
     const parsed = profile(item);
     if (!parsed.ok) return parsed;
-    if (list3.some((other) => other.name === parsed.value.name)) {
+    if (list4.some((other) => other.name === parsed.value.name)) {
       return {
         ok: false,
         line: item.line,
         error: `two profiles are named \`${parsed.value.name}\`.`
       };
     }
-    list3.push(parsed.value);
+    list4.push(parsed.value);
   }
-  return { ok: true, value: list3 };
+  return { ok: true, value: list4 };
 }
 function profile(node) {
   if (node.kind !== "map") return { ok: false, line: node.line, error: "expected a profile." };
@@ -20499,10 +20816,10 @@ function profile(node) {
       const parsed = condition(entry, key);
       if (!parsed.ok) return parsed;
       Object.assign(result.conditions, { [key]: parsed.value });
-    } else if (key === "ollama") {
-      const parsed = ollamaBlock(entry);
+    } else if (isBlockName(key)) {
+      const parsed = block(entry, key);
       if (!parsed.ok) return parsed;
-      result.settings.ollama = parsed.value;
+      result.settings[key] = parsed.value;
     } else {
       const parsed = setting(entry, "profile");
       if (!parsed.ok) return parsed;
@@ -20554,7 +20871,7 @@ function condition(entry, name) {
 }
 function resolveLayers(layers) {
   const [own = {}] = layers;
-  const { profiles: list3 = [], ...values } = merge(layers);
+  const { profiles: list4 = [], ...values } = merge(layers);
   const inherited = serving(
     layers.slice(1).map((settings, index) => ({
       name: layerSource(index + 1),
@@ -20573,7 +20890,7 @@ function resolveLayers(layers) {
   const topError = settingsProblem(top);
   if (topError) return { ok: false, error: topError };
   const profiled = [];
-  for (const profile2 of list3) {
+  for (const profile2 of list4) {
     const name = `Profile \`${profile2.name}\``;
     const served = serving([{ name, source: name, settings: profile2.settings }], {
       source: "the top level",
@@ -20659,9 +20976,9 @@ function applies(profile2, run2) {
   return (!stages || stages.includes(run2.stage)) && (tasks === void 0 || run2.tasks === tasks) && (min === void 0 || run2.tasks >= min) && (max === void 0 || run2.tasks <= max);
 }
 function tasksPerRun(layers) {
-  const list3 = layers.find((layer) => layer.profiles !== void 0)?.profiles ?? [];
+  const list4 = layers.find((layer) => layer.profiles !== void 0)?.profiles ?? [];
   let most = 1;
-  for (const { conditions } of list3) {
+  for (const { conditions } of list4) {
     const { tasks, "min-tasks": min, "max-tasks": max } = conditions;
     const named = tasks ?? max ?? (min === void 0 ? void 0 : MAX_TASKS);
     if (named !== void 0) most = Math.max(most, named);
@@ -20671,8 +20988,8 @@ function tasksPerRun(layers) {
 function mostTasks(layers, profile2) {
   const cap = tasksPerRun(layers);
   if (profile2 === void 0) return cap;
-  const list3 = layers.find((layer) => layer.profiles !== void 0)?.profiles ?? [];
-  const { tasks, "max-tasks": max } = list3.find(({ name }) => name === profile2)?.conditions ?? {};
+  const list4 = layers.find((layer) => layer.profiles !== void 0)?.profiles ?? [];
+  const { tasks, "max-tasks": max } = list4.find(({ name }) => name === profile2)?.conditions ?? {};
   return tasks ?? max ?? cap;
 }
 function servedCounts(layers, stage) {
@@ -20700,11 +21017,23 @@ function serving(layers, base) {
       result = omit(result, PROVIDER_KEYS);
     }
     if (provider !== void 0) from = source;
-    const { ollama: ollama2, ...values } = pick(settings, PROFILE_SETTINGS);
+    const engine = settings.engine;
+    if (engine !== void 0 && engine !== engineOf(result)) {
+      result = omit(
+        result,
+        PROVIDER_BLOCKS.filter((block2) => BLOCK_ENGINES[block2] !== engine)
+      );
+    }
+    const { ollama: ollama2, vllm: vllm2, ...values } = pick(settings, PROFILE_SETTINGS);
     Object.assign(result, values);
     if (ollama2 !== void 0) result.ollama = { ...result.ollama, ...ollama2 };
+    if (vllm2 !== void 0) result.vllm = { ...result.vllm, ...vllm2 };
   }
   return { ok: true, value: result };
+}
+function engineOf(settings) {
+  const provider = settings.provider ?? DEFAULTS.provider;
+  return settings.engine ?? PROVIDERS[provider]?.settings.engine?.default;
 }
 function layerSource(index) {
   const source = LAYER_SOURCES[index] ?? `layer ${index + 1}`;
@@ -20747,6 +21076,7 @@ function settingsProblem(settings) {
     {
       ...values,
       ...settings.ollama === void 0 ? {} : { ollama: settings.ollama },
+      ...settings.vllm === void 0 ? {} : { vllm: settings.vllm },
       provider: settings.provider ?? DEFAULTS.provider,
       model
     },
@@ -20781,6 +21111,18 @@ function readTask(runtime2) {
     throw new Error(`The task file of #${number3} holds #${task.number}.`);
   }
   return task;
+}
+
+// src/inference/images.ts
+var POD_IMAGES = {
+  // Published from 5e733d1, before the image per engine; it predates Ollama settings.
+  ollama: "ghcr.io/codenergy-dev/codeman-pod@sha256:3252d41775a230249490b5af79aec050151e49c4722bb62f9ce3d247d02f6ca3",
+  // Not published yet.
+  vllm: ""
+};
+function podImage(engine, override = "") {
+  if (engine === "ollama" && override !== "") return override;
+  return POD_IMAGES[engine] ?? "";
 }
 
 // src/budget.ts
@@ -21200,6 +21542,7 @@ var Runpod = class {
         const memory = (await this.#gpu(gpuType))?.memory;
         return typeof memory === "number" && memory > 0 ? memory : void 0;
       },
+      cudaVersions: (gpuType, min) => this.#cudaVersions(gpuType, min),
       create: (spec) => this.#createPod(spec),
       get: (id) => this.#getPod(id),
       list: (env) => this.#listPods(env),
@@ -21258,11 +21601,31 @@ var Runpod = class {
     }
     return hourly / 3600;
   }
+  /**
+   * `GET /v2/catalog/gpus/{id}` with the pods' availability on Secure Cloud from a CUDA version
+   * (docs/web/runpod/get-a-gpu-type.md): a missing `cudaVersions` is an empty one.
+   */
+  async #cudaVersions(gpuType, min) {
+    const query = `include=AVAILABILITY&product=POD&cloud=SECURE&minCudaVersion=${encodeURIComponent(min)}`;
+    const gpu = await this.#request(
+      `/catalog/gpus/${encodeURIComponent(gpuType)}?${query}`,
+      "GET",
+      void 0,
+      [404]
+    );
+    return (gpu?.cudaVersions ?? []).flatMap(
+      ({ version, available }) => typeof version === "string" ? [{ version, available: available === true }] : []
+    );
+  }
   async #createPod(spec) {
     const pod = await this.#request("/pods", "POST", {
       name: spec.name,
       image: spec.image,
-      gpu: { id: spec.gpuType, count: 1 },
+      gpu: {
+        id: spec.gpuType,
+        count: 1,
+        ...spec.minCudaVersion ? { minCudaVersion: spec.minCudaVersion } : {}
+      },
       // Decision 6 of the self-hosted inference plan: Runpod's own data centers only.
       cloud: "SECURE",
       env: spec.env,
@@ -21373,7 +21736,8 @@ function toPod(pod) {
     env: pod.env ?? {},
     gpuType: pod.gpu?.id,
     createdAt: new Date(pod.createdAt),
-    pricePerSecond: typeof pod.cost === "number" && pod.cost > 0 ? pod.cost / 3600 : void 0
+    pricePerSecond: typeof pod.cost === "number" && pod.cost > 0 ? pod.cost / 3600 : void 0,
+    ...typeof pod.cudaVersion === "string" && pod.cudaVersion !== "" ? { cudaVersion: pod.cudaVersion } : {}
   };
 }
 function timestamp(date) {
@@ -21602,6 +21966,8 @@ var Gateway = class {
   contextLength;
   /** The Ollama variables from the pod's settings that it gave Ollama, which the status reports. */
   ollama = {};
+  /** The vLLM settings of the pod that it gave vLLM, by key, which the status reports. */
+  vllm;
   /** How the pod's model was fitted to its GPU, once it serves; the status reports it. */
   fit;
   /**
@@ -21798,9 +22164,11 @@ var Gateway = class {
     const active = this.#runs.filter((run2) => run2.active);
     return {
       version: GATEWAY_VERSION,
+      engine: this.#options.engine.name,
       ready: this.ready,
       contextLength: this.contextLength,
       ollama: this.ollama,
+      vllm: this.vllm,
       fit: this.fit,
       failure: this.failure,
       serving: this.serving,
@@ -22191,6 +22559,71 @@ function sleep2(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// src/inference/huggingface.ts
+var HUB = "https://huggingface.co";
+var HuggingFace = class {
+  #fetch;
+  constructor(fetchFn = fetch) {
+    this.#fetch = fetchFn;
+  }
+  async model(id) {
+    if (!isHuggingFaceId(id)) {
+      throw new Error(`\`${id}\` is not a Hugging Face model ID, \`namespace/name\`.`);
+    }
+    const path = id.split("/").map(encodeURIComponent).join("/");
+    let response;
+    try {
+      response = await this.#fetch(`${HUB}/api/models/${path}?blobs=true`, {
+        headers: { Accept: "application/json" },
+        signal: AbortSignal.timeout(3e4)
+      });
+    } catch (error3) {
+      throw new Error(
+        `Could not reach Hugging Face's API to check \`${id}\` (${error3 instanceof Error ? error3.message : error3}), so no pod was created; try again later.`
+      );
+    }
+    if (response.status === 401 || response.status === 404) throw notPublic(id);
+    if (!response.ok) {
+      const reason = response.headers.get("x-error-message");
+      throw new Error(
+        `Hugging Face's API answered ${response.status} for \`${id}\`${reason ? ` (${reason})` : ""}, so no pod was created; try again later.`
+      );
+    }
+    return checked(id, await response.json());
+  }
+};
+function notPublic(id) {
+  return new Error(
+    `Hugging Face has no public model \`${id}\`: check its ID, whose case counts. Codeman serves only public models, without a token.`
+  );
+}
+function checked(id, info2) {
+  if (info2.private === true) throw notPublic(id);
+  if (info2.disabled === true) throw new Error(`\`${id}\` is disabled on Hugging Face.`);
+  if (info2.gated !== void 0 && info2.gated !== false && info2.gated !== null) {
+    throw new Error(
+      `\`${id}\` is gated on Hugging Face: its files need an accepted request and a token, which Codeman does not use. Choose a model that is not gated, such as a copy of it by another publisher.`
+    );
+  }
+  const weights = (info2.siblings ?? []).filter(
+    (file) => typeof file.rfilename === "string" && file.rfilename.endsWith(".safetensors")
+  );
+  if (weights.length === 0) {
+    throw new Error(
+      `\`${id}\` has no safetensors weights on Hugging Face, which vLLM loads: choose a version of the model in safetensors, not GGUF nor PyTorch's pickles.`
+    );
+  }
+  const sizes = weights.map((file) => file.size);
+  const summed = sizes.every((size) => typeof size === "number" && size >= 0) ? sizes.reduce((total, size) => total + size, 0) : void 0;
+  const weightsBytes = summed ?? (typeof info2.usedStorage === "number" ? info2.usedStorage : void 0);
+  if (weightsBytes === void 0) {
+    throw new Error(
+      `Hugging Face does not give the size of \`${id}\`'s weights, which sets the pod's disk, so no pod was created.`
+    );
+  }
+  return { id, weightsBytes };
+}
+
 // src/inference/provider.ts
 var OpenFailure = class extends Error {
   pods;
@@ -22441,7 +22874,26 @@ var RUN_IDLE_MINUTES = 30;
 var CLAIM_POLL_MS = 1e4;
 var CLAIMS = Math.ceil(CREATE_LEASE_MS / CLAIM_POLL_MS) + 10;
 var DISK_GB = 80;
+var VLLM_BASE_DISK_GB = 40;
+var VLLM_DISK_SPARE = 0.25;
 var BILLING_DAYS = 30;
+function onVllm(settings) {
+  return settings.engine.name === "vllm";
+}
+function podVllm(settings) {
+  const derived = settings.parallel === void 0 ? {} : { "max-num-seqs": String(settings.parallel) };
+  return Object.fromEntries(
+    Object.entries({ ...derived, ...settings.vllm }).sort(
+      ([a], [b]) => a < b ? -1 : a > b ? 1 : 0
+    )
+  );
+}
+function vllmDiskGb(weightsBytes) {
+  return Math.max(
+    DISK_GB,
+    Math.ceil(weightsBytes / 1e9 * (1 + VLLM_DISK_SPARE) + VLLM_BASE_DISK_GB)
+  );
+}
 function leaseHolder(repository, task) {
   return `${repositoryName(repository)}#${task}`;
 }
@@ -22460,13 +22912,19 @@ function podOllama(settings) {
   );
 }
 function fitKey(settings) {
-  const variables = ollamaVariables(settings).filter(
+  const variables = settings.engine && onVllm({ engine: settings.engine }) ? [
+    "engine vllm",
+    ...vllmValues(settings).filter((value) => !value.startsWith("max-model-len="))
+  ] : ollamaVariables(settings).filter(
     (variable) => !variable.startsWith("OLLAMA_CONTEXT_LENGTH=")
   );
   return sha256([settings.image, settings.model, settings.gpuType, ...variables].join("\n")).slice(
     0,
     32
   );
+}
+function vllmValues(settings) {
+  return Object.entries(settings.vllm ?? {}).map(([key, value]) => `${key}=${value}`);
 }
 function ollamaVariables(settings) {
   return Object.entries(settings.ollama ?? {}).map(([name, value]) => `${name}=${value}`);
@@ -22477,13 +22935,15 @@ function quotedVariables(settings) {
 function podSettingsKey(settings, holder) {
   const { model, gpuType, image, reuse } = settings;
   const ollama2 = ollamaVariables(settings);
+  const vllm2 = settings.engine && onVllm({ engine: settings.engine });
   const parts = [
     model,
     gpuType,
     image,
     reuse,
     ...servesOneRun(image) ? [holder] : [],
-    ...ollama2.length > 0 ? [`ollama ${ollama2.join(" ")}`] : []
+    ...ollama2.length > 0 ? [`ollama ${ollama2.join(" ")}`] : [],
+    ...vllm2 ? ["engine vllm", `vllm ${vllmValues(settings).join(" ")}`] : []
   ];
   return sha256(parts.join("\n")).slice(0, 16);
 }
@@ -22521,7 +22981,7 @@ var PodInference = class {
     if (!options.gpu.pods) throw new Error(`${options.gpu.name} has no pods.`);
     this.name = `${options.gpu.name} pods`;
     this.#own = settings.ollama ?? {};
-    this.#settings = { ...settings, ollama: podOllama(settings) };
+    this.#settings = onVllm(settings) ? { ...settings, ollama: {}, vllm: podVllm(settings) } : { ...settings, ollama: podOllama(settings), vllm: void 0 };
     this.#options = options;
     this.#host = options.gpu.pods;
     this.#registry = new PodRegistry(options.store, options.repository.owner, () => this.#now());
@@ -22542,6 +23002,12 @@ var PodInference = class {
   #checkImage(log) {
     const own = { ollama: this.#own };
     const { image, parallel } = this.#settings;
+    if (onVllm(this.#settings)) {
+      if (image) return;
+      throw new Error(
+        "This version of Codeman pins no vLLM pod image yet (`POD_IMAGES` in src/inference/images.ts), so no pod was created: use a version that pins one, or `engine: ollama`. See docs/settings/vllm.md#pod-images."
+      );
+    }
     if (fitsTheGpu(image)) return;
     if (ollamaVariables(own).length > 0) {
       throw new Error(
@@ -22882,11 +23348,28 @@ var PodInference = class {
         wait: this.#options.wait
       }
     );
+    if (running.cudaVersion && (own || onVllm(this.#settings))) {
+      log.info(`Pod ${podId} runs on a host with CUDA ${running.cudaVersion}.`);
+    }
     const shared = !servesOneRun(image);
     const ollama2 = this.#settings.ollama ?? {};
+    const vllm2 = onVllm(this.#settings);
     const configured = Object.keys(ollama2).length > 0;
     const fits = fitsTheGpu(image);
-    if (shared || configured || fits) {
+    if (vllm2) {
+      const status2 = await this.#admin(target, "GET", "/admin/status");
+      if (!sameVariables(status2.vllm, this.#settings.vllm ?? {})) {
+        throw new Error(
+          `Pod ${podId}'s gateway did not apply the vLLM settings (${quotedValues(this.#settings)}): its image cannot.`
+        );
+      }
+      if (status2.fit?.engine !== "vllm") {
+        throw new Error(
+          `Pod ${podId}'s gateway did not report how vLLM serves ${model}: its image cannot.`
+        );
+      }
+      await this.#reportVllm(status2.fit, podId, own, log);
+    } else if (shared || configured || fits) {
       const status2 = await this.#admin(target, "GET", "/admin/status");
       if (shared && (status2.version ?? 1) < GATEWAY_VERSION) {
         throw new Error(
@@ -22903,7 +23386,9 @@ var PodInference = class {
           `Pod ${podId}'s gateway did not report how ${model} fits the GPU: its image cannot check it. List the image in IMAGES_WITHOUT_OLLAMA_SETTINGS (src/inference/ollama.ts), or use one built since the fit to the GPU.`
         );
       }
-      if (fits && status2.fit) await this.#reportFit(status2.fit, podId, own, log);
+      if (fits && status2.fit && status2.fit.engine !== "vllm") {
+        await this.#reportFit(status2.fit, podId, own, log);
+      }
     }
     const handle = {
       mode: "pod",
@@ -22937,9 +23422,10 @@ var PodInference = class {
     const { model, gpuType, image, engine } = this.#settings;
     if (!image) throw new Error("No pod image is pinned; see docs/installation/runpod.md#pods.");
     const listed = await this.#host.price(gpuType);
-    const fits = fitsTheGpu(image);
+    const vllm2 = onVllm(this.#settings) ? await this.#prepareVllm(log) : void 0;
+    const fits = !vllm2 && fitsTheGpu(image);
     const memory = fits ? await this.#host.memory?.(gpuType).catch(() => void 0) : void 0;
-    const cached = fits ? await this.#cachedFit(log) : void 0;
+    const cached = vllm2 ? vllm2.cached : fits ? await this.#cachedFit(log) : void 0;
     const owner = this.#options.repository.owner.toLowerCase();
     const now = this.#now();
     const pod = await this.#host.create({
@@ -22947,6 +23433,7 @@ var PodInference = class {
       image,
       env: {
         ...Object.keys(this.#settings.ollama ?? {}).length > 0 ? { CODEMAN_OLLAMA: JSON.stringify(this.#settings.ollama) } : {},
+        ...vllm2 ? { CODEMAN_VLLM: JSON.stringify(this.#settings.vllm) } : {},
         ...memory ? { CODEMAN_GPU_MEMORY_GB: String(memory) } : {},
         ...cached ? { CODEMAN_FIT: JSON.stringify(cached) } : {},
         CODEMAN_ORGANIZATION: owner,
@@ -22961,13 +23448,97 @@ var PodInference = class {
       },
       port: GATEWAY_PORT,
       gpuType,
-      diskGb: DISK_GB
+      diskGb: vllm2?.diskGb ?? DISK_GB,
+      ...vllm2 ? { minCudaVersion: VLLM_MIN_CUDA } : {}
     });
     this.#events.push({ pod: pod.id, event: "created" });
     log.info(
       `Created pod ${pod.id} with ${gpuType}, at ${usd(listed * 3600)} per hour; waiting for ${model}.`
     );
     return { pod, listed };
+  }
+  /**
+   * Before creating a vLLM pod, at no cost: a host of the GPU type must offer vLLM's CUDA now
+   * (decision 2 of the plan for vLLM on pods), and the model, and its draft model, must be public
+   * on Hugging Face with safetensors weights, whose size sets the pod's disk (decision 10). Gives
+   * the disk and the cached context.
+   */
+  async #prepareVllm(log) {
+    const { gpuType, model } = this.#settings;
+    const versions = await this.#host.cudaVersions?.(gpuType, VLLM_MIN_CUDA);
+    if (versions && !versions.some(({ available }) => available)) {
+      throw new Error(
+        versions.length === 0 ? `Runpod offers no host with ${gpuType} and CUDA ${VLLM_MIN_CUDA} or newer, which vLLM's image needs, so no pod was created: use another GPU type, or \`engine: ollama\`.` : `No host with ${gpuType} and CUDA ${VLLM_MIN_CUDA} or newer has room now (Runpod offers ${versions.map(({ version }) => version).join(", ")}), which vLLM's image needs, so no pod was created: try again later, or use another GPU type.`
+      );
+    }
+    const hub = this.#options.hub ?? new HuggingFace(this.#options.fetch);
+    const draft = this.#settings.vllm?.["speculative-model"];
+    const models = await Promise.all([model, ...draft ? [draft] : []].map((id) => hub.model(id)));
+    const weights = models.reduce((total, { weightsBytes }) => total + weightsBytes, 0);
+    const diskGb = vllmDiskGb(weights);
+    log.info(
+      `Hugging Face serves ${models.map(({ id }) => id).join(" and ")}: ${(weights / 1e9).toFixed(1)} GB of weights, so the pod gets ${diskGb} GB of disk.`
+    );
+    return { diskGb, cached: await this.#cachedContext(log) };
+  }
+  /** The context that served a vLLM pod's settings before, from the cache of fits. */
+  async #cachedContext(log) {
+    if (this.#settings.vllm?.["max-model-len"]) return void 0;
+    const path = LAYOUT.context(this.#options.repository.owner, fitKey(this.#settings));
+    try {
+      const contextLength = (await this.#options.store.get(path))?.fields.contextLength;
+      if (!Number.isSafeInteger(contextLength)) return void 0;
+      log.info(`The cache of fits gives these settings a context of ${contextLength} tokens.`);
+      return { contextLength };
+    } catch (error3) {
+      log.warning(
+        `Could not read the cache of fits (${error3 instanceof Error ? error3.message : error3}); the pod fits the context itself.`
+      );
+      return void 0;
+    }
+  }
+  /**
+   * Logs how vLLM serves the pod's model, and records in the cache of fits what the pod this
+   * task created found from vLLM's measures.
+   */
+  async #reportVllm(fit, podId, own, log) {
+    const { model, image, gpuType } = this.#settings;
+    const how = fit.source === "settings" ? "from the settings" : fit.source === "cache" ? "from the cache of fits" : `found in ${fit.loads} start(s)`;
+    const theirs = fit.modelContextLength ? ` (the model's own is ${fit.modelContextLength})` : "";
+    log.info(
+      `Pod ${podId} serves ${model} with vLLM, ${fit.parallel} parallel request(s) and a context of ${fit.contextLength} tokens${theirs}, wholly on the GPU: its K/V cache holds ${fit.concurrency.toFixed(2)} requests of it (${Math.round(fit.cacheTokens)} tokens); ${how}. Its tool calls work with the parser ${fit.toolCallParser}.`
+    );
+    if (!own || fit.source !== "search") return;
+    const values = Object.fromEntries(
+      Object.entries(this.#settings.vllm ?? {}).filter(([key]) => key !== "max-model-len")
+    );
+    try {
+      await this.#options.store.write([
+        {
+          op: "set",
+          path: LAYOUT.context(this.#options.repository.owner, fitKey(this.#settings)),
+          fields: {
+            engine: "vllm",
+            image,
+            model,
+            gpuType,
+            vllm: values,
+            contextLength: fit.contextLength,
+            ...fit.modelContextLength ? { modelContextLength: fit.modelContextLength } : {},
+            parallel: fit.parallel,
+            concurrency: fit.concurrency,
+            cacheTokens: fit.cacheTokens,
+            loads: fit.loads,
+            pod: podId,
+            recordedAt: this.#now()
+          }
+        }
+      ]);
+    } catch (error3) {
+      log.warning(
+        `Could not record the fit in the cache of fits (${error3 instanceof Error ? error3.message : error3}); the next pod fits it again.`
+      );
+    }
   }
   /**
    * The context that fitted these settings before, from the cache of fits, with its model's
@@ -23044,6 +23615,9 @@ var PodInference = class {
     return callGateway(fetchFn, accountKey, target, method, path, body);
   }
 };
+function quotedValues(settings) {
+  return vllmValues(settings).map((value) => `\`${value}\``).join(", ");
+}
 function sameVariables(reported, requested) {
   if (typeof reported !== "object" || reported === null) return false;
   const names = Object.keys(requested);
@@ -23272,6 +23846,7 @@ function inferenceChoice(settings, record, options = {}) {
     gpu: settings.gpu ?? "",
     podReuse: settings["pod-reuse"] === "run" ? "run" : "task",
     ...settings.ollama && Object.keys(settings.ollama).length > 0 ? { ollama: settings.ollama } : {},
+    ...settings.vllm && Object.keys(settings.vllm).length > 0 ? { vllm: settings.vllm } : {},
     ...options.parallel === void 0 ? {} : { parallel: options.parallel }
   };
 }
@@ -23286,11 +23861,17 @@ function parseInferenceChoice(text) {
   if (choice.provider === "openrouter") return choice;
   const valid = typeof choice.model === "string" && ENGINES[choice.engine] !== void 0 && Array.isArray(choice.pods) && (choice.provider === "runpod-pod" ? typeof choice.gpu === "string" : typeof choice.endpoint === "string");
   if (!valid) throw new Error("The inference input is not a valid choice.");
-  if (choice.provider === "runpod-pod" && choice.ollama !== void 0) {
-    const ollama2 = choice.ollama;
-    const strings = typeof ollama2 === "object" && ollama2 !== null && !Array.isArray(ollama2) && Object.values(ollama2).every((value) => typeof value === "string");
-    if (!strings) throw new Error("The inference input is not a valid choice.");
-    ollamaEnvironment(choice.ollama);
+  if (choice.provider === "runpod-pod") {
+    for (const [block2, check] of [
+      [choice.ollama, ollamaEnvironment],
+      [choice.vllm, vllmArguments]
+    ]) {
+      if (block2 === void 0) continue;
+      const value = block2;
+      const strings = typeof value === "object" && value !== null && !Array.isArray(value) && Object.values(value).every((text2) => typeof text2 === "string");
+      if (!strings) throw new Error("The inference input is not a valid choice.");
+      check(block2);
+    }
   }
   if (choice.provider === "runpod-pod" && choice.parallel !== void 0) {
     const { parallel } = choice;
@@ -23314,7 +23895,7 @@ function inferenceProvider(runtime2, store) {
   }
   return selfHosted(choice, runtime2.repository, {
     accountKey: runtime2.input("gpu-key", { required: true }),
-    image: runtime2.input("pod-image") || POD_IMAGE,
+    image: podImage(choice.engine, runtime2.input("pod-image")),
     usage: runtime2.input("gateway-usage"),
     store
   });
@@ -23360,9 +23941,17 @@ function selfHosted(choice, repository, inputs) {
         image: inputs.image,
         reuse: choice.podReuse,
         ollama: ollamaEnvironment(choice.ollama),
+        ...choice.engine === "vllm" ? { vllm: checkedVllm(choice.vllm) } : {},
         parallel: choice.parallel
       },
-      { repository, gpu, accountKey: inputs.accountKey, store: inputs.store() }
+      {
+        repository,
+        gpu,
+        accountKey: inputs.accountKey,
+        store: inputs.store(),
+        ...inputs.fetch ? { fetch: inputs.fetch } : {},
+        ...inputs.hub ? { hub: inputs.hub } : {}
+      }
     );
   }
   return new ServerlessInference(
@@ -29458,7 +30047,7 @@ function parseRouteOutput(text, limits) {
   const seen = /* @__PURE__ */ new Set();
   const steps = (value, name, field) => {
     if (!Array.isArray(value)) return { ok: false, error: `${name} must be a list.` };
-    const list3 = [];
+    const list4 = [];
     for (const [index, item] of value.entries()) {
       const where = `${name}[${index}]`;
       if (!isObject(item) || !ROUTED_STAGES.includes(item.stage)) {
@@ -29469,9 +30058,9 @@ function parseRouteOutput(text, limits) {
       seen.add(stage);
       const text2 = string(item[field], `${where}.${field}`, limits.summary, cuts);
       if (!text2.ok) return text2;
-      list3.push({ stage, [field]: text2.value });
+      list4.push({ stage, [field]: text2.value });
     }
-    return { ok: true, value: list3 };
+    return { ok: true, value: list4 };
   };
   const route = steps(data.route, "route", "brief");
   if (!route.ok) return route;
@@ -30455,11 +31044,11 @@ function writeAnswers(plan, record) {
       `${head} (${answer?.option}) ${oneLineTitle(option?.label ?? "")}, chosen by ${answer?.by}.`
     ];
   });
-  const block = [ANSWERS_START, ...lines, ANSWERS_END].join("\n");
+  const block2 = [ANSWERS_START, ...lines, ANSWERS_END].join("\n");
   const start = plan.indexOf(ANSWERS_START);
   const end = plan.indexOf(ANSWERS_END);
   if (start !== -1 && end > start) {
-    return plan.slice(0, start) + block + plan.slice(end + ANSWERS_END.length);
+    return plan.slice(0, start) + block2 + plan.slice(end + ANSWERS_END.length);
   }
   return `${plan.trimEnd()}
 
@@ -30467,7 +31056,7 @@ function writeAnswers(plan, record) {
 
 Recorded by Codeman from \`/codeman\` commands on the issue.
 
-${block}
+${block2}
 `;
 }
 function oneLineTitle(text) {
@@ -30974,8 +31563,8 @@ function trigrams(text) {
   }
   return result;
 }
-function coverage(block, text) {
-  const wanted = trigrams(block);
+function coverage(block2, text) {
+  const wanted = trigrams(block2);
   if (wanted.size === 0) return 1;
   const present = trigrams(text);
   let found = 0;
@@ -30985,18 +31574,18 @@ function coverage(block, text) {
 var COVERED = 0.6;
 function agentRules(rules, repositoryRules2) {
   const blocks = ruleBlocks(rules);
-  const omitted = repositoryRules2 ? blocks.filter((block) => coverage(block.text, repositoryRules2) >= COVERED) : [];
-  const kept = blocks.filter((block) => !omitted.includes(block));
+  const omitted = repositoryRules2 ? blocks.filter((block2) => coverage(block2.text, repositoryRules2) >= COVERED) : [];
+  const kept = blocks.filter((block2) => !omitted.includes(block2));
   const text = [
     "# Codeman's working rules",
     UNDER_CODEMAN,
-    ...kept.map((block) => block.text),
+    ...kept.map((block2) => block2.text),
     ...omitted.length > 0 ? [
-      `The repository's own instructions already cover the rest of Codeman's rules: ${omitted.map((block) => block.heading).join(", ")}.`
+      `The repository's own instructions already cover the rest of Codeman's rules: ${omitted.map((block2) => block2.heading).join(", ")}.`
     ] : []
   ].join("\n\n");
   return { text: `${text}
-`, omitted: omitted.map((block) => block.heading) };
+`, omitted: omitted.map((block2) => block2.heading) };
 }
 function readRules() {
   return readFileSync3(RULES_FILE, "utf8");
@@ -31983,8 +32572,8 @@ async function applyPlan(task, io) {
   }
   const dir = io.resultDir;
   const manifest = readJson(join7(dir, "manifest.json"));
-  const checked = checkPlanResult(manifest, task.planPath);
-  if (!checked.ok) return blocked(io, task, checked.error);
+  const checked2 = checkPlanResult(manifest, task.planPath);
+  if (!checked2.ok) return blocked(io, task, checked2.error);
   const planFile = join7(dir, "tree", task.planPath);
   if (!lstatSync3(planFile).isFile()) return blocked(io, task, `${task.planPath} is not a file.`);
   const plan = decodeText(readFileSync5(planFile));
@@ -32017,7 +32606,7 @@ async function applyPlan(task, io) {
   });
   const state = pendingDecisions(record).length > 0 ? "awaiting-decision" : "ready";
   const t = say(task, record);
-  const ignored = checked.value.ignored.map((path) => t.ignoredChange(path));
+  const ignored = checked2.value.ignored.map((path) => t.ignoredChange(path));
   await finish(io, task, state, {
     outcome: "done",
     record,
@@ -32036,7 +32625,7 @@ async function applyStage(task, io) {
       message: `${t.noResult} ${retryHint(t, task)}`
     });
   }
-  const checked = stage === "review" ? { ok: true, value: { accepted: [], staged: [], dropped: [] } } : checkChanges(manifest, {
+  const checked2 = stage === "review" ? { ok: true, value: { accepted: [], staged: [], dropped: [] } } : checkChanges(manifest, {
     ignore: task.ignore,
     workflows: io.conventions.workflows,
     maxFiles: task.settings["max-files"],
@@ -32044,11 +32633,11 @@ async function applyStage(task, io) {
     planPath: task.planPath,
     webDocs: stage === "web" ? "only" : "never"
   });
-  if (!checked.ok) return blocked(io, task, checked.error);
+  if (!checked2.ok) return blocked(io, task, checked2.error);
   if (stage === "web") {
-    checked.value = await checkWebFiles(io.repo, task.baseSha, join7(dir, "tree"), checked.value);
+    checked2.value = await checkWebFiles(io.repo, task.baseSha, join7(dir, "tree"), checked2.value);
   }
-  const warnings = checked.value.dropped.map(({ path, reason: reason2 }) => t.droppedChange(path, reason2));
+  const warnings = checked2.value.dropped.map(({ path, reason: reason2 }) => t.droppedChange(path, reason2));
   const outputFile = join7(dir, "output.json");
   const output = existsSync3(outputFile) ? parseStageOutput(
     readFileSync5(outputFile, "utf8").slice(0, MAX_OUTPUT_BYTES),
@@ -32076,8 +32665,8 @@ async function applyStage(task, io) {
   });
   const tree = join7(dir, "tree");
   const changes = [
-    ...readChanges(tree, checked.value.accepted, task.settings),
-    ...readChanges(tree, checked.value.staged, task.settings).map((change) => ({
+    ...readChanges(tree, checked2.value.accepted, task.settings),
+    ...readChanges(tree, checked2.value.staged, task.settings).map((change) => ({
       ...change,
       path: stagedPath(change.path, io.conventions.workflows)
     }))
@@ -32502,16 +33091,16 @@ function afterAccept(t, state, record, by, workflows) {
   }
   return { state, record: accepted, message: "" };
 }
-async function checkWebFiles(repo, ref, tree, checked) {
+async function checkWebFiles(repo, ref, tree, checked2) {
   const text = (path) => {
     const file = join7(tree, path);
     return lstatSync3(file).isFile() ? readFileSync5(file, "utf8") : "";
   };
-  const written = checked.accepted.filter(
+  const written = checked2.accepted.filter(
     (change) => change.status !== "deleted" && isWebPath(change.path)
   );
   const tools = /* @__PURE__ */ new Set();
-  const dropped = [...checked.dropped];
+  const dropped = [...checked2.dropped];
   const bad = /* @__PURE__ */ new Set();
   for (const change of written.filter((file) => file.path.startsWith(WEB_TOOLS_DIR))) {
     const problem2 = webFileProblem(change.path, text(change.path), () => true);
@@ -32540,8 +33129,8 @@ async function checkWebFiles(repo, ref, tree, checked) {
     }
   }
   return {
-    ...checked,
-    accepted: checked.accepted.filter((change) => !bad.has(change.path)),
+    ...checked2,
+    accepted: checked2.accepted.filter((change) => !bad.has(change.path)),
     dropped
   };
 }
@@ -33293,7 +33882,7 @@ async function select(services) {
       decisionsUrl: decisionsUrl(record, (id) => repo.commentUrl(work.task.url, id))
     });
   };
-  const block = async (work) => {
+  const block2 = async (work) => {
     const { task, talk, record } = work;
     const t = messages(taskLanguage(work.language, record?.language));
     const stage = work.agentStage ?? "plan";
@@ -33337,7 +33926,7 @@ async function select(services) {
   for (const work of picks) picked.push(await prepare(work, agentPick.tasks));
   for (const number3 of agentPick.unserved) {
     const work = workOf(number3);
-    if (work) await block(work);
+    if (work) await block2(work);
   }
   for (const waiting of agentPick.waiting) {
     const work = workOf(waiting.number);
@@ -33348,9 +33937,9 @@ async function select(services) {
     runtime2.info("Nothing to do.");
     return;
   }
-  const list3 = picked.map((one) => `#${one.number} (${one.action})`).join(", ");
+  const list4 = picked.map((one) => `#${one.number} (${one.action})`).join(", ");
   runtime2.info(
-    `Picked ${picked.length} task(s), of up to ${cap}: ${list3}; ${agentPick.tasks} run an agent.`
+    `Picked ${picked.length} task(s), of up to ${cap}: ${list4}; ${agentPick.tasks} run an agent.`
   );
   for (const one of picked) await one.start();
   const runOf = (one) => ledgerRunId(runtime2.run.id, runtime2.run.attempt, one.number);

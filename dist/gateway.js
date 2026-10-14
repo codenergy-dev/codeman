@@ -177,6 +177,7 @@ var Runpod = class {
         const memory = (await this.#gpu(gpuType))?.memory;
         return typeof memory === "number" && memory > 0 ? memory : void 0;
       },
+      cudaVersions: (gpuType, min) => this.#cudaVersions(gpuType, min),
       create: (spec) => this.#createPod(spec),
       get: (id) => this.#getPod(id),
       list: (env) => this.#listPods(env),
@@ -235,11 +236,31 @@ var Runpod = class {
     }
     return hourly / 3600;
   }
+  /**
+   * `GET /v2/catalog/gpus/{id}` with the pods' availability on Secure Cloud from a CUDA version
+   * (docs/web/runpod/get-a-gpu-type.md): a missing `cudaVersions` is an empty one.
+   */
+  async #cudaVersions(gpuType, min) {
+    const query = `include=AVAILABILITY&product=POD&cloud=SECURE&minCudaVersion=${encodeURIComponent(min)}`;
+    const gpu = await this.#request(
+      `/catalog/gpus/${encodeURIComponent(gpuType)}?${query}`,
+      "GET",
+      void 0,
+      [404]
+    );
+    return (gpu?.cudaVersions ?? []).flatMap(
+      ({ version, available }) => typeof version === "string" ? [{ version, available: available === true }] : []
+    );
+  }
   async #createPod(spec) {
     const pod = await this.#request("/pods", "POST", {
       name: spec.name,
       image: spec.image,
-      gpu: { id: spec.gpuType, count: 1 },
+      gpu: {
+        id: spec.gpuType,
+        count: 1,
+        ...spec.minCudaVersion ? { minCudaVersion: spec.minCudaVersion } : {}
+      },
       // Decision 6 of the self-hosted inference plan: Runpod's own data centers only.
       cloud: "SECURE",
       env: spec.env,
@@ -350,7 +371,8 @@ function toPod(pod) {
     env: pod.env ?? {},
     gpuType: pod.gpu?.id,
     createdAt: new Date(pod.createdAt),
-    pricePerSecond: typeof pod.cost === "number" && pod.cost > 0 ? pod.cost / 3600 : void 0
+    pricePerSecond: typeof pod.cost === "number" && pod.cost > 0 ? pod.cost / 3600 : void 0,
+    ...typeof pod.cudaVersion === "string" && pod.cudaVersion !== "" ? { cudaVersion: pod.cudaVersion } : {}
   };
 }
 function timestamp(date) {
@@ -377,6 +399,334 @@ function describeProblem(body) {
 }
 function amount(value) {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+// src/inference/vllm.ts
+var MODEL2 = /^[A-Za-z0-9][A-Za-z0-9._-]*(\/[A-Za-z0-9][A-Za-z0-9._-]*)?$/;
+var vllm = {
+  name: "vllm",
+  example: "Qwen/Qwen3-Coder-30B-A3B-Instruct",
+  isModel: (model) => model.length <= 100 && MODEL2.test(model),
+  usage: (body) => openAiUsage(body)
+};
+var HUB_NAME = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,94}[A-Za-z0-9])?$/;
+function isHuggingFaceId(text) {
+  const [namespace = "", name = "", ...rest] = text.split("/");
+  return rest.length === 0 && [namespace, name].every((part) => HUB_NAME.test(part) && !/--|\.\./.test(part));
+}
+var VLLM_VERSION = "0.31.0";
+var VLLM_PORT = 8e3;
+var VLLM_URL = `http://127.0.0.1:${VLLM_PORT}`;
+var VLLM_TOOL_PARSERS = [
+  "dots",
+  "deepseek_v3",
+  "deepseek_v31",
+  "deepseek_v32",
+  "deepseek_v4",
+  "deepseek_v41",
+  "cohere_command3",
+  "cohere_command4",
+  "ernie45",
+  "glm45",
+  "glm47",
+  "ling3",
+  "granite-20b-fc",
+  "granite",
+  "granite4",
+  "hermes",
+  "poolside_v1",
+  "hunyuan_a13b",
+  "hy_v3",
+  "hy_v4",
+  "internlm",
+  "jamba",
+  "lfm2",
+  "kimi_k2",
+  "kimi_k3",
+  "k2_horizon",
+  "llama3_json",
+  "llama4_json",
+  "llama4_pythonic",
+  "longcat",
+  "mimo",
+  "minimax_m2",
+  "minimax_m3",
+  "minicpm5",
+  "mistral",
+  "olmo3",
+  "muse_glimmer",
+  "openai",
+  "phi4_mini_json",
+  "pythonic",
+  "qwen3_coder",
+  "qwen3_xml",
+  "seed_oss",
+  "step3",
+  "step3p5",
+  "inkling",
+  "xlam",
+  "gigachat3",
+  "functiongemma",
+  "gemma4",
+  "apertus"
+];
+var VLLM_REASONING_PARSERS = [
+  "deepseek_r1",
+  "deepseek_v3",
+  "deepseek_v4",
+  "deepseek_v41",
+  "poolside_v1",
+  "cohere_command3",
+  "cohere_command4",
+  "ernie45",
+  "gemma4",
+  "glm45",
+  "glm47",
+  "ling3",
+  "openai_gptoss",
+  "granite",
+  "granite_thinking_parser",
+  "holo2",
+  "hunyuan_a13b",
+  "hy_v3",
+  "hy_v4",
+  "kimi_k2",
+  "kimi_k3",
+  "k2_horizon",
+  "mimo",
+  "minimax_m2",
+  "minimax_m2_append_think",
+  "minimax_m3",
+  "mistral",
+  "nemotron_v3",
+  "olmo3",
+  "muse_glimmer",
+  "qwen3",
+  "seed_oss",
+  "step3",
+  "step3p5",
+  "inkling"
+];
+var VLLM_SPECULATIVE_METHODS = [
+  "mtp",
+  "ngram",
+  "eagle3",
+  "dflash",
+  "dspark",
+  "draft_model"
+];
+var DRAFT_MODEL_METHODS = /* @__PURE__ */ new Set([
+  "eagle3",
+  "dflash",
+  "dspark",
+  "draft_model"
+]);
+var VLLM_SETTINGS = {
+  "max-model-len": { argument: "--max-model-len", value: { kind: "count", min: 1 } },
+  "max-num-seqs": { argument: "--max-num-seqs", value: { kind: "count", min: 1 } },
+  "gpu-memory-utilization": { argument: "--gpu-memory-utilization", value: { kind: "fraction" } },
+  "kv-cache-dtype": {
+    argument: "--kv-cache-dtype",
+    value: {
+      kind: "choice",
+      values: ["auto", "bfloat16", "float16", "fp8", "fp8_e4m3", "fp8_e5m2"]
+    }
+  },
+  "enable-prefix-caching": { argument: "--enable-prefix-caching", value: { kind: "boolean" } },
+  "max-num-batched-tokens": {
+    argument: "--max-num-batched-tokens",
+    value: { kind: "count", min: 1 }
+  },
+  "tool-call-parser": {
+    argument: "--tool-call-parser",
+    value: { kind: "choice", values: VLLM_TOOL_PARSERS }
+  },
+  "reasoning-parser": {
+    argument: "--reasoning-parser",
+    value: { kind: "choice", values: VLLM_REASONING_PARSERS }
+  },
+  "speculative-method": {
+    argument: "method",
+    value: { kind: "choice", values: VLLM_SPECULATIVE_METHODS }
+  },
+  "speculative-tokens": { argument: "num_speculative_tokens", value: { kind: "count", min: 1 } },
+  "speculative-model": { argument: "model", value: { kind: "model" } },
+  "language-model-only": { argument: "--language-model-only", value: { kind: "boolean" } },
+  "enforce-eager": { argument: "--enforce-eager", value: { kind: "boolean" } },
+  "async-scheduling": { argument: "--async-scheduling", value: { kind: "boolean" } }
+};
+var SPECULATIVE_KEYS = ["speculative-method", "speculative-tokens", "speculative-model"];
+var SERVED = "Codeman serves the run's model on the pod's loopback, behind its gateway";
+var LOOPBACK = "only Codeman's gateway calls vLLM, from the pod's loopback";
+var CODE = "it loads code or files that Codeman does not ship in the pod image";
+var DOWNLOADS = "Codeman has vLLM download public models from Hugging Face, onto the pod's disk";
+var ONE_GPU = "a pod has one GPU";
+var OFF_GPU = "it moves weights or the cache off the GPU, which runs much slower";
+var SENDS = "it sends the runs' data, with the repository's code in it, off the pod";
+var WRITES = "it writes the runs' requests, with the repository's code in them, to the pod's log";
+var REFUSED_VLLM_SETTINGS = {
+  host: SERVED,
+  port: SERVED,
+  uds: SERVED,
+  "api-key": SERVED,
+  "served-model-name": SERVED,
+  model: SERVED,
+  "enable-auto-tool-choice": "Codeman always turns it on: its agents work through tool calls",
+  "allowed-origins": LOOPBACK,
+  "ssl-keyfile": LOOPBACK,
+  "root-path": LOOPBACK,
+  middleware: CODE,
+  "tool-parser-plugin": CODE,
+  "reasoning-parser-plugin": CODE,
+  "chat-template": CODE,
+  "trust-remote-code": "it runs the model repository's code beside the runs' requests",
+  "download-dir": DOWNLOADS,
+  "load-format": DOWNLOADS,
+  "hf-token": DOWNLOADS,
+  "tensor-parallel-size": ONE_GPU,
+  "pipeline-parallel-size": ONE_GPU,
+  "data-parallel-size": ONE_GPU,
+  "cpu-offload-gb": OFF_GPU,
+  "kv-offloading-size": OFF_GPU,
+  "kv-offloading-backend": OFF_GPU,
+  "kv-transfer-config": SENDS,
+  "kv-events-config": SENDS,
+  "otlp-traces-endpoint": SENDS,
+  "enable-log-requests": WRITES,
+  "enable-log-outputs": WRITES
+};
+function refusal(key) {
+  return REFUSED_VLLM_SETTINGS[key.startsWith("ssl-") ? "ssl-keyfile" : key];
+}
+function keyOf2(written) {
+  return written.toLowerCase().replace(/^--/, "").replaceAll("_", "-");
+}
+var FRACTION = /^(?:0?\.[0-9]+|0|1|[01]\.[0-9]+)$/;
+function vllmSetting(key, text) {
+  const fail = (error2) => ({ ok: false, error: error2 });
+  const setting = VLLM_SETTINGS[key];
+  if (!setting) {
+    const kebab = keyOf2(key);
+    const refused = refusal(kebab);
+    if (refused) return fail(`\`vllm\` cannot set \`${kebab}\`: ${refused}.`);
+    if (kebab !== key && VLLM_SETTINGS[kebab]) {
+      return fail(
+        `\`vllm\` takes its keys in kebab-case, without \`--\`: write \`${kebab}\`, not \`${key}\`.`
+      );
+    }
+    if (kebab === "speculative-config") {
+      return fail(
+        "`vllm` takes speculative decoding as keys of their own, since the settings file holds no JSON: `speculative-method`, `speculative-tokens` and `speculative-model`."
+      );
+    }
+    return fail(
+      `\`vllm\` does not accept \`${key}\`; it takes ${list2(Object.keys(VLLM_SETTINGS).map((name) => `\`${name}\``))} (docs/settings/vllm.md).`
+    );
+  }
+  const { value } = setting;
+  switch (value.kind) {
+    case "count": {
+      const number = /^[0-9]+$/.test(text) ? Number(text) : Number.NaN;
+      return Number.isSafeInteger(number) && number >= value.min ? { ok: true, value: String(number) } : fail(`\`vllm\`'s \`${key}\` must be a whole number, at least ${value.min}.`);
+    }
+    case "fraction": {
+      const number = FRACTION.test(text) ? Number(text) : Number.NaN;
+      return number > 0 && number <= 1 ? { ok: true, value: String(number) } : fail(`\`vllm\`'s \`${key}\` must be a number above 0 and at most 1, such as \`0.9\`.`);
+    }
+    case "boolean":
+      return text === "true" || text === "false" ? { ok: true, value: text } : fail(`\`vllm\`'s \`${key}\` must be \`true\` or \`false\`.`);
+    case "choice":
+      if (value.values.includes(text)) return { ok: true, value: text };
+      return fail(
+        value.values.length > 10 ? `\`vllm\`'s \`${key}\` must be one of vLLM ${VLLM_VERSION}'s, such as \`${value.values.includes("qwen3_xml") ? "qwen3_xml" : "qwen3"}\`, not \`${text}\` (docs/settings/vllm.md).` : `\`vllm\`'s \`${key}\` must be one of ${value.values.map((v) => `\`${v}\``).join(", ")}.`
+      );
+    case "model":
+      return isHuggingFaceId(text) ? { ok: true, value: text } : fail(
+        `\`vllm\`'s \`${key}\` must be a Hugging Face model ID, such as \`Qwen/Qwen3-0.6B\`.`
+      );
+  }
+}
+function vllmBlockProblem(settings) {
+  const method = settings?.["speculative-method"];
+  const tokens = settings?.["speculative-tokens"];
+  const model = settings?.["speculative-model"];
+  if (method === void 0) {
+    return tokens !== void 0 || model !== void 0 ? "`vllm`'s `speculative-tokens` and `speculative-model` go with `speculative-method`." : void 0;
+  }
+  if (tokens === void 0) {
+    return `\`vllm\`'s \`speculative-method\` needs \`speculative-tokens\`, the tokens drafted per step, such as \`3\`.`;
+  }
+  if (DRAFT_MODEL_METHODS.has(method) && model === void 0) {
+    return `\`vllm\`'s \`speculative-method: ${method}\` needs \`speculative-model\`, its draft model's Hugging Face ID.`;
+  }
+  if (!DRAFT_MODEL_METHODS.has(method) && model !== void 0) {
+    return `\`vllm\`'s \`speculative-method: ${method}\` takes no \`speculative-model\`.`;
+  }
+  return void 0;
+}
+function vllmArguments(settings) {
+  const checked = checkedVllm(settings);
+  const problem = vllmBlockProblem(checked);
+  if (problem) throw new Error(problem);
+  const args = [];
+  const speculative = {};
+  for (const [key, value] of Object.entries(checked)) {
+    const setting = VLLM_SETTINGS[key];
+    if (SPECULATIVE_KEYS.includes(key)) {
+      speculative[setting.argument] = setting.value.kind === "count" ? Number(value) : value;
+    } else if (setting.value.kind === "boolean") {
+      args.push(value === "true" ? setting.argument : setting.argument.replace(/^--/, "--no-"));
+    } else {
+      args.push(setting.argument, value);
+    }
+  }
+  if (Object.keys(speculative).length > 0) {
+    const { method, num_speculative_tokens, model } = speculative;
+    args.push(
+      "--speculative-config",
+      JSON.stringify({ method, num_speculative_tokens, ...model ? { model } : {} })
+    );
+  }
+  return args;
+}
+function checkedVllm(settings) {
+  const entries = Object.entries(settings ?? {}).map(([key, text]) => {
+    const checked = vllmSetting(key, text);
+    if (!checked.ok) throw new Error(checked.error);
+    return [key, checked.value];
+  });
+  return Object.fromEntries(entries.sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0));
+}
+function parseVllmSettings(text) {
+  if (text === void 0 || text.trim() === "") return { ok: true, value: {} };
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return { ok: false, error: "CODEMAN_VLLM is not JSON." };
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return { ok: false, error: "CODEMAN_VLLM is not an object of settings." };
+  }
+  for (const [key, value] of Object.entries(parsed)) {
+    if (!VLLM_SETTINGS[key] || typeof value !== "string") {
+      return { ok: false, error: `CODEMAN_VLLM sets \`${key}\`, which Codeman does not.` };
+    }
+  }
+  try {
+    const value = checkedVllm(parsed);
+    const problem = vllmBlockProblem(value);
+    if (problem) return { ok: false, error: `CODEMAN_VLLM: ${problem}` };
+    return { ok: true, value };
+  } catch (error2) {
+    return {
+      ok: false,
+      error: `CODEMAN_VLLM: ${error2 instanceof Error ? error2.message : String(error2)}`
+    };
+  }
+}
+function list2(items) {
+  return items.length < 2 ? items[0] ?? "" : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
 }
 
 // src/gateway/gateway.ts
@@ -550,6 +900,8 @@ var Gateway = class {
   contextLength;
   /** The Ollama variables from the pod's settings that it gave Ollama, which the status reports. */
   ollama = {};
+  /** The vLLM settings of the pod that it gave vLLM, by key, which the status reports. */
+  vllm;
   /** How the pod's model was fitted to its GPU, once it serves; the status reports it. */
   fit;
   /**
@@ -746,9 +1098,11 @@ var Gateway = class {
     const active = this.#runs.filter((run) => run.active);
     return {
       version: GATEWAY_VERSION,
+      engine: this.#options.engine.name,
       ready: this.ready,
       contextLength: this.contextLength,
       ollama: this.ollama,
+      vllm: this.vllm,
       fit: this.fit,
       failure: this.failure,
       serving: this.serving,
@@ -1151,12 +1505,16 @@ function podSettings(env) {
   if (!(keptIdle > 0) || !(runIdle > 0)) throw new Error("Idle limits must be positive.");
   return {
     model,
+    engine: env.CODEMAN_ENGINE || "ollama",
+    imageEngine: env.CODEMAN_IMAGE_ENGINE || "ollama",
     adminSha256,
     policy: { startBy, keptIdleMs: keptIdle * 6e4, runIdleMs: runIdle * 6e4 },
     podId: env.RUNPOD_POD_ID,
     podKey: env.RUNPOD_API_KEY,
     ollama: parseOllamaVariables(env.CODEMAN_OLLAMA),
+    vllm: parseVllmSettings(env.CODEMAN_VLLM),
     fitHint: parseFitHint(env.CODEMAN_FIT),
+    contextHint: parseContextHint(env.CODEMAN_FIT),
     gpuMemoryGb: positive(Number(env.CODEMAN_GPU_MEMORY_GB ?? ""))
   };
 }
@@ -1168,6 +1526,15 @@ function parseFitHint(text) {
   try {
     const { contextLength, digest } = JSON.parse(text);
     return Number.isSafeInteger(contextLength) && (contextLength ?? 0) > 0 && typeof digest === "string" && digest !== "" ? { contextLength, digest } : void 0;
+  } catch {
+    return void 0;
+  }
+}
+function parseContextHint(text) {
+  if (!text) return void 0;
+  try {
+    const { contextLength } = JSON.parse(text);
+    return Number.isSafeInteger(contextLength) && contextLength > 0 ? contextLength : void 0;
   } catch {
     return void 0;
   }
@@ -1348,11 +1715,260 @@ async function untilUp(server) {
   throw new Error("Ollama did not start.");
 }
 
+// src/gateway/vllm.ts
+var VllmFitFailure = class extends Error {
+};
+var VllmStopped = class extends Error {
+};
+function vllmServeArguments(model, settings, maxModelLen) {
+  const { "max-model-len": _, ...rest } = settings;
+  return [
+    "serve",
+    model,
+    "--host",
+    "127.0.0.1",
+    "--port",
+    "8000",
+    "--served-model-name",
+    model,
+    "--enable-auto-tool-choice",
+    ...vllmArguments(rest),
+    "--max-model-len",
+    String(maxModelLen)
+  ];
+}
+var MIG_UUID = /^MIG-/;
+function vllmServeEnvironment(base) {
+  const { RUNPOD_API_KEY: _, ...rest } = base;
+  return {
+    ...rest,
+    VLLM_NO_USAGE_STATS: "1",
+    DO_NOT_TRACK: "1",
+    ...MIG_UUID.test(base.CUDA_VISIBLE_DEVICES ?? "") ? { CUDA_VISIBLE_DEVICES: "0" } : {}
+  };
+}
+function cacheCapacity(metrics) {
+  const line = metrics.split("\n").find((one) => one.startsWith("vllm:cache_config_info{"));
+  if (!line) return void 0;
+  const labels = new Map(
+    [...line.matchAll(/([A-Za-z_][A-Za-z0-9_]*)="((?:[^"\\]|\\.)*)"/g)].map((match) => [
+      match[1],
+      match[2]
+    ])
+  );
+  const cacheTokens = Number(labels.get("kv_cache_size_tokens"));
+  const concurrency = Number(labels.get("kv_cache_max_concurrency"));
+  return Number.isFinite(cacheTokens) && cacheTokens > 0 && Number.isFinite(concurrency) ? { cacheTokens, concurrency } : void 0;
+}
+function servedContext(models, model) {
+  const data = models?.data;
+  if (!Array.isArray(data)) return void 0;
+  const entries = data;
+  const entry = entries.find((one) => one.id === model) ?? entries[0];
+  const length = entry?.max_model_len;
+  return typeof length === "number" && Number.isSafeInteger(length) && length > 0 ? length : void 0;
+}
+function autoFitModelContext(lines) {
+  for (const line of [...lines].reverse()) {
+    const match = /Auto-fit max_model_len: full model context length (\d+) fits/.exec(line) ?? /Auto-fit max_model_len: reduced from (\d+) to \d+/.exec(line);
+    if (match) return Number(match[1]);
+  }
+  return void 0;
+}
+function vllmError(lines, exit) {
+  const errors = lines.filter((line) => /\b[A-Za-z]*(Error|Exception):/.test(line)).map((line) => line.replace(/^.*?\b([A-Za-z]*(Error|Exception):)/, "$1").trim());
+  const text = errors.findLast((error2) => !/root cause above|initialization failed/i.test(error2)) ?? errors.at(-1);
+  return text ? text.length > 600 ? `${text.slice(0, 599)}\u2026` : text : exit;
+}
+var MAX_RESTARTS = 2;
+function nextContext(measures, n) {
+  const last = measures.at(-1);
+  const step = (tokens) => Math.floor(tokens / CONTEXT_STEP) * CONTEXT_STEP;
+  let target = step(last.cacheTokens / n);
+  const before = measures.at(-2);
+  if (before && before.contextLength !== last.contextLength) {
+    const slope = (1 / last.concurrency - 1 / before.concurrency) / (last.contextLength - before.contextLength);
+    const base = 1 / last.concurrency - slope * last.contextLength;
+    if (slope > 0) target = step((1 / n - base) / slope);
+  }
+  return Math.min(target, last.contextLength - CONTEXT_STEP);
+}
+function requests2(n) {
+  return `${n} parallel request${n === 1 ? "" : "s"}`;
+}
+function holds(measure) {
+  return `vLLM's K/V cache holds ${measure.concurrency.toFixed(2)} of them (${Math.round(measure.cacheTokens)} tokens)`;
+}
+function vllmExplicitMessage(model, n, measure) {
+  return `\`${model}\` does not fit the GPU with ${requests2(n)} and a context of ${measure.contextLength} tokens: ${holds(measure)}. Lower \`max-model-len\` or \`max-num-seqs\` in the \`vllm\` settings, set \`kv-cache-dtype: fp8\` or \`language-model-only: true\`, or use a GPU with more memory.`;
+}
+function vllmFloorMessage(model, n, floor, measure) {
+  return `\`${model}\` does not fit the GPU with ${requests2(n)} and a context of ${floor} tokens, the least Codeman gives an agent: with a context of ${measure.contextLength} tokens, ${holds(measure)}. Give the profile fewer tasks (\`tasks\` or \`max-tasks\`) or set a smaller \`max-num-seqs\`, set \`kv-cache-dtype: fp8\` or \`language-model-only: true\` in the \`vllm\` settings, or use a GPU with more memory.`;
+}
+function vllmUnfitMessage(model, n, loads, measure) {
+  return `vLLM found no context of \`${model}\` for ${requests2(n)} in ${loads} starts: with a context of ${measure.contextLength} tokens, ${holds(measure)}. Set \`max-model-len\` in the \`vllm\` settings, give the profile fewer tasks, or use a GPU with more memory.`;
+}
+function vllmStartMessage(model, context, reason, explicit) {
+  const with_ = context === "auto" ? "" : ` with a context of ${context} tokens`;
+  const fix = explicit ? " Lower `max-model-len` in the `vllm` settings, set `kv-cache-dtype: fp8` or `language-model-only: true`, or use a GPU with more memory." : "";
+  return `vLLM did not start \`${model}\`${with_}: ${reason}${fix}`;
+}
+function vllmProbeMessage(model, parser, detail) {
+  return `vLLM did not return a tool call with the parser \`${parser}\`: it may not match \`${model}\` (${detail}). Set the \`tool-call-parser\` that the model's card or vLLM's recipe gives in the \`vllm\` settings.`;
+}
+async function prepareVllm(server, model, log, options) {
+  const fetchFn = server.fetch ?? fetch;
+  const now = server.now ?? Date.now;
+  const wait = server.wait ?? ((ms) => new Promise((done) => setTimeout(done, ms)));
+  const n = options.maxNumSeqs;
+  let loads = 0;
+  const get = async (path) => {
+    const response = await fetchFn(`${server.url}${path}`);
+    if (!response.ok) throw new Error(`vLLM ${path} answered ${response.status}.`);
+    return response;
+  };
+  const launch = async (context) => {
+    loads++;
+    const started = now();
+    log(
+      context === "auto" ? `Starting vLLM for ${model}, with the largest context that fits the GPU for one request.` : `Starting vLLM for ${model}, with a context of ${context} tokens.`
+    );
+    await server.start(context);
+    for (; ; ) {
+      const reason = server.stopped();
+      if (reason !== void 0) throw new VllmStopped(reason);
+      const healthy = await fetchFn(`${server.url}/health`).then((response) => response.ok).catch(() => false);
+      if (healthy) break;
+      await wait(2e3);
+    }
+    const contextLength = servedContext(await (await get("/v1/models")).json(), model);
+    const capacity = cacheCapacity(await (await get("/metrics")).text());
+    if (contextLength === void 0 || capacity === void 0) {
+      throw new Error("vLLM did not report its context and its cache's capacity.");
+    }
+    const measure2 = { contextLength, ...capacity };
+    log(
+      `vLLM serves ${model} after ${((now() - started) / 1e3).toFixed(0)} s, with a context of ${contextLength} tokens: its K/V cache holds ${capacity.concurrency.toFixed(2)} requests of it (${Math.round(capacity.cacheTokens)} tokens).`
+    );
+    return measure2;
+  };
+  const failed = (error2, context, explicit) => {
+    if (error2 instanceof VllmStopped) {
+      throw new VllmFitFailure(vllmStartMessage(model, context, error2.message, explicit));
+    }
+    throw error2;
+  };
+  let measure;
+  let source;
+  let modelContext;
+  if (options.configured) {
+    const context = options.configured;
+    measure = await launch(context).catch((error2) => failed(error2, context, true));
+    if (measure.concurrency < n) throw new VllmFitFailure(vllmExplicitMessage(model, n, measure));
+    source = "settings";
+  } else {
+    const measures = [];
+    if (options.hint) {
+      const hint = options.hint;
+      log(`Trying the context that fitted these settings before: ${hint} tokens.`);
+      try {
+        measures.push(await launch(hint));
+      } catch (error2) {
+        if (!(error2 instanceof VllmStopped)) throw error2;
+        log(`vLLM did not start with the cached context (${error2.message}); fitting again.`);
+      }
+    }
+    if (measures.length === 0) {
+      measures.push(await launch("auto").catch((error2) => failed(error2, "auto", false)));
+      modelContext = autoFitModelContext(server.output());
+    }
+    measure = measures.at(-1);
+    source = options.hint && measures.length === 1 && loads === 1 ? "cache" : "search";
+    const floor = floorContext(modelContext);
+    for (let restarts = 0; measure.concurrency < n; restarts++) {
+      const target = nextContext(measures, n);
+      if (target < floor) throw new VllmFitFailure(vllmFloorMessage(model, n, floor, measure));
+      if (restarts === MAX_RESTARTS) {
+        throw new VllmFitFailure(vllmUnfitMessage(model, n, loads, measure));
+      }
+      log(
+        `vLLM's cache holds ${measure.concurrency.toFixed(2)} requests of ${measure.contextLength} tokens, fewer than ${n}: restarting it with ${target}.`
+      );
+      measure = await launch(target).catch((error2) => failed(error2, target, false));
+      measures.push(measure);
+      source = "search";
+    }
+    if (measure.contextLength < floor) {
+      throw new VllmFitFailure(vllmFloorMessage(model, n, floor, measure));
+    }
+  }
+  await probe(server, model, options.toolCallParser, log);
+  return {
+    engine: "vllm",
+    contextLength: measure.contextLength,
+    modelContextLength: modelContext,
+    requestedParallel: n,
+    parallel: n,
+    concurrency: measure.concurrency,
+    cacheTokens: measure.cacheTokens,
+    source,
+    loads,
+    toolCallParser: options.toolCallParser
+  };
+}
+var PROBE_TRIES = 2;
+async function probe(server, model, parser, log) {
+  const fetchFn = server.fetch ?? fetch;
+  let detail = "no answer";
+  for (let attempt = 1; attempt <= PROBE_TRIES; attempt++) {
+    try {
+      const response = await fetchFn(`${server.url}/v1/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: "user", content: "Call the ping tool now, with no arguments." }],
+          tools: [
+            {
+              type: "function",
+              function: {
+                name: "ping",
+                description: "Checks that tools work. Takes no arguments.",
+                parameters: { type: "object", properties: {} }
+              }
+            }
+          ],
+          tool_choice: "auto",
+          max_tokens: 4096,
+          temperature: 0
+        }),
+        signal: AbortSignal.timeout(5 * 6e4)
+      });
+      const body = await response.json().catch(() => ({}));
+      const calls = body.choices?.[0]?.message?.tool_calls ?? [];
+      if (response.ok && calls.some((call) => call.function?.name === "ping")) {
+        log(`vLLM returned a tool call with the parser ${parser}.`);
+        return;
+      }
+      detail = response.ok ? "it answered without a parsed tool call" : `it answered ${response.status}`;
+    } catch (error2) {
+      detail = error2 instanceof Error ? error2.message : String(error2);
+    }
+    log(`The probe of tool calls failed (try ${attempt} of ${PROBE_TRIES}): ${detail}.`);
+  }
+  throw new VllmFitFailure(vllmProbeMessage(model, parser, detail));
+}
+
 // src/gateway/main.ts
+var ENGINES = {
+  ollama: { engine: ollama, url: OLLAMA_URL },
+  vllm: { engine: vllm, url: VLLM_URL }
+};
+var KEPT_LINES = 400;
 async function main() {
   const settings = podSettings(process.env);
   const log = (message) => console.log(`[codeman] ${message}`);
-  let ollamaProcess;
+  let engineProcess;
   const terminate = async (reason) => {
     log(`Terminating the pod: ${reason}.`);
     if (settings.podId && settings.podKey) {
@@ -1360,44 +1976,42 @@ async function main() {
         log(`Could not terminate the pod: ${error2 instanceof Error ? error2.message : error2}`);
       });
     }
-    ollamaProcess?.kill("SIGTERM");
+    await stop(engineProcess);
     process.exit(0);
   };
   if (Date.now() >= settings.policy.startBy) await terminate("it started after its start limit");
+  const served = ENGINES[settings.engine];
+  if (!served || settings.engine !== settings.imageEngine) {
+    await terminate(
+      `it was created for the engine ${settings.engine}, and its image serves ${settings.imageEngine}`
+    );
+  }
   if (!settings.ollama.ok) {
     await terminate(`its Ollama settings cannot be applied: ${settings.ollama.error}`);
   }
-  const variables = settings.ollama.ok ? settings.ollama.value : {};
-  const names = Object.entries(variables).map(([name, value]) => `${name}=${value}`);
-  if (names.length > 0) log(`Ollama settings: ${names.join(", ")}.`);
+  if (!settings.vllm.ok) {
+    await terminate(`its vLLM settings cannot be applied: ${settings.vllm.error}`);
+  }
+  const { engine, url } = served;
   const gateway = new Gateway({
-    upstream: `${OLLAMA_URL}/v1`,
-    engine: ollama,
+    upstream: `${url}/v1`,
+    engine,
     adminSha256: settings.adminSha256,
     log
   });
-  gateway.ollama = variables;
   await gateway.listen("0.0.0.0", GATEWAY_PORT);
   log(`Gateway listening on port ${GATEWAY_PORT}.`);
-  ollamaProcess = serve(variables, void 0);
   setInterval(() => {
     const reason = expiry(gateway, settings.policy, Date.now());
     if (reason) void terminate(reason);
     else gateway.expireRuns(settings.policy.runIdleMs);
   }, 15e3).unref();
   try {
-    const fit = await prepareOllama(
-      {
-        url: OLLAMA_URL,
-        restart: async (contextLength) => {
-          await stop(ollamaProcess);
-          ollamaProcess = serve(variables, contextLength);
-        }
-      },
-      settings.model,
-      log,
-      fitOptions(variables, settings)
-    );
+    const fit = settings.engine === "vllm" ? await serveVllm(settings, gateway, log, (child) => {
+      engineProcess = child;
+    }) : await serveOllama(settings, gateway, log, (child) => {
+      engineProcess = child;
+    });
     gateway.fit = fit;
     gateway.contextLength = fit.contextLength;
     gateway.ready = true;
@@ -1412,17 +2026,113 @@ async function main() {
     await terminate(reason);
   }
 }
-function serve(variables, contextLength) {
+async function serveOllama(settings, gateway, log, running) {
+  const variables = settings.ollama.ok ? settings.ollama.value : {};
+  const names = Object.entries(variables).map(([name, value]) => `${name}=${value}`);
+  if (names.length > 0) log(`Ollama settings: ${names.join(", ")}.`);
+  gateway.ollama = variables;
+  let child = serveOllamaProcess(variables, void 0);
+  running(child);
+  return prepareOllama(
+    {
+      url: OLLAMA_URL,
+      restart: async (contextLength) => {
+        await stop(child);
+        child = serveOllamaProcess(variables, contextLength);
+        running(child);
+      }
+    },
+    settings.model,
+    log,
+    fitOptions(variables, settings)
+  );
+}
+async function serveVllm(settings, gateway, log, running) {
+  const values = settings.vllm.ok ? settings.vllm.value : {};
+  const names = Object.entries(values).map(([key, value]) => `${key}=${value}`);
+  log(`vLLM settings: ${names.join(", ")}.`);
+  gateway.vllm = values;
+  const toolCallParser = values["tool-call-parser"];
+  if (!toolCallParser) throw new Error("CODEMAN_VLLM has no `tool-call-parser`.");
+  let child;
+  let lines = [];
+  let stopped;
+  const configured = Number(values["max-model-len"] ?? "") || void 0;
+  return prepareVllm(
+    {
+      url: VLLM_URL,
+      start: async (maxModelLen) => {
+        await stop(child);
+        lines = [];
+        stopped = void 0;
+        const started = spawn("vllm", vllmServeArguments(settings.model, values, maxModelLen), {
+          env: vllmServeEnvironment(process.env),
+          stdio: ["ignore", "pipe", "pipe"],
+          // Its own process group, so stopping it stops the engine's processes too.
+          detached: true
+        });
+        const keep = (stream, out) => {
+          let rest = "";
+          stream.on("data", (chunk) => {
+            out.write(chunk);
+            const text = rest + chunk.toString("utf8");
+            const parts = text.split("\n");
+            rest = parts.pop() ?? "";
+            lines.push(...parts);
+            if (lines.length > KEPT_LINES) lines = lines.slice(-KEPT_LINES);
+          });
+        };
+        keep(started.stdout, process.stdout);
+        keep(started.stderr, process.stderr);
+        started.once("exit", (code, signal) => {
+          setTimeout(() => {
+            if (child !== started) return;
+            stopped = vllmError(lines, `it exited with ${signal ?? `code ${code}`}`);
+          }, 1e3);
+        });
+        started.once("error", (error2) => {
+          if (child === started) stopped = `it could not start: ${error2.message}`;
+        });
+        child = started;
+        running(started);
+      },
+      stopped: () => stopped,
+      output: () => lines
+    },
+    settings.model,
+    log,
+    {
+      configured,
+      maxNumSeqs: Number(values["max-num-seqs"] ?? "") || 1,
+      hint: configured ? void 0 : settings.contextHint,
+      toolCallParser
+    }
+  );
+}
+function serveOllamaProcess(variables, contextLength) {
   return spawn("ollama", ["serve"], {
     stdio: "inherit",
     env: ollamaServeEnvironment(process.env, variables, contextLength)
   });
 }
-function stop(child) {
-  if (!child || child.exitCode !== null) return Promise.resolve();
-  return new Promise((resolve) => {
-    child.once("exit", () => resolve());
-    child.kill("SIGTERM");
-  });
+async function stop(child) {
+  if (!child?.pid || child.exitCode !== null || child.signalCode !== null) return;
+  const group = (signal) => {
+    try {
+      process.kill(-child.pid, signal);
+    } catch {
+      child.kill(signal);
+    }
+  };
+  const exited = new Promise((resolve) => child.once("exit", () => resolve()));
+  group("SIGTERM");
+  const killed = setTimeout(() => group("SIGKILL"), 3e4);
+  await exited;
+  clearTimeout(killed);
+  try {
+    process.kill(-child.pid, "SIGKILL");
+    await new Promise((resolve) => setTimeout(resolve, 2e3));
+  } catch {
+  }
 }
 await main();
