@@ -5,7 +5,13 @@ import { MemoryStore } from "../store/memory.ts";
 import { FakeGateways, FakeGpu } from "../testing/fake-gpu.ts";
 import { FakeRuntime } from "../testing/fake-runtime.ts";
 import { POD_IMAGES } from "./images.ts";
-import { inferenceChoice, inferenceProvider, parseInferenceChoice, selfHosted } from "./index.ts";
+import {
+  choicePool,
+  inferenceChoice,
+  inferenceProvider,
+  parseInferenceChoice,
+  selfHosted,
+} from "./index.ts";
 
 /** The settings of a repository's file that sets `layer`. */
 function settings(layer: Partial<Settings>): Settings {
@@ -180,6 +186,38 @@ test("a pod's choice carries the most tasks its profile serves, for num-parallel
       () => parseInferenceChoice(JSON.stringify({ ...choice, parallel })),
       /not a valid/,
       JSON.stringify(parallel),
+    );
+  }
+});
+
+test("a choice carries the pool its organization agrees on, and a pod's its batch", () => {
+  const pod = settings({ provider: "runpod-pod", model: "qwen3-coder:30b", gpu: "GPU A" });
+  const pool = { id: "a+b", members: ["a", "b"] };
+  const choice = inferenceChoice(pod, null, { pool, batch: "300-1-0" });
+  assert.deepEqual(choice.pool, pool);
+  assert.equal(choice.provider === "runpod-pod" && choice.batch, "300-1-0");
+  assert.deepEqual(parseInferenceChoice(JSON.stringify(choice)), choice);
+  assert.deepEqual(choicePool(choice, "B"), pool);
+  assert.throws(() => choicePool(choice, "c"), /pool a\+b, without c/);
+  // Older choices name no pool: the organization alone.
+  const older = inferenceChoice(settings({ model: "a/b" }), null);
+  assert.equal("pool" in older, false);
+  assert.deepEqual(choicePool(older, "A"), { id: "a", members: ["a"] });
+  const openrouter = inferenceChoice(settings({ model: "a/b" }), null, { pool, batch: "1-1-1" });
+  assert.equal("batch" in openrouter, false, "only pods take a batch");
+  for (const wrong of [
+    { pool: { id: "b+a", members: ["a"] } },
+    { pool: { id: "a+b", members: ["c"] } },
+    { pool: { id: "a+b", members: [] } },
+    { pool: { id: "a+b", members: ["A"] } },
+    { pool: "a+b" },
+    { batch: "x" },
+    { batch: 3 },
+  ]) {
+    assert.throws(
+      () => parseInferenceChoice(JSON.stringify({ ...choice, ...wrong })),
+      /not a valid/,
+      JSON.stringify(wrong),
     );
   }
 });

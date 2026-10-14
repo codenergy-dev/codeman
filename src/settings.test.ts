@@ -306,14 +306,21 @@ test("the counts at which a stage is served, and by what", () => {
     "    max-tasks: 2",
     "    model: c/d",
   ]);
-  assert.deepEqual(servedCounts(pods, "code"), {
-    ok: true,
-    value: [
-      { tasks: 1, profile: "up-to-two" },
-      { tasks: 2, profile: "up-to-two" },
-      { tasks: 4, profile: "four" },
+  const code = servedCounts(pods, "code");
+  assert.ok(code.ok);
+  assert.deepEqual(
+    code.value.map(({ tasks, profile, pod }) => [tasks, profile, pod]),
+    [
+      [1, "up-to-two", false],
+      [2, "up-to-two", false],
+      [4, "four", false],
     ],
-  });
+  );
+  // The same settings at each count share a batch key; another profile's differs.
+  const [one, two, four] = code.value;
+  assert.equal(one?.key, two?.key);
+  assert.notEqual(one?.key, four?.key);
+  assert.match(one?.key ?? "", /^[0-9a-f]{16}$/);
   assert.deepEqual(servedCounts(pods, "plan"), { ok: true, value: [] }, "nothing serves it");
   // A top level with a model serves every count no profile does.
   const top = layers(["model: e/f", "profiles:", "  - name: four", "    tasks: 4"]);
@@ -597,7 +604,7 @@ test("rejects malformed profiles, naming the line", () => {
     ["profiles:\n  - name: a\n    stages: code", "line 3: `stages` must list"],
     [
       "profiles:\n  - name: a\n    tasks: 0",
-      "line 3: `tasks` must be a whole number from 1 to 10: the tasks of the run that run an agent.",
+      "line 3: `tasks` must be a whole number from 1 to 10: the tasks of a batch, which run at once with the same settings.",
     ],
     ["profiles:\n  - name: a\n    max-tasks: 11", "line 3: `max-tasks` must be a whole number"],
     ["profiles:\n  - name: a\n    min-tasks: 1.5", "line 3: `min-tasks` must be a whole number"],
@@ -1169,6 +1176,16 @@ test("the example: planning on OpenRouter, 4 tasks on a full GPU or up to 3 on a
     [3, "mig"],
     [4, "parallel-tasks"],
   ]);
+  // The offers: a code task forms a batch of up to 3 on one MIG pod, or of 4 on a full GPU, with
+  // tasks of any repository of the pool; a planning task, a batch of any size on OpenRouter.
+  assert.ok(code.ok);
+  const keys = new Set(code.value.filter((offer) => offer.profile === "mig").map((o) => o.key));
+  assert.equal(keys.size, 1);
+  assert.ok(!keys.has(code.value[3]?.key ?? ""));
+  assert.ok(code.value.every((offer) => offer.pod));
+  const plan = servedCounts(layers, "plan");
+  assert.ok(plan.ok && plan.value.length === 10);
+  assert.ok(plan.value.every((offer) => !offer.pod && offer.key === plan.value[0]?.key));
   // No top-level model: the runs without an agent need none.
   const top = resolveSettings(...layers);
   assert.ok(top.ok && top.value.model === "" && top.value["task-budget"] === 2);
@@ -1586,4 +1603,27 @@ describe("vLLM settings on pods", () => {
     assert.equal(plan.ok && plan.value.settings.vllm, undefined);
     assert.deepEqual(plan.ok && plan.value.settings.ollama, { "context-length": "65536" });
   });
+});
+
+test("`pool` lists the organizations that batch together, only in the organization's settings", () => {
+  const shared = parseSettings("pool: [Organization-A, organization-b]", SHARED_SETTINGS);
+  assert.deepEqual(shared, { ok: true, value: { pool: ["Organization-A", "organization-b"] } });
+  assert.deepEqual(parseSettings("model: a/b\npool: [a, b]"), {
+    ok: false,
+    error:
+      ".codeman/settings.yml, line 2: `pool` can be set only in the organization's settings, the CODEMAN_SETTINGS variable.",
+  });
+  for (const value of ["a", "[]", "[a, -b]", "[a, a/b]", `[${"x,".repeat(10)}y]`]) {
+    const parsed = parseSettings(`pool: ${value}`, SHARED_SETTINGS);
+    assert.ok(!parsed.ok && /line 1: `pool` must list/.test(parsed.error), value);
+  }
+  const twice = parseSettings("pool: [a, A]", SHARED_SETTINGS);
+  assert.ok(!twice.ok && twice.error.endsWith("`pool` lists an organization twice."));
+  const profile = parseSettings("profiles:\n  - name: p\n    pool: [a]", SHARED_SETTINGS);
+  assert.ok(!profile.ok && /unknown setting `pool`/.test(profile.error));
+  // It is not a run's setting: the resolved settings leave it out, and the log names it.
+  const layers = [{}, {}, {}, { model: "a/b", pool: ["a", "b"] }];
+  const resolved = resolveSettings(...layers);
+  assert.ok(resolved.ok && !("pool" in resolved.value));
+  assert.ok(settingSources(layers).some((line) => line.includes("pool=[a, b]")));
 });

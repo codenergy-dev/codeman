@@ -26,6 +26,7 @@ One subject per file, grouped by what the reader wants to do. The [root README](
 - [Task lifecycle](tasks/lifecycle.md): a task's states and their labels.
 - [Stages](tasks/stages.md): the seven stages, one per agent run, and which are routed; planning, routing, running a routed stage, and feedback.
 - [Runs and jobs](runs/runs-and-jobs.md): what starts a run, how many tasks it takes, and each job with its credentials.
+- [Batches across repositories](runs/batches.md): pools of organizations, the board of ready tasks, batches and their reservations, and the dispatch of other repositories' runs.
 - [The agent](runs/agent.md): its sandbox, its working rules, and its output and limits.
 - [What the agent may change](runs/changes.md): the change policy, on-demand workflows, and third-party documentation.
 - [Budget](budget/budget.md): the task's, the month's and the organization's budgets; reservations, expiry and refusals.

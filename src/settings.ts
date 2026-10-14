@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { ENGINES } from "./inference/engines.ts";
 import { type OllamaSettings, ollamaSetting } from "./inference/ollama.ts";
 import {
@@ -18,6 +19,7 @@ import {
 } from "./inference/providers.ts";
 import { type VllmSettings, vllmSetting } from "./inference/vllm.ts";
 import type { Parsed } from "./output.ts";
+import { poolSetting } from "./pool.ts";
 import { isStage, STAGES, type Stage } from "./stages.ts";
 import { parseYaml, type YamlEntry, type YamlNode } from "./yaml.ts";
 
@@ -357,11 +359,11 @@ function isConditionName(name: string): name is ConditionName {
 export interface Conditions {
   /** The stages it applies to, any of `STAGES`. */
   stages?: Stage[] | undefined;
-  /** The run works on exactly this many tasks that run an agent. */
+  /** The run's batch has exactly this many tasks. */
   tasks?: number | undefined;
-  /** The run works on at least this many tasks that run an agent. */
+  /** The run's batch has at least this many tasks. */
   "min-tasks"?: number | undefined;
-  /** The run works on at most this many tasks that run an agent. */
+  /** The run's batch has at most this many tasks. */
   "max-tasks"?: number | undefined;
 }
 
@@ -380,6 +382,11 @@ export interface Profile {
 /** What one layer of settings sets: values, and the whole list of profiles. */
 export type SettingsLayer = PartialSettings & {
   profiles?: readonly Profile[] | undefined;
+  /**
+   * The organizations whose repositories batch tasks together, by login; only the
+   * organization's settings set it (decision 8 of the plan for GPU batches across repositories).
+   */
+  pool?: readonly string[] | undefined;
 };
 
 const PROFILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -398,14 +405,15 @@ export function parseSettings(text: string, source = SETTINGS_FILE): Parsed<Sett
     const parsed =
       entry.key === "profiles"
         ? profiles(entry.value)
-        : isBlockName(entry.key)
-          ? block(entry, entry.key)
-          : setting(entry, "setting");
+        : entry.key === "pool"
+          ? pool(entry)
+          : isBlockName(entry.key)
+            ? block(entry, entry.key)
+            : setting(entry, "setting");
     if (!parsed.ok) return { ok: false, error: `${source}, line ${parsed.line}: ${parsed.error}` };
     if (
       source !== SHARED_SETTINGS &&
-      isSettingName(entry.key) &&
-      ORGANIZATION_SETTINGS.has(entry.key)
+      (entry.key === "pool" || (isSettingName(entry.key) && ORGANIZATION_SETTINGS.has(entry.key)))
     ) {
       return {
         ok: false,
@@ -415,6 +423,15 @@ export function parseSettings(text: string, source = SETTINGS_FILE): Parsed<Sett
     settings[entry.key] = parsed.value;
   }
   return { ok: true, value: settings as SettingsLayer };
+}
+
+/** `pool`: a list of logins, such as `[organization-a, organization-b]`. */
+function pool(entry: YamlEntry): Read<string[]> {
+  const { line, value } = entry;
+  const items = value.kind === "list" ? value.items : undefined;
+  const texts = items?.flatMap((item) => (item.kind === "scalar" ? [item.text] : []));
+  const parsed = poolSetting(texts && texts.length === items?.length ? texts : undefined);
+  return parsed.ok ? parsed : { ok: false, line, error: parsed.error };
 }
 
 /** A parse result whose error names the line it is on. */
@@ -588,16 +605,20 @@ function condition(entry: YamlEntry, name: ConditionName): Read<Stage[] | number
     return {
       ok: false,
       line,
-      error: `\`${name}\` must be a whole number from 1 to ${MAX_TASKS}: the tasks of the run that run an agent.`,
+      error: `\`${name}\` must be a whole number from 1 to ${MAX_TASKS}: the tasks of a batch, which run at once with the same settings.`,
     };
   }
   return { ok: true, value: count };
 }
 
-/** What a run's profile depends on: its stage, and how many tasks it works on at once. */
+/** What a run's profile depends on: its stage, and how many tasks its batch has. */
 export interface RunConditions {
   stage: Stage;
-  /** The run's tasks that run an agent, whatever their stage. */
+  /**
+   * The tasks of its batch: those that run at once with the same resolved settings, on one pod
+   * across the pool's repositories, or in one workflow run on other providers (decision 12 of the
+   * plan for GPU batches across repositories).
+   */
   tasks: number;
 }
 
@@ -640,7 +661,7 @@ interface Resolved {
  */
 function resolveLayers(layers: readonly SettingsLayer[]): Parsed<Resolved> {
   const [own = {}] = layers;
-  const { profiles: list = [], ...values } = merge(layers);
+  const { profiles: list = [], pool: _pool, ...values } = merge(layers);
   // The top level, as the layers the task's commands inherit set it; a task's model fills it only
   // when none of them sets one.
   const inherited = serving(
@@ -811,15 +832,23 @@ export function mostTasks(layers: readonly SettingsLayer[], profile: string | un
   return tasks ?? max ?? cap;
 }
 
-/** A count of the run's tasks at which a stage is served, and the profile that serves it. */
+/**
+ * A count of a batch's tasks at which a stage is served (an offer, in the terms of the plan for GPU
+ * batches across repositories), the profile that serves it, and the batch key: tasks with the
+ * same count and key run with the same resolved settings, so they form a batch.
+ */
 export interface ServedCount {
   tasks: number;
   /** Undefined when the top level does. */
   profile?: string | undefined;
+  /** A hash of what serves the task at this count (`batchKey`). */
+  key: string;
+  /** Whether a pod serves it: its batch may span the pool's repositories. */
+  pod: boolean;
 }
 
 /**
- * The counts of the run's tasks, from 1 to `MAX_TASKS`, at which some profile or the top level
+ * The counts of a batch's tasks, from 1 to `MAX_TASKS`, at which some profile or the top level
  * serves a stage, each with what serves it. Empty when nothing does at any count.
  */
 export function servedCounts(
@@ -830,10 +859,49 @@ export function servedCounts(
   if (!resolved.ok) return resolved;
   const counts: ServedCount[] = [];
   for (let tasks = 1; tasks <= MAX_TASKS; tasks++) {
-    const served = servingRun(resolved.value, { stage, tasks });
-    if (served) counts.push({ tasks, profile: served.profile?.name });
+    if (!servingRun(resolved.value, { stage, tasks })) continue;
+    const run = resolveRun(layers, { stage, tasks });
+    if (!run.ok) return run;
+    const { settings, profile } = run.value;
+    counts.push({
+      tasks,
+      profile,
+      key: batchKey(settings, profile, mostTasks(layers, profile)),
+      pod: settings.provider === "runpod-pod",
+    });
   }
   return { ok: true, value: counts };
+}
+
+/**
+ * The batch key of a run's resolved settings (choice 20 of the plan for GPU batches across
+ * repositories): a hash of its profile, and of what serves its model, with the most tasks its
+ * profile serves for pods, which their parallel requests default to. Not the pod registry's
+ * hash, which depends on the image `open-key` uses.
+ */
+export function batchKey(
+  settings: Settings,
+  profile: string | undefined,
+  parallel: number,
+): string {
+  const sorted = (block: Readonly<Record<string, string>> | undefined) =>
+    block === undefined
+      ? null
+      : Object.fromEntries(Object.entries(block).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+  const pod = settings.provider === "runpod-pod";
+  const serving = {
+    profile: profile ?? null,
+    provider: settings.provider,
+    model: settings.model,
+    engine: settings.engine ?? null,
+    gpu: settings.gpu ?? null,
+    endpoint: settings.endpoint ?? null,
+    reuse: settings["pod-reuse"] ?? null,
+    ollama: sorted(settings.ollama),
+    vllm: sorted(settings.vllm),
+    parallel: pod ? parallel : null,
+  };
+  return createHash("sha256").update(JSON.stringify(serving)).digest("hex").slice(0, 16);
 }
 
 /** A layer of `serving`, and how its errors name it. */
@@ -932,7 +1000,7 @@ export function settingSources(layers: readonly SettingsLayer[]): string[] {
   const named = new Set<string>();
   const show = (value: unknown) =>
     Array.isArray(value)
-      ? `[${value.map((profile: Profile) => profile.name).join(", ")}]`
+      ? `[${value.map((item: Profile | string) => (typeof item === "string" ? item : item.name)).join(", ")}]`
       : typeof value === "object" && value !== null
         ? `{${Object.entries(value)
             .map(([key, text]) => `${key}: ${text}`)

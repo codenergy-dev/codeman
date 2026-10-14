@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-10-13T20:52:00-03:00
-updated_at: 2026-10-13T22:11:52-03:00
+updated_at: 2026-10-13T22:16:40-03:00
 commit: 95962c0
 ---
 
@@ -190,6 +190,7 @@ Each step ends with `npm run check` passing, unless it says otherwise.
 2. **Third-party documentation.** Done when the pages this plan cites are in `docs/web/github/` and the web-docs test passes. Done while writing the plan.
    - **Done on 2026-10-13**: committed with the plan as `f296ab7`.
 3. **Settings** (`src/settings.ts`, `src/pool.ts`, `src/inference/index.ts`): the `pool` setting (decision 8, choice 21), only in the organization's layer, with its errors, and the pool's ID; a stage's offers at each count, with the batch key (decision 12, choice 20); `pool` and `batch` in the `inference` choice (choice 22). Done when `src/settings.test.ts` covers the setting's errors and the offers of the profiles' example, and `src/inference/index.test.ts` the choice.
+   - **Done on 2026-10-13**: `src/pool.ts` (`poolSetting`, `declaredPool`, `poolId`, `isPoolId`, `soloPool`, at most 10 members); `pool` in `SettingsLayer`, read only from `CODEMAN_SETTINGS` and left out of the resolved settings; `ServedCount` gained `key` (`batchKey`) and `pod`, and the count conditions' docs and errors speak of a batch; the `inference` choice carries `pool` (`choicePool` checks the owner is a member) and a pod's `batch` (`isBatchId`). Tests in `src/pool.test.ts`, `src/settings.test.ts` (the setting's errors, the keys, the example's offers) and `src/inference/index.test.ts`. [Batches across repositories](../runs/batches.md) started, with its pools section.
 4. **Layout and migration** (`src/store/layout.ts`, `src/ledger.ts`, `src/inference/registry.ts`, `src/inference/selfhosted.ts`, `src/steps/keys.ts`, `src/services.ts`): the paths of decision 9; the ledger and the registry take the pool; the organization's month reading the old pods (choice 29). Done when the layout, ledger, registry, self-hosted and emulator tests pass on the new paths.
 5. **The pool's handshake** (decision 8): `select` writes its organization's document and reads the members' (`src/pool.ts`). Done when tests cover a pool both sides declare, one side only, and a member that never ran.
 6. **The board** (decision 10, choices 24 and 26, `src/board.ts`): each `select` rewrites its repository's snapshot, keeps `since`, and reads the pool's unexpired snapshots. Done when tests on the memory store cover a rewrite that drops a closed task, expiry, and `since` kept.

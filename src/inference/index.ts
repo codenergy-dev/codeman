@@ -1,4 +1,5 @@
 import type { RepositoryRef } from "../platform/types.ts";
+import { isLogin, isPoolId, MAX_POOL_MEMBERS, type Pool, soloPool } from "../pool.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import { MAX_TASKS, type Settings } from "../settings.ts";
 import { positiveNumber } from "../steps/common.ts";
@@ -43,6 +44,11 @@ export type InferenceChoice = (
        * GPU); absent from older choices.
        */
       parallel?: number | undefined;
+      /**
+       * The batch the task runs in, whose pod it joins (decision 13 of the plan for GPU batches
+       * across repositories); absent for a task of no batch, and from older choices.
+       */
+      batch?: string | undefined;
     })
   | (SelfHostedChoice & { provider: "runpod-serverless"; endpoint: string })
 ) &
@@ -70,6 +76,12 @@ interface Budgeted {
    * before it.
    */
   recorded: { spent: number };
+  /**
+   * The pool whose registry and accounts the run uses: its ID, and the members that agree on it
+   * (choice 22 of the plan for GPU batches across repositories). Absent from older choices: the
+   * organization alone.
+   */
+  pool?: Pool | undefined;
 }
 
 /** The task's choice of inference, from its resolved settings and its record. */
@@ -84,12 +96,16 @@ export function inferenceChoice(
     accounts?: readonly string[];
     /** The most tasks the run's profile serves at once (`mostTasks`). */
     parallel?: number | undefined;
+    pool?: Pool | undefined;
+    /** The batch of a pod's task. */
+    batch?: string | undefined;
   } = {},
 ): InferenceChoice {
   const budgeted: Budgeted = {
     ...(options.profile ? { profile: options.profile } : {}),
     accounts: [...new Set([accountOf(settings.provider), ...(options.accounts ?? [])])],
     recorded: { spent: record?.spent ?? 0 },
+    ...(options.pool ? { pool: options.pool } : {}),
   };
   if (settings.provider === "openrouter") return { provider: "openrouter", ...budgeted };
   const common = {
@@ -110,7 +126,25 @@ export function inferenceChoice(
           : {}),
         ...(settings.vllm && Object.keys(settings.vllm).length > 0 ? { vllm: settings.vllm } : {}),
         ...(options.parallel === undefined ? {} : { parallel: options.parallel }),
+        ...(options.batch === undefined ? {} : { batch: options.batch }),
       };
+}
+
+/** A batch's ID: the workflow run and attempt that formed it, and its place among them. */
+export function isBatchId(text: string): boolean {
+  return /^\d+-\d+-\d+$/.test(text);
+}
+
+/**
+ * The pool a choice names, which must include the repository's owner; the owner alone for a
+ * choice without one.
+ */
+export function choicePool(choice: InferenceChoice, owner: string): Pool {
+  const pool = choice.pool ?? soloPool(owner);
+  if (!pool.members.includes(owner.toLowerCase())) {
+    throw new Error(`The inference input names pool ${pool.id}, without ${owner.toLowerCase()}.`);
+  }
+  return pool;
 }
 
 /** The `inference` input; empty, as from older workflow files, is OpenRouter. */
@@ -125,7 +159,8 @@ export function parseInferenceChoice(text: string): InferenceChoice {
     Array.isArray(choice.accounts) &&
     choice.accounts.every((name) => typeof name === "string" && name !== "") &&
     amount(choice.recorded?.spent) &&
-    (choice.profile === undefined || typeof choice.profile === "string");
+    (choice.profile === undefined || typeof choice.profile === "string") &&
+    (choice.pool === undefined || validPool(choice.pool));
   if (!budgeted) throw new Error("The inference input is not a valid choice.");
   if (choice.provider === "openrouter") return choice;
   const valid =
@@ -153,6 +188,13 @@ export function parseInferenceChoice(text: string): InferenceChoice {
       check(block);
     }
   }
+  if (
+    choice.provider === "runpod-pod" &&
+    choice.batch !== undefined &&
+    (typeof choice.batch !== "string" || !isBatchId(choice.batch))
+  ) {
+    throw new Error("The inference input is not a valid choice.");
+  }
   if (choice.provider === "runpod-pod" && choice.parallel !== undefined) {
     const { parallel } = choice;
     if (!Number.isInteger(parallel) || parallel < 1 || parallel > MAX_TASKS) {
@@ -160,6 +202,26 @@ export function parseInferenceChoice(text: string): InferenceChoice {
     }
   }
   return choice;
+}
+
+/** A pool as a choice carries it: its ID, and some of its members, by their lowercase logins. */
+function validPool(value: unknown): boolean {
+  const pool = value as Partial<Pool> | null;
+  const members = pool?.members;
+  return (
+    typeof pool?.id === "string" &&
+    isPoolId(pool.id) &&
+    Array.isArray(members) &&
+    members.length > 0 &&
+    members.length <= MAX_POOL_MEMBERS &&
+    members.every(
+      (member) =>
+        typeof member === "string" &&
+        isLogin(member) &&
+        member === member.toLowerCase() &&
+        pool.id?.split("+").includes(member),
+    )
+  );
 }
 
 function zero(): Budgeted["recorded"] {
