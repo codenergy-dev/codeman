@@ -8,7 +8,7 @@ import {
   usd,
 } from "../budget.ts";
 import { encrypt } from "../crypto.ts";
-import { gpuProvider, parseInferenceChoice } from "../inference/index.ts";
+import { choicePool, gpuProvider, parseInferenceChoice } from "../inference/index.ts";
 import { type OpenedRun, OpenFailure, type PodEvent } from "../inference/provider.ts";
 import { accountOf, isHourlyAccount } from "../inference/providers.ts";
 import { PodRegistry } from "../inference/registry.ts";
@@ -28,8 +28,9 @@ import { positiveNumber } from "./common.ts";
 export async function openKey(services: Services): Promise<void> {
   const { runtime } = services;
   const run = ledgerRun(runtime);
+  const choice = parseInferenceChoice(runtime.input("inference"));
   // The backend first: a run the ledger cannot record opens nothing.
-  const ledger = services.ledger("open-key");
+  const ledger = services.ledger("open-key", choicePool(choice, runtime.repository.owner));
   await ledger.check(runtime);
   const outcome = await open(services, ledger, run);
   if (outcome.status === "opened") ledger.open(run, outcome.limit, outcome.pods);
@@ -220,7 +221,8 @@ export async function closeKey(services: Services): Promise<void> {
   if (usage.keptPod) runtime.output("kept-pod", usage.keptPod);
 
   // Last: the run's access is ended and its usage reported whatever the ledger does.
-  const ledger = services.ledger("close-key");
+  const choice = parseInferenceChoice(runtime.input("inference"));
+  const ledger = services.ledger("close-key", choicePool(choice, runtime.repository.owner));
   const run = ledgerRun(runtime);
   ledger.close(run, usage, runtime.input("agent-job-result"));
   await ledger.flush(runtime);
@@ -251,12 +253,13 @@ export async function release(services: Services): Promise<void> {
   const gpu = gpuProvider(accountOf(choice.provider), accountKey);
   if (!gpu.pods) throw new Error(`${gpu.name} has no pods.`);
   const handle = runtime.input("handle", { required: true });
-  const registry = new PodRegistry(services.store(), runtime.repository.owner);
+  const pool = choicePool(choice, runtime.repository.owner);
+  const registry = new PodRegistry(services.store(), pool.id);
   const pods = await releasePod(gpu.pods, registry, handle, runtime, {
     provider: gpu.name,
     gateway: { accountKey },
   });
-  const ledger = services.ledger("release-pod");
+  const ledger = services.ledger("release-pod", pool);
   ledger.release(ledgerRun(runtime), pods);
   await ledger.flush(runtime);
 }

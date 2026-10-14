@@ -1,10 +1,12 @@
 import type { RepositoryRef } from "../platform/types.ts";
 
 /**
- * Where Codeman keeps its documents in the store (docs/backend/data-layout.md). Everything
- * belongs to an organization, the repository's owner (a user account is its own organization),
- * so one Firebase project serves several organizations, and a repository's documents carry it
- * in a field. Owners and repositories are lowercase, as GitHub compares them.
+ * Where Codeman keeps its documents in the store (docs/backend/data-layout.md). What belongs to an
+ * organization, the repository's owner (a user account is its own organization), is under it:
+ * its runs and events, which the budgets read. What a pool of organizations shares is under the
+ * pool (decision 9 of the plan for GPU batches across repositories): the pod registry, the
+ * Serverless endpoints' runs, the board and the batches. The cache of fits is shared by all.
+ * Owners, repositories and pools are lowercase, as GitHub compares them.
  *
  * The budgets' queries (an organization's or a repository's runs of a month, a task's runs)
  * filter on equality only, which Firestore's automatic indexes serve.
@@ -18,28 +20,45 @@ export const LAYOUT = {
   events: (owner: string) => `${LAYOUT.organization(owner)}/events`,
   event: (owner: string, event: string) => `${LAYOUT.events(owner)}/${documentId(event)}`,
   /**
+   * The pod registry of an organization before pools, kept as history: the organization's month
+   * still counts the time its pods' tasks did not.
+   */
+  organizationPods: (owner: string) => `${LAYOUT.organization(owner)}/pods`,
+  /** A pool, by its ID: its members' logins joined by `+`. */
+  pool: (pool: string) => `pools/${documentId(pool.toLowerCase())}`,
+  /**
    * The pod registry: a pod Codeman created, named by the nonce of its admin token, which the
    * task that creates it draws first; with the leases of the tasks that use or keep it.
    */
-  pods: (owner: string) => `${LAYOUT.organization(owner)}/pods`,
-  pod: (owner: string, nonce: string) => `${LAYOUT.pods(owner)}/${documentId(nonce)}`,
+  pods: (pool: string) => `${LAYOUT.pool(pool)}/pods`,
+  pod: (pool: string, nonce: string) => `${LAYOUT.pods(pool)}/${documentId(nonce)}`,
+  /**
+   * The board: each repository's ready tasks that a pod could serve, as its last `select` saw
+   * them, named by the repository (`owner/name`).
+   */
+  board: (pool: string) => `${LAYOUT.pool(pool)}/board`,
+  boardEntry: (pool: string, repository: string) =>
+    `${LAYOUT.board(pool)}/${documentId(repository.toLowerCase())}`,
+  /** A batch: the tasks, of any repository of the pool, that one pod serves at once. */
+  batches: (pool: string) => `${LAYOUT.pool(pool)}/batches`,
+  batch: (pool: string, id: string) => `${LAYOUT.batches(pool)}/${documentId(id)}`,
   /**
    * The cache of fits: the context a pod's model fitted its GPU with, for one combination of
-   * image, model, GPU type and Ollama settings, named by their hash (decision 4 of the plan for
-   * fitting Ollama to the GPU).
+   * image, model, GPU type and engine settings, named by their hash (decision 4 of the plan for
+   * fitting Ollama to the GPU). It depends on nothing an organization owns.
    */
-  contexts: (owner: string) => `${LAYOUT.organization(owner)}/contexts`,
-  context: (owner: string, key: string) => `${LAYOUT.contexts(owner)}/${documentId(key)}`,
+  contexts: () => "contexts",
+  context: (key: string) => `${LAYOUT.contexts()}/${documentId(key)}`,
   /**
-   * A Serverless endpoint of the organization's GPU account, by its ID; under it, each run's
-   * billed times on the endpoint's worker, named by the run and its reservation, which the ledger
-   * splits among the runs that used the worker at once.
+   * A Serverless endpoint of the pool's GPU account, by its ID; under it, each run's billed times
+   * on the endpoint's worker, named by the run and its reservation, which the ledger splits among
+   * the runs that used the worker at once.
    */
-  endpoint: (owner: string, endpoint: string) =>
-    `${LAYOUT.organization(owner)}/endpoints/${documentId(endpoint)}`,
-  endpointRuns: (owner: string, endpoint: string) => `${LAYOUT.endpoint(owner, endpoint)}/runs`,
-  endpointRun: (owner: string, endpoint: string, id: string) =>
-    `${LAYOUT.endpointRuns(owner, endpoint)}/${documentId(id)}`,
+  endpoint: (pool: string, endpoint: string) =>
+    `${LAYOUT.pool(pool)}/endpoints/${documentId(endpoint)}`,
+  endpointRuns: (pool: string, endpoint: string) => `${LAYOUT.endpoint(pool, endpoint)}/runs`,
+  endpointRun: (pool: string, endpoint: string, id: string) =>
+    `${LAYOUT.endpointRuns(pool, endpoint)}/${documentId(id)}`,
 } as const;
 
 /**

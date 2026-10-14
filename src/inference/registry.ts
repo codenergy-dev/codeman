@@ -90,18 +90,19 @@ export interface Left {
 
 /**
  * Codeman's pod registry, in the store (decision 1 of the pod registry plan): a document per pod,
- * which the tasks of an organization with the same settings find, join or create in
+ * which the tasks of a pool's repositories with the same settings find, join or create in
  * transactions, and on which each holds a lease. A pod no lease holds is ended; the job that
  * ends it terminates it. See docs/inference/pods.md.
  */
 export class PodRegistry {
   readonly #store: Store;
-  readonly #owner: string;
+  /** The pool's ID, whose registry this is. */
+  readonly #pool: string;
   readonly #now: () => Date;
 
-  constructor(store: Store, owner: string, now: () => Date = () => new Date()) {
+  constructor(store: Store, pool: string, now: () => Date = () => new Date()) {
     this.#store = store;
-    this.#owner = owner;
+    this.#pool = pool;
     this.#now = now;
   }
 
@@ -116,7 +117,7 @@ export class PodRegistry {
       async (tx) => {
         const now = this.#now();
         const pods = (
-          await tx.query(LAYOUT.pods(this.#owner), {
+          await tx.query(LAYOUT.pods(this.#pool), {
             where: [
               { field: "settings", op: "==", value: description.settings },
               { field: "live", op: "==", value: true },
@@ -258,9 +259,9 @@ export class PodRegistry {
     await this.change(nonce, () => ({ end: reason }));
   }
 
-  /** The organization's pods that the registry holds, oldest first. */
+  /** The pool's pods that the registry holds, oldest first. */
   async live(): Promise<RegisteredPod[]> {
-    const documents = await this.#store.query(LAYOUT.pods(this.#owner), {
+    const documents = await this.#store.query(LAYOUT.pods(this.#pool), {
       where: [{ field: "live", op: "==", value: true }],
     });
     return documents.map(registered).sort(byAge);
@@ -300,7 +301,7 @@ export class PodRegistry {
   }
 
   #path(nonce: string): string {
-    return LAYOUT.pod(this.#owner, nonce);
+    return LAYOUT.pod(this.#pool, nonce);
   }
 }
 

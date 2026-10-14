@@ -315,6 +315,7 @@ export function selfHosted(
         gpu,
         accountKey: inputs.accountKey,
         store: inputs.store(),
+        pool: choicePool(choice, repository.owner),
         ...(inputs.fetch ? { fetch: inputs.fetch } : {}),
         ...(inputs.hub ? { hub: inputs.hub } : {}),
       },

@@ -5,6 +5,7 @@ import { type FitReport, GATEWAY_PORT } from "../gateway/pod.ts";
 import type { GatewayUsage, Span } from "../gateway/usage.ts";
 import type { VllmFitReport } from "../gateway/vllm.ts";
 import type { RepositoryRef } from "../platform/types.ts";
+import { type Pool, soloPool } from "../pool.ts";
 import type { Log } from "../runtime/runtime.ts";
 import { LAYOUT, repositoryName } from "../store/layout.ts";
 import type { Store } from "../store/store.ts";
@@ -322,6 +323,8 @@ export interface SelfHostedOptions {
   accountKey: string;
   /** Codeman's store, which holds the pod registry. */
   store: Store;
+  /** The pool whose registry the pods are in; the organization alone when undefined. */
+  pool?: Pool | undefined;
   now?: () => Date;
   fetch?: typeof fetch;
   wait?: (ms: number) => Promise<void>;
@@ -355,7 +358,8 @@ export class PodInference implements InferenceProvider {
       : { ...settings, ollama: podOllama(settings), vllm: undefined };
     this.#options = options;
     this.#host = options.gpu.pods;
-    this.#registry = new PodRegistry(options.store, options.repository.owner, () => this.#now());
+    const pool = options.pool ?? soloPool(options.repository.owner);
+    this.#registry = new PodRegistry(options.store, pool.id, () => this.#now());
   }
 
   /** The pod events so far, which the caller reports. */
@@ -929,7 +933,7 @@ export class PodInference implements InferenceProvider {
   /** The context that served a vLLM pod's settings before, from the cache of fits. */
   async #cachedContext(log: Log): Promise<{ contextLength: number } | undefined> {
     if (this.#settings.vllm?.["max-model-len"]) return undefined;
-    const path = LAYOUT.context(this.#options.repository.owner, fitKey(this.#settings));
+    const path = LAYOUT.context(fitKey(this.#settings));
     try {
       const contextLength = (await this.#options.store.get(path))?.fields.contextLength;
       if (!Number.isSafeInteger(contextLength)) return undefined;
@@ -967,7 +971,7 @@ export class PodInference implements InferenceProvider {
       await this.#options.store.write([
         {
           op: "set",
-          path: LAYOUT.context(this.#options.repository.owner, fitKey(this.#settings)),
+          path: LAYOUT.context(fitKey(this.#settings)),
           fields: {
             engine: "vllm",
             image,
@@ -998,7 +1002,7 @@ export class PodInference implements InferenceProvider {
    */
   async #cachedFit(log: Log): Promise<{ contextLength: number; digest: string } | undefined> {
     if (this.#settings.ollama?.OLLAMA_CONTEXT_LENGTH) return undefined;
-    const path = LAYOUT.context(this.#options.repository.owner, fitKey(this.#settings));
+    const path = LAYOUT.context(fitKey(this.#settings));
     try {
       const fields = (await this.#options.store.get(path))?.fields;
       const { contextLength, digest } = fields ?? {};
@@ -1046,7 +1050,7 @@ export class PodInference implements InferenceProvider {
       await this.#options.store.write([
         {
           op: "set",
-          path: LAYOUT.context(this.#options.repository.owner, fitKey(this.#settings)),
+          path: LAYOUT.context(fitKey(this.#settings)),
           fields: {
             image,
             model,

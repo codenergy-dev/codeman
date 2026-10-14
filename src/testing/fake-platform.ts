@@ -435,6 +435,7 @@ export function fakeServices(
     accounts: () => accounts,
     store: () => store,
     // No waits between attempts: a store that fails, fails at once.
-    ledger: (job) => new Ledger(store, { runtime, job }, { wait: async () => undefined }),
+    ledger: (job, pool) =>
+      new Ledger(store, { runtime, job, pool }, { wait: async () => undefined }),
   };
 }

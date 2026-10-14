@@ -786,7 +786,7 @@ test("an image pinned before Ollama settings gets no derived settings, no cache,
           `The pod image ${image} predates Ollama settings: its pods serve one request at a time, with the model's own context length, and nothing checks that the model fits the GPU. See docs/settings/ollama.md#pod-images.`,
         ),
     );
-    assert.deepEqual(await store.query(LAYOUT.contexts("o")), []);
+    assert.deepEqual(await store.query(LAYOUT.contexts()), []);
   }
 });
 
@@ -796,7 +796,7 @@ test("the cache of fits: written after a search by the pod's creator, read into 
   await open("8", "300", { parallel: 4 });
   const variables = { OLLAMA_NUM_PARALLEL: "4" };
   const key = fitKey({ ...settings, image: SHARED_IMAGE, ollama: variables });
-  const path = LAYOUT.context("o", key);
+  const path = LAYOUT.context(key);
   const cached = await store.get(path);
   const { recordedAt, ...fields } = cached?.fields ?? {};
   assert.deepEqual(fields, {
@@ -844,14 +844,14 @@ test("the cache of fits: written after a search by the pod's creator, read into 
   // A context in the settings needs no cache.
   await open("10", "302", { parallel: 4, ollama: { OLLAMA_CONTEXT_LENGTH: "32768" } });
   assert.equal(gpu.created[2]?.env.CODEMAN_FIT, undefined);
-  assert.equal((await store.query(LAYOUT.contexts("o"))).length, 1);
+  assert.equal((await store.query(LAYOUT.contexts())).length, 1);
 });
 
 test("a cache of fits that cannot be read leaves the pod to search", async () => {
   const { gpu, store, open } = setup({ real: true, image: SHARED_IMAGE });
   const get = store.get.bind(store);
   store.get = async (path: string) => {
-    if (path.includes("/contexts/")) throw new Error("unavailable");
+    if (path.startsWith("contexts/")) throw new Error("unavailable");
     return get(path);
   };
   const { runtime } = await open("7", "300", { parallel: 4 });
@@ -1073,7 +1073,7 @@ test("vLLM's cache of fits: written after the creator's search, read into the ne
   await open("7", "300", onVllm);
   const values = { "kv-cache-dtype": "fp8", "max-num-seqs": "4", "tool-call-parser": "qwen3_xml" };
   const key = fitKey({ ...settings, ...onVllm, image: VLLM_IMAGE, ollama: {}, vllm: values });
-  const cached = await store.get(LAYOUT.context("o", key));
+  const cached = await store.get(LAYOUT.context(key));
   const { recordedAt, ...fields } = cached?.fields ?? {};
   assert.deepEqual(fields, {
     engine: "vllm",
@@ -1094,11 +1094,11 @@ test("vLLM's cache of fits: written after the creator's search, read into the ne
   const { runtime } = await open("8", "301", onVllm);
   assert.equal(gpu.created[1]?.env.CODEMAN_FIT, '{"contextLength":131072}');
   assert.ok(runtime.logged("info").some((line) => line.includes("; from the cache of fits.")));
-  assert.equal((await store.get(LAYOUT.context("o", key)))?.version, cached?.version);
+  assert.equal((await store.get(LAYOUT.context(key)))?.version, cached?.version);
   // An explicit context needs no cache, and writes none.
   await open("9", "302", { ...onVllm, vllm: { ...onVllm.vllm, "max-model-len": "65536" } });
   assert.equal(gpu.created[2]?.env.CODEMAN_FIT, undefined);
-  assert.equal((await store.query(LAYOUT.contexts("o"))).length, 1);
+  assert.equal((await store.query(LAYOUT.contexts())).length, 1);
 });
 
 test("a vLLM pod whose gateway does not report vLLM's settings and fit fails the run", async () => {

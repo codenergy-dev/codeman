@@ -50,7 +50,7 @@ test("tasks that claim at once get one creator; the others wait, then join with 
   assert.equal(claims.filter((claim) => claim.kind === "wait").length, 2);
   const [creator] = creators as Extract<Claim, { kind: "create" }>[];
   assert.ok(creator);
-  const document = await store.get(`organizations/o/pods/${creator.pod.nonce}`);
+  const document = await store.get(`pools/o/pods/${creator.pod.nonce}`);
   assert.equal(document?.fields.status, "creating");
   assert.equal(document?.fields.live, true);
   assert.equal(document?.fields.model, "qwen3-coder:30b");

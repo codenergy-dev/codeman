@@ -192,7 +192,7 @@ test("a terminated pod's time that no task counted counts in the organization's 
     },
   ]);
   await release.ledger.flush(release.runtime);
-  const pod = (await store.get("organizations/codenergy/pods/n1"))?.fields;
+  const pod = (await store.get("pools/codenergy/pods/n1"))?.fields;
   assert.deepEqual(
     [pod?.pod, pod?.provider, pod?.month, pod?.lifeCost, pod?.counted, pod?.untracked],
     ["pod1", "runpod", "2026-10", 0.36, 0.27, 0.09],
@@ -220,6 +220,33 @@ test("a terminated pod's time that no task counted counts in the organization's 
   );
   assert.ok(Math.abs(organization.month - 0.24) < 1e-9);
   assert.ok((await open.ledger.monthRuns(open.runtime)).some((run) => run.id === "pod-n1"));
+});
+
+test("the organization's month still counts the untracked time of its pods from before pools", async () => {
+  const store = new MemoryStore();
+  const fields = (untracked: number) => ({
+    pod: "old",
+    provider: "runpod",
+    month: "2026-10",
+    untracked,
+    createdAt: new Date("2026-10-02T10:00:00Z"),
+    terminatedAt: new Date("2026-10-02T11:00:00Z"),
+  });
+  await store.write([
+    { op: "create", path: "organizations/codenergy/pods/n0", fields: fields(0.5) },
+    // Another organization's older pods are its own.
+    { op: "create", path: "organizations/other/pods/n9", fields: fields(9) },
+  ]);
+  const open = ledger(store, "open-key", { at: "2026-10-07T13:00:00Z" });
+  const reserved = await open.ledger.reserve("300-1-9", {
+    task: 9,
+    taskBudget: 1,
+    monthlyBudget: 20,
+    organizationBudget: 100,
+    recorded: 0,
+    billed: new Map(),
+  });
+  assert.ok(Math.abs((reserved.organization ?? 0) - 0.5) < 1e-9, `${reserved.organization}`);
 });
 
 /** A run's cost in the ledger of the organization `codenergy`. */
@@ -295,7 +322,7 @@ test("Serverless runs of two repositories split the time they shared the endpoin
   assert.deepEqual(await months("340-1-12", NOON + 17 * 60_000), ["2.4500", "2.9000"]);
   assert.equal(await costOf(store, "320-1-9"), undefined);
 
-  const endpoint = await store.query("organizations/codenergy/endpoints/ep1/runs");
+  const endpoint = await store.query("pools/codenergy/endpoints/ep1/runs");
   assert.deepEqual(
     endpoint.map(({ path, fields }) => [
       path.split("/").at(-1),
@@ -318,7 +345,7 @@ test("Serverless runs of two repositories split the time they shared the endpoin
     [minutes(5, 15)],
     NOON + 20 * 60_000,
   );
-  assert.equal((await store.query("organizations/codenergy/endpoints/ep1/runs")).length, 2);
+  assert.equal((await store.query("pools/codenergy/endpoints/ep1/runs")).length, 2);
   assert.equal(await costOf(store, "310-1-4"), 0.45);
   assert.equal(await costOf(store, "300-1-7"), 0.45);
   assert.match(again.logged("info").join("\n"), /and 0 other run\(s\) count less now/);
@@ -356,7 +383,7 @@ test("a run that open-key opened again keeps its earlier attempt's time in the s
   // Its second attempt closes alone, beside the first's time.
   await closeOnEndpoint(store, "300-1-7", "codeman", [minutes(20, 25)], NOON + 26 * 60_000);
   assert.equal(await costOf(store, "300-1-7"), 0.3);
-  assert.equal((await store.query("organizations/codenergy/endpoints/ep1/runs")).length, 3);
+  assert.equal((await store.query("pools/codenergy/endpoints/ep1/runs")).length, 3);
   assert.equal(await costOf(store, "310-1-4"), 0.45);
 });
 

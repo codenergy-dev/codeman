@@ -14,6 +14,7 @@ import {
 import { busyShares, type Span } from "./gateway/usage.ts";
 import type { BusyTime, PodEvent, PodLife, RunUsage } from "./inference/provider.ts";
 import { accountOf, type ProviderName } from "./inference/providers.ts";
+import { type Pool, soloPool } from "./pool.ts";
 import type { Log, Runtime } from "./runtime/runtime.ts";
 import { isLedgerRunId, LAYOUT, ledgerMonth, repositoryName } from "./store/layout.ts";
 import type {
@@ -43,6 +44,11 @@ export interface LedgerSource {
   runtime: Pick<Runtime, "repository" | "run">;
   /** The step the job runs, such as `open-key`. */
   job: string;
+  /**
+   * The pool whose pods and endpoints the job's runs use, with the members that agree on it; the
+   * organization alone when undefined.
+   */
+  pool?: Pool | undefined;
 }
 
 /** What `select` knows of a run when it picks its task. */
@@ -188,7 +194,7 @@ export class Ledger {
     const month = ledgerMonth(this.#now());
     return this.#retry(log, "read Codeman's ledger", async () => [
       ...ledgerRuns(await monthQuery(this.#store, owner, month)),
-      ...untrackedRuns(await untrackedQuery(this.#store, owner, month)),
+      ...(await untrackedQuery(this.#store, this.#pool(), owner, month)),
     ]);
   }
 
@@ -258,7 +264,7 @@ export class Ledger {
           // Pods' time no task counted belongs to the organization's month alone (decision 4 of
           // the pod registry plan).
           organization
-            ? untrackedQuery(tx, owner, ledgerMonth(now)).then(untrackedRuns)
+            ? untrackedQuery(tx, this.#pool(), owner, ledgerMonth(now))
             : Promise.resolve([]),
         ]);
         const own = task.find((other) => other.id === run);
@@ -416,6 +422,7 @@ export class Ledger {
    */
   async #split(run: string, busy: BusyTime, log: Log): Promise<void> {
     const { owner } = this.#source.runtime.repository;
+    const pool = this.#pool().id;
     const [first] = busy.spans;
     const last = busy.spans.at(-1);
     if (!first || !last) return;
@@ -428,6 +435,7 @@ export class Ledger {
           const mine: EndpointRun = {
             id: `${run}-${reservedAt}`,
             run,
+            repository: this.#repository(),
             reservedAt,
             busy: busy.spans,
             pricePerSecond: busy.pricePerSecond,
@@ -436,15 +444,18 @@ export class Ledger {
           // does: every run that overlaps one that overlaps this run ends after this.
           const since = new Date(first[0] - RESERVATION_MS);
           const found = endpointRuns(
-            await tx.query(LAYOUT.endpointRuns(owner, busy.endpoint), {
+            await tx.query(LAYOUT.endpointRuns(pool, busy.endpoint), {
               where: [{ field: "to", op: ">=", value: since }],
             }),
           );
           const runs = [...found.filter((other) => other.id !== mine.id), mine];
           const shares = busyShares(runs);
           const others = runs.filter((other) => other !== mine && overlaps(other.busy, mine.busy));
+          // The pool's organizations share the endpoint: each run is under its own.
           const documents = await Promise.all(
-            others.map((other) => tx.get(LAYOUT.run(owner, other.run))),
+            others.map((other) =>
+              tx.get(LAYOUT.run(ownerOf(other.repository) ?? owner, other.run)),
+            ),
           );
           const share = (one: EndpointRun) => round(shares.get(one.id) ?? 0);
           const estimate = round(
@@ -453,7 +464,7 @@ export class Ledger {
           );
           tx.write({
             op: "set",
-            path: LAYOUT.endpointRun(owner, busy.endpoint, mine.id),
+            path: LAYOUT.endpointRun(pool, busy.endpoint, mine.id),
             fields: {
               run,
               repository: this.#repository(),
@@ -473,7 +484,7 @@ export class Ledger {
             if (other.share === undefined || Math.abs(other.share - share(other)) >= 1e-6) {
               tx.write({
                 op: "set",
-                path: LAYOUT.endpointRun(owner, busy.endpoint, other.id),
+                path: LAYOUT.endpointRun(pool, busy.endpoint, other.id),
                 fields: { share: share(other), splitAt: now },
                 merge: true,
               });
@@ -532,7 +543,7 @@ export class Ledger {
       await this.#store.write([
         {
           op: "set",
-          path: LAYOUT.pod(owner, life.record),
+          path: LAYOUT.pod(this.#pool().id, life.record),
           fields: {
             pod,
             provider: life.provider,
@@ -555,6 +566,10 @@ export class Ledger {
 
   #repository(): string {
     return repositoryName(this.#source.runtime.repository);
+  }
+
+  #pool(): Pool {
+    return this.#source.pool ?? soloPool(this.#source.runtime.repository.owner);
   }
 
   /** Adds fields to a run's document, which replace those of the same name. */
@@ -704,15 +719,29 @@ export function ledgerRuns(documents: readonly StoredDocument[]): LedgerRun[] {
   return runs.sort((a, b) => a.start.getTime() - b.start.getTime() || (a.id < b.id ? -1 : 1));
 }
 
-/** The organization's pods that ended in a month, with their time no task counted. */
-function untrackedQuery(
+/**
+ * The time no task counted of the pods that ended in a month, as the organization's month counts
+ * it: of the pool's pods, and of the organization's from before pools (choice 29 of the plan for
+ * GPU batches across repositories).
+ */
+async function untrackedQuery(
   store: StoreReader,
+  pool: Pool,
   owner: string,
   month: string,
-): Promise<StoredDocument[]> {
-  return store.query(LAYOUT.pods(owner), {
-    where: [{ field: "month", op: "==", value: month }],
-  });
+): Promise<LedgerRun[]> {
+  const where = [{ field: "month", op: "==" as const, value: month }];
+  const [pooled, older] = await Promise.all([
+    store.query(LAYOUT.pods(pool.id), { where }),
+    store.query(LAYOUT.organizationPods(owner), { where }),
+  ]);
+  return untrackedRuns([...pooled, ...older]);
+}
+
+/** The owner of a repository named `owner/name`. */
+function ownerOf(repository: string | undefined): string | undefined {
+  const owner = repository?.split("/")[0];
+  return owner ? owner : undefined;
 }
 
 /**
@@ -749,6 +778,8 @@ interface EndpointRun {
   /** The document's ID: the run's, and its reservation's time. */
   id: string;
   run: string;
+  /** The run's repository, `owner/name`, under whose organization its document is. */
+  repository?: string | undefined;
   /** When the run's reservation was made, in milliseconds since the epoch; 0 when unknown. */
   reservedAt: number;
   busy: readonly Span[];
@@ -760,7 +791,7 @@ interface EndpointRun {
 /** The runs on an endpoint's worker; documents without valid billed times are left out. */
 function endpointRuns(documents: readonly StoredDocument[]): EndpointRun[] {
   return documents.flatMap((document): EndpointRun[] => {
-    const { run, pricePerSecond, busy, share } = document.fields;
+    const { run, pricePerSecond, busy, share, repository } = document.fields;
     if (typeof run !== "string" || typeof pricePerSecond !== "number") return [];
     if (typeof busy !== "string") return [];
     let spans: unknown;
@@ -778,6 +809,7 @@ function endpointRuns(documents: readonly StoredDocument[]): EndpointRun[] {
       {
         id: document.path.slice(document.path.lastIndexOf("/") + 1),
         run,
+        repository: typeof repository === "string" ? repository : undefined,
         reservedAt: reservationOf(document),
         busy: spans,
         pricePerSecond,

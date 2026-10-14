@@ -3,6 +3,7 @@ import type { InferenceProvider } from "./inference/provider.ts";
 import type { Ledger } from "./ledger.ts";
 import type { Conventions } from "./platform/conventions.ts";
 import type { CiResults, Platform } from "./platform/platform.ts";
+import type { Pool } from "./pool.ts";
 import type { Runtime } from "./runtime/runtime.ts";
 import type { Store } from "./store/store.ts";
 
@@ -29,6 +30,9 @@ export interface Services {
    * settings are missing.
    */
   store(): Store;
-  /** The ledger of the step's job, on the store; `job` names the step. */
-  ledger(job: string): Ledger;
+  /**
+   * The ledger of the step's job, on the store; `job` names the step, and `pool` the pool whose
+   * pods and endpoints its runs use (the organization alone when undefined).
+   */
+  ledger(job: string, pool?: Pool): Ledger;
 }

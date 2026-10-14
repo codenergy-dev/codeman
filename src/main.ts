@@ -54,7 +54,7 @@ export function gitHubServices(runtime: Runtime): Services {
     inference,
     accounts: () => providerAccounts(runtime),
     store: theStore,
-    ledger: (job) => new Ledger(theStore(), { runtime, job }),
+    ledger: (job, pool) => new Ledger(theStore(), { runtime, job, pool }),
   };
 }
 
