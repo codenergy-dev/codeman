@@ -1,5 +1,8 @@
 # The jobs of one task of a Codeman run: codeman.yml calls this workflow once per task it
 # picked, at once. Copy it to .github/workflows/codeman-task.yml, next to codeman.yml.
+# Each job that runs Codeman checks it out at the commit in the CODEMAN_COMMIT_SHA variable, and
+# passes the template version of these files; a commit that expects another version fails,
+# saying to copy the templates again.
 # Setup: https://github.com/codenergy-dev/codeman/blob/main/docs/installation/setup.md
 name: Codeman task
 
@@ -86,10 +89,26 @@ jobs:
       context-length: ${{ steps.codeman.outputs.context-length }}
       encrypted-key: ${{ steps.codeman.outputs.encrypted-key }}
     steps:
-      - uses: codenergy-dev/codeman@COMMIT_SHA
+      # Codeman at the commit in the CODEMAN_COMMIT_SHA variable: a full SHA, not a branch or tag.
+      - name: Check CODEMAN_COMMIT_SHA
+        run: |
+          if [[ ! "$CODEMAN_COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Set the CODEMAN_COMMIT_SHA variable to a full commit SHA of codenergy-dev/codeman (40 lowercase hexadecimal characters), not a branch or tag."
+            exit 1
+          fi
+        env:
+          CODEMAN_COMMIT_SHA: ${{ vars.CODEMAN_COMMIT_SHA }}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: codenergy-dev/codeman
+          ref: ${{ vars.CODEMAN_COMMIT_SHA }}
+          path: .codeman/action
+          persist-credentials: false
+      - uses: ./.codeman/action
         id: codeman
         with:
           step: open-key
+          template-version: 1
           task: ${{ inputs.task }}
           task-budget: ${{ inputs.task-budget }}
           monthly-budget: ${{ inputs.monthly-budget }}
@@ -128,6 +147,22 @@ jobs:
           # and merge it.
           fetch-depth: 0
           persist-credentials: false
+      # Codeman at the commit in the CODEMAN_COMMIT_SHA variable, after the repository's
+      # checkout, which would remove it. Codeman's step leaves it out of the agent's copy.
+      - name: Check CODEMAN_COMMIT_SHA
+        run: |
+          if [[ ! "$CODEMAN_COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Set the CODEMAN_COMMIT_SHA variable to a full commit SHA of codenergy-dev/codeman (40 lowercase hexadecimal characters), not a branch or tag."
+            exit 1
+          fi
+        env:
+          CODEMAN_COMMIT_SHA: ${{ vars.CODEMAN_COMMIT_SHA }}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: codenergy-dev/codeman
+          ref: ${{ vars.CODEMAN_COMMIT_SHA }}
+          path: .codeman/action
+          persist-credentials: false
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: codeman-task
@@ -136,10 +171,11 @@ jobs:
       # this job's PATH, except entries in the runner's home, and none of its other variables.
       # Only install tools: a step that runs repository code (npm ci, make, tests) runs code the
       # agent wrote outside its sandbox, where it can read this job's secrets.
-      - uses: codenergy-dev/codeman@COMMIT_SHA
+      - uses: ./.codeman/action
         id: codeman
         with:
           step: agent
+          template-version: 1
           task: ${{ inputs.task }}
           github-token: ${{ github.token }}
           encrypted-key: ${{ needs.open-key.outputs.encrypted-key }}
@@ -186,10 +222,26 @@ jobs:
       pod-shared: ${{ steps.codeman.outputs.pod-shared }}
       kept-pod: ${{ steps.codeman.outputs.kept-pod }}
     steps:
-      - uses: codenergy-dev/codeman@COMMIT_SHA
+      # Codeman at the commit in the CODEMAN_COMMIT_SHA variable: a full SHA, not a branch or tag.
+      - name: Check CODEMAN_COMMIT_SHA
+        run: |
+          if [[ ! "$CODEMAN_COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Set the CODEMAN_COMMIT_SHA variable to a full commit SHA of codenergy-dev/codeman (40 lowercase hexadecimal characters), not a branch or tag."
+            exit 1
+          fi
+        env:
+          CODEMAN_COMMIT_SHA: ${{ vars.CODEMAN_COMMIT_SHA }}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: codenergy-dev/codeman
+          ref: ${{ vars.CODEMAN_COMMIT_SHA }}
+          path: .codeman/action
+          persist-credentials: false
+      - uses: ./.codeman/action
         id: codeman
         with:
           step: close-key
+          template-version: 1
           handle: ${{ needs.open-key.outputs.handle }}
           key-hash: ${{ needs.open-key.outputs.key-hash }}
           inference: ${{ inputs.inference }}
@@ -215,6 +267,21 @@ jobs:
       chain: ${{ steps.codeman.outputs.chain }}
       continues: ${{ steps.codeman.outputs.continues }}
     steps:
+      # Codeman at the commit in the CODEMAN_COMMIT_SHA variable: a full SHA, not a branch or tag.
+      - name: Check CODEMAN_COMMIT_SHA
+        run: |
+          if [[ ! "$CODEMAN_COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Set the CODEMAN_COMMIT_SHA variable to a full commit SHA of codenergy-dev/codeman (40 lowercase hexadecimal characters), not a branch or tag."
+            exit 1
+          fi
+        env:
+          CODEMAN_COMMIT_SHA: ${{ vars.CODEMAN_COMMIT_SHA }}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: codenergy-dev/codeman
+          ref: ${{ vars.CODEMAN_COMMIT_SHA }}
+          path: .codeman/action
+          persist-credentials: false
       - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         id: app-token
         with:
@@ -243,10 +310,11 @@ jobs:
         with:
           name: codeman-result-${{ inputs.task }}
           path: ${{ runner.temp }}/codeman/result
-      - uses: codenergy-dev/codeman@COMMIT_SHA
+      - uses: ./.codeman/action
         id: codeman
         with:
           step: apply
+          template-version: 1
           task: ${{ inputs.task }}
           github-token: ${{ steps.app-token.outputs.token }}
           workflow-token: ${{ steps.workflow-token.outputs.token }}
@@ -289,9 +357,25 @@ jobs:
       # Releases the pod in Codeman's pod registry, and records its end.
       id-token: write
     steps:
-      - uses: codenergy-dev/codeman@COMMIT_SHA
+      # Codeman at the commit in the CODEMAN_COMMIT_SHA variable: a full SHA, not a branch or tag.
+      - name: Check CODEMAN_COMMIT_SHA
+        run: |
+          if [[ ! "$CODEMAN_COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Set the CODEMAN_COMMIT_SHA variable to a full commit SHA of codenergy-dev/codeman (40 lowercase hexadecimal characters), not a branch or tag."
+            exit 1
+          fi
+        env:
+          CODEMAN_COMMIT_SHA: ${{ vars.CODEMAN_COMMIT_SHA }}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: codenergy-dev/codeman
+          ref: ${{ vars.CODEMAN_COMMIT_SHA }}
+          path: .codeman/action
+          persist-credentials: false
+      - uses: ./.codeman/action
         with:
           step: release-pod
+          template-version: 1
           handle: ${{ needs.open-key.outputs.handle }}
           inference: ${{ inputs.inference }}
           ledger-run: ${{ inputs.ledger-run }}

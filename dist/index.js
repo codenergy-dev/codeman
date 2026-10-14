@@ -19739,6 +19739,39 @@ var require_lib = __commonJS({
   }
 });
 
+// src/action.ts
+import { readFileSync } from "node:fs";
+import { isAbsolute, join, relative, sep } from "node:path";
+import { fileURLToPath } from "node:url";
+var CODEMAN_REPOSITORY = "codenergy-dev/codeman";
+var TEMPLATE_VERSION = 1;
+var ACTION_ROOT = fileURLToPath(new URL("..", import.meta.url));
+var FULL_SHA = /^[0-9a-f]{40}$/;
+function actionCommit(root = ACTION_ROOT) {
+  try {
+    const head = readFileSync(join(root, ".git", "HEAD"), "utf8").trim();
+    return FULL_SHA.test(head) ? head : void 0;
+  } catch {
+    return void 0;
+  }
+}
+function templateVersionProblem(given, commit) {
+  const version = given.trim();
+  if (version === String(TEMPLATE_VERSION)) return void 0;
+  const at = commit ? `commit ${commit}` : "the commit in CODEMAN_COMMIT_SHA";
+  const templates = `https://github.com/${CODEMAN_REPOSITORY}/tree/${commit ?? "<CODEMAN_COMMIT_SHA>"}/templates`;
+  const files = version ? `This workflow's files are template version ${version}` : "This workflow's files pass no template version";
+  const newer = /^\d+$/.test(version) && Number(version) > TEMPLATE_VERSION;
+  return `${files}, but Codeman at ${at} expects version ${TEMPLATE_VERSION}. Copy templates/codeman.yml and templates/codeman-task.yml from the commit in CODEMAN_COMMIT_SHA (${templates}) to .github/workflows/ again, keeping the steps you added to the agent job` + (newer ? "; or set CODEMAN_COMMIT_SHA to the commit these files come from." : ".");
+}
+function actionPathIn(workspace, root = ACTION_ROOT) {
+  const path = relative(workspace, root);
+  if (path === "" || path === ".." || path.startsWith(`..${sep}`) || isAbsolute(path)) {
+    return void 0;
+  }
+  return path.split(sep).join("/");
+}
+
 // src/pool.ts
 var MAX_POOL_MEMBERS = 10;
 var LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/;
@@ -21187,8 +21220,8 @@ function settingsProblem(settings) {
 }
 
 // src/steps/common.ts
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync as readFileSync2 } from "node:fs";
+import { join as join2 } from "node:path";
 function positiveNumber(runtime2, name) {
   const value = Number(runtime2.input(name, { required: true }));
   if (!Number.isFinite(value) || value <= 0)
@@ -21196,18 +21229,18 @@ function positiveNumber(runtime2, name) {
   return value;
 }
 function workdir(runtime2) {
-  return runtime2.input("workdir") || join(runtime2.tempDir, "codeman");
+  return runtime2.input("workdir") || join2(runtime2.tempDir, "codeman");
 }
 function taskFile(runtime2, task) {
-  return join(workdir(runtime2), "task", task === void 0 ? "task.json" : `${task}.json`);
+  return join2(workdir(runtime2), "task", task === void 0 ? "task.json" : `${task}.json`);
 }
-var resultDir = (runtime2) => join(workdir(runtime2), "result");
-var chainDir = (runtime2) => join(workdir(runtime2), "chain");
+var resultDir = (runtime2) => join2(workdir(runtime2), "result");
+var chainDir = (runtime2) => join2(workdir(runtime2), "chain");
 function readTask(runtime2) {
   const input = runtime2.input("task");
   if (input !== "" && !/^\d+$/.test(input)) throw new Error("Input task must be an issue number.");
   const number3 = input === "" ? void 0 : Number(input);
-  const task = JSON.parse(readFileSync(taskFile(runtime2, number3), "utf8"));
+  const task = JSON.parse(readFileSync2(taskFile(runtime2, number3), "utf8"));
   if (task.version !== 1) throw new Error("The task file has an unknown version.");
   if (number3 !== void 0 && task.number !== number3) {
     throw new Error(`The task file of #${number3} holds #${task.number}.`);
@@ -25381,7 +25414,7 @@ var GITHUB = {
 };
 
 // node_modules/@actions/github/lib/context.js
-import { readFileSync as readFileSync2, existsSync } from "fs";
+import { readFileSync as readFileSync3, existsSync } from "fs";
 import { EOL } from "os";
 var Context = class {
   /**
@@ -25392,7 +25425,7 @@ var Context = class {
     this.payload = {};
     if (process.env.GITHUB_EVENT_PATH) {
       if (existsSync(process.env.GITHUB_EVENT_PATH)) {
-        this.payload = JSON.parse(readFileSync2(process.env.GITHUB_EVENT_PATH, { encoding: "utf8" }));
+        this.payload = JSON.parse(readFileSync3(process.env.GITHUB_EVENT_PATH, { encoding: "utf8" }));
       } else {
         const path = process.env.GITHUB_EVENT_PATH;
         process.stdout.write(`GITHUB_EVENT_PATH ${path} does not exist${EOL}`);
@@ -26783,8 +26816,8 @@ function withCustomRequest(customRequest) {
 
 // node_modules/@octokit/auth-token/dist-bundle/index.js
 var b64url = "(?:[a-zA-Z0-9_-]+)";
-var sep = "\\.";
-var jwtRE = new RegExp(`^${b64url}${sep}${b64url}${sep}${b64url}$`);
+var sep2 = "\\.";
+var jwtRE = new RegExp(`^${b64url}${sep2}${b64url}${sep2}${b64url}$`);
 var isJWT = jwtRE.test.bind(jwtRE);
 async function auth(token) {
   const isApp = isJWT(token);
@@ -29924,12 +29957,12 @@ function status(error3) {
 }
 
 // src/steps/agent.ts
-import { existsSync as existsSync2, lstatSync as lstatSync2, mkdirSync as mkdirSync4, readFileSync as readFileSync4, rmSync as rmSync4, writeFileSync as writeFileSync4 } from "node:fs";
-import { join as join6 } from "node:path";
+import { existsSync as existsSync2, lstatSync as lstatSync2, mkdirSync as mkdirSync4, readFileSync as readFileSync5, rmSync as rmSync4, writeFileSync as writeFileSync4 } from "node:fs";
+import { join as join7 } from "node:path";
 
 // src/collect.ts
 import { lstatSync, mkdirSync, rmSync } from "node:fs";
-import { join as join2 } from "node:path";
+import { join as join3 } from "node:path";
 
 // src/sandbox.ts
 import { spawn, spawnSync } from "node:child_process";
@@ -29961,9 +29994,15 @@ function installForAgent(source, name) {
   sudo(["install", "-D", "-m", "0755", source, target]);
   return target;
 }
-function copyToAgent(source, target) {
+function copyToAgent(source, target, exclude = []) {
+  for (const path of exclude) {
+    if (path.startsWith("/") || path.split("/").some((part) => ["", ".", ".."].includes(part))) {
+      throw new Error(`Cannot leave out ${path}: not a path inside the copy.`);
+    }
+  }
   sudo(["rm", "-rf", target]);
   sudo(["cp", "-a", source, target]);
+  for (const path of exclude) sudo(["rm", "-rf", "--", `${target}/${path}`]);
   sudo(["chown", "-R", `${AGENT_USER}:${AGENT_USER}`, target]);
 }
 function writeAsAgent(file, content) {
@@ -30088,7 +30127,7 @@ function collectChanges(options) {
   const changes = parseStatus(status2).filter(
     ({ path }) => !options.exclude.some((prefix) => path === prefix || path.startsWith(`${prefix}/`))
   );
-  const tree = join2(options.outDir, "tree");
+  const tree = join3(options.outDir, "tree");
   mkdirSync(tree, { recursive: true });
   const copies = changes.filter((change) => change.status !== "deleted").map(({ path }) => path);
   if (copies.length > 0) {
@@ -30108,7 +30147,7 @@ function collectChanges(options) {
   }
   return changes.map((change) => {
     if (change.status === "deleted") return change;
-    const copy = join2(tree, change.path);
+    const copy = join3(tree, change.path);
     const stats = lstatSync(copy);
     if (!stats.isFile()) {
       rmSync(copy, { recursive: true, force: true });
@@ -30172,7 +30211,7 @@ function deriveKey(secret, salt) {
 import { spawnSync as spawnSync2 } from "node:child_process";
 import { createHash as createHash3 } from "node:crypto";
 import { chmodSync, mkdirSync as mkdirSync2, writeFileSync } from "node:fs";
-import { join as join3 } from "node:path";
+import { join as join4 } from "node:path";
 var OPENCODE_VERSION = "1.18.32";
 var PACKAGES = {
   "linux-x64": {
@@ -30242,13 +30281,13 @@ var openCode = {
       throw new Error(`${pkg.name}@${OPENCODE_VERSION} does not match its pinned integrity.`);
     }
     mkdirSync2(dir, { recursive: true });
-    const file = join3(dir, "opencode.tgz");
+    const file = join4(dir, "opencode.tgz");
     writeFileSync(file, tarball);
     const tar = spawnSync2("tar", ["-xzf", file, "-C", dir, "package/bin/opencode"], {
       stdio: "inherit"
     });
     if (tar.status !== 0) throw new Error("Extracting OpenCode failed.");
-    const executable = join3(dir, "package", "bin", "opencode");
+    const executable = join4(dir, "package", "bin", "opencode");
     chmodSync(executable, 493);
     return executable;
   },
@@ -31377,7 +31416,7 @@ function languageName(tag) {
 import { spawnSync as spawnSync3 } from "node:child_process";
 import { mkdtempSync, rmSync as rmSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join as join4 } from "node:path";
+import { join as join5 } from "node:path";
 
 // src/validate.ts
 var MAX_PLAN_BYTES = 256 * 1024;
@@ -31553,7 +31592,7 @@ function webRule(path, policy) {
 }
 function ignoredPaths(rules, paths) {
   if (paths.length === 0) return /* @__PURE__ */ new Set();
-  const dir = mkdtempSync(join4(tmpdir(), "codeman-ignore-"));
+  const dir = mkdtempSync(join5(tmpdir(), "codeman-ignore-"));
   try {
     const env = {
       PATH: process.env.PATH ?? "",
@@ -31562,7 +31601,7 @@ function ignoredPaths(rules, paths) {
     };
     const init = spawnSync3("git", ["init", "-q", dir], { env, encoding: "utf8" });
     if (init.status !== 0) throw new Error(`git init failed: ${init.stderr.trim()}`);
-    writeFileSync2(join4(dir, ".git", "info", "exclude"), rules);
+    writeFileSync2(join5(dir, ".git", "info", "exclude"), rules);
     const result = spawnSync3(
       "git",
       [
@@ -31757,7 +31796,7 @@ function decodeStatus(body) {
 // src/results.ts
 import { spawnSync as spawnSync4 } from "node:child_process";
 import { mkdirSync as mkdirSync3, rmSync as rmSync3, writeFileSync as writeFileSync3 } from "node:fs";
-import { join as join5 } from "node:path";
+import { join as join6 } from "node:path";
 var RESULTS_DIR = ".codeman/results";
 var MAX_LOG_BYTES = 64 * 1024;
 var MAX_ARTIFACT_BYTES = 50 * 1024 * 1024;
@@ -31777,8 +31816,8 @@ async function downloadResults(ci, runs, dir) {
   let budget = MAX_ARTIFACT_BYTES;
   const index = ["# Workflow results", ""];
   for (const run2 of runs) {
-    const runDir = join5(dir, String(run2.id));
-    mkdirSync3(join5(runDir, "logs"), { recursive: true });
+    const runDir = join6(dir, String(run2.id));
+    mkdirSync3(join6(runDir, "logs"), { recursive: true });
     const lines = [
       `## ${run2.name} (${run2.path})`,
       "",
@@ -31790,7 +31829,7 @@ async function downloadResults(ci, runs, dir) {
       if (job.conclusion === "success" || job.conclusion === "skipped") continue;
       try {
         const log = logTail(await ci.jobLog(job.id));
-        writeFileSync3(join5(runDir, "logs", `${job.id}-${safeName(job.name)}.txt`), log);
+        writeFileSync3(join6(runDir, "logs", `${job.id}-${safeName(job.name)}.txt`), log);
       } catch {
         lines.push("  (its log could not be downloaded)");
       }
@@ -31804,18 +31843,18 @@ async function downloadResults(ci, runs, dir) {
         lines.push(`- Artifact "${name}": skipped, over the ${MAX_ARTIFACT_BYTES} byte limit`);
       } else {
         budget -= artifact.bytes;
-        const target = join5(runDir, "artifacts", name);
+        const target = join6(runDir, "artifacts", name);
         const extracted = extract(await ci.downloadArtifact(artifact.id), target);
         lines.push(
           `- Artifact "${name}": ${extracted ? `artifacts/${name}/` : "could not be extracted"}`
         );
       }
     }
-    writeFileSync3(join5(runDir, "README.md"), `${lines.join("\n")}
+    writeFileSync3(join6(runDir, "README.md"), `${lines.join("\n")}
 `);
     index.push(`- ${run2.name}: ${run2.conclusion ?? "unknown"}, in \`${run2.id}/\``);
   }
-  writeFileSync3(join5(dir, "README.md"), `${index.join("\n")}
+  writeFileSync3(join6(dir, "README.md"), `${index.join("\n")}
 `);
 }
 function extract(zip, target) {
@@ -32203,7 +32242,7 @@ ${[...requests, ...reviews].join("\n\n")}
 }
 
 // src/rules.ts
-import { readFileSync as readFileSync3 } from "node:fs";
+import { readFileSync as readFileSync4 } from "node:fs";
 var RULES_FILE = new URL("../AGENTS.md", import.meta.url);
 var UNDER_CODEMAN = `## Working under Codeman
 
@@ -32255,7 +32294,7 @@ function agentRules(rules, repositoryRules2) {
 `, omitted: omitted.map((block2) => block2.heading) };
 }
 function readRules() {
-  return readFileSync3(RULES_FILE, "utf8");
+  return readFileSync4(RULES_FILE, "utf8");
 }
 
 // src/steps/agent.ts
@@ -32289,15 +32328,17 @@ async function agentJob(services, reached) {
   runtime2.startGroup(`Install ${harness.name}`);
   createAgentUser();
   const executable = installForAgent(
-    await harness.install(join6(workdir(runtime2), "harness")),
+    await harness.install(join7(workdir(runtime2), "harness")),
     harness.name
   );
   runtime2.endGroup();
   const worktree = `${AGENT_HOME}/work`;
-  copyToAgent(workspace, worktree);
+  const action = actionPathIn(workspace);
+  const excluded = action ? [action] : [];
+  copyToAgent(workspace, worktree, excluded);
   if (task.workflowRuns?.length) {
     runtime2.startGroup("Download the results of the workflows the agent asked for");
-    const results = join6(workdir(runtime2), "workflow-results");
+    const results = join7(workdir(runtime2), "workflow-results");
     await downloadResults(services.ci(), task.workflowRuns, results);
     copyToAgent(results, `${worktree}/${RESULTS_DIR}`);
     runtime2.endGroup();
@@ -32305,7 +32346,7 @@ async function agentJob(services, reached) {
   const prompt = task.action === "implement" ? stagePrompt(task, minutes, conventions) : task.action === "route" ? routePrompt(task, conventions) : planPrompt(task, conventions);
   writeAsAgent(`${worktree}/${TASK_FILE}`, prompt);
   if (task.action === "implement" && task.stage === "web") {
-    writeAsAgent(`${worktree}/${WEB_TOOL_PATH}`, readFileSync4(GENERIC_TOOL, "utf8"));
+    writeAsAgent(`${worktree}/${WEB_TOOL_PATH}`, readFileSync5(GENERIC_TOOL, "utf8"));
   }
   const rules = agentRules(readRules(), repositoryRules(workspace));
   if (rules.omitted.length > 0) {
@@ -32372,12 +32413,12 @@ async function agentJob(services, reached) {
   rmSync4(out, { recursive: true, force: true });
   mkdirSync4(out, { recursive: true });
   const changes = collectChanges({
-    gitDir: join6(workspace, ".git"),
+    gitDir: join7(workspace, ".git"),
     worktree,
     outDir: out,
-    exclude: [OUTPUT_DIR]
+    exclude: [OUTPUT_DIR, ...excluded]
   });
-  const outputFile = join6(out, "output.json");
+  const outputFile = join7(out, "output.json");
   if (!copyAgentFile(`${worktree}/${OUTPUT_FILE}`, outputFile, MAX_OUTPUT_BYTES)) {
     rmSync4(outputFile, { force: true });
   }
@@ -32389,7 +32430,7 @@ async function agentJob(services, reached) {
     durationMs,
     changes
   };
-  writeFileSync4(join6(out, "manifest.json"), JSON.stringify(manifest, null, 2));
+  writeFileSync4(join7(out, "manifest.json"), JSON.stringify(manifest, null, 2));
   runtime2.info(`Changed ${changes.length} file(s):`);
   for (const change of changes) runtime2.info(`  ${change.status} ${oneLine(change.path)}`);
   if (access2.stopped?.aborted) runtime2.fail(`The run stopped: ${stopReason(access2.stopped)}`);
@@ -32417,24 +32458,24 @@ function stopReason(signal) {
   return reason instanceof Error ? reason.message : String(reason);
 }
 function readAgentOutput(runtime2, source) {
-  const copy = join6(workdir(runtime2), "output-check.json");
+  const copy = join7(workdir(runtime2), "output-check.json");
   try {
-    return copyAgentFile(source, copy, MAX_OUTPUT_BYTES) ? readFileSync4(copy, "utf8") : void 0;
+    return copyAgentFile(source, copy, MAX_OUTPUT_BYTES) ? readFileSync5(copy, "utf8") : void 0;
   } finally {
     rmSync4(copy, { force: true });
   }
 }
 function repositoryRules(workspace) {
   for (const name of ["AGENTS.md", "CLAUDE.md"]) {
-    const file = join6(workspace, name);
-    if (existsSync2(file) && lstatSync2(file).isFile()) return readFileSync4(file, "utf8");
+    const file = join7(workspace, name);
+    if (existsSync2(file) && lstatSync2(file).isFile()) return readFileSync5(file, "utf8");
   }
   return void 0;
 }
 
 // src/steps/apply.ts
-import { existsSync as existsSync3, lstatSync as lstatSync3, mkdirSync as mkdirSync5, readFileSync as readFileSync5, writeFileSync as writeFileSync5 } from "node:fs";
-import { join as join7 } from "node:path";
+import { existsSync as existsSync3, lstatSync as lstatSync3, mkdirSync as mkdirSync5, readFileSync as readFileSync6, writeFileSync as writeFileSync5 } from "node:fs";
+import { join as join8 } from "node:path";
 
 // src/inference/spend.ts
 var MAX_PODS = 20;
@@ -33116,7 +33157,7 @@ async function apply(services) {
   runtime2.output("chain", String(chain));
   if (chain) {
     mkdirSync5(chainDir(runtime2), { recursive: true });
-    writeFileSync5(join7(chainDir(runtime2), String(task.number)), `${task.number}
+    writeFileSync5(join8(chainDir(runtime2), String(task.number)), `${task.number}
 `);
   }
 }
@@ -33207,17 +33248,17 @@ async function applyPlan(task, io) {
     });
   }
   const dir = io.resultDir;
-  const manifest = readJson(join7(dir, "manifest.json"));
+  const manifest = readJson(join8(dir, "manifest.json"));
   const checked2 = checkPlanResult(manifest, task.planPath);
   if (!checked2.ok) return blocked(io, task, checked2.error);
-  const planFile = join7(dir, "tree", task.planPath);
+  const planFile = join8(dir, "tree", task.planPath);
   if (!lstatSync3(planFile).isFile()) return blocked(io, task, `${task.planPath} is not a file.`);
-  const plan = decodeText(readFileSync5(planFile));
+  const plan = decodeText(readFileSync6(planFile));
   if (plan === void 0) return blocked(io, task, `${task.planPath} is not UTF-8 text.`);
-  const outputFile = join7(dir, "output.json");
+  const outputFile = join8(dir, "output.json");
   if (!existsSync3(outputFile)) return blocked(io, task, "The agent did not write output.json.");
   const output = parsePlanOutput(
-    readFileSync5(outputFile, "utf8").slice(0, MAX_OUTPUT_BYTES),
+    readFileSync6(outputFile, "utf8").slice(0, MAX_OUTPUT_BYTES),
     outputLimits(task.settings),
     nextDecisionId(task.record)
   );
@@ -33254,7 +33295,7 @@ async function applyStage(task, io) {
   const stage = task.stage ?? "code";
   const t = say(task);
   const dir = io.resultDir;
-  const manifest = readJson(join7(dir, "manifest.json"));
+  const manifest = readJson(join8(dir, "manifest.json"));
   if (!isManifest(manifest)) {
     return finish(io, task, "blocked", {
       outcome: "failed",
@@ -33271,12 +33312,12 @@ async function applyStage(task, io) {
   });
   if (!checked2.ok) return blocked(io, task, checked2.error);
   if (stage === "web") {
-    checked2.value = await checkWebFiles(io.repo, task.baseSha, join7(dir, "tree"), checked2.value);
+    checked2.value = await checkWebFiles(io.repo, task.baseSha, join8(dir, "tree"), checked2.value);
   }
   const warnings = checked2.value.dropped.map(({ path, reason: reason2 }) => t.droppedChange(path, reason2));
-  const outputFile = join7(dir, "output.json");
+  const outputFile = join8(dir, "output.json");
   const output = existsSync3(outputFile) ? parseStageOutput(
-    readFileSync5(outputFile, "utf8").slice(0, MAX_OUTPUT_BYTES),
+    readFileSync6(outputFile, "utf8").slice(0, MAX_OUTPUT_BYTES),
     stage,
     outputLimits(task.settings),
     io.conventions.workflows
@@ -33299,7 +33340,7 @@ async function applyStage(task, io) {
     report,
     errors: warnings
   });
-  const tree = join7(dir, "tree");
+  const tree = join8(dir, "tree");
   const changes = [
     ...readChanges(tree, checked2.value.accepted, task.settings),
     ...readChanges(tree, checked2.value.staged, task.settings).map((change) => ({
@@ -33519,12 +33560,12 @@ async function applyRoute(task, io) {
       }
     );
   };
-  const outputFile = join7(io.resultDir, "output.json");
+  const outputFile = join8(io.resultDir, "output.json");
   if (io.jobs.agentJob !== "success" || !existsSync3(outputFile)) {
     return fallback("The routing agent did not finish, or wrote no output.json.");
   }
   const output = parseRouteOutput(
-    readFileSync5(outputFile, "utf8").slice(0, MAX_OUTPUT_BYTES),
+    readFileSync6(outputFile, "utf8").slice(0, MAX_OUTPUT_BYTES),
     outputLimits(task.settings)
   );
   if (!output.ok) return fallback(output.error);
@@ -33729,8 +33770,8 @@ function afterAccept(t, state, record, by, workflows) {
 }
 async function checkWebFiles(repo, ref, tree, checked2) {
   const text = (path) => {
-    const file = join7(tree, path);
-    return lstatSync3(file).isFile() ? readFileSync5(file, "utf8") : "";
+    const file = join8(tree, path);
+    return lstatSync3(file).isFile() ? readFileSync6(file, "utf8") : "";
   };
   const written = checked2.accepted.filter(
     (change) => change.status !== "deleted" && isWebPath(change.path)
@@ -33783,14 +33824,14 @@ async function currentWebPages(io, task, known) {
 function readChanges(tree, accepted, settings) {
   return accepted.map((change) => {
     if (change.status === "deleted") return { path: change.path, content: null };
-    const file = join7(tree, change.path);
+    const file = join8(tree, change.path);
     const stats = lstatSync3(file);
     if (!stats.isFile() || stats.size > settings["max-file-bytes"]) {
       throw new Error(`${oneLine(change.path)} changed after it was checked.`);
     }
     return {
       path: change.path,
-      content: readFileSync5(file),
+      content: readFileSync6(file),
       mode: change.mode === "100755" ? "100755" : "100644"
     };
   });
@@ -33990,7 +34031,7 @@ function spendRow(io, task, cost) {
   };
 }
 function agentDuration(dir) {
-  const manifest = readJson(join7(dir, "manifest.json"));
+  const manifest = readJson(join8(dir, "manifest.json"));
   const ms = isManifest(manifest) ? manifest.durationMs : void 0;
   return typeof ms === "number" && Number.isFinite(ms) && ms >= 0 ? ms : void 0;
 }
@@ -33999,7 +34040,7 @@ function spentLine(t, task, spent) {
 }
 function readJson(file) {
   try {
-    return JSON.parse(readFileSync5(file, "utf8"));
+    return JSON.parse(readFileSync6(file, "utf8"));
   } catch {
     return void 0;
   }
@@ -35160,7 +35201,9 @@ function gitHubServices(runtime2) {
     ledger: (job, pool2) => new Ledger(theStore(), { runtime: runtime2, job, pool: pool2 })
   };
 }
-async function run(services) {
+async function run(services, commit = actionCommit()) {
+  const problem2 = templateVersionProblem(services.runtime.input("template-version"), commit);
+  if (problem2) throw new Error(problem2);
   const name = services.runtime.input("step", { required: true });
   const step = STEPS[name];
   if (!step)

@@ -1,3 +1,4 @@
+import { actionCommit, templateVersionProblem } from "./action.ts";
 import { inferenceProvider, providerAccounts } from "./inference/index.ts";
 import type { InferenceProvider } from "./inference/provider.ts";
 import { Ledger } from "./ledger.ts";
@@ -58,7 +59,13 @@ export function gitHubServices(runtime: Runtime): Services {
   };
 }
 
-export async function run(services: Services): Promise<void> {
+/**
+ * Runs the job's step, once the workflow files that call it are the template version this code
+ * expects: a step of another version would miss inputs it needs, or read outputs no job gives.
+ */
+export async function run(services: Services, commit = actionCommit()): Promise<void> {
+  const problem = templateVersionProblem(services.runtime.input("template-version"), commit);
+  if (problem) throw new Error(problem);
   const name = services.runtime.input("step", { required: true });
   const step = STEPS[name];
   if (!step)

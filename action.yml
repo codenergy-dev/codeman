@@ -5,6 +5,8 @@ inputs:
   step:
     description: "Which job of the Codeman workflow this is: select, open-key, agent, close-key, apply or release-pod."
     required: true
+  template-version:
+    description: "The version of the workflow templates the workflow files were copied from; the templates pass it in every Codeman step. A step whose files are not the version this commit of Codeman expects fails, saying to copy the templates again."
   github-token:
     description: "(select, apply) GitHub App installation token. (agent) The job's GITHUB_TOKEN, to download workflow results."
   workflow-token:

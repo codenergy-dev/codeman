@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
+import { TEMPLATE_VERSION } from "./action.ts";
 import { ACCOUNTS, PROVIDERS } from "./inference/providers.ts";
 import { renamedSetting } from "./settings.ts";
 import { select } from "./steps/select.ts";
@@ -272,4 +273,115 @@ test("the dispatch job wakes each repository with a token for it alone, that may
     entries(caller, ["jobs", "select", "outputs"]).get("dispatches"),
     `\${{ steps.codeman.outputs.dispatches }}`,
   );
+});
+
+/** A job's steps, each as its lines, without comments. */
+function stepsOf(text: string, job: string): string[][] {
+  const steps: string[][] = [];
+  for (const line of block(text, ["jobs", job, "steps"])) {
+    if (line.trim() === "" || line.trim().startsWith("#")) continue;
+    if (line.startsWith("      - ")) steps.push([]);
+    steps.at(-1)?.push(line);
+  }
+  return steps;
+}
+
+const CHECK = [
+  "      - name: Check CODEMAN_COMMIT_SHA",
+  "        run: |",
+  '          if [[ ! "$CODEMAN_COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]]; then',
+  '            echo "::error::Set the CODEMAN_COMMIT_SHA variable to a full commit SHA of codenergy-dev/codeman (40 lowercase hexadecimal characters), not a branch or tag."',
+  "            exit 1",
+  "          fi",
+  "        env:",
+  `          CODEMAN_COMMIT_SHA: \${{ vars.CODEMAN_COMMIT_SHA }}`,
+];
+const CHECKOUT = [
+  "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1",
+  "        with:",
+  "          repository: codenergy-dev/codeman",
+  `          ref: \${{ vars.CODEMAN_COMMIT_SHA }}`,
+  "          path: .codeman/action",
+  "          persist-credentials: false",
+];
+/** The jobs that run Codeman, by file. */
+const CODEMAN_JOBS: [string, string, string][] = [
+  ["codeman.yml", "select", caller],
+  ["codeman-task.yml", "open-key", task],
+  ["codeman-task.yml", "agent", task],
+  ["codeman-task.yml", "close-key", task],
+  ["codeman-task.yml", "apply", task],
+  ["codeman-task.yml", "release-pod", task],
+];
+
+test("each job runs Codeman from a checkout at CODEMAN_COMMIT_SHA, checked to be a full SHA first", () => {
+  for (const [file, job, text] of CODEMAN_JOBS) {
+    const steps = stepsOf(text, job);
+    const at = steps.findIndex((step) => step[0] === "      - uses: ./.codeman/action");
+    assert.ok(at >= 2, `${file}: ${job} runs Codeman`);
+    assert.equal(
+      steps.filter((step) => step.join("\n").includes(".codeman/action")).length,
+      2,
+      `${file}: ${job} checks out and runs Codeman once`,
+    );
+    const check = steps.findIndex((step) => step[0] === CHECK[0]);
+    assert.deepEqual(steps[check], CHECK, `${file}: ${job} checks the variable`);
+    assert.deepEqual(steps[check + 1], CHECKOUT, `${file}: ${job} checks out right after`);
+    assert.ok(check + 1 < at, `${file}: ${job} checks out before it runs Codeman`);
+    // The value reaches the shell through the environment only.
+    assert.ok(!steps[check]?.slice(1, -2).join("\n").includes("${{"), `${file}: ${job}`);
+    assert.ok(
+      steps[at]?.includes(`          template-version: ${TEMPLATE_VERSION}`),
+      `${file}: ${job} passes the template version`,
+    );
+  }
+  // The agent job checks out the repository first: its checkout cleans the workspace.
+  const agent = stepsOf(task, "agent");
+  assert.equal(agent[0]?.[0], CHECKOUT[0]);
+  assert.ok(!agent[0]?.join("\n").includes("repository:"));
+  assert.deepEqual(agent[1], CHECK);
+});
+
+test("no other job runs Codeman, and no commit is written in the files", () => {
+  for (const [text, jobs] of [
+    [caller, ["forward-review", "dispatch", "next-run"]],
+    [task, []],
+  ] as const) {
+    for (const job of jobs)
+      assert.ok(!block(text, ["jobs", job]).join("\n").includes("codeman/action"), job);
+  }
+  assert.ok(!entries(caller, ["jobs", "task"]).get("uses")?.includes("codeman/action"));
+  for (const text of [caller, task]) {
+    assert.ok(!/(?<!CODEMAN_)COMMIT_SHA/.test(text), "no placeholder");
+    assert.ok(!text.includes("codenergy-dev/codeman@"), "no pinned Codeman");
+    assert.equal(
+      [...text.matchAll(/uses: \.\/\.codeman\/action$/gm)].length,
+      CODEMAN_JOBS.filter(([, , source]) => source === text).length,
+    );
+  }
+  assert.match(readFileSync("action.yml", "utf8"), /^ {2}template-version:$/m);
+});
+
+test("checking Codeman out changes no job's permissions", () => {
+  const permissions = (text: string, job: string) => {
+    const inline = entries(text, ["jobs", job]).get("permissions");
+    if (inline === undefined) return "none";
+    return inline === ""
+      ? JSON.stringify([...entries(text, ["jobs", job, "permissions"])])
+      : inline;
+  };
+  const expected: [string, string, string][] = [
+    [caller, "forward-review", '[["actions","write"]]'],
+    [caller, "select", '[["id-token","write"]]'],
+    [caller, "dispatch", "{}"],
+    [caller, "task", '[["contents","read"],["actions","read"],["id-token","write"]]'],
+    [caller, "next-run", '[["actions","write"]]'],
+    [task, "open-key", '[["id-token","write"]]'],
+    [task, "agent", '[["contents","read"],["actions","read"]]'],
+    [task, "close-key", '[["id-token","write"]]'],
+    [task, "apply", "none"],
+    [task, "release-pod", '[["id-token","write"]]'],
+  ];
+  for (const [text, job, value] of expected) assert.equal(permissions(text, job), value, job);
+  for (const text of [caller, task]) assert.match(text, /^permissions: \{\}$/m);
 });

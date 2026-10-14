@@ -44,9 +44,18 @@ test("the agent is contained and its changes are collected safely", {
   const runnerTemp = process.env.RUNNER_TEMP ?? `${home}/work/_temp`;
   process.env.PATH = `${home}/.cargo/bin:/opt/codeman-test/bin:${process.env.PATH ?? ""}`;
 
+  // Codeman's own checkout, inside the workspace in the agent job, stays out of the copy.
+  mkdirSync(join(repo, ".codeman", "action"), { recursive: true });
+  writeFileSync(join(repo, ".codeman", "action", "action.yml"), "name: Codeman\n");
+
   createAgentUser();
   const worktree = `${AGENT_HOME}/work`;
-  copyToAgent(repo, worktree);
+  copyToAgent(repo, worktree, [".codeman/action"]);
+  const copied = (path: string) => spawnSync("sudo", ["-n", "test", "-e", path]).status === 0;
+  assert.ok(copied(`${worktree}/README.md`));
+  assert.ok(!copied(`${worktree}/.codeman/action`), "the action's folder is not copied");
+  assert.throws(() => copyToAgent(repo, worktree, ["../x"]), /not a path inside the copy/);
+  assert.ok(copied(`${worktree}/README.md`), "a refused exclusion changes nothing");
   const script = [
     "echo changed >> README.md",
     "mkdir -p plans && echo plan > plans/p.md",

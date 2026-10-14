@@ -44,9 +44,19 @@ export function installForAgent(source: string, name: string): string {
   return target;
 }
 
-export function copyToAgent(source: string, target: string): void {
+/**
+ * Copies `source` to `target`, for the agent, without the paths of `exclude` (relative to
+ * `source`, with `/` separators), which are removed before the agent can see them.
+ */
+export function copyToAgent(source: string, target: string, exclude: readonly string[] = []): void {
+  for (const path of exclude) {
+    if (path.startsWith("/") || path.split("/").some((part) => ["", ".", ".."].includes(part))) {
+      throw new Error(`Cannot leave out ${path}: not a path inside the copy.`);
+    }
+  }
   sudo(["rm", "-rf", target]);
   sudo(["cp", "-a", source, target]);
+  for (const path of exclude) sudo(["rm", "-rf", "--", `${target}/${path}`]);
   sudo(["chown", "-R", `${AGENT_USER}:${AGENT_USER}`, target]);
 }
 

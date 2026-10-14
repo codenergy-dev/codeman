@@ -1,7 +1,7 @@
 ---
-status: pending
+status: in progress
 created_at: 2026-10-14T15:53:06-03:00
-updated_at: 2026-10-14T15:53:06-03:00
+updated_at: 2026-10-14T16:03:03-03:00
 commit: 362a8da
 ---
 
@@ -45,8 +45,8 @@ Repositories run the Codeman commit named by the `CODEMAN_COMMIT_SHA` variable (
 
 ## Steps
 
-1. **The action.** `src/action.ts`: `TEMPLATE_VERSION`, the action's root and commit, the version check and its message, and the action's folder inside a workspace. `run` (`src/main.ts`) checks the version before any step. `action.yml` declares `template-version`. The `agent` step leaves the action's folder out of the agent's copy and of the collected changes. *Done when* tests cover a match, a missing version, an older and a newer one, and the folder's path inside and outside the workspace, and the sandbox test (Linux, CI) checks that an excluded path is not copied.
-2. **The templates.** In each of the six jobs that run Codeman: a step that checks `CODEMAN_COMMIT_SHA`, then `actions/checkout` of `codenergy-dev/codeman` at it into `.codeman/action`, then `uses: ./.codeman/action` with `template-version`; in `agent`, both after the target's checkout. No `COMMIT_SHA` remains. *Done when* `src/templates.test.ts` checks, for every Codeman step, a validated checkout at `vars.CODEMAN_COMMIT_SHA` in the same job before it, at the path it uses, with `persist-credentials: false` and the pinned SHA; that no `codenergy-dev/codeman@` or `COMMIT_SHA` remains; that the value reaches the check through `env`; that the permissions are unchanged; and that every step passes `TEMPLATE_VERSION`.
+1. **The action.** `src/action.ts`: `TEMPLATE_VERSION`, the action's root and commit, the version check and its message, and the action's folder inside a workspace. `run` (`src/main.ts`) checks the version before any step. `action.yml` declares `template-version`. The `agent` step leaves the action's folder out of the agent's copy and of the collected changes. *Done when* tests cover a match, a missing version, an older and a newer one, and the folder's path inside and outside the workspace, and the sandbox test (Linux, CI) checks that an excluded path is not copied. **Done on 2026-10-14**: `src/action.ts` and `src/action.test.ts`; `run` fails before any step on a mismatch; `copyToAgent` takes the paths to leave out (refusing any outside the copy), and `agent` passes the action's folder to it and to `collectChanges`.
+2. **The templates.** In each of the six jobs that run Codeman: a step that checks `CODEMAN_COMMIT_SHA`, then `actions/checkout` of `codenergy-dev/codeman` at it into `.codeman/action`, then `uses: ./.codeman/action` with `template-version`; in `agent`, both after the target's checkout. No `COMMIT_SHA` remains. *Done when* `src/templates.test.ts` checks, for every Codeman step, a validated checkout at `vars.CODEMAN_COMMIT_SHA` in the same job before it, at the path it uses, with `persist-credentials: false` and the pinned SHA; that no `codenergy-dev/codeman@` or `COMMIT_SHA` remains; that the value reaches the check through `env`; that the permissions are unchanged; and that every step passes `TEMPLATE_VERSION`. **Done on 2026-10-14**: the check and the checkout come first in each job, after the repository's checkout in `agent`; tests also check that no other job runs Codeman and every job's permissions.
 3. **Docs.** [Setup](../installation/setup.md) (set `CODEMAN_COMMIT_SHA`; nothing to replace in the templates; when to copy them again), [upgrading](../installation/upgrading.md), [security](../security/risks.md) and [secrets](../security/secrets.md) (the trade-off), [the agent](../runs/agent.md) (the action's folder and the sandbox), [development](../development/guide.md) (bumping the template version), [dependencies](../development/dependencies.md), and the [index](../README.md). *Done when* every page that said to replace `COMMIT_SHA` or pin a SHA in the files says what to do now, and `src/docs.test.ts` passes.
 4. **Build and check.** `npm run build` and `npm run check` pass; `dist/gateway.js` does not change. *Done when* both pass and the working tree is clean.
 

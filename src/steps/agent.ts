@@ -1,5 +1,6 @@
 import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { actionPathIn } from "../action.ts";
 import { collectChanges, copyAgentFile, type Manifest } from "../collect.ts";
 import { decrypt } from "../crypto.ts";
 import { harnesses } from "../harness/index.ts";
@@ -84,7 +85,11 @@ async function agentJob(services: Services, reached: () => void): Promise<void> 
   runtime.endGroup();
 
   const worktree = `${AGENT_HOME}/work`;
-  copyToAgent(workspace, worktree);
+  // Codeman's own checkout, when the job put it in the workspace: not the repository's, so the
+  // agent neither reads it as such nor changes it, and it is never collected.
+  const action = actionPathIn(workspace);
+  const excluded = action ? [action] : [];
+  copyToAgent(workspace, worktree, excluded);
   if (task.workflowRuns?.length) {
     runtime.startGroup("Download the results of the workflows the agent asked for");
     const results = join(workdir(runtime), "workflow-results");
@@ -183,7 +188,7 @@ async function agentJob(services: Services, reached: () => void): Promise<void> 
     gitDir: join(workspace, ".git"),
     worktree,
     outDir: out,
-    exclude: [OUTPUT_DIR],
+    exclude: [OUTPUT_DIR, ...excluded],
   });
   const outputFile = join(out, "output.json");
   if (!copyAgentFile(`${worktree}/${OUTPUT_FILE}`, outputFile, MAX_OUTPUT_BYTES)) {
