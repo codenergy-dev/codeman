@@ -47,4 +47,6 @@ export interface Runtime extends Log {
   runIdOf(url: string): string | undefined;
   /** The repository the run works on. */
   readonly repository: RepositoryRef;
+  /** The file of the run's workflow, such as `codeman.yml`, which another run can start. */
+  readonly workflow: string;
 }

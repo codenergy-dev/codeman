@@ -69,7 +69,7 @@ interface StoredChangeRequest extends ChangeRequest {
 
 /** An in-memory platform with one repository. Comment and review IDs grow across it. */
 export class FakePlatform implements Platform {
-  readonly repository: RepositoryRef = { owner: "o", name: "r" };
+  readonly repository: RepositoryRef;
   readonly issues = new Map<number, Issue>();
   readonly comments = new Map<number, Comment[]>();
   readonly changeRequests = new Map<number, StoredChangeRequest>();
@@ -86,7 +86,11 @@ export class FakePlatform implements Platform {
   #nextChangeRequest = 1001;
   #clock = Date.parse("2026-10-01T12:00:00Z");
 
-  constructor(files: Record<string, string> = {}) {
+  constructor(
+    files: Record<string, string> = {},
+    repository: RepositoryRef = { owner: "o", name: "r" },
+  ) {
+    this.repository = repository;
     const sha = this.#store(undefined, "Initial commit", new Map(), files);
     this.branches.set(this.defaultBranchName, sha);
   }

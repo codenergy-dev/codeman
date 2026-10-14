@@ -79,3 +79,40 @@ export function soloPool(owner: string): Pool {
   const own = owner.toLowerCase();
   return { id: own, members: [own] };
 }
+
+/** What an organization's document says of the pool it declares, if anything. */
+export interface Declaration {
+  pool?: string | undefined;
+}
+
+/**
+ * The members that agree on `pool` (decision 8): those whose organization's document declares the
+ * same pool, the organization itself always; and a line for the log about each that does not.
+ */
+export function agreement(
+  pool: Pool,
+  owner: string,
+  declarations: ReadonlyMap<string, Declaration | undefined>,
+): { pool: Pool; notes: string[] } {
+  const own = owner.toLowerCase();
+  const members: string[] = [];
+  const notes: string[] = [];
+  for (const member of pool.members) {
+    if (member === own) {
+      members.push(member);
+      continue;
+    }
+    const declared = declarations.get(member)?.pool;
+    if (declared === pool.id) members.push(member);
+    else if (declared === undefined) {
+      notes.push(
+        `Organization ${member} has declared no pool yet (none of its repositories ran this version of Codeman): its repositories are not batched with this one's.`,
+      );
+    } else {
+      notes.push(
+        `Organization ${member} declares pool \`${declared}\`, not \`${pool.id}\`: its repositories are not batched with this one's.`,
+      );
+    }
+  }
+  return { pool: { id: pool.id, members }, notes };
+}

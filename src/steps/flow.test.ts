@@ -578,6 +578,10 @@ test("pods: select hands the task's pods to the key jobs, and apply takes the le
     podReuse: "task",
     // One task at a time without counts: `num-parallel` defaults to 1.
     parallel: 1,
+    // A batch of one, on a pod: its document lets the registry size the pod.
+    batch: "1-1-0",
+    // The organization alone, without `pool`.
+    pool: { id: "o", members: ["o"] },
   });
   const task = readTask(selected);
   agentResult({ [task.planPath]: "# Plan\n" }, { summary: "Plan.", language: "en", decisions: [] });
@@ -766,6 +770,7 @@ test("profiles: a task planned on OpenRouter and coded on a pod adds up both pro
     profile: "planner",
     accounts: ["openrouter", "runpod"],
     recorded: { spent: 0 },
+    pool: { id: "o", members: ["o"] },
   });
   const { planPath } = readTask(selected);
   agentResult({ [planPath]: "# Plan\n" }, { summary: "Adds a limiter.", decisions: [] });
@@ -1192,16 +1197,17 @@ test("profiles pick the tasks: 4 on the full GPU, up to 3 on the MIG partition",
   );
   assert.deepEqual(parallels(selected), [3, 3, 3], "up to 3 on the MIG partition");
 
-  // A planning task counts too: it plans on OpenRouter, and the three others take the full GPU.
+  // A count is a batch's: a planning task is a batch of its own on OpenRouter, and the three
+  // others a batch of 3 on the MIG partition (decision 12 of the plan for GPU batches).
   const mixed = new FakePlatform({ ".codeman/settings.yml": exampleSettings() });
   readyTasks(mixed, 3);
   mixed.openIssue("alice", "A new task", "Plan it.");
   selected = await selectStep(mixed);
   assert.deepEqual(pickedTasks(selected), [
     ["4", "plan", "planner"],
-    ["1", "route", "parallel-tasks"],
-    ["2", "route", "parallel-tasks"],
-    ["3", "route", "parallel-tasks"],
+    ["1", "route", "mig"],
+    ["2", "route", "mig"],
+    ["3", "route", "mig"],
   ]);
 });
 
@@ -1216,14 +1222,16 @@ test("profiles pick the tasks: tasks served only with more than are ready wait, 
     const [panel = ""] = platform.botComments(task);
     assert.match(
       panel,
-      /Waiting for 4 tasks ready for profile `parallel-tasks`; 3 are\. Codeman checks again at every run\./,
+      /Waiting for 4 tasks ready for profile `parallel-tasks`; 3 are, in 1 repository\. Codeman checks again at every run\./,
     );
     assert.match(panel, /Model: `qwen3-coder:30b`/);
   }
   assert.ok(
     first
       .logged("info")
-      .includes("#1 Task 1: waits for 4 tasks ready for profile `parallel-tasks`; 3 are."),
+      .includes(
+        "#1 Task 1: waits for 4 tasks ready for profile `parallel-tasks`; 3 are, in 1 repository.",
+      ),
   );
   // The next run finds them still waiting, and leaves the panels alone.
   const panels = tasks.map((task) => platform.botComments(task));

@@ -25,6 +25,8 @@ export interface Issue {
   labels: string[];
   /** Null for a deleted account. */
   author: User | null;
+  /** When it last changed, ISO 8601, when known. */
+  updatedAt?: string | undefined;
 }
 
 /**

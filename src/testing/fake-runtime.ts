@@ -11,6 +11,7 @@ export class FakeRuntime implements Runtime {
   readonly summaries: { heading: string; text: string; items: readonly string[] }[] = [];
   readonly tempDir: string;
   readonly repository: RepositoryRef;
+  readonly workflow = "codeman.yml";
   readonly run: { id: string; attempt: number; url: string };
   /** The OIDC tokens the step asked for, by audience. */
   readonly idTokens: string[] = [];

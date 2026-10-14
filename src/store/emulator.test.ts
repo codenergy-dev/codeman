@@ -7,6 +7,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
+import { exchange } from "../board.ts";
 import { PodRegistry } from "../inference/registry.ts";
 import { Ledger } from "../ledger.ts";
 import { FakeRuntime } from "../testing/fake-runtime.ts";
@@ -106,6 +107,28 @@ test("Firestore emulator: tasks that claim a pod's settings at once get one crea
   );
   assert.deepEqual(claims.map((claim) => claim.kind).sort(), ["create", "wait"]);
   assert.equal((await registry.live()).length, 1);
+});
+
+test("Firestore emulator: two selects at once reserve each task of the board once", {
+  skip,
+}, async () => {
+  const store = Firestore.emulator(host, project());
+  const offers = [{ tasks: 4, profile: "four", key: "k4", pod: true }];
+  const now = new Date();
+  const run = (repository: string, id: string, tasks: number[], places: number) =>
+    exchange(store, {
+      pool: { id: "o", members: ["o"] },
+      repository,
+      branch: "main",
+      workflow: "codeman.yml",
+      run: { id, attempt: 1 },
+      now,
+      own: tasks.map((number) => ({ number, stage: "code", offers })),
+      places,
+    });
+  await run("o/a", "100", [1, 2, 3, 4], 0);
+  const formed = await Promise.all([run("o/b", "200", [], 4), run("o/c", "300", [], 4)]);
+  assert.equal(formed[0].batches.length + formed[1].batches.length, 1);
 });
 
 const rulesSkip = jar

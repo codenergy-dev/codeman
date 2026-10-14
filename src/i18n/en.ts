@@ -201,8 +201,8 @@ export const en: Messages = {
   replanHint: "Comment `/codeman replan <what to change>` to try again.",
   removeLabelHint: "Remove the `codeman:blocked` label to try again.",
 
-  waitingForTasks: (tasks, profile, ready) =>
-    `Waiting for ${tasks} tasks ready for profile \`${profile}\`; ${ready} ${ready === 1 ? "is" : "are"}. Codeman checks again at every run.`,
+  waitingForTasks: (tasks, profile, ready, repositories) =>
+    `Waiting for ${tasks} tasks ready for profile \`${profile}\`; ${ready} ${ready === 1 ? "is" : "are"}, in ${repositories} ${repositories === 1 ? "repository" : "repositories"}. Codeman checks again at every run.`,
   noSettingsForStage: (stage) =>
     `No settings apply to the ${STAGES[stage]} stage: no profile serves it with any number of tasks, and the top-level settings have no \`model\`. Add the stage to a profile, or a top-level \`model\`, in \`.codeman/settings.yml\` or the organization's settings.`,
 

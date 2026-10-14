@@ -1,11 +1,14 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import type { Waiting } from "../batches.ts";
+import { type Dispatch, exchange, handshake, type OwnTask, type Started } from "../board.ts";
 import { descriptionCommands } from "../commands.ts";
 import { type Messages, messages, taskLanguage } from "../i18n/index.ts";
 import { inferenceChoice } from "../inference/index.ts";
 import type { WorkflowConventions } from "../platform/conventions.ts";
 import type { CiRun, Comment, Review, ReviewComment } from "../platform/types.ts";
 import { IGNORE_FILE, unprotected } from "../policy.ts";
+import { declaredPool, type Pool } from "../pool.ts";
 import type { CommandError } from "../problems.ts";
 import {
   applyCommands,
@@ -37,10 +40,9 @@ import {
 import { ROUTED_STAGE_STATE, type RoutedStage, routedStageOfState, type Stage } from "../stages.ts";
 import { type State, stateOf } from "../state.ts";
 import { decisionsUrl, renderRefused, renderStatus, reportUrl } from "../status.ts";
-import { ledgerRunId } from "../store/layout.ts";
+import { ledgerRunId, repositoryName } from "../store/layout.ts";
 import {
   type Action,
-  type AgentPick,
   acceptRequest,
   authorizedComments,
   authorizedReviews,
@@ -53,7 +55,6 @@ import {
   openedByMaintainer,
   type Pending,
   pendingWork,
-  pickAgentTasks,
   type Request,
   replanRequests,
   resumeRequests,
@@ -87,6 +88,17 @@ export async function select(services: Services): Promise<void> {
   // file is older or the variable is not set.
   const shared = parseSettings(runtime.input("settings"), SHARED_SETTINGS);
   if (!shared.ok) throw new Error(shared.error);
+  // The pool the organization declares, before any task is marked (decision 8 of the plan for GPU
+  // batches across repositories).
+  const declared = declaredPool(repo.repository.owner, shared.value.pool);
+  if (!declared.ok) throw new Error(`${SHARED_SETTINGS}: ${declared.error}`);
+  // A run another repository's run started for a batch says so; only the store decides.
+  const batchInput = runtime.input("batch");
+  if (batchInput !== "") {
+    runtime.info(
+      `This run was started for batch ${oneLine(batchInput).slice(0, 200)}; the tasks it starts come from Codeman's store, not from this input.`,
+    );
+  }
   // Rules and settings come from the default branch, where the agent cannot change them.
   const defaultBranch = await repo.defaultBranch();
   const settingsText = await repo.readFile(defaultBranch, SETTINGS_FILE);
@@ -298,22 +310,64 @@ export async function select(services: Services): Promise<void> {
     ready.push(await describe(choice));
   }
   // Recording answers and accepting workflows come first, take places of the run as before, and
-  // are not among the tasks the profiles count (choice 9).
+  // are in no batch (choice 9 of the plan for profiles that pick the tasks).
   const withoutAgent = ready.filter((work) => !work.agentStage).slice(0, cap);
   const agentWork = ready.filter((work) => work.agentStage);
-  const agentPick = pickAgentTasks(
-    agentWork.map((work) => ({ number: work.task.number, counts: work.counts })),
-    cap,
-    cap - withoutAgent.length,
-  );
-  const picks = [
-    ...withoutAgent,
-    ...agentWork.filter((work) => agentPick.picked.includes(work.task.number)),
-  ];
   const workOf = (number: number) => agentWork.find((work) => work.task.number === number);
 
-  /** Reads one picked task and resolves its settings; `start` marks it as started. */
-  const prepare = async (work: Work, agents: number): Promise<Picked> => {
+  // The pool, with the members that agree on it; then the board and the batches, in one
+  // transaction (decisions 2, 8, 10 and 11 of the plan for GPU batches across repositories).
+  const store = services.store();
+  const now = new Date();
+  const agreed = await handshake(store, repo.repository.owner, declared.value, now);
+  for (const note of agreed.notes) runtime.warning(note);
+  const pool: Pool = agreed.pool;
+  if (pool.members.length > 1 || declared.value.members.length > 1) {
+    runtime.info(`Pool ${pool.id}: batches with the repositories of ${pool.members.join(", ")}.`);
+  }
+  const own: OwnTask[] = agentWork.map((work) => ({
+    number: work.task.number,
+    stage: work.agentStage ?? "",
+    updatedAt: work.task.updatedAt,
+    offers: work.counts.filter((count) => count.tasks <= cap),
+  }));
+  const board = await exchange(store, {
+    pool,
+    repository: repositoryName(repo.repository),
+    branch: defaultBranch,
+    workflow: runtime.workflow,
+    run: { id: runtime.run.id, attempt: runtime.run.attempt },
+    now,
+    own,
+    places: cap - withoutAgent.length,
+  });
+  for (const { number, batch } of board.dropped) {
+    runtime.info(
+      `#${number} was reserved by batch ${batch}, but is no longer ready for it; released.`,
+    );
+  }
+  for (const one of board.honored) {
+    runtime.info(
+      `#${one.number} was reserved by batch ${one.batch}, of ${one.size} task(s) for profile \`${one.profile ?? ""}\`; it starts now.`,
+    );
+  }
+  for (const batch of board.batches) {
+    if (!batch.id) continue;
+    runtime.info(
+      `Formed batch ${batch.id}: ${batch.size} task(s) for profile \`${batch.profile ?? ""}\`, ${batch.tasks.map((task) => `${task.repository}#${task.number}`).join(", ")}.`,
+    );
+  }
+  const starting: { work: Work; started: Started }[] = [];
+  for (const started of [...board.honored, ...board.formed]) {
+    const work = workOf(started.number);
+    if (work) starting.push({ work, started });
+  }
+
+  /**
+   * Reads one picked task and resolves its settings, with its batch's count; `start` marks it as
+   * started.
+   */
+  const prepare = async (work: Work, started?: Started): Promise<Picked> => {
     const { choice, task, talk, record, maintainerComments, reviewComments, reviews } = work;
     const { sources, newRequests, route, action, stage, description, pending } = work;
     // A new plan keeps the answers given so far and says what to change.
@@ -357,9 +411,8 @@ export async function select(services: Services): Promise<void> {
     const branchSha = await repo.branchSha(branch);
     const baseSha = branchSha ?? (await repo.branchSha(defaultBranch));
     if (!baseSha) throw new Error(`Branch ${defaultBranch} not found.`);
-    const runConditions: RunConditions | undefined = work.agentStage
-      ? { stage: work.agentStage, tasks: agents }
-      : undefined;
+    const runConditions: RunConditions | undefined =
+      work.agentStage && started ? { stage: work.agentStage, tasks: started.size } : undefined;
     const { own, resolved, rejected } = resolveOwn(work.own, runConditions);
     const rejection = rejected ?? work.rejected;
     if (rejection) problems.push({ problem: { kind: "settings-rejected", error: rejection } });
@@ -454,6 +507,7 @@ export async function select(services: Services): Promise<void> {
       profile,
       accounts,
       parallel,
+      batch: started?.batch,
       context,
       start,
     };
@@ -515,14 +569,15 @@ export async function select(services: Services): Promise<void> {
    * Says why a task waits (decision 3), on its panel; written only when the message changes, so
    * the runs that find it still waiting leave it alone (choice 10).
    */
-  const wait = async (work: Work, waiting: AgentPick["waiting"][number]): Promise<void> => {
+  const wait = async (work: Work, waiting: Waiting): Promise<void> => {
     const { task, talk, record } = work;
     const profile = waiting.profile ?? "";
+    const { ready, repositories } = waiting;
     runtime.info(
-      `#${task.number} ${oneLine(task.title)}: waits for ${waiting.tasks} tasks ready for profile \`${profile}\`; ${waiting.ready} ${waiting.ready === 1 ? "is" : "are"}.`,
+      `#${task.number} ${oneLine(task.title)}: waits for ${waiting.tasks} tasks ready for profile \`${profile}\`; ${ready} ${ready === 1 ? "is" : "are"}, in ${repositories} ${repositories === 1 ? "repository" : "repositories"}.`,
     );
     const t = messages(taskLanguage(work.language, record?.language));
-    const message = t.waitingForTasks(waiting.tasks, profile, waiting.ready);
+    const message = t.waitingForTasks(waiting.tasks, profile, ready, repositories);
     if (talk.status?.body.includes(message)) return;
     const served = resolveOwn(work.own, {
       stage: work.agentStage ?? "plan",
@@ -537,14 +592,23 @@ export async function select(services: Services): Promise<void> {
 
   // Every task first, so that a task whose settings stop the run leaves the others unmarked.
   const picked: Picked[] = [];
-  for (const work of picks) picked.push(await prepare(work, agentPick.tasks));
-  for (const number of agentPick.unserved) {
+  for (const work of withoutAgent) picked.push(await prepare(work));
+  for (const { work, started } of starting) picked.push(await prepare(work, started));
+  for (const number of board.unserved) {
     const work = workOf(number);
     if (work) await block(work);
   }
-  for (const waiting of agentPick.waiting) {
+  for (const waiting of board.waiting) {
     const work = workOf(waiting.number);
     if (work) await wait(work, waiting);
+  }
+  // The runs of other repositories to start for the batches this run formed, which the dispatch
+  // job starts, each with a token for that repository alone (decision 7).
+  runtime.output("dispatches", JSON.stringify(board.dispatches satisfies Dispatch[]));
+  for (const one of board.dispatches) {
+    runtime.info(
+      `Starts ${one.owner}/${one.repository}'s ${one.workflow} for batch ${one.batches}.`,
+    );
   }
   if (picked.length === 0) {
     runtime.output("action", "none");
@@ -552,12 +616,13 @@ export async function select(services: Services): Promise<void> {
     return;
   }
   const list = picked.map((one) => `#${one.number} (${one.action})`).join(", ");
+  const agents = picked.filter((one) => one.needsAgent).length;
   runtime.info(
-    `Picked ${picked.length} task(s), of up to ${cap}: ${list}; ${agentPick.tasks} run an agent.`,
+    `Picked ${picked.length} task(s), of up to ${cap}: ${list}; ${agents} run an agent.`,
   );
   for (const one of picked) await one.start();
   const runOf = (one: Picked) => ledgerRunId(runtime.run.id, runtime.run.attempt, one.number);
-  const outputs = picked.map((one) => taskOutputs(one, runOf(one)));
+  const outputs = picked.map((one) => taskOutputs(one, runOf(one), pool));
   // The jobs of each task, a leg of the run's matrix, take its outputs from this list.
   runtime.output("tasks", JSON.stringify(outputs));
   // The first task's, as one output each, and its context as `task.json`, for workflow files
@@ -578,6 +643,7 @@ export async function select(services: Services): Promise<void> {
       model: one.model,
       provider: one.settings.provider,
       profile: one.profile,
+      batch: one.batch,
     });
   }
   await ledger.flush(runtime);
@@ -610,7 +676,7 @@ interface Work {
   rejected: string | undefined;
   language: string;
   taskBudget: number;
-  /** The counts of the run's agent tasks that serve its stage. */
+  /** The counts of a batch at which something serves its stage: its offers. */
   counts: ServedCount[];
 }
 
@@ -644,6 +710,8 @@ interface Picked {
   accounts: string[];
   /** The most tasks its profile serves at once. */
   parallel: number;
+  /** The batch of a pod's task, whose pod it joins. */
+  batch: string | undefined;
   context: TaskContext;
   start: () => Promise<void>;
 }
@@ -652,11 +720,13 @@ interface Picked {
  * A task's outputs, which its jobs read from the `tasks` list. The run's tasks open their keys at
  * once; Codeman's ledger keeps them within the budgets together.
  */
-function taskOutputs(task: Picked, run: string): Record<string, string> {
+function taskOutputs(task: Picked, run: string, pool: Pool): Record<string, string> {
   const choice = inferenceChoice(task.settings, task.record, {
     profile: task.profile,
     accounts: task.accounts,
     parallel: task.parallel,
+    pool,
+    batch: task.batch,
   });
   return {
     task: String(task.number),

@@ -36,6 +36,7 @@ export interface GitHubIssue {
   labels: ReadonlyArray<string | { name?: string }>;
   /** Null for a deleted account. */
   user?: GitHubUser | null;
+  updated_at?: string;
 }
 
 export interface GitHubComment {
@@ -73,6 +74,7 @@ export function toIssue(issue: GitHubIssue): Issue {
     url: issue.html_url,
     labels: labelNames(issue.labels),
     author: toUser(issue.user),
+    ...(issue.updated_at ? { updatedAt: issue.updated_at } : {}),
   };
 }
 

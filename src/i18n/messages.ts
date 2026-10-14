@@ -150,7 +150,11 @@ export interface Messages {
 
   // Picking the tasks (the plan for profiles that pick the tasks).
   /** A task that a profile serves only with `tasks` tasks in the run, of which `ready` are. */
-  waitingForTasks(tasks: number, profile: string, ready: number): string;
+  /**
+   * A task that waits for a batch: the count, the profile, and how many ready tasks that count
+   * serves, in how many of the pool's repositories.
+   */
+  waitingForTasks(tasks: number, profile: string, ready: number, repositories: number): string;
   /** A task whose stage no profile, nor the top level, serves at any count. */
   noSettingsForStage(stage: Stage): string;
 

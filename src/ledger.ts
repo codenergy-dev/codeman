@@ -62,6 +62,8 @@ export interface PickedRun {
   /** Where the model is served. */
   provider: ProviderName;
   profile: string | undefined;
+  /** The batch whose pod serves it, when it has one. */
+  batch?: string | undefined;
 }
 
 /** What `open-key` checks a run against, and what the task's record counted before the ledger. */
@@ -172,6 +174,7 @@ export class Ledger {
         model: picked.model,
         provider: picked.provider,
         profile: picked.profile ?? null,
+        ...(picked.batch ? { batch: picked.batch } : {}),
       });
     }
     this.#event(run, "task-picked", { action: picked.action, stage: picked.stage });

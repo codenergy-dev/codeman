@@ -86,6 +86,11 @@ export class GitHubActionsRuntime implements Runtime {
     return /\/actions\/runs\/(\d+)$/.exec(url)?.[1];
   }
 
+  /** From `GITHUB_WORKFLOW_REF`: `owner/repo/.github/workflows/codeman.yml@refs/heads/main`. */
+  get workflow(): string {
+    return workflowFile(process.env.GITHUB_WORKFLOW_REF ?? "");
+  }
+
   /** As `@actions/github`'s context reads it. */
   get repository(): RepositoryRef {
     const [owner = "", name = ""] = (process.env.GITHUB_REPOSITORY ?? "").split("/");
@@ -94,4 +99,11 @@ export class GitHubActionsRuntime implements Runtime {
     }
     return { owner, name };
   }
+}
+
+/** The workflow's file in a workflow's ref; `codeman.yml`, the templates' name, when it has none. */
+export function workflowFile(ref: string): string {
+  const path = ref.split("@")[0] ?? "";
+  const file = path.slice(path.lastIndexOf("/") + 1);
+  return /^[\w.-]+\.ya?ml$/.test(file) ? file : "codeman.yml";
 }

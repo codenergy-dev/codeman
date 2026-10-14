@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { type BatchCandidate, formBatches } from "./batches.ts";
 import { descriptionCommands } from "./commands.ts";
 import { en } from "./i18n/en.ts";
 import { GITHUB } from "./platform/github/conventions.ts";
 import type { Comment, Issue, Review, ReviewVerdict } from "./platform/types.ts";
 import { encodeStatus, type TaskRecord } from "./record.ts";
-import { parseSettings, servedCounts } from "./settings.ts";
+import { parseSettings, type ServedCount, servedCounts } from "./settings.ts";
 import type { Stage } from "./stages.ts";
 import { renderRun } from "./status.ts";
 import {
@@ -20,7 +21,6 @@ import {
   finishedRuns,
   openedByMaintainer,
   pendingWork,
-  pickAgentTasks,
   replanRequests,
   resumeRequests,
   reviewCommands,
@@ -223,99 +223,84 @@ function exampleCounts(stage: Stage) {
   return served.ok ? served.value : [];
 }
 
-test("a run takes the largest count that enough ready tasks are served with", () => {
+/** A run's own tasks as candidates of `formBatches`, in priority order. */
+function candidates(...counts: ServedCount[][]): BatchCandidate[] {
+  return counts.map((offers, index) => ({
+    repository: "o/r",
+    number: index + 1,
+    since: 0,
+    rank: index,
+    offers: offers.filter((offer) => offer.tasks <= 4),
+    own: true,
+  }));
+}
+
+/** The tasks of each batch that forms, by number. */
+function formed(tasks: BatchCandidate[], places = 4): number[][] {
+  return formBatches(tasks, { places, limit: () => 10 }).batches.map((batch) =>
+    batch.tasks.map((task) => task.number),
+  );
+}
+
+test("a run's tasks form batches of the example's counts, the largest each completes", () => {
   const plan = exampleCounts("plan");
   const code = exampleCounts("code");
-  const tasks = (...stages: ("plan" | "code")[]) =>
-    stages.map((stage, index) => ({
-      number: index + 1,
-      counts: stage === "plan" ? plan : code,
-    }));
   // 5 ready: the first 4, on the full GPU; the fifth is left for the next run, with no message.
-  assert.deepEqual(pickAgentTasks(tasks("code", "code", "code", "code", "code"), 4, 4), {
-    picked: [1, 2, 3, 4],
-    tasks: 4,
-    waiting: [],
-    unserved: [],
+  const five = formBatches(candidates(code, code, code, code, code), {
+    places: 4,
+    limit: () => 10,
   });
-  // 3 ready: all 3, on the MIG partition.
-  assert.deepEqual(pickAgentTasks(tasks("code", "code", "code"), 4, 4).picked, [1, 2, 3]);
-  // A planning task counts too.
-  assert.deepEqual(pickAgentTasks(tasks("plan", "code", "code", "code"), 4, 4).tasks, 4);
-  // Places that tasks without an agent took: up to 3.
-  assert.deepEqual(pickAgentTasks(tasks("code", "code", "code", "code"), 4, 3).picked, [1, 2, 3]);
-  // With no count condition anywhere, one at a time.
-  const any = [{ tasks: 1 }];
   assert.deepEqual(
-    pickAgentTasks(
-      [
-        { number: 1, counts: any },
-        { number: 2, counts: any },
-      ],
-      1,
-      1,
-    ),
-    { picked: [1], tasks: 1, waiting: [], unserved: [] },
+    five.batches.map((batch) => [batch.profile, batch.tasks.length]),
+    [["parallel-tasks", 4]],
   );
-  assert.deepEqual(pickAgentTasks([], 4, 4), { picked: [], tasks: 0, waiting: [], unserved: [] });
+  assert.deepEqual([five.waiting, five.unserved], [[], []]);
+  // 3 ready: all 3, on the MIG partition.
+  assert.deepEqual(formed(candidates(code, code, code)), [[1, 2, 3]]);
+  // A planning task is a batch of its own: it no longer makes the code tasks 4.
+  const mixed = formBatches(candidates(plan, code, code, code), { places: 4, limit: () => 10 });
+  assert.deepEqual(
+    mixed.batches.map((batch) => [batch.profile, batch.size]),
+    [
+      ["planner", 1],
+      ["mig", 3],
+    ],
+  );
+  // Places that tasks without an agent took: up to 3.
+  assert.deepEqual(formed(candidates(code, code, code, code), 3), [[1, 2, 3]]);
+  // With no count condition anywhere, one at a time.
+  const any = { tasks: 1, key: "k", pod: false };
+  assert.deepEqual(formed(candidates([any], [any]), 1), [[1]]);
 });
 
-test("a task served only with more tasks than are ready waits; one served at none is unserved", () => {
-  const four = [{ tasks: 4, profile: "parallel-tasks" }];
-  const plan = Array.from({ length: 10 }, (_, index) => ({ tasks: index + 1, profile: "planner" }));
-  // Three tasks served only with 4 wait, and say how many are ready.
-  const waiting = pickAgentTasks(
-    [1, 2, 3].map((number) => ({ number, counts: four })),
-    4,
-    4,
-  );
-  assert.deepEqual(waiting, {
-    picked: [],
-    tasks: 0,
-    waiting: [1, 2, 3].map((number) => ({
+test("a task no batch of its count completes waits; one served at no count is unserved", () => {
+  const four = [{ tasks: 4, profile: "parallel-tasks", key: "k4", pod: true }];
+  const plan = exampleCounts("plan");
+  const waiting = formBatches(candidates(four, four, four), { places: 4, limit: () => 10 });
+  assert.deepEqual(
+    waiting.waiting,
+    [1, 2, 3].map((number) => ({
       number,
       tasks: 4,
       profile: "parallel-tasks",
       ready: 3,
+      repositories: 1,
     })),
-    unserved: [],
-  });
+  );
   // A waiting task does not hold back the planning task behind it; one nothing serves is unserved.
-  const mixed = pickAgentTasks(
-    [
-      { number: 1, counts: four },
-      { number: 2, counts: [] },
-      { number: 3, counts: plan },
-    ],
-    4,
-    4,
+  const mixed = formBatches(candidates(four, [], plan), { places: 4, limit: () => 10 });
+  assert.deepEqual(
+    mixed.batches.map((batch) => batch.tasks.map((task) => task.number)),
+    [[3]],
   );
-  assert.deepEqual(mixed, {
-    picked: [3],
-    tasks: 1,
-    waiting: [{ number: 1, tasks: 4, profile: "parallel-tasks", ready: 2 }],
-    unserved: [2],
-  });
-  // Once 4 are served with 4, they run together, the planning task included.
-  const ready = pickAgentTasks(
-    [
-      { number: 1, counts: four },
-      { number: 2, counts: four },
-      { number: 3, counts: four },
-      { number: 4, counts: plan },
-    ],
-    4,
-    4,
-  );
-  assert.deepEqual([ready.picked, ready.waiting], [[1, 2, 3, 4], []]);
-  // With places for 2 only, the count of 4 cannot be reached this run, but enough tasks are ready
-  // for it: they are left for the next run, without a message.
-  const full = pickAgentTasks(
-    [1, 2, 3, 4].map((number) => ({ number, counts: four })),
-    4,
-    2,
-  );
-  assert.deepEqual([full.picked, full.waiting], [[], []]);
+  assert.deepEqual(mixed.waiting, [
+    { number: 1, tasks: 4, profile: "parallel-tasks", ready: 1, repositories: 1 },
+  ]);
+  assert.deepEqual(mixed.unserved, [2]);
+  // With places for 2 only, 4 ready for the count of 4 are left for the next run, without a
+  // message.
+  const full = formBatches(candidates(four, four, four, four), { places: 2, limit: () => 10 });
+  assert.deepEqual([full.batches, full.waiting], [[], []]);
 });
 
 test("only the App's own comment counts as the status comment", () => {

@@ -210,8 +210,8 @@ export const ptBR: Messages = {
   replanHint: "Comente `/codeman replan <o que mudar>` para tentar de novo.",
   removeLabelHint: "Remova a label `codeman:blocked` para tentar de novo.",
 
-  waitingForTasks: (tasks, profile, ready) =>
-    `Aguardando ${tasks} tarefas prontas para o perfil \`${profile}\`; ${ready} ${ready === 1 ? "está" : "estão"}. O Codeman verifica de novo a cada rodada.`,
+  waitingForTasks: (tasks, profile, ready, repositories) =>
+    `Aguardando ${tasks} tarefas prontas para o perfil \`${profile}\`; ${ready} ${ready === 1 ? "está" : "estão"}, em ${repositories} ${repositories === 1 ? "repositório" : "repositórios"}. O Codeman verifica de novo a cada rodada.`,
   noSettingsForStage: (stage) =>
     `Nenhuma configuração se aplica à ${OF_STAGE(stage)}: nenhum perfil a atende com qualquer número de tarefas, e as configurações de nível superior não têm \`model\`. Inclua a etapa num perfil, ou um \`model\` no nível superior, em \`.codeman/settings.yml\` ou nas configurações da organização.`,
 
