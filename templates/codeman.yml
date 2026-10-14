@@ -22,15 +22,44 @@ on:
       max-runs:
         description: Consecutive runs of a routed stage before a task is blocked.
         type: string
+      # Set when another repository's run formed a batch with this repository's tasks; only
+      # logged: select starts the tasks Codeman's store reserved for this repository.
+      batch:
+        description: The batches that reserved this repository's tasks, for the log.
+        type: string
   issue_comment:
     types: [created]
   pull_request_review:
     types: [submitted]
+  # Labeling, unlabeling, closing or reopening a task updates the pool's board at once. Codeman's
+  # own labels (codeman:*) are filtered out below.
+  issues:
+    types: [labeled, unlabeled, closed, reopened]
 
-# One active run per repository. Each run reads the state of every task, so a
-# queued run that GitHub replaces loses no work.
+# One active run per repository, and one pending, replaced by the next. Each run reads the state
+# of every task, so a queued run that GitHub replaces loses no work. A run whose jobs will all be
+# skipped (a comment without /codeman, another label, a review the forward-review job forwards)
+# goes to a group of its own, so it never replaces a pending run. The condition is select's.
 concurrency:
-  group: codeman
+  group: >-
+    ${{ (
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' || (
+        github.event_name == 'issue_comment' &&
+        contains(github.event.comment.body, '/codeman') &&
+        github.event.comment.user.type != 'Bot'
+      ) || (
+        github.event_name == 'issues' && (
+          (
+            (github.event.action == 'labeled' || github.event.action == 'unlabeled') &&
+            github.event.label.name == 'codeman'
+          ) || (
+            (github.event.action == 'closed' || github.event.action == 'reopened') &&
+            contains(github.event.issue.labels.*.name, 'codeman')
+          )
+        )
+      )
+    ) && 'codeman' || format('codeman-skipped-{0}', github.run_id) }}
   cancel-in-progress: false
 
 permissions: {}
@@ -66,13 +95,24 @@ jobs:
     name: Select tasks
     # Comments only start a run when they mention /codeman and are not from a bot. Whether the
     # author may steer Codeman is checked in the job, from their permission on the repository:
-    # author_association hides private organization members.
+    # author_association hides private organization members. Issue events only when the
+    # codeman label changes, or a task is closed or reopened. Keep it as the concurrency group's.
     if: >-
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' || (
         github.event_name == 'issue_comment' &&
         contains(github.event.comment.body, '/codeman') &&
         github.event.comment.user.type != 'Bot'
+      ) || (
+        github.event_name == 'issues' && (
+          (
+            (github.event.action == 'labeled' || github.event.action == 'unlabeled') &&
+            github.event.label.name == 'codeman'
+          ) || (
+            (github.event.action == 'closed' || github.event.action == 'reopened') &&
+            contains(github.event.issue.labels.*.name, 'codeman')
+          )
+        )
       )
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -85,6 +125,8 @@ jobs:
       action: ${{ steps.codeman.outputs.action }}
       # Each task's inputs for codeman-task.yml.
       tasks: ${{ steps.codeman.outputs.tasks }}
+      # The other repositories of the pool whose reserved tasks the dispatch job wakes.
+      dispatches: ${{ steps.codeman.outputs.dispatches }}
     steps:
       - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         id: app-token
@@ -117,12 +159,54 @@ jobs:
           task-budget: ${{ inputs.task-budget }}
           monthly-budget: ${{ inputs.monthly-budget }}
           max-runs: ${{ inputs.max-runs }}
+          batch: ${{ inputs.batch }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: steps.codeman.outputs.action != 'none'
         with:
           name: codeman-task
           path: ${{ runner.temp }}/codeman/task
           retention-days: 1
+
+  # Starts the Codeman workflow of each repository of the pool whose tasks a batch this run formed
+  # reserved, so they join the batch's pod: one leg per repository. Each leg's token is for that
+  # repository alone and may only start workflows (Actions write); it is revoked when its step
+  # ends. No checkout, no OIDC token, no permission for the job's own token. The target's
+  # select starts only what Codeman's store reserved for it.
+  dispatch:
+    name: Wake ${{ matrix.owner }}/${{ matrix.repository }}
+    needs: select
+    if: needs.select.outputs.dispatches != '' && needs.select.outputs.dispatches != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.select.outputs.dispatches) }}
+    steps:
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app-token
+        with:
+          client-id: ${{ vars.CODEMAN_GITHUB_APP_CLIENT_ID }}
+          private-key: ${{ secrets.CODEMAN_GITHUB_APP_PRIVATE_KEY }}
+          owner: ${{ matrix.owner }}
+          repositories: ${{ matrix.repository }}
+          permission-actions: write
+      - run: |
+          busy=$(gh api "repos/$OWNER/$REPOSITORY/actions/concurrency_groups/codeman" \
+            --jq '.group_members[] | "\(.status): \(.run_html_url)"' 2>/dev/null) || busy=""
+          if [ -n "$busy" ]; then
+            echo "Its codeman group is busy; the run waits for it, and the reservation lasts 30 minutes:"
+            echo "$busy"
+          fi
+          gh workflow run "$WORKFLOW" --repo "$OWNER/$REPOSITORY" --ref "$REF" -f batch="$BATCHES"
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          OWNER: ${{ matrix.owner }}
+          REPOSITORY: ${{ matrix.repository }}
+          WORKFLOW: ${{ matrix.workflow }}
+          REF: ${{ matrix.ref }}
+          BATCHES: ${{ matrix.batches }}
 
   # Runs each task select picked in its own jobs, from key to apply, in codeman-task.yml: one
   # leg of the matrix per task, at once. A task that fails leaves the others.

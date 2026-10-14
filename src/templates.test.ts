@@ -105,6 +105,7 @@ test("each job keeps the secrets it had before parallel tasks, and the agent job
     assert.deepEqual(secretsOf(task, job), secrets, job);
   }
   assert.deepEqual(secretsOf(caller, "select"), ["CODEMAN_GITHUB_APP_PRIVATE_KEY"]);
+  assert.deepEqual(secretsOf(caller, "dispatch"), ["CODEMAN_GITHUB_APP_PRIVATE_KEY"]);
   assert.deepEqual(secretsOf(caller, "forward-review"), []);
   assert.deepEqual(secretsOf(caller, "next-run"), []);
 
@@ -176,7 +177,7 @@ test("only the jobs that use Codeman's store get an OIDC token and the backend's
     assert.ok(!block(task, ["jobs", job]).join("\n").includes("id-token"), job);
     assert.deepEqual(settingsOf(task, job), new Map(), job);
   }
-  for (const job of ["forward-review", "next-run"]) {
+  for (const job of ["forward-review", "next-run", "dispatch"]) {
     assert.ok(!block(caller, ["jobs", job]).join("\n").includes("id-token"), job);
   }
   // The run's document in the ledger reaches the jobs that add to it.
@@ -207,4 +208,63 @@ test("each task's jobs read its own context and result, and mark it for next-run
   const next = block(caller, ["jobs", "next-run"]).join("\n");
   assert.match(next, /select\(startswith\("codeman-chain-"\)\)/);
   assert.match(next, /needs: \[select, task\]/);
+});
+
+/** A condition's text, without its layout. */
+function condition(lines: readonly string[]): string {
+  return lines.join(" ").replace(/\s+/g, " ").replace(/\( /g, "(").replace(/ \)/g, ")").trim();
+}
+
+test("issue events start select only for the codeman label, and skipped runs never replace a pending one", () => {
+  assert.deepEqual(
+    entries(caller, ["on", "issues"]).get("types"),
+    "[labeled, unlabeled, closed, reopened]",
+  );
+  const select = condition(block(caller, ["jobs", "select", "if"]));
+  assert.match(select, /github\.event\.label\.name == 'codeman'/);
+  assert.match(select, /contains\(github\.event\.issue\.labels\.\*\.name, 'codeman'\)/);
+  // The group is `codeman` exactly when select runs; otherwise one of the run's own.
+  const group = condition(block(caller, ["concurrency", "group"]));
+  assert.equal(
+    group,
+    `\${{ (${select}) && 'codeman' || format('codeman-skipped-{0}', github.run_id) }}`,
+  );
+  assert.equal(entries(caller, ["concurrency"]).get("cancel-in-progress"), "false");
+  // A dispatched run's batch reaches select, for its log only.
+  assert.ok(entries(caller, ["on", "workflow_dispatch", "inputs"]).has("batch"));
+  assert.equal(stepInput(caller, "select", "batch"), "${{ inputs.batch }}");
+});
+
+test("the dispatch job wakes each repository with a token for it alone, that may only start workflows", () => {
+  const job = block(caller, ["jobs", "dispatch"]).join("\n");
+  assert.match(job, /needs: select/);
+  assert.equal(entries(caller, ["jobs", "dispatch"]).get("permissions"), "{}");
+  assert.ok(!job.includes("actions/checkout"), "no checkout");
+  assert.ok(!job.includes("id-token"), "no OIDC token");
+  assert.ok(!job.includes("codenergy-dev/codeman@"), "no Codeman step");
+  const token = entries(caller, ["jobs", "dispatch", "steps", "with"]);
+  assert.deepEqual(
+    [...token.keys()].filter((key) => key.startsWith("permission-")),
+    ["permission-actions"],
+  );
+  assert.equal(token.get("permission-actions"), "write");
+  assert.equal(token.get("owner"), "${{ matrix.owner }}");
+  assert.equal(token.get("repositories"), "${{ matrix.repository }}");
+  assert.match(job, /uses: actions\/create-github-app-token@[0-9a-f]{40} # v3\.2\.0/);
+  assert.match(job, /include: \$\{\{ fromJSON\(needs\.select\.outputs\.dispatches\) \}\}/);
+  // Untrusted-looking values reach the shell through the environment only.
+  assert.ok(!/\$\{\{ matrix\.[a-z]+ \}\}"/.test(job));
+  assert.match(job, /gh workflow run "\$WORKFLOW" --repo "\$OWNER\/\$REPOSITORY" --ref "\$REF"/);
+  // The agent's permissions stay as they were.
+  assert.deepEqual(
+    entries(task, ["jobs", "agent", "permissions"]),
+    new Map([
+      ["contents", "read"],
+      ["actions", "read"],
+    ]),
+  );
+  assert.equal(
+    entries(caller, ["jobs", "select", "outputs"]).get("dispatches"),
+    "${{ steps.codeman.outputs.dispatches }}",
+  );
 });

@@ -31,6 +31,8 @@ inputs:
     description: "(open-key) Spending limit per calendar month of the organization's repositories together, in USD, from select's tasks. Only the organization's settings (the settings input) set it. Empty means none."
   max-runs:
     description: "(select) Consecutive runs of a routed stage before a task is blocked. Empty uses .codeman/settings.yml or 3."
+  batch:
+    description: "(select) The batches another repository's run formed with this repository's tasks, when it started this run. Only logged: select starts what Codeman's store reserved for the repository."
   key-expiry-hours:
     description: "(open-key) Hours until a task key expires."
     default: "24"
@@ -106,7 +108,9 @@ inputs:
     description: "Directory for Codeman's files. Defaults to RUNNER_TEMP/codeman."
 outputs:
   tasks:
-    description: "(select) The tasks this run works on, as many as the profiles' counts allow (one without them), as a JSON list: for each, its task, action, needs-agent, stage, base-sha, task-budget, monthly-budget and inference, as the outputs of those names describe them, organization-monthly-budget (empty when the organization's settings set none), and ledger-run, the run's ID in Codeman's ledger (empty without an agent). Empty when there is nothing to do."
+    description: "(select) The tasks this run works on, in batches of the profiles' counts (one at a time without them), as a JSON list: for each, its task, action, needs-agent, stage, base-sha, task-budget, monthly-budget and inference, as the outputs of those names describe them, organization-monthly-budget (empty when the organization's settings set none), and ledger-run, the run's ID in Codeman's ledger (empty without an agent). Empty when there is nothing to do."
+  dispatches:
+    description: "(select) The other repositories of the pool whose tasks a batch this run formed reserved, as a JSON list: for each, its owner, repository (the name), workflow (its Codeman workflow's file), ref (its default branch) and batches (the IDs, for its log). Only members of the pool that agree on it; [] when none."
   action:
     description: "(select) What this run does for its first task: plan, route, implement, record, accept; none when there is nothing to do."
   needs-agent:
