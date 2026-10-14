@@ -293,8 +293,15 @@ const CHECK = [
   '            echo "::error::Set the CODEMAN_COMMIT_SHA variable to a full commit SHA of codenergy-dev/codeman (40 lowercase hexadecimal characters), not a branch or tag."',
   "            exit 1",
   "          fi",
+  '          status=$(gh api "repos/codenergy-dev/codeman/compare/main...$CODEMAN_COMMIT_SHA" --jq .status) || status=""',
+  '          if [[ "$status" != "behind" && "$status" != "identical" ]]; then',
+  // biome-ignore lint/suspicious/noTemplateCurlyInString: the shell's expansion, as the template has it.
+  '            echo "::error::CODEMAN_COMMIT_SHA must be a commit of codenergy-dev/codeman\'s main branch, but GitHub compares it with main as \\"${status:-not found}\\"."',
+  "            exit 1",
+  "          fi",
   "        env:",
   `          CODEMAN_COMMIT_SHA: \${{ vars.CODEMAN_COMMIT_SHA }}`,
+  `          GH_TOKEN: \${{ github.token }}`,
 ];
 const CHECKOUT = [
   "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1",
@@ -328,8 +335,8 @@ test("each job runs Codeman from a checkout at CODEMAN_COMMIT_SHA, checked to be
     assert.deepEqual(steps[check], CHECK, `${file}: ${job} checks the variable`);
     assert.deepEqual(steps[check + 1], CHECKOUT, `${file}: ${job} checks out right after`);
     assert.ok(check + 1 < at, `${file}: ${job} checks out before it runs Codeman`);
-    // The value reaches the shell through the environment only.
-    assert.ok(!steps[check]?.slice(1, -2).join("\n").includes("${{"), `${file}: ${job}`);
+    // The values reach the shell through the environment only.
+    assert.ok(!steps[check]?.slice(1, -3).join("\n").includes("${{"), `${file}: ${job}`);
     assert.ok(
       steps[at]?.includes(`          template-version: ${TEMPLATE_VERSION}`),
       `${file}: ${job} passes the template version`,

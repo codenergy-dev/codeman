@@ -138,8 +138,15 @@ jobs:
             echo "::error::Set the CODEMAN_COMMIT_SHA variable to a full commit SHA of codenergy-dev/codeman (40 lowercase hexadecimal characters), not a branch or tag."
             exit 1
           fi
+          # Only a commit of Codeman's main: GitHub also serves its forks' commits under its name.
+          status=$(gh api "repos/codenergy-dev/codeman/compare/main...$CODEMAN_COMMIT_SHA" --jq .status) || status=""
+          if [[ "$status" != "behind" && "$status" != "identical" ]]; then
+            echo "::error::CODEMAN_COMMIT_SHA must be a commit of codenergy-dev/codeman's main branch, but GitHub compares it with main as \"${status:-not found}\"."
+            exit 1
+          fi
         env:
           CODEMAN_COMMIT_SHA: ${{ vars.CODEMAN_COMMIT_SHA }}
+          GH_TOKEN: ${{ github.token }}
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: codenergy-dev/codeman

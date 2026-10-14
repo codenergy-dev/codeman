@@ -1,7 +1,7 @@
 ---
 status: completed
 created_at: 2026-10-14T15:53:06-03:00
-updated_at: 2026-10-14T16:06:03-03:00
+updated_at: 2026-10-14T16:30:53-03:00
 commit: 362a8da
 ---
 
@@ -50,12 +50,16 @@ Repositories run the Codeman commit named by the `CODEMAN_COMMIT_SHA` variable (
    - *Check that the commit is on Codeman's `main`* before the checkout, such as with `GET /repos/codenergy-dev/codeman/compare/main...<sha>` (status `behind` or `identical`) with the job's token: closes the fork commits, leaving older commits of `main`. Recommended.
    - *Allow only the organization's value*: GitHub's `vars` context merges both levels, so the workflow cannot tell them apart; reading the organization's variable through the API needs a token with organization access, which these jobs do not have.
 
+   **Answer** (2026-10-14): check that the commit is on Codeman's `main`, in this plan (step 5).
+
 ## Steps
 
 1. **The action.** `src/action.ts`: `TEMPLATE_VERSION`, the action's root and commit, the version check and its message, and the action's folder inside a workspace. `run` (`src/main.ts`) checks the version before any step. `action.yml` declares `template-version`. The `agent` step leaves the action's folder out of the agent's copy and of the collected changes. *Done when* tests cover a match, a missing version, an older and a newer one, and the folder's path inside and outside the workspace, and the sandbox test (Linux, CI) checks that an excluded path is not copied. **Done on 2026-10-14**: `src/action.ts` and `src/action.test.ts`; `run` fails before any step on a mismatch; `copyToAgent` takes the paths to leave out (refusing any outside the copy), and `agent` passes the action's folder to it and to `collectChanges`.
 2. **The templates.** In each of the six jobs that run Codeman: a step that checks `CODEMAN_COMMIT_SHA`, then `actions/checkout` of `codenergy-dev/codeman` at it into `.codeman/action`, then `uses: ./.codeman/action` with `template-version`; in `agent`, both after the target's checkout. No `COMMIT_SHA` remains. *Done when* `src/templates.test.ts` checks, for every Codeman step, a validated checkout at `vars.CODEMAN_COMMIT_SHA` in the same job before it, at the path it uses, with `persist-credentials: false` and the pinned SHA; that no `codenergy-dev/codeman@` or `COMMIT_SHA` remains; that the value reaches the check through `env`; that the permissions are unchanged; and that every step passes `TEMPLATE_VERSION`. **Done on 2026-10-14**: the check and the checkout come first in each job, after the repository's checkout in `agent`; tests also check that no other job runs Codeman and every job's permissions.
 3. **Docs.** [Setup](../installation/setup.md) (set `CODEMAN_COMMIT_SHA`; nothing to replace in the templates; when to copy them again), [upgrading](../installation/upgrading.md), [security](../security/risks.md) and [secrets](../security/secrets.md) (the trade-off), [the agent](../runs/agent.md) (the action's folder and the sandbox), [development](../development/guide.md) (bumping the template version), [dependencies](../development/dependencies.md), and the [index](../README.md). *Done when* every page that said to replace `COMMIT_SHA` or pin a SHA in the files says what to do now, and `src/docs.test.ts` passes. **Done on 2026-10-14**: those pages, plus [risks](../security/risks.md) (the variable's trade-off, decision 6), the [checklist](../security/overview.md#checklist), [runs and jobs](../runs/runs-and-jobs.md#jobs) and the root `README.md`.
 4. **Build and check.** `npm run build` and `npm run check` pass; `dist/gateway.js` does not change. *Done when* both pass and the working tree is clean. **Done on 2026-10-14**: 609 tests (2 skipped: the sandbox tests, which run on Linux in CI); `dist/index.js` rebuilt, `dist/gateway.js` unchanged.
+
+5. **The commit is on Codeman's `main`** (decision 6). The check step also asks GitHub to compare the commit with `main` (`gh api repos/codenergy-dev/codeman/compare/main...$CODEMAN_COMMIT_SHA --jq .status`, with the job's `github.token`, which reads a public repository with any permissions) and fails unless it says `behind` or `identical`: a commit only a fork has, or none, fails before the checkout. *Done when* `src/templates.test.ts` checks the step in every job, and [risk 7](../security/risks.md#7-codemans-own-code-and-dependencies) and the [checklist](../security/overview.md#checklist) say what remains. **Done on 2026-10-14.**
 
 ## End-to-end test
 
@@ -65,11 +69,12 @@ On a test repository with Codeman installed, the backend's variables set, and an
 2. **A wrong value fails.** Set the variable to `main`, then delete it. Expect: each run fails at the check of its first job (`select`), with the message that names `CODEMAN_COMMIT_SHA`, and nothing is checked out. Set it back.
 3. **A template-version mismatch fails.** In the test repository's `codeman-task.yml`, change the `apply` job's `template-version` to `0`, and run on a task that only records answers. Expect: `apply` fails with the message that says to copy both templates from the commit in `CODEMAN_COMMIT_SHA`, with the link to `templates/` at that commit, before it writes anything; `select` ran as usual. Restore the file.
 4. **The agent cannot see or alter the action.** Open a task whose description asks the agent to list `.codeman/action` and `$GITHUB_WORKSPACE/.codeman/action`, and to write a file in each. Expect: the first does not exist in its copy (a file it writes there is not collected, and `apply` would drop it anyway), the second cannot be read (permission denied); the task branch gains no file under `.codeman/`.
-5. **The backend still admits the jobs.** Expect `select`, `open-key`, `close-key` and `release-pod` to record the run in Firestore as before: the Workload Identity condition is unchanged.
+5. **A commit off `main` fails.** Set the variable to a full SHA that is not on Codeman's `main`, such as a commit of a fork of `codenergy-dev/codeman`, or a made-up one. Expect: `select` fails at the check with "CODEMAN_COMMIT_SHA must be a commit of codenergy-dev/codeman's main branch, but GitHub compares it with main as "diverged"" (or "ahead", or "not found"), before any checkout. Set it back. This also confirms that the jobs' tokens can read the comparison.
+6. **The backend still admits the jobs.** Expect `select`, `open-key`, `close-key` and `release-pod` to record the run in Firestore as before: the Workload Identity condition is unchanged.
 
 ## Out of scope
 
-- Checking that the commit is on Codeman's `main` branch (decision 6). GitHub serves commits of a fork of `codenergy-dev/codeman` under its name too, as it does for `uses: owner/repo@<sha>`; the docs say to take the SHA from `main`.
+- Telling the organization's variable from a repository's of the same name (decision 6): the workflow cannot; the check against `main` makes either one run only Codeman's own commits.
 - Telling, in code, which template changes need a version bump: a reviewer decides, guided by [development](../development/guide.md).
 - A default commit when the variable is unset.
 - Changing the `dispatch`, `forward-review` and `next-run` jobs, which run no Codeman step.
