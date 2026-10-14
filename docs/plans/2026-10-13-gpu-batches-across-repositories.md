@@ -1,7 +1,7 @@
 ---
-status: pending
+status: in progress
 created_at: 2026-10-13T20:52:00-03:00
-updated_at: 2026-10-13T20:52:00-03:00
+updated_at: 2026-10-13T22:11:52-03:00
 commit: 95962c0
 ---
 
@@ -55,7 +55,7 @@ Recorded in `docs/web/github/` for this plan; each fact links to its page.
    - A pool is mutual trust: anyone who can change `codeman.yml` on a default branch in any member organization holds the key, and so reaches every member's installed repositories with the App's permissions (Contents and Workflows write already). Inside one organization this is true today.
    - Alternative considered: one private App per organization, each key also in the other organizations' secrets. The same trust, more upkeep (an App, a client ID and a key per member, and each workflow choosing the right one per owner).
 
-### Open: answers needed before work starts
+### Answered by the responsible person on 2026-10-13: every decision takes its recommendation
 
 7. **The App's permissions, and which jobs get a token for another owner.** Minimum privilege; `agent` never gets one.
    - (a) A new `dispatch` job in `codeman.yml`, after `select`, one matrix leg per repository to wake. Each leg mints, with `actions/create-github-app-token`, a token for that owner with `repositories: <that repository>` and `permission-actions: write` only, and runs `gh workflow run`. No checkout, no OIDC, `permissions: {}` for its `GITHUB_TOKEN`. The App's Actions permission goes from read to **read and write**, which each installation approves once. `select`, `apply` and every other job keep their tokens as they are.
@@ -64,7 +64,7 @@ Recorded in `docs/web/github/` for this plan; each fact links to its page.
 
    Recommendation: (a). The only token for another owner is one job's, for one repository, Actions write, for one call, revoked at the end of its step. `repository_dispatch` was ruled out: it needs Contents write.
 
-   **Answer:**
+   **Answer:** (a), as recommended: a `dispatch` job, one leg per repository to wake, each with a token for that owner limited to that repository and `permission-actions: write`; the App's Actions permission becomes read and write, which each installation approves.
 
 8. **Where the pool is declared, and how a mismatch shows.**
    - (a) A `pool` setting that only the organization's settings set (`CODEMAN_SETTINGS`, like `organization-monthly-budget`): a list of owner logins that must include the organization itself, such as `pool: [organization-a, organization-b]`. Its ID is the sorted logins, lowercase, joined by `+`; without the setting, the pool is the organization alone, and its ID its login. Each `select` writes the pool it declares on its organization's document (`organizations/{owner}`: `pool`, `members`, `declaredAt`); it batches with another member only when that member's document declares the same pool, and otherwise logs, once per run, "Organization B declares pool `b`, not `a+b`: its repositories are not batched with this one's." Each member writes only its own board under its own pool ID, so a mismatch can never mix two pools' data; it only keeps them apart.
@@ -73,7 +73,7 @@ Recorded in `docs/web/github/` for this plan; each fact links to its page.
 
    Recommendation: (a). One place for the organization's shared settings; the handshake needs both sides to agree, so neither can pull the other in. Owners that are user accounts, and private repositories on GitHub Free, have no organization variables: they set it in a repository variable `CODEMAN_SETTINGS`, as for every shared setting ([shared settings](../installation/shared-settings.md)).
 
-   **Answer:**
+   **Answer:** (a), as recommended: `pool:` only in the organization's `CODEMAN_SETTINGS`; the pool's ID is the sorted logins, lowercase, joined by `+`; a mismatch is logged once per run.
 
 9. **Firestore's layout, and the migration.**
    - (a) What belongs to an organization stays under `organizations/{owner}/`: `runs` and `events`, which the budgets and history read. What the pool shares moves under `pools/{pool}/`: `pods`, `endpoints/{endpoint}/runs`, the board (`board/{owner%2Frepository}`) and the batches (`batches/{id}`). The cache of fits, which depends only on image, model, GPU and Ollama settings, moves to a top-level `contexts/{key}`. The old `pods`, `contexts` and `endpoints` stay as history, unread, except that the organization's month also reads the old `pods` collection until the month of the change ends, so untracked time recorded before it still counts. Upgrade every member's repositories at once, with no live pod.
@@ -82,7 +82,7 @@ Recorded in `docs/web/github/` for this plan; each fact links to its page.
 
    Recommendation: (a). Budgets stay per organization with their queries unchanged; only what is shared moves.
 
-   **Answer:**
+   **Answer:** (a), as recommended: pods, endpoints, the board and the batches move to `pools/{pool}/`; runs and events stay under `organizations/{owner}`; the cache of fits moves to `contexts/{key}`; every repository upgrades at once, with no live pod.
 
 10. **How a batch is formed.**
     - **The board.** One document per repository, rewritten whole by each of its `select`s: the repository, its default branch and workflow file, `updatedAt`, `expiresAt`, and its ready tasks that a pod profile could serve, each with its number, the issue's `updated_at`, its stage, `since` (when the board first listed it ready, carried from the previous snapshot) and its offers: each count n at which its profile serves it, with that profile's name and the pod settings' key (the registry's hash, `num-parallel` included). Tasks this `select` starts, and tasks no pod profile serves, are left out.
@@ -92,7 +92,7 @@ Recorded in `docs/web/github/` for this plan; each fact links to its page.
 
     Recommendation: (a) and (a). A batch the board completes is never left waiting for a particular repository's next run, and age is the only fairness that needs no setting.
 
-    **Answer:**
+    **Answer:** (a) and (a), as recommended: any `select` forms every batch the board completes; oldest `since` first.
 
 11. **Reservations, and a target repository that is busy.** A batch's document holds each repository's reserved tasks with their n, profile and settings key, `formedBy` (the run), `formedAt` and `expiresAt`; the target's `select` marks each task `started` or `dropped`.
     - **Whose reservation.** It belongs to the repository, not to the dispatched run: any `select` of that repository honors it, so a dispatched run that GitHub replaces in the queue loses nothing.
@@ -101,7 +101,7 @@ Recorded in `docs/web/github/` for this plan; each fact links to its page.
 
     Recommendation: (c) for how long, (a) for the group. One run per repository stays the guard against two runs on one task; the dynamic group also fixes today's replacements by skipped comment runs.
 
-    **Answer:**
+    **Answer:** (c) for how long and (a) for the group, as recommended: 30 minutes, the `dispatch` leg logs whether the target's group is running; runs that skip every job, and `forward-review`'s, go to a group of their own.
 
 12. **What a count counts, and the picker.**
     - (a) A count is the size of a batch: the tasks that run at once with the same resolved settings. On a pod, the batch may span the pool's repositories, and the board and reservations form it; on OpenRouter or Serverless, it is the tasks of the run that take that profile. Tasks without an agent come first, as today; the run's cap stays the largest count (10 for `min-tasks` alone, 1 with no count). The example of [profiles](../settings/profiles.md#example) changes: 1 planning task and 3 code tasks no longer make 4; the code tasks take `mig` (3).
@@ -110,7 +110,7 @@ Recorded in `docs/web/github/` for this plan; each fact links to its page.
 
     Recommendation: (a). One meaning for every provider; parallel OpenRouter runs keep working with `max-tasks`. A waiting task's panel counts the pool: "Waiting for 4 tasks ready for profile `parallel-tasks`; 3 are, in 2 repositories."
 
-    **Answer:**
+    **Answer:** (a), as recommended: a count is the tasks of one batch on one GPU (or, off pods, of the run) with the same resolved settings; the example of [profiles](../settings/profiles.md#example) and its tests change accordingly.
 
 13. **How many runs a pod holds.**
     - (a) The registry joins a pod only while its unexpired run leases, plus its batch's reservations not yet joined, are fewer than the settings' `num-parallel`; a task that finds every pod of its settings full creates another. A kept pod serves the next batch.
@@ -119,7 +119,7 @@ Recorded in `docs/web/github/` for this plan; each fact links to its page.
 
     Recommendation: (a). Without it, two batches of 4 on the same settings share one pod sized for 4.
 
-    **Answer:**
+    **Answer:** (a), as recommended: a pod takes runs only while its unexpired run leases and its batch's pending reservations are fewer than its parallel requests.
 
 14. **Budgets across organizations.** Each run counts against its own organization's month and its repository's (decision 5). Two questions remain.
     - **A pod's untracked time** (its life no run counted): (a) split among the organizations in proportion to the time their runs counted on it, or to the creator's organization when none did; (b) the creator's organization; (c) evenly among the organizations that used it; (d) a pool budget.
@@ -127,7 +127,7 @@ Recorded in `docs/web/github/` for this plan; each fact links to its page.
 
     Recommendation: (a) and (a). Every billed cent counts once, in the organizations that used the account then. Sharing pods across organizations requires one Runpod account: a pod's admin token is an HMAC of the account's key, so another key cannot join or end it.
 
-    **Answer:**
+    **Answer:** (a) and (a), as recommended.
 
 15. **The registry and the orphan sweep across the pool.**
     - (a) A pod's environment carries `CODEMAN_POOL`, `CODEMAN_ORGANIZATION` (its creator's) and the account's fingerprint (an HMAC of the GPU key with a fixed label, never the key); its document carries the fingerprint, and a task joins only pods of its own account. The sweep, as today only with its own account's listing, terminates the pods of its pool that the pool's registry does not hold; pods from before the change that carry `CODEMAN_ORGANIZATION` of its own organization and no pool; and pods of another pool created by its own organization only when that pool's registry does not hold them either.
@@ -136,7 +136,7 @@ Recorded in `docs/web/github/` for this plan; each fact links to its page.
 
     Recommendation: (a). It never ends a pod another pool still uses, and a member that stops running Codeman leaves no pod behind.
 
-    **Answer:**
+    **Answer:** (a), as recommended.
 
 16. **Workload Identity Federation for the pool.**
     - (a) One provider whose condition lists the pool's owner IDs (`assertion.repository_owner_id in ['<A>', '<B>']`), as [setup](../installation/setup.md#4-set-up-the-backend) documents; adding a member updates the condition.
@@ -144,7 +144,7 @@ Recorded in `docs/web/github/` for this plan; each fact links to its page.
 
     Recommendation: (a). The condition is the real boundary of the pool: only the owners it admits can write the board, the batches and the registry; Codeman cannot read it, and a member it does not admit fails in `select` with today's backend error.
 
-    **Answer:**
+    **Answer:** (a), as recommended; updating the provider's condition is a manual step for the responsible person.
 
 17. **The issue triggers' cost and noise.** The `select` job runs for `issues` when the event's label is `codeman` (`labeled`, `unlabeled`) or the issue has it (`opened`, `closed`); every other `issues` event, and every label change Codeman makes (`codeman:*`), skips every job, in a group of its own (decision 11). Each run that does select costs about one runner minute on private repositories (none on public ones); skipped runs cost none, but each appears in the Actions tab.
     - (a) The approved types: `opened`, `labeled`, `unlabeled`, `closed`.
@@ -153,7 +153,7 @@ Recorded in `docs/web/github/` for this plan; each fact links to its page.
 
     Recommendation: (b) and (c): `labeled`, `unlabeled`, `closed`, `reopened`.
 
-    **Answer:**
+    **Answer:** (b) and (c), as recommended: `labeled`, `unlabeled`, `closed`, `reopened`, with the label-name check, and skipped runs in their own concurrency group.
 
 18. **Failure modes.**
     - **A dispatch is refused** (the App is not installed on the repository, its new permission is not approved, the installation is suspended, the workflow is missing or disabled): (a) the `dispatch` leg fails, visibly in the forming run, and the reservation expires after its 30 minutes; the forming repository's tasks run on their pod meanwhile; (b) the leg also releases the reservation at once, which needs `id-token: write` in `dispatch`; (c) `select` checks each target first, which needs a token for each.
@@ -161,22 +161,42 @@ Recorded in `docs/web/github/` for this plan; each fact links to its page.
 
     Recommendation: (a). A dispatch that fails is a setup mistake, shown in the job; the batch only shrinks.
 
-    **Answer:**
+    **Answer:** (a), as recommended.
+
+### Choices made while refining the steps
+
+Settled conservatively, within the decisions above, on 2026-10-13; the plans for [vLLM on pods](2026-10-13-vllm-on-pods.md) and for [fitting Ollama to the GPU](2026-10-13-fit-ollama-to-the-gpu.md) were completed after this plan was written.
+
+19. **What changed since.** Pods serve with Ollama or vLLM, from `POD_IMAGES` (`src/inference/images.ts`); a pod's settings key has the engine and its vLLM settings; the most tasks a profile serves is the default of Ollama's `num-parallel` and of vLLM's `max-num-seqs`. So a pod's capacity (decision 13) is the `OLLAMA_NUM_PARALLEL` or the `max-num-seqs` it gets; a pod that gets neither, on an older image, has no limit, as today.
+20. **The batch key.** The board's offers do not carry the registry's hash: `select` does not know the pod image `open-key` uses (its `pod-image` input), and on an image that serves one run at a time the hash includes the task, so no two tasks would share it. An offer carries a hash of what serves the task at that count: the profile, provider, model, engine, GPU, `pod-reuse`, endpoint, `ollama` and `vllm` settings, and the most tasks the profile serves. Tasks with the same key run with the same resolved settings, so their pods share the registry's hash too.
+21. **The `pool` setting.** A list of 1 to 10 GitHub logins that includes the organization, checked in `select`, which knows the owner; set elsewhere than `CODEMAN_SETTINGS`, it stops the run, as `organization-monthly-budget` does.
+22. **What the key jobs know of the pool.** The `inference` choice carries `pool`: its ID, and the members that agree (the organization always does). Budgets split and reconcile only among them; a choice from an older `select`, without it, is the organization alone. A member that does not agree may use another Runpod account, so counting its runs in the pool's estimate could undercount.
+23. **Places.** Reserved tasks that are still ready are all honored, up to Codeman's cap of 10, whatever the run's cap: a batch's pod is sized for them. The run's own new tasks take the places the run's cap leaves after the tasks without an agent and the honored ones. Another repository's tasks in new batches, with those its unexpired batches reserve, are at most 10.
+24. **Priority.** Oldest `since` first; a task listed for the first time has the moment of this `select`. Ties go by repository, then by each repository's own order, which for the forming repository is `chooseTasks`'s (planning before stages) and for the others the order of their snapshot.
+25. **Forming.** Tasks are taken in priority order: the first that some offer completes takes its largest such count n with the first n tasks of that offer, as long as places allow; then the next. Local offers (OpenRouter, Serverless) are completed only by the forming repository's own tasks, and leave no batch document.
+26. **The board's expiry.** 25 hours: the daily schedule rewrites every repository's snapshot, and the issue triggers rewrite it on every change in between. A stale entry is caught by re-validation (decision 2).
+27. **Batch documents.** Every pod batch has one, the forming repository's tasks already `started`; `open-key` finds a batch's pod through it.
+28. **Dispatches.** One per target repository per run, naming all its new batches, since one run of a repository honors all its reservations.
+29. **The old pods.** The organization's month always reads `organizations/{owner}/pods` too: nothing is written there after the change, so after the change's month it adds nothing, and no date is needed.
+30. **The workflow's file.** The board records the file of the workflow that ran `select`, from `GITHUB_WORKFLOW_REF`, which the `dispatch` leg starts.
+31. **Untracked time.** "In proportion to the time their runs counted on it" is read as what their runs counted on the pod, which is their time on it at their share of its price.
 
 ## Steps
 
 Each step ends with `npm run check` passing, unless it says otherwise.
 
 1. **This plan.** Done when the responsible person has answered decisions 7 to 18, the answers are recorded here, and the status is `in progress`.
+   - **Done on 2026-10-13**: committed as `f296ab7` with status `pending`; every open decision took its recommendation, recorded with choices 19 to 31 and the refined steps, and the status set to `in progress`.
 2. **Third-party documentation.** Done when the pages this plan cites are in `docs/web/github/` and the web-docs test passes. Done while writing the plan.
-3. **Settings** (`src/settings.ts`): the `pool` setting (decision 8), only in the organization's layer, with its errors; the pool ID; counts as batches (decision 12): for a stage, each task's offers (n, profile, pod settings key). Done when `src/settings.test.ts` covers the setting's errors and the offers of the profiles' example.
-4. **Layout and migration** (`src/store/layout.ts`, `src/ledger.ts`, `src/inference/registry.ts`, `src/inference/selfhosted.ts`): the paths of decision 9; the organization's month reading the old pods. Done when the contract, ledger, registry and emulator tests pass on the new paths.
-5. **The pool's handshake** (decision 8): `select` writes its organization's document and reads the members'. Done when tests cover a pool both sides declare, one side only, and a member that never ran.
-6. **The board** (decision 10): each `select` rewrites its repository's snapshot, keeps `since`, and reads the pool's unexpired snapshots. Done when tests on the memory store cover a rewrite that drops a closed task, expiry, and `since` kept.
-7. **Batches and reservations** (decisions 10 to 12): a pure `formBatches` over the board; the reservation transaction; `select` honoring its repository's reservations first, re-validating each task against GitHub, dropping and releasing those no longer ready, resolving each task's profile with the batch's n; the pool-wide waiting message; the `dispatches` output (owner, repository, workflow, default branch, batch ID), only for owners in the pool. Done when tests cover: 2 and 2 across two repositories forming 4; oldest first; a reservation honored by a run other than the dispatched one; an expired reservation returning its tasks; a re-validation dropping a closed task; an owner outside the pool never in `dispatches`; and two `select`s at once on the emulator reserving each task once.
-8. **The registry across the pool** (decisions 13 and 15): capacity, the account's fingerprint, the pool's sweep. Done when `registry.test.ts` and `selfhosted.test.ts` cover a full pod making the next task create another, a pod of another account left alone, and each sweep case of decision 15.
-9. **Budgets** (decision 14): the untracked time's split and the pool's billing reconciliation. Done when `budget.test.ts` and `ledger.test.ts` cover a pod shared by two organizations, its untracked time split, and a billed hour split between them.
-10. **Workflows** (decisions 7, 11 and 17): `templates/codeman.yml` gets the `issues` trigger, the `select` job's conditions, the event-dependent concurrency group (with `forward-review` in its own), the `batch` input (for the log only; `select` trusts only Firestore) and the `dispatch` job; `action.yml` the `dispatches` output. Done when `src/templates.test.ts` asserts the triggers, that `dispatch` has no `id-token`, no checkout and only `permission-actions: write`, and that `agent`'s permissions are unchanged.
+   - **Done on 2026-10-13**: committed with the plan as `f296ab7`.
+3. **Settings** (`src/settings.ts`, `src/pool.ts`, `src/inference/index.ts`): the `pool` setting (decision 8, choice 21), only in the organization's layer, with its errors, and the pool's ID; a stage's offers at each count, with the batch key (decision 12, choice 20); `pool` and `batch` in the `inference` choice (choice 22). Done when `src/settings.test.ts` covers the setting's errors and the offers of the profiles' example, and `src/inference/index.test.ts` the choice.
+4. **Layout and migration** (`src/store/layout.ts`, `src/ledger.ts`, `src/inference/registry.ts`, `src/inference/selfhosted.ts`, `src/steps/keys.ts`, `src/services.ts`): the paths of decision 9; the ledger and the registry take the pool; the organization's month reading the old pods (choice 29). Done when the layout, ledger, registry, self-hosted and emulator tests pass on the new paths.
+5. **The pool's handshake** (decision 8): `select` writes its organization's document and reads the members' (`src/pool.ts`). Done when tests cover a pool both sides declare, one side only, and a member that never ran.
+6. **The board** (decision 10, choices 24 and 26, `src/board.ts`): each `select` rewrites its repository's snapshot, keeps `since`, and reads the pool's unexpired snapshots. Done when tests on the memory store cover a rewrite that drops a closed task, expiry, and `since` kept.
+7. **Batches and reservations** (decisions 10 to 12, choices 23, 25, 27 and 28): a pure `formBatches` (`src/batches.ts`) replacing `pickAgentTasks`; the reservation transaction (`src/board.ts`); `select` honoring its repository's reservations first, re-validating each task against GitHub, dropping and releasing those no longer ready, resolving each task's profile with its batch's n; the pool-wide waiting message (English and Portuguese); the `dispatches` output (owner, repository, workflow, default branch, batch IDs), only for owners in the pool; `batch` in the run's ledger document. Done when tests cover: 2 and 2 across two repositories forming 4; oldest first; a reservation honored by a run other than the dispatched one; an expired reservation returning its tasks; a re-validation dropping a closed task; an owner outside the pool never in `dispatches`; the profiles' example's new counts; and two `select`s at once on the emulator reserving each task once.
+8. **The registry across the pool** (decisions 13 and 15, choice 19): capacity, the account's fingerprint, the pool's sweep. Done when `registry.test.ts` and `selfhosted.test.ts` cover a full pod making the next task create another, a batch's task joining its batch's pod, a pod of another account left alone, and each sweep case of decision 15.
+9. **Budgets** (decision 14, choice 31): the untracked time's split and the pool's billing reconciliation. Done when `budget.test.ts` and `ledger.test.ts` cover a pod shared by two organizations, its untracked time split, and a billed hour split between them.
+10. **Workflows** (decisions 7, 11 and 17): `templates/codeman.yml` gets the `issues` trigger, the `select` job's conditions, the event-dependent concurrency group (with `forward-review` in its own), the `batch` input (for the log only; `select` trusts only Firestore) and the `dispatch` job; `action.yml` the `batch` input and the `dispatches` output. Done when `src/templates.test.ts` asserts the triggers, the group, that `dispatch` has no `id-token`, no checkout and only `permission-actions: write`, and that `agent`'s permissions are unchanged.
 11. **Docs**: [runs and jobs](../runs/runs-and-jobs.md), [profiles](../settings/profiles.md) (its example), [settings](../settings/reference.md), [task lifecycle](../tasks/lifecycle.md), [pods](../inference/pods.md), [budget](../budget/budget.md), [spend](../budget/spend.md), [backend](../backend/backend.md), [data layout](../backend/data-layout.md), [security](../security/overview.md) with the analysis of decision 6, [secrets](../security/secrets.md) (the key in `dispatch`, Actions write), [risks](../security/risks.md), [setup](../installation/setup.md) (a public App, installing it in each organization, the secrets in each, the condition), [shared settings](../installation/shared-settings.md) (`pool`), [upgrading](../installation/upgrading.md) (counts as batches, the layout, approving the App's new permission, every repository at once) and `docs/README.md`. Done when the docs test and the link checker pass.
 12. **Build.** Rebuild `dist/`. Done when `npm run check` passes, the tree is clean, and whether `dist/gateway.js` changed is recorded (a new pod environment variable may need a new image).
 
