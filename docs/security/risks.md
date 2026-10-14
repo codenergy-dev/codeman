@@ -58,7 +58,7 @@ How to protect: before `/codeman accept-workflows`, check that the workflow take
 
 *Logs: public repositories. Model provider: both.*
 
-The agent job logs what the agent does, and run logs are public on public repositories. The task key is masked. Anything else the agent prints appears in the log. The repository's code, issues and comments go to the model provider through OpenRouter, or, with self-hosted inference, to a container on Runpod. Codeman creates pods on Secure Cloud only, in Runpod's certified data centers; a Serverless endpoint runs where the maintainer who created it chose. A pod's gateway is public behind Runpod's proxy, and serves only whoever holds the run's token; Ollama's own port stays inside the pod.
+The agent job logs what the agent does, and run logs are public on public repositories. The task key is masked. Anything else the agent prints appears in the log. The repository's code, issues and comments go to the model provider through OpenRouter, or, with self-hosted inference, to a container on Runpod. Codeman creates pods on Secure Cloud only, in Runpod's certified data centers; a Serverless endpoint runs where the maintainer who created it chose. A pod's gateway is public behind Runpod's proxy, and serves only whoever holds the run's token; Ollama's and vLLM's own ports stay inside the pod. A vLLM pod downloads its model from Hugging Face; before creating it, Codeman asks Hugging Face's API whether the model is public, without a token, and the request carries only the model's ID. vLLM's usage statistics are turned off, and its arguments that run a model repository's code (`trust-remote-code`), load plugins, or send the cache, traces or requests elsewhere are refused ([vLLM settings](../settings/vllm.md#refused-keys)).
 
 How to protect: keep secrets out of the repository, as you would anyway. On private repositories, choose a model and provider whose data policy you accept; OpenRouter's privacy settings can restrict providers. With Serverless, choose Secure Cloud data centers.
 
@@ -66,7 +66,7 @@ How to protect: keep secrets out of the repository, as you would anyway. On priv
 
 *Public and private repositories.*
 
-The workflow runs Codeman, third-party actions and the OpenCode harness with the permissions above. The template pins Codeman and every action to a full commit SHA. OpenCode is pinned to a version and checked against its npm integrity hash. Codeman's pod image, with Ollama, is pinned by digest. See [dependencies](../development/dependencies.md).
+The workflow runs Codeman, third-party actions and the OpenCode harness with the permissions above. The template pins Codeman and every action to a full commit SHA. OpenCode is pinned to a version and checked against its npm integrity hash. Codeman's pod images, one with Ollama and one with vLLM, are pinned by digest. See [dependencies](../development/dependencies.md).
 
 How to protect: pin Codeman to a SHA, as [installation](../installation/setup.md) says, and read the changes before moving to a new one.
 

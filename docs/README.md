@@ -8,7 +8,7 @@ One subject per file, grouped by what the reader wants to do. The [root README](
 - [Shared settings](installation/shared-settings.md): settings an organization gives all its repositories.
 - [Self-hosted inference on Runpod](installation/runpod.md): the Runpod account, pods and a Serverless endpoint.
 - [Profiles](installation/profiles.md): how to use different providers and models for different runs.
-- [Upgrading](installation/upgrading.md): old setting names, a model per provider, profiles that pick the tasks, pods that fit the GPU, and workflow files copied before the backend.
+- [Upgrading](installation/upgrading.md): old setting names, a model per provider, profiles that pick the tasks, pods that fit the GPU, vLLM on pods, and workflow files copied before the backend.
 
 ## Using it
 
@@ -17,6 +17,7 @@ One subject per file, grouped by what the reader wants to do. The [root README](
 - [Profiles](settings/profiles.md): conditions, how many tasks a run takes, which profile applies, layers and checks, with an example.
 - [Provider settings across layers](settings/provider-settings-across-layers.md): what a layer or profile that changes provider keeps, with worked examples.
 - [Ollama settings](settings/ollama.md): the `ollama` block of a pod's settings: the keys accepted and refused, how they reach the pod, parallel requests from the profile's count, the context that fits the GPU, and pod images.
+- [vLLM settings](settings/vllm.md): `engine: vllm` on pods and its `vllm` block: the keys accepted and refused, the required tool call parser and its probe, the context for the profile's requests, the model on Hugging Face, the CUDA floor, pod images and start times.
 - [Commands](tasks/commands.md): every `/codeman` command.
 - [Comments](tasks/comments.md): the status, decisions and run comments, and the conversation's language.
 
@@ -44,7 +45,7 @@ One subject per file, grouped by what the reader wants to do. The [root README](
 
 ## Working on Codeman
 
-- [Development](development/guide.md): scripts, the source layout, Firestore's emulator and conventions.
+- [Development](development/guide.md): scripts, the source layout, publishing and pinning the pod images, Firestore's emulator and conventions.
 - [Platforms](development/platforms.md): the platform interfaces, and what an adapter must guarantee.
 - [Dependencies](development/dependencies.md): what Codeman depends on, why, and the last audit.
 - [Plans](plans/): one file per piece of work, with its decisions; the project's history.

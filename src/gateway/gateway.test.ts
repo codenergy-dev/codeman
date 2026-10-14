@@ -509,3 +509,29 @@ test("a start that failed shows in /health without its reason, which /admin/stat
   assert.deepEqual(fitted.fit, instance.fit);
   assert.deepEqual(await (await fetch(`${url}/health`)).json(), { ready: true });
 });
+
+test("the status names the engine, and a vLLM pod's settings and fit", async () => {
+  const { instance, url } = await gateway({ upstream: "http://127.0.0.1:1/v1" });
+  const read = async () =>
+    (await (
+      await fetch(`${url}/admin/status`, { headers: { Authorization: "Bearer admin" } })
+    ).json()) as Record<string, unknown>;
+  assert.equal((await read()).vllm, undefined, "none on an Ollama pod");
+  instance.vllm = { "max-num-seqs": "4", "tool-call-parser": "qwen3_xml" };
+  instance.fit = {
+    engine: "vllm",
+    contextLength: 131072,
+    modelContextLength: 262144,
+    requestedParallel: 4,
+    parallel: 4,
+    concurrency: 4.5,
+    cacheTokens: 589824,
+    source: "search",
+    loads: 2,
+    toolCallParser: "qwen3_xml",
+  };
+  const status = await read();
+  assert.equal(status.engine, "fake");
+  assert.deepEqual(status.vllm, instance.vllm);
+  assert.deepEqual(status.fit, instance.fit);
+});

@@ -12,6 +12,7 @@ import {
   settingValues,
   withProviderDefaults,
 } from "./providers.ts";
+import { TOOL_CALL_PARSER_NEEDED } from "./vllm.ts";
 
 test("OpenRouter takes only an OpenRouter model", () => {
   assert.equal(providerProblem({ provider: "openrouter", model: "a/b" }), undefined);
@@ -45,11 +46,11 @@ test("a pod needs a GPU, serves Ollama models, and keeps the pod for the task by
   assert.equal(providerProblem({ ...settings, "pod-reuse": "run" }), undefined);
   assert.equal(
     providerProblem({ ...settings, endpoint: "abc" }),
-    "`runpod-pod` does not accept `endpoint`; besides `model`, it takes `engine`, `gpu`, `pod-reuse` and `ollama`.",
+    "`runpod-pod` does not accept `endpoint`; besides `model`, it takes `engine`, `gpu`, `pod-reuse`, `ollama` and `vllm`.",
   );
   assert.equal(
-    providerProblem({ ...settings, engine: "vllm" }),
-    "`runpod-pod` does not offer the engine `vllm`; it offers `ollama`.",
+    providerProblem({ ...settings, engine: "sglang" }),
+    "`runpod-pod` does not offer the engine `sglang`; it offers `ollama`, `vllm`.",
   );
   assert.match(
     providerProblem({ ...settings, model: "not a model" }) ?? "",
@@ -190,5 +191,56 @@ test("pods take an `ollama` block, checked against Ollama's list", () => {
     providerProblem({ provider: "openrouter", model: "a/b", ollama: { "num-parallel": "4" } }),
     "`openrouter` does not accept `ollama`; it takes only `model`.",
   );
-  assert.deepEqual(PROVIDERS["runpod-pod"].blocks, { ollama: { engine: "ollama" } });
+  assert.deepEqual(PROVIDERS["runpod-pod"].blocks, {
+    ollama: { engine: "ollama" },
+    vllm: { engine: "vllm" },
+  });
+});
+
+test("pods serve Hugging Face models with vLLM, which needs the model's tool call parser", () => {
+  const pod = {
+    provider: "runpod-pod",
+    model: "unsloth/Qwen3.8-27B-NVFP4",
+    gpu: "GPU",
+    engine: "vllm",
+  };
+  assert.equal(providerProblem(pod), TOOL_CALL_PARSER_NEEDED);
+  assert.equal(providerProblem(pod, false), undefined, "settings that serve no run");
+  const vllm = { "tool-call-parser": "qwen3_xml" };
+  assert.equal(providerProblem({ ...pod, vllm }), undefined);
+  assert.equal(
+    providerProblem({ ...pod, vllm, model: "Qwen3-8B" }),
+    "With `runpod-pod` and the engine `vllm`, `model` must be a Hugging Face model ID, `namespace/name`, such as `Qwen/Qwen3-Coder-30B-A3B-Instruct`, not `Qwen3-8B`.",
+  );
+  assert.match(
+    providerProblem({ ...pod, vllm, model: "qwen3-coder:30b" }) ?? "",
+    /must be a Hugging Face model ID/,
+  );
+  assert.equal(
+    providerProblem({ ...pod, vllm: { ...vllm, host: "0.0.0.0" } }),
+    "`vllm` cannot set `host`: Codeman serves the run's model on the pod's loopback, behind its gateway.",
+  );
+  assert.equal(
+    providerProblem({ ...pod, vllm: { ...vllm, "speculative-method": "mtp" } }),
+    "`vllm`'s `speculative-method` needs `speculative-tokens`, the tokens drafted per step, such as `3`.",
+    "the block is checked whole",
+  );
+  assert.equal(
+    providerProblem({ ...pod, vllm, ollama: { "num-parallel": "4" } }),
+    "With `runpod-pod`, `ollama` configures the engine `ollama`, not `vllm`.",
+  );
+  assert.equal(
+    providerProblem({ ...pod, engine: "ollama", model: "qwen3:8b", vllm }),
+    "With `runpod-pod`, `vllm` configures the engine `vllm`, not `ollama`.",
+  );
+  assert.equal(
+    providerProblem({
+      provider: "runpod-serverless",
+      model: "Qwen3-8B",
+      endpoint: "abc",
+      vllm,
+    }),
+    "`runpod-serverless` does not accept `vllm`; besides `model`, it takes `engine` and `endpoint`.",
+    "Serverless endpoints keep their worker's settings",
+  );
 });

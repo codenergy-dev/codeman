@@ -61,6 +61,57 @@ test("creates a pod on Secure Cloud with one GPU and one HTTP port", async () =>
   assert.deepEqual(created.createdAt, new Date("2026-10-03T12:00:00Z"));
 });
 
+test("a pod may require a CUDA floor of its host, and reports the host's version", async () => {
+  const { fetch, calls } = fakeFetch([
+    { ...pod, cudaVersion: null },
+    { ...pod, cudaVersion: "13.1" },
+  ]);
+  const runpod = new Runpod("rk", fetch);
+  const created = await runpod.pods.create({
+    name: "n",
+    image: "i",
+    env: {},
+    port: 8080,
+    gpuType: "NVIDIA RTX A6000",
+    diskGb: 80,
+    minCudaVersion: "13.0",
+  });
+  assert.deepEqual(JSON.parse(String(calls[0]?.[1].body)).gpu, {
+    id: "NVIDIA RTX A6000",
+    count: 1,
+    minCudaVersion: "13.0",
+  });
+  assert.equal(created.cudaVersion, undefined, "unknown until a host runs it");
+  assert.equal((await runpod.pods.get("abc123"))?.cudaVersion, "13.1");
+});
+
+test("reads which CUDA versions a GPU type's hosts offer pods, from a floor", async () => {
+  const { fetch, calls } = fakeFetch([
+    {
+      id: "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+      cudaVersions: [
+        { version: "13.0", available: false },
+        { version: "13.1", available: true },
+        { version: 13.2, available: true },
+      ],
+    },
+    { id: "AMD" },
+    new Response('{"title":"Not Found","status":404}', { status: 404 }),
+  ]);
+  const runpod = new Runpod("rk", fetch);
+  const gpu = "NVIDIA RTX PRO 6000 Blackwell Server Edition";
+  assert.deepEqual(await runpod.pods.cudaVersions?.(gpu, "13.0"), [
+    { version: "13.0", available: false },
+    { version: "13.1", available: true },
+  ]);
+  assert.equal(
+    calls[0]?.[0],
+    "https://api.runpod.io/v2/catalog/gpus/NVIDIA%20RTX%20PRO%206000%20Blackwell%20Server%20Edition?include=AVAILABILITY&product=POD&cloud=SECURE&minCudaVersion=13.0",
+  );
+  assert.deepEqual(await runpod.pods.cudaVersions?.("AMD", "13.0"), [], "none listed");
+  assert.deepEqual(await runpod.pods.cudaVersions?.("gone", "13.0"), []);
+});
+
 test("reads a pod's status, and a missing pod as none", async () => {
   const { fetch, calls } = fakeFetch([
     { ...pod, status: "RUNNING" },

@@ -27,6 +27,14 @@ export interface PodSpec {
   gpuType: string;
   /** Container disk, in GB. */
   diskGb: number;
+  /** The lowest CUDA version its host must offer, as `major.minor`; any when undefined. */
+  minCudaVersion?: string | undefined;
+}
+
+/** A CUDA version that hosts of a GPU type offer, and whether one of them has room now. */
+export interface CudaVersion {
+  version: string;
+  available: boolean;
 }
 
 export type PodStatus = "starting" | "running" | "stopped" | "failed" | "terminated";
@@ -41,6 +49,8 @@ export interface Pod {
   createdAt: Date;
   /** What the provider bills for it, in USD per second; 0 or undefined when it does not say. */
   pricePerSecond: number | undefined;
+  /** The CUDA version its host reports, once it has one. */
+  cudaVersion?: string | undefined;
 }
 
 export interface PodHost {
@@ -51,6 +61,11 @@ export interface PodHost {
    * not say. The gateway starts its search for the context that fits from it.
    */
   memory?(gpuType: string): Promise<number | undefined>;
+  /**
+   * The CUDA versions, from `min` up, that the hosts of a GPU type offer pods, each with whether
+   * one has room now; empty when none does.
+   */
+  cudaVersions?(gpuType: string, min: string): Promise<CudaVersion[]>;
   create(spec: PodSpec): Promise<Pod>;
   /** The pod, or undefined when it does not exist (terminated pods included). */
   get(id: string): Promise<Pod | undefined>;

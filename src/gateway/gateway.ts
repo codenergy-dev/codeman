@@ -22,6 +22,7 @@ import {
   summarize,
   type WorkerSample,
 } from "./usage.ts";
+import type { VllmFitReport } from "./vllm.ts";
 
 /** The OpenAI-compatible routes the agent may call; nothing else reaches the engine. */
 const ROUTES = new Set(["POST /v1/chat/completions", "POST /v1/completions", "GET /v1/models"]);
@@ -164,8 +165,10 @@ export class Gateway {
   contextLength: number | undefined;
   /** The Ollama variables from the pod's settings that it gave Ollama, which the status reports. */
   ollama: Readonly<Record<string, string>> = {};
+  /** The vLLM settings of the pod that it gave vLLM, by key, which the status reports. */
+  vllm: Readonly<Record<string, string>> | undefined;
   /** How the pod's model was fitted to its GPU, once it serves; the status reports it. */
-  fit: FitReport | undefined;
+  fit: FitReport | VllmFitReport | undefined;
   /**
    * Why the model could not be served, which `/admin/status` reports; `/health` says only that
    * it failed, since it takes no token.
@@ -383,9 +386,11 @@ export class Gateway {
     const active = this.#runs.filter((run) => run.active);
     return {
       version: GATEWAY_VERSION,
+      engine: this.#options.engine.name,
       ready: this.ready,
       contextLength: this.contextLength,
       ollama: this.ollama,
+      vllm: this.vllm,
       fit: this.fit,
       failure: this.failure,
       serving: this.serving,

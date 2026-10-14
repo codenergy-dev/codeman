@@ -1,5 +1,6 @@
 import type { Fetch } from "../budget.ts";
 import type {
+  CudaVersion,
   Endpoint,
   GpuProvider,
   Pod,
@@ -32,6 +33,7 @@ interface RunpodPod {
   gpu?: { id?: string; count?: number } | null;
   cost?: number;
   createdAt: string;
+  cudaVersion?: string | null;
 }
 
 interface RunpodGpu {
@@ -41,6 +43,7 @@ interface RunpodGpu {
   pool?: string | null;
   secure?: boolean;
   price?: { secure?: number; community?: number; serverless?: number };
+  cudaVersions?: { version?: unknown; available?: unknown }[];
 }
 
 interface RunpodEndpoint {
@@ -75,6 +78,7 @@ export class Runpod implements GpuProvider {
         const memory = (await this.#gpu(gpuType))?.memory;
         return typeof memory === "number" && memory > 0 ? memory : undefined;
       },
+      cudaVersions: (gpuType, min) => this.#cudaVersions(gpuType, min),
       create: (spec) => this.#createPod(spec),
       get: (id) => this.#getPod(id),
       list: (env) => this.#listPods(env),
@@ -140,11 +144,32 @@ export class Runpod implements GpuProvider {
     return hourly / 3600;
   }
 
+  /**
+   * `GET /v2/catalog/gpus/{id}` with the pods' availability on Secure Cloud from a CUDA version
+   * (docs/web/runpod/get-a-gpu-type.md): a missing `cudaVersions` is an empty one.
+   */
+  async #cudaVersions(gpuType: string, min: string): Promise<CudaVersion[]> {
+    const query = `include=AVAILABILITY&product=POD&cloud=SECURE&minCudaVersion=${encodeURIComponent(min)}`;
+    const gpu = (await this.#request(
+      `/catalog/gpus/${encodeURIComponent(gpuType)}?${query}`,
+      "GET",
+      undefined,
+      [404],
+    )) as RunpodGpu | undefined;
+    return (gpu?.cudaVersions ?? []).flatMap(({ version, available }) =>
+      typeof version === "string" ? [{ version, available: available === true }] : [],
+    );
+  }
+
   async #createPod(spec: PodSpec): Promise<Pod> {
     const pod = (await this.#request("/pods", "POST", {
       name: spec.name,
       image: spec.image,
-      gpu: { id: spec.gpuType, count: 1 },
+      gpu: {
+        id: spec.gpuType,
+        count: 1,
+        ...(spec.minCudaVersion ? { minCudaVersion: spec.minCudaVersion } : {}),
+      },
       // Decision 6 of the self-hosted inference plan: Runpod's own data centers only.
       cloud: "SECURE",
       env: spec.env,
@@ -280,6 +305,9 @@ function toPod(pod: RunpodPod): Pod {
     gpuType: pod.gpu?.id,
     createdAt: new Date(pod.createdAt),
     pricePerSecond: typeof pod.cost === "number" && pod.cost > 0 ? pod.cost / 3600 : undefined,
+    ...(typeof pod.cudaVersion === "string" && pod.cudaVersion !== ""
+      ? { cudaVersion: pod.cudaVersion }
+      : {}),
   };
 }
 

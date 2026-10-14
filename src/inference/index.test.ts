@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { resolveSettings, type Settings } from "../settings.ts";
 import { MemoryStore } from "../store/memory.ts";
+import { FakeGateways, FakeGpu } from "../testing/fake-gpu.ts";
 import { FakeRuntime } from "../testing/fake-runtime.ts";
-import { inferenceChoice, inferenceProvider, parseInferenceChoice } from "./index.ts";
+import { POD_IMAGES } from "./images.ts";
+import { inferenceChoice, inferenceProvider, parseInferenceChoice, selfHosted } from "./index.ts";
 
 /** The settings of a repository's file that sets `layer`. */
 function settings(layer: Partial<Settings>): Settings {
@@ -134,6 +136,38 @@ test("a pod's choice carries its Ollama settings, checked again when read", () =
   }
 });
 
+test("a vLLM pod's choice carries its vLLM settings, checked again when read", () => {
+  const choice = inferenceChoice(
+    settings({
+      provider: "runpod-pod",
+      engine: "vllm",
+      model: "unsloth/Qwen3.8-27B-NVFP4",
+      gpu: "GPU A",
+      vllm: { "tool-call-parser": "qwen3_xml", "kv-cache-dtype": "fp8" },
+    }),
+    null,
+    { parallel: 4 },
+  );
+  assert.equal(choice.provider === "runpod-pod" && choice.engine, "vllm");
+  assert.deepEqual(choice.provider === "runpod-pod" && choice.vllm, {
+    "tool-call-parser": "qwen3_xml",
+    "kv-cache-dtype": "fp8",
+  });
+  assert.deepEqual(parseInferenceChoice(JSON.stringify(choice)), choice);
+  for (const vllm of [
+    { host: "0.0.0.0" },
+    { "max-num-seqs": 4 },
+    { "speculative-method": "mtp" },
+    ["tool-call-parser"],
+  ]) {
+    assert.throws(
+      () => parseInferenceChoice(JSON.stringify({ ...choice, vllm })),
+      /not a valid|cannot set|needs/,
+      JSON.stringify(vllm),
+    );
+  }
+});
+
 test("a pod's choice carries the most tasks its profile serves, for num-parallel", () => {
   const pod = settings({ provider: "runpod-pod", model: "qwen3-coder:30b", gpu: "GPU A" });
   const choice = inferenceChoice(pod, null, { profile: "parallel-tasks", parallel: 4 });
@@ -146,6 +180,59 @@ test("a pod's choice carries the most tasks its profile serves, for num-parallel
       () => parseInferenceChoice(JSON.stringify({ ...choice, parallel })),
       /not a valid/,
       JSON.stringify(parallel),
+    );
+  }
+});
+
+test("a vLLM pod's choice reaches its pod: the vLLM image, its settings and max-num-seqs", async () => {
+  const choice = inferenceChoice(
+    settings({
+      provider: "runpod-pod",
+      engine: "vllm",
+      model: "unsloth/Qwen3.8-27B-NVFP4",
+      gpu: "GPU-A",
+      vllm: { "tool-call-parser": "qwen3_xml" },
+    }),
+    null,
+    { parallel: 3 },
+  );
+  if (choice.provider !== "runpod-pod") throw new Error("a pod's choice");
+  const gpu = new FakeGpu();
+  const gateways = new FakeGateways(gpu, { real: true });
+  try {
+    const provider = selfHosted(
+      choice,
+      { owner: "o", name: "r" },
+      {
+        accountKey: "k",
+        image: "ghcr.io/o/codeman-vllm@sha256:2",
+        usage: "",
+        store: () => new MemoryStore(),
+        gpu,
+        fetch: gateways.fetch,
+        hub: { model: async (id) => ({ id, weightsBytes: 1e9 }) },
+      },
+    );
+    await provider.open({ task: "7", runId: "300", limit: 1 }, new FakeRuntime());
+    assert.equal(
+      gpu.created[0]?.env.CODEMAN_VLLM,
+      '{"max-num-seqs":"3","tool-call-parser":"qwen3_xml"}',
+    );
+    assert.equal(gpu.created[0]?.env.CODEMAN_ENGINE, "vllm");
+  } finally {
+    gateways.close();
+  }
+  // The `pod-image` input is Ollama's: a vLLM run takes the pinned vLLM image, or none yet.
+  const runtime = new FakeRuntime({
+    inputs: { inference: JSON.stringify(choice), "gpu-key": "rk", "pod-image": "x@sha256:1" },
+  });
+  if (POD_IMAGES.vllm === "") {
+    await assert.rejects(
+      inferenceProvider(runtime, () => new MemoryStore()).open(
+        { task: "7", runId: "300", limit: 1 },
+        new FakeRuntime(),
+      ),
+      /pins no vLLM pod image yet/,
     );
   }
 });

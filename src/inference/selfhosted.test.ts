@@ -9,6 +9,7 @@ import { FakePlatform, fakeServices } from "../testing/fake-platform.ts";
 import { FakeRuntime } from "../testing/fake-runtime.ts";
 import { seedRuns } from "../testing/ledger-runs.ts";
 import type { PodSpec } from "./gpu.ts";
+import type { ModelHub } from "./huggingface.ts";
 import { IMAGES_WITHOUT_OLLAMA_SETTINGS, ollama, SINGLE_RUN_IMAGES } from "./ollama.ts";
 import { OpenFailure } from "./provider.ts";
 import { CREATE_LEASE_MS, PodRegistry } from "./registry.ts";
@@ -20,8 +21,11 @@ import {
   PodInference,
   type PodSettings,
   podSettingsKey,
+  podVllm,
   releasePod,
+  vllmDiskGb,
 } from "./selfhosted.ts";
+import { vllm } from "./vllm.ts";
 
 const repository = { owner: "o", name: "r" };
 /** The image pinned before shared pods: each task gets a pod of its own. */
@@ -44,7 +48,7 @@ const near = (actual: number | undefined, expected: number) =>
  * Pods on a fake GPU cloud, with the pod registry in memory. By default each pod's gateway answers
  * as one that serves one run at a time; with `real`, Codeman's own gateway answers.
  */
-function setup(options: { real?: boolean; image?: string } = {}) {
+function setup(options: { real?: boolean; image?: string; hub?: ModelHub } = {}) {
   let now = new Date("2026-10-03T12:00:00Z");
   const gpu = new FakeGpu({ now: () => now });
   const gateways = new FakeGateways(gpu, { real: options.real === true });
@@ -62,6 +66,7 @@ function setup(options: { real?: boolean; image?: string } = {}) {
         now: () => now,
         fetch: gateways.fetch,
         wait: (ms) => wait(ms),
+        ...(options.hub ? { hub: options.hub } : {}),
       },
     );
   const open = async (
@@ -890,4 +895,220 @@ test("a model that does not fit fails the run with the gateway's reason, and no 
   joining.gateways.state("pod1").failure = reason;
   await assert.rejects(joining.open("8", "300", { parallel: 4 }), /did not serve/);
   assert.equal(joining.gpu.created.length, 1);
+});
+
+/** vLLM pods: an image of their own, a fake Hugging Face, and the test model. */
+function vllmSetup(
+  models: Record<string, number | Error> = { "unsloth/Qwen3.8-27B-NVFP4": 23.4e9 },
+) {
+  const asked: string[] = [];
+  const hub: ModelHub = {
+    model: async (id) => {
+      asked.push(id);
+      const found = models[id];
+      if (found instanceof Error) throw found;
+      if (found === undefined) throw new Error(`Hugging Face has no public model \`${id}\`.`);
+      return { id, weightsBytes: found };
+    },
+  };
+  return { ...setup({ real: true, image: VLLM_IMAGE, hub }), asked };
+}
+const VLLM_IMAGE = "ghcr.io/o/codeman-vllm@sha256:2";
+const onVllm: Partial<PodSettings> = {
+  engine: vllm,
+  model: "unsloth/Qwen3.8-27B-NVFP4",
+  vllm: { "kv-cache-dtype": "fp8", "tool-call-parser": "qwen3_xml" },
+  parallel: 4,
+};
+
+test("a vLLM pod gets its settings with max-num-seqs, vLLM's CUDA, and a disk for its model", async () => {
+  const { gpu, open, asked } = vllmSetup();
+  const { opened, runtime } = await open("7", "300", onVllm);
+  const spec = gpu.created[0];
+  assert.equal(spec?.image, VLLM_IMAGE);
+  assert.equal(spec?.minCudaVersion, "13.0");
+  assert.equal(spec?.diskGb, 80, "23.4 GB of weights fit the least disk");
+  assert.equal(spec?.env.CODEMAN_ENGINE, "vllm");
+  assert.equal(
+    spec?.env.CODEMAN_VLLM,
+    '{"kv-cache-dtype":"fp8","max-num-seqs":"4","tool-call-parser":"qwen3_xml"}',
+  );
+  for (const name of ["CODEMAN_OLLAMA", "CODEMAN_GPU_MEMORY_GB", "CODEMAN_FIT"]) {
+    assert.equal(spec?.env[name], undefined, name);
+  }
+  assert.deepEqual(asked, ["unsloth/Qwen3.8-27B-NVFP4"]);
+  const key = podSettingsKey(
+    { ...settings, ...onVllm, image: VLLM_IMAGE, vllm: podVllm(onVllm) },
+    "o/r#7",
+  );
+  assert.equal(spec?.name, `codeman-o-${key}`);
+  const info = runtime.logged("info");
+  assert.ok(info.includes("Pod pod1 runs on a host with CUDA 13.0."));
+  assert.ok(
+    info.includes(
+      "Hugging Face serves unsloth/Qwen3.8-27B-NVFP4: 23.4 GB of weights, so the pod gets 80 GB of disk.",
+    ),
+  );
+  assert.ok(
+    info.includes(
+      "Pod pod1 serves unsloth/Qwen3.8-27B-NVFP4 with vLLM, 4 parallel request(s) and a context of 131072 tokens (the model's own is 262144), wholly on the GPU: its K/V cache holds 4.50 requests of it (589824 tokens); found in 2 start(s). Its tool calls work with the parser qwen3_xml.",
+    ),
+  );
+  assert.equal(opened.contextLength, 131072, "the agent is told the context served");
+  const joined = await open("8", "300", onVllm);
+  assert.equal(joined.handle.podId, "pod1", "the same settings share the pod");
+  assert.deepEqual(asked, ["unsloth/Qwen3.8-27B-NVFP4"], "only a new pod checks the model");
+});
+
+test("a vLLM pod's settings key has its engine and settings; Ollama pods keep theirs", () => {
+  const shared = { ...settings, image: SHARED_IMAGE };
+  const before = sha256(["qwen3-coder:30b", "GPU-A", SHARED_IMAGE, "task"].join("\n")).slice(0, 16);
+  assert.equal(podSettingsKey({ ...shared, engine: ollama }, "o/r#7"), before);
+  const vllmPod = { ...shared, engine: vllm, vllm: { "max-num-seqs": "4" } };
+  const four = podSettingsKey(vllmPod, "o/r#7");
+  assert.equal(
+    four,
+    sha256(
+      ["qwen3-coder:30b", "GPU-A", SHARED_IMAGE, "task", "engine vllm", "vllm max-num-seqs=4"].join(
+        "\n",
+      ),
+    ).slice(0, 16),
+  );
+  assert.notEqual(four, podSettingsKey({ ...vllmPod, vllm: { "max-num-seqs": "3" } }, "o/r#7"));
+  assert.deepEqual(
+    podVllm({ vllm: { "max-num-seqs": "2", "tool-call-parser": "hermes" }, parallel: 4 }),
+    {
+      "max-num-seqs": "2",
+      "tool-call-parser": "hermes",
+    },
+  );
+  assert.deepEqual(podVllm({ vllm: { "tool-call-parser": "hermes" } }), {
+    "tool-call-parser": "hermes",
+  });
+  assert.notEqual(
+    fitKey({ ...vllmPod, ollama: {} }),
+    fitKey({ ...shared, ollama: {} }),
+    "the cache of fits keys the engine too",
+  );
+  assert.equal(
+    fitKey({ ...vllmPod, ollama: {}, vllm: { ...vllmPod.vllm, "max-model-len": "9" } }),
+    fitKey({ ...vllmPod, ollama: {} }),
+    "the context is not part of the key",
+  );
+  assert.deepEqual([vllmDiskGb(0), vllmDiskGb(23.4e9), vllmDiskGb(100e9)], [80, 80, 165]);
+});
+
+test("without a pinned vLLM image, a run stops before any pod, at no cost", async () => {
+  const { gpu, registry, open, asked } = vllmSetup();
+  await assert.rejects(
+    open("7", "300", { ...onVllm, image: "" }),
+    (error: unknown) =>
+      error instanceof OpenFailure &&
+      error.message ===
+        "This version of Codeman pins no vLLM pod image yet (`POD_IMAGES` in src/inference/images.ts), so no pod was created: use a version that pins one, or `engine: ollama`. See docs/settings/vllm.md#pod-images.",
+  );
+  assert.deepEqual(gpu.created, []);
+  assert.deepEqual(asked, []);
+  assert.deepEqual(await registry.live(), []);
+});
+
+test("without a host that offers vLLM's CUDA now, a run stops before creating the pod", async () => {
+  const { gpu, registry, open } = vllmSetup();
+  gpu.cuda["GPU-A"] = [
+    { version: "12.8", available: true },
+    { version: "13.0", available: false },
+    { version: "13.1", available: false },
+  ];
+  await assert.rejects(
+    open("7", "300", onVllm),
+    /^Error: No host with GPU-A and CUDA 13\.0 or newer has room now \(Runpod offers 13\.0, 13\.1\), which vLLM's image needs, so no pod was created: try again later, or use another GPU type\.$/,
+  );
+  gpu.cuda["GPU-A"] = [{ version: "12.8", available: true }];
+  await assert.rejects(
+    open("8", "300", onVllm),
+    /Runpod offers no host with GPU-A and CUDA 13\.0 or newer/,
+  );
+  assert.deepEqual(gpu.created, []);
+  assert.deepEqual(await registry.live(), [], "the creation leases ended");
+  // Ollama pods ask for no CUDA version.
+  const ollamaPods = setup({ real: true, image: SHARED_IMAGE });
+  ollamaPods.gpu.cuda["GPU-A"] = [];
+  await ollamaPods.open("7", "300");
+  assert.equal(ollamaPods.gpu.created[0]?.minCudaVersion, undefined);
+});
+
+test("a model Hugging Face does not serve publicly stops the run before creating the pod", async () => {
+  const gated = new Error("`a/gated` is gated on Hugging Face.");
+  const { gpu, open, asked } = vllmSetup({ "a/gated": gated, "org/drafter": 1e9 });
+  await assert.rejects(
+    open("7", "300", { ...onVllm, model: "a/gated" }),
+    /is gated on Hugging Face/,
+  );
+  await assert.rejects(
+    open("8", "300", { ...onVllm, model: "a/missing" }),
+    /no public model `a\/missing`/,
+  );
+  assert.deepEqual(gpu.created, []);
+  assert.deepEqual(asked, ["a/gated", "a/missing"]);
+});
+
+test("a draft model is checked too, and its weights count in the disk", async () => {
+  const { gpu, open, asked } = vllmSetup({ "org/big": 90e9, "org/drafter": 10e9 });
+  await open("7", "300", {
+    ...onVllm,
+    model: "org/big",
+    vllm: {
+      "tool-call-parser": "hermes",
+      "speculative-method": "eagle3",
+      "speculative-tokens": "3",
+      "speculative-model": "org/drafter",
+    },
+  });
+  assert.deepEqual(asked, ["org/big", "org/drafter"]);
+  assert.equal(gpu.created[0]?.diskGb, 165);
+});
+
+test("vLLM's cache of fits: written after the creator's search, read into the next pod", async () => {
+  const { gpu, store, open } = vllmSetup();
+  await open("7", "300", onVllm);
+  const values = { "kv-cache-dtype": "fp8", "max-num-seqs": "4", "tool-call-parser": "qwen3_xml" };
+  const key = fitKey({ ...settings, ...onVllm, image: VLLM_IMAGE, ollama: {}, vllm: values });
+  const cached = await store.get(LAYOUT.context("o", key));
+  const { recordedAt, ...fields } = cached?.fields ?? {};
+  assert.deepEqual(fields, {
+    engine: "vllm",
+    image: VLLM_IMAGE,
+    model: "unsloth/Qwen3.8-27B-NVFP4",
+    gpuType: "GPU-A",
+    vllm: values,
+    contextLength: 131072,
+    modelContextLength: 262144,
+    parallel: 4,
+    concurrency: 4.5,
+    cacheTokens: 589824,
+    loads: 2,
+    pod: "pod1",
+  });
+  assert.ok(recordedAt instanceof Date);
+  gpu.setStatus("pod1", "terminated");
+  const { runtime } = await open("8", "301", onVllm);
+  assert.equal(gpu.created[1]?.env.CODEMAN_FIT, '{"contextLength":131072}');
+  assert.ok(runtime.logged("info").some((line) => line.includes("; from the cache of fits.")));
+  assert.equal((await store.get(LAYOUT.context("o", key)))?.version, cached?.version);
+  // An explicit context needs no cache, and writes none.
+  await open("9", "302", { ...onVllm, vllm: { ...onVllm.vllm, "max-model-len": "65536" } });
+  assert.equal(gpu.created[2]?.env.CODEMAN_FIT, undefined);
+  assert.equal((await store.query(LAYOUT.contexts("o"))).length, 1);
+});
+
+test("a vLLM pod whose gateway does not report vLLM's settings and fit fails the run", async () => {
+  // Not Codeman's gateway: it answers as one that knows nothing of vLLM.
+  const hub: ModelHub = { model: async (id) => ({ id, weightsBytes: 1e9 }) };
+  const { gpu, gateways, open } = setup({ image: VLLM_IMAGE, hub });
+  gateways.state("pod1").version = GATEWAY_VERSION;
+  await assert.rejects(
+    open("7", "300", onVllm),
+    /Pod pod1's gateway did not apply the vLLM settings \(`kv-cache-dtype=fp8`, `max-num-seqs=4`, `tool-call-parser=qwen3_xml`\): its image cannot\./,
+  );
+  assert.deepEqual(gpu.terminated, ["pod1"]);
 });

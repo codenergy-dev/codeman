@@ -370,9 +370,9 @@ test("pods need a GPU, serve Ollama models, and keep the pod for the task", () =
   const wrongEngine = resolveSettings(
     {},
     {},
-    { provider: "runpod-pod", model: "qwen3-coder:30b", gpu: "G", engine: "vllm" },
+    { provider: "runpod-pod", model: "qwen3-coder:30b", gpu: "G", engine: "sglang" },
   );
-  assert.ok(!wrongEngine.ok && wrongEngine.error.includes("does not offer the engine `vllm`"));
+  assert.ok(!wrongEngine.ok && wrongEngine.error.includes("does not offer the engine `sglang`"));
   const wrongModel = resolveSettings(
     {},
     {},
@@ -583,7 +583,7 @@ test("rejects malformed profiles, naming the line", () => {
     ["profiles:\n  - model: a/b", "line 2: a profile needs a `name`."],
     [
       "profiles:\n  - name: a\n    task-budget: 5",
-      "line 3: a profile cannot set `task-budget`; it sets only `provider`, `model`, `engine`, `gpu`, `endpoint`, `pod-reuse`, `ollama`.",
+      "line 3: a profile cannot set `task-budget`; it sets only `provider`, `model`, `engine`, `gpu`, `endpoint`, `pod-reuse`, `ollama`, `vllm`.",
     ],
     ["profiles:\n  - name: a\n    secret: x", "line 3: unknown setting `secret`."],
     ["profiles:\n  - name: a\n    provider: spot", "line 3: `provider` must be one of"],
@@ -1393,5 +1393,197 @@ describe("Ollama settings on pods", () => {
     assert.ok(plan.ok && plan.value.settings.ollama === undefined);
     const code = resolveRun([{}, {}, file, organization], { stage: "code", tasks: 1 });
     assert.ok(code.ok && code.value.settings.ollama?.["num-parallel"] === "4");
+  });
+});
+
+describe("vLLM settings on pods", () => {
+  const parse = (lines: string[], source?: string) => {
+    const parsed = parseSettings(lines.join("\n"), source);
+    assert.ok(parsed.ok, parsed.ok ? "" : parsed.error);
+    return parsed.ok ? parsed.value : {};
+  };
+  const pod = [
+    "provider: runpod-pod",
+    "engine: vllm",
+    "model: unsloth/Qwen3.8-27B-NVFP4",
+    'gpu: "NVIDIA RTX PRO 6000 Blackwell Server Edition"',
+  ];
+
+  test("reads a `vllm` block at the top level and in profiles, with values as vLLM takes them", () => {
+    const file = parse([
+      ...pod,
+      "vllm:",
+      "  tool-call-parser: qwen3_xml",
+      "  reasoning-parser: qwen3",
+      "  kv-cache-dtype: fp8",
+      "  speculative-method: mtp",
+      "  speculative-tokens: 03",
+      "  language-model-only: true",
+      "  gpu-memory-utilization: .90",
+      "profiles:",
+      "  - name: mig",
+      "    max-tasks: 3",
+      '    gpu: "NVIDIA RTX PRO 6000 Blackwell Server Edition MIG 2g.48gb"',
+      "    vllm:",
+      "      max-model-len: 131072",
+      "      enforce-eager: true",
+    ]);
+    assert.deepEqual(file.vllm, {
+      "tool-call-parser": "qwen3_xml",
+      "reasoning-parser": "qwen3",
+      "kv-cache-dtype": "fp8",
+      "speculative-method": "mtp",
+      "speculative-tokens": "3",
+      "language-model-only": "true",
+      "gpu-memory-utilization": "0.9",
+    });
+    const run = (tasks: number) => {
+      const resolved = resolveRun([{}, {}, file], { stage: "code", tasks });
+      assert.ok(resolved.ok, resolved.ok ? "" : resolved.error);
+      return resolved.ok ? resolved.value.settings : undefined;
+    };
+    assert.deepEqual(run(2)?.vllm, {
+      ...file.vllm,
+      "max-model-len": "131072",
+      "enforce-eager": "true",
+    });
+    assert.equal(run(2)?.engine, "vllm");
+    assert.deepEqual(run(4)?.vllm, file.vllm, "no profile applies: the top level's");
+  });
+
+  test("errors name the line, the key and what to write", () => {
+    const cases: [string[], string][] = [
+      [
+        ["vllm:", "  max_num_seqs: 4"],
+        "line 2: `vllm` takes its keys in kebab-case, without `--`: write `max-num-seqs`, not `max_num_seqs`.",
+      ],
+      [
+        ["vllm:", "  MAX_MODEL_LEN: 4096"],
+        "line 2: `vllm` takes its keys in kebab-case, without `--`: write `max-model-len`, not `MAX_MODEL_LEN`.",
+      ],
+      [
+        ["vllm:", "  max-num-seq: 4"],
+        "line 2: `vllm` does not accept `max-num-seq`; it takes `max-model-len`, `max-num-seqs`,",
+      ],
+      [
+        ["vllm:", "  host: 0.0.0.0"],
+        "line 2: `vllm` cannot set `host`: Codeman serves the run's model on the pod's loopback, behind its gateway.",
+      ],
+      [["vllm:", "  ssl-certfile: x"], "line 2: `vllm` cannot set `ssl-certfile`: only Codeman's"],
+      [
+        ["vllm:", "  trust_remote_code: true"],
+        "line 2: `vllm` cannot set `trust-remote-code`: it runs the model repository's code",
+      ],
+      [["vllm:", "  tensor-parallel-size: 2"], "line 2: `vllm` cannot set `tensor-parallel-size`:"],
+      [["vllm:", "  cpu-offload-gb: 8"], "line 2: `vllm` cannot set `cpu-offload-gb`:"],
+      [
+        ["vllm:", "  enable-log-requests: true"],
+        "line 2: `vllm` cannot set `enable-log-requests`:",
+      ],
+      [
+        ["vllm:", "  speculative-config: x"],
+        "line 2: `vllm` takes speculative decoding as keys of their own",
+      ],
+      [
+        ["vllm:", "  tool-call-parser: qwen4"],
+        "line 2: `vllm`'s `tool-call-parser` must be one of vLLM 0.31.0's, such as `qwen3_xml`, not `qwen4`",
+      ],
+      [
+        ["vllm:", "  kv-cache-dtype: nvfp4"],
+        "line 2: `vllm`'s `kv-cache-dtype` must be one of `auto`, `bfloat16`, `float16`, `fp8`, `fp8_e4m3`, `fp8_e5m2`.",
+      ],
+      [
+        ["vllm:", "  gpu-memory-utilization: 1.5"],
+        "line 2: `vllm`'s `gpu-memory-utilization` must be a number above 0 and at most 1",
+      ],
+      [
+        ["vllm:", "  gpu-memory-utilization: 0"],
+        "line 2: `vllm`'s `gpu-memory-utilization` must be a number above 0",
+      ],
+      [
+        ["vllm:", "  max-num-seqs: 0"],
+        "line 2: `vllm`'s `max-num-seqs` must be a whole number, at least 1.",
+      ],
+      [
+        ["vllm:", "  enforce-eager: yes"],
+        "line 2: `vllm`'s `enforce-eager` must be `true` or `false`.",
+      ],
+      [
+        ["vllm:", "  speculative-method: custom_class"],
+        "line 2: `vllm`'s `speculative-method` must be one of `mtp`, `ngram`, `eagle3`",
+      ],
+      [
+        ["vllm:", "  speculative-model: draft"],
+        "line 2: `vllm`'s `speculative-model` must be a Hugging Face model ID",
+      ],
+      [["vllm: 4"], "line 1: `vllm` must be a block of vLLM's settings"],
+      [
+        ["profiles:", "  - name: a", "    vllm:", "      port: 1"],
+        "line 4: `vllm` cannot set `port`:",
+      ],
+    ];
+    for (const [lines, error] of cases) {
+      const parsed = parseSettings(lines.join("\n"));
+      assert.ok(
+        !parsed.ok && parsed.error.startsWith(`.codeman/settings.yml, ${error}`),
+        `${lines.join("\n")}\n${parsed.ok ? "" : parsed.error}`,
+      );
+    }
+    assert.deepEqual(parseSetting("vllm", "4").ok, false, "not a value of commands or inputs");
+  });
+
+  test("a run with vLLM needs a tool call parser, a Hugging Face model and whole blocks", () => {
+    const resolve = (...lines: string[]) => resolveSettings({}, {}, parse([...pod, ...lines]));
+    assert.deepEqual(resolve(), {
+      ok: false,
+      error:
+        "`vllm` needs `tool-call-parser`, the one that matches the model, such as `qwen3_xml` for Qwen3 models; see the model's card or vLLM's recipe for it (docs/settings/vllm.md).",
+    });
+    assert.ok(resolve("vllm:", "  tool-call-parser: qwen3_xml").ok);
+    const speculative = resolve(
+      "vllm:",
+      "  tool-call-parser: qwen3_xml",
+      "  speculative-method: eagle3",
+      "  speculative-tokens: 3",
+    );
+    assert.ok(!speculative.ok && speculative.error.includes("needs `speculative-model`"));
+    const ollama = resolve("vllm:", "  tool-call-parser: hermes", "ollama:", "  num-parallel: 2");
+    assert.ok(!ollama.ok && ollama.error.includes("`ollama` configures the engine `ollama`"));
+    const top = resolveSettings({}, {}, parse(["provider: runpod-pod", "engine: vllm"]));
+    assert.ok(top.ok, "settings without a model serve no run, and need no parser");
+  });
+
+  test("a layer or profile that names another engine leaves the other engine's block", () => {
+    const organization = parse(
+      [
+        "provider: runpod-pod",
+        "model: qwen3.8:27b-mtp-q4_K_M",
+        'gpu: "NVIDIA RTX PRO 6000 Blackwell Server Edition"',
+        "ollama:",
+        "  num-parallel: 4",
+      ],
+      SHARED_SETTINGS,
+    );
+    const file = parse([
+      "engine: vllm",
+      "model: unsloth/Qwen3.8-27B-NVFP4",
+      "vllm:",
+      "  tool-call-parser: qwen3_xml",
+      "profiles:",
+      "  - name: ollama-pod",
+      "    stages: [plan]",
+      "    engine: ollama",
+      "    model: qwen3:8b",
+      "    ollama:",
+      "      context-length: 65536",
+    ]);
+    const code = resolveRun([{}, {}, file, organization], { stage: "code", tasks: 1 });
+    assert.ok(code.ok, code.ok ? "" : code.error);
+    assert.equal(code.ok && code.value.settings.ollama, undefined, "the organization's dropped");
+    assert.deepEqual(code.ok && code.value.settings.vllm, { "tool-call-parser": "qwen3_xml" });
+    const plan = resolveRun([{}, {}, file, organization], { stage: "plan", tasks: 1 });
+    assert.ok(plan.ok, plan.ok ? "" : plan.error);
+    assert.equal(plan.ok && plan.value.settings.vllm, undefined);
+    assert.deepEqual(plan.ok && plan.value.settings.ollama, { "context-length": "65536" });
   });
 });

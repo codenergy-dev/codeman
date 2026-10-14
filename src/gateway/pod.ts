@@ -4,6 +4,7 @@ import {
   ollamaContextLength,
   parseOllamaVariables,
 } from "../inference/ollama.ts";
+import { parseVllmSettings } from "../inference/vllm.ts";
 import {
   contextCandidates,
   estimateContext,
@@ -71,6 +72,10 @@ export function expiry(state: PodState, policy: PodPolicy, now: number): string 
 /** The pod's settings, from the environment Codeman created it with. */
 export interface PodSettings {
   model: string;
+  /** The engine Codeman created the pod for (`CODEMAN_ENGINE`), `ollama` when unset. */
+  engine: string;
+  /** The engine the pod's image serves (`CODEMAN_IMAGE_ENGINE`), `ollama` when unset. */
+  imageEngine: string;
   adminSha256: string;
   policy: PodPolicy;
   /** The provider's ID of this pod, and a key that may terminate it. */
@@ -81,8 +86,15 @@ export interface PodSettings {
    * cannot be read: the pod then terminates rather than serve without them.
    */
   ollama: ReturnType<typeof parseOllamaVariables>;
+  /**
+   * The vLLM settings of `CODEMAN_VLLM`, by key, the derived `max-num-seqs` included, or why they
+   * cannot be read: the pod then terminates rather than serve without them.
+   */
+  vllm: ReturnType<typeof parseVllmSettings>;
   /** A context that fitted the same settings before, from the cache (`CODEMAN_FIT`). */
   fitHint: FitHint | undefined;
+  /** The same for vLLM, whose hint has no digest: the context alone. */
+  contextHint: number | undefined;
   /** The GPU type's memory, in GB, as the provider gives it (`CODEMAN_GPU_MEMORY_GB`). */
   gpuMemoryGb: number | undefined;
 }
@@ -99,12 +111,16 @@ export function podSettings(env: Record<string, string | undefined>): PodSetting
   if (!(keptIdle > 0) || !(runIdle > 0)) throw new Error("Idle limits must be positive.");
   return {
     model,
+    engine: env.CODEMAN_ENGINE || "ollama",
+    imageEngine: env.CODEMAN_IMAGE_ENGINE || "ollama",
     adminSha256,
     policy: { startBy, keptIdleMs: keptIdle * 60_000, runIdleMs: runIdle * 60_000 },
     podId: env.RUNPOD_POD_ID,
     podKey: env.RUNPOD_API_KEY,
     ollama: parseOllamaVariables(env.CODEMAN_OLLAMA),
+    vllm: parseVllmSettings(env.CODEMAN_VLLM),
     fitHint: parseFitHint(env.CODEMAN_FIT),
+    contextHint: parseContextHint(env.CODEMAN_FIT),
     gpuMemoryGb: positive(Number(env.CODEMAN_GPU_MEMORY_GB ?? "")),
   };
 }
@@ -127,6 +143,22 @@ export function parseFitHint(text: string | undefined): FitHint | undefined {
       typeof digest === "string" &&
       digest !== ""
       ? { contextLength: contextLength as number, digest }
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The context a vLLM pod's `CODEMAN_FIT` gives, as JSON: `{"contextLength":131072}`. Undefined
+ * when unset or unreadable: vLLM then fits it, so a broken hint costs time only.
+ */
+export function parseContextHint(text: string | undefined): number | undefined {
+  if (!text) return undefined;
+  try {
+    const { contextLength } = JSON.parse(text) as { contextLength?: unknown };
+    return Number.isSafeInteger(contextLength) && (contextLength as number) > 0
+      ? (contextLength as number)
       : undefined;
   } catch {
     return undefined;
@@ -201,6 +233,8 @@ export interface FitHint {
  * of the plan for fitting Ollama to the GPU).
  */
 export interface FitReport {
+  /** None: vLLM's reports say `vllm` (`VllmFitReport`). */
+  engine?: undefined;
   /** One request's context, as Ollama serves it. */
   contextLength: number;
   /** The model's own context length; undefined when it does not say. */

@@ -43,7 +43,7 @@ inputs:
   gpu-key:
     description: "(open-key, close-key, release-pod) Runpod's account key, for the runpod-pod and runpod-serverless providers. With organization-monthly-budget, open-key also needs it when the settings name a Runpod provider or the organization's runs used Runpod this month, to read its account's billing."
   pod-image:
-    description: "(open-key) Codeman's pod image, by digest. Empty uses the image this version of Codeman pins."
+    description: "(open-key) Codeman's Ollama pod image, by digest. Empty uses the image this version of Codeman pins. vLLM pods always use the pinned vLLM image."
   serverless-key:
     description: "(agent) Key of the Serverless endpoint, restricted to it, for the runpod-serverless provider. Only the gateway outside the sandbox holds it."
   handle:

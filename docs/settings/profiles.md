@@ -40,7 +40,7 @@ The profiles' counts also decide how many tasks a run works on at once, each in 
 
 `select`'s log says what it picked, of how many, which tasks wait and which are blocked.
 
-On a pod, the most tasks a profile serves is also how many requests its Ollama serves at once, unless its `ollama` settings give `num-parallel` ([parallel requests](ollama.md#parallel-requests)): 4 for `tasks: 4`, 3 for `max-tasks: 3`.
+On a pod, the most tasks a profile serves is also how many requests its Ollama serves at once, unless its `ollama` settings give `num-parallel` ([parallel requests](ollama.md#parallel-requests)): 4 for `tasks: 4`, 3 for `max-tasks: 3`. With `engine: vllm`, it is vLLM's `max-num-seqs`, unless its `vllm` settings give one ([vLLM settings](vllm.md#parallel-requests)).
 
 ## Which applies
 

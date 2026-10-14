@@ -66,6 +66,14 @@ Since the [plan for fitting Ollama to the GPU](../plans/2026-10-13-fit-ollama-to
 - An `ollama:` block written only to match the profile's count, such as `num-parallel: 4` in a `tasks: 4` profile, can go.
 - A pod profile with `min-tasks` alone, or none of the counts while another profile has `min-tasks` alone, serves up to 10 requests at once ([parallel requests](../settings/ollama.md#parallel-requests)); give it a `max-tasks`, or `num-parallel` in its `ollama:` block, when its GPU cannot hold their caches.
 
+## vLLM on pods
+
+Since the [plan for vLLM on pods](../plans/2026-10-13-vllm-on-pods.md), a pod can serve a Hugging Face model with vLLM (`engine: vllm`, [vLLM settings](../settings/vllm.md)). Nothing changes for Ollama pods: their settings, settings key and environment stay as they were. Check three things:
+
+- **Pod images.** Codeman's images are now one per engine, `codeman-ollama` and `codeman-vllm`, pinned in `POD_IMAGES` (`src/inference/images.ts`) instead of `POD_IMAGE`. A version that pins no vLLM image yet stops runs with `engine: vllm` before any pod is created. A `pod-image` input still overrides the Ollama image only.
+- **Layers that change engine.** A layer or profile that names another `engine` leaves out the block of the engine it inherits, as one that names another provider leaves out its settings ([provider settings across layers](../settings/provider-settings-across-layers.md)).
+- **The model.** With `engine: vllm`, `model` is a Hugging Face ID of a public model, not gated, with safetensors weights, such as `unsloth/Qwen3.8-27B-NVFP4`, not an Ollama name; and the `vllm` block needs the model's `tool-call-parser`.
+
 ## Workflow files copied before the backend
 
 To update workflow files copied before the backend, copy both templates again, and move any steps you added to the `agent` job into the new `codeman-task.yml`: the jobs that record runs need their new permissions, variables and the run's ID in the ledger. Older workflow files fail in `select`, before they mark any task, since they pass none of the backend's variables. Workflow files copied before the budgets came from the ledger pass neither the organization's monthly budget nor the task's spend from `close-key` to `apply`: copy both templates again, too. With pods, update every repository of the organization at once to a version with the pod registry: its `open-key` terminates the organization's pods created by older versions, which the registry does not hold, and older versions cannot share the newer pods.

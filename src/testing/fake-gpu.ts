@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
 import type { Server } from "node:http";
 import { Gateway } from "../gateway/gateway.ts";
-import { type FitReport, parseFitHint } from "../gateway/pod.ts";
+import { type FitReport, parseContextHint, parseFitHint } from "../gateway/pod.ts";
+import type { VllmFitReport } from "../gateway/vllm.ts";
 import { type InferenceEngine, openAiUsage } from "../inference/engine.ts";
 import type {
+  CudaVersion,
   Endpoint,
   GpuProvider,
   Pod,
@@ -13,6 +15,7 @@ import type {
   ServerlessHost,
 } from "../inference/gpu.ts";
 import { parseOllamaVariables } from "../inference/ollama.ts";
+import { parseVllmSettings } from "../inference/vllm.ts";
 
 /** A GPU cloud for tests: pods and endpoints in memory, and the calls made to it. */
 export class FakeGpu implements GpuProvider {
@@ -27,6 +30,10 @@ export class FakeGpu implements GpuProvider {
   readonly prices: Record<string, number>;
   /** GB of memory, by GPU type; types not listed do not say. */
   readonly memories: Record<string, number> = { "GPU-A": 48 };
+  /** The CUDA versions hosts offer, by GPU type; types not listed offer 13.0, with room. */
+  readonly cuda: Record<string, CudaVersion[]> = {};
+  /** The CUDA version hosts report for the pods they run. */
+  cudaVersion = "13.0";
   /** What each pod was billed, by ID, terminated pods included. */
   readonly billed: Record<string, number> = {};
   readonly endpoints = new Map<string, Endpoint>();
@@ -49,6 +56,10 @@ export class FakeGpu implements GpuProvider {
         return price;
       },
       memory: async (gpuType) => this.memories[gpuType],
+      cudaVersions: async (gpuType, min) =>
+        (this.cuda[gpuType] ?? [{ version: "13.0", available: true }]).filter(
+          ({ version }) => Number(version) >= Number(min),
+        ),
       create: async (spec) => {
         this.created.push(spec);
         const pod: Pod = {
@@ -69,7 +80,10 @@ export class FakeGpu implements GpuProvider {
         if (!pod) return undefined;
         const gets = (this.#gets.get(id) ?? 0) + 1;
         this.#gets.set(id, gets);
-        if (pod.status === "starting" && gets > this.startAfter) pod.status = "running";
+        if (pod.status === "starting" && gets > this.startAfter) {
+          pod.status = "running";
+          pod.cudaVersion = this.cudaVersion;
+        }
         return { ...pod };
       },
       list: async (env) =>
@@ -178,7 +192,9 @@ export class FakeGateways {
       // As the pod's gateway applies them (src/gateway/main.ts), and fits the model to the GPU.
       const ollama = parseOllamaVariables(pod.env.CODEMAN_OLLAMA);
       if (ollama.ok) gateway.ollama = ollama.value;
-      gateway.fit = fakeFit(gateway.ollama, pod);
+      const vllm = parseVllmSettings(pod.env.CODEMAN_VLLM);
+      if (pod.env.CODEMAN_ENGINE === "vllm" && vllm.ok) gateway.vllm = vllm.value;
+      gateway.fit = gateway.vllm ? fakeVllmFit(gateway.vllm, pod) : fakeFit(gateway.ollama, pod);
       gateway.contextLength = gateway.fit.contextLength;
       const { server, url } = await gateway.listen();
       served = { gateway, url, server };
@@ -267,5 +283,28 @@ export function fakeFit(variables: Readonly<Record<string, string>>, pod: Pod): 
     size: 30_000_000_000,
     sizeVram: 30_000_000_000,
     family: "qwen3moe",
+  };
+}
+
+/**
+ * How a pod's real gateway would serve the model with vLLM, for tests: the settings' context,
+ * else the cached one, else 131072 tokens found in 2 starts; for `max-num-seqs` requests.
+ */
+export function fakeVllmFit(settings: Readonly<Record<string, string>>, pod: Pod): VllmFitReport {
+  const configured = Number(settings["max-model-len"]) || undefined;
+  const hint = parseContextHint(pod.env.CODEMAN_FIT);
+  const parallel = Number(settings["max-num-seqs"]) || 1;
+  const contextLength = configured ?? hint ?? 131072;
+  return {
+    engine: "vllm",
+    contextLength,
+    modelContextLength: configured || hint ? undefined : 262144,
+    requestedParallel: parallel,
+    parallel,
+    concurrency: parallel + 0.5,
+    cacheTokens: (parallel + 0.5) * contextLength,
+    source: configured ? "settings" : hint ? "cache" : "search",
+    loads: configured || hint ? 1 : 2,
+    toolCallParser: settings["tool-call-parser"] ?? "",
   };
 }

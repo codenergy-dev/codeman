@@ -6,14 +6,22 @@ import type { Store } from "../store/store.ts";
 import type { ProviderAccounts } from "./budget.ts";
 import { ENGINES } from "./engines.ts";
 import type { GpuProvider } from "./gpu.ts";
-import { type OllamaSettings, ollamaEnvironment, POD_IMAGE } from "./ollama.ts";
+import type { ModelHub } from "./huggingface.ts";
+import { podImage } from "./images.ts";
+import { type OllamaSettings, ollamaEnvironment } from "./ollama.ts";
 import { OpenRouter, OpenRouterProvider } from "./openrouter.ts";
 import type { InferenceProvider } from "./provider.ts";
 import { ACCOUNTS, accountOf, isHourlyAccount, isProviderName } from "./providers.ts";
 import { Runpod } from "./runpod.ts";
 import { PodInference, ServerlessInference } from "./selfhosted.ts";
 import type { PodSpend } from "./spend.ts";
-import { vllmContextLength, vllmProblems } from "./vllm.ts";
+import {
+  checkedVllm,
+  type VllmSettings,
+  vllmArguments,
+  vllmContextLength,
+  vllmProblems,
+} from "./vllm.ts";
 
 /**
  * Where a task's runs get their model, as `select` resolves it and the jobs after it read it
@@ -27,6 +35,8 @@ export type InferenceChoice = (
       podReuse: "task" | "run";
       /** The `ollama` settings, by key; absent without any. */
       ollama?: OllamaSettings | undefined;
+      /** The `vllm` settings, by key; absent without any. */
+      vllm?: VllmSettings | undefined;
       /**
        * The most tasks the run's profile serves at once, which `num-parallel` defaults to on
        * images that apply Ollama settings (choices 5 and 6 of the plan for fitting Ollama to the
@@ -98,6 +108,7 @@ export function inferenceChoice(
         ...(settings.ollama && Object.keys(settings.ollama).length > 0
           ? { ollama: settings.ollama }
           : {}),
+        ...(settings.vllm && Object.keys(settings.vllm).length > 0 ? { vllm: settings.vllm } : {}),
         ...(options.parallel === undefined ? {} : { parallel: options.parallel }),
       };
 }
@@ -125,16 +136,22 @@ export function parseInferenceChoice(text: string): InferenceChoice {
       ? typeof choice.gpu === "string"
       : typeof choice.endpoint === "string");
   if (!valid) throw new Error("The inference input is not a valid choice.");
-  if (choice.provider === "runpod-pod" && choice.ollama !== undefined) {
-    // The pod's environment comes from it: only the keys and values the list takes.
-    const ollama: unknown = choice.ollama;
-    const strings =
-      typeof ollama === "object" &&
-      ollama !== null &&
-      !Array.isArray(ollama) &&
-      Object.values(ollama).every((value) => typeof value === "string");
-    if (!strings) throw new Error("The inference input is not a valid choice.");
-    ollamaEnvironment(choice.ollama);
+  if (choice.provider === "runpod-pod") {
+    // The pod's environment comes from them: only the keys and values the lists take.
+    for (const [block, check] of [
+      [choice.ollama, ollamaEnvironment],
+      [choice.vllm, vllmArguments],
+    ] as const) {
+      if (block === undefined) continue;
+      const value: unknown = block;
+      const strings =
+        typeof value === "object" &&
+        value !== null &&
+        !Array.isArray(value) &&
+        Object.values(value).every((text) => typeof text === "string");
+      if (!strings) throw new Error("The inference input is not a valid choice.");
+      check(block);
+    }
   }
   if (choice.provider === "runpod-pod" && choice.parallel !== undefined) {
     const { parallel } = choice;
@@ -166,7 +183,7 @@ export function inferenceProvider(runtime: Runtime, store: () => Store): Inferen
   }
   return selfHosted(choice, runtime.repository, {
     accountKey: runtime.input("gpu-key", { required: true }),
-    image: runtime.input("pod-image") || POD_IMAGE,
+    image: podImage(choice.engine, runtime.input("pod-image")),
     usage: runtime.input("gateway-usage"),
     store,
   });
@@ -211,6 +228,9 @@ export function selfHosted(
     usage: string;
     store: () => Store;
     gpu?: GpuProvider;
+    /** For tests: the gateways' fetch, and where vLLM's models are checked. */
+    fetch?: typeof fetch;
+    hub?: ModelHub;
   },
 ): InferenceProvider {
   const gpu = inputs.gpu ?? gpuProvider(accountOf(choice.provider), inputs.accountKey);
@@ -225,9 +245,17 @@ export function selfHosted(
         image: inputs.image,
         reuse: choice.podReuse,
         ollama: ollamaEnvironment(choice.ollama),
+        ...(choice.engine === "vllm" ? { vllm: checkedVllm(choice.vllm) } : {}),
         parallel: choice.parallel,
       },
-      { repository, gpu, accountKey: inputs.accountKey, store: inputs.store() },
+      {
+        repository,
+        gpu,
+        accountKey: inputs.accountKey,
+        store: inputs.store(),
+        ...(inputs.fetch ? { fetch: inputs.fetch } : {}),
+        ...(inputs.hub ? { hub: inputs.hub } : {}),
+      },
     );
   }
   return new ServerlessInference(

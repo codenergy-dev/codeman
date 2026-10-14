@@ -2,18 +2,21 @@ import { ENGINES } from "./inference/engines.ts";
 import { type OllamaSettings, ollamaSetting } from "./inference/ollama.ts";
 import {
   accountOf,
+  BLOCK_ENGINES,
   endpointId,
   isOpenRouterModel,
   PROVIDER_BLOCKS,
   PROVIDER_NAMES,
   PROVIDER_SETTINGS,
   PROVIDERS,
+  type ProviderBlockName,
   type ProviderName,
   type ProviderSettingName,
   providerProblem,
   settingValues,
   withProviderDefaults,
 } from "./inference/providers.ts";
+import { type VllmSettings, vllmSetting } from "./inference/vllm.ts";
 import type { Parsed } from "./output.ts";
 import { isStage, STAGES, type Stage } from "./stages.ts";
 import { parseYaml, type YamlEntry, type YamlNode } from "./yaml.ts";
@@ -68,7 +71,7 @@ export interface Settings {
    * settings that follow it are accepted only by some providers (`src/inference/providers.ts`).
    */
   provider: ProviderName;
-  /** What serves the model: `ollama` on pods, `vllm` on Serverless endpoints. */
+  /** What serves the model: `ollama` or `vllm` on pods, `vllm` on Serverless endpoints. */
   engine?: string | undefined;
   /** The GPU type of a pod, as the provider names it, such as `NVIDIA RTX A6000`. */
   gpu?: string | undefined;
@@ -81,6 +84,11 @@ export interface Settings {
    * of its Ollama server (`OLLAMA_SETTINGS` in `src/inference/ollama.ts`).
    */
   ollama?: OllamaSettings | undefined;
+  /**
+   * The pod's vLLM settings, by key, such as `{ "max-num-seqs": "4" }`: each becomes an argument
+   * of `vllm serve` (`VLLM_SETTINGS` in `src/inference/vllm.ts`).
+   */
+  vllm?: VllmSettings | undefined;
 }
 
 export type SettingName = keyof Settings;
@@ -211,7 +219,7 @@ export function isSettingName(name: string): name is SettingName {
 
 /** Validates one value, given as text. */
 export function parseSetting(name: SettingName, text: string): Parsed<string | number> {
-  if (name === "ollama") return { ok: false, error: OLLAMA_BLOCK };
+  if (isBlockName(name)) return { ok: false, error: BLOCKS[name].error };
   if (name === "model") {
     return isModelName(text)
       ? { ok: true, value: text }
@@ -274,8 +282,31 @@ export const PROFILE_SETTINGS: readonly SettingName[] = [
 /** The settings that go with a provider: dropped by a layer or profile that changes provider. */
 const PROVIDER_KEYS: readonly string[] = [...PROVIDER_SETTINGS, ...PROVIDER_BLOCKS];
 
-const OLLAMA_BLOCK =
-  "`ollama` must be a block of Ollama's settings, one `name: value` per line, indented under it, such as `num-parallel: 4`.";
+/** How the settings file takes each block of settings: its error, and the check of each key. */
+const BLOCKS: Readonly<
+  Record<
+    ProviderBlockName,
+    {
+      error: string;
+      check: (key: string, text: string) => Parsed<string>;
+    }
+  >
+> = {
+  ollama: {
+    error:
+      "`ollama` must be a block of Ollama's settings, one `name: value` per line, indented under it, such as `num-parallel: 4`.",
+    check: ollamaSetting,
+  },
+  vllm: {
+    error:
+      "`vllm` must be a block of vLLM's settings, one `name: value` per line, indented under it, such as `tool-call-parser: qwen3_xml`.",
+    check: vllmSetting,
+  },
+};
+
+function isBlockName(name: string): name is ProviderBlockName {
+  return (PROVIDER_BLOCKS as readonly string[]).includes(name);
+}
 
 /**
  * Names settings had before the provider settings plan, and what to write instead (decision 7):
@@ -367,8 +398,8 @@ export function parseSettings(text: string, source = SETTINGS_FILE): Parsed<Sett
     const parsed =
       entry.key === "profiles"
         ? profiles(entry.value)
-        : entry.key === "ollama"
-          ? ollamaBlock(entry)
+        : isBlockName(entry.key)
+          ? block(entry, entry.key)
           : setting(entry, "setting");
     if (!parsed.ok) return { ok: false, error: `${source}, line ${parsed.line}: ${parsed.error}` };
     if (
@@ -389,20 +420,24 @@ export function parseSettings(text: string, source = SETTINGS_FILE): Parsed<Sett
 /** A parse result whose error names the line it is on. */
 type Read<T> = { ok: true; value: T } | { ok: false; line: number; error: string };
 
-/** `ollama`: a block of Ollama's settings, each checked against the list, on its own line. */
-function ollamaBlock(entry: YamlEntry): Read<OllamaSettings> {
+/**
+ * A block of settings, such as `ollama` or `vllm`: an engine's settings, each checked against its
+ * list, on its own line.
+ */
+function block(entry: YamlEntry, name: ProviderBlockName): Read<Record<string, string>> {
   const { line, value } = entry;
-  if (value.kind !== "map") return { ok: false, line, error: OLLAMA_BLOCK };
+  const { error, check } = BLOCKS[name];
+  if (value.kind !== "map") return { ok: false, line, error };
   const settings: Record<string, string> = {};
   for (const { key, line: keyLine, value: keyValue } of value.entries) {
     if (keyValue.kind !== "scalar") {
       return {
         ok: false,
         line: keyLine,
-        error: `the value of \`ollama\`'s \`${key}\` is not a plain value.`,
+        error: `the value of \`${name}\`'s \`${key}\` is not a plain value.`,
       };
     }
-    const checked = ollamaSetting(key, keyValue.text);
+    const checked = check(key, keyValue.text);
     if (!checked.ok) return { ok: false, line: keyLine, error: checked.error };
     settings[key] = checked.value;
   }
@@ -503,10 +538,10 @@ function profile(node: YamlNode): Read<Profile> {
       const parsed = condition(entry, key);
       if (!parsed.ok) return parsed;
       Object.assign(result.conditions, { [key]: parsed.value });
-    } else if (key === "ollama") {
-      const parsed = ollamaBlock(entry);
+    } else if (isBlockName(key)) {
+      const parsed = block(entry, key);
       if (!parsed.ok) return parsed;
-      result.settings.ollama = parsed.value;
+      result.settings[key] = parsed.value;
     } else {
       const parsed = setting(entry, "profile");
       if (!parsed.ok) return parsed;
@@ -837,11 +872,26 @@ function serving(
       result = omit(result, PROVIDER_KEYS);
     }
     if (provider !== undefined) from = source;
-    const { ollama, ...values } = pick(settings, PROFILE_SETTINGS);
+    // A layer that names another engine leaves out the blocks of the one it inherits.
+    const engine = settings.engine;
+    if (engine !== undefined && engine !== engineOf(result)) {
+      result = omit(
+        result,
+        PROVIDER_BLOCKS.filter((block) => BLOCK_ENGINES[block] !== engine),
+      );
+    }
+    const { ollama, vllm, ...values } = pick(settings, PROFILE_SETTINGS);
     Object.assign(result, values);
     if (ollama !== undefined) result.ollama = { ...result.ollama, ...ollama };
+    if (vllm !== undefined) result.vllm = { ...result.vllm, ...vllm };
   }
   return { ok: true, value: result };
+}
+
+/** The engine settings name, or their provider's default one. */
+function engineOf(settings: PartialSettings): string | undefined {
+  const provider = settings.provider ?? DEFAULTS.provider;
+  return settings.engine ?? PROVIDERS[provider]?.settings.engine?.default;
 }
 
 /** How errors name the layer at `index` of `resolveSettings`: where it comes from, capitalized. */
@@ -911,6 +961,7 @@ function settingsProblem(settings: PartialSettings): string | undefined {
     {
       ...values,
       ...(settings.ollama === undefined ? {} : { ollama: settings.ollama }),
+      ...(settings.vllm === undefined ? {} : { vllm: settings.vllm }),
       provider: settings.provider ?? DEFAULTS.provider,
       model,
     },

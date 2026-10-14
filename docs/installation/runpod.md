@@ -29,9 +29,21 @@ Instead of OpenRouter, Codeman can serve the model itself on GPUs rented from [R
    ```
 
    Only the documented keys are accepted; a typo, or a key Codeman controls such as `host`, stops the run with an error before any pod is created.
-2. Codeman runs its own pod image, `ghcr.io/codenergy-dev/codeman-pod`, public and pinned by digest in the version you use (`POD_IMAGE` in `src/inference/ollama.ts`); there is nothing to set up. To run an image of your own, set `pod-image: <image>@sha256:<digest>` on the `open-key` step.
 
-   The organization's tasks with the same pod settings (model, `gpu`, image, `pod-reuse` and Ollama settings), in any of its repositories, share one pod, and a pod kept after a run serves the next run on its settings ([shared pods](../inference/pods.md#shared-pods)). That needs an image whose gateway serves several runs at once, built from Codeman's code since shared pods. The image pinned before them serves one run at a time, and Codeman gives each task a pod of its own on it; an image of your own must serve several runs, or be listed in `SINGLE_RUN_IMAGES`, or its runs fail. Ollama settings, and fitting the model to the GPU, need an image built since them, too: the images pinned before cannot apply them, a run with Ollama settings stops on them before any pod is created, and a run without serves on them as before ([pod images](../settings/ollama.md#pod-images)).
+   To serve the model with vLLM instead, which batches the requests of the tasks that share a pod whatever the model, set `engine: vllm`, a Hugging Face model ID of a public model with safetensors weights, and a `vllm:` block with at least the model's `tool-call-parser` ([vLLM settings](../settings/vllm.md)):
+
+   ```yaml
+   engine: vllm
+   model: unsloth/Qwen3.8-27B-NVFP4
+   vllm:
+     tool-call-parser: qwen3_xml
+     reasoning-parser: qwen3
+   ```
+
+   vLLM's image needs hosts with CUDA 13.0 or newer: Codeman requires them, and stops the run before creating a pod when none of the GPU type has room. Its pods take longer to start than Ollama's, about 6 to 9 minutes for a 27B model.
+2. Codeman runs its own pod images, one per engine, `ghcr.io/codenergy-dev/codeman-ollama` and `ghcr.io/codenergy-dev/codeman-vllm`, public and pinned by digest in the version you use (`POD_IMAGES` in `src/inference/images.ts`; versions before the image per engine pin `ghcr.io/codenergy-dev/codeman-pod`); there is nothing to set up. A version that pins no vLLM image yet stops a run with `engine: vllm` before any pod is created ([pod images](../settings/vllm.md#pod-images)). To run an Ollama image of your own, set `pod-image: <image>@sha256:<digest>` on the `open-key` step; vLLM pods always run Codeman's.
+
+   The organization's tasks with the same pod settings (model, `gpu`, image, `pod-reuse`, and the Ollama or vLLM settings), in any of its repositories, share one pod, and a pod kept after a run serves the next run on its settings ([shared pods](../inference/pods.md#shared-pods)). That needs an image whose gateway serves several runs at once, built from Codeman's code since shared pods. The image pinned before them serves one run at a time, and Codeman gives each task a pod of its own on it; an image of your own must serve several runs, or be listed in `SINGLE_RUN_IMAGES`, or its runs fail. Ollama settings, and fitting the model to the GPU, need an image built since them, too: the images pinned before cannot apply them, a run with Ollama settings stops on them before any pod is created, and a run without serves on them as before ([pod images](../settings/ollama.md#pod-images)).
 3. Codeman keeps its pods in the [backend](setup.md#4-set-up-the-backend), and terminates the pods of the Runpod account that carry the organization's environment (`CODEMAN_ORGANIZATION`, or `CODEMAN_REPOSITORY` of one of its repositories) and that its registry does not hold. Create other pods of the account without those variables, or in another account; Codeman never touches them.
 
 ## Serverless

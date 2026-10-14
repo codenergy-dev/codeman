@@ -22,13 +22,14 @@ A pod Codeman creates on Runpod's Secure Cloud, shared by the organization's tas
 | --- | --- | --- |
 | `gpu` | none; required | The pod's GPU type, by Runpod's GPU ID (not its display name), such as `"NVIDIA RTX A6000"` (quoted or not in the file; `/codeman set gpu` takes the rest of its line) |
 | `pod-reuse` | `task` | `task`: a pod is kept after a run for the next run on its settings, of any task; `run`: a pod ends with its runs |
-| `engine` | `ollama` | What serves the model; `ollama` is the only engine on pods so far |
+| `engine` | `ollama` | What serves the model: `ollama`, or `vllm`, which batches requests whatever the model ([vLLM settings](vllm.md)). A layer or profile that names another engine leaves out the block of the engine it inherits |
 | `ollama` | none | The pod's Ollama settings, with the engine `ollama`: a block of keys, each one of the server's variables, such as `num-parallel: 4` for `OLLAMA_NUM_PARALLEL=4`; only the keys of [Ollama settings](ollama.md). Without them, a pod serves as many requests at once as its profile's tasks, with the largest context that fits its GPU |
+| `vllm` | none | The pod's vLLM settings, with the engine `vllm`: a block of keys, each one of `vllm serve`'s arguments, such as `max-num-seqs: 4` for `--max-num-seqs 4`; only the keys of [vLLM settings](vllm.md). It needs `tool-call-parser`. Without the others, a pod serves as many requests at once as its profile's tasks, with the largest context that fits its GPU for them |
 
-- **Model ID:** Ollama's, such as `qwen3-coder:30b`.
+- **Model ID:** Ollama's, such as `qwen3-coder:30b`; with `engine: vllm`, a Hugging Face ID, `namespace/name`, such as `unsloth/Qwen3.8-27B-NVFP4`, of a public model, not gated, with safetensors weights.
 - **Secrets:** `CODEMAN_RUNPOD_API_KEY`, in the key jobs.
 - **Cost:** the pod's time at its price, split among the runs on it ([spend](../budget/spend.md#self-hosted-runs)).
-- **Pod image:** Ollama settings, and fitting the model to the GPU, need an image whose gateway does both; a run with Ollama settings on an image that cannot stops before any pod is created ([Ollama settings](ollama.md#pod-images)).
+- **Pod image:** Codeman picks it by `engine`, one per engine ([vLLM settings](vllm.md#pod-images)). Ollama settings, and fitting the model to the GPU, need an image whose gateway does both; a run with Ollama settings on an image that cannot stops before any pod is created ([Ollama settings](ollama.md#pod-images)).
 
 ## `runpod-serverless`
 

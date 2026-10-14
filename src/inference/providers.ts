@@ -1,5 +1,11 @@
 import { ENGINES } from "./engines.ts";
 import { type OllamaSettings, ollamaEnvironment } from "./ollama.ts";
+import {
+  isHuggingFaceId,
+  TOOL_CALL_PARSER_NEEDED,
+  type VllmSettings,
+  vllmArguments,
+} from "./vllm.ts";
 
 /**
  * The providers a run's model can be served by, as the `provider` setting names them, and the
@@ -15,10 +21,11 @@ export const PROVIDER_SETTINGS = ["engine", "gpu", "endpoint", "pod-reuse"] as c
 export type ProviderSettingName = (typeof PROVIDER_SETTINGS)[number];
 
 /**
- * Blocks of settings that only some providers accept, each for one of their engines, such as
- * `ollama` (the Ollama settings plan). Each key of a block is inherited like a setting.
+ * Blocks of settings that only some providers accept, each for one of their engines: `ollama`
+ * (the Ollama settings plan) and `vllm` (the plan for vLLM on pods). Each key of a block is
+ * inherited like a setting.
  */
-export const PROVIDER_BLOCKS = ["ollama"] as const;
+export const PROVIDER_BLOCKS = ["ollama", "vllm"] as const;
 export type ProviderBlockName = (typeof PROVIDER_BLOCKS)[number];
 
 /** How a provider takes a block of settings. */
@@ -26,6 +33,20 @@ export interface ProviderBlock {
   /** The engine the block configures; the provider takes it only with that engine. */
   engine: string;
 }
+
+/**
+ * Checks a whole block, inherited from every layer: throws with what is wrong, such as a key it
+ * does not take or keys that do not go together.
+ */
+const BLOCK_CHECKS: Readonly<
+  Record<ProviderBlockName, (settings: Readonly<Record<string, string>>) => unknown>
+> = { ollama: ollamaEnvironment, vllm: vllmArguments };
+
+/** The engine each block configures, whichever provider takes it. */
+export const BLOCK_ENGINES: Readonly<Record<ProviderBlockName, string>> = {
+  ollama: "ollama",
+  vllm: "vllm",
+};
 
 /** How a provider takes one of its settings. */
 export interface ProviderSetting {
@@ -77,11 +98,11 @@ export const PROVIDERS: Readonly<Record<ProviderName, Provider>> = {
   "runpod-pod": {
     account: "runpod",
     settings: {
-      engine: { values: ["ollama"], default: "ollama" },
+      engine: { values: ["ollama", "vllm"], default: "ollama" },
       gpu: { required: true, example: '"NVIDIA RTX A6000"' },
       "pod-reuse": { values: ["task", "run"], default: "task" },
     },
-    blocks: { ollama: { engine: "ollama" } },
+    blocks: { ollama: { engine: "ollama" }, vllm: { engine: "vllm" } },
     model: "engine",
     secrets: [],
   },
@@ -133,7 +154,7 @@ export function settingValues(name: ProviderSettingName): string[] | undefined {
 /** The settings of one run on a provider, as `providerProblem` checks them. */
 export type ProviderSettings = { provider: string; model: string } & Partial<
   Record<ProviderSettingName, string>
-> & { ollama?: OllamaSettings | undefined };
+> & { ollama?: OllamaSettings | undefined; vllm?: VllmSettings | undefined };
 
 /**
  * Why settings do not fit their provider: a setting it does not accept, a value it does not
@@ -179,12 +200,18 @@ export function providerProblem(settings: ProviderSettings, serves = true): stri
       return `With \`${name}\`, \`${block}\` configures the engine \`${spec.engine}\`, not \`${engine}\`.`;
     }
     try {
-      ollamaEnvironment(settings[block]);
+      BLOCK_CHECKS[block](settings[block] ?? {});
     } catch (error) {
       return error instanceof Error ? error.message : String(error);
     }
   }
-  return serves ? modelProblem(name, settings.model, settings.engine) : undefined;
+  if (!serves) return undefined;
+  // A pod's vLLM serves tool calls only with the model's parser (decision 5 of the plan for vLLM
+  // on pods).
+  if (provider.blocks?.vllm && engine === "vllm" && !settings.vllm?.["tool-call-parser"]) {
+    return TOOL_CALL_PARSER_NEEDED;
+  }
+  return modelProblem(name, settings.model, settings.engine);
 }
 
 /** The settings with the provider's defaults for those no layer set. */
@@ -230,6 +257,12 @@ function modelProblem(
   const engineName = engine ?? provider.settings.engine?.default ?? "";
   const served = ENGINES[engineName];
   if (!served) return `\`${name}\` has no engine \`${engineName}\`.`;
+  // vLLM downloads a pod's model from Hugging Face (decision 10 of the plan for vLLM on pods).
+  if (provider.blocks?.vllm && engineName === "vllm") {
+    return isHuggingFaceId(model)
+      ? undefined
+      : `With \`${name}\` and the engine \`vllm\`, \`model\` must be a Hugging Face model ID, \`namespace/name\`, such as \`${served.example}\`, not \`${model}\`.`;
+  }
   return served.isModel(model)
     ? undefined
     : `With \`${name}\`, \`model\` must be a model name of the engine \`${engineName}\`, such as \`${served.example}\`, not \`${model}\`.`;

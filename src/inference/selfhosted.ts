@@ -3,6 +3,7 @@ import { usd } from "../budget.ts";
 import { type EndedRun, GATEWAY_VERSION, sha256 } from "../gateway/gateway.ts";
 import { type FitReport, GATEWAY_PORT } from "../gateway/pod.ts";
 import type { GatewayUsage, Span } from "../gateway/usage.ts";
+import type { VllmFitReport } from "../gateway/vllm.ts";
 import type { RepositoryRef } from "../platform/types.ts";
 import type { Log } from "../runtime/runtime.ts";
 import { LAYOUT, repositoryName } from "../store/layout.ts";
@@ -19,6 +20,7 @@ import {
   type ServerlessHost,
   waitUntilReady,
 } from "./gpu.ts";
+import { HuggingFace, type ModelHub } from "./huggingface.ts";
 import { IMAGES_WITHOUT_OLLAMA_SETTINGS, OLLAMA_VERSION, SINGLE_RUN_IMAGES } from "./ollama.ts";
 import {
   type InferenceProvider,
@@ -37,6 +39,7 @@ import {
   PodRegistry,
   type RegisteredPod,
 } from "./registry.ts";
+import { VLLM_MIN_CUDA } from "./vllm.ts";
 
 /** How long a new pod has to pull its image and model and serve it. */
 export const START_MINUTES = 25;
@@ -48,8 +51,12 @@ export const RUN_IDLE_MINUTES = 30;
 export const CLAIM_POLL_MS = 10_000;
 /** Claims a task makes before it gives up: its waits for a creation lease, and pods it could not join. */
 const CLAIMS = Math.ceil(CREATE_LEASE_MS / CLAIM_POLL_MS) + 10;
-/** Container disk of a pod, in GB: the model and Ollama's image. */
+/** Container disk of a pod, in GB: the model and Ollama's image; the least a vLLM pod gets. */
 const DISK_GB = 80;
+/** A vLLM pod's disk beside the model's weights, in GB: vLLM's image, unpacked, and its caches. */
+const VLLM_BASE_DISK_GB = 40;
+/** Room a vLLM pod's disk leaves beyond the model's weights, as a share of them. */
+const VLLM_DISK_SPARE = 0.25;
 /** Billing is read this far back; older pods have left the spend table's refreshed rows. */
 const BILLING_DAYS = 30;
 
@@ -74,10 +81,46 @@ export interface PodSettings extends SelfHostedSettings {
    */
   ollama?: Readonly<Record<string, string>> | undefined;
   /**
+   * The vLLM settings, by key, such as `{ "tool-call-parser": "qwen3_xml" }`, sorted
+   * (`checkedVllm`); with the engine `vllm` only.
+   */
+  vllm?: Readonly<Record<string, string>> | undefined;
+  /**
    * The most tasks the run's profile serves at once, which `num-parallel` defaults to on images
-   * that fit the model to the GPU (choices 5 and 6 of the plan for fitting Ollama to the GPU).
+   * that fit the model to the GPU (choices 5 and 6 of the plan for fitting Ollama to the GPU), and
+   * `max-num-seqs` with vLLM.
    */
   parallel?: number | undefined;
+}
+
+/** Whether pod settings serve their model with vLLM. */
+function onVllm(settings: Pick<PodSettings, "engine">): boolean {
+  return settings.engine.name === "vllm";
+}
+
+/**
+ * The vLLM settings a pod gets: `max-num-seqs` defaults to the most tasks the run's profile
+ * serves, and the settings' own win (decision 3 of the plan for vLLM on pods). Sorted by key.
+ */
+export function podVllm(settings: Pick<PodSettings, "vllm" | "parallel">): Record<string, string> {
+  const derived =
+    settings.parallel === undefined ? {} : { "max-num-seqs": String(settings.parallel) };
+  return Object.fromEntries(
+    Object.entries({ ...derived, ...settings.vllm }).sort(([a], [b]) =>
+      a < b ? -1 : a > b ? 1 : 0,
+    ),
+  );
+}
+
+/**
+ * A vLLM pod's container disk, in GB: its model's weights with room to spare, and vLLM's image
+ * and caches; 80 GB at least (decision 10 of the plan for vLLM on pods).
+ */
+export function vllmDiskGb(weightsBytes: number): number {
+  return Math.max(
+    DISK_GB,
+    Math.ceil((weightsBytes / 1e9) * (1 + VLLM_DISK_SPARE) + VLLM_BASE_DISK_GB),
+  );
 }
 
 /** What `close` needs to find a pod run again. Travels in plain text between jobs. */
@@ -146,15 +189,29 @@ export function podOllama(
  * length, which the cache stands in for.
  */
 export function fitKey(
-  settings: Pick<PodSettings, "image" | "model" | "gpuType" | "ollama">,
+  settings: Pick<PodSettings, "image" | "model" | "gpuType" | "ollama"> &
+    Partial<Pick<PodSettings, "engine" | "vllm">>,
 ): string {
-  const variables = ollamaVariables(settings).filter(
-    (variable) => !variable.startsWith("OLLAMA_CONTEXT_LENGTH="),
-  );
+  // A vLLM pod's: its engine and every vLLM setting but the context (decision 9 of the plan for
+  // vLLM on pods).
+  const variables =
+    settings.engine && onVllm({ engine: settings.engine })
+      ? [
+          "engine vllm",
+          ...vllmValues(settings).filter((value) => !value.startsWith("max-model-len=")),
+        ]
+      : ollamaVariables(settings).filter(
+          (variable) => !variable.startsWith("OLLAMA_CONTEXT_LENGTH="),
+        );
   return sha256([settings.image, settings.model, settings.gpuType, ...variables].join("\n")).slice(
     0,
     32,
   );
+}
+
+/** The vLLM settings of pod settings, as `key=value`; empty without any. */
+function vllmValues(settings: Partial<Pick<PodSettings, "vllm">>): string[] {
+  return Object.entries(settings.vllm ?? {}).map(([key, value]) => `${key}=${value}`);
 }
 
 /** The Ollama variables of pod settings, as `VARIABLE=value`; empty without any. */
@@ -173,14 +230,17 @@ function quotedVariables(settings: Pick<PodSettings, "ollama">): string {
  * The hash of the settings a pod serves, which the organization's tasks with the same settings
  * share it by. On an image that serves one run at a time, the task is one of them: it gets a pod
  * of its own. Ollama settings are part of them, only when there are some, so pods without any
- * keep their hash (choice 9 of the Ollama settings plan).
+ * keep their hash (choice 9 of the Ollama settings plan); a vLLM pod's has its engine and its
+ * vLLM settings (decision 9 of the plan for vLLM on pods).
  */
 export function podSettingsKey(
-  settings: Pick<PodSettings, "model" | "gpuType" | "image" | "reuse" | "ollama">,
+  settings: Pick<PodSettings, "model" | "gpuType" | "image" | "reuse" | "ollama"> &
+    Partial<Pick<PodSettings, "engine" | "vllm">>,
   holder: string,
 ): string {
   const { model, gpuType, image, reuse } = settings;
   const ollama = ollamaVariables(settings);
+  const vllm = settings.engine && onVllm({ engine: settings.engine });
   const parts = [
     model,
     gpuType,
@@ -188,6 +248,7 @@ export function podSettingsKey(
     reuse,
     ...(servesOneRun(image) ? [holder] : []),
     ...(ollama.length > 0 ? [`ollama ${ollama.join(" ")}`] : []),
+    ...(vllm ? ["engine vllm", `vllm ${vllmValues(settings).join(" ")}`] : []),
   ];
   return sha256(parts.join("\n")).slice(0, 16);
 }
@@ -222,8 +283,10 @@ interface GatewayStatus {
   ready?: boolean;
   contextLength?: number;
   ollama?: Record<string, unknown>;
+  /** The vLLM settings it applied, by key, from gateways that serve vLLM. */
+  vllm?: Record<string, unknown>;
   /** How the model fits the GPU, from gateways that check it. */
-  fit?: FitReport;
+  fit?: FitReport | VllmFitReport;
   /** Why the model could not be served. */
   failure?: string;
 }
@@ -262,6 +325,8 @@ export interface SelfHostedOptions {
   now?: () => Date;
   fetch?: typeof fetch;
   wait?: (ms: number) => Promise<void>;
+  /** Where a vLLM pod's model is checked and sized: Hugging Face's API by default. */
+  hub?: ModelHub;
 }
 
 /**
@@ -285,7 +350,9 @@ export class PodInference implements InferenceProvider {
     if (!options.gpu.pods) throw new Error(`${options.gpu.name} has no pods.`);
     this.name = `${options.gpu.name} pods`;
     this.#own = settings.ollama ?? {};
-    this.#settings = { ...settings, ollama: podOllama(settings) };
+    this.#settings = onVllm(settings)
+      ? { ...settings, ollama: {}, vllm: podVllm(settings) }
+      : { ...settings, ollama: podOllama(settings), vllm: undefined };
     this.#options = options;
     this.#host = options.gpu.pods;
     this.#registry = new PodRegistry(options.store, options.repository.owner, () => this.#now());
@@ -309,6 +376,12 @@ export class PodInference implements InferenceProvider {
   #checkImage(log: Log): void {
     const own = { ollama: this.#own };
     const { image, parallel } = this.#settings;
+    if (onVllm(this.#settings)) {
+      if (image) return;
+      throw new Error(
+        "This version of Codeman pins no vLLM pod image yet (`POD_IMAGES` in src/inference/images.ts), so no pod was created: use a version that pins one, or `engine: ollama`. See docs/settings/vllm.md#pod-images.",
+      );
+    }
     if (fitsTheGpu(image)) return;
     if (ollamaVariables(own).length > 0) {
       throw new Error(
@@ -701,11 +774,28 @@ export class PodInference implements InferenceProvider {
         wait: this.#options.wait,
       },
     );
+    if (running.cudaVersion && (own || onVllm(this.#settings))) {
+      log.info(`Pod ${podId} runs on a host with CUDA ${running.cudaVersion}.`);
+    }
     const shared = !servesOneRun(image);
     const ollama = this.#settings.ollama ?? {};
+    const vllm = onVllm(this.#settings);
     const configured = Object.keys(ollama).length > 0;
     const fits = fitsTheGpu(image);
-    if (shared || configured || fits) {
+    if (vllm) {
+      const status = (await this.#admin(target, "GET", "/admin/status")) as GatewayStatus;
+      if (!sameVariables(status.vllm, this.#settings.vllm ?? {})) {
+        throw new Error(
+          `Pod ${podId}'s gateway did not apply the vLLM settings (${quotedValues(this.#settings)}): its image cannot.`,
+        );
+      }
+      if (status.fit?.engine !== "vllm") {
+        throw new Error(
+          `Pod ${podId}'s gateway did not report how vLLM serves ${model}: its image cannot.`,
+        );
+      }
+      await this.#reportVllm(status.fit, podId, own, log);
+    } else if (shared || configured || fits) {
       const status = (await this.#admin(target, "GET", "/admin/status")) as GatewayStatus;
       if (shared && (status.version ?? 1) < GATEWAY_VERSION) {
         throw new Error(
@@ -722,7 +812,9 @@ export class PodInference implements InferenceProvider {
           `Pod ${podId}'s gateway did not report how ${model} fits the GPU: its image cannot check it. List the image in IMAGES_WITHOUT_OLLAMA_SETTINGS (src/inference/ollama.ts), or use one built since the fit to the GPU.`,
         );
       }
-      if (fits && status.fit) await this.#reportFit(status.fit, podId, own, log);
+      if (fits && status.fit && status.fit.engine !== "vllm") {
+        await this.#reportFit(status.fit, podId, own, log);
+      }
     }
     const handle: PodHandle = {
       mode: "pod",
@@ -767,9 +859,10 @@ export class PodInference implements InferenceProvider {
     const { model, gpuType, image, engine } = this.#settings;
     if (!image) throw new Error("No pod image is pinned; see docs/installation/runpod.md#pods.");
     const listed = await this.#host.price(gpuType);
-    const fits = fitsTheGpu(image);
+    const vllm = onVllm(this.#settings) ? await this.#prepareVllm(log) : undefined;
+    const fits = !vllm && fitsTheGpu(image);
     const memory = fits ? await this.#host.memory?.(gpuType).catch(() => undefined) : undefined;
-    const cached = fits ? await this.#cachedFit(log) : undefined;
+    const cached = vllm ? vllm.cached : fits ? await this.#cachedFit(log) : undefined;
     const owner = this.#options.repository.owner.toLowerCase();
     const now = this.#now();
     const pod = await this.#host.create({
@@ -779,6 +872,7 @@ export class PodInference implements InferenceProvider {
         ...(Object.keys(this.#settings.ollama ?? {}).length > 0
           ? { CODEMAN_OLLAMA: JSON.stringify(this.#settings.ollama) }
           : {}),
+        ...(vllm ? { CODEMAN_VLLM: JSON.stringify(this.#settings.vllm) } : {}),
         ...(memory ? { CODEMAN_GPU_MEMORY_GB: String(memory) } : {}),
         ...(cached ? { CODEMAN_FIT: JSON.stringify(cached) } : {}),
         CODEMAN_ORGANIZATION: owner,
@@ -793,13 +887,109 @@ export class PodInference implements InferenceProvider {
       },
       port: GATEWAY_PORT,
       gpuType,
-      diskGb: DISK_GB,
+      diskGb: vllm?.diskGb ?? DISK_GB,
+      ...(vllm ? { minCudaVersion: VLLM_MIN_CUDA } : {}),
     });
     this.#events.push({ pod: pod.id, event: "created" });
     log.info(
       `Created pod ${pod.id} with ${gpuType}, at ${usd(listed * 3600)} per hour; waiting for ${model}.`,
     );
     return { pod, listed };
+  }
+
+  /**
+   * Before creating a vLLM pod, at no cost: a host of the GPU type must offer vLLM's CUDA now
+   * (decision 2 of the plan for vLLM on pods), and the model, and its draft model, must be public
+   * on Hugging Face with safetensors weights, whose size sets the pod's disk (decision 10). Gives
+   * the disk and the cached context.
+   */
+  async #prepareVllm(
+    log: Log,
+  ): Promise<{ diskGb: number; cached: { contextLength: number } | undefined }> {
+    const { gpuType, model } = this.#settings;
+    const versions = await this.#host.cudaVersions?.(gpuType, VLLM_MIN_CUDA);
+    if (versions && !versions.some(({ available }) => available)) {
+      throw new Error(
+        versions.length === 0
+          ? `Runpod offers no host with ${gpuType} and CUDA ${VLLM_MIN_CUDA} or newer, which vLLM's image needs, so no pod was created: use another GPU type, or \`engine: ollama\`.`
+          : `No host with ${gpuType} and CUDA ${VLLM_MIN_CUDA} or newer has room now (Runpod offers ${versions.map(({ version }) => version).join(", ")}), which vLLM's image needs, so no pod was created: try again later, or use another GPU type.`,
+      );
+    }
+    const hub = this.#options.hub ?? new HuggingFace(this.#options.fetch);
+    const draft = this.#settings.vllm?.["speculative-model"];
+    const models = await Promise.all([model, ...(draft ? [draft] : [])].map((id) => hub.model(id)));
+    const weights = models.reduce((total, { weightsBytes }) => total + weightsBytes, 0);
+    const diskGb = vllmDiskGb(weights);
+    log.info(
+      `Hugging Face serves ${models.map(({ id }) => id).join(" and ")}: ${(weights / 1e9).toFixed(1)} GB of weights, so the pod gets ${diskGb} GB of disk.`,
+    );
+    return { diskGb, cached: await this.#cachedContext(log) };
+  }
+
+  /** The context that served a vLLM pod's settings before, from the cache of fits. */
+  async #cachedContext(log: Log): Promise<{ contextLength: number } | undefined> {
+    if (this.#settings.vllm?.["max-model-len"]) return undefined;
+    const path = LAYOUT.context(this.#options.repository.owner, fitKey(this.#settings));
+    try {
+      const contextLength = (await this.#options.store.get(path))?.fields.contextLength;
+      if (!Number.isSafeInteger(contextLength)) return undefined;
+      log.info(`The cache of fits gives these settings a context of ${contextLength} tokens.`);
+      return { contextLength: contextLength as number };
+    } catch (error) {
+      log.warning(
+        `Could not read the cache of fits (${error instanceof Error ? error.message : error}); the pod fits the context itself.`,
+      );
+      return undefined;
+    }
+  }
+
+  /**
+   * Logs how vLLM serves the pod's model, and records in the cache of fits what the pod this
+   * task created found from vLLM's measures.
+   */
+  async #reportVllm(fit: VllmFitReport, podId: string, own: boolean, log: Log): Promise<void> {
+    const { model, image, gpuType } = this.#settings;
+    const how =
+      fit.source === "settings"
+        ? "from the settings"
+        : fit.source === "cache"
+          ? "from the cache of fits"
+          : `found in ${fit.loads} start(s)`;
+    const theirs = fit.modelContextLength ? ` (the model's own is ${fit.modelContextLength})` : "";
+    log.info(
+      `Pod ${podId} serves ${model} with vLLM, ${fit.parallel} parallel request(s) and a context of ${fit.contextLength} tokens${theirs}, wholly on the GPU: its K/V cache holds ${fit.concurrency.toFixed(2)} requests of it (${Math.round(fit.cacheTokens)} tokens); ${how}. Its tool calls work with the parser ${fit.toolCallParser}.`,
+    );
+    if (!own || fit.source !== "search") return;
+    const values = Object.fromEntries(
+      Object.entries(this.#settings.vllm ?? {}).filter(([key]) => key !== "max-model-len"),
+    );
+    try {
+      await this.#options.store.write([
+        {
+          op: "set",
+          path: LAYOUT.context(this.#options.repository.owner, fitKey(this.#settings)),
+          fields: {
+            engine: "vllm",
+            image,
+            model,
+            gpuType,
+            vllm: values,
+            contextLength: fit.contextLength,
+            ...(fit.modelContextLength ? { modelContextLength: fit.modelContextLength } : {}),
+            parallel: fit.parallel,
+            concurrency: fit.concurrency,
+            cacheTokens: fit.cacheTokens,
+            loads: fit.loads,
+            pod: podId,
+            recordedAt: this.#now(),
+          },
+        },
+      ]);
+    } catch (error) {
+      log.warning(
+        `Could not record the fit in the cache of fits (${error instanceof Error ? error.message : error}); the next pod fits it again.`,
+      );
+    }
   }
 
   /**
@@ -883,6 +1073,13 @@ export class PodInference implements InferenceProvider {
     const { fetch: fetchFn = fetch, accountKey } = this.#options;
     return callGateway(fetchFn, accountKey, target, method, path, body);
   }
+}
+
+/** The vLLM settings of pod settings, for messages: `` `max-num-seqs=4` ``. */
+function quotedValues(settings: Pick<PodSettings, "vllm">): string {
+  return vllmValues(settings)
+    .map((value) => `\`${value}\``)
+    .join(", ");
 }
 
 /** Whether a gateway reported exactly the Ollama variables requested. */
