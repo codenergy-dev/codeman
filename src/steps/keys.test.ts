@@ -50,6 +50,37 @@ async function open(
   return { runtime, inference };
 }
 
+/** The `inference` input of a run on a Runpod pod. */
+const POD_CHOICE = JSON.stringify({
+  provider: "runpod-pod",
+  engine: "ollama",
+  model: "qwen3-coder:30b",
+  pods: [],
+  accounts: ["runpod"],
+  recorded: { spent: 0 },
+  gpu: "GPU A",
+});
+
+async function close(
+  store: MemoryStore,
+  options: { inference: FakeInference; accounts?: FakeAccounts; inputs?: Record<string, string> },
+) {
+  const runtime = new FakeRuntime({
+    inputs: options.inputs ?? { handle: "h", "ledger-run": "300-1-7", inference: POD_CHOICE },
+  });
+  await closeKey(
+    fakeServices(
+      new FakePlatform(),
+      runtime,
+      undefined,
+      options.inference,
+      options.accounts,
+      store,
+    ),
+  );
+  return runtime;
+}
+
 async function run(store: MemoryStore, id: string, owner = "o") {
   return (await store.get(`organizations/${owner}/runs/${id}`))?.fields;
 }
@@ -301,9 +332,15 @@ test("closes the run by its handle, and reports what it used and the task's spen
       taskCosts: { "100": 0.1, "300": 0.0312 },
     },
   });
-  const runtime = new FakeRuntime({ inputs: { handle: "h", "ledger-run": "300-1-7" } });
-  await closeKey(fakeServices(new FakePlatform(), runtime, undefined, inference, undefined, store));
+  const accounts = new FakeAccounts();
+  accounts.costs = { "100": 0.5 };
+  const runtime = await close(store, {
+    inference,
+    accounts,
+    inputs: { handle: "h", "ledger-run": "300-1-7" },
+  });
   assert.deepEqual(inference.closed, ["h"]);
+  assert.deepEqual(accounts.costsRead, [], "the run's close read the task's keys already");
   assert.deepEqual(runtime.outputs, {
     "run-cost": "0.0312",
     "input-tokens": "1500",
@@ -327,4 +364,92 @@ test("an older workflow file passes the handle as key-hash: the run closes, then
   );
   assert.deepEqual(inference.closed, ["old"]);
   assert.deepEqual(runtime.outputs, { "run-cost": "0.0000" }, "unknown figures are left out");
+});
+
+test("a run on another provider refreshes the cost an OpenRouter run of the task read too soon", async () => {
+  const seed = async (store: MemoryStore) =>
+    seedRuns(store, {
+      // The plan, on OpenRouter, closed before OpenRouter counted its key's usage.
+      "100-1-7": { status: "closed", cost: 0 },
+      "300-1-7": { provider: "runpod-pod", status: "open", limit: 1.9, reservedAt: new Date() },
+    });
+  const accounts = new FakeAccounts();
+  accounts.costs = { "100": 0.42 };
+
+  const closed = new MemoryStore();
+  await seed(closed);
+  const runtime = await close(closed, {
+    inference: new FakeInference({ usage: { cost: 0.05 } }),
+    accounts,
+  });
+  assert.deepEqual(accounts.costsRead, ["7"]);
+  assert.equal((await run(closed, "100-1-7"))?.cost, 0.42);
+  assert.equal(runtime.outputs["task-total"], "0.4700");
+  assert.equal(runtime.outputs["task-costs"], '{"100":0.42,"300":0.05}');
+
+  const opening = new MemoryStore();
+  await seedRuns(opening, { "100-1-7": { status: "closed", cost: 0 }, "300-1-7": {} });
+  const opened = await open(opening, { accounts, inputs: openInputs({ inference: POD_CHOICE }) });
+  assert.equal(opened.runtime.outputs["task-spent"], "0.4200");
+  assert.equal(opened.runtime.outputs["key-limit"], "1.58");
+  assert.equal((await run(opening, "100-1-7"))?.cost, 0.42);
+});
+
+test("without OpenRouter's key, or when its keys cannot be read, the task's OpenRouter runs keep their costs", async () => {
+  const seed = async () => {
+    const store = new MemoryStore();
+    await seedRuns(store, {
+      "100-1-7": { status: "closed", cost: 0 },
+      "300-1-7": { provider: "runpod-pod", status: "open", limit: 1.9, reservedAt: new Date() },
+    });
+    return store;
+  };
+  const keyless = new FakeAccounts();
+  keyless.secrets.openrouter = "CODEMAN_OPENROUTER_MANAGEMENT_KEY";
+  const blind = await seed();
+  const runtime = await close(blind, {
+    inference: new FakeInference({ usage: { cost: 0.05 } }),
+    accounts: keyless,
+  });
+  assert.deepEqual(keyless.costsRead, []);
+  assert.equal(runtime.outputs["task-costs"], '{"100":0,"300":0.05}');
+  assert.ok(
+    runtime
+      .logged("info")
+      .includes(
+        "The task's OpenRouter runs keep the costs the ledger has: the job has no `CODEMAN_OPENROUTER_MANAGEMENT_KEY` to read their keys.",
+      ),
+  );
+  const opening = new MemoryStore();
+  await seedRuns(opening, { "100-1-7": { status: "closed", cost: 0 }, "300-1-7": {} });
+  const opened = await open(opening, {
+    accounts: keyless,
+    inputs: openInputs({ inference: POD_CHOICE }),
+  });
+  assert.equal(opened.runtime.outputs.status, "opened", "a pod run does not need OpenRouter's key");
+
+  const failing = new FakeAccounts();
+  failing.costsFailure = new Error("OpenRouter GET /keys failed with 500.");
+  const unread = await seed();
+  const warned = await close(unread, {
+    inference: new FakeInference({ usage: { cost: 0.05 } }),
+    accounts: failing,
+  });
+  assert.equal((await run(unread, "100-1-7"))?.cost, 0);
+  assert.equal(warned.outputs["task-total"], "0.0500");
+  assert.deepEqual(warned.logged("warning"), [
+    "Could not read what the task's OpenRouter runs spent: OpenRouter GET /keys failed with 500.",
+  ]);
+});
+
+test("a task without an ended OpenRouter run does not read OpenRouter", async () => {
+  const store = new MemoryStore();
+  await seedRuns(store, {
+    "100-1-7": { provider: "runpod-pod", status: "closed", cost: 0.2 },
+    "300-1-7": { provider: "runpod-pod", status: "open", limit: 1.8, reservedAt: new Date() },
+  });
+  const accounts = new FakeAccounts();
+  accounts.costs = {};
+  await close(store, { inference: new FakeInference({ usage: { cost: 0.05 } }), accounts });
+  assert.deepEqual(accounts.costsRead, []);
 });

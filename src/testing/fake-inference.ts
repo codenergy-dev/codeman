@@ -34,6 +34,10 @@ export class FakeAccounts implements ProviderAccounts {
   readonly secrets: Record<string, string> = {};
   /** OpenRouter's costs of the task's runs; undefined as without its key. */
   costs: Record<string, number> | undefined;
+  /** What reading OpenRouter's costs throws, when set. */
+  costsFailure: Error | undefined;
+  /** The tasks whose OpenRouter costs were read, in order. */
+  readonly costsRead: string[] = [];
   /** Each GPU account's hourly billing. */
   readonly hours = new Map<string, Map<number, number>>();
   readonly billingRead: string[] = [];
@@ -42,7 +46,9 @@ export class FakeAccounts implements ProviderAccounts {
     return this.secrets[provider];
   }
 
-  async taskCosts(): Promise<Record<string, number> | undefined> {
+  async taskCosts(task: string): Promise<Record<string, number> | undefined> {
+    this.costsRead.push(task);
+    if (this.costsFailure) throw this.costsFailure;
     return this.costs;
   }
 

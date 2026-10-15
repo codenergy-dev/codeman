@@ -1,7 +1,8 @@
 import {
   type BilledHours,
   costsByWorkflowRun,
-  expired,
+  ended,
+  type LedgerRun,
   MIN_RUN_BUDGET,
   monthStart,
   taskTotal,
@@ -94,17 +95,11 @@ async function open(services: Services, ledger: Ledger, run: string): Promise<Op
     }
   }
 
-  // A run that never closed counts its limit; once it expired, OpenRouter's keys tell its cost.
+  // OpenRouter's keys tell what the task's ended OpenRouter runs spent: one that expired counts
+  // its cost instead of its limit, and one that read its cost too soon gets it right.
   const runs = await ledger.taskRuns(run, runtime);
-  if (runs.some((other) => other.account === "openrouter" && expired(other, now))) {
-    const costs = await accounts.taskCosts(task).catch((error: unknown) => {
-      runtime.warning(
-        `Could not read what the task's OpenRouter runs spent: ${error instanceof Error ? error.message : error}`,
-      );
-      return undefined;
-    });
-    if (costs) await ledger.refresh(runs, { costs }, runtime);
-  }
+  const costs = await openRouterCosts(services, runs);
+  if (costs) await ledger.refresh(runs, { costs }, runtime);
 
   const reservation = await ledger.reserve(run, {
     task: Number(task),
@@ -226,15 +221,48 @@ export async function closeKey(services: Services): Promise<void> {
   const run = ledgerRun(runtime);
   ledger.close(run, usage, runtime.input("agent-job-result"));
   await ledger.flush(runtime);
-  const runs = await ledger.refresh(
-    await ledger.taskRuns(run, runtime),
-    { costs: usage.taskCosts, pods: usage.podCosts },
-    runtime,
-  );
+  const before = await ledger.taskRuns(run, runtime);
+  // An OpenRouter run's close read the task's keys already.
+  const costs =
+    accountOf(choice.provider) === "openrouter"
+      ? usage.taskCosts
+      : await openRouterCosts(services, before);
+  const runs = await ledger.refresh(before, { costs, pods: usage.podCosts }, runtime);
   const total = taskTotal(runs);
   runtime.output("task-total", total.toFixed(4));
   runtime.output("task-costs", JSON.stringify(costsByWorkflowRun(runs)));
   runtime.info(`The task has spent ${usd(total)} in all.`);
+}
+
+/**
+ * What each run of the task spent on OpenRouter, from its keys, when the task has an OpenRouter
+ * run that ended, whatever provider this run uses: a run that read its cost before OpenRouter
+ * counted it, or that expired, gets it from any later run of the task. Undefined when it has none,
+ * when the job has no OpenRouter management key, or when the keys cannot be read, which only
+ * warns.
+ */
+async function openRouterCosts(
+  services: Services,
+  runs: readonly LedgerRun[],
+): Promise<Record<string, number> | undefined> {
+  const { runtime } = services;
+  const now = new Date();
+  const ran = runs.find((other) => other.account === "openrouter" && ended(other, now));
+  if (!ran) return undefined;
+  const accounts = services.accounts();
+  const secret = accounts.missing("openrouter");
+  if (secret) {
+    runtime.info(
+      `The task's OpenRouter runs keep the costs the ledger has: the job has no \`${secret}\` to read their keys.`,
+    );
+    return undefined;
+  }
+  return accounts.taskCosts(String(ran.task)).catch((error: unknown) => {
+    runtime.warning(
+      `Could not read what the task's OpenRouter runs spent: ${error instanceof Error ? error.message : error}`,
+    );
+    return undefined;
+  });
 }
 
 /**

@@ -1,6 +1,7 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import {
   type BilledHours,
+  ended,
   expired,
   type LedgerRun,
   RESERVATION_MS,
@@ -223,10 +224,7 @@ export class Ledger {
     for (const [workflowRun, figure] of Object.entries(figures.costs ?? {})) {
       const same = next.filter((run) => run.workflowRun === workflowRun);
       const [run] = same;
-      const ended =
-        run !== undefined &&
-        (run.status === "closed" || run.status === "expired" || expired(run, now));
-      if (same.length !== 1 || !run || run.account !== "openrouter" || !ended) continue;
+      if (same.length !== 1 || !run || run.account !== "openrouter" || !ended(run, now)) continue;
       const cost = Math.max(0, figure - (run.spentBefore ?? 0));
       if (run.cost !== undefined && Math.abs(run.cost - cost) < 0.0001) continue;
       change(run, expired(run, now) ? { cost, status: "expired" } : { cost });

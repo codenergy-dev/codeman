@@ -21281,6 +21281,9 @@ function reserving(run2, now) {
 function expired(run2, now) {
   return run2.status === "open" && run2.cost === void 0 && run2.expiresAt <= now;
 }
+function ended(run2, now) {
+  return run2.status === "closed" || run2.status === "expired" || expired(run2, now);
+}
 function counted(runs) {
   const alone = [];
   const onPods = /* @__PURE__ */ new Map();
@@ -23210,7 +23213,7 @@ var PodRegistry = class {
           tx.write({
             op: "set",
             path: this.#path(stale.nonce),
-            fields: ended(now, "its creation lease expired"),
+            fields: ended2(now, "its creation lease expired"),
             merge: true
           });
         }
@@ -23358,7 +23361,7 @@ var PodRegistry = class {
           path: this.#path(nonce),
           fields: {
             leases: leases.map(leaseFields),
-            ...change.end ? ended(now, change.end) : { status: status2 }
+            ...change.end ? ended2(now, change.end) : { status: status2 }
           },
           merge: true
         });
@@ -23377,7 +23380,7 @@ function sameAccount(pod, account) {
 function heldBy(leases, now) {
   return [...new Set(leases.filter((one) => one.until > now).map((one) => one.holder))];
 }
-function ended(now, reason) {
+function ended2(now, reason) {
   return { status: "ended", live: false, endedAt: now, reason, creatingUntil: null };
 }
 function leaseFields(lease) {
@@ -23634,9 +23637,9 @@ var PodInference = class {
     const handle = parseHandle(text);
     if (handle.mode !== "pod") throw new Error("The handle is not a pod run's.");
     const { shared } = handle;
-    let ended2;
+    let ended3;
     try {
-      ended2 = await this.#admin(
+      ended3 = await this.#admin(
         handle,
         "POST",
         "/admin/end",
@@ -23647,19 +23650,19 @@ var PodInference = class {
         `Could not read the run's usage from its pod: ${error3 instanceof Error ? error3.message : error3}`
       );
     }
-    const keep = handle.reuse === "task" && ended2 !== void 0;
-    await this.#leave(handle, keep, ended2 === void 0, log);
+    const keep = handle.reuse === "task" && ended3 !== void 0;
+    await this.#leave(handle, keep, ended3 === void 0, log);
     const now = this.#now();
-    const usage = { ...tokens(ended2), pod: handle.podId, keptPod: keep ? handle.podId : void 0 };
+    const usage = { ...tokens(ended3), pod: handle.podId, keptPod: keep ? handle.podId : void 0 };
     if (shared) {
-      const share = ended2?.share;
+      const share = ended3?.share;
       const billed2 = await this.#billing(this.#settings.pods, now, log);
       const podCosts2 = { ...billed2 };
       if (share) podCosts2[handle.podId] = Number(share.taskCost.toFixed(6));
       return {
         ...usage,
         // Without the gateway's figure, the run counts the pod's whole time since it started.
-        cost: ended2?.cost ?? podCost(new Date(handle.start), now, handle.pricePerSecond),
+        cost: ended3?.cost ?? podCost(new Date(handle.start), now, handle.pricePerSecond),
         podCosts: podCosts2,
         podShared: true,
         pods: this.#takeEvents()
@@ -24770,8 +24773,7 @@ var Ledger = class {
     for (const [workflowRun, figure] of Object.entries(figures.costs ?? {})) {
       const same = next.filter((run3) => run3.workflowRun === workflowRun);
       const [run2] = same;
-      const ended2 = run2 !== void 0 && (run2.status === "closed" || run2.status === "expired" || expired(run2, now));
-      if (same.length !== 1 || !run2 || run2.account !== "openrouter" || !ended2) continue;
+      if (same.length !== 1 || !run2 || run2.account !== "openrouter" || !ended(run2, now)) continue;
       const cost = Math.max(0, figure - (run2.spentBefore ?? 0));
       if (run2.cost !== void 0 && Math.abs(run2.cost - cost) < 1e-4) continue;
       change(run2, expired(run2, now) ? { cost, status: "expired" } : { cost });
@@ -30421,9 +30423,9 @@ var RunpodQueue = class {
   };
   /** Whether the job is over, as `page` says; it then leaves the active jobs. */
   #ended(id, page) {
-    const ended2 = FINAL.has(page.status ?? "");
-    if (ended2) this.#active.delete(id);
-    return ended2;
+    const ended3 = FINAL.has(page.status ?? "");
+    if (ended3) this.#active.delete(id);
+    return ended3;
   }
   /** The job's outputs, read until it ends; a job left unfinished is cancelled. */
   async *#body(id, signal, first, firstPage) {
@@ -30900,14 +30902,14 @@ var en = {
   of: (part, whole) => `${part} of ${whole}`,
   stage: (stage) => STAGES2[stage],
   runTitle: ({ action, stage, revised, outcome }) => {
-    const ended2 = outcome ? OUTCOMES[outcome] : "";
+    const ended3 = outcome ? OUTCOMES[outcome] : "";
     switch (action) {
       case "plan":
-        return outcome === "done" ? revised ? "Plan: revised" : "Plan: written" : `Plan: ${ended2}`;
+        return outcome === "done" ? revised ? "Plan: revised" : "Plan: written" : `Plan: ${ended3}`;
       case "route":
-        return outcome === "done" ? "Next stages chosen" : `Routing: ${ended2}`;
+        return outcome === "done" ? "Next stages chosen" : `Routing: ${ended3}`;
       case "implement":
-        return `${capitalize(STAGES2[stage ?? "code"])} stage${ended2 ? `: ${ended2}` : ""}`;
+        return `${capitalize(STAGES2[stage ?? "code"])} stage${ended3 ? `: ${ended3}` : ""}`;
       case "record":
         return "Answers recorded";
       case "accept":
@@ -30995,7 +30997,7 @@ var en = {
     "runpod-serverless": "Runpod (Serverless)"
   })[provider],
   spendNote: (provider) => ({
-    openrouter: "**OpenRouter**: a run's cost is what its key used, exact, and later runs refresh it.",
+    openrouter: "**OpenRouter**: a run's cost is what its key used, exact, and the task's later runs refresh it, whatever their provider.",
     "runpod-pod": "**Runpod (pod)**: a run's cost is its pod's time at the pod's price; the task also counts its pod's time between runs, refreshed later from Runpod's billing.",
     "runpod-serverless": "**Runpod (Serverless)**: a run's cost is an estimate of the time Runpod bills its workers, which counts in the month as soon as the run ends; time a worker served several runs at once, of any of the organization's repositories, is split among them, and later runs refresh it."
   })[provider],
@@ -31162,14 +31164,14 @@ var ptBR = {
   of: (part, whole) => `${part} de ${whole}`,
   stage: (stage) => STAGES3[stage],
   runTitle: ({ action, stage, revised, outcome }) => {
-    const ended2 = outcome ? OUTCOMES2[outcome] : "";
+    const ended3 = outcome ? OUTCOMES2[outcome] : "";
     switch (action) {
       case "plan":
-        return outcome === "done" ? revised ? "Plano: revisado" : "Plano: escrito" : `Plano: ${outcome === "failed" ? "falhou" : ended2}`;
+        return outcome === "done" ? revised ? "Plano: revisado" : "Plano: escrito" : `Plano: ${outcome === "failed" ? "falhou" : ended3}`;
       case "route":
-        return outcome === "done" ? "Pr\xF3ximas etapas escolhidas" : `Roteamento: ${outcome === "failed" ? "falhou" : ended2}`;
+        return outcome === "done" ? "Pr\xF3ximas etapas escolhidas" : `Roteamento: ${outcome === "failed" ? "falhou" : ended3}`;
       case "implement":
-        return `${capitalize2(OF_STAGE(stage ?? "code"))}${ended2 ? `: ${ended2}` : ""}`;
+        return `${capitalize2(OF_STAGE(stage ?? "code"))}${ended3 ? `: ${ended3}` : ""}`;
       case "record":
         return "Respostas registradas";
       case "accept":
@@ -31257,7 +31259,7 @@ var ptBR = {
     "runpod-serverless": "Runpod (Serverless)"
   })[provider],
   spendNote: (provider) => ({
-    openrouter: "**OpenRouter**: o custo de uma rodada \xE9 o que a sua chave usou, exato, e as rodadas seguintes o atualizam.",
+    openrouter: "**OpenRouter**: o custo de uma rodada \xE9 o que a sua chave usou, exato, e as rodadas seguintes da tarefa o atualizam, qualquer que seja o seu provedor.",
     "runpod-pod": "**Runpod (pod)**: o custo de uma rodada \xE9 o tempo do seu pod ao pre\xE7o dele; a tarefa conta tamb\xE9m o tempo do pod entre rodadas, atualizado depois pela cobran\xE7a da Runpod.",
     "runpod-serverless": "**Runpod (Serverless)**: o custo de uma rodada \xE9 uma estimativa do tempo que a Runpod cobra pelos seus workers, que conta no m\xEAs assim que a rodada termina; o tempo em que um worker atendeu v\xE1rias rodadas ao mesmo tempo, de qualquer reposit\xF3rio da organiza\xE7\xE3o, \xE9 dividido entre elas, e as rodadas seguintes o atualizam."
   })[provider],
@@ -34094,15 +34096,8 @@ async function open(services, ledger, run2) {
     }
   }
   const runs = await ledger.taskRuns(run2, runtime2);
-  if (runs.some((other) => other.account === "openrouter" && expired(other, now))) {
-    const costs = await accounts.taskCosts(task).catch((error3) => {
-      runtime2.warning(
-        `Could not read what the task's OpenRouter runs spent: ${error3 instanceof Error ? error3.message : error3}`
-      );
-      return void 0;
-    });
-    if (costs) await ledger.refresh(runs, { costs }, runtime2);
-  }
+  const costs = await openRouterCosts(services, runs);
+  if (costs) await ledger.refresh(runs, { costs }, runtime2);
   const reservation = await ledger.reserve(run2, {
     task: Number(task),
     taskBudget,
@@ -34205,15 +34200,33 @@ async function closeKey(services) {
   const run2 = ledgerRun(runtime2);
   ledger.close(run2, usage, runtime2.input("agent-job-result"));
   await ledger.flush(runtime2);
-  const runs = await ledger.refresh(
-    await ledger.taskRuns(run2, runtime2),
-    { costs: usage.taskCosts, pods: usage.podCosts },
-    runtime2
-  );
+  const before = await ledger.taskRuns(run2, runtime2);
+  const costs = accountOf(choice.provider) === "openrouter" ? usage.taskCosts : await openRouterCosts(services, before);
+  const runs = await ledger.refresh(before, { costs, pods: usage.podCosts }, runtime2);
   const total = taskTotal(runs);
   runtime2.output("task-total", total.toFixed(4));
   runtime2.output("task-costs", JSON.stringify(costsByWorkflowRun(runs)));
   runtime2.info(`The task has spent ${usd(total)} in all.`);
+}
+async function openRouterCosts(services, runs) {
+  const { runtime: runtime2 } = services;
+  const now = /* @__PURE__ */ new Date();
+  const ran = runs.find((other) => other.account === "openrouter" && ended(other, now));
+  if (!ran) return void 0;
+  const accounts = services.accounts();
+  const secret = accounts.missing("openrouter");
+  if (secret) {
+    runtime2.info(
+      `The task's OpenRouter runs keep the costs the ledger has: the job has no \`${secret}\` to read their keys.`
+    );
+    return void 0;
+  }
+  return accounts.taskCosts(String(ran.task)).catch((error3) => {
+    runtime2.warning(
+      `Could not read what the task's OpenRouter runs spent: ${error3 instanceof Error ? error3.message : error3}`
+    );
+    return void 0;
+  });
 }
 async function release(services) {
   const { runtime: runtime2 } = services;

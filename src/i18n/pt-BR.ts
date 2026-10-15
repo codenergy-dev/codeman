@@ -162,7 +162,7 @@ export const ptBR: Messages = {
   spendNote: (provider) =>
     ({
       openrouter:
-        "**OpenRouter**: o custo de uma rodada é o que a sua chave usou, exato, e as rodadas seguintes o atualizam.",
+        "**OpenRouter**: o custo de uma rodada é o que a sua chave usou, exato, e as rodadas seguintes da tarefa o atualizam, qualquer que seja o seu provedor.",
       "runpod-pod":
         "**Runpod (pod)**: o custo de uma rodada é o tempo do seu pod ao preço dele; a tarefa conta também o tempo do pod entre rodadas, atualizado depois pela cobrança da Runpod.",
       "runpod-serverless":

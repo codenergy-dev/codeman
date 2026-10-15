@@ -73,6 +73,11 @@ export function expired(run: LedgerRun, now: Date): boolean {
   return run.status === "open" && run.cost === undefined && run.expiresAt <= now;
 }
 
+/** Whether the run ended at `now`: closed, or its reservation expired. */
+export function ended(run: LedgerRun, now: Date): boolean {
+  return run.status === "closed" || run.status === "expired" || expired(run, now);
+}
+
 /** Runs the budgets count together: a run alone, or a task's runs on one pod. */
 interface Counted {
   runs: LedgerRun[];

@@ -154,7 +154,7 @@ export const en: Messages = {
   spendNote: (provider) =>
     ({
       openrouter:
-        "**OpenRouter**: a run's cost is what its key used, exact, and later runs refresh it.",
+        "**OpenRouter**: a run's cost is what its key used, exact, and the task's later runs refresh it, whatever their provider.",
       "runpod-pod":
         "**Runpod (pod)**: a run's cost is its pod's time at the pod's price; the task also counts its pod's time between runs, refreshed later from Runpod's billing.",
       "runpod-serverless":
