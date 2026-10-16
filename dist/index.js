@@ -30143,10 +30143,10 @@ function parseStatus(output) {
   for (const entry of output.split("\0")) {
     if (entry.length < 4) continue;
     const code = entry.slice(0, 2);
-    const path = entry.slice(3);
-    if (code === "??") changes.push({ path, status: "added" });
-    else if (code[1] === "D") changes.push({ path, status: "deleted" });
-    else if (code[1] === "M" || code[1] === "T") changes.push({ path, status: "modified" });
+    const path = entry.slice(3).replace(/\/+$/, "");
+    const status2 = code === "??" ? "added" : code[1] === "D" ? "deleted" : code[1] === "M" || code[1] === "T" ? "modified" : void 0;
+    if (!status2 || path === "") continue;
+    changes.push(entry.endsWith("/") ? { path, status: status2, type: "other" } : { path, status: status2 });
   }
   return changes;
 }
@@ -30171,29 +30171,18 @@ function collectChanges(options) {
   );
   const tree = join3(options.outDir, "tree");
   mkdirSync(tree, { recursive: true });
-  const copies = changes.filter((change) => change.status !== "deleted").map(({ path }) => path);
+  const copies = changes.filter((change) => change.status !== "deleted" && change.type === void 0).map(({ path }) => path);
+  const failed2 = copyPaths(options.worktree, tree, copies);
   if (copies.length > 0) {
-    sudo([
-      "/usr/bin/env",
-      `--chdir=${options.worktree}`,
-      "cp",
-      "-P",
-      "--preserve=mode",
-      "--parents",
-      "-t",
-      tree,
-      "--",
-      ...copies
-    ]);
     sudo(["chown", "-R", `${process.getuid?.()}:${process.getgid?.()}`, tree]);
   }
   return changes.map((change) => {
-    if (change.status === "deleted") return change;
+    if (change.status === "deleted" || change.type !== void 0) return change;
     const copy = join3(tree, change.path);
-    const stats = lstatSync(copy);
-    if (!stats.isFile()) {
+    const stats = failed2.has(change.path) ? void 0 : lstatOrUndefined(copy);
+    if (!stats?.isFile()) {
       rmSync(copy, { recursive: true, force: true });
-      return { ...change, type: stats.isSymbolicLink() ? "symlink" : "other" };
+      return { ...change, type: stats?.isSymbolicLink() ? "symlink" : "other" };
     }
     return {
       ...change,
@@ -30202,6 +30191,43 @@ function collectChanges(options) {
       size: stats.size
     };
   });
+}
+function copyPaths(worktree, tree, paths) {
+  const copy = (list4) => sudo([
+    "/usr/bin/env",
+    `--chdir=${worktree}`,
+    "cp",
+    "-P",
+    "--preserve=mode",
+    "--parents",
+    "-t",
+    tree,
+    "--",
+    ...list4
+  ]);
+  const failed2 = /* @__PURE__ */ new Set();
+  if (paths.length === 0) return failed2;
+  try {
+    copy(paths);
+  } catch {
+    sudo(["rm", "-rf", "--", tree]);
+    mkdirSync(tree, { recursive: true });
+    for (const path of paths) {
+      try {
+        copy([path]);
+      } catch {
+        failed2.add(path);
+      }
+    }
+  }
+  return failed2;
+}
+function lstatOrUndefined(path) {
+  try {
+    return lstatSync(path);
+  } catch {
+    return void 0;
+  }
 }
 function copyAgentFile(source, target, maxBytes) {
   try {
@@ -32474,7 +32500,12 @@ async function agentJob(services, reached) {
   };
   writeFileSync4(join7(out, "manifest.json"), JSON.stringify(manifest, null, 2));
   runtime2.info(`Changed ${changes.length} file(s):`);
-  for (const change of changes) runtime2.info(`  ${change.status} ${oneLine(change.path)}`);
+  for (const change of changes) {
+    const kept = change.type === void 0 || change.type === "file";
+    runtime2.info(
+      `  ${change.status} ${oneLine(change.path)}${kept ? "" : ` (${change.type}, not copied)`}`
+    );
+  }
   if (access2.stopped?.aborted) runtime2.fail(`The run stopped: ${stopReason(access2.stopped)}`);
   else if (run2.timedOut) runtime2.fail(`The agent did not finish within ${minutes} minutes.`);
   else if (run2.exitCode !== 0) runtime2.fail(`The agent exited with code ${run2.exitCode}.`);

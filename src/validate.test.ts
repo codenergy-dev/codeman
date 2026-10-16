@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { parseStatus } from "./collect.ts";
+import { GITHUB } from "./platform/github/conventions.ts";
+import { checkChanges } from "./policy.ts";
 import { checkPlanResult, decodeText } from "./validate.ts";
 
 const plan = "plans/2026-09-24-x.md";
@@ -19,6 +21,7 @@ test("parses git status output", () => {
     " D old.txt",
     " T link",
     "M  staged.txt",
+    "?? scratch/upstream/",
     "",
   ].join("\0");
   assert.deepEqual(parseStatus(output), [
@@ -26,6 +29,23 @@ test("parses git status output", () => {
     { path: "README.md", status: "modified" },
     { path: "old.txt", status: "deleted" },
     { path: "link", status: "modified" },
+    { path: "scratch/upstream", status: "added", type: "other" },
+  ]);
+});
+
+test("an embedded repository is a change apply drops as not a regular file", () => {
+  const [repository] = parseStatus("?? scratch/upstream/\0");
+  assert.ok(repository);
+  const result = checkChanges(manifest([repository]), {
+    ignore: null,
+    workflows: GITHUB.workflows,
+    maxFiles: 10,
+    maxFileBytes: 1000,
+    planPath: plan,
+  });
+  assert.ok(result.ok);
+  assert.deepEqual(result.value.dropped, [
+    { path: "scratch/upstream", reason: { kind: "not-a-file" } },
   ]);
 });
 

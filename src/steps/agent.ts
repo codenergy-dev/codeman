@@ -205,7 +205,12 @@ async function agentJob(services: Services, reached: () => void): Promise<void> 
   writeFileSync(join(out, "manifest.json"), JSON.stringify(manifest, null, 2));
 
   runtime.info(`Changed ${changes.length} file(s):`);
-  for (const change of changes) runtime.info(`  ${change.status} ${oneLine(change.path)}`);
+  for (const change of changes) {
+    const kept = change.type === undefined || change.type === "file";
+    runtime.info(
+      `  ${change.status} ${oneLine(change.path)}${kept ? "" : ` (${change.type}, not copied)`}`,
+    );
+  }
   // The result is kept either way: apply commits unfinished work so the next run continues.
   if (access.stopped?.aborted) runtime.fail(`The run stopped: ${stopReason(access.stopped)}`);
   else if (run.timedOut) runtime.fail(`The agent did not finish within ${minutes} minutes.`);

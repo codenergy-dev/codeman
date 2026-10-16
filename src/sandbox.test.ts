@@ -39,6 +39,10 @@ test("the agent is contained and its changes are collected safely", {
   git("init", "-q");
   git("add", ".");
   git("commit", "-qm", "init");
+  // A submodule: a directory `cp` refuses, which `git status` lists without a trailing slash.
+  const head = git("rev-parse", "HEAD").toString().trim();
+  git("update-index", "--add", "--cacheinfo", `160000,${head},vendor/lib`);
+  git("commit", "-qm", "submodule");
   process.env.CODEMAN_RUNNER_SECRET = "runner-only-secret";
   const home = homedir();
   const runnerTemp = process.env.RUNNER_TEMP ?? `${home}/work/_temp`;
@@ -60,6 +64,9 @@ test("the agent is contained and its changes are collected safely", {
     "echo changed >> README.md",
     "mkdir -p plans && echo plan > plans/p.md",
     "rm src/a.txt",
+    // Scratch clones: embedded repositories, which git lists as directories.
+    "git init -q scratch/up && echo x > scratch/up/f.txt",
+    "git init -q vendor/lib && git -C vendor/lib -c user.name=a -c user.email=a@a commit -q --allow-empty -m x",
     "mkdir -p node_modules && echo x > node_modules/x.js",
     "ln -s /etc/shadow leak.txt",
     "mkdir -p .codeman && ln -s /etc/shadow .codeman/output.json",
@@ -103,6 +110,18 @@ test("the agent is contained and its changes are collected safely", {
   assert.equal(byPath.get("src/a.txt")?.status, "deleted");
   assert.equal(byPath.get("leak.txt")?.type, "symlink");
   assert.ok(!existsSync(join(out, "tree", "leak.txt")), "links are listed, not copied");
+  assert.deepEqual(byPath.get("scratch/up"), {
+    path: "scratch/up",
+    status: "added",
+    type: "other",
+  });
+  assert.equal(byPath.get("vendor/lib")?.type, "other");
+  assert.ok(!existsSync(join(out, "tree", "scratch")), "embedded repositories are not copied");
+  assert.ok(!existsSync(join(out, "tree", "vendor", "lib")), "a submodule is not copied");
+  assert.ok(
+    ![...byPath.keys()].some((path) => path.startsWith("scratch/up/")),
+    "nor listed inside",
+  );
   assert.ok(![...byPath.keys()].some((path) => path.startsWith("node_modules")), "ignored files");
   assert.ok(![...byPath.keys()].some((path) => path.startsWith(".codeman")), "excluded files");
   assert.ok(!byPath.has("sudo.txt"), "the agent cannot use sudo");

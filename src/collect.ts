@@ -1,4 +1,4 @@
-import { lstatSync, mkdirSync, rmSync } from "node:fs";
+import { lstatSync, mkdirSync, rmSync, type Stats } from "node:fs";
 import { join } from "node:path";
 import { sudo } from "./sandbox.ts";
 
@@ -21,16 +21,27 @@ export interface Manifest {
   changes: Change[];
 }
 
-/** Parses `git status --porcelain=v1 -z --no-renames`, comparing the work tree with the checkout. */
-export function parseStatus(output: string): Pick<Change, "path" | "status">[] {
-  const changes: Pick<Change, "path" | "status">[] = [];
+/**
+ * Parses `git status --porcelain=v1 -z --no-renames`, comparing the work tree with the checkout.
+ * Git lists an embedded repository (a directory with its own `.git`) as one entry ending in
+ * `/`, without looking inside: it is returned without the slash, as `type: "other"`.
+ */
+export function parseStatus(output: string): Pick<Change, "path" | "status" | "type">[] {
+  const changes: Pick<Change, "path" | "status" | "type">[] = [];
   for (const entry of output.split("\0")) {
     if (entry.length < 4) continue;
     const code = entry.slice(0, 2);
-    const path = entry.slice(3);
-    if (code === "??") changes.push({ path, status: "added" });
-    else if (code[1] === "D") changes.push({ path, status: "deleted" });
-    else if (code[1] === "M" || code[1] === "T") changes.push({ path, status: "modified" });
+    const path = entry.slice(3).replace(/\/+$/, "");
+    const status =
+      code === "??"
+        ? "added"
+        : code[1] === "D"
+          ? "deleted"
+          : code[1] === "M" || code[1] === "T"
+            ? "modified"
+            : undefined;
+    if (!status || path === "") continue;
+    changes.push(entry.endsWith("/") ? { path, status, type: "other" } : { path, status });
   }
   return changes;
 }
@@ -40,7 +51,9 @@ export function parseStatus(output: string): Pick<Change, "path" | "status">[] {
  *
  * The agent controls its copy of the repository, including `.git`, so git runs with the
  * original checkout's `.git` (trusted) against the agent's work tree. Only regular files are
- * copied; symlinks and special files are listed in the manifest but not copied.
+ * copied; symlinks, directories (embedded repositories) and special files are listed in the
+ * manifest as changed, but not copied. A path that cannot be copied is listed the same way, so
+ * one path never costs the run its result.
  */
 export function collectChanges(options: {
   gitDir: string;
@@ -70,31 +83,22 @@ export function collectChanges(options: {
 
   const tree = join(options.outDir, "tree");
   mkdirSync(tree, { recursive: true });
-  const copies = changes.filter((change) => change.status !== "deleted").map(({ path }) => path);
+  const copies = changes
+    .filter((change) => change.status !== "deleted" && change.type === undefined)
+    .map(({ path }) => path);
+  const failed = copyPaths(options.worktree, tree, copies);
   if (copies.length > 0) {
-    sudo([
-      "/usr/bin/env",
-      `--chdir=${options.worktree}`,
-      "cp",
-      "-P",
-      "--preserve=mode",
-      "--parents",
-      "-t",
-      tree,
-      "--",
-      ...copies,
-    ]);
     sudo(["chown", "-R", `${process.getuid?.()}:${process.getgid?.()}`, tree]);
   }
 
   return changes.map((change): Change => {
-    if (change.status === "deleted") return change;
+    if (change.status === "deleted" || change.type !== undefined) return change;
     const copy = join(tree, change.path);
-    const stats = lstatSync(copy);
-    if (!stats.isFile()) {
+    const stats = failed.has(change.path) ? undefined : lstatOrUndefined(copy);
+    if (!stats?.isFile()) {
       // Keep only the fact that it changed: the artifact upload would follow a symlink.
       rmSync(copy, { recursive: true, force: true });
-      return { ...change, type: stats.isSymbolicLink() ? "symlink" : "other" };
+      return { ...change, type: stats?.isSymbolicLink() ? "symlink" : "other" };
     }
     return {
       ...change,
@@ -103,6 +107,52 @@ export function collectChanges(options: {
       size: stats.size,
     };
   });
+}
+
+/**
+ * Copies `paths` from `worktree` into `tree`, without following symlinks, and returns those it
+ * could not copy. One path `cp` refuses, such as a directory, fails the whole command, so then
+ * each path is copied on its own.
+ */
+function copyPaths(worktree: string, tree: string, paths: readonly string[]): Set<string> {
+  const copy = (list: readonly string[]) =>
+    sudo([
+      "/usr/bin/env",
+      `--chdir=${worktree}`,
+      "cp",
+      "-P",
+      "--preserve=mode",
+      "--parents",
+      "-t",
+      tree,
+      "--",
+      ...list,
+    ]);
+  const failed = new Set<string>();
+  if (paths.length === 0) return failed;
+  try {
+    copy(paths);
+  } catch {
+    // Start again from an empty tree, so no copy ever lands on what the first attempt left.
+    sudo(["rm", "-rf", "--", tree]);
+    mkdirSync(tree, { recursive: true });
+    for (const path of paths) {
+      try {
+        copy([path]);
+      } catch {
+        failed.add(path);
+      }
+    }
+  }
+  return failed;
+}
+
+function lstatOrUndefined(path: string): Stats | undefined {
+  try {
+    return lstatSync(path);
+  } catch {
+    return undefined;
+  }
 }
 
 /** Copies one file out of the agent's home, only if it is a regular file of at most `maxBytes`. */
