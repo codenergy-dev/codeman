@@ -255,6 +255,23 @@ test("each stage gets its own instructions and statuses", () => {
   }
 });
 
+test("stages keep scratch work out of the tree, and progress notes in the plan as they go", () => {
+  const prompt = (stage: "web" | "design" | "code" | "test" | "review") =>
+    stagePrompt({ ...task, action: "implement", stage }, 45, GITHUB);
+  for (const stage of ["web", "design", "code", "test", "review"] as const) {
+    assert.match(prompt(stage), /Keep scratch work out of the working tree: clones of other/);
+    assert.match(prompt(stage), /`mktemp -d` creates under `\/tmp`/);
+  }
+  for (const stage of ["web", "design", "code", "test"] as const) {
+    assert.match(prompt(stage), /keep a `## Progress` section at its end/);
+    assert.match(prompt(stage), /not only at the end: if the run is cut short/);
+    assert.match(prompt(stage), /do not change the plan's scope or decisions/);
+    assert.match(prompt(stage), /update the plan's progress notes and write/);
+  }
+  assert.ok(!prompt("review").includes("## Progress"), "review changes nothing");
+  assert.ok(!prompt("review").includes("progress notes and write"));
+});
+
 test("the next stage gets the notes of the previous one", () => {
   const prompt = stagePrompt(
     {

@@ -6,7 +6,7 @@ The agent reads text that may be hostile (see [security](../security/risks.md)) 
 
 - It cannot read the runner's processes, so it cannot reach the job's tokens or the secrets of other steps.
 - The runner's home, which holds the job's temporary files, is closed to other users before the agent starts. The agent is not in the `docker` group.
-- Its environment is rebuilt from an allowlist: its own `HOME` and XDG directories, the job's `PATH` without entries in the runner's home, and the harness's variables. Nothing else from the runner passes, including what `sudo`'s PAM session adds from `/etc/environment`.
+- Its environment is rebuilt from an allowlist: its own `HOME` and XDG directories, `TMPDIR` set to `/tmp` (outside its working tree, for scratch work), the job's `PATH` without entries in the runner's home, and the harness's variables. Nothing else from the runner passes, including what `sudo`'s PAM session adds from `/etc/environment`.
 - Its tools and network are not restricted: it can use what the runner image has and what earlier steps of the job set up. The sandbox protects credentials, not the runner.
 - Its credential (the run's OpenRouter key, or its token for a self-hosted gateway) reaches it only through its environment. It is the only credential the agent holds: a Serverless endpoint's key stays in Codeman's step, outside the sandbox.
 - When the harness exits or reaches its time limit, every process of that user is killed.

@@ -263,7 +263,7 @@ ${historySection(task, quote)}${handoff}${requests}`;
 
 /** What each stage's agent does, after deciding whether its stage has work. */
 const STAGE_WORK: Record<RoutedStage, (task: TaskContext, conventions: Conventions) => string> = {
-  web: () => `Your stage is **web**: record in \`docs/web/\` the documentation of the third-party services, APIs and tools the task relies on, following the rules for third-party documentation you received. You change nothing else, except the plan's progress note: every other change is discarded.
+  web: () => `Your stage is **web**: record in \`docs/web/\` the documentation of the third-party services, APIs and tools the task relies on, following the rules for third-party documentation you received. You change nothing else, except the plan's progress notes: every other change is discarded.
 
 1. Find the third parties the plan relies on. Read the tools in \`docs/web/tools/\` and the pages already in \`docs/web/\`. If every page the task needs is there, and no maintainer asked for a refresh (under Requests, or in the brief), report \`skipped\` and say why.
 2. If \`docs/web/tools/\` has no generic tool, start from Codeman's: copy \`${WEB_TOOL_PATH}\` to \`docs/web/tools/fetch-markdown.md\` and set its dates to now. Write a tool for a third party only when its site needs instructions the generic one lacks: where its Markdown is, and its license.
@@ -344,6 +344,13 @@ function outputShape(
 ${limitsText(limits, stage)}`;
 }
 
+/**
+ * How a stage that commits keeps its record in the plan, so a run cut short by its time or its
+ * budget still leaves one for the next.
+ */
+const PROGRESS_RULE =
+  "Keep the plan current as you work: mark the steps you finish, and keep a `## Progress` section at its end (or the progress section it already has) with what you tried, what failed, what worked and what is left. Update it after each step that matters, not only at the end: if the run is cut short, it is committed with your work, and the next run starts from it. Progress notes do not change the plan's scope or decisions, which stay as approved.";
+
 /** A routed stage's task: web, design, code, test or review, on the task branch. */
 export function stagePrompt(task: TaskContext, minutes: number, conventions: Conventions): string {
   const stage = task.stage ?? "code";
@@ -370,10 +377,11 @@ You are Codeman, an agent that works on the repository in the current directory 
 ${RULES_RULE}
 ${untrustedRule(conventions)}
 - Leave your changes in the working tree. Do not commit, push, or change git's configuration. Codeman commits what you leave.
+- Keep scratch work out of the working tree: clones of other repositories, copies of this one, test output, probe scripts and backups go in a temporary directory, such as one \`mktemp -d\` creates under \`/tmp\`. Leave in the working tree only what belongs in the commit.
 - Changes to the paths below are discarded, as are changes under \`.codeman/\` (except \`${OUTPUT_FILE}\`), symbolic links, files over ${task.settings["max-file-bytes"]} bytes, and \`.codemanignore\`. A run may change at most ${task.settings["max-files"]} files, or nothing is committed.
 - Never write secrets or environment variable values into any file.
 ${conventions.workflows.agentRules(task.branch)}
-- You have about ${minutes} minutes. Well before that, leave the work in a consistent state, update the plan and write \`${OUTPUT_FILE}\`. Unfinished work is committed and the next run of this stage continues it.
+- You have about ${minutes} minutes. Well before that, leave the work in a consistent state, ${stage === "review" ? "" : "update the plan's progress notes "}and write \`${OUTPUT_FILE}\`. Unfinished work is committed and the next run of this stage continues it.
 
 Protected paths (\`.gitignore\` syntax):
 
@@ -387,9 +395,7 @@ Read the plan, then the issue, the maintainer comments${requests ? ", the reques
 
 ${STAGE_WORK[stage](task, conventions)}
 
-Keep the plan current: mark what you finished and add a short progress note for the next stage.
-
-${outputLanguage(task)}
+${stage === "review" ? "" : `${PROGRESS_RULE}\n\n`}${outputLanguage(task)}
 
 ${outputShape(stage, outputLimits(task.settings), conventions.workflows)}
 
