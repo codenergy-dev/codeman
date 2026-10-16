@@ -47,13 +47,37 @@ export function parseStatus(output: string): Pick<Change, "path" | "status" | "t
 }
 
 /**
+ * The `git status` that lists the agent's changes: the trusted `.git` against the agent's work
+ * tree, with only trusted configuration. Git does not enter submodules, whose repositories and
+ * configuration the agent controls; Codeman never commits a submodule change anyway.
+ */
+export function statusCommand(gitDir: string, worktree: string): string[] {
+  return [
+    "git",
+    "--no-optional-locks",
+    "-c",
+    "safe.directory=*",
+    "-c",
+    "core.fsmonitor=false",
+    `--git-dir=${gitDir}`,
+    `--work-tree=${worktree}`,
+    "status",
+    "--porcelain=v1",
+    "-z",
+    "--untracked-files=all",
+    "--ignore-submodules=all",
+    "--no-renames",
+  ];
+}
+
+/**
  * Lists what the agent changed and copies the changed files into `outDir/tree`.
  *
  * The agent controls its copy of the repository, including `.git`, so git runs with the
  * original checkout's `.git` (trusted) against the agent's work tree. Only regular files are
  * copied; symlinks, directories (embedded repositories) and special files are listed in the
  * manifest as changed, but not copied. A path that cannot be copied is listed the same way, so
- * one path never costs the run its result.
+ * one path never costs the run its result. Submodules are not listed.
  */
 export function collectChanges(options: {
   gitDir: string;
@@ -61,21 +85,7 @@ export function collectChanges(options: {
   outDir: string;
   exclude: readonly string[];
 }): Change[] {
-  const status = sudo([
-    "git",
-    "--no-optional-locks",
-    "-c",
-    "safe.directory=*",
-    "-c",
-    "core.fsmonitor=false",
-    `--git-dir=${options.gitDir}`,
-    `--work-tree=${options.worktree}`,
-    "status",
-    "--porcelain=v1",
-    "-z",
-    "--untracked-files=all",
-    "--no-renames",
-  ]);
+  const status = sudo(statusCommand(options.gitDir, options.worktree));
   const changes = parseStatus(status).filter(
     ({ path }) =>
       !options.exclude.some((prefix) => path === prefix || path.startsWith(`${prefix}/`)),

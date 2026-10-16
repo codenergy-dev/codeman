@@ -39,7 +39,7 @@ test("the agent is contained and its changes are collected safely", {
   git("init", "-q");
   git("add", ".");
   git("commit", "-qm", "init");
-  // A submodule: a directory `cp` refuses, which `git status` lists without a trailing slash.
+  // A submodule, whose repository the agent will create: collection must not enter it.
   const head = git("rev-parse", "HEAD").toString().trim();
   git("update-index", "--add", "--cacheinfo", `160000,${head},vendor/lib`);
   git("commit", "-qm", "submodule");
@@ -60,13 +60,18 @@ test("the agent is contained and its changes are collected safely", {
   assert.ok(!copied(`${worktree}/.codeman/action`), "the action's folder is not copied");
   assert.throws(() => copyToAgent(repo, worktree, ["../x"]), /not a path inside the copy/);
   assert.ok(copied(`${worktree}/README.md`), "a refused exclusion changes nothing");
+  // Only root can write here, as collection runs; the agent cannot.
+  const entered = join(root, "submodule-entered");
   const script = [
     "echo changed >> README.md",
     "mkdir -p plans && echo plan > plans/p.md",
     "rm src/a.txt",
     // Scratch clones: embedded repositories, which git lists as directories.
     "git init -q scratch/up && echo x > scratch/up/f.txt",
-    "git init -q vendor/lib && git -C vendor/lib -c user.name=a -c user.email=a@a commit -q --allow-empty -m x",
+    // A submodule with a changed file and a clean filter that leaves a marker if git runs it.
+    "git init -q vendor/lib && cd vendor/lib && echo a > f && git add f",
+    "git -c user.name=a -c user.email=a@a commit -q -m x && echo '* filter=probe' > .gitattributes",
+    `git config filter.probe.clean 'touch ${entered}; cat' && sleep 1 && touch f && cd ../..`,
     "mkdir -p node_modules && echo x > node_modules/x.js",
     "ln -s /etc/shadow leak.txt",
     "mkdir -p .codeman && ln -s /etc/shadow .codeman/output.json",
@@ -115,7 +120,8 @@ test("the agent is contained and its changes are collected safely", {
     status: "added",
     type: "other",
   });
-  assert.equal(byPath.get("vendor/lib")?.type, "other");
+  assert.ok(!byPath.has("vendor/lib"), "submodules are not listed");
+  assert.ok(!existsSync(entered), "git did not enter the submodule");
   assert.ok(!existsSync(join(out, "tree", "scratch")), "embedded repositories are not copied");
   assert.ok(!existsSync(join(out, "tree", "vendor", "lib")), "a submodule is not copied");
   assert.ok(

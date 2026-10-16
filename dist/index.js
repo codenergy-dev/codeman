@@ -30150,22 +30150,26 @@ function parseStatus(output) {
   }
   return changes;
 }
-function collectChanges(options) {
-  const status2 = sudo([
+function statusCommand(gitDir, worktree) {
+  return [
     "git",
     "--no-optional-locks",
     "-c",
     "safe.directory=*",
     "-c",
     "core.fsmonitor=false",
-    `--git-dir=${options.gitDir}`,
-    `--work-tree=${options.worktree}`,
+    `--git-dir=${gitDir}`,
+    `--work-tree=${worktree}`,
     "status",
     "--porcelain=v1",
     "-z",
     "--untracked-files=all",
+    "--ignore-submodules=all",
     "--no-renames"
-  ]);
+  ];
+}
+function collectChanges(options) {
+  const status2 = sudo(statusCommand(options.gitDir, options.worktree));
   const changes = parseStatus(status2).filter(
     ({ path }) => !options.exclude.some((prefix) => path === prefix || path.startsWith(`${prefix}/`))
   );
