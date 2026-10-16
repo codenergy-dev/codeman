@@ -30013,6 +30013,13 @@ import { createInterface } from "node:readline";
 var AGENT_USER = "codeman-agent";
 var AGENT_HOME = `/home/${AGENT_USER}`;
 var SAFE_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+function sudoCapture(args) {
+  const result = spawnSync("sudo", ["-n", ...args], {
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024
+  });
+  return { status: result.status, stdout: result.stdout ?? "" };
+}
 function sudo(args, input) {
   const result = spawnSync("sudo", ["-n", ...args], {
     encoding: "utf8",
@@ -30028,6 +30035,7 @@ function createAgentUser() {
   if (spawnSync("id", ["-u", AGENT_USER]).status !== 0) {
     sudo(["useradd", "--create-home", "--shell", "/bin/bash", AGENT_USER]);
   }
+  sudo(["chown", `${AGENT_USER}:${AGENT_USER}`, AGENT_HOME]);
   sudo(["chmod", "700", AGENT_HOME]);
   sudo(["chmod", "o-rwx", homedir()]);
 }
@@ -30053,6 +30061,27 @@ function writeAsAgent(file, content) {
 }
 function killAgentProcesses() {
   spawnSync("sudo", ["-n", "pkill", "-KILL", "-u", AGENT_USER]);
+}
+function trySudo(args) {
+  spawnSync("sudo", ["-n", ...args], { stdio: "ignore" });
+}
+function sealAgentSandbox(worktree) {
+  trySudo(["crontab", "-r", "-u", AGENT_USER]);
+  trySudo(["-u", AGENT_USER, "bash", "-c", "atq 2>/dev/null | awk '{print $1}' | xargs -r atrm"]);
+  trySudo(["loginctl", "disable-linger", AGENT_USER]);
+  trySudo(["loginctl", "terminate-user", AGENT_USER]);
+  trySudo(["usermod", "-L", "-s", "/usr/sbin/nologin", AGENT_USER]);
+  let alive = true;
+  for (let attempt = 0; alive && attempt < 20; attempt++) {
+    killAgentProcesses();
+    alive = spawnSync("sudo", ["-n", "pgrep", "-u", AGENT_USER]).status === 0;
+    if (alive) spawnSync("sleep", ["0.1"]);
+  }
+  if (alive) {
+    throw new Error("A process of the agent survived; refusing to collect from a live sandbox.");
+  }
+  sudo(["chown", "-h", "root:root", AGENT_HOME]);
+  sudo(["chown", "-R", "-h", "root:root", worktree]);
 }
 function agentPath(jobPath, runnerHome) {
   const entries = [...jobPath.split(":"), ...SAFE_PATH.split(":")].filter(
@@ -30169,21 +30198,32 @@ function statusCommand(gitDir, worktree) {
   ];
 }
 function collectChanges(options) {
+  requireRealDirectory(options.worktree);
   const status2 = sudo(statusCommand(options.gitDir, options.worktree));
   const changes = parseStatus(status2).filter(
     ({ path }) => !options.exclude.some((prefix) => path === prefix || path.startsWith(`${prefix}/`))
   );
   const tree = join3(options.outDir, "tree");
   mkdirSync(tree, { recursive: true });
-  const copies = changes.filter((change) => change.status !== "deleted" && change.type === void 0).map(({ path }) => path);
+  const candidates = changes.filter(
+    (change) => change.status !== "deleted" && change.type === void 0
+  );
+  const kinds = classifyPaths(
+    options.worktree,
+    candidates.map(({ path }) => path)
+  );
+  const copies = candidates.filter(({ path }) => kinds.get(path) === "file").map(({ path }) => path);
   const failed2 = copyPaths(options.worktree, tree, copies);
   if (copies.length > 0) {
     sudo(["chown", "-R", `${process.getuid?.()}:${process.getgid?.()}`, tree]);
   }
   return changes.map((change) => {
     if (change.status === "deleted" || change.type !== void 0) return change;
+    if (kinds.get(change.path) !== "file" || failed2.has(change.path)) {
+      return { ...change, type: kinds.get(change.path) === "symlink" ? "symlink" : "other" };
+    }
     const copy = join3(tree, change.path);
-    const stats = failed2.has(change.path) ? void 0 : lstatOrUndefined(copy);
+    const stats = lstatOrUndefined(copy);
     if (!stats?.isFile()) {
       rmSync(copy, { recursive: true, force: true });
       return { ...change, type: stats?.isSymbolicLink() ? "symlink" : "other" };
@@ -30195,6 +30235,43 @@ function collectChanges(options) {
       size: stats.size
     };
   });
+}
+function requireRealDirectory(path) {
+  if (sudoCapture(["test", "-h", path]).status === 0) {
+    throw new Error(`The work tree ${path} is a symbolic link; refusing to collect through it.`);
+  }
+  if (sudoCapture(["test", "-d", path]).status !== 0) {
+    throw new Error(`The work tree ${path} is not a directory; refusing to collect.`);
+  }
+}
+function classifyPaths(worktree, paths) {
+  if (paths.length === 0) return /* @__PURE__ */ new Map();
+  const { stdout } = sudoCapture([
+    "/usr/bin/env",
+    `--chdir=${worktree}`,
+    "find",
+    ...paths.map((path) => `./${path}`),
+    "-maxdepth",
+    "0",
+    "-printf",
+    // Backslash escapes for find to expand: a tab between the type letter and the path, NUL after.
+    "%y\\t%p\\0"
+  ]);
+  return parseFindTypes(stdout, paths);
+}
+function parseFindTypes(output, paths) {
+  const letters = /* @__PURE__ */ new Map();
+  for (const entry of output.split("\0")) {
+    const tab = entry.indexOf("	");
+    if (tab === -1) continue;
+    letters.set(entry.slice(tab + 1).replace(/^\.\//, ""), entry.slice(0, tab));
+  }
+  const kinds = /* @__PURE__ */ new Map();
+  for (const path of paths) {
+    const letter = letters.get(path);
+    kinds.set(path, letter === "f" ? "file" : letter === "l" ? "symlink" : "other");
+  }
+  return kinds;
 }
 function copyPaths(worktree, tree, paths) {
   const copy = (list4) => sudo([
@@ -30234,6 +30311,9 @@ function lstatOrUndefined(path) {
   }
 }
 function copyAgentFile(source, target, maxBytes) {
+  const lexical = sudoCapture(["realpath", "-s", "--", source]).stdout.trim();
+  const resolved = sudoCapture(["realpath", "--", source]).stdout.trim();
+  if (!lexical || lexical !== resolved) return false;
   try {
     sudo(["cp", "-P", source, target]);
   } catch {
@@ -32474,7 +32554,7 @@ async function agentJob(services, reached) {
       }
     }
     durationMs = Date.now() - started;
-    killAgentProcesses();
+    sealAgentSandbox(worktree);
   } finally {
     const usage = await access2.finish();
     if (usage)

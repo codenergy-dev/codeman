@@ -29,8 +29,8 @@ import {
   copyToAgent,
   createAgentUser,
   installForAgent,
-  killAgentProcesses,
   runAsAgent,
+  sealAgentSandbox,
   writeAsAgent,
 } from "../sandbox.ts";
 import type { Services } from "../services.ts";
@@ -170,7 +170,8 @@ async function agentJob(services: Services, reached: () => void): Promise<void> 
       }
     }
     durationMs = Date.now() - started;
-    killAgentProcesses();
+    // Stop everything the agent could still run and take its paths away, before root collects.
+    sealAgentSandbox(worktree);
   } finally {
     // The run's token stops working, and what the gateway measured goes to close-key.
     const usage = await access.finish();

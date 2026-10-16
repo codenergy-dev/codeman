@@ -1,6 +1,6 @@
 import { lstatSync, mkdirSync, rmSync, type Stats } from "node:fs";
 import { join } from "node:path";
-import { sudo } from "./sandbox.ts";
+import { sudo, sudoCapture } from "./sandbox.ts";
 
 export interface Change {
   path: string;
@@ -85,6 +85,10 @@ export function collectChanges(options: {
   outDir: string;
   exclude: readonly string[];
 }): Change[] {
+  // The agent owns its home, so the work tree may be a symlink it put there to send root out of
+  // the sandbox. `sealAgentSandbox` has taken the paths away from the agent; refuse one anyway.
+  requireRealDirectory(options.worktree);
+
   const status = sudo(statusCommand(options.gitDir, options.worktree));
   const changes = parseStatus(status).filter(
     ({ path }) =>
@@ -93,8 +97,17 @@ export function collectChanges(options: {
 
   const tree = join(options.outDir, "tree");
   mkdirSync(tree, { recursive: true });
-  const copies = changes
-    .filter((change) => change.status !== "deleted" && change.type === undefined)
+  // Classify before copying: only regular files are copied. A symlink, a FIFO or any other
+  // special file is listed but never opened, so `cp` cannot follow it out or block on a pipe.
+  const candidates = changes.filter(
+    (change) => change.status !== "deleted" && change.type === undefined,
+  );
+  const kinds = classifyPaths(
+    options.worktree,
+    candidates.map(({ path }) => path),
+  );
+  const copies = candidates
+    .filter(({ path }) => kinds.get(path) === "file")
     .map(({ path }) => path);
   const failed = copyPaths(options.worktree, tree, copies);
   if (copies.length > 0) {
@@ -103,8 +116,11 @@ export function collectChanges(options: {
 
   return changes.map((change): Change => {
     if (change.status === "deleted" || change.type !== undefined) return change;
+    if (kinds.get(change.path) !== "file" || failed.has(change.path)) {
+      return { ...change, type: kinds.get(change.path) === "symlink" ? "symlink" : "other" };
+    }
     const copy = join(tree, change.path);
-    const stats = failed.has(change.path) ? undefined : lstatOrUndefined(copy);
+    const stats = lstatOrUndefined(copy);
     if (!stats?.isFile()) {
       // Keep only the fact that it changed: the artifact upload would follow a symlink.
       rmSync(copy, { recursive: true, force: true });
@@ -119,10 +135,63 @@ export function collectChanges(options: {
   });
 }
 
+/** Fails collection if the work tree is a symlink or not a directory, so root reads nothing else. */
+function requireRealDirectory(path: string): void {
+  if (sudoCapture(["test", "-h", path]).status === 0) {
+    throw new Error(`The work tree ${path} is a symbolic link; refusing to collect through it.`);
+  }
+  if (sudoCapture(["test", "-d", path]).status !== 0) {
+    throw new Error(`The work tree ${path} is not a directory; refusing to collect.`);
+  }
+}
+
 /**
- * Copies `paths` from `worktree` into `tree`, without following symlinks, and returns those it
- * could not copy. One path `cp` refuses, such as a directory, fails the whole command, so then
- * each path is copied on its own.
+ * The kind of each path, from one `find` that opens nothing (it only stats): a regular file,
+ * a symlink, or `other` (a FIFO, a socket, a directory, or a path that is gone). Paths are given
+ * as `./path` so a name that starts with `-` is never read as an option.
+ */
+export function classifyPaths(
+  worktree: string,
+  paths: readonly string[],
+): Map<string, "file" | "symlink" | "other"> {
+  if (paths.length === 0) return new Map();
+  const { stdout } = sudoCapture([
+    "/usr/bin/env",
+    `--chdir=${worktree}`,
+    "find",
+    ...paths.map((path) => `./${path}`),
+    "-maxdepth",
+    "0",
+    "-printf",
+    // Backslash escapes for find to expand: a tab between the type letter and the path, NUL after.
+    "%y\\t%p\\0",
+  ]);
+  return parseFindTypes(stdout, paths);
+}
+
+/** Parses `find -printf "%y\\t%p\\0"` into a kind per path; a path `find` did not report is `other`. */
+export function parseFindTypes(
+  output: string,
+  paths: readonly string[],
+): Map<string, "file" | "symlink" | "other"> {
+  const letters = new Map<string, string>();
+  for (const entry of output.split("\0")) {
+    const tab = entry.indexOf("\t");
+    if (tab === -1) continue;
+    letters.set(entry.slice(tab + 1).replace(/^\.\//, ""), entry.slice(0, tab));
+  }
+  const kinds = new Map<string, "file" | "symlink" | "other">();
+  for (const path of paths) {
+    const letter = letters.get(path);
+    kinds.set(path, letter === "f" ? "file" : letter === "l" ? "symlink" : "other");
+  }
+  return kinds;
+}
+
+/**
+ * Copies `paths` (all regular files) from `worktree` into `tree`, without following symlinks, and
+ * returns those it could not copy. If one path makes the batch fail, each is copied on its own, so
+ * one failure never costs the rest their copy.
  */
 function copyPaths(worktree: string, tree: string, paths: readonly string[]): Set<string> {
   const copy = (list: readonly string[]) =>
@@ -167,6 +236,11 @@ function lstatOrUndefined(path: string): Stats | undefined {
 
 /** Copies one file out of the agent's home, only if it is a regular file of at most `maxBytes`. */
 export function copyAgentFile(source: string, target: string, maxBytes: number): boolean {
+  // Refuse a source reached through a symlink the agent left, so root never follows one out of the
+  // sandbox: the lexical path and the fully resolved path match only when no component is a link.
+  const lexical = sudoCapture(["realpath", "-s", "--", source]).stdout.trim();
+  const resolved = sudoCapture(["realpath", "--", source]).stdout.trim();
+  if (!lexical || lexical !== resolved) return false;
   try {
     sudo(["cp", "-P", source, target]);
   } catch {

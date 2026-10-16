@@ -19,14 +19,17 @@ import {
   createAgentUser,
   killAgentProcesses,
   runAsAgent,
+  sealAgentSandbox,
 } from "./sandbox.ts";
 import { FakeRuntime } from "./testing/fake-runtime.ts";
 
 // Creates a system user and needs passwordless sudo, like GitHub's Linux runners. CI sets this.
 const enabled = process.platform === "linux" && process.env.CODEMAN_SANDBOX_TEST === "1";
 
+// A FIFO that cp would block on fails the test as a timeout, not a hang, if its filter regresses.
 test("the agent is contained and its changes are collected safely", {
   skip: !enabled,
+  timeout: 120_000,
 }, async () => {
   const root = mkdtempSync(join(tmpdir(), "codeman-"));
   const repo = join(root, "repo");
@@ -73,6 +76,8 @@ test("the agent is contained and its changes are collected safely", {
     "git -c user.name=a -c user.email=a@a commit -q -m x && echo '* filter=probe' > .gitattributes",
     `git config filter.probe.clean 'touch ${entered}; cat' && sleep 1 && touch f && cd ../..`,
     "mkdir -p node_modules && echo x > node_modules/x.js",
+    // A FIFO in a tracked path: cp must never open it (it would block), so it is listed, not copied.
+    "mkfifo pipe",
     "ln -s /etc/shadow leak.txt",
     "mkdir -p .codeman && ln -s /etc/shadow .codeman/output.json",
     "sudo -n true 2>/dev/null && echo yes > sudo.txt",
@@ -93,13 +98,8 @@ test("the agent is contained and its changes are collected safely", {
     new FakeRuntime(),
   );
   assert.deepEqual(run, { exitCode: 0, timedOut: false });
-  killAgentProcesses();
-  let survivors = true;
-  for (let attempt = 0; survivors && attempt < 20; attempt++) {
-    survivors = spawnSync("pgrep", ["-u", AGENT_USER]).status === 0;
-    if (survivors) await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  assert.ok(!survivors, "no agent process survives");
+  // Seals the sandbox: stops the agent, checks none of its processes survive, and takes its paths.
+  sealAgentSandbox(worktree);
 
   const out = join(root, "result");
   const changes = collectChanges({
@@ -115,6 +115,8 @@ test("the agent is contained and its changes are collected safely", {
   assert.equal(byPath.get("src/a.txt")?.status, "deleted");
   assert.equal(byPath.get("leak.txt")?.type, "symlink");
   assert.ok(!existsSync(join(out, "tree", "leak.txt")), "links are listed, not copied");
+  assert.equal(byPath.get("pipe")?.type, "other", "a FIFO is listed as other");
+  assert.ok(!existsSync(join(out, "tree", "pipe")), "a FIFO is not copied");
   assert.deepEqual(byPath.get("scratch/up"), {
     path: "scratch/up",
     status: "added",
@@ -174,4 +176,33 @@ test("the agent stops when its run does, with the reason", { skip: !enabled }, a
   assert.equal(run.timedOut, false);
   assert.match(runtime.logged("warning")[0] ?? "", /The agent was stopped: No worker started\./);
   killAgentProcesses();
+});
+
+test("collection refuses a work tree the agent turned into a symlink", { skip: !enabled }, () => {
+  const root = mkdtempSync(join(tmpdir(), "codeman-link-"));
+  const repo = join(root, "repo");
+  mkdirSync(repo, { recursive: true });
+  writeFileSync(join(repo, "README.md"), "hello\n");
+  const git = (...args: string[]) =>
+    execFileSync("git", ["-C", repo, "-c", "user.name=t", "-c", "user.email=t@t", ...args]);
+  git("init", "-q");
+  git("add", ".");
+  git("commit", "-qm", "init");
+
+  // A directory outside the sandbox that the agent should not be able to have root read.
+  const secrets = join(root, "secrets");
+  mkdirSync(secrets, { recursive: true });
+  writeFileSync(join(secrets, "token.txt"), "secret\n");
+
+  createAgentUser();
+  const worktree = `${AGENT_HOME}/work`;
+  spawnSync("sudo", ["-n", "rm", "-rf", worktree]);
+  spawnSync("sudo", ["-n", "-u", AGENT_USER, "ln", "-s", secrets, worktree]);
+
+  const out = join(root, "result");
+  assert.throws(
+    () => collectChanges({ gitDir: join(repo, ".git"), worktree, outDir: out, exclude: [] }),
+    /symbolic link/,
+  );
+  assert.ok(!existsSync(join(out, "tree", "token.txt")), "nothing outside the sandbox is copied");
 });

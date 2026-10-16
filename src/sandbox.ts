@@ -13,6 +13,15 @@ export const AGENT_USER = "codeman-agent";
 export const AGENT_HOME = `/home/${AGENT_USER}`;
 const SAFE_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 
+/** Runs a privileged command and returns its status and stdout, without throwing on a failure. */
+export function sudoCapture(args: readonly string[]): { status: number | null; stdout: string } {
+  const result = spawnSync("sudo", ["-n", ...args], {
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  return { status: result.status, stdout: result.stdout ?? "" };
+}
+
 export function sudo(args: readonly string[], input?: string): string {
   const result = spawnSync("sudo", ["-n", ...args], {
     encoding: "utf8",
@@ -33,6 +42,8 @@ export function createAgentUser(): void {
   if (spawnSync("id", ["-u", AGENT_USER]).status !== 0) {
     sudo(["useradd", "--create-home", "--shell", "/bin/bash", AGENT_USER]);
   }
+  // Give the home back to the agent, in case a previous run's collection took it away.
+  sudo(["chown", `${AGENT_USER}:${AGENT_USER}`, AGENT_HOME]);
   sudo(["chmod", "700", AGENT_HOME]);
   sudo(["chmod", "o-rwx", homedir()]);
 }
@@ -68,6 +79,43 @@ export function writeAsAgent(file: string, content: string): void {
 /** Stops every process the agent left behind, so nothing changes files while they are collected. */
 export function killAgentProcesses(): void {
   spawnSync("sudo", ["-n", "pkill", "-KILL", "-u", AGENT_USER]);
+}
+
+/** Runs a privileged command that is allowed to fail, such as on a runner that lacks the tool. */
+function trySudo(args: readonly string[]): void {
+  spawnSync("sudo", ["-n", ...args], { stdio: "ignore" });
+}
+
+/**
+ * Seals the agent out before collection: stops everything it could still run, and takes its home
+ * and work tree away from it, so no process it left can change a path while root reads it.
+ *
+ * The kill after the harness does not reach work the agent scheduled for later (cron, `at`, a
+ * systemd user service kept alive by lingering). Each stop is best-effort: a runner may lack
+ * `at` or `loginctl`. The agent owns its home, so until root owns it the agent could rename an
+ * entry and put a symlink in its place; `chown` without `-L` never follows a link out.
+ */
+export function sealAgentSandbox(worktree: string): void {
+  trySudo(["crontab", "-r", "-u", AGENT_USER]);
+  // List and remove the agent's own `at` jobs, as the agent, tolerating a missing `at`.
+  trySudo(["-u", AGENT_USER, "bash", "-c", "atq 2>/dev/null | awk '{print $1}' | xargs -r atrm"]);
+  trySudo(["loginctl", "disable-linger", AGENT_USER]);
+  // Kills the whole user slice, including a systemd user manager and its timers.
+  trySudo(["loginctl", "terminate-user", AGENT_USER]);
+  trySudo(["usermod", "-L", "-s", "/usr/sbin/nologin", AGENT_USER]);
+  // Kill, then wait briefly for the processes to be gone; a signalled process may still be dying.
+  let alive = true;
+  for (let attempt = 0; alive && attempt < 20; attempt++) {
+    killAgentProcesses();
+    alive = spawnSync("sudo", ["-n", "pgrep", "-u", AGENT_USER]).status === 0;
+    if (alive) spawnSync("sleep", ["0.1"]);
+  }
+  if (alive) {
+    throw new Error("A process of the agent survived; refusing to collect from a live sandbox.");
+  }
+  // After this, the agent owns neither its home nor its work tree, so it cannot swap any path.
+  sudo(["chown", "-h", "root:root", AGENT_HOME]);
+  sudo(["chown", "-R", "-h", "root:root", worktree]);
 }
 
 /**

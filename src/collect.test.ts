@@ -4,7 +4,19 @@ import { cpSync, existsSync, mkdtempSync, rmSync, utimesSync, writeFileSync } fr
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { parseStatus, statusCommand } from "./collect.ts";
+import { parseFindTypes, parseStatus, statusCommand } from "./collect.ts";
+
+test("classifies find's output, and treats a path find did not report as other", () => {
+  const output = "f\t./src/a.ts\0l\t./link\0p\t./pipe\0d\t./dir\0";
+  const kinds = parseFindTypes(output, ["src/a.ts", "link", "pipe", "dir", "gone"]);
+  assert.deepEqual(Object.fromEntries(kinds), {
+    "src/a.ts": "file",
+    link: "symlink",
+    pipe: "other",
+    dir: "other",
+    gone: "other",
+  });
+});
 
 test("the status command stays out of submodules, whose configuration the agent controls", () => {
   const root = mkdtempSync(join(tmpdir(), "codeman-status-"));
