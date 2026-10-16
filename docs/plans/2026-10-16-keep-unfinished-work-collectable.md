@@ -1,7 +1,7 @@
 ---
 status: completed
 created_at: 2026-10-16T12:45:25-03:00
-updated_at: 2026-10-16T12:51:39-03:00
+updated_at: 2026-10-16T13:28:25-03:00
 commit: e26a8c9
 ---
 
@@ -39,5 +39,5 @@ Constraints: the manifest's format stays as it is; collection keeps its security
 ## Out of scope
 
 - Raising `max-files`, or dropping scratch files by pattern in `apply`.
-- Removing stale progress notes when a plan is revised.
+- Removing stale progress notes when a plan is revised. (A later change makes a revised plan keep the progress section, marked as predating the revision, since earlier runs' work stays on the branch.)
 - Committing the contents of embedded repositories, or tracked submodules.

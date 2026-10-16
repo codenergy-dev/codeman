@@ -32074,7 +32074,7 @@ function planPrompt(task, conventions) {
   const limits = outputLimits(task.settings);
   const first = nextDecisionId(task.record);
   const quote = quoter();
-  const previous = task.record ? `A previous plan exists at \`${task.planPath}\`. Update it instead of starting over: apply the revision requests and settled decisions below, if any, and remove its \`## Answers\` section.` : `Create the plan at \`${task.planPath}\`.`;
+  const previous = task.record ? `A previous plan exists at \`${task.planPath}\`. Update it instead of starting over: apply the revision requests and settled decisions below, if any, and remove its \`## Answers\` section. Keep its \`## Progress\` section: the work earlier runs left stays on the branch, so mark that those notes predate this revision (for example under a \`### Before this revision\` subheading); the stages then follow the revised steps.` : `Create the plan at \`${task.planPath}\`.`;
   const settled = task.settled.flatMap((decision) => {
     if (!decision.answer) return [];
     const option = decision.options.find((candidate) => candidate.key === decision.answer?.option);
@@ -32323,7 +32323,7 @@ ${untrustedRule(conventions)}
 - Changes to the paths below are discarded, as are changes under \`.codeman/\` (except \`${OUTPUT_FILE}\`), symbolic links, files over ${task.settings["max-file-bytes"]} bytes, and \`.codemanignore\`. A run may change at most ${task.settings["max-files"]} files, or nothing is committed.
 - Never write secrets or environment variable values into any file.
 ${conventions.workflows.agentRules(task.branch)}
-- You have about ${minutes} minutes. Well before that, leave the work in a consistent state, ${stage === "review" ? "" : "update the plan's progress notes "}and write \`${OUTPUT_FILE}\`. Unfinished work is committed and the next run of this stage continues it.
+- You have about ${minutes} minutes. Well before that, ${stage === "review" ? `write \`${OUTPUT_FILE}\` with what you checked and your verdict. Review commits nothing, so a run that does not finish in time leaves no result` : `leave the work in a consistent state, update the plan's progress notes and write \`${OUTPUT_FILE}\`. Unfinished work is committed and the next run of this stage continues it`}.
 
 Protected paths (\`.gitignore\` syntax):
 

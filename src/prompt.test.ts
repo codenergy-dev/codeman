@@ -76,6 +76,8 @@ test("updates an existing plan instead of starting over", () => {
     GITHUB,
   );
   assert.match(prompt, /A previous plan exists/);
+  assert.match(prompt, /Keep its `## Progress` section/);
+  assert.match(prompt, /mark that those notes predate this revision/);
 });
 
 test("a revision carries the requests and the settled decisions", () => {
@@ -270,6 +272,17 @@ test("stages keep scratch work out of the tree, and progress notes in the plan a
   }
   assert.ok(!prompt("review").includes("## Progress"), "review changes nothing");
   assert.ok(!prompt("review").includes("progress notes and write"));
+});
+
+test("the time rule tells review it commits nothing, and the other stages that work is kept", () => {
+  const prompt = (stage: "code" | "review") =>
+    stagePrompt({ ...task, action: "implement", stage }, 45, GITHUB);
+  assert.match(prompt("review"), /Review commits nothing, so a run that does not finish in time/);
+  assert.ok(
+    !prompt("review").includes("Unfinished work is committed"),
+    "review is not told its work is committed",
+  );
+  assert.match(prompt("code"), /Unfinished work is committed and the next run of this stage/);
 });
 
 test("the next stage gets the notes of the previous one", () => {
