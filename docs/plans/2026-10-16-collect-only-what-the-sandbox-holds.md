@@ -1,7 +1,7 @@
 ---
-status: in progress
+status: completed
 created_at: 2026-10-16T13:20:30-03:00
-updated_at: 2026-10-16T13:20:30-03:00
+updated_at: 2026-10-16T13:32:18-03:00
 commit: 227486f
 ---
 
@@ -29,8 +29,9 @@ The kill after the harness (`killAgentProcesses`) does not reach work the agent 
 1. `sealAgentSandbox` in `src/sandbox.ts`: remove the agent's cron and `at` jobs, `loginctl terminate-user` and `disable-linger`, `usermod -L`, kill again and check no process is left; then `chown` its home and work tree to root without following symlinks. All best-effort for the lockdown commands, since a runner may lack `at` or `loginctl`. Called from `agent` after the harness, before collection.
 2. In `collectChanges`: fail with a clear message if the work tree is a symlink or not a directory, before `git status`, so no manifest is written and the task blocks with "no result".
 3. Classify the listed paths with one `find -maxdepth 0` call that opens nothing: regular files are copied, symlinks and everything else (FIFOs, sockets, directories) are listed as `type: "other"`/`"symlink"` and not copied.
-4. `copyAgentFile` refuses a symlinked source or path component the same way.
-5. Tests: unit tests where possible; the CI-only sandbox test gains a symlinked work tree (the step fails, nothing outside is copied) and a FIFO in a tracked path (listed as other, no hang, under a timeout).
+4. `copyAgentFile` (now `copySealedAgentFile`) refuses a symlinked source or path component the same way.
+5. Reading `.codeman/output.json` while the sandbox is still live (the output check before a fix) happens as the agent user, not as root: `copyLiveAgentFile` reads only a regular file, without following a last-component symlink or blocking on a pipe, up to the size limit, so the agent only ever gets back what it could already read. After the seal, `copySealedAgentFile` reads as root, with the symlink check as defense in depth and a regular-file check before `cp`.
+6. Tests: unit tests where possible; the CI-only sandbox test gains a symlinked work tree (the step fails, nothing outside is copied) and a FIFO in a tracked path (listed as other, no hang, under a timeout).
 
 ## Out of scope
 

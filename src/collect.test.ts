@@ -1,10 +1,56 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { parseFindTypes, parseStatus, statusCommand } from "./collect.ts";
+import { liveReadCommand, parseFindTypes, parseStatus, statusCommand } from "./collect.ts";
+
+/** A PATH whose `dd` is GNU's, as on Linux runners: `gdd` on macOS, if installed. */
+function gnuDdPath(dir: string): string | undefined {
+  const path = process.env.PATH ?? "";
+  if (spawnSync("dd", ["--version"], { encoding: "utf8" }).stdout?.includes("GNU")) return path;
+  const gdd = spawnSync("sh", ["-c", "command -v gdd"], { encoding: "utf8" }).stdout.trim();
+  if (!gdd) return undefined;
+  mkdirSync(join(dir, "bin"), { recursive: true });
+  symlinkSync(gdd, join(dir, "bin", "dd"));
+  return `${join(dir, "bin")}:${path}`;
+}
+
+test("the live read takes only a regular file, within the limit, and never blocks", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "codeman-live-"));
+  try {
+    const path = gnuDdPath(dir);
+    if (!path) return t.skip("needs GNU dd");
+    writeFileSync(join(dir, "ok.json"), '{"ok":1}\n');
+    writeFileSync(join(dir, "secret"), "secret\n");
+    symlinkSync(join(dir, "secret"), join(dir, "link.json"));
+    spawnSync("mkfifo", [join(dir, "pipe.json")]);
+    const read = (name: string, max = 1024) => {
+      const [file = "", ...args] = liveReadCommand(join(dir, name), max);
+      return spawnSync(file, args, { env: { PATH: path }, timeout: 10_000 });
+    };
+    const ok = read("ok.json");
+    assert.equal(ok.status, 0);
+    assert.equal(ok.stdout.toString(), '{"ok":1}\n');
+    assert.equal(read("ok.json", 4).stdout.length, 5, "one byte over the limit, so it is refused");
+    assert.notEqual(read("link.json").status, 0, "a symlink is refused");
+    const pipe = read("pipe.json");
+    assert.equal(pipe.error, undefined, "a pipe does not block");
+    assert.notEqual(pipe.status, 0, "a pipe is refused");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 test("classifies find's output, and treats a path find did not report as other", () => {
   const output = "f\t./src/a.ts\0l\t./link\0p\t./pipe\0d\t./dir\0";

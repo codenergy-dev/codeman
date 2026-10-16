@@ -1,6 +1,7 @@
-import { lstatSync, mkdirSync, rmSync, type Stats } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { lstatSync, mkdirSync, rmSync, type Stats, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { sudo, sudoCapture } from "./sandbox.ts";
+import { AGENT_USER, sudo, sudoCapture } from "./sandbox.ts";
 
 export interface Change {
   path: string;
@@ -234,13 +235,45 @@ function lstatOrUndefined(path: string): Stats | undefined {
   }
 }
 
-/** Copies one file out of the agent's home, only if it is a regular file of at most `maxBytes`. */
-export function copyAgentFile(source: string, target: string, maxBytes: number): boolean {
+/**
+ * Reads a file out of the agent's home as the agent, while the sandbox is live (before
+ * `sealAgentSandbox`), for at most `maxBytes`: what comes back is only ever what the agent could
+ * read itself, whatever it swaps meanwhile. The file must be a regular file, not a symlink;
+ * `dd` opens it without following a last-component link and without blocking on a pipe.
+ */
+export const LIVE_READ_SCRIPT =
+  '[ -f "$1" ] && [ ! -h "$1" ] || exit 3; exec dd if="$1" iflag=nofollow,nonblock,count_bytes count="$2" bs=65536 status=none';
+
+/** The command, after `sudo -n -u <agent> --`, that reads `source` up to one byte over `maxBytes`. */
+export function liveReadCommand(source: string, maxBytes: number): string[] {
+  return ["/bin/sh", "-c", LIVE_READ_SCRIPT, "sh", source, String(maxBytes + 1)];
+}
+
+/** Copies a file out of the live sandbox, read as the agent; see `LIVE_READ_SCRIPT`. */
+export function copyLiveAgentFile(source: string, target: string, maxBytes: number): boolean {
+  const result = spawnSync(
+    "sudo",
+    ["-n", "-u", AGENT_USER, "--", ...liveReadCommand(source, maxBytes)],
+    { timeout: 30_000, maxBuffer: maxBytes + 1024 },
+  );
+  if (result.status !== 0 || !result.stdout || result.stdout.length > maxBytes) return false;
+  writeFileSync(target, result.stdout);
+  return true;
+}
+
+/**
+ * Copies a file out of the sealed sandbox (after `sealAgentSandbox`), as root, only if it is a
+ * regular file of at most `maxBytes`. Nothing of the agent runs and root owns its paths, so the
+ * checks hold until the copy; the symlink check is defense in depth.
+ */
+export function copySealedAgentFile(source: string, target: string, maxBytes: number): boolean {
   // Refuse a source reached through a symlink the agent left, so root never follows one out of the
   // sandbox: the lexical path and the fully resolved path match only when no component is a link.
   const lexical = sudoCapture(["realpath", "-s", "--", source]).stdout.trim();
   const resolved = sudoCapture(["realpath", "--", source]).stdout.trim();
   if (!lexical || lexical !== resolved) return false;
+  // Only a regular file: cp would block on a named pipe.
+  if (sudoCapture(["test", "-f", source]).status !== 0) return false;
   try {
     sudo(["cp", "-P", source, target]);
   } catch {

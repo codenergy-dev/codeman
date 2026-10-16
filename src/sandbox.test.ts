@@ -11,7 +11,7 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { collectChanges, copyAgentFile } from "./collect.ts";
+import { collectChanges, copyLiveAgentFile, copySealedAgentFile } from "./collect.ts";
 import {
   AGENT_HOME,
   AGENT_USER,
@@ -80,6 +80,7 @@ test("the agent is contained and its changes are collected safely", {
     "mkfifo pipe",
     "ln -s /etc/shadow leak.txt",
     "mkdir -p .codeman && ln -s /etc/shadow .codeman/output.json",
+    `echo '{"ok":1}' > .codeman/ok.json && mkfifo .codeman/pipe.json`,
     "sudo -n true 2>/dev/null && echo yes > sudo.txt",
     `cat /proc/${process.pid}/environ > environ.txt 2>/dev/null`,
     'echo "$OPENROUTER_API_KEY" > key.txt',
@@ -98,6 +99,15 @@ test("the agent is contained and its changes are collected safely", {
     new FakeRuntime(),
   );
   assert.deepEqual(run, { exitCode: 0, timedOut: false });
+  // While the sandbox is live, files are read as the agent: no symlink, no pipe, the size checked.
+  const live = (name: string, max = 1024) =>
+    copyLiveAgentFile(`${worktree}/.codeman/${name}`, join(root, `live-${name}`), max);
+  assert.equal(live("output.json"), false, "a symlinked file is refused while live");
+  assert.equal(live("pipe.json"), false, "a pipe is refused while live, without blocking");
+  assert.equal(live("ok.json"), true);
+  assert.equal(readFileSync(join(root, "live-ok.json"), "utf8"), '{"ok":1}\n');
+  assert.equal(live("ok.json", 4), false, "a file over the limit is refused");
+
   // Seals the sandbox: stops the agent, checks none of its processes survive, and takes its paths.
   sealAgentSandbox(worktree);
 
@@ -149,10 +159,14 @@ test("the agent is contained and its changes are collected safely", {
   assert.ok(!byPath.has("docker.txt"), "the agent cannot use Docker");
 
   assert.equal(
-    copyAgentFile(`${worktree}/.codeman/output.json`, join(out, "output.json"), 1024),
+    copySealedAgentFile(`${worktree}/.codeman/output.json`, join(out, "output.json"), 1024),
     false,
     "a symlinked output file is refused",
   );
+  const sealed = (name: string) =>
+    copySealedAgentFile(`${worktree}/.codeman/${name}`, join(out, `sealed-${name}`), 1024);
+  assert.equal(sealed("pipe.json"), false, "a pipe is refused after the seal, without blocking");
+  assert.equal(sealed("ok.json"), true);
   assert.notEqual(
     lstatSync("/etc/shadow").uid,
     process.getuid?.(),

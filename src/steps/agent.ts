@@ -1,7 +1,12 @@
 import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { actionPathIn } from "../action.ts";
-import { collectChanges, copyAgentFile, type Manifest } from "../collect.ts";
+import {
+  collectChanges,
+  copyLiveAgentFile,
+  copySealedAgentFile,
+  type Manifest,
+} from "../collect.ts";
 import { decrypt } from "../crypto.ts";
 import { harnesses } from "../harness/index.ts";
 import { type AgentAccess, agentAccess } from "../inference/access.ts";
@@ -192,7 +197,8 @@ async function agentJob(services: Services, reached: () => void): Promise<void> 
     exclude: [OUTPUT_DIR, ...excluded],
   });
   const outputFile = join(out, "output.json");
-  if (!copyAgentFile(`${worktree}/${OUTPUT_FILE}`, outputFile, MAX_OUTPUT_BYTES)) {
+  // After the seal: nothing of the agent runs, and root owns its paths.
+  if (!copySealedAgentFile(`${worktree}/${OUTPUT_FILE}`, outputFile, MAX_OUTPUT_BYTES)) {
     rmSync(outputFile, { force: true });
   }
   const manifest: Manifest = {
@@ -248,11 +254,16 @@ function stopReason(signal: AbortSignal): string {
   return reason instanceof Error ? reason.message : String(reason);
 }
 
-/** The agent's output as it is now, if it wrote one Codeman would read. */
+/**
+ * The agent's output as it is now, if it wrote one Codeman would read. The sandbox is still live
+ * (processes the agent left may run), so the file is read as the agent, never as root.
+ */
 function readAgentOutput(runtime: Services["runtime"], source: string): string | undefined {
   const copy = join(workdir(runtime), "output-check.json");
   try {
-    return copyAgentFile(source, copy, MAX_OUTPUT_BYTES) ? readFileSync(copy, "utf8") : undefined;
+    return copyLiveAgentFile(source, copy, MAX_OUTPUT_BYTES)
+      ? readFileSync(copy, "utf8")
+      : undefined;
   } finally {
     rmSync(copy, { force: true });
   }

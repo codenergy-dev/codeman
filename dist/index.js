@@ -29999,11 +29999,12 @@ function status(error3) {
 }
 
 // src/steps/agent.ts
-import { existsSync as existsSync2, lstatSync as lstatSync2, mkdirSync as mkdirSync4, readFileSync as readFileSync5, rmSync as rmSync4, writeFileSync as writeFileSync4 } from "node:fs";
+import { existsSync as existsSync2, lstatSync as lstatSync2, mkdirSync as mkdirSync4, readFileSync as readFileSync5, rmSync as rmSync4, writeFileSync as writeFileSync5 } from "node:fs";
 import { join as join7 } from "node:path";
 
 // src/collect.ts
-import { lstatSync, mkdirSync, rmSync } from "node:fs";
+import { spawnSync as spawnSync2 } from "node:child_process";
+import { lstatSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join as join3 } from "node:path";
 
 // src/sandbox.ts
@@ -30310,10 +30311,25 @@ function lstatOrUndefined(path) {
     return void 0;
   }
 }
-function copyAgentFile(source, target, maxBytes) {
+var LIVE_READ_SCRIPT = '[ -f "$1" ] && [ ! -h "$1" ] || exit 3; exec dd if="$1" iflag=nofollow,nonblock,count_bytes count="$2" bs=65536 status=none';
+function liveReadCommand(source, maxBytes) {
+  return ["/bin/sh", "-c", LIVE_READ_SCRIPT, "sh", source, String(maxBytes + 1)];
+}
+function copyLiveAgentFile(source, target, maxBytes) {
+  const result = spawnSync2(
+    "sudo",
+    ["-n", "-u", AGENT_USER, "--", ...liveReadCommand(source, maxBytes)],
+    { timeout: 3e4, maxBuffer: maxBytes + 1024 }
+  );
+  if (result.status !== 0 || !result.stdout || result.stdout.length > maxBytes) return false;
+  writeFileSync(target, result.stdout);
+  return true;
+}
+function copySealedAgentFile(source, target, maxBytes) {
   const lexical = sudoCapture(["realpath", "-s", "--", source]).stdout.trim();
   const resolved = sudoCapture(["realpath", "--", source]).stdout.trim();
   if (!lexical || lexical !== resolved) return false;
+  if (sudoCapture(["test", "-f", source]).status !== 0) return false;
   try {
     sudo(["cp", "-P", source, target]);
   } catch {
@@ -30360,9 +30376,9 @@ function deriveKey(secret, salt) {
 }
 
 // src/harness/opencode.ts
-import { spawnSync as spawnSync2 } from "node:child_process";
+import { spawnSync as spawnSync3 } from "node:child_process";
 import { createHash as createHash3 } from "node:crypto";
-import { chmodSync, mkdirSync as mkdirSync2, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync as mkdirSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import { join as join4 } from "node:path";
 var OPENCODE_VERSION = "1.18.32";
 var PACKAGES = {
@@ -30434,8 +30450,8 @@ var openCode = {
     }
     mkdirSync2(dir, { recursive: true });
     const file = join4(dir, "opencode.tgz");
-    writeFileSync(file, tarball);
-    const tar = spawnSync2("tar", ["-xzf", file, "-C", dir, "package/bin/opencode"], {
+    writeFileSync2(file, tarball);
+    const tar = spawnSync3("tar", ["-xzf", file, "-C", dir, "package/bin/opencode"], {
       stdio: "inherit"
     });
     if (tar.status !== 0) throw new Error("Extracting OpenCode failed.");
@@ -31565,8 +31581,8 @@ function languageName(tag) {
 }
 
 // src/policy.ts
-import { spawnSync as spawnSync3 } from "node:child_process";
-import { mkdtempSync, rmSync as rmSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { spawnSync as spawnSync4 } from "node:child_process";
+import { mkdtempSync, rmSync as rmSync2, writeFileSync as writeFileSync3 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join as join5 } from "node:path";
 
@@ -31751,10 +31767,10 @@ function ignoredPaths(rules, paths) {
       GIT_CONFIG_NOSYSTEM: "1",
       GIT_CONFIG_GLOBAL: "/dev/null"
     };
-    const init = spawnSync3("git", ["init", "-q", dir], { env, encoding: "utf8" });
+    const init = spawnSync4("git", ["init", "-q", dir], { env, encoding: "utf8" });
     if (init.status !== 0) throw new Error(`git init failed: ${init.stderr.trim()}`);
-    writeFileSync2(join5(dir, ".git", "info", "exclude"), rules);
-    const result = spawnSync3(
+    writeFileSync3(join5(dir, ".git", "info", "exclude"), rules);
+    const result = spawnSync4(
       "git",
       [
         "-c",
@@ -31946,8 +31962,8 @@ function decodeStatus(body) {
 }
 
 // src/results.ts
-import { spawnSync as spawnSync4 } from "node:child_process";
-import { mkdirSync as mkdirSync3, rmSync as rmSync3, writeFileSync as writeFileSync3 } from "node:fs";
+import { spawnSync as spawnSync5 } from "node:child_process";
+import { mkdirSync as mkdirSync3, rmSync as rmSync3, writeFileSync as writeFileSync4 } from "node:fs";
 import { join as join6 } from "node:path";
 var RESULTS_DIR = ".codeman/results";
 var MAX_LOG_BYTES = 64 * 1024;
@@ -31981,7 +31997,7 @@ async function downloadResults(ci, runs, dir) {
       if (job.conclusion === "success" || job.conclusion === "skipped") continue;
       try {
         const log = logTail(await ci.jobLog(job.id));
-        writeFileSync3(join6(runDir, "logs", `${job.id}-${safeName(job.name)}.txt`), log);
+        writeFileSync4(join6(runDir, "logs", `${job.id}-${safeName(job.name)}.txt`), log);
       } catch {
         lines.push("  (its log could not be downloaded)");
       }
@@ -32002,22 +32018,22 @@ async function downloadResults(ci, runs, dir) {
         );
       }
     }
-    writeFileSync3(join6(runDir, "README.md"), `${lines.join("\n")}
+    writeFileSync4(join6(runDir, "README.md"), `${lines.join("\n")}
 `);
     index.push(`- ${run2.name}: ${run2.conclusion ?? "unknown"}, in \`${run2.id}/\``);
   }
-  writeFileSync3(join6(dir, "README.md"), `${index.join("\n")}
+  writeFileSync4(join6(dir, "README.md"), `${index.join("\n")}
 `);
 }
 function extract(zip, target) {
   mkdirSync3(target, { recursive: true });
   const file = `${target}.zip`;
-  writeFileSync3(file, zip);
+  writeFileSync4(file, zip);
   try {
-    const listing = spawnSync4("unzip", ["-Z", "-t", file], { encoding: "utf8" });
+    const listing = spawnSync5("unzip", ["-Z", "-t", file], { encoding: "utf8" });
     const size = Number(/([0-9]+) bytes uncompressed/.exec(listing.stdout)?.[1] ?? Number.NaN);
     if (listing.status !== 0 || !(size <= MAX_EXTRACTED_BYTES)) return false;
-    return spawnSync4("unzip", ["-q", "-o", file, "-d", target]).status === 0;
+    return spawnSync5("unzip", ["-q", "-o", file, "-d", target]).status === 0;
   } finally {
     rmSync3(file, { force: true });
   }
@@ -32573,7 +32589,7 @@ async function agentJob(services, reached) {
     exclude: [OUTPUT_DIR, ...excluded]
   });
   const outputFile = join7(out, "output.json");
-  if (!copyAgentFile(`${worktree}/${OUTPUT_FILE}`, outputFile, MAX_OUTPUT_BYTES)) {
+  if (!copySealedAgentFile(`${worktree}/${OUTPUT_FILE}`, outputFile, MAX_OUTPUT_BYTES)) {
     rmSync4(outputFile, { force: true });
   }
   const manifest = {
@@ -32584,7 +32600,7 @@ async function agentJob(services, reached) {
     durationMs,
     changes
   };
-  writeFileSync4(join7(out, "manifest.json"), JSON.stringify(manifest, null, 2));
+  writeFileSync5(join7(out, "manifest.json"), JSON.stringify(manifest, null, 2));
   runtime2.info(`Changed ${changes.length} file(s):`);
   for (const change of changes) {
     const kept = change.type === void 0 || change.type === "file";
@@ -32619,7 +32635,7 @@ function stopReason(signal) {
 function readAgentOutput(runtime2, source) {
   const copy = join7(workdir(runtime2), "output-check.json");
   try {
-    return copyAgentFile(source, copy, MAX_OUTPUT_BYTES) ? readFileSync5(copy, "utf8") : void 0;
+    return copyLiveAgentFile(source, copy, MAX_OUTPUT_BYTES) ? readFileSync5(copy, "utf8") : void 0;
   } finally {
     rmSync4(copy, { force: true });
   }
@@ -32633,7 +32649,7 @@ function repositoryRules(workspace) {
 }
 
 // src/steps/apply.ts
-import { existsSync as existsSync3, lstatSync as lstatSync3, mkdirSync as mkdirSync5, readFileSync as readFileSync6, writeFileSync as writeFileSync5 } from "node:fs";
+import { existsSync as existsSync3, lstatSync as lstatSync3, mkdirSync as mkdirSync5, readFileSync as readFileSync6, writeFileSync as writeFileSync6 } from "node:fs";
 import { join as join8 } from "node:path";
 
 // src/inference/spend.ts
@@ -33316,7 +33332,7 @@ async function apply(services) {
   runtime2.output("chain", String(chain));
   if (chain) {
     mkdirSync5(chainDir(runtime2), { recursive: true });
-    writeFileSync5(join8(chainDir(runtime2), String(task.number)), `${task.number}
+    writeFileSync6(join8(chainDir(runtime2), String(task.number)), `${task.number}
 `);
   }
 }
@@ -34408,7 +34424,7 @@ async function release(services) {
 }
 
 // src/steps/select.ts
-import { mkdirSync as mkdirSync6, writeFileSync as writeFileSync6 } from "node:fs";
+import { mkdirSync as mkdirSync6, writeFileSync as writeFileSync7 } from "node:fs";
 import { dirname } from "node:path";
 async function select(services) {
   const { runtime: runtime2, conventions } = services;
@@ -34738,7 +34754,7 @@ async function select(services) {
         );
       }
       mkdirSync6(dirname(taskFile(runtime2, task.number)), { recursive: true });
-      writeFileSync6(taskFile(runtime2, task.number), JSON.stringify(context3, null, 2));
+      writeFileSync7(taskFile(runtime2, task.number), JSON.stringify(context3, null, 2));
     };
     runtime2.info(
       model ? `Selected #${task.number} to ${action}, with model ${model}.` : `Selected #${task.number} to ${action}.`
@@ -34852,7 +34868,7 @@ async function select(services) {
   if (first && firstPicked) {
     for (const [name, value] of Object.entries(first)) runtime2.output(name, value);
     runtime2.output("model", firstPicked.model);
-    writeFileSync6(taskFile(runtime2), JSON.stringify(firstPicked.context, null, 2));
+    writeFileSync7(taskFile(runtime2), JSON.stringify(firstPicked.context, null, 2));
   }
   for (const one of picked) {
     ledger.pick(runOf(one), {
