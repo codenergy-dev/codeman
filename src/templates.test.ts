@@ -246,9 +246,10 @@ test("the dispatch job wakes each repository with a token for it alone, that may
   const token = entries(caller, ["jobs", "dispatch", "steps", "with"]);
   assert.deepEqual(
     [...token.keys()].filter((key) => key.startsWith("permission-")),
-    ["permission-actions"],
+    ["permission-actions", "permission-metadata"],
   );
   assert.equal(token.get("permission-actions"), "write");
+  assert.equal(token.get("permission-metadata"), "read");
   assert.equal(token.get("owner"), `\${{ matrix.owner }}`);
   assert.equal(token.get("repositories"), `\${{ matrix.repository }}`);
   assert.match(job, /uses: actions\/create-github-app-token@[0-9a-f]{40} # v3\.2\.0/);

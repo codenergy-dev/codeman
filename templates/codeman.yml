@@ -218,6 +218,8 @@ jobs:
           owner: ${{ matrix.owner }}
           repositories: ${{ matrix.repository }}
           permission-actions: write
+          # To read the repository's default branch, which gh starts the workflow on.
+          permission-metadata: read
       - run: |
           busy=$(gh api "repos/$OWNER/$REPOSITORY/actions/concurrency_groups/codeman" \
             --jq '.group_members[] | "\(.status): \(.run_html_url)"' 2>/dev/null) || busy=""
