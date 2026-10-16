@@ -922,7 +922,10 @@ var Gateway = class {
     const now = this.#now();
     const task = settings.task ?? "";
     for (const run of this.#runs) {
-      if (run.active && (task === "" || run.task === task)) this.#end(run, now);
+      if (!run.closed && (task === "" || run.task === task)) {
+        this.#end(run, now);
+        run.closed = true;
+      }
     }
     this.release(task);
     this.#runs.push({
@@ -980,13 +983,15 @@ var Gateway = class {
   /**
    * Ends a run, by its token's hash, or the last one: its token stops working. With `keep`, its
    * task keeps the pod for its next run, and is given the pod's time while no run uses it.
-   * Returns what the run used.
+   * Returns what the run used. A run already ended or stopped keeps its end, so calling it again,
+   * as a key job that retries does, returns the same usage.
    */
   endRun(options = {}) {
     const run = this.#find(options.tokenSha256);
     if (!run) return void 0;
     const now = this.#now();
     this.#end(run, now);
+    run.closed = true;
     if (options.keep && run.task && !this.#keepers().includes(run.task)) {
       this.#kept.push({ task: run.task, from: now });
     }
@@ -1016,6 +1021,10 @@ var Gateway = class {
   get serving() {
     return this.#runs.some((run) => run.active);
   }
+  /** Whether a run the gateway stopped, for its budget or its silence, waits for its key job. */
+  get awaitingClose() {
+    return this.#runs.some((run) => run.stopped !== void 0 && !run.closed);
+  }
   /** The runs being served, for the pod's limits. */
   get runs() {
     return this.#runs.filter((run) => run.active).map((run) => ({ deadline: this.#deadline(run), lastActivity: run.lastActivity }));
@@ -1037,8 +1046,9 @@ var Gateway = class {
     return now + Math.floor((run.limit - this.#cost(run)) / run.meter.pricePerSecond * 1e3);
   }
   /**
-   * Stops the runs whose budget is spent or whose agent made no request for `runIdleMs`, while
-   * others go on; when none would, the pod terminates instead.
+   * Stops the runs whose budget is spent or whose agent made no request for `runIdleMs`, alone or
+   * all together: from then on they take none of the pod's time. Their key jobs still end them
+   * and read their usage; a pod left without a run waits for them (`expiry`).
    */
   expireRuns(runIdleMs) {
     const now = this.#now();
@@ -1483,15 +1493,8 @@ function expiry(state, policy, now) {
   if (!state.ready) {
     return now >= policy.startBy ? "the model was not served in time" : void 0;
   }
-  const runs = state.runs ?? (state.serving ? [{ deadline: state.deadline, lastActivity: state.lastActivity }] : []);
-  if (runs.length > 0) {
-    const spent = (run) => run.deadline !== void 0 && now >= run.deadline;
-    const silent = (run) => now - run.lastActivity >= policy.runIdleMs;
-    if (!runs.every((run) => spent(run) || silent(run))) return void 0;
-    if (runs.length > 1) return "every run on it spent its budget or made no request for too long";
-    return runs.every(spent) ? "the run's budget is spent" : "the run made no request for too long";
-  }
-  return now - state.lastActivity >= policy.keptIdleMs ? "no run came to use it" : void 0;
+  if (state.serving || now - state.lastActivity < policy.keptIdleMs) return void 0;
+  return state.awaitingClose ? "it stopped its runs, and no key job ended them in time" : "no run came to use it";
 }
 function podSettings(env) {
   const model = env.CODEMAN_MODEL;
@@ -2002,9 +2005,9 @@ async function main() {
   await gateway.listen("0.0.0.0", GATEWAY_PORT);
   log(`Gateway listening on port ${GATEWAY_PORT}.`);
   setInterval(() => {
+    gateway.expireRuns(settings.policy.runIdleMs);
     const reason = expiry(gateway, settings.policy, Date.now());
     if (reason) void terminate(reason);
-    else gateway.expireRuns(settings.policy.runIdleMs);
   }, 15e3).unref();
   try {
     const fit = settings.engine === "vllm" ? await serveVllm(settings, gateway, log, (child) => {

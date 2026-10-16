@@ -22137,7 +22137,10 @@ var Gateway = class {
     const now = this.#now();
     const task = settings.task ?? "";
     for (const run2 of this.#runs) {
-      if (run2.active && (task === "" || run2.task === task)) this.#end(run2, now);
+      if (!run2.closed && (task === "" || run2.task === task)) {
+        this.#end(run2, now);
+        run2.closed = true;
+      }
     }
     this.release(task);
     this.#runs.push({
@@ -22195,13 +22198,15 @@ var Gateway = class {
   /**
    * Ends a run, by its token's hash, or the last one: its token stops working. With `keep`, its
    * task keeps the pod for its next run, and is given the pod's time while no run uses it.
-   * Returns what the run used.
+   * Returns what the run used. A run already ended or stopped keeps its end, so calling it again,
+   * as a key job that retries does, returns the same usage.
    */
   endRun(options = {}) {
     const run2 = this.#find(options.tokenSha256);
     if (!run2) return void 0;
     const now = this.#now();
     this.#end(run2, now);
+    run2.closed = true;
     if (options.keep && run2.task && !this.#keepers().includes(run2.task)) {
       this.#kept.push({ task: run2.task, from: now });
     }
@@ -22231,6 +22236,10 @@ var Gateway = class {
   get serving() {
     return this.#runs.some((run2) => run2.active);
   }
+  /** Whether a run the gateway stopped, for its budget or its silence, waits for its key job. */
+  get awaitingClose() {
+    return this.#runs.some((run2) => run2.stopped !== void 0 && !run2.closed);
+  }
   /** The runs being served, for the pod's limits. */
   get runs() {
     return this.#runs.filter((run2) => run2.active).map((run2) => ({ deadline: this.#deadline(run2), lastActivity: run2.lastActivity }));
@@ -22252,8 +22261,9 @@ var Gateway = class {
     return now + Math.floor((run2.limit - this.#cost(run2)) / run2.meter.pricePerSecond * 1e3);
   }
   /**
-   * Stops the runs whose budget is spent or whose agent made no request for `runIdleMs`, while
-   * others go on; when none would, the pod terminates instead.
+   * Stops the runs whose budget is spent or whose agent made no request for `runIdleMs`, alone or
+   * all together: from then on they take none of the pod's time. Their key jobs still end them
+   * and read their usage; a pod left without a run waits for them (`expiry`).
    */
   expireRuns(runIdleMs) {
     const now = this.#now();
@@ -23436,6 +23446,8 @@ var DISK_GB = 80;
 var VLLM_BASE_DISK_GB = 40;
 var VLLM_DISK_SPARE = 0.25;
 var BILLING_DAYS = 30;
+var END_ATTEMPTS = 3;
+var END_RETRY_MS = 5e3;
 function onVllm(settings) {
   return settings.engine.name === "vllm";
 }
@@ -23637,19 +23649,7 @@ var PodInference = class {
     const handle = parseHandle(text);
     if (handle.mode !== "pod") throw new Error("The handle is not a pod run's.");
     const { shared } = handle;
-    let ended3;
-    try {
-      ended3 = await this.#admin(
-        handle,
-        "POST",
-        "/admin/end",
-        shared ? { tokenSha256: shared.tokenSha256, keep: handle.reuse === "task" } : void 0
-      ) ?? void 0;
-    } catch (error3) {
-      log.warning(
-        `Could not read the run's usage from its pod: ${error3 instanceof Error ? error3.message : error3}`
-      );
-    }
+    const ended3 = await this.#endRun(handle, log);
     const keep = handle.reuse === "task" && ended3 !== void 0;
     await this.#leave(handle, keep, ended3 === void 0, log);
     const now = this.#now();
@@ -23661,8 +23661,7 @@ var PodInference = class {
       if (share) podCosts2[handle.podId] = Number(share.taskCost.toFixed(6));
       return {
         ...usage,
-        // Without the gateway's figure, the run counts the pod's whole time since it started.
-        cost: ended3?.cost ?? podCost(new Date(handle.start), now, handle.pricePerSecond),
+        cost: ended3?.cost ?? estimatedShare(handle, now, log),
         podCosts: podCosts2,
         podShared: true,
         pods: this.#takeEvents()
@@ -23680,6 +23679,37 @@ var PodInference = class {
       podCosts,
       pods: this.#takeEvents()
     };
+  }
+  /**
+   * Ends the run on its pod's gateway and reads what it used. `/admin/end` returns the same usage
+   * when called again, so a failed call is tried again, `END_ATTEMPTS` times in all: the
+   * provider's proxy or the pod may fail for a moment. Undefined when the gateway never answers,
+   * or does not know the run, as after its restart.
+   */
+  async #endRun(handle, log) {
+    const { shared } = handle;
+    const body = shared ? { tokenSha256: shared.tokenSha256, keep: handle.reuse === "task" } : void 0;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        const ended3 = await this.#admin(handle, "POST", "/admin/end", body);
+        if (!ended3) {
+          log.warning(
+            `Pod ${handle.podId}'s gateway does not know this run, as after a restart: it reported no usage.`
+          );
+        }
+        return ended3 ?? void 0;
+      } catch (error3) {
+        const message = error3 instanceof Error ? error3.message : String(error3);
+        if (attempt >= END_ATTEMPTS) {
+          log.warning(
+            `Could not read the run's usage from its pod after ${END_ATTEMPTS} tries: ${message}`
+          );
+          return void 0;
+        }
+        log.info(`Could not end the run on its pod (${message}); trying again.`);
+        await this.#wait(END_RETRY_MS);
+      }
+    }
   }
   /**
    * Replaces the run's lease with a keep lease, or drops it, and terminates the pod when no other
@@ -24007,6 +24037,7 @@ var PodInference = class {
       start: startedBefore && !own ? this.#now().getTime() : created,
       created,
       pricePerSecond: running.pricePerSecond ?? record.pricePerSecond ?? await this.#host.price(this.#settings.gpuType),
+      limit: run2.limit,
       reuse: this.#settings.reuse,
       holder,
       ...shared ? { shared: { task: String(seat), tokenSha256: sha256(token) } } : {}
@@ -24273,6 +24304,15 @@ function lifeOf(handle, provider, now) {
     to: now.getTime(),
     pricePerSecond: handle.pricePerSecond
   };
+}
+function estimatedShare(handle, now, log) {
+  const elapsed = podCost(new Date(handle.start), now, handle.pricePerSecond);
+  const capped = handle.limit !== void 0 && handle.limit < elapsed;
+  const cost = capped ? handle.limit : elapsed;
+  log.warning(
+    `The run's cost is an estimate, since its pod's gateway did not report it: the pod's time since the run started, ${usd(elapsed)}${capped ? `, capped at the run's limit, ${usd(cost)}` : ""}.`
+  );
+  return cost;
 }
 function tasksOn(holders) {
   return `the tasks that still use or keep it (${holders.join(", ")})`;

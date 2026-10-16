@@ -114,6 +114,8 @@ interface Run extends RunSettings {
   /** When it ended or was stopped. */
   end?: number | undefined;
   stopped?: string | undefined;
+  /** Whether its key job ended it (`endRun`), or a later run of its task replaced it. */
+  closed?: boolean | undefined;
   records: RequestRecord[];
   /** Its worker samples, in order. */
   samples: WorkerSample[];
@@ -189,7 +191,10 @@ export class Gateway {
     const now = this.#now();
     const task = settings.task ?? "";
     for (const run of this.#runs) {
-      if (run.active && (task === "" || run.task === task)) this.#end(run, now);
+      if (!run.closed && (task === "" || run.task === task)) {
+        this.#end(run, now);
+        run.closed = true;
+      }
     }
     this.release(task);
     this.#runs.push({
@@ -252,13 +257,15 @@ export class Gateway {
   /**
    * Ends a run, by its token's hash, or the last one: its token stops working. With `keep`, its
    * task keeps the pod for its next run, and is given the pod's time while no run uses it.
-   * Returns what the run used.
+   * Returns what the run used. A run already ended or stopped keeps its end, so calling it again,
+   * as a key job that retries does, returns the same usage.
    */
   endRun(options: { tokenSha256?: string | undefined; keep?: boolean } = {}): EndedRun | undefined {
     const run = this.#find(options.tokenSha256);
     if (!run) return undefined;
     const now = this.#now();
     this.#end(run, now);
+    run.closed = true;
     if (options.keep && run.task && !this.#keepers().includes(run.task)) {
       this.#kept.push({ task: run.task, from: now });
     }
@@ -293,6 +300,11 @@ export class Gateway {
     return this.#runs.some((run) => run.active);
   }
 
+  /** Whether a run the gateway stopped, for its budget or its silence, waits for its key job. */
+  get awaitingClose(): boolean {
+    return this.#runs.some((run) => run.stopped !== undefined && !run.closed);
+  }
+
   /** The runs being served, for the pod's limits. */
   get runs(): { deadline: number | undefined; lastActivity: number }[] {
     return this.#runs
@@ -319,8 +331,9 @@ export class Gateway {
   }
 
   /**
-   * Stops the runs whose budget is spent or whose agent made no request for `runIdleMs`, while
-   * others go on; when none would, the pod terminates instead.
+   * Stops the runs whose budget is spent or whose agent made no request for `runIdleMs`, alone or
+   * all together: from then on they take none of the pod's time. Their key jobs still end them
+   * and read their usage; a pod left without a run waits for them (`expiry`).
    */
   expireRuns(runIdleMs: number): void {
     const now = this.#now();

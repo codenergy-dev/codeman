@@ -17,38 +17,25 @@ import {
 const policy: PodPolicy = { startBy: 1_000_000, keptIdleMs: 900_000, runIdleMs: 1_800_000 };
 
 test("a pod that never served terminates at its start limit", () => {
-  const state = { ready: false, serving: false, deadline: undefined, lastActivity: 0 };
+  const state = { ready: false, serving: false, lastActivity: 0 };
   assert.equal(expiry(state, policy, 999_999), undefined);
   assert.match(expiry(state, policy, 1_000_000) ?? "", /not served in time/);
 });
 
-test("a run's pod terminates at the run's deadline, or when its agent goes silent", () => {
-  const serving = { ready: true, serving: true, deadline: 5_000_000, lastActivity: 4_000_000 };
-  assert.equal(expiry(serving, policy, 4_999_999), undefined);
-  assert.match(expiry(serving, policy, 5_000_000) ?? "", /budget is spent/);
-  const silent = { ...serving, deadline: 99_000_000 };
-  assert.equal(expiry(silent, policy, 4_000_000 + 1_799_999), undefined);
-  assert.match(expiry(silent, policy, 4_000_000 + 1_800_000) ?? "", /no request/);
+test("a pod never terminates while it serves a run: the gateway stops spent and silent runs", () => {
+  const serving = { ready: true, serving: true, lastActivity: 0 };
+  assert.equal(expiry(serving, policy, 99_000_000), undefined);
 });
 
-test("a pod with several runs terminates only once every run is spent or silent", () => {
-  const state = {
-    ready: true,
-    serving: true,
-    deadline: 5_000_000,
-    lastActivity: 4_000_000,
-    runs: [
-      { deadline: 5_000_000, lastActivity: 4_000_000 },
-      { deadline: 9_000_000, lastActivity: 4_500_000 },
-    ],
-  };
-  assert.equal(expiry(state, policy, 5_000_000), undefined, "the second run goes on");
-  assert.match(expiry(state, policy, 4_500_000 + 1_800_000) ?? "", /every run on it/);
-  assert.match(expiry({ ...state, runs: [] }, policy, 4_000_000 + 900_000) ?? "", /no run came/);
+test("a pod whose runs were stopped waits for their closes, then terminates", () => {
+  // The last run stopped at 4,000,000: the pod waits its kept-idle time from then.
+  const stopped = { ready: true, serving: false, lastActivity: 4_000_000, awaitingClose: true };
+  assert.equal(expiry(stopped, policy, 4_899_999), undefined);
+  assert.match(expiry(stopped, policy, 4_900_000) ?? "", /no key job ended them/);
 });
 
 test("a kept pod waits for its task's next run up to its idle limit", () => {
-  const kept = { ready: true, serving: false, deadline: undefined, lastActivity: 2_000_000 };
+  const kept = { ready: true, serving: false, lastActivity: 2_000_000 };
   assert.equal(expiry(kept, policy, 2_899_999), undefined);
   assert.match(expiry(kept, policy, 2_900_000) ?? "", /no run came/);
 });

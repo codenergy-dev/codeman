@@ -16,6 +16,8 @@ import { CREATE_LEASE_MS, PodRegistry } from "./registry.ts";
 import {
   accountFingerprint,
   adminToken,
+  END_ATTEMPTS,
+  END_RETRY_MS,
   fitKey,
   ofOrganization,
   type PodHandle,
@@ -651,6 +653,62 @@ test("a shared pod whose gateway does not answer a close stays for the task that
   gateways.state("pod1").reachable = true;
   const c = await open("9", "300");
   assert.equal(c.handle.podId, "pod2");
+});
+
+test("close tries /admin/end again when the pod's gateway fails for a moment", async () => {
+  const { gateways, open, advance, setWait } = setup({ real: true, image: SHARED_IMAGE });
+  const a = await open("7", "300");
+  assert.equal(a.handle.limit, 1, "the handle carries the run's limit");
+  advance(10 * 60_000);
+  gateways.state("pod1").reachable = false;
+  const waits: number[] = [];
+  setWait(async (ms) => {
+    waits.push(ms);
+    gateways.state("pod1").reachable = true;
+  });
+  const runtime = new FakeRuntime();
+  const usage = await a.provider.close(a.opened.handle, runtime);
+  near(usage.cost, 0.12);
+  assert.equal(usage.keptPod, "pod1");
+  assert.deepEqual(waits, [END_RETRY_MS]);
+  assert.equal(gateways.calls.filter((call) => call.endsWith(" /admin/end")).length, 2);
+  assert.deepEqual(runtime.logged("warning"), []);
+});
+
+test("a shared pod's run whose gateway never answers counts the pod's time, capped at its limit", async () => {
+  const { gateways, open, advance } = setup({ real: true, image: SHARED_IMAGE });
+  const a = await open("7", "300", {}, repository, 0.05);
+  const b = await open("8", "300", {}, repository, 0.05);
+  // Ten minutes: US$ 0.12 of the pod's time, of which the gateway would give each run its limit.
+  advance(10 * 60_000);
+  gateways.state("pod1").reachable = false;
+  const runtime = new FakeRuntime();
+  const usage = await a.provider.close(a.opened.handle, runtime);
+  assert.equal(usage.cost, 0.05);
+  assert.equal(usage.inputTokens, undefined);
+  assert.equal(gateways.calls.filter((call) => call.endsWith(" /admin/end")).length, END_ATTEMPTS);
+  const warnings = runtime.logged("warning").join("\n");
+  assert.match(warnings, /Could not read the run's usage from its pod after 3 tries/);
+  assert.match(
+    warnings,
+    /The run's cost is an estimate, since its pod's gateway did not report it: the pod's time since the run started, US\$ 0\.12, capped at the run's limit, US\$ 0\.05\./,
+  );
+  // A handle from before it carried the limit keeps the pod's whole time.
+  const { limit: _, ...older } = b.handle;
+  near((await b.provider.close(JSON.stringify(older), new FakeRuntime())).cost, 0.12);
+});
+
+test("a close whose gateway does not know the run warns, and counts the estimate", async () => {
+  const { open, advance } = setup({ real: true, image: SHARED_IMAGE });
+  const a = await open("7", "300");
+  advance(5 * 60_000);
+  const shared = { task: a.handle.shared?.task, tokenSha256: "0".repeat(64) };
+  const runtime = new FakeRuntime();
+  const usage = await a.provider.close(JSON.stringify({ ...a.handle, shared }), runtime);
+  near(usage.cost, 0.06);
+  const warnings = runtime.logged("warning").join("\n");
+  assert.match(warnings, /Pod pod1's gateway does not know this run, as after a restart/);
+  assert.match(warnings, /The run's cost is an estimate/);
 });
 
 test("a task that cannot join its settings' pod abandons it and creates another", async () => {

@@ -97,6 +97,10 @@ Since the [plan for Codeman's commit from a variable](../plans/2026-10-14-commit
 
 From then on, a new version of Codeman is a change of the variable. Copy the templates again only when a job fails saying the files' template version is not the one Codeman expects.
 
+## A spent pod waits for its close
+
+Since the [plan for keeping a spent pod for its close](../plans/2026-10-15-keep-a-spent-pod-for-its-close.md), a pod whose runs all spent their budget or went silent stops them and waits for their `close-key`, instead of terminating at once ([pods](../inference/pods.md)). That is the gateway's, so it applies once Codeman pins pod images built since the plan ([pod images](../development/guide.md#pod-images)); until then, pods on the images pinned before keep terminating at once. `close-key`'s retries of `/admin/end` and its estimate capped at the run's limit apply to pods on any image. Nothing to change in settings or workflow files.
+
 ## Workflow files copied before the backend
 
 To update workflow files copied before the backend, copy both templates again, and move any steps you added to the `agent` job into the new `codeman-task.yml`: the jobs that record runs need their new permissions, variables and the run's ID in the ledger. Older workflow files fail in `select`, before they mark any task, since they pass none of the backend's variables. Workflow files copied before the budgets came from the ledger pass neither the organization's monthly budget nor the task's spend from `close-key` to `apply`: copy both templates again, too. With pods, update every repository of the organization at once to a version with the pod registry: its `open-key` terminates the organization's pods created by older versions, which the registry does not hold, and older versions cannot share the newer pods.

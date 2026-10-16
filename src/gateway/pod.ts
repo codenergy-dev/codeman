@@ -30,7 +30,10 @@ export const FAILURE_GRACE_MS = 2 * 60_000;
 export interface PodPolicy {
   /** The model must be served by then, in milliseconds since the epoch. */
   startBy: number;
-  /** A kept pod, between runs of its tasks, waits this long for the next run. */
+  /**
+   * A pod without a run being served waits this long: for its tasks' next runs while kept, and
+   * for the key jobs that end the runs it stopped and read their usage.
+   */
   keptIdleMs: number;
   /** A run without requests for this long has lost its agent. */
   runIdleMs: number;
@@ -39,34 +42,28 @@ export interface PodPolicy {
 /** What the gateway knows that decides whether the pod is still useful. */
 export interface PodState {
   ready: boolean;
+  /** Whether a run is being served. */
   serving: boolean;
-  /** When the current run's budget is spent. */
-  deadline: number | undefined;
+  /** The last time a request arrived or a run started, stopped or ended. */
   lastActivity: number;
-  /** Each run being served, when the gateway serves several; else the one `serving` tells. */
-  runs?: readonly { deadline: number | undefined; lastActivity: number }[];
+  /** Whether a run the gateway stopped, for its budget or its silence, waits for its close. */
+  awaitingClose?: boolean | undefined;
 }
 
 /**
- * Why the pod should terminate itself now, or undefined while it is useful: while every run on
- * it has spent its budget or lost its agent. The gateway stops such a run alone while others go
- * on.
+ * Why the pod should terminate itself now, or undefined while it is useful. The gateway stops a
+ * run that spent its budget or lost its agent (`Gateway.expireRuns`), never the pod at once: a
+ * pod without a run being served waits `keptIdleMs` from its last activity, for the next runs of
+ * the tasks that keep it, and for the key jobs that end its stopped runs and read their usage.
  */
 export function expiry(state: PodState, policy: PodPolicy, now: number): string | undefined {
   if (!state.ready) {
     return now >= policy.startBy ? "the model was not served in time" : undefined;
   }
-  const runs =
-    state.runs ??
-    (state.serving ? [{ deadline: state.deadline, lastActivity: state.lastActivity }] : []);
-  if (runs.length > 0) {
-    const spent = (run: (typeof runs)[number]) => run.deadline !== undefined && now >= run.deadline;
-    const silent = (run: (typeof runs)[number]) => now - run.lastActivity >= policy.runIdleMs;
-    if (!runs.every((run) => spent(run) || silent(run))) return undefined;
-    if (runs.length > 1) return "every run on it spent its budget or made no request for too long";
-    return runs.every(spent) ? "the run's budget is spent" : "the run made no request for too long";
-  }
-  return now - state.lastActivity >= policy.keptIdleMs ? "no run came to use it" : undefined;
+  if (state.serving || now - state.lastActivity < policy.keptIdleMs) return undefined;
+  return state.awaitingClose
+    ? "it stopped its runs, and no key job ended them in time"
+    : "no run came to use it";
 }
 
 /** The pod's settings, from the environment Codeman created it with. */

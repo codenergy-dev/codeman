@@ -9,7 +9,7 @@ One subject per file, grouped by what the reader wants to do. The [root README](
 - [Shared settings](installation/shared-settings.md): settings an organization gives all its repositories.
 - [Self-hosted inference on Runpod](installation/runpod.md): the Runpod account, pods and a Serverless endpoint.
 - [Profiles](installation/profiles.md): how to use different providers and models for different runs.
-- [Upgrading](installation/upgrading.md): old setting names, a model per provider, profiles that pick the tasks, pods that fit the GPU, vLLM on pods, GPU batches across repositories, Codeman's commit from a variable, and workflow files copied before the backend.
+- [Upgrading](installation/upgrading.md): old setting names, a model per provider, profiles that pick the tasks, pods that fit the GPU, vLLM on pods, GPU batches across repositories, Codeman's commit from a variable, a spent pod that waits for its close, and workflow files copied before the backend.
 
 ## Using it
 

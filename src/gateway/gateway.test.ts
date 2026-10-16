@@ -4,6 +4,7 @@ import type { AddressInfo } from "node:net";
 import { after, test } from "node:test";
 import { fakeEngine } from "../testing/fake-gpu.ts";
 import { Gateway, type GatewayOptions, runSettings, sha256, type Upstream } from "./gateway.ts";
+import { expiry, type PodPolicy } from "./pod.ts";
 
 /** An OpenAI-compatible engine: answers each request as `respond` says, and keeps the bodies. */
 async function engine(
@@ -57,6 +58,9 @@ async function gateway(options: Partial<GatewayOptions> & { upstream: string }) 
   servers.push(server);
   return { instance, url };
 }
+
+const near = (actual: number | undefined, expected: number) =>
+  assert.ok(Math.abs((actual ?? Number.NaN) - expected) < 1e-9, `${actual} is not ${expected}`);
 
 const completion = {
   choices: [{ message: { role: "assistant", content: "Hi" } }],
@@ -439,6 +443,66 @@ test("a run's budget is its share; a spent run stops alone while the others go o
   assert.equal((await call(url, "a")).status, 503);
   assert.equal((await call(url, "b")).status, 200);
   assert.ok(Math.abs((instance.usage(sha256("a"))?.cost ?? 0) - 0.01) < 1e-12);
+});
+
+test("a lone spent run stops and takes no more of the pod; the pod waits for its close", async () => {
+  const upstream = await engine(() => ({ chunks: [JSON.stringify(completion)] }));
+  let now = 1_000_000;
+  const { instance, url } = await gateway({ upstream: upstream.url, now: () => now });
+  const policy: PodPolicy = { startBy: 0, keptIdleMs: 15 * 60_000, runIdleMs: 30 * 60_000 };
+  // US$ 0.01 lasts 50 seconds alone.
+  instance.startRun(taskRun("a", "7", now, 0.01));
+  now += 50_000;
+  assert.equal((await call(url, "a")).status, 402);
+  instance.expireRuns(policy.runIdleMs);
+  assert.equal(instance.serving, false);
+  assert.equal(instance.awaitingClose, true);
+  assert.equal(instance.deadline, undefined, "a stopped run has no deadline");
+  assert.equal(expiry(instance, policy, now), undefined, "the pod waits for the run's close");
+  // Ten minutes later, its share is still its limit: the pod's time since went to nobody.
+  now += 10 * 60_000;
+  assert.equal(expiry(instance, policy, now), undefined);
+  near(instance.usage(sha256("a"))?.cost, 0.01);
+  const ended = instance.endRun({ tokenSha256: sha256("a"), keep: true });
+  near(ended?.cost, 0.01);
+  near(ended?.share?.taskCost, 0.01);
+  assert.equal(instance.awaitingClose, false);
+  // A key job that retries gets the same usage, and keeps the pod once.
+  const again = instance.endRun({ tokenSha256: sha256("a"), keep: true });
+  near(again?.cost, 0.01);
+  assert.equal(again?.requests, ended?.requests);
+  assert.deepEqual(instance.status().keepers, ["7"]);
+  // Without a next run, the kept-idle time counts from the close.
+  now += 15 * 60_000 - 1;
+  assert.equal(expiry(instance, policy, now), undefined);
+  now += 1;
+  assert.match(expiry(instance, policy, now) ?? "", /no run came/);
+});
+
+test("a pod whose stopped runs no key job ends terminates after its kept-idle time", async () => {
+  let now = 1_000_000;
+  const { instance } = await gateway({ upstream: "unused", now: () => now });
+  const policy: PodPolicy = { startBy: 0, keptIdleMs: 15 * 60_000, runIdleMs: 30 * 60_000 };
+  instance.startRun(taskRun("a", "7", now));
+  instance.startRun(taskRun("b", "8", now, 0.01));
+  // Shared, run b's US$ 0.01 lasts 100 seconds; run a goes on, then goes silent.
+  now += 100_000;
+  instance.expireRuns(policy.runIdleMs);
+  assert.deepEqual(instance.status().active, ["7"]);
+  now += 30 * 60_000 - 100_000;
+  instance.expireRuns(policy.runIdleMs);
+  assert.equal(instance.serving, false);
+  const stoppedAt = now;
+  // Run a stopped for its silence: half the first 100 seconds, then the pod alone.
+  near(instance.usage(sha256("a"))?.cost, (50 + 30 * 60 - 100) * 0.0002);
+  now += 10 * 60_000;
+  near(instance.usage(sha256("a"))?.cost, (50 + 30 * 60 - 100) * 0.0002);
+  near(instance.usage(sha256("b"))?.cost, 0.01);
+  assert.equal(expiry(instance, policy, stoppedAt + 15 * 60_000 - 1), undefined);
+  assert.match(
+    expiry(instance, policy, stoppedAt + 15 * 60_000) ?? "",
+    /no key job ended them in time/,
+  );
 });
 
 test("the admin routes start, end and release the runs of tasks, and report the pod's runs", async () => {

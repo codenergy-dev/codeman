@@ -78,10 +78,11 @@ async function main(): Promise<void> {
   await gateway.listen("0.0.0.0", GATEWAY_PORT);
   log(`Gateway listening on port ${GATEWAY_PORT}.`);
   setInterval(() => {
+    // Spent or silent runs stop, alone or all together, and take no more of the pod's time. A
+    // pod left without a run waits for the key jobs that end them and read their usage.
+    gateway.expireRuns(settings.policy.runIdleMs);
     const reason = expiry(gateway, settings.policy, Date.now());
     if (reason) void terminate(reason);
-    // Some runs go on: those spent or silent stop alone, and stop costing the others.
-    else gateway.expireRuns(settings.policy.runIdleMs);
   }, 15_000).unref();
 
   try {

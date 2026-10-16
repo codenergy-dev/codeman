@@ -61,6 +61,9 @@ const VLLM_BASE_DISK_GB = 40;
 const VLLM_DISK_SPARE = 0.25;
 /** Billing is read this far back; older pods have left the spend table's refreshed rows. */
 const BILLING_DAYS = 30;
+/** Tries of `/admin/end` at a run's close, and the wait between two. */
+export const END_ATTEMPTS = 3;
+export const END_RETRY_MS = 5_000;
 
 /** What a task's self-hosted runs use, as `select` resolved it from the settings. */
 export interface SelfHostedSettings {
@@ -139,6 +142,11 @@ export interface PodHandle {
   /** When the pod was created; its whole life counts in the task's spend. */
   created?: number | undefined;
   pricePerSecond: number;
+  /**
+   * What the run may spend, in USD, which caps its cost on a shared pod when the gateway does not
+   * report it; none in handles from before it.
+   */
+  limit?: number | undefined;
   reuse: "task" | "run";
   /** The task's lease in the pod registry: `owner/name#7`. */
   holder: string;
@@ -486,20 +494,7 @@ export class PodInference implements InferenceProvider {
     const handle = parseHandle(text);
     if (handle.mode !== "pod") throw new Error("The handle is not a pod run's.");
     const { shared } = handle;
-    let ended: EndedRun | undefined;
-    try {
-      ended =
-        ((await this.#admin(
-          handle,
-          "POST",
-          "/admin/end",
-          shared ? { tokenSha256: shared.tokenSha256, keep: handle.reuse === "task" } : undefined,
-        )) as EndedRun | null) ?? undefined;
-    } catch (error) {
-      log.warning(
-        `Could not read the run's usage from its pod: ${error instanceof Error ? error.message : error}`,
-      );
-    }
+    const ended = await this.#endRun(handle, log);
     const keep = handle.reuse === "task" && ended !== undefined;
     await this.#leave(handle, keep, ended === undefined, log);
     const now = this.#now();
@@ -511,8 +506,7 @@ export class PodInference implements InferenceProvider {
       if (share) podCosts[handle.podId] = Number(share.taskCost.toFixed(6));
       return {
         ...usage,
-        // Without the gateway's figure, the run counts the pod's whole time since it started.
-        cost: ended?.cost ?? podCost(new Date(handle.start), now, handle.pricePerSecond),
+        cost: ended?.cost ?? estimatedShare(handle, now, log),
         podCosts,
         podShared: true,
         pods: this.#takeEvents(),
@@ -535,6 +529,40 @@ export class PodInference implements InferenceProvider {
       podCosts,
       pods: this.#takeEvents(),
     };
+  }
+
+  /**
+   * Ends the run on its pod's gateway and reads what it used. `/admin/end` returns the same usage
+   * when called again, so a failed call is tried again, `END_ATTEMPTS` times in all: the
+   * provider's proxy or the pod may fail for a moment. Undefined when the gateway never answers,
+   * or does not know the run, as after its restart.
+   */
+  async #endRun(handle: PodHandle, log: Log): Promise<EndedRun | undefined> {
+    const { shared } = handle;
+    const body = shared
+      ? { tokenSha256: shared.tokenSha256, keep: handle.reuse === "task" }
+      : undefined;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        const ended = (await this.#admin(handle, "POST", "/admin/end", body)) as EndedRun | null;
+        if (!ended) {
+          log.warning(
+            `Pod ${handle.podId}'s gateway does not know this run, as after a restart: it reported no usage.`,
+          );
+        }
+        return ended ?? undefined;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (attempt >= END_ATTEMPTS) {
+          log.warning(
+            `Could not read the run's usage from its pod after ${END_ATTEMPTS} tries: ${message}`,
+          );
+          return undefined;
+        }
+        log.info(`Could not end the run on its pod (${message}); trying again.`);
+        await this.#wait(END_RETRY_MS);
+      }
+    }
   }
 
   /**
@@ -912,6 +940,7 @@ export class PodInference implements InferenceProvider {
         running.pricePerSecond ??
         record.pricePerSecond ??
         (await this.#host.price(this.#settings.gpuType)),
+      limit: run.limit,
       reuse: this.#settings.reuse,
       holder,
       ...(shared ? { shared: { task: String(seat), tokenSha256: sha256(token) } } : {}),
@@ -1261,6 +1290,21 @@ function lifeOf(handle: PodHandle, provider: string, now: Date): PodLife {
     to: now.getTime(),
     pricePerSecond: handle.pricePerSecond,
   };
+}
+
+/**
+ * A shared pod's run without the gateway's figure: the pod's time since the run started, capped
+ * at the run's limit, since the gateway never lets a run's share pass it. Warns that it is an
+ * estimate.
+ */
+function estimatedShare(handle: PodHandle, now: Date, log: Log): number {
+  const elapsed = podCost(new Date(handle.start), now, handle.pricePerSecond);
+  const capped = handle.limit !== undefined && handle.limit < elapsed;
+  const cost = capped ? (handle.limit as number) : elapsed;
+  log.warning(
+    `The run's cost is an estimate, since its pod's gateway did not report it: the pod's time since the run started, ${usd(elapsed)}${capped ? `, capped at the run's limit, ${usd(cost)}` : ""}.`,
+  );
+  return cost;
 }
 
 /** The tasks that still use or keep a pod, for the logs. */
