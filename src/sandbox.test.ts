@@ -37,6 +37,7 @@ test("the agent is contained and its changes are collected safely", {
   writeFileSync(join(repo, "README.md"), "hello\n");
   writeFileSync(join(repo, "src", "a.txt"), "a\n");
   writeFileSync(join(repo, ".gitignore"), "node_modules/\n");
+  writeFileSync(join(repo, "pipe"), "p\n");
   const git = (...args: string[]) =>
     execFileSync("git", ["-C", repo, "-c", "user.name=t", "-c", "user.email=t@t", ...args]);
   git("init", "-q");
@@ -77,7 +78,8 @@ test("the agent is contained and its changes are collected safely", {
     `git config filter.probe.clean 'touch ${entered}; cat' && sleep 1 && touch f && cd ../..`,
     "mkdir -p node_modules && echo x > node_modules/x.js",
     // A FIFO in a tracked path: cp must never open it (it would block), so it is listed, not copied.
-    "mkfifo pipe",
+    // Git ignores an untracked FIFO, so only a tracked path reaches collection.
+    "rm pipe && mkfifo pipe",
     "ln -s /etc/shadow leak.txt",
     "mkdir -p .codeman && ln -s /etc/shadow .codeman/output.json",
     `echo '{"ok":1}' > .codeman/ok.json && mkfifo .codeman/pipe.json`,
@@ -125,7 +127,11 @@ test("the agent is contained and its changes are collected safely", {
   assert.equal(byPath.get("src/a.txt")?.status, "deleted");
   assert.equal(byPath.get("leak.txt")?.type, "symlink");
   assert.ok(!existsSync(join(out, "tree", "leak.txt")), "links are listed, not copied");
-  assert.equal(byPath.get("pipe")?.type, "other", "a FIFO is listed as other");
+  assert.deepEqual(
+    byPath.get("pipe"),
+    { path: "pipe", status: "modified", type: "other" },
+    "a FIFO is listed as other",
+  );
   assert.ok(!existsSync(join(out, "tree", "pipe")), "a FIFO is not copied");
   assert.deepEqual(byPath.get("scratch/up"), {
     path: "scratch/up",
