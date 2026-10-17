@@ -1,22 +1,181 @@
 # Secrets
 
-The workflow is [`templates/codeman.yml`](../../templates/codeman.yml), which runs each task's jobs (`open-key`, `agent`, `close-key`, `apply`, `release-pod`) in [`templates/codeman-task.yml`](../../templates/codeman-task.yml); the jobs are described in [runs and jobs](../runs/runs-and-jobs.md#jobs). `codeman.yml` passes that workflow its secrets by name, and grants it at most the `agent` job's permissions plus `id-token: write`, which only the jobs that use Codeman's [backend](../backend/backend.md) ask for; each of its jobs references only the secrets the table below names, and asks for its own permissions.
+This page lists the credentials Codeman's jobs use, the permissions each job requests, and why each credential is safe from the agent and from the other jobs.
 
-| Secret | Used by | Safe | Why | Gap | Mitigation |
+> [!IMPORTANT]
+> These sections say what protects each secret from the agent and from other jobs, not from people with write access. Codeman's secrets are plain repository or organization secrets: anyone with write access to a repository that receives them can read them all, with a workflow on any branch ([who can read Codeman's secrets](overview.md#who-can-read-codemans-secrets)).
+
+## Where each credential goes
+
+The workflow is [`templates/codeman.yml`](../../templates/codeman.yml). It runs each task's jobs (`open-key`, `agent`, `close-key`, `apply`, `release-pod`) in [`templates/codeman-task.yml`](../../templates/codeman-task.yml); the jobs are described in [runs and jobs](../runs/runs-and-jobs.md#jobs). `codeman.yml` passes that workflow its secrets by name, and each of its jobs references only the secrets this table names.
+
+| Credential | Jobs that hold it | Reaches the agent | Safe | Worst case if it leaks |
+| --- | --- | --- | --- | --- |
+| [GitHub App private key](#github-app-private-key), and its App tokens | `select`, `dispatch`, `apply` | No | Yes | Tokens for every installation of the App, with the App's permissions |
+| [OpenRouter management key](#openrouter-management-key) | `open-key`, `close-key` | No | Yes | Keys without limits, on the account's credits; the account's keys listed and changed |
+| [Runpod API key](#runpod-api-key) | `open-key`, `close-key`, `release-pod` | No | Yes | Anything in the Runpod account, including spending all its credits |
+| [Runpod Serverless key](#runpod-serverless-key) | Codeman's step in `agent` | No | Yes, with the `agent` job as the template has it | The endpoint, run at the account's cost until someone revokes the key |
+| [Key encryption secret](#key-encryption-secret) | `open-key`, Codeman's step in `agent` | No | Yes, with the `agent` job as the template has it | The task keys in the run logs, decrypted |
+| [The run's task key or run token](#the-runs-task-key-or-run-token) | The agent, in `agent` | Yes: it is the agent's own | Partly | What remains of the task's budget, until the run ends |
+| [GitHub's OIDC token and the backend's tokens](#githubs-oidc-token-and-the-backends-tokens) | `select`, `open-key`, `close-key`, `release-pod` | No: `agent` never gets one | Yes | All of the project's Firestore data, for an hour |
+| [The jobs' `GITHUB_TOKEN`](#the-jobs-github_token) | Every job, with its own permissions | No | Yes | Reading the repository and its runs (`agent`), or starting workflows (`forward-review`, `next-run`) |
+| [The repository's own secrets](#the-repositorys-own-secrets) | The repository's other workflows | Indirectly ([risk 1](risks.md#1-code-the-agent-wrote-runs-with-the-repositorys-secrets)) | Depends on those workflows | Whatever those workflows expose |
+
+## Permissions each job requests
+
+Both templates set `permissions: {}` at the top, so a job's `GITHUB_TOKEN` has only what the job asks for. `codeman.yml` grants `codeman-task.yml` at most the `agent` job's permissions plus `id-token: write`, which only the jobs that use Codeman's [backend](../backend/backend.md) ask for. Each job of `codeman-task.yml` asks for its own.
+
+| Workflow | Job | `GITHUB_TOKEN` | App token | OIDC token | Codeman's secrets |
 | --- | --- | --- | --- | --- | --- |
-| `CODEMAN_GITHUB_APP_PRIVATE_KEY`, and the App tokens made from it | `select`, `apply`, `dispatch` | Yes | These jobs run no LLM and no repository code. Each requests a token with only the permissions it needs; `dispatch`'s is for one repository of the pool and `actions: write` and `metadata: read` only, to start its Codeman run on the default branch ([security](overview.md#a-public-app-and-a-pool)). `apply` treats the agent's result as untrusted and filters it through the [change policy](../runs/changes.md#change-policy). The token that may write workflows is requested only to move workflows a maintainer accepted. | The App may write to every branch of the repositories it is installed on. Codeman only writes to task branches, but nothing else stops it. | Install the App on selected repositories only. Add a ruleset on the default branch that requires a pull request. |
-| `CODEMAN_OPENROUTER_MANAGEMENT_KEY` | `open-key`, `close-key` | Yes | These jobs check out only Codeman's code, run no LLM, and send this key only to OpenRouter. | It creates keys without limits, which spend the account's credits, and it can list and change the account's keys ([create](../web/openrouter/create-a-new-api-key.md), [list](../web/openrouter/list-api-keys.md), [update](../web/openrouter/update-an-api-key.md)). Anyone with write access to a repository that receives it can read it ([who can read Codeman's secrets](overview.md#who-can-read-codemans-secrets)). | An OpenRouter account dedicated to Codeman, with prepaid credits and nothing that refills them automatically. Rotate the key if it may have leaked. |
-| `CODEMAN_RUNPOD_API_KEY` (the `runpod-pod` and `runpod-serverless` providers) | `open-key`, `close-key`, `release-pod` | Yes | These jobs check out only Codeman's code, run no LLM and only call Runpod and the pods' gateways. Pods get only the hash of their admin token, derived from this key. | It may do anything in the Runpod account, including spend all its credits. | An account dedicated to Codeman, with prepaid credits and no auto-pay ([installation](../installation/runpod.md)). |
-| `CODEMAN_RUNPOD_SERVERLESS_KEY` (the `runpod-serverless` provider) | Codeman's step in `agent`, which runs the gateway | Yes, with the `agent` job as the template has it | The same isolation as the encryption secret: the agent gets only a local URL and the run's token, which stops working when the run ends or its budget is spent. | It does not expire and has no spending limit. A step added to `agent` that runs repository code can read it ([risk 3](risks.md#3-steps-added-to-the-agent-job-run-outside-the-sandbox)), and run the endpoint at the account's cost until someone revokes it. | Restrict it to the endpoint; keep the endpoint at one worker; prepaid credits. If a step did run repository code, revoke the key. |
-| `CODEMAN_KEY_ENCRYPTION_SECRET` | `open-key`, `agent` | Yes, with the `agent` job as the template has it | In `agent`, only Codeman's own step holds it. The agent runs as another user, which cannot read that step's process. See [agent sandbox](../runs/agent.md#agent-sandbox). | A step added to `agent` that runs repository code runs as the runner's user and can read it ([risk 3](risks.md#3-steps-added-to-the-agent-job-run-outside-the-sandbox)). With it, anyone can decrypt the task keys in the run logs, which are public on public repositories. | Run no repository code in `agent`. If a step did, rotate the secret. Each key it protects is disabled when its run ends and expires within 24 hours. |
-| The run's task key, or its token for a self-hosted gateway | The agent, in `agent` | Partly | It is the agent's own credential. Its limit is what remains of the task's budget. `close-key` disables it (or ends the run on its gateway) when the run ends; a key expires after 24 hours, a pod's run once its budget is spent. On a pod that several tasks share, of any repository of the [pool](../runs/batches.md#pools), it opens only its own run. It is masked in the logs, and it travels between jobs encrypted. See [budget](../budget/budget.md) and [OpenRouter](../inference/openrouter.md). | A manipulated agent can send it out ([risk 4](risks.md#4-the-agent-can-send-its-task-key-out)). | Keep the task budget low. [Roadmap](overview.md#roadmap) item 1. |
-| `GITHUB_TOKEN` of `agent` (contents and actions read) | Codeman's step in `agent`, to download the results of workflows | Yes | The same isolation as the encryption secret. It can only read. | The same as the encryption secret. | The same as the encryption secret. |
-| GitHub's OIDC token, and the backend's tokens made from it (`id-token: write`) | `select`, `open-key`, `close-key`, `release-pod` | Yes | These jobs run no LLM and no repository code. No key is stored: the OIDC token proves the job's repository and workflow, and Google exchanges it for an hour's access as the backend's service account, to Firestore only. The provider's attribute condition admits only the organization's repositories, by its ID, or only those it lists, by theirs ([installation](../installation/setup.md#4-set-up-the-backend)), from `codeman.yml` on the default branch. Both tokens are masked. `agent` never gets one, so neither the agent nor a Serverless gateway reaches the backend. See [backend](../backend/backend.md). | Whoever can change `codeman.yml` or `codeman-task.yml` on the default branch can read and write all of the project's Firestore data, which holds Codeman's records but no secret (the pod registry holds each pod's nonce, from which only the GPU account key derives its admin token), and so can make other repositories' pods end or take new tasks; the condition cannot tell one job of the workflow from another, so `id-token: write` given to `agent` would let the agent in. | A Firebase project for Codeman only; the attribute condition of [installation](../installation/setup.md#4-set-up-the-backend); reviewed pull requests on the default branch; never give `agent` that permission. |
-| `GITHUB_TOKEN` of `forward-review` and `next-run` (actions write) | These jobs | Yes | They only start the Codeman workflow with `gh workflow run`. They check out nothing, and values reach the command through environment variables, not the script. | None known. | — |
-| The repository's own secrets, used by its other workflows | The repository's workflows. Codeman never reads them. | Depends on those workflows | Codeman does not reference them. | Workflows that run on Codeman's branches run code the agent wrote, with the secrets those workflows expose ([risk 1](risks.md#1-code-the-agent-wrote-runs-with-the-repositorys-secrets)). | See risk 1. |
+| `codeman.yml` | `forward-review` | `actions: write` | — | No | None |
+| `codeman.yml` | `select` | Only `id-token: write` | Contents, pull requests, actions and metadata read; issues write | Yes | App key |
+| `codeman.yml` | `dispatch` | None | For one repository of the pool: `actions: write`, `metadata: read` | No | App key |
+| `codeman-task.yml` | `open-key` | Only `id-token: write` | — | Yes | Management key, Runpod API key, encryption secret |
+| `codeman-task.yml` | `agent` | `contents: read`, `actions: read` | — | No | Encryption secret, Serverless key |
+| `codeman-task.yml` | `close-key` | Only `id-token: write` | — | Yes | Management key, Runpod API key |
+| `codeman-task.yml` | `apply` | None | Contents, issues and pull requests write; for `accept` only, a second token with contents and workflows write | No | App key |
+| `codeman-task.yml` | `release-pod` | Only `id-token: write` | — | Yes | Runpod API key |
+| `codeman.yml` | `next-run` | `actions: write` | — | No | None |
 
-Organization secrets whose visibility is limited to selected repositories stay limited to those repositories. Inside each of them, though, every workflow that references them gets them, on any branch, including Codeman's task branches: anyone with write access to one of them can read them all ([who can read Codeman's secrets](overview.md#who-can-read-codemans-secrets)). The table above says what protects each secret from the agent and from other jobs, not from people with write access.
+Every job that runs Codeman also uses its `GITHUB_TOKEN` to check `CODEMAN_COMMIT_SHA` against Codeman's public repository ([risk 7](risks.md#7-codemans-own-code-and-dependencies)).
 
-Variables are not secrets. The backend's variables (`CODEMAN_FIREBASE_PROJECT`, `CODEMAN_WORKLOAD_IDENTITY_PROVIDER`, `CODEMAN_SERVICE_ACCOUNT`) name the project and the identity, and grant nothing without a job's OIDC token that the provider admits. `CODEMAN_SETTINGS`, the organization's [shared settings](../installation/shared-settings.md), is plain text: every repository it is shared with can read it, in any workflow, and the `select` job prints it and the values it gives in its log, which is public on public repositories. Settings never hold secrets; never put one in this variable. Whoever can change it changes the settings of every repository it is shared with, budgets and model included. Organization owners change the organization's variable. Anyone with write access to a repository can create a repository variable of the same name, which overrides the organization's for that repository ([precedence](../web/github/variables-reference.md#configuration-variable-precedence)) and replaces its settings whole, `organization-monthly-budget` and `pool` included ([who can read Codeman's secrets](overview.md#who-can-read-codemans-secrets)). Each repository's `.codeman/settings.yml` still overrides either.
+## Each credential
 
-`CODEMAN_COMMIT_SHA` names the commit of Codeman that every job checks out and runs with the secrets above. It grants nothing by itself, but whoever can change it chooses the code that runs: organization owners for the organization's variable, and anyone with write access for a repository variable, which overrides it. See [risk 7](risks.md#7-codemans-own-code-and-dependencies).
+### GitHub App private key
+
+`CODEMAN_GITHUB_APP_PRIVATE_KEY`, and the App tokens made from it.
+
+- **Used by:** `select`, `apply` and `dispatch`.
+- **Why it is safe:**
+  - These jobs run no LLM and no repository code.
+  - Each job requests a token with only the permissions it needs.
+  - `dispatch`'s token is for one repository of the [pool](../glossary.md#pool-of-organizations), with `actions: write` and `metadata: read` only, to start that repository's Codeman run on its default branch ([risk 8](risks.md#8-a-pool-shares-one-app-key)).
+  - `apply` treats the agent's result as untrusted, and filters it through the [change policy](../runs/changes.md#change-policy).
+  - The token that may write workflows is requested only to move workflows a [maintainer](../glossary.md#maintainer) accepted.
+- **Gap:** the App may write to every branch of the repositories it is installed on. Codeman only writes to [task branches](../glossary.md#task-branch), but nothing else stops it.
+- **Mitigation:** install the App on selected repositories only. Add a ruleset on the default branch that requires a pull request.
+
+### OpenRouter management key
+
+`CODEMAN_OPENROUTER_MANAGEMENT_KEY`.
+
+- **Used by:** `open-key` and `close-key`.
+- **Why it is safe:** these jobs check out only Codeman's code, run no LLM, and send this key only to OpenRouter.
+- **Gap:**
+  - It creates keys without limits, which spend the account's credits. It can also list and change the account's keys ([create](../web/openrouter/create-a-new-api-key.md), [list](../web/openrouter/list-api-keys.md), [update](../web/openrouter/update-an-api-key.md)).
+  - Anyone with write access to a repository that receives it can read it ([who can read Codeman's secrets](overview.md#who-can-read-codemans-secrets)).
+- **Mitigation:** an OpenRouter account dedicated to Codeman, with prepaid credits and nothing that refills them automatically. Rotate the key if it may have leaked.
+
+### Runpod API key
+
+`CODEMAN_RUNPOD_API_KEY`, for the `runpod-pod` and `runpod-serverless` [inference providers](../glossary.md#inference-provider).
+
+- **Used by:** `open-key`, `close-key` and `release-pod`.
+- **Why it is safe:**
+  - These jobs check out only Codeman's code, run no LLM, and only call Runpod and the pods' gateways.
+  - A [pod](../glossary.md#pod) gets only the hash of its admin token, which is derived from this key.
+- **Gap:** it may do anything in the Runpod account, including spend all its credits.
+- **Mitigation:** an account dedicated to Codeman, with prepaid credits and no auto-pay ([installation](../installation/runpod.md)).
+
+### Runpod Serverless key
+
+`CODEMAN_RUNPOD_SERVERLESS_KEY`, for the `runpod-serverless` provider.
+
+- **Used by:** Codeman's step in `agent`, which runs the [gateway](../glossary.md#gateway) outside the sandbox.
+- **Why it is safe**, with the `agent` job as the template has it: it has the same isolation as the [key encryption secret](#key-encryption-secret). The agent gets only a local URL and the run's token, which stops working when the run ends or its budget is spent.
+- **Gap:**
+  - It does not expire and has no spending limit.
+  - A step added to `agent` that runs repository code can read it ([risk 3](risks.md#3-steps-added-to-the-agent-job-run-outside-the-sandbox)), and run the endpoint at the account's cost until someone revokes it.
+- **Mitigation:**
+  - Restrict the key to the endpoint.
+  - Keep the endpoint at one worker.
+  - Use prepaid credits.
+  - If a step did run repository code, revoke the key.
+
+### Key encryption secret
+
+`CODEMAN_KEY_ENCRYPTION_SECRET`.
+
+- **Used by:** `open-key`, and Codeman's step in `agent`.
+- **Why it is safe**, with the `agent` job as the template has it: in `agent`, only Codeman's own step holds it. The agent runs as another user, which cannot read that step's process ([agent sandbox](../runs/agent.md#agent-sandbox)).
+- **Gap:** a step added to `agent` that runs repository code runs as the runner's user, and can read it ([risk 3](risks.md#3-steps-added-to-the-agent-job-run-outside-the-sandbox)). With it, anyone can decrypt the task keys in the run logs, which are public on public repositories.
+- **Mitigation:** run no repository code in `agent`. If a step did, rotate the secret. Each key it protects is disabled when its run ends, and expires within 24 hours.
+
+### The run's task key or run token
+
+The [agent run](../glossary.md#agent-run)'s credential: an OpenRouter [task key](../glossary.md#task-key), or a [run token](../glossary.md#run-token) for a self-hosted gateway.
+
+- **Used by:** the agent, in `agent`. It is the agent's own credential.
+- **Why it is only partly safe:**
+  - **Limit:** what remains of the task's [budget](../budget/budget.md).
+  - **Lifetime:** `close-key` disables the key, or ends the run on its gateway, when the run ends. A key expires after 24 hours, and a pod's run once its budget is spent ([OpenRouter](../inference/openrouter.md)).
+  - **Isolation:** on a pod that several tasks share, of any repository of the pool, it opens only its own run.
+  - **Exposure:** it is masked in the logs, and travels between jobs encrypted.
+- **Gap:** a manipulated agent can send it out ([risk 4](risks.md#4-the-agent-can-send-its-task-key-out)).
+- **Mitigation:** keep the task budget low. [Roadmap](overview.md#roadmap) item 1 would restrict the agent's network.
+
+### GitHub's OIDC token and the backend's tokens
+
+GitHub's OIDC token (`id-token: write`), and the backend's tokens made from it.
+
+- **Used by:** `select`, `open-key`, `close-key` and `release-pod`.
+- **Why it is safe:**
+  - These jobs run no LLM and no repository code.
+  - No key is stored. The OIDC token proves the job's repository and workflow. Google exchanges it for an hour's access as the backend's service account, to Firestore only.
+  - The provider's [attribute condition](../glossary.md#attribute-condition) admits only `codeman.yml` on the default branch ([installation](../installation/setup.md#4-set-up-the-backend)). It admits the repositories of the organization, by its ID, or only those it lists, by theirs.
+  - Both tokens are masked.
+  - `agent` never gets one, so neither the agent nor a Serverless gateway reaches the backend ([backend](../backend/backend.md)).
+- **Gap:**
+  - Whoever can change `codeman.yml` or `codeman-task.yml` on the default branch can read and write all of the project's Firestore data.
+  - That data holds Codeman's records, but no secret. The [pod registry](../glossary.md#pod-registry) holds each pod's nonce, from which only the Runpod API key derives its admin token.
+  - With that access, they can make other repositories' pods end, or take new tasks.
+  - The condition cannot tell one job of the workflow from another: `id-token: write` given to `agent` would let the agent in.
+- **Mitigation:**
+  - A Firebase project for Codeman only.
+  - The attribute condition of [installation](../installation/setup.md#4-set-up-the-backend).
+  - Reviewed pull requests on the default branch.
+  - Never give `agent` that permission.
+
+### The jobs' GITHUB_TOKEN
+
+Each job's permissions are in [permissions each job requests](#permissions-each-job-requests).
+
+| Jobs | Permissions | Used for | Why it is safe | Gap |
+| --- | --- | --- | --- | --- |
+| `agent` | `contents: read`, `actions: read` | The repository's checkout, the commit check, and Codeman's step, which downloads the results of workflows | The agent never sees it: it has the [key encryption secret](#key-encryption-secret)'s isolation. It can only read | The encryption secret's, with its mitigation |
+| `forward-review`, `next-run` | `actions: write` | Starting the Codeman workflow with `gh workflow run` | They check out nothing. Values reach the command through environment variables, not the script | None known |
+| The other jobs | None, besides `id-token: write` where the job asks for it | The commit check, on Codeman's public repository | It can do nothing else | — |
+
+### The repository's own secrets
+
+The secrets the repository's other workflows use.
+
+- **Used by:** the repository's workflows. Codeman never reads or references them.
+- **Safe:** it depends on those workflows.
+- **Gap:** workflows that run on Codeman's branches run code the agent wrote, with the secrets those workflows expose ([risk 1](risks.md#1-code-the-agent-wrote-runs-with-the-repositorys-secrets)).
+- **Mitigation:** see [risk 1](risks.md#1-code-the-agent-wrote-runs-with-the-repositorys-secrets).
+
+## Visibility across repositories
+
+Organization secrets whose visibility is limited to selected repositories stay limited to those repositories. Inside each of them, though, every workflow that references them gets them, on any branch, Codeman's task branches included. So anyone with write access to one of them can read them all ([who can read Codeman's secrets](overview.md#who-can-read-codemans-secrets)).
+
+## Variables
+
+Variables are not secrets. Organization owners change the organization's variables. Anyone with write access to a repository can create a repository variable of the same name, which overrides the organization's for that repository ([precedence](../web/github/variables-reference.md#configuration-variable-precedence)).
+
+| Variable | What it does | What it grants by itself |
+| --- | --- | --- |
+| `CODEMAN_FIREBASE_PROJECT`, `CODEMAN_WORKLOAD_IDENTITY_PROVIDER`, `CODEMAN_SERVICE_ACCOUNT` | Name the backend's project and identity | Nothing without a job's OIDC token that the provider admits |
+| `CODEMAN_GITHUB_APP_CLIENT_ID` | Names the App | Nothing without the App's private key ([forks](forks.md#variables)) |
+| `CODEMAN_SETTINGS` | Holds the [organization's settings](../glossary.md#organizations-settings) ([shared settings](../installation/shared-settings.md)) | The settings of every repository it is shared with, budgets and model included |
+| `CODEMAN_COMMIT_SHA` | Names [Codeman's commit](../glossary.md#codemans-commit): the commit every job checks out and runs with the secrets above | Nothing, but whoever changes it chooses the code that runs ([risk 7](risks.md#7-codemans-own-code-and-dependencies)) |
+
+`CODEMAN_SETTINGS` is plain text:
+
+- Every repository it is shared with can read it, in any workflow.
+- The `select` job prints it, and the values it gives, in its log, which is public on public repositories.
+- A repository variable of that name replaces the settings whole, `organization-monthly-budget` and `pool` included ([who can read Codeman's secrets](overview.md#who-can-read-codemans-secrets)).
+- Each repository's `.codeman/settings.yml` still overrides either.
+
+> [!WARNING]
+> Never put a secret in `CODEMAN_SETTINGS`, or in any variable: settings never hold secrets, and variables are shown in the logs.
