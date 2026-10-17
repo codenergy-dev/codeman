@@ -1,55 +1,89 @@
 # Codeman's documentation
 
-One subject per file, grouped by what the reader wants to do. The [root README](../README.md) says what Codeman is.
+Codeman is a GitHub Action that lets an AI agent work on your issues and pull requests, but asks you to make the important decisions first ([what Codeman is](../README.md)).
 
-## Setting it up
+New to Codeman? Read the [README](../README.md), then follow [Installation](installation/setup.md).
 
-- [Installation](installation/setup.md): the GitHub App, OpenRouter, the credentials and their repository access, the backend with its two attribute conditions, and the workflow with the commit of Codeman it runs, step by step, and a pool of organizations; then trying it.
-- [Backend maintenance](installation/backend-maintenance.md): reading, changing, deleting and restoring the backend's pool, provider and attribute condition, service account and roles, APIs and Firestore, and seeing who changed them.
-- [Shared settings](installation/shared-settings.md): settings an organization gives all its repositories.
-- [Self-hosted inference on Runpod](installation/runpod.md): the Runpod account, pods and a Serverless endpoint.
-- [Mixing providers](installation/mixing-providers.md): how to use different providers and models for different runs.
-- [Upgrading](installation/upgrading.md): old setting names, a model per provider, profiles that pick the tasks, pods that fit the GPU, vLLM on pods, GPU batches across repositories, Codeman's commit from a variable, a spent pod that waits for its close, and workflow files copied before the backend.
+## Get started
 
-## Using it
+| Page | Read it to … |
+| --- | --- |
+| [Installation](installation/setup.md) | Set up Codeman on a repository, then try a task |
+| [Self-hosted inference on Runpod](installation/runpod.md) | Serve models on GPUs you rent from Runpod |
+| [Shared settings](installation/shared-settings.md) | Give every repository of an organization the same settings |
+| [A pool of organizations](installation/pool.md) | Let several organizations share one Runpod account and pods |
+| [Mixing providers](installation/mixing-providers.md) | Use different providers and models for different stages |
+| [Glossary](glossary.md) | Look up the one meaning of each term |
 
-- [Settings](settings/reference.md): where settings come from, every setting, and the file's format.
-- [Providers](settings/providers.md): each provider's settings, model IDs, secrets and cost.
-- [Profiles](settings/profiles.md): conditions, how many tasks a run takes, which profile applies, layers and checks, with an example.
-- [Provider settings across layers](settings/provider-settings-across-layers.md): what a layer or profile that changes provider keeps, with worked examples.
-- [Ollama settings](settings/ollama.md): the `ollama` block of a pod's settings: the keys accepted and refused, how they reach the pod, parallel requests from the profile's count, the context that fits the GPU, and pod images.
-- [vLLM settings](settings/vllm.md): `engine: vllm` on pods and its `vllm` block: the keys accepted and refused, the required tool call parser and its probe, the context for the profile's requests, the model on Hugging Face, the CUDA floor, pod images and start times.
-- [Commands](tasks/commands.md): every `/codeman` command.
-- [Comments](tasks/comments.md): the status, decisions and run comments, and the conversation's language.
+## Work with tasks
 
-## How it works
+| Page | Read it to … |
+| --- | --- |
+| [Task lifecycle](tasks/lifecycle.md) | Follow a task's state labels, and unblock a blocked task |
+| [Stages](tasks/stages.md) | Know what each stage does, and how routing chooses them |
+| [Commands](tasks/commands.md) | Steer a task with `/codeman` commands |
+| [Comments](tasks/comments.md) | Read the status, decisions and run comments |
 
-- [Task lifecycle](tasks/lifecycle.md): a task's states and their labels.
-- [Stages](tasks/stages.md): the seven stages, one per agent run, and which are routed; planning, routing, running a routed stage, and feedback.
-- [Runs and jobs](runs/runs-and-jobs.md): what starts a run, how many tasks it takes, and each job with its credentials.
-- [Batches across repositories](runs/batches.md): pools of organizations, the board of ready tasks, batches and their reservations, and the dispatch of other repositories' runs.
-- [The agent](runs/agent.md): its sandbox, its working rules, and its output and limits.
-- [What the agent may change](runs/changes.md): the change policy, on-demand workflows, and third-party documentation.
-- [Budget](budget/budget.md): the task's, the month's and the organization's budgets; reservations, expiry and refusals.
-- [Spend](budget/spend.md): the spend table, and how self-hosted runs count.
-- [OpenRouter](inference/openrouter.md): per-run keys, usage, analytics and key encryption.
-- [Self-hosted inference](inference/self-hosted.md): Runpod's providers compared, the interfaces, and the gateway.
-- [Pods](inference/pods.md): the pod registry, leases, shared pods and their capacity.
-- [Serverless](inference/serverless.md): the endpoint's checks, the job queue, and worker-time estimates and splits.
-- [Backend](backend/backend.md): Firestore's access, client, rules and cost; the store; the ledger.
-- [Data layout](backend/data-layout.md): the backend's collections, documents, IDs, events and queries.
+## Configure
+
+| Page | Read it to … |
+| --- | --- |
+| [Settings](settings/reference.md) | Find every setting, its layers, and the file's format |
+| [Providers](settings/providers.md) | Choose a provider, with its settings, secrets and cost |
+| [Profiles](settings/profiles.md) | Give some agent runs another provider, model or settings |
+| [Provider settings across layers](settings/provider-settings-across-layers.md) | Know what a change of provider keeps |
+| [Pod engines](settings/pod-engines.md) | Choose Ollama or vLLM, and tune what both share |
+| [Ollama settings](settings/ollama.md) | Tune a pod's Ollama server, and its GPU fit |
+| [vLLM settings](settings/vllm.md) | Tune a pod's vLLM server, its tool calls and fit |
+
+## Costs
+
+| Page | Read it to … |
+| --- | --- |
+| [Budget](budget/budget.md) | Set the task's, the month's and the organization's budgets |
+| [Spend](budget/spend.md) | Read the spend table, and how GPU time counts |
+
+## Operate
+
+| Page | Read it to … |
+| --- | --- |
+| [Backend maintenance](installation/backend-maintenance.md) | Read, change, stop or restore the backend's Google Cloud setup |
+| [Upgrading](installation/upgrading.md) | Move to a newer commit of Codeman safely |
 
 ## Security
 
-- [Security](security/overview.md): whom it is for, the checklist, a public App and a pool, and the roadmap.
-- [Secrets](security/secrets.md): each secret, who uses it, why it is safe, its gaps and mitigations.
-- [Risks](security/risks.md): the risks, from most to least severe, and untrusted input.
-- [Forks](security/forks.md): what a fork of a public or private repository gets, what it cannot reach, what others can start, variables, and the settings to choose.
+| Page | Read it to … |
+| --- | --- |
+| [Security](security/overview.md) | Judge whether Codeman is safe for your repository |
+| [Secrets](security/secrets.md) | See where each credential goes, and why it is safe |
+| [Risks](security/risks.md) | Know the real risks, and how to protect against each |
+| [Forks](security/forks.md) | Know what a fork gets, and what to set |
 
-## Working on Codeman
+## How it works
 
-- [Development](development/guide.md): scripts, the source layout, the templates' version, publishing and pinning the pod images, Firestore's emulator and conventions.
-- [Platforms](development/platforms.md): the platform interfaces, and what an adapter must guarantee.
-- [Dependencies](development/dependencies.md): what Codeman depends on, why, and the last audit.
-- [Plans](plans/): one file per piece of work, with its decisions; the project's history.
-- [Third-party documentation](web/): the pages of the services Codeman relies on, and how each was fetched.
+| Page | Read it to … |
+| --- | --- |
+| [Runs and jobs](runs/runs-and-jobs.md) | Know what starts a run, and what each job does |
+| [Batches across repositories](runs/batches.md) | See how several repositories' tasks share one pod |
+| [The agent](runs/agent.md) | Know the agent's sandbox, rules and output |
+| [What the agent may change](runs/changes.md) | Know which changes Codeman commits, and how workflows land |
+| [OpenRouter](inference/openrouter.md) | See how each agent run gets its own capped key |
+| [Self-hosted inference](inference/self-hosted.md) | Compare pods and Serverless, and meet the gateway |
+| [Pods](inference/pods.md) | See how pods are shared, held and ended |
+| [Serverless](inference/serverless.md) | Check an endpoint, and see how runs split its cost |
+| [Backend](backend/backend.md) | Know what Firestore holds, and how jobs reach it |
+| [Data layout](backend/data-layout.md) | Find each collection, its writers, readers and fields |
+
+## Contribute
+
+| Page | Read it to … |
+| --- | --- |
+| [Development](development/guide.md) | Build, test and release Codeman, and publish its pod images |
+| [Writing the docs](development/documentation.md) | Shape a page, and keep its links and anchors |
+| [Platforms](development/platforms.md) | Add a platform or runtime behind Codeman's interfaces |
+| [Dependencies](development/dependencies.md) | See what Codeman depends on, why, and the audits |
+
+Two directories stay in the repository and are not published on the site:
+
+- `docs/plans/` holds one plan per piece of work, with its decisions: the project's history. The [Firestore backend plan](plans/2026-10-07-firestore-backend.md) is one example.
+- `docs/web/` holds the pages of the third-party services Codeman relies on. Each one names the tool that fetched it, such as [Fetch Markdown](web/tools/fetch-markdown.md).

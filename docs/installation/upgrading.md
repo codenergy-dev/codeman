@@ -380,7 +380,7 @@ Check two things:
 
 - **Since:** 2026-10-13, `513f4d9` ([plan for vLLM on pods](../plans/2026-10-13-vllm-on-pods.md)). The first vLLM image is pinned in `df7b528` (2026-10-14).
 - **Who is affected:** pod profiles that use `engine: vllm`, or a layer that changes engine; and a `pod-image` input.
-- **Breaking:** no. Nothing changes for Ollama pods: their settings, settings key and environment stay as they were.
+- **Breaking:** no. Nothing changes for Ollama pods: their settings, [pod settings](../glossary.md#pod-settings) and environment stay as they were.
 
 A pod can serve a Hugging Face model with vLLM (`engine: vllm`, [vLLM settings](../settings/vllm.md)).
 
@@ -454,7 +454,7 @@ Versions before `df7b528` pin `ghcr.io/codenergy-dev/codeman-pod`, the images pu
 | Image | Pinned | What Codeman does |
 | --- | --- | --- |
 | `codeman-pod@sha256:6a7617fc…`, before shared pods | `63d74fe` to `4ef93ac` (2026-10-05 to 2026-10-08) | It serves one run at a time. Codeman lists it in `SINGLE_RUN_IMAGES` ([`ollama.ts`](../../src/inference/ollama.ts)), and its pods' settings include the task. So each task has a pod of its own, which it keeps for its next run |
-| `codeman-pod@sha256:3252d417…`, before Ollama settings | `4ef93ac` to `df7b528` (2026-10-08 to 2026-10-14) | It cannot apply Ollama settings, nor can the image before it: both are in `IMAGES_WITHOUT_OLLAMA_SETTINGS`. A run with Ollama settings stops on them before any pod is created. Runs without get neither the derived `num-parallel` nor the computed context, nor the check of the GPU, and keep their settings key ([Ollama's pod images](../settings/ollama.md#pod-images)) |
+| `codeman-pod@sha256:3252d417…`, before Ollama settings | `4ef93ac` to `df7b528` (2026-10-08 to 2026-10-14) | It cannot apply Ollama settings, nor can the image before it: both are in `IMAGES_WITHOUT_OLLAMA_SETTINGS`. A run with Ollama settings stops on them before any pod is created. Runs without get neither the derived `num-parallel` nor the computed context, nor the check of the GPU, and keep their pod settings ([Ollama's pod images](../settings/ollama.md#pod-images)) |
 | Any other image, from a `pod-image` input | — | It must serve several runs. A pod whose gateway reports an older `version` fails the run, and the error says to list its image |
 
 - **The gateway's version.** The gateway reports its API `version` with its state: 2 serves several runs, and an older gateway reports none ([the gateway](../inference/self-hosted.md#the-gateway)). The error says: `Pod <ID>'s gateway serves one run at a time: list its image in SINGLE_RUN_IMAGES (src/inference/ollama.ts) to give each task a pod of its own on it.`

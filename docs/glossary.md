@@ -4,9 +4,29 @@ The terms the docs use, one meaning each. A term with several meanings points to
 
 ## A
 
+### Account
+
+Always qualified: the OpenRouter account, whose credits the task keys spend; the [GPU account](#gpu-account), on Runpod; or the backend's [service account](#service-account), in Google Cloud. A GitHub user account counts as its own organization.
+
+### Account fingerprint
+
+How Codeman names a [GPU account](#gpu-account) without its key: the first 16 hex characters of an HMAC-SHA256 of a fixed label with the [Runpod API key](#runpod-api-key). A pod's registry document and environment carry it, so a task joins only pods of its own account. See [pods](inference/pods.md).
+
+### Action
+
+What `select` makes a workflow run do for a task: `plan`, `route`, `implement` (a routed stage), `record` (apply the maintainers' answers) or `accept` (move the accepted workflows). It is `none` when nothing can move. It is not a GitHub Action. See [jobs](runs/runs-and-jobs.md#jobs).
+
+### Admin token
+
+The token that manages a pod's gateway, on `/usage` and the `/admin/` routes: an HMAC of the [Runpod API key](#runpod-api-key) and the pod's nonce. Only the [key jobs](#key-jobs) can derive it; the pod keeps only its hash. See [the admin token](inference/self-hosted.md#the-admin-token).
+
 ### Agent run
 
 One stage of one task: one agent, run by the harness in the task's `agent` job, with its own task key or run token. See [stages](tasks/stages.md).
+
+### App token
+
+A token of the [GitHub App](#github-app)'s installation, which a job requests with the App's private key, with only the permissions it needs. The token action revokes it when the job ends. See [secrets](security/secrets.md#github-app-private-key).
 
 ### Attribute condition
 
@@ -18,6 +38,10 @@ The expression on the Workload Identity provider that decides which GitHub OIDC 
 
 The Firebase project, with Cloud Firestore, where Codeman keeps what its jobs share across runs and repositories. Tasks' state stays on GitHub. See [backend](backend/backend.md).
 
+### Base
+
+What a [layer](#layer) applies its values over: what the layers before it resolve to. A value the layer does not set is the base's. A profile's base is the [top level](#top-level). See [layers](settings/reference.md#layers).
+
 ### Batch
 
 The tasks that run at once with the same resolved settings. On a pod, a batch may take tasks of the pool's other repositories; on OpenRouter and Serverless, it is the tasks of one workflow run that take the profile. See [batches across repositories](runs/batches.md).
@@ -25,6 +49,10 @@ The tasks that run at once with the same resolved settings. On a pod, a batch ma
 ### Board
 
 The pool's index of ready tasks that a pod profile could serve, one snapshot per repository, from which `select` forms batches. GitHub stays the source of truth. See [the board](runs/batches.md#the-board).
+
+### Brief
+
+The routing agent's instructions to one routed stage it chooses. The routing stage's run comment shows each brief. See [routing](tasks/stages.md#routing).
 
 ## C
 
@@ -35,6 +63,10 @@ The contexts that fitted a pod's image, model, GPU type and engine settings befo
 ### Capacity
 
 The most runs a pod serves at once: its parallel requests. A task that finds every pod of its settings full creates another. See [shared pods](inference/pods.md#shared-pods).
+
+### Change policy
+
+The rules by which `apply` keeps or drops each path the agent changed, stages the workflows it wrote, and commits the rest to the [task branch](#task-branch). See [change policy](runs/changes.md#change-policy).
 
 ### Change request
 
@@ -52,6 +84,10 @@ Always qualified: an [attribute condition](#attribute-condition), on the backend
 
 The tokens one request can hold. A pod serves the largest context that fits its GPU, at least 64000 tokens or the model's own when smaller, and the agent is told it. See [Ollama's memory](settings/ollama.md#memory).
 
+### Contract tests
+
+The tests that every [store](#store) must pass ([`src/store/contract.ts`](../src/store/contract.ts)): the store in memory always, and Firestore's emulator when it runs. See [Firestore's emulator](development/guide.md#firestores-emulator).
+
 ### Count
 
 The size of a batch, from 1 to 10, which a profile's `tasks`, `min-tasks` and `max-tasks` conditions test. The counts also decide how many tasks a workflow run takes. See [profiles](settings/profiles.md#conditions).
@@ -62,11 +98,37 @@ The size of a batch, from 1 to 10, which a profile's `tasks`, `min-tasks` and `m
 
 What serves the model on a pod: Ollama or vLLM, chosen with `engine`. A Serverless endpoint runs Runpod's vLLM worker. See [providers](settings/providers.md#runpod-pod).
 
+### Engine block
+
+The `ollama` or `vllm` block of the settings, whose keys tune a pod's [engine](#engine). A layer or profile that names another provider drops it, and one that names another engine drops the other engine's block. See [the block](settings/pod-engines.md#the-block).
+
+### Estimate
+
+A run's cost that Codeman computes rather than reads from a bill: a Serverless run's share of the worker's estimated time, or a pod run's time when its gateway cannot report its share. The organization's [month](#month) reconciles the estimates with Runpod's hourly billing. See [self-hosted runs](budget/spend.md#self-hosted-runs).
+
+Ollama's context estimate is not a cost: it is a first guess at the [fit](#fit) ([Ollama's memory](settings/ollama.md#memory)).
+
 ## F
+
+### Federated token
+
+The token that Google's Security Token Service gives a job in exchange for its [OIDC token](#oidc-token), through the [Workload Identity provider](#workload-identity-provider). The job exchanges it in turn for the [service account](#service-account)'s access token. See [access](backend/backend.md#access).
 
 ### Fit
 
 The context and parallel requests at which a pod's model and its K/V cache fit wholly on the GPU. The pod's gateway finds it as the pod starts, and `open-key` logs it. See [Ollama's memory](settings/ollama.md#memory) and [vLLM's](settings/vllm.md#memory).
+
+### Fixed order
+
+The routed stages in their order, which run without a route when the routing agent's result cannot be used. They start at design when the task was just planned, and at code otherwise, so web never runs. See [when its result cannot be used](tasks/stages.md#when-its-result-cannot-be-used).
+
+### Flex price
+
+Runpod's price for a Serverless flex worker: a worker that scales to zero when idle. Codeman prices a Serverless run at the flex price of the endpoint's dearest GPU type, times its GPUs per worker. See [what a run costs](inference/serverless.md#what-a-run-costs).
+
+### Floor
+
+The least [context](#context) a pod gives an agent: 64000 tokens, or the model's own context when smaller. When the model does not fit even at the floor, the pod's start fails. See [context and the GPU](settings/pod-engines.md#context-and-the-gpu).
 
 ## G
 
@@ -77,6 +139,14 @@ Codeman's program in front of a self-hosted engine: it holds the runs' tokens an
 ### Gateway run
 
 A run as the gateway serves it: one task's token, limit and request records. On a pod, each task has its own, named by its seat. See [the gateway](inference/self-hosted.md#the-gateway).
+
+### GitHub App
+
+The App that a maintainer registers for Codeman, under the owner that runs it. Codeman's jobs act as it, with [App tokens](#app-token), rather than with the workflow's `GITHUB_TOKEN`. Its private key is the `CODEMAN_GITHUB_APP_PRIVATE_KEY` secret. See [installation](installation/setup.md#1-register-the-github-app).
+
+### GPU account
+
+The Runpod account that the [Runpod API key](#runpod-api-key) opens: where pods run, and whose billing the organization's [month](#month) reads. A [pool of organizations](#pool-of-organizations) shares one. See [accounts](settings/providers.md#accounts).
 
 ## H
 
@@ -96,9 +166,17 @@ Where an agent run's model is served, chosen with `provider`: `openrouter`, `run
 
 A second of a shared pod with no run on it, which goes to the tasks that keep the pod then. See [shared pods](inference/pods.md#shared-pods).
 
+### Key encryption secret
+
+`CODEMAN_KEY_ENCRYPTION_SECRET`: `open-key` encrypts the run's task key or run token with it, and Codeman's step in `agent` decrypts it. So the credential travels between jobs encrypted. See [secrets](security/secrets.md#key-encryption-secret).
+
 ### Key jobs
 
 `open-key`, `close-key` and `release-pod`: the jobs that open and end runs' access to their models, and the only ones that hold OpenRouter's management key and the GPU account's key. See [jobs](runs/runs-and-jobs.md#jobs).
+
+### K/V cache
+
+The engine's memory of the tokens that each request in progress holds, beside the model on the GPU. It grows with the parallel requests times the context. A quantized cache takes less memory, with some loss of precision. See [context and the GPU](settings/pod-engines.md#context-and-the-gpu).
 
 ## L
 
@@ -124,11 +202,36 @@ The ledger's document of one agent run, with its status, limit and cost. Its ID 
 
 A user with admin or write permission on the repository; GitHub reports maintain as write. Only maintainers' issues are tasks, and only their comments count. See [commands](tasks/commands.md).
 
+### Management key
+
+`CODEMAN_OPENROUTER_MANAGEMENT_KEY`: the OpenRouter key that creates, lists and changes the account's other keys. Only `open-key` and `close-key` hold it, to create and end [task keys](#task-key). See [secrets](security/secrets.md#openrouter-management-key).
+
+### Manual run's inputs
+
+The inputs of a manual run of `codeman.yml`: `model`, `task-budget`, `monthly-budget` and `max-runs`. They are the fourth [layer](#layer). Scheduled and comment runs have none. The `batch` input, set when another repository's batch starts the run, is only logged. See [layers](settings/reference.md#layers).
+
+### Month
+
+Always qualified, and always a calendar month in UTC. A ledger run counts in the month in which `select` picked it.
+
+- The repository's month: what its runs spent, against `monthly-budget`.
+- The organization's month: what all its repositories' runs spent, reconciled with the GPU accounts' billing, against `organization-monthly-budget`.
+
+See [the three budgets](budget/budget.md#the-three-budgets).
+
 ## O
+
+### OIDC token
+
+The token that GitHub gives a job granted `id-token: write`, which proves its repository and workflow. Only `select`, `open-key`, `close-key` and `release-pod` request it, to reach the [backend](#backend). See [access](backend/backend.md#access).
 
 ### Organization's settings
 
 The settings an organization shares with its repositories, in its `CODEMAN_SETTINGS` variable, which the template passes as `select`'s `settings` input. They are the second layer, and the only one that sets `organization-monthly-budget` and `pool`. See [shared settings](installation/shared-settings.md).
+
+### Orphan pod
+
+A pod of the [GPU account](#gpu-account) that Codeman created for the pool, or for the organization before pools, but that no live document of the [pod registry](#pod-registry) holds. `open-key` terminates it when it sweeps the account. Pods without Codeman's environment are never touched. See [sweeping orphans](inference/pods.md#sweeping-orphans).
 
 ## P
 
@@ -172,11 +275,19 @@ A profile's `stages`, `tasks`, `min-tasks` or `max-tasks`, which decide when it 
 
 Always qualified: an [inference provider](#inference-provider), in the settings, or the [Workload Identity provider](#workload-identity-provider), in Google Cloud.
 
+### Provider settings
+
+The settings that only some [inference providers](#inference-provider) take: `engine`, `gpu`, `endpoint` and `pod-reuse`, and the [engine blocks](#engine-block). A layer or profile that names another provider keeps none of the inherited ones. See [provider settings across layers](settings/provider-settings-across-layers.md).
+
 ## R
 
 ### Reservation
 
 Always qualified. A budget reservation is a run's limit, which `open-key` writes in the ledger before it opens the run ([budget](budget/budget.md)); a batch reservation is a task that another repository's batch reserved for this repository's next run ([reservations](runs/batches.md#reservations)).
+
+### Review round
+
+One `changes` from review. When the rounds in a row exceed `max-runs`, the task is blocked. The count starts over when review passes, and in the runs that carry out a `fix` request. See [runs in a row and review rounds](tasks/stages.md#runs-in-a-row-and-review-rounds).
 
 ### Routed stage
 
@@ -190,6 +301,18 @@ Always qualified: a [workflow run](#workflow-run), an [agent run](#agent-run), a
 
 The random token of an agent run on a self-hosted gateway, in place of a task key. It opens only its own gateway run, and ending that run revokes it. See [the gateway](inference/self-hosted.md#the-gateway).
 
+### Runpod API key
+
+`CODEMAN_RUNPOD_API_KEY`, the key of the [GPU account](#gpu-account); the docs also call it the account key or the GPU account key. Only the [key jobs](#key-jobs) hold it: to create and end pods, derive their [admin tokens](#admin-token), and read the account's billing. See [secrets](security/secrets.md#runpod-api-key).
+
+### Run's cap
+
+The most tasks a [workflow run](#workflow-run) takes: the largest `tasks` or `max-tasks` of the profiles, or 10 when a profile has `min-tasks` alone. It is 1 when no profile has a [count](#count). A pod's parallel requests default to it when its profile names no `tasks` or `max-tasks`. See [parallel requests](settings/pod-engines.md#parallel-requests).
+
+### Runs in a row
+
+The runs of the same routed stage that end unfinished, `partial` or out of time, one after another. The `max-runs`th blocks the task. The count starts over when another stage runs, or when a `fix` or `continue` request resumes the task. See [runs in a row and review rounds](tasks/stages.md#runs-in-a-row-and-review-rounds).
+
 ## S
 
 ### Sandbox
@@ -200,13 +323,37 @@ How the agent job isolates the agent: it runs as the `codeman-agent` user, witho
 
 A task's position on a pod, given when the task first joins it and kept for the pod's life. The gateway names the task's runs by it. See [shared pods](inference/pods.md#shared-pods).
 
+### Secure Cloud
+
+Runpod's certified data centers. Codeman creates pods there only. A [Serverless endpoint](#serverless-endpoint) runs where the maintainer who created it chose, which Runpod's API does not report. See [self-hosted inference on Runpod](installation/runpod.md).
+
+### Serverless endpoint
+
+A Runpod endpoint that a maintainer creates from Runpod's vLLM worker, named by the `endpoint` setting of `runpod-serverless`. Its workers start on demand. The gateway queues each request on it as a [Serverless job](#serverless-job). See [Serverless](inference/serverless.md).
+
 ### Serverless job
 
 One request that the gateway queues on a Serverless endpoint (`/run`), then reads until it ends. It is not a workflow job. See [Serverless](inference/serverless.md).
 
+### Serverless key
+
+`CODEMAN_RUNPOD_SERVERLESS_KEY`, a Runpod key restricted to the [Serverless endpoint](#serverless-endpoint). Only Codeman's step in `agent` holds it, for the gateway; the agent gets only its [run token](#run-token). See [secrets](security/secrets.md#runpod-serverless-key).
+
+### Service account
+
+The backend's Google Cloud identity, `codeman@<project ID>.iam.gserviceaccount.com`, with the Cloud Datastore User role. Jobs act as it for an hour, through Workload Identity Federation; it has no stored key. See [access](backend/backend.md#access).
+
+### Settings key
+
+The hash of what serves a task at a [count](#count): the profile, provider, model and provider settings, and on a pod the parallel requests. Tasks with the same count and settings key form a [batch](#batch). It is not an OpenRouter key, nor the [pod settings](#pod-settings), which also hash the image. See [forming batches](runs/batches.md#forming-batches).
+
 ### Stage
 
 One of the seven steps of a task that an agent runs: `plan`, `route`, `web`, `design`, `code`, `test` and `review`. Every agent run is a stage; recording answers and accepting workflows are not. See [stages](tasks/stages.md).
+
+### Staged workflow
+
+A workflow file that the agent wrote under `.github/workflows/`, which `apply` commits under `.codeman/workflows/` instead. It reaches `.github/workflows/` only when a maintainer accepts it with `/codeman accept-workflows`. See [on-demand workflows](runs/changes.md#on-demand-workflows).
 
 ### Status comment
 
@@ -233,6 +380,10 @@ The OpenRouter key of one agent run, limited to what remains of the task's budge
 ### Task record
 
 The task's state beyond its labels, such as its branch, decisions, answers and spend, kept in a hidden block of the status comment. See [comments](tasks/comments.md#status-and-run-comments).
+
+### Task's commands
+
+The `/codeman set` commands of a [task](#task), in its issue's description and comments: the sixth [layer](#layer). They set only `model`, `task-budget`, `max-runs`, `language` and `gpu`, and the last one for a setting wins. See [layers](settings/reference.md#layers).
 
 ### Template version
 

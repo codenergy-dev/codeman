@@ -281,7 +281,7 @@ CONDITION="assertion.repository_owner_id == '$ORG_ID' && assertion.repository_id
 - **The workflow.** `workflow_ref` names the workflow that runs the job, the caller's for the jobs of `codeman-task.yml`, at its branch. Only `codeman.yml` on `main` gets in, which only a reviewed pull request changes. No other workflow of your repositories can reach the backend, not even one that runs code the agent wrote on a task branch.
 - **The default branch.** If your default branch has another name, change `main`.
 - **Several organizations.** Use `assertion.repository_owner_id in ['<ID>', '<ID>']`, with either condition.
-- **The length.** A condition is at most 4096 characters ([update-oidc](../web/google-cloud/gcloud-iam-workload-identity-pools-providers-update-oidc.md)), about 280 repository IDs. Beyond that, see [many repositories](backend-maintenance.md#change-the-attribute-condition).
+- **The length.** A condition is at most 4096 characters ([update-oidc](../web/google-cloud/gcloud-iam-workload-identity-pools-providers-update-oidc.md)), about 280 repository IDs. Beyond that, see [many repositories](backend-maintenance.md#many-repositories).
 
 ### Steps
 
