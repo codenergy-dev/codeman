@@ -1,7 +1,7 @@
 ---
-status: in progress
+status: completed
 created_at: 2026-10-15T21:09:30-03:00
-updated_at: 2026-10-15T21:13:19-03:00
+updated_at: 2026-10-17T13:02:25-03:00
 commit: c26cd15
 ---
 
@@ -47,6 +47,7 @@ The fix as proposed: the gateway stops the runs and waits for their closes, term
 5. **Check and commit.** `npm run check` passes, `dist/` rebuilt; one commit.
    - **Done on 2026-10-15**: 617 tests, 615 pass and 2 skipped (the sandbox's, Linux runners only). `dist/index.js` and `dist/gateway.js` changed, so the pod image workflow builds both images once the commit reaches `main`.
 6. **Pin the rebuilt images.** Pending: the responsible person publishes both images from the commit of step 5 and sends their digests; they are pinned in `POD_IMAGES` in a commit of their own ([pod images](../development/guide.md#pod-images)). Until then, pods run the images pinned now: their gateway still terminates the pod once every run is spent, and only `close`'s changes apply to them.
+   - **Done on 2026-10-17**: both images were published from `e26a8c9`, which contains this change and after which nothing in `docker/pod/`, `dist/gateway.js` or the workflow changed. They are pinned in `POD_IMAGES`.
 
 ## Out of scope
 
