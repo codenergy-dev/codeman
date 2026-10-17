@@ -62,6 +62,7 @@ With neither, the tests are skipped. Each test uses a project of its own, so the
 
 ## Conventions
 
+- Write the docs as [writing the docs](documentation.md) says.
 - Imports of local files use the `.ts` extension; Node runs the tests without a build step.
 - Use only TypeScript syntax that can be erased (`erasableSyntaxOnly`): no `enum`, `namespace` or parameter properties.
 - Keep logic in pure functions that tests can call directly. `src/main.ts` wires the steps to GitHub; nothing else picks a platform.
