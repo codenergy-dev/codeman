@@ -1,40 +1,104 @@
 # Provider settings across layers
 
-A run's settings come from [layers](reference.md) and, for some runs, a [profile](profiles.md). This page says what happens to a [provider's](providers.md) settings when a layer or a profile changes provider, with worked examples. The rule was chosen in the [provider settings plan](../plans/2026-10-08-provider-settings.md) (choice 9), what it requires of `model` in the [model per provider plan](../plans/2026-10-08-model-per-provider.md), and `serving` and `resolveRun` in [`src/settings.ts`](../../src/settings.ts) apply them.
+This page says what happens to a [provider's](../glossary.md#inference-provider) settings when a [layer](../glossary.md#layer) or a [profile](../glossary.md#profile) changes provider, with worked examples. The order of the layers is in [layers](reference.md#layers).
+
+The provider settings are `engine`, `gpu`, `endpoint`, `pod-reuse`, and the keys of the `ollama` and `vllm` blocks ([providers](providers.md)).
+
+## At a glance
+
+| Where | Names a provider? | Inherited provider settings | Inherited `model` |
+| --- | --- | --- | --- |
+| The organization's settings, the repository's file, or a profile, without `provider` | No | Kept; those it sets replace them | Carries over, unless it sets one |
+| The same, with the same provider as its base | Yes, the same | Kept; those it sets replace them | Carries over, unless it sets one |
+| The same, with another provider | Yes, another | Dropped: only its own, then the new provider's defaults | Never carries over: it must set its own when it inherits one |
+| A manual run's inputs | Cannot: there is no `provider` input | Kept | Its `model` replaces the top level's, not a profile's. It does not stand in for a layer's own |
+| A task's `/codeman set` | Cannot: there is no `set provider` | Its `gpu` applies to the runs whose provider accepts it | For the top level's provider: it overrides the model of that provider's runs, profiles included. A profile on another provider keeps its own. See [the model](#the-model) |
 
 ## The rule
 
-A provider's settings (`engine`, `gpu`, `endpoint`, `pod-reuse`, and the keys of the `ollama` and `vllm` blocks) go with it.
+A provider's settings go with it. Budgets and limits are not provider settings, and never drop.
 
-1. Each layer inherits from its base, the layers before it ([settings](reference.md)): Codeman's default (`provider: openrouter`), the organization's settings, the repository's file, a manual run's inputs; then the run's profile, whose base is the top level; then the task's commands.
-2. A layer or profile that names another provider than the one it inherits starts with none of the inherited provider settings, and must set its own `model` ([the model](#the-model)).
-3. One that names the same provider, or none, keeps them, and replaces only those it sets. Each key of the `ollama` and `vllm` blocks counts as a setting of its own: a profile that sets `context-length` keeps the `num-parallel` it inherits ([Ollama settings](ollama.md#how-they-apply)). A block configures one engine: one that names another `engine` than the one it inherits leaves out the inherited block of that engine, so a profile with `engine: vllm` on an organization's Ollama pods does not inherit its `ollama` keys ([vLLM settings](vllm.md#how-they-apply)).
-4. Then the provider's defaults fill what is left (`engine`; `pod-reuse: task`).
+```mermaid
+flowchart TD
+  L["The next layer or profile"] --> P{"Does it name another provider<br/>than the one it inherits?"}
+  P -->|"no, or the same one"| G{"Does it name another engine<br/>than the one it inherits?"}
+  P -->|yes| M{"Does it inherit a model<br/>and set none?"}
+  M -->|yes| E["select stops with an error:<br/>it must set its own model"]
+  M -->|no| X["Drop the inherited<br/>provider settings"]
+  X --> G
+  G -->|yes| B["Drop the inherited block<br/>of the other engine"]
+  G -->|no| A["Apply the values it sets.<br/>Block keys merge one by one"]
+  B --> A
+  A --> N{"Is there another layer?"}
+  N -->|yes| L
+  N -->|no| D["The provider's defaults fill the rest"]
+```
 
-Budgets and limits are not provider settings, and never drop.
-
-## Why
-
-No layer can unset a value it inherits: `gpu:` with no value is an error ("`gpu` must be a GPU type, such as `NVIDIA RTX A6000`."). Without the rule, a profile could not leave a provider whose settings the next one refuses.
+1. Each layer, then the run's profile, applies its values over its base, in the order of [layers](reference.md#layers). A profile's base is the [top level](../glossary.md#top-level).
+2. A layer or profile that names another provider than the one it inherits starts with none of the inherited provider settings. It must set its own `model` ([the model](#the-model)).
+3. One that names the same provider, or none, keeps them, and replaces only those it sets.
+4. Each key of the `ollama` and `vllm` blocks counts as a setting of its own. A profile that sets `context-length` keeps the `num-parallel` it inherits ([Ollama settings](ollama.md#how-they-apply)).
+5. A block configures one [engine](../glossary.md#engine). A layer or profile that names another `engine` than the one it inherits leaves out the inherited block of that engine. So a profile with `engine: vllm` on an organization's Ollama pods does not inherit its `ollama` keys ([vLLM settings](vllm.md#how-they-apply)).
+6. Then the provider's defaults fill what is left: `engine`, and `pod-reuse: task`.
 
 ## The model
 
 A model is set for one provider, and never reaches another.
 
-- **A layer or profile that changes provider sets its own `model`.** Otherwise the first run, whatever its stage, stops in `select`, before any key is opened or pod created, with an error that names the layer or profile: "Profile `planner` names `openrouter`, but inherits `runpod-pod` from the top level, so it must set its own `model`, one for `openrouter`." A layer or profile that names no provider, or the same one, inherits `model`.
-- **The provider it inherits** is the one its base resolves to, and the error names where it comes from: the top level, for a profile; for a layer, the last layer before it that names a provider, or Codeman's default `openrouter` when none does. So a repository's file with `provider: runpod-pod`, whose organization's settings set only `model`, changes provider: ".codeman/settings.yml names `runpod-pod`, but inherits `openrouter` from Codeman's default, so it must set its own `model`, one for `runpod-pod`."
-- **Only a model that would carry over counts.** Codeman's defaults have no model, so a change of provider that inherits no model needs none of its own: an organization can name `provider: runpod-pod` and leave the model to each repository.
-- **A manual run's `model` input does not make up for it**, since scheduled runs have none: the repository's file must set its own. The input replaces the top level's model, so it reaches the runs on the top level's provider.
-- **A task's `/codeman set model` does not either.** It is for the top level's provider: it overrides the model of the runs on that provider, profiles included, and a profile on another provider keeps its own model. A task's `/codeman set gpu` applies to the runs whose provider accepts it.
-- **If either the task's `model` or its `gpu` does not fit, Codeman leaves out both.** A `model` does not fit when it does not fit the top level's provider; a `gpu` does not, when none of the settings' providers accepts it. The run goes on with the other settings, and its comment reports the problem: "The task's settings were not applied: …", with the first error. So a valid `gpu` is lost with a `model` that does not fit, and the other way round.
+### When a layer must set its own
 
-Why: Codeman checks a model's form only, and an OpenRouter ID such as `deepseek/deepseek-v4.1-flash` also has the form of an Ollama name and of a Hugging Face ID. A model carried from OpenRouter to a pod would pass the check, and fail only when the pod, already created and billed, pulls it.
+A layer or profile that changes provider sets its own `model`. Otherwise the first run, whatever its stage, stops in `select`, before any key is opened or pod created. The error names the layer or profile:
+
+```text
+Profile `planner` names `openrouter`, but inherits `runpod-pod` from the top level, so it must set its own `model`, one for `openrouter`.
+```
+
+- A layer or profile that names no provider, or the same one, inherits `model`.
+- **Only a model that would carry over counts.** Codeman's defaults have no model, so a change of provider that inherits no model needs none of its own. An organization can name `provider: runpod-pod` and leave the model to each repository.
+
+### Which provider it inherits
+
+The provider a layer or profile inherits is the one its base resolves to, and the error names where it comes from:
+
+| The one that changes provider | Inherits its provider from |
+| --- | --- |
+| A profile | The top level |
+| A layer | The last layer before it that names a provider, or Codeman's default `openrouter` when none does |
+
+So a repository's file with `provider: runpod-pod`, whose organization's settings set only `model`, changes provider:
+
+```text
+.codeman/settings.yml names `runpod-pod`, but inherits `openrouter` from Codeman's default, so it must set its own `model`, one for `runpod-pod`.
+```
+
+### What does not make up for it
+
+- **A manual run's `model` input**, since scheduled runs have none: the repository's file must set its own. The input replaces the top level's model, so it reaches the runs on the top level's provider.
+- **A task's `/codeman set model`.** It is for the top level's provider: it overrides the model of the runs on that provider, profiles included. A profile on another provider keeps its own model.
+
+A task's `/codeman set gpu` applies to the runs whose provider accepts it.
+
+### When the task's settings do not fit
+
+If either the task's `model` or its `gpu` does not fit, Codeman leaves out both:
+
+- A `model` does not fit when it does not fit the top level's provider.
+- A `gpu` does not fit when none of the settings' providers accepts it.
+
+The run goes on with the other settings, and its comment reports the problem: "The task's settings were not applied: …", with the first error. So a valid `gpu` is lost with a `model` that does not fit, and the other way round.
+
+## Why
+
+- **No layer can unset a value it inherits.** `gpu:` with no value is an error: "`gpu` must be a GPU type, such as `NVIDIA RTX A6000`." Without the rule, a profile could not leave a provider whose settings the next one refuses.
+- **Codeman checks a model's form only.** An OpenRouter ID such as `deepseek/deepseek-v4.1-flash` also has the form of an Ollama name and of a Hugging Face ID. A model carried from OpenRouter to a pod would pass the check, and fail only when the pod, already created and billed, pulls it.
 
 ## Examples
 
 Every outcome and error below is asserted by `src/settings.test.ts` ("provider settings across layers").
 
 ### 1. A profile that switches provider
+
+**Settings:**
 
 ```yaml
 provider: runpod-pod
@@ -48,13 +112,22 @@ profiles:
     model: Qwen/Qwen3-Coder-30B-A3B-Instruct
 ```
 
-Review runs: `runpod-serverless`, `endpoint: abc123xyz`, `engine: vllm` (its default), the Qwen model; no `gpu`, no `pod-reuse`. Every other run: `runpod-pod`, `qwen3-coder:30b`, `gpu: "NVIDIA RTX A6000"`, `pod-reuse: task` and `engine: ollama` (the defaults).
+**Result:**
 
-Without the rule, the profile would inherit `gpu`, and every run would stop with "Profile `serverless-review`: `runpod-serverless` does not accept `gpu`; besides `model`, it takes `engine` and `endpoint`.", with nothing the profile could write to fix it.
+| Runs | Provider | Model | Provider settings |
+| --- | --- | --- | --- |
+| Review | `runpod-serverless` | `Qwen/Qwen3-Coder-30B-A3B-Instruct` | `endpoint: abc123xyz`, and `engine: vllm`, its default. No `gpu`, no `pod-reuse` |
+| Every other | `runpod-pod` | `qwen3-coder:30b` | `gpu: "NVIDIA RTX A6000"`, and the defaults `pod-reuse: task` and `engine: ollama` |
+
+**Without the rule:** the profile would inherit `gpu`, and every run would stop with an error that nothing in the profile could fix:
+
+```text
+Profile `serverless-review`: `runpod-serverless` does not accept `gpu`; besides `model`, it takes `engine` and `endpoint`.
+```
 
 ### 2. A repository leaves the organization's pods
 
-The organization's `CODEMAN_SETTINGS`:
+**Settings.** The organization's `CODEMAN_SETTINGS`:
 
 ```yaml
 provider: runpod-pod
@@ -71,13 +144,31 @@ provider: openrouter
 model: deepseek/deepseek-v4.1-flash
 ```
 
-Runs: `openrouter` with `deepseek/deepseek-v4.1-flash`. The organization's `gpu` and `pod-reuse` are dropped; its `task-budget: 1` still applies.
+**Result:**
 
-Had the file set only `provider: openrouter`, the organization's model would carry over to another provider, so the first run would stop with ".codeman/settings.yml names `openrouter`, but inherits `runpod-pod` from the organization's settings, so it must set its own `model`, one for `openrouter`."
+| Setting | Value |
+| --- | --- |
+| `provider` | `openrouter` |
+| `model` | `deepseek/deepseek-v4.1-flash` |
+| `gpu`, `pod-reuse` | Dropped |
+| `task-budget` | `1`, the organization's: budgets never drop |
+
+**If you get it wrong:** had the file set only `provider: openrouter`, the organization's model would carry over to another provider. The first run would stop with:
+
+```text
+.codeman/settings.yml names `openrouter`, but inherits `runpod-pod` from the organization's settings, so it must set its own `model`, one for `openrouter`.
+```
 
 ### 3. No provider, or the same provider, keeps them
 
-With the same organization's settings as its base, a repository file with only `model: qwen2.5-coder:32b`, or with `provider: runpod-pod` and that model, runs `runpod-pod` with `qwen2.5-coder:32b`, the organization's `gpu` and `pod-reuse: run`. The same holds for profiles:
+**Settings.** The same organization's settings as example 2, and a repository file with either:
+
+- only `model: qwen2.5-coder:32b`;
+- or `provider: runpod-pod` and that model.
+
+**Result:** both run `runpod-pod` with `qwen2.5-coder:32b`, the organization's `gpu` and `pod-reuse: run`.
+
+The same holds for profiles. **Settings:**
 
 ```yaml
 provider: runpod-pod
@@ -94,9 +185,18 @@ profiles:
     model: qwen2.5-coder:32b
 ```
 
-Code runs: `qwen3-coder:30b` on `"NVIDIA H100 80GB HBM3"`, `pod-reuse: run`. Test runs: `qwen2.5-coder:32b` on `"NVIDIA RTX A6000"`, `pod-reuse: run`.
+**Result:**
+
+| Runs | Model | GPU | `pod-reuse` |
+| --- | --- | --- | --- |
+| Code | `qwen3-coder:30b` | `"NVIDIA H100 80GB HBM3"` | `run` |
+| Test | `qwen2.5-coder:32b` | `"NVIDIA RTX A6000"` | `run` |
+
+**If you get it wrong:** a profile that names another provider instead, without a `model`, stops the run, as in example 4.
 
 ### 4. A profile that changes provider sets its own model
+
+**Settings:**
 
 ```yaml
 provider: runpod-pod
@@ -108,14 +208,18 @@ profiles:
     provider: openrouter
 ```
 
-The profile changes provider without `model`, so the first run, whatever its stage, stops with "Profile `planner` names `openrouter`, but inherits `runpod-pod` from the top level, so it must set its own `model`, one for `openrouter`." The fix is a `model` in the profile, such as `model: deepseek/deepseek-v4.1-flash`. The same holds the other way round, for a profile on Runpod that inherits OpenRouter from the top level, though an OpenRouter ID would pass the Runpod engines' check of its form ([the model](#the-model)).
+**Result:** the profile changes provider without `model`, so the first run, whatever its stage, stops with:
 
-## Summary
+```text
+Profile `planner` names `openrouter`, but inherits `runpod-pod` from the top level, so it must set its own `model`, one for `openrouter`.
+```
 
-| Where | Names a provider? | Inherited provider settings (`engine`, `gpu`, `endpoint`, `pod-reuse`, the `ollama` and `vllm` keys) | Inherited `model` |
-| --- | --- | --- | --- |
-| Organization's settings, repository's file, or a profile, without `provider` | No | Kept; those it sets replace them | Carries over, unless it sets one |
-| The same, with the same provider as its base | Yes, the same | Kept; those it sets replace them | Carries over, unless it sets one |
-| The same, with another provider | Yes, another | Dropped; only its own, then the new provider's defaults | Never carries over: it must set its own when it inherits one |
-| A manual run's inputs | Cannot (no `provider` input) | Kept | Its `model` replaces the top level's, not a profile's; it does not stand in for a layer's own |
-| A task's `/codeman set` | Cannot (no `set provider`) | `gpu` applies to the runs whose provider accepts it | For the top level's provider: overrides the model of its runs, profiles included; a profile on another provider keeps its own. If the task's `model` or its `gpu` does not fit, both are left out ([the model](#the-model)) |
+**The fix:** a `model` in the profile, such as `model: deepseek/deepseek-v4.1-flash`.
+
+**The other way round:** the same holds for a profile on Runpod that inherits OpenRouter from the top level, though an OpenRouter ID would pass the Runpod engines' check of its form ([why](#why)).
+
+## Where the choices were made
+
+- The rule: the [provider settings plan](../plans/2026-10-08-provider-settings.md), choice 9.
+- What it requires of `model`: the [model per provider plan](../plans/2026-10-08-model-per-provider.md).
+- `serving` and `resolveRun` in [`src/settings.ts`](../../src/settings.ts) apply them.

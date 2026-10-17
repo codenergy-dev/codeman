@@ -1,45 +1,72 @@
 # Providers
 
-`provider` chooses where a run's model is served. Each provider accepts its own settings beside `model`, and some a block of settings for their engine, and a setting it does not accept, a value it does not offer, or a required setting it lacks stops the run with an error that names the provider. A top level without a `model` serves no run, so it is checked only for what its provider accepts ([profiles](profiles.md#checks)). The registry in [`src/inference/providers.ts`](../../src/inference/providers.ts) holds them; a new provider is a new entry. The choices were made in the [provider settings plan](../plans/2026-10-08-provider-settings.md).
+`provider` chooses where an [agent run's](../glossary.md#agent-run) model is served. This page lists the [inference providers](../glossary.md#inference-provider) and the settings each one accepts.
 
-What a [layer](reference.md) or a [profile](profiles.md) that names another provider keeps of the provider settings it inherits is in [provider settings across layers](provider-settings-across-layers.md).
+## At a glance
 
-Each provider bills an account, whose key opens its runs and whose billing the [budgets](../budget/budget.md) read: `openrouter`, or `runpod` for both Runpod providers.
+| Provider | Serves the model with | Settings besides `model` | Model ID | Account |
+| --- | --- | --- | --- | --- |
+| `openrouter` (the default) | OpenRouter | None | OpenRouter's | `openrouter` |
+| `runpod-pod` | A [pod](../glossary.md#pod) Codeman creates, running Ollama or vLLM | `gpu` (required), `pod-reuse`, `engine`, `ollama`, `vllm` | Ollama's, or a Hugging Face ID with vLLM | `runpod` |
+| `runpod-serverless` | A Serverless endpoint a maintainer created, running Runpod's vLLM worker | `endpoint` (required), `engine` | A Hugging Face ID | `runpod` |
+
+## How settings are checked
+
+- Each provider accepts its own settings beside `model`, and some a block of settings for their [engine](../glossary.md#engine).
+- A setting the provider does not accept, a value it does not offer, or a required setting it lacks stops the run. The error names the provider.
+- A [top level](../glossary.md#top-level) without a `model` serves no run, so it is checked only for what its provider accepts ([profiles](profiles.md#checks)).
+- What a [layer](reference.md#layers) or a [profile](profiles.md) that names another provider keeps of the provider settings it inherits is in [provider settings across layers](provider-settings-across-layers.md).
+
+## Accounts
+
+Each provider bills an account: `openrouter`, or `runpod` for both Runpod providers. The account's key opens the provider's runs, and the [budgets](../budget/budget.md) read its billing.
 
 ## `openrouter`
 
 The default. It accepts no setting beside `model`.
 
 - **Model ID:** OpenRouter's, such as `deepseek/deepseek-v4.1-flash`.
-- **Secrets:** `CODEMAN_OPENROUTER_MANAGEMENT_KEY`, in the key jobs.
+- **Secrets:** `CODEMAN_OPENROUTER_MANAGEMENT_KEY`, in the [key jobs](../glossary.md#key-jobs).
 - **Cost:** what the run's key used, exact, from OpenRouter.
 
 ## `runpod-pod`
 
-A pod Codeman creates on Runpod's Secure Cloud, shared by the pool's tasks with the same pod settings, up to its capacity ([pods](../inference/pods.md)).
+A pod Codeman creates on Runpod's Secure Cloud, shared by the [pool's](../glossary.md#pool-of-organizations) tasks with the same [pod settings](../glossary.md#pod-settings), up to its [capacity](../glossary.md#capacity) ([pods](../inference/pods.md)).
 
-| Setting | Default | Meaning |
+| Setting | Default | Allowed values | Meaning |
+| --- | --- | --- | --- |
+| `gpu` | none; required | A Runpod GPU ID, not its display name, such as `"NVIDIA RTX A6000"` | The pod's GPU type. Quoted or not in the file; `/codeman set gpu` takes the rest of its line |
+| `pod-reuse` | `task` | `task`, `run` | `task`: a pod is kept after a run for the next run on its settings, of any task. `run`: a pod ends with its runs |
+| `engine` | `ollama` | `ollama`, `vllm` | What serves the model. `vllm` batches requests whatever the model ([vLLM settings](vllm.md)). Naming another engine than the one inherited drops that engine's block ([the rule](provider-settings-across-layers.md#the-rule)) |
+| `ollama` | none | The keys of [Ollama settings](ollama.md) | With `engine: ollama`, the pod's Ollama settings: a block of keys, each one of the server's variables, such as `num-parallel: 4` for `OLLAMA_NUM_PARALLEL=4` |
+| `vllm` | none | The keys of [vLLM settings](vllm.md); `tool-call-parser` is required | With `engine: vllm`, the pod's vLLM settings: a block of keys, each one of `vllm serve`'s arguments, such as `max-num-seqs: 4` for `--max-num-seqs 4` |
+
+Without an `ollama` block, or without `vllm` keys beside `tool-call-parser`, a pod serves as many requests at once as its profile's tasks, with the largest context that fits its GPU.
+
+The model ID depends on the engine:
+
+| Engine | Model ID | Example |
 | --- | --- | --- |
-| `gpu` | none; required | The pod's GPU type, by Runpod's GPU ID (not its display name), such as `"NVIDIA RTX A6000"` (quoted or not in the file; `/codeman set gpu` takes the rest of its line) |
-| `pod-reuse` | `task` | `task`: a pod is kept after a run for the next run on its settings, of any task; `run`: a pod ends with its runs |
-| `engine` | `ollama` | What serves the model: `ollama`, or `vllm`, which batches requests whatever the model ([vLLM settings](vllm.md)). A layer or profile that names another engine leaves out the block of the engine it inherits |
-| `ollama` | none | The pod's Ollama settings, with the engine `ollama`: a block of keys, each one of the server's variables, such as `num-parallel: 4` for `OLLAMA_NUM_PARALLEL=4`; only the keys of [Ollama settings](ollama.md). Without them, a pod serves as many requests at once as its profile's tasks, with the largest context that fits its GPU |
-| `vllm` | none | The pod's vLLM settings, with the engine `vllm`: a block of keys, each one of `vllm serve`'s arguments, such as `max-num-seqs: 4` for `--max-num-seqs 4`; only the keys of [vLLM settings](vllm.md). It needs `tool-call-parser`. Without the others, a pod serves as many requests at once as its profile's tasks, with the largest context that fits its GPU for them |
+| Ollama | Ollama's name | `qwen3-coder:30b` |
+| vLLM | A Hugging Face ID, `namespace/name`, of a public model, not gated, with safetensors weights | `unsloth/Qwen3.8-27B-NVFP4` |
 
-- **Model ID:** Ollama's, such as `qwen3-coder:30b`; with `engine: vllm`, a Hugging Face ID, `namespace/name`, such as `unsloth/Qwen3.8-27B-NVFP4`, of a public model, not gated, with safetensors weights.
 - **Secrets:** `CODEMAN_RUNPOD_API_KEY`, in the key jobs.
 - **Cost:** the pod's time at its price, split among the runs on it ([spend](../budget/spend.md#self-hosted-runs)).
-- **Pod image:** Codeman picks it by `engine`, one per engine ([vLLM settings](vllm.md#pod-images)). Ollama settings, and fitting the model to the GPU, need an image whose gateway does both; a run with Ollama settings on an image that cannot stops before any pod is created ([Ollama settings](ollama.md#pod-images)).
+- **Pod image:** Codeman picks it by `engine`, one per engine ([vLLM settings](vllm.md#pod-images)). Ollama settings, and fitting the model to the GPU, need an image whose gateway does both. A run with Ollama settings on an image that cannot stops before any pod is created ([Ollama settings](ollama.md#pod-images)).
 
 ## `runpod-serverless`
 
 The workers of a Serverless endpoint a maintainer created, running Runpod's vLLM worker ([Serverless](../inference/serverless.md)). An endpoint's GPU types are set on the endpoint, so it takes no `gpu`.
 
-| Setting | Default | Meaning |
-| --- | --- | --- |
-| `endpoint` | none; required | The endpoint's ID, or a URL of it from Runpod's console (`https://api.runpod.ai/v2/<id>/...`), whose path gives the ID. A URL on any other host, or not on HTTPS, is an error, since the endpoint's key goes there |
-| `engine` | `vllm` | What serves the model; `vllm` is the only engine on Serverless |
+| Setting | Default | Allowed values | Meaning |
+| --- | --- | --- | --- |
+| `endpoint` | none; required | An ID of 1 to 64 letters and digits, or a URL of the endpoint from Runpod's console, `https://api.runpod.ai/v2/<id>/...` | The endpoint. A URL's path gives the ID. A URL on any other host, or not on HTTPS, is an error, since the endpoint's key goes there |
+| `engine` | `vllm` | `vllm` | What serves the model. `vllm` is the only engine on Serverless |
 
 - **Model ID:** what the worker serves, its Hugging Face ID, such as `Qwen/Qwen3-Coder-30B-A3B-Instruct`.
 - **Secrets:** `CODEMAN_RUNPOD_API_KEY`, in the key jobs; `CODEMAN_RUNPOD_SERVERLESS_KEY`, the endpoint's key, in the agent job.
 - **Cost:** an estimate of the time Runpod bills the endpoint's worker for the run, split with the runs that used it at the same times ([Serverless](../inference/serverless.md)).
+
+## How it works
+
+The registry in [`src/inference/providers.ts`](../../src/inference/providers.ts) holds the providers: a new provider is a new entry. The choices were made in the [provider settings plan](../plans/2026-10-08-provider-settings.md).
