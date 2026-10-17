@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-10-16T17:52:56-03:00
-updated_at: 2026-10-17T13:20:00-03:00
+updated_at: 2026-10-17T18:57:45-03:00
 commit: ebb63ac
 ---
 
@@ -261,6 +261,49 @@ The detailed proposals are in the reviews of 2026-10-16: outlines, conversions, 
     - the scan's counts are near zero for long paragraphs and sentences;
     - every Mermaid diagram renders on GitHub;
     - `docs/README.md` lists every file.
+
+## Progress
+
+As of 2026-10-17, steps 1 to 11 are done, and step 12 except one check. `npm run lint` and `npm test` pass: 624 tests, 621 pass and 3 skipped.
+
+| Step | Commit |
+| --- | --- |
+| Rename `installation/profiles.md` to `installation/mixing-providers.md` (decision 6) | `abcae15` |
+| 1-2. Conventions, the `AGENTS.md` rule, glossary | `d84a444` |
+| 5. Settings | `6913880` |
+| 8. Security | `9d2bc4e` |
+| 7. Tasks and runs | `604ca7f` |
+| 4. Onboarding, with `installation/pool.md` | `dd97d3b` |
+| 6. Pod engines, with `settings/pod-engines.md` | `64ec7b1` |
+| 9. Inference, budget and backend | `f59fb8b` |
+| 11. Development | `e63b4c9` |
+| 10. Operations | `35c0612` |
+| 3 and 12. Index, glossary terms, final scan | `9496930` |
+
+The commits were made per area while other areas were still being rewritten. So `9d2bc4e` and `604ca7f` fail the link check: `installation/setup.md` still pointed at the moved pool section. `dd97d3b` fixes it.
+
+The final scan covers 41 files:
+
+| Measure | Before | After |
+| --- | --- | --- |
+| Paragraphs or list items over 80 words | 105 | 0 |
+| Sentences over 45 words | 99 | 0 |
+| Mermaid diagrams | 0 | 42 |
+| Callouts | 0 | 47 |
+| Tables | 29 | 175 |
+
+Left open:
+
+- **The diagrams on GitHub.** A static check of the 42 Mermaid fences found no syntax problem, but none was seen rendered. Check them on GitHub once the commits are pushed.
+- **Audit dates the owner has to fill in.** `development/dependencies.md` says "Not recorded" for:
+  - the GitHub Actions;
+  - the pod images and their `node` base;
+  - the external services;
+  - the `npm audit` run.
+- **Facts without a page in `docs/web/`.** In `installation/backend-maintenance.md` and `upgrading.md`:
+  - the console path "Settings → GitHub Apps → Codeman → Review request";
+  - the `deleteProtectionState: DELETE_PROTECTION_ENABLED` output.
+- **Diagrams not drawn.** The lifecycles of the Workload Identity pool and of the service account are left out. Google's pages do not say whether a restored pool or provider is still disabled.
 
 ## Out of scope
 
