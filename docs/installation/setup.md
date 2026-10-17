@@ -30,13 +30,13 @@ An App created before batches has Actions read-only: change it to read and write
 
 ## 2. Prepare OpenRouter
 
-Codeman creates one budget-capped OpenRouter key per task. To do that it needs a **management key**, created under **Settings → Management keys** in OpenRouter.
+Codeman creates one OpenRouter key per agent run, capped at what remains of the task's budget. To do that it needs a **management key**, created under **Settings → Management keys** in OpenRouter.
 
-A management key can create keys without limits, so only the two key jobs of the workflow receive it. Add credits to the account; each task key spends from them.
+A management key can create keys without limits, so only the two key jobs of the workflow receive it. Add credits to the account; each run's key spends from them.
 
 ## 3. Add the credentials
 
-Add these under **Settings → Secrets and variables → Actions**, either in the repository or in the organization. At organization level, make them visible only to the repositories that use Codeman ([repository access](#repository-access)).
+Add these under **Settings → Secrets and variables → Actions**, either in the repository or in the organization. At organization level, make them visible only to the repositories that use Codeman ([repository access](#repository-access)). On GitHub Free, private repositories cannot read organization secrets or variables ([GitHub](../web/github/using-secrets-in-github-actions.md#creating-secrets-for-an-organization)): add them to each repository.
 
 | Type | Name | Value |
 | --- | --- | --- |
@@ -46,7 +46,7 @@ Add these under **Settings → Secrets and variables → Actions**, either in th
 | Secret | `CODEMAN_KEY_ENCRYPTION_SECRET` | A random value of at least 32 characters. It encrypts each run's key or gateway token between `open-key` and `agent`, within one workflow run, so the organizations of a pool need not share it |
 | Secret | `CODEMAN_RUNPOD_API_KEY` | The `runpod-pod` and `runpod-serverless` providers only, in the settings or a profile: the Runpod account's API key |
 | Secret | `CODEMAN_RUNPOD_SERVERLESS_KEY` | The `runpod-serverless` provider only: a key restricted to the endpoint |
-| Variable | `CODEMAN_COMMIT_SHA` | The commit of Codeman the workflow runs; see [the workflow](#5-add-the-workflow-and-settings) |
+| Variable | `CODEMAN_COMMIT_SHA` | The commit of Codeman the workflow runs, a full SHA on Codeman's `main`; [the workflow](#5-add-the-workflow-and-settings) says how to get it. Choose it now: the backend's rules and the templates come from that commit |
 | Variable | `CODEMAN_SETTINGS` | Optional, in the organization: settings its repositories share; see [shared settings](shared-settings.md) |
 | Variable | `CODEMAN_FIREBASE_PROJECT`, `CODEMAN_WORKLOAD_IDENTITY_PROVIDER`, `CODEMAN_SERVICE_ACCOUNT` | The backend; see [the next part](#4-set-up-the-backend) |
 
@@ -56,7 +56,7 @@ Generate the encryption secret with:
 openssl rand -base64 32
 ```
 
-It encrypts each task key, or self-hosted run token, while it travels from the job that creates it to the agent job; see [OpenRouter](../inference/openrouter.md). Self-hosted inference needs it too.
+It encrypts each run's OpenRouter key, or self-hosted run token, while it travels from the job that creates it to the agent job; see [OpenRouter](../inference/openrouter.md). Self-hosted inference needs it too.
 
 ### Repository access
 
@@ -156,7 +156,7 @@ Firestore's free quota covers Codeman's use by far ([cost](../backend/backend.md
    | `CODEMAN_WORKLOAD_IDENTITY_PROVIDER` | What the last command printed: `projects/<project number>/locations/global/workloadIdentityPools/codeman/providers/github` |
    | `CODEMAN_SERVICE_ACCOUNT` | `codeman@<project ID>.iam.gserviceaccount.com` |
 
-   On GitHub Free, private repositories cannot read organization variables: add them to each repository.
+   On GitHub Free, add them to each repository ([credentials](#3-add-the-credentials)).
 
 To read, change, delete or restore any of this later, and to see who changed it, see [backend maintenance](backend-maintenance.md).
 
@@ -172,14 +172,14 @@ Organizations that share one Runpod account can batch tasks on the same pods ([b
 4. Set `pool` to the same list in its `CODEMAN_SETTINGS`, such as `pool: [organization-a, organization-b]` ([shared settings](shared-settings.md)).
 5. Copy the same workflow files into each repository that runs Codeman.
 
-A pool is mutual trust: whoever can change `codeman.yml` on a default branch of any member holds the App's key, and so reaches every member's installed repositories with the App's permissions ([security](../security/overview.md#a-public-app-and-a-pool)).
+A pool is mutual trust: anyone with write access to a repository of any member that receives the App's private key can read it, with a workflow on any branch ([who can read Codeman's secrets](../security/overview.md#who-can-read-codemans-secrets)), and so reaches every member's installed repositories with the App's permissions ([security](../security/overview.md#a-public-app-and-a-pool)).
 
 ## 5. Add the workflow and settings
 
-1. Copy [`templates/codeman.yml`](../../templates/codeman.yml) to `.github/workflows/codeman.yml` in the target repository, and [`templates/codeman-task.yml`](../../templates/codeman-task.yml), which runs each task's jobs, to `.github/workflows/codeman-task.yml`.
-2. Add the variable `CODEMAN_COMMIT_SHA`, in the organization (visible to the repositories that use Codeman) or in the repository, which overrides it: a full commit SHA of this repository's `main` branch, 40 lowercase hexadecimal characters. Copy the templates from that same commit. Each job that runs Codeman checks the value, checks Codeman out at it into `.codeman/action` and runs it from there; a job fails when the variable is unset or is not a full SHA, since a branch or tag would let the code change by itself. Nothing in the templates needs replacing. If you copy `codeman.yml` under another name, change the backend's [attribute condition](#4-set-up-the-backend) to match it.
+1. Copy [`templates/codeman.yml`](../../templates/codeman.yml) to `.github/workflows/codeman.yml` in the target repository, and [`templates/codeman-task.yml`](../../templates/codeman-task.yml), which runs each task's jobs, to `.github/workflows/codeman-task.yml`. Commit both to the default branch: GitHub runs the default branch's copy for comments, labels and the schedule, starts a manual run only of a workflow there ([events](../web/github/events-that-trigger-workflows.md)), and the backend's [attribute condition](#4-set-up-the-backend) admits only `codeman.yml` on `main`.
+2. Add the variable `CODEMAN_COMMIT_SHA`, in the organization (visible to the repositories that use Codeman) or in the repository, which overrides it: a full commit SHA of this repository's `main` branch, 40 lowercase hexadecimal characters, such as its latest: `gh api repos/codenergy-dev/codeman/commits/main --jq .sha`. Copy the templates from that same commit. Each job that runs Codeman checks the value, checks Codeman out at it into `.codeman/action` and runs it from there; a job fails when the variable is unset or is not a full SHA, since a branch or tag would let the code change by itself, and when the commit is not on Codeman's `main`, since GitHub also serves the commits of Codeman's forks under its name. Nothing in the templates needs replacing. If you copy `codeman.yml` under another name, change the backend's [attribute condition](#4-set-up-the-backend) to match it.
 3. If the agent needs tools that the runner image lacks, set them up in the `agent` job of `codeman-task.yml`, where the template marks the place (for example `actions/setup-node`). Tools installed inside the runner's home, such as Rust through `rustup`, are out of the agent's reach; install them system-wide instead. Add only steps that install tools: a step that runs repository code, such as `npm ci`, runs code the agent wrote outside its sandbox, where it can read the job's secrets. See [security](../security/risks.md#3-steps-added-to-the-agent-job-run-outside-the-sandbox).
-4. Copy [`templates/settings.yml`](../../templates/settings.yml) to `.codeman/settings.yml` and choose the model, unless the organization's [shared settings](shared-settings.md) choose it. See [settings](../settings/reference.md) for every value.
+4. Optionally, write `.codeman/settings.yml`, with [`templates/settings.yml`](../../templates/settings.yml) as a guide; without it, the organization's [shared settings](shared-settings.md) and Codeman's defaults apply. The template sets `model`, `provider`, the budgets, `max-runs` and the limits, and each value in the file overrides the organization's: with shared settings, write only the values to override. See [settings](../settings/reference.md) for every value.
 5. Optionally, add a `.codemanignore` with the paths the agent may not change; see [change policy](../runs/changes.md#change-policy). Without one, Codeman uses its own rules and proposes them in its first pull request. Those rules keep the agent out of `.github/`, including workflows; see [on-demand workflows](../runs/changes.md#on-demand-workflows) to allow them.
 6. Create a `codeman` label in the target repository.
 
@@ -194,7 +194,7 @@ A run works on one task by default. A [profile](profiles.md) with a count of tas
 ## Try it
 
 1. As a maintainer, open an issue that leaves something to decide, and label it `codeman`. Codeman works only on issues that maintainers open. To choose settings for this task, add lines such as `/codeman model <id>` or `/codeman set task-budget 5` to the description; see [commands](../tasks/commands.md).
-2. Run the workflow manually. Codeman posts a status comment, writes a plan on the branch `codeman/<issue>-<slug>`, and lists its decisions in a comment of their own.
+2. Adding the label starts a run; you can also run the workflow manually. Codeman posts a status comment, writes a plan on the branch `codeman/<issue>-<slug>`, and lists its decisions in a comment of their own.
 3. Answer in a comment, for example `/codeman decide 1 a` or `/codeman approve`. The comment starts a new run, which records the answers. When none is pending, the issue gets `codeman:ready`.
-4. Codeman starts the next run right away, and the stages follow one run each: routing, then the routed stages it chose among web, design, code and test, and review. After code, a draft pull request that closes the issue appears. When review passes, the pull request is ready for review and the issue gets `codeman:done`. Unfinished work is committed, and the following run continues it.
+4. Codeman starts the next run right away, and the stages follow one run each: routing, then the routed stages it chose among web, design, code and test, and review. After code, a draft pull request that closes the issue appears; when the route has no code stage, the pull request opens when review passes. When review passes, the pull request is ready for review and the issue gets `codeman:done`. Unfinished work is committed, and the following run continues it.
 5. Review the pull request. A review that requests changes, or a `/codeman fix <what to change>` comment, starts a run that pushes the changes to the same branch.

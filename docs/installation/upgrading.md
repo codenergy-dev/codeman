@@ -14,7 +14,7 @@ A task that changed its GPU with `/codeman set gpu-type` needs `/codeman set gpu
 
 ## Secret renamed
 
-`CODEMAN_OPENROUTER_KEY_ENCRYPTION_SECRET` is now `CODEMAN_KEY_ENCRYPTION_SECRET`, since it also protects the gateway tokens of self-hosted runs. Add the secret under the new name (the same value will do) where the old one is, copy the templates again, then remove the old one. Workflow files copied before keep passing the old name, and work until they are replaced.
+`CODEMAN_OPENROUTER_KEY_ENCRYPTION_SECRET` is now `CODEMAN_KEY_ENCRYPTION_SECRET`, since it also protects the gateway tokens of self-hosted runs. Add the secret under the new name (the same value will do) where the old one is, then copy the templates again, then remove the old one. Workflow files copied before keep passing the old name, and work until they are replaced. Templates copied from this change on pass only the new name: without the new secret, every `open-key` fails with `Input required and not supplied: encryption-secret`, so no agent runs.
 
 ## A model per provider
 
@@ -85,7 +85,7 @@ Since the [plan for GPU batches across repositories](../plans/2026-10-13-gpu-bat
 1. **Every repository at once, with no live pod.** Pods, Serverless endpoints' runs, the board and the batches move to `pools/{pool}/` in the backend, and the cache of fits to `contexts/`; runs and events stay under `organizations/{owner}`. The older `pods`, `contexts` and `endpoints` of each organization stay as history, unread, except that the organization's month still counts its older pods' untracked time. An upgraded `open-key` terminates the organization's pods created by older versions, which no registry reads any more: wait until no pod runs (Runpod's console shows none) before the first upgraded run, and upgrade every repository of every member of the pool together. The first pod of each settings searches its context again.
 2. **The App's Actions permission**: read and write, approved in each installation ([setup](setup.md#1-register-the-github-app)).
 3. **Both workflow files**, copied again in each repository: `codeman.yml` gains the `issues` trigger, the concurrency group of skipped runs, the `batch` input and the `dispatch` job. Create the `codeman` label if a repository lacks it.
-4. **Counts.** A planning task and code tasks are no longer counted together: in the [profiles' example](../settings/profiles.md#example), 1 planning task and 3 code tasks now run the code tasks on `mig` (3), not on `parallel-tasks` (4). A profile whose count was meant as the whole run's needs another look.
+4. **Counts.** A planning task and code tasks are no longer counted together: in the [profiles' example](../settings/profiles.md#example), 1 planning task and 3 code tasks now run the code tasks on `mig` (3), not on the profile named `parallel-tasks` (4). A profile whose count was meant as the whole run's needs another look.
 5. **A pool of organizations**, optionally: [setup](setup.md#a-pool-of-organizations).
 
 ## Codeman's commit from a variable
@@ -93,17 +93,28 @@ Since the [plan for GPU batches across repositories](../plans/2026-10-13-gpu-bat
 Since the [plan for Codeman's commit from a variable](../plans/2026-10-14-commit-from-a-variable.md), the workflow files name no commit of Codeman: each job that runs it checks it out at the commit in the `CODEMAN_COMMIT_SHA` variable. Once, in each repository:
 
 1. Add `CODEMAN_COMMIT_SHA`, in the organization or the repository: a full commit SHA of Codeman's `main` branch, at or after that plan ([setup](setup.md#5-add-the-workflow-and-settings)).
-2. Copy both templates again from that commit, keeping the steps you added to the `agent` job. Until then, the files keep running the commit written in them; pointed by hand at a commit since the plan, they fail at once, saying they pass no template version.
+2. Copy both templates again from that commit, keeping the steps you added to the `agent` job. These templates pass only `CODEMAN_KEY_ENCRYPTION_SECRET`: add it before copying them, if the old name is all you have ([secret renamed](#secret-renamed)). Until then, the files keep running the commit written in them; pointed by hand at a commit since the plan, they fail at once, saying they pass no template version.
 
 From then on, a new version of Codeman is a change of the variable. Copy the templates again only when a job fails saying the files' template version is not the one Codeman expects.
 
+## Backend mapping gains repository_id
+
+Since the [plan for the backend's condition and maintenance](../plans/2026-10-14-backend-condition-and-maintenance.md), the installation's provider also maps `attribute.repository_id=assertion.repository_id`, so that a condition can admit only listed repositories by their IDs ([setup](setup.md#4-set-up-the-backend)). A provider created before maps only `google.subject`, `attribute.repository`, `attribute.repository_owner_id` and `attribute.workflow_ref`. It keeps working with its condition, and needs no change while it admits any repository of the organization. A condition may use only fields the mapping maps ([attribute condition](../web/google-cloud/configure-workload-identity-federation-with-deployment-pipelines.md#define-an-attribute-condition)), so to move to the listed-repositories condition, read the mapping, with the names and variables of [backend maintenance](backend-maintenance.md):
+
+```sh
+gcloud iam workload-identity-pools providers describe github --project="$PROJECT_ID" \
+  --location=global --workload-identity-pool=codeman --format='yaml(attributeMapping)'
+```
+
+If it has no `attribute.repository_id`, pass the installation's whole mapping with `--attribute-mapping` in the same `update-oidc` that sets the new condition ([change the attribute condition](backend-maintenance.md#change-the-attribute-condition), step 4). Nothing changes in settings or workflow files.
+
 ## A spent pod waits for its close
 
-Since the [plan for keeping a spent pod for its close](../plans/2026-10-15-keep-a-spent-pod-for-its-close.md), a pod whose runs all spent their budget or went silent stops them and waits for their `close-key`, instead of terminating at once ([pods](../inference/pods.md)). That is the gateway's, so it applies once Codeman pins pod images built since the plan ([pod images](../development/guide.md#pod-images)); until then, pods on the images pinned before keep terminating at once. `close-key`'s retries of `/admin/end` and its estimate capped at the run's limit apply to pods on any image. Nothing to change in settings or workflow files.
+Since the [plan for keeping a spent pod for its close](../plans/2026-10-15-keep-a-spent-pod-for-its-close.md), a pod whose runs all spent their budget or went silent stops them and waits for their `close-key`, instead of terminating at once ([pods](../inference/pods.md)). That is the gateway's, so it applies with the version of Codeman that pins the pod images published from `e26a8c9`, which contains the change (`POD_IMAGES` in `src/inference/images.ts`, [pod images](../development/guide.md#pod-images)); pods on the images pinned before keep terminating at once. `close-key`'s retries of `/admin/end` and its estimate capped at the run's limit apply to pods on any image. Nothing to change in settings or workflow files.
 
 ## The dispatch reads the default branch
 
-The `dispatch` job's token also asks for `metadata: read`: without it, `gh workflow run` cannot read the target repository's default branch, and every dispatch to another repository of the pool fails with "Resource not accessible by integration (repository.defaultBranchRef)". Copy `codeman.yml` again in each repository of the pool. The App already has that permission, which every GitHub App has, so its installations approve nothing. The template version does not change: files copied before keep running, and only their dispatches fail.
+The `dispatch` job's App token also asks for `metadata: read` (`permission-metadata: read`; the job's own token has no permission): without it, `gh workflow run` cannot read the target repository's default branch, and every dispatch to another repository of the pool fails with "Resource not accessible by integration (repository.defaultBranchRef)". Copy `codeman.yml` again in each repository of the pool. The App already has that permission, which every GitHub App has, so its installations approve nothing. The template version does not change: files copied before keep running, and only their dispatches fail.
 
 ## Workflow files copied before the backend
 

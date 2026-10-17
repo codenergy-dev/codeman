@@ -30,7 +30,7 @@ Only maintainers (people with write access to the repository) can steer Codeman,
 
 You need a GitHub App for Codeman, an [OpenRouter](https://openrouter.ai) account, their credentials in your repository or organization, a free [Firebase](https://firebase.google.com) project where Codeman records its runs, and a workflow, which runs the commit of Codeman that the `CODEMAN_COMMIT_SHA` variable names. [docs/installation/](docs/installation/setup.md) walks through each one.
 
-Codeman is model-agnostic: it reaches models through OpenRouter, and each task gets its own key with a spending limit, inside a monthly budget per repository and, if you set one, per organization. You choose the model and the budgets in `.codeman/settings.yml`, which inherits the defaults an organization can [share](docs/installation/shared-settings.md) with its repositories, and the paths the agent may not change in `.codemanignore`.
+Codeman is model-agnostic: it reaches models through OpenRouter, and each agent run gets its own key, capped at what remains of the task's budget, inside a monthly budget per repository and, if you set one, per organization. You choose the model and the budgets in `.codeman/settings.yml`, which inherits the defaults an organization can [share](docs/installation/shared-settings.md) with its repositories, and the paths the agent may not change in `.codemanignore`.
 
 You can also serve an open model yourself, on GPUs rented from [Runpod](https://www.runpod.io), with the same budgets:
 
@@ -40,9 +40,9 @@ model: qwen3-coder:30b
 gpu: "NVIDIA RTX A6000"
 ```
 
-Codeman then starts a GPU, serves the model with Ollama behind its own gateway, shares it among the organization's tasks on the same model and GPU, and stops it when no task needs it any more. A Serverless endpoint works too (`provider: runpod-serverless`). Each provider takes only its own settings; see [self-hosted inference](docs/installation/runpod.md). [Profiles](docs/installation/profiles.md) mix providers in one task, such as OpenRouter to plan and a GPU to write the code, under the same budgets.
+Codeman then starts a GPU, serves the model with Ollama or vLLM behind its own gateway, shares it among the tasks on the same model and GPU of the organization, or of its [pool](docs/installation/setup.md#a-pool-of-organizations), and stops it when no task needs it any more. A Serverless endpoint works too (`provider: runpod-serverless`). Each provider takes only its own settings; see [self-hosted inference](docs/installation/runpod.md). [Profiles](docs/installation/profiles.md) mix providers in one task, such as OpenRouter to plan and a GPU to write the code, under the same budgets.
 
-The workflow runs once a day, when you start it manually, when a maintainer comments a `/codeman` command, and when a review on one of Codeman's pull requests asks for changes:
+The workflow runs once a day, when you start it manually, when a maintainer comments a `/codeman` command, when the `codeman` label is added to or removed from an issue, when an issue with it is closed or reopened, and when a review on one of Codeman's pull requests asks for changes or mentions `/codeman`:
 
 ```yaml
 on:
@@ -53,6 +53,8 @@ on:
     types: [created]
   pull_request_review:
     types: [submitted]
+  issues:
+    types: [labeled, unlabeled, closed, reopened]
 ```
 
 ## Learn more

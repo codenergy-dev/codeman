@@ -1,7 +1,7 @@
 ---
-status: pending
+status: in progress
 created_at: 2026-10-16T17:52:56-03:00
-updated_at: 2026-10-16T18:20:00-03:00
+updated_at: 2026-10-17T13:13:47-03:00
 commit: ebb63ac
 ---
 
@@ -57,7 +57,7 @@ Each decision asked whether to document the current behavior or change the code.
 
 Each step is one commit or a few, touching only the files named. A step is done when its rows below are fixed and `npm test` passes. Rows marked with a decision number wait for that decision.
 
-1. **Security statements** (high). Done when all of these are fixed:
+1. **Security statements** (high). **Done on 2026-10-17.** `security/overview.md` has the new section `## Who can read Codeman's secrets`. Replacing artifacts is not stated, since no saved source shows it; the `PATH` escape awaits decision 7. Done when all of these are fixed:
    - **Who can read Codeman's secrets.** Anyone with write access to a repository that receives Codeman's secrets can read every one of them, with a workflow on any branch. The docs say "whoever can change `codeman.yml` on the default branch" instead. Fix `security/overview.md` (checklist, "A public App and a pool"), `security/forks.md` (recommendation 3), `security/risks.md` §7 and `installation/setup.md:175`. State the boundary once, in `security/overview.md`, and link to it.
    - **Who can change `CODEMAN_SETTINGS`.** The docs disagree:
      - `security/secrets.md` says organization owners;
@@ -73,7 +73,7 @@ Each step is one commit or a few, touching only the files named. A step is done 
      - CI workflows with `secrets: inherit` on `codeman/*` (`risks.md` §1).
      - An outsider's `/codeman` comment replaces a pending run (`forks.md`).
      - The intro of `forks.md` overstates "credentials do not work".
-2. **Onboarding** (`README.md`, `installation/setup.md`, `installation/shared-settings.md`, `installation/profiles.md`):
+2. **Done on 2026-10-17.** **Onboarding** (`README.md`, `installation/setup.md`, `installation/shared-settings.md`, `installation/profiles.md`):
    - Copying `templates/settings.yml` overrides the organization's shared settings. The file is optional (`src/steps/select.ts:97-101`). This is high severity.
    - The trigger list leaves out `issues` (`templates/codeman.yml:39-40`). "Try it" says to run the workflow by hand, but adding the label already starts a run.
    - An OpenRouter key is made per agent run, not per task.
@@ -86,7 +86,7 @@ Each step is one commit or a few, touching only the files named. A step is done 
    - The Runpod key with `organization-monthly-budget` is also needed when the month's runs used Runpod (`src/steps/keys.ts:72-81`).
    - The pull request opens when review passes if the route has no code stage.
    - The README says pods run "Ollama"; they run Ollama or vLLM.
-3. **Settings** (`settings/*.md`):
+3. **Done on 2026-10-17.** **Settings** (`settings/*.md`):
    - Decision 1: the `model`/`gpu` rule, in 4 places.
    - A manual run's inputs are only `model`, `task-budget`, `monthly-budget` and `max-runs`.
    - Decision 3: the exact `max-runs` limits. Make `templates/codeman.yml` and `action.yml` describe them the same way.
@@ -97,7 +97,7 @@ Each step is one commit or a few, touching only the files named. A step is done 
    - The description is read first, then the comments, and the last command wins.
    - Units and types: `max-file-bytes` is in bytes.
    - `gpu` quoting is optional; make the examples consistent.
-4. **Pod engines and Runpod** (`settings/ollama.md`, `settings/vllm.md`, `installation/runpod.md`):
+4. **Done on 2026-10-17.** **Pod engines and Runpod** (`settings/ollama.md`, `settings/vllm.md`, `installation/runpod.md`):
    - Ollama's estimate also subtracts `gpu-overhead`, and falls back to the model's own context (`src/gateway/fit.ts:65,107-108`).
    - vLLM has a third failure message, "no context … in K starts" (`src/gateway/vllm.ts:347-349`).
    - vLLM has a second CUDA message, for no host at all (`src/inference/selfhosted.ts:1027-1032`). The CUDA check runs before the Hugging Face check.
@@ -110,7 +110,7 @@ Each step is one commit or a few, touching only the files named. A step is done 
    - "Not published yet" for the vLLM image is stale (`src/inference/images.ts:14-15`).
    - List all 11 serial Ollama families.
    - Remove the upgrade-history line from `vllm.md#how-they-apply`.
-5. **Tasks and runs** (`tasks/*.md`, `runs/*.md`):
+5. **Done on 2026-10-17.** **Tasks and runs** (`tasks/*.md`, `runs/*.md`):
    - Decision 2: commands posted during `awaiting-decision`.
    - Review reports only `done`, `changes`, `blocked`, `decisions` (`src/output.ts:157-163`). Web never runs in a fallback route. The router chooses among four stages.
    - The agent's time limit: `agent-minutes` 50, in a 60-minute job, with 2 minutes kept for the fix pass.
@@ -132,7 +132,7 @@ Each step is one commit or a few, touching only the files named. A step is done 
    - What "moved" means for the next run.
    - The commit check also requires a commit on Codeman's `main`.
    - Staging takes any depth under `.github/workflows/`. `max-files` counts after the drops.
-6. **Inference, budget and backend** (`inference/*.md`, `budget/*.md`, `backend/*.md`):
+6. **Done on 2026-10-17.** **Inference, budget and backend** (`inference/*.md`, `budget/*.md`, `backend/*.md`):
    - Transactions make 5 attempts by default, and 20 for the reservation, the split, the registry and the board (`src/store/store.ts:19`, `src/ledger.ts:112,117`).
    - `status: expired` is written only by an OpenRouter refresh (`src/ledger.ts:227-230`).
    - A failed `open-key` blocks the task. A task in `planning` goes back to `new`.
@@ -144,7 +144,7 @@ Each step is one commit or a few, touching only the files named. A step is done 
    - A pod that `close-key` cannot reach terminates itself after 15 idle minutes.
    - Queries use the pool's pods.
    - Name the Serverless key the agent job uses.
-7. **Operations** (`installation/backend-maintenance.md`, `installation/upgrading.md`):
+7. **Done on 2026-10-17**, with four Google Cloud pages and `gh run list` saved in `docs/web/`. **Operations** (`installation/backend-maintenance.md`, `installation/upgrading.md`):
    - "A spent pod waits for its close": the gateway part is not in any pinned image yet (`src/inference/images.ts:11,14`). This is high severity. The responsible person has published the rebuilt images:
      - `ghcr.io/codenergy-dev/codeman-ollama@sha256:1be16bba4040cbdc9f68276cb98dbc41707c4c38d4e16cf7a490003aa79ca08c`
      - `ghcr.io/codenergy-dev/codeman-vllm@sha256:2ffa65329f98ac14f184ea46f596b5d10ff89024914ef7c885e65796e30aa434`
@@ -161,7 +161,7 @@ Each step is one commit or a few, touching only the files named. A step is done 
    - Make clear that `parallel-tasks` there is a profile name, not the removed setting.
 
    Fetch the missing Google Cloud pages into `docs/web/` before writing about them.
-8. **Development** (`development/*.md`):
+8. **Done on 2026-10-17.** **Development** (`development/*.md`):
    - `src/steps/` has 5 modules for 6 jobs (`keys.ts`).
    - `Services` has 8 members.
    - A gateway change reaches pods only after the digests are pinned again.
@@ -173,10 +173,31 @@ Each step is one commit or a few, touching only the files named. A step is done 
    - `.npmrc` also sets `engine-strict`.
    - Tests run every step on the fake platform.
    - Pods also carry `CODEMAN_POOL`.
-9. **Code comments that are wrong.** List them for the owner; this plan does not change code:
+9. **Code comments that are wrong.** List them for the owner; this plan does not change code. The comment on the `dispatch` token in `templates/codeman.yml` ("revoked when its step ends") was corrected to "its job", since it is a template comment and needs no version bump:
    - `src/settings.ts:82-83` (`pod-reuse: task`);
    - `src/state.ts:1` (pull requests);
    - `src/tasks.ts:260` (`pendingWork`).
+
+## Progress
+
+Every doc correction is in, as of 2026-10-17. `npm run lint`, `npm run typecheck` and `npm test` pass: 624 tests, 621 pass and 3 skipped.
+
+Pinning the images from `e26a8c9` in `src/inference/images.ts` closed the last step of the [plan for keeping a spent pod for its close](2026-10-15-keep-a-spent-pod-for-its-close.md). It goes in a commit of its own.
+
+The plan stays `in progress` until the code plans that the decisions call for exist. Correcting the docs surfaced these behaviors, which the docs now describe and those code plans should take up:
+
+- **A review during `awaiting-decision` chains `record` runs.** While a task is `codeman:awaiting-decision`, a maintainer review that requests changes, or has `/codeman` in its text, makes every run a `record` run. Each one chains to the next and posts a run comment until the decisions are answered. A probe on the fake platform reproduced it. This is likely a bug, related to decision 2.
+- **`/codeman continue` does not reset review rounds; a `fix` does.** After review blocks a task, the next round that asks for changes blocks it again, although the message says to continue. This goes with decision 3.
+- **Commands ignored or refused in some places:**
+  - Answers, `set` and `accept-workflows` written in a review's text are ignored.
+  - Extra text on an `approve` or `decide` line makes the command invalid.
+- **No source for some figures:**
+  - No source gives the size of Codeman's vLLM image, "about 9.1 GB" in `settings/vllm.md`.
+  - No template sets `key-expiry-hours`.
+- **Disabling the service account versus the pool.** Disabling the service account rejects tokens it already issued. Disabling the Workload Identity pool leaves a job's service-account token valid for up to about 55 minutes.
+- **Deleting the database does not reset every budget:**
+  - A task's spend carries over from its record on GitHub.
+  - The organization's month still counts what a GPU account billed.
 
 ## Out of scope
 

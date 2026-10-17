@@ -11,7 +11,15 @@ SA="codeman@$PROJECT_ID.iam.gserviceaccount.com"
 ORG_ID=123456789   # the organization's numeric ID: gh api orgs/<organization> --jq .id
 ```
 
-Make changes between runs. Each of a run's jobs that reaches the backend (`select`, `open-key`, `close-key`, `release-pod`) exchanges its own token, so a change that refuses them fails the jobs that start after it, even within a run that `select` already passed.
+Make changes between runs. Each of a run's jobs that reaches the backend (`select`, `open-key`, `close-key`, `release-pod`) exchanges its own token, so a change that refuses them fails the jobs that start after it, even within a run that `select` already passed. Before a change, check in each repository that runs Codeman that no run is in progress, queued, or pending in the workflow's concurrency group ([gh run list](../web/github-cli/gh-run-list.md)):
+
+```sh
+for status in in_progress queued pending; do
+  gh run list --repo <owner>/<repository> --workflow codeman.yml --status "$status"
+done
+```
+
+A run can still start after the check: the schedule starts one at 09:00 UTC, and a `/codeman` comment, a change of a task's labels, a review, a manual run or a dispatch from another repository of the pool starts one at any time ([`templates/codeman.yml`](../../templates/codeman.yml)).
 
 ## The pool
 
@@ -25,7 +33,7 @@ gcloud iam workload-identity-pools describe codeman --project="$PROJECT_ID" --lo
 `list --show-deleted` includes deleted pools ([list](../web/google-cloud/gcloud-iam-workload-identity-pools-list.md)).
 
 - **Change.** `update` changes its display name, description, or state ([update](../web/google-cloud/gcloud-iam-workload-identity-pools-update.md)).
-- **Disable: the backend's emergency stop.** A disabled pool exchanges no tokens, and the tokens it already issued stop granting access; every Codeman job that reaches the backend fails until the pool is enabled again, and then those tokens work again. Enable it again with the pool's **Status** toggle in the console ([update a pool](../web/google-cloud/manage-workload-identity-pools-and-providers.md#update-a-pool)); the `gcloud` reference documents no flag for it.
+- **Disable: the backend's emergency stop.** A disabled pool exchanges no tokens, and the tokens it already issued stop granting access; every Codeman job that reaches the backend fails until the pool is enabled again, and then those tokens work again. A job that already holds the service account's token keeps using it: each job asks IAM Credentials for a token of the account that lasts 1 hour, and uses it until 5 minutes before it expires, up to 55 minutes ([`src/store/google.ts`](../../src/store/google.ts)), longer than any of these jobs may run (`open-key`'s limit, the longest, is 35 minutes). Google's pages do not say whether disabling the pool revokes that token; [disabling the service account](#disable-and-enable-it) does. Enable it again with the pool's **Status** toggle in the console ([update a pool](../web/google-cloud/manage-workload-identity-pools-and-providers.md#update-a-pool)); the `gcloud` reference documents no flag for it.
 
   ```sh
   gcloud iam workload-identity-pools update codeman --project="$PROJECT_ID" --location=global --disabled
@@ -105,7 +113,7 @@ The condition decides which repositories reach the backend ([the two variants](s
      --location=global --workload-identity-pool=codeman --attribute-condition="$CONDITION"
    ```
 
-   The condition may use only fields the mapping also maps ([attribute condition](../web/google-cloud/configure-workload-identity-federation-with-deployment-pipelines.md#define-an-attribute-condition)). A provider created before `repository_id` was in the installation's mapping needs it to use the listed-repositories variant: pass the whole mapping of step 3 with `--attribute-mapping` in the same command.
+   The condition may use only fields the mapping also maps ([attribute condition](../web/google-cloud/configure-workload-identity-federation-with-deployment-pipelines.md#define-an-attribute-condition)). A provider created before `repository_id` was in the installation's mapping needs it to use the listed-repositories variant: pass the whole mapping of step 3 with `--attribute-mapping` in the same command ([upgrading](upgrading.md#backend-mapping-gains-repository_id)).
 
 5. **Check it.** Read the condition back (above), and run Codeman by hand in one repository the condition admits. A condition that admits too much fails nothing, so read it, not only the runs.
 6. **Put the old one back** if a run fails:
@@ -115,13 +123,13 @@ The condition decides which repositories reach the backend ([the two variants](s
      --location=global --workload-identity-pool=codeman --attribute-condition="$(cat condition-before.txt)"
    ```
 
-**What a wrong condition does.** Every job that reaches the backend fails at the token exchange, in each repository the condition refuses: `select` first, before it marks any task, with `Google's STS refused the request with <status>: <error>`, where the error is what Google's Security Token Service answered ([`src/store/google.ts`](../../src/store/google.ts)). Google's audit logs do not record the refused exchange: the logs of token exchanges are Data Access logs, off by default, and they leave out failures caused by the request, such as invalid credentials ([example logs](../web/google-cloud/example-logs-for-workload-identity-federation.md#logs-for-exchanging-an-idp-token-for-a-federated-token)).
+**What a wrong condition does.** Every job that reaches the backend fails at the token exchange, in each repository the condition refuses: `select` first, before it marks any task. It tries 4 times, 1, 3 and 9 seconds apart, warning `Could not read Codeman's store (<message>); trying again in 1 s.` between them, then fails with `Could not read Codeman's store after 4 attempts: Google's STS refused the request with <status>: <error>`, where the error is what Google's Security Token Service answered ([`src/ledger.ts`](../../src/ledger.ts), [`src/store/google.ts`](../../src/store/google.ts)). Google's audit logs do not record the refused exchange: the logs of token exchanges are Data Access logs, off by default, and they leave out failures caused by the request, such as invalid credentials ([example logs](../web/google-cloud/example-logs-for-workload-identity-federation.md#logs-for-exchanging-an-idp-token-for-a-federated-token)).
 
 **Many repositories.** About 280 repository IDs of 10 digits fit in 4096 characters with the rest of the condition. Beyond that, add a second provider to the pool with the next IDs, created as in step 3 and kept, and set `CODEMAN_WORKLOAD_IDENTITY_PROVIDER` to it in the repositories it lists; or use the variant that admits any repository of the organization.
 
 ### Disable, delete or restore it
 
-- **Disable.** A disabled provider exchanges no tokens, but the tokens it already issued still grant access; to stop those too, disable the pool ([update-oidc](../web/google-cloud/gcloud-iam-workload-identity-pools-providers-update-oidc.md)). Enable it again from its **Edit** icon in the console ([update a provider](../web/google-cloud/manage-workload-identity-pools-and-providers.md#update-a-provider)).
+- **Disable.** A disabled provider exchanges no tokens, but the tokens it already issued still grant access; to stop those too, disable the pool, and to stop the service account's tokens that jobs already hold, [the service account](#disable-and-enable-it) ([update-oidc](../web/google-cloud/gcloud-iam-workload-identity-pools-providers-update-oidc.md)). Enable it again from its **Edit** icon in the console ([update a provider](../web/google-cloud/manage-workload-identity-pools-and-providers.md#update-a-provider)).
 
   ```sh
   gcloud iam workload-identity-pools providers update-oidc github --project="$PROJECT_ID" \
@@ -156,7 +164,7 @@ The account's own IAM policy says which identities may act as it. It should hold
 gcloud iam service-accounts get-iam-policy "$SA" --project="$PROJECT_ID"
 ```
 
-Removing that binding cuts every job off from the backend, whatever the pool and provider say: the federated token can no longer get the account's token ([remove-iam-policy-binding](../web/google-cloud/gcloud-iam-service-accounts-remove-iam-policy-binding.md)). Step 6 of the installation adds it back ([add-iam-policy-binding](../web/google-cloud/gcloud-iam-service-accounts-add-iam-policy-binding.md)).
+Removing that binding cuts every job off from the backend, whatever the pool and provider say: the federated token can no longer get the account's token, and jobs fail with `Could not read Codeman's store after 4 attempts: IAM Credentials refused the request with <status>: <error>`. A job that already holds the account's token keeps using it, for up to 55 minutes, as under [the pool](#the-pool) ([remove-iam-policy-binding](../web/google-cloud/gcloud-iam-service-accounts-remove-iam-policy-binding.md)). Step 6 of the installation adds it back ([add-iam-policy-binding](../web/google-cloud/gcloud-iam-service-accounts-add-iam-policy-binding.md)).
 
 ```sh
 gcloud iam service-accounts remove-iam-policy-binding "$SA" --project="$PROJECT_ID" \
@@ -173,11 +181,20 @@ gcloud projects get-iam-policy "$PROJECT_ID" --flatten=bindings \
   --filter=bindings.role:roles/datastore.user --format='value(bindings.members)'
 ```
 
-`gcloud projects get-iam-policy "$PROJECT_ID"` prints the whole policy. Removing the role stops Codeman's reads and writes, and every run fails in `select`; step 4 of the installation grants it again ([remove-iam-policy-binding](../web/google-cloud/gcloud-projects-remove-iam-policy-binding.md), [add-iam-policy-binding](../web/google-cloud/gcloud-projects-add-iam-policy-binding.md)).
+`gcloud projects get-iam-policy "$PROJECT_ID"` prints the whole policy. Removing the role stops Codeman's reads and writes, and every run fails in `select`, with `Could not read Codeman's store after 4 attempts: Firestore batchGet failed with 403`, then Google's status and message ([`src/store/firestore.ts`](../../src/store/firestore.ts)); step 4 of the installation grants it again ([remove-iam-policy-binding](../web/google-cloud/gcloud-projects-remove-iam-policy-binding.md), [add-iam-policy-binding](../web/google-cloud/gcloud-projects-add-iam-policy-binding.md)).
 
 ```sh
 gcloud projects remove-iam-policy-binding "$PROJECT_ID" --role=roles/datastore.user \
   --member="serviceAccount:$SA"
+```
+
+### Disable and enable it
+
+Disabling the account stops the backend for every repository at once: Google rejects the account's existing access tokens, so it cuts off the jobs that already hold one too, and refuses new ones. Enabling it again makes its existing tokens valid again, and lets jobs get new ones ([projects.serviceAccounts.disable](../web/google-cloud/method-projects-serviceaccounts-disable.md)). Google advises disabling an account before deleting it ([delete](../web/google-cloud/delete-and-undelete-service-accounts.md#delete-a-service-account)). In the console, the account's page, under **Service account status**, has **Disable service account** and **Enable service account** ([disable](../web/google-cloud/disable-and-enable-service-accounts.md#disable-a-service-account), [enable](../web/google-cloud/disable-and-enable-service-accounts.md#enable-a-service-account)). The commands print `Disabled service account <email>` and `Enabled service account <email>`:
+
+```sh
+gcloud iam service-accounts disable "$SA"
+gcloud iam service-accounts enable "$SA"
 ```
 
 ### Delete and restore it
@@ -212,11 +229,26 @@ The Firebase console and `gcloud` cover it; the Firebase CLI is not needed.
   gcloud firestore databases update --database='(default)' --delete-protection --project="$PROJECT_ID"
   ```
 
-- **Delete.** Deleting the database deletes Codeman's records: the ledger the budgets read, the pod registry and the board of a pool; every run fails in `select` until a new one exists. With delete protection, turn it off first (`--no-delete-protection`). In the Firebase console, **Databases & Storage → Firestore → Data**, the menu above the data table, **Delete database**; or the command below ([delete a database](../web/firebase/manage-databases.md#delete-a-database)). Google's page documents no way to restore a deleted database.
+- **Delete.** Deleting the database deletes Codeman's records: the ledger the budgets read, the pod registry and the board of a pool; every run fails in `select` until a new one exists. Codeman then starts from an empty ledger:
+  - The month's spend counts from zero, for `monthly-budget` and for `organization-monthly-budget`. The organization's month still counts the hours a GPU account billed, when the run uses that account.
+  - A task's spend starts from what its record on GitHub holds, carried on its first run in the new ledger ([budget](../budget/budget.md)).
+  - With an empty pod registry, the next `open-key` of a pod run terminates the pool's live pods, logging `Terminated pod <ID>: it carries Codeman's environment, and the pod registry does not hold it.` ([`src/inference/selfhosted.ts`](../../src/inference/selfhosted.ts)). The first pod of each settings searches its context again.
+
+  With delete protection, turn it off first (`--no-delete-protection`). In the Firebase console, **Databases & Storage → Firestore → Data**, the menu above the data table, **Delete database**; or the command below ([delete a database](../web/firebase/manage-databases.md#delete-a-database)). Without a [backup](#firestore), Google's pages document no way to restore a deleted database.
 
   ```sh
   gcloud firestore databases delete --database='(default)' --project="$PROJECT_ID"
   ```
+
+- **Backups.** The installation turns none on. A backup schedule takes a backup of the database each day or each week, kept for up to 14 weeks; backups need billing enabled, and their storage and restores are charged. Deleting the database does not delete its backups. A restore writes a backup into a new database, whose ID must not be in use; Codeman reads only `(default)`, an ID that can be used again about 5 minutes after its database is deleted ([backups](../web/google-cloud/back-up-and-restore-data.md), [database ID](../web/firebase/manage-databases.md#database-id)). After a restore, publish the rules again ([after restoring](../web/google-cloud/back-up-and-restore-data.md#what-to-do-after-restoring)). The restored ledger lacks the runs since the backup, and the registry the pods created since, which the next `open-key` of a pod run terminates as above.
+
+  ```sh
+  gcloud firestore backups schedules create --database='(default)' --recurrence=daily \
+    --retention=14w --project="$PROJECT_ID"
+  gcloud firestore backups list --format="table(name, database, state)" --project="$PROJECT_ID"
+  ```
+
+- **Point-in-time recovery (PITR).** Off by default. Once on, Firestore keeps a version of each document per minute for 7 days, from which part of the database can be read back, or the whole of it cloned or exported; its storage has no free tier ([PITR](../web/google-cloud/point-in-time-recovery-pitr-overview.md)). Google's page does not say whether that data outlives a deleted database.
 
 ## Who changed what
 

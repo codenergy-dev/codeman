@@ -38,7 +38,7 @@ A task that no batch of its count completes waits; its panel says how many are r
 ## Reservations
 
 - A reservation belongs to the repository, not to the dispatched run: whichever `select` of that repository comes first honors it.
-- That `select` checks each reserved task against GitHub: still ready, with the batch's count and key among its offers. It starts those (`started`), resolving their profile with the batch's count, and drops the others (`dropped`), which releases their seat on the pod.
+- That `select` checks each reserved task against GitHub: still ready, with the batch's count and key among its offers. It starts those (`started`), resolving their profile with the batch's count, and drops the others (`dropped`), which releases their seat on the pod. It starts at most 10 reserved tasks; it drops the rest.
 - After 30 minutes, a batch's tasks still `reserved` return to the board, and the batch runs smaller.
 
 ## Waking the other repositories

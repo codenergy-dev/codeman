@@ -21,12 +21,12 @@ Together they add 26 packages, all from the `@actions` and `@octokit` projects p
 | --- | --- | --- | --- |
 | `typescript` | 6.0.3 | Type checking | 7.x is not supported by the lint ecosystem yet. |
 | `@types/node` | 24.13.6 | Node.js types | Node 24 is the Actions runtime (`node24`). |
-| `esbuild` | 0.28.2 | Bundles `dist/index.js` | Its install script only verifies the binary; not needed. |
-| `@biomejs/biome` | 2.5.14 | Lint and format | Single binary, no transitive dependencies. Chosen over ESLint + typescript-eslint (95 packages). |
+| `esbuild` | 0.28.2 | Bundles `dist/index.js` and the gateway, `dist/gateway.js` | Its install script only verifies the binary; not needed. |
+| `@biomejs/biome` | 2.5.14 | Lint and format | One binary, from the one of its 8 platform packages (`@biomejs/cli-*`) that matches the machine; no other transitive dependencies. Chosen over ESLint + typescript-eslint (95 packages). |
 
 Tests use the built-in `node:test` runner; Node 24 runs TypeScript directly.
 
-`.npmrc` sets `ignore-scripts=true` (no install scripts run) and `save-exact=true` (exact versions). `package-lock.json` is committed.
+`.npmrc` sets `ignore-scripts=true` (no install scripts run), `save-exact=true` (exact versions) and `engine-strict=true` (installing fails on a Node.js version that `package.json`'s `engines` excludes). `package-lock.json` is committed.
 
 ## GitHub Actions
 
@@ -73,8 +73,8 @@ Codeman calls these APIs with `fetch` or through the packages above. Their docum
 How Codeman uses it:
 
 1. It runs as the unprivileged `codeman-agent` user (see [agent sandbox](../runs/agent.md#agent-sandbox)).
-2. Configuration goes through `OPENCODE_CONFIG_CONTENT`, which overrides the repository's: `autoupdate: false`, `share: "disabled"`, only the `openrouter` provider, and `deny` for `webfetch`, `websearch`, `external_directory`, `question` and `doom_loop`. No permission is left as `ask`, because nobody is there to answer.
-3. The apply job accepts only the files a stage allows (the plan, while planning), so the agent cannot change `opencode.json` or `.opencode/`.
+2. Configuration goes through `OPENCODE_CONFIG_CONTENT`, which overrides the repository's: `autoupdate: false`, `share: "disabled"`, only one provider, `openrouter`, or Codeman's gateway, as `codeman`, on self-hosted inference, and `deny` for `webfetch`, `websearch`, `external_directory`, `question` and `doom_loop`. No permission is left as `ask`, because nobody is there to answer.
+3. `opencode.json`, `opencode.jsonc` and `.opencode/` are protected only by the default rules of `.codemanignore` ([change policy](../runs/changes.md#change-policy)), so the apply job drops the agent's changes to them. A repository can re-allow them with `!`; the agent can then change the harness configuration of later runs, and each run's summary warns about the paths no longer protected.
 4. It is called as a child process (`opencode run --format json`); `@opencode-ai/sdk` is not used.
 
 ## Self-hosted inference
@@ -102,7 +102,7 @@ Audited on 2026-10-03 for the [self-hosted inference plan](../plans/2026-10-02-s
 Audited on 2026-10-13 for the [plan for vLLM on pods](../plans/2026-10-13-vllm-on-pods.md).
 
 - **What and why:** an inference engine that serves Hugging Face models with an OpenAI-compatible API and batches concurrent requests whatever the model, which Ollama does not for some families ([Ollama settings](../settings/ollama.md#parallel-requests)). It refuses to start rather than move a model or its cache off the GPU ([kv_cache_utils.py](../web/vllm/vllm-v1-core-kv-cache-utils-py-at-v0-31-0.md)). A small in-house replacement is not possible. Apache-2.0, [vllm-project/vllm](https://github.com/vllm-project/vllm), very active: a release about every two weeks ([v0.31.0](../web/vllm/v0-31-0.md)).
-- **Version:** 0.31.0, from its official image `vllm/vllm-openai:v0.31.0`, CUDA 13.0, pinned by the index's digest (`sha256:c1c9f6fd5c109ba7f0546a59f5b2f15fb87f64c77782e90a27b648b42a8e67c3`) in [`docker/pod/Dockerfile`](../../docker/pod/Dockerfile): 9.04 GB compressed for linux/amd64, running as root, its entry point replaced by the gateway's ([the image](../web/docker-hub/vllm-vllm-openai-v0-31-0.md)). Its CUDA needs hosts whose driver supports CUDA 13.0, which Codeman requires when it creates a vLLM pod (`VLLM_MIN_CUDA`). The [vLLM settings](../settings/vllm.md) and the parsers come from this version's source; an upgrade checks them against the new version's, and changes `VLLM_VERSION` in `src/inference/vllm.ts`, which a test compares with the Dockerfile.
+- **Version:** 0.31.0, from its official image `vllm/vllm-openai:v0.31.0`, CUDA 13.0, pinned by the index's digest (`sha256:c1c9f6fd5c109ba7f0546a59f5b2f15fb87f64c77782e90a27b648b42a8e67c3`) in [`docker/pod/Dockerfile`](../../docker/pod/Dockerfile): 9.04 GB compressed for linux/amd64, running as root, its entry point replaced by the gateway's ([the image](../web/docker-hub/vllm-vllm-openai-v0-31-0.md)). That size is vLLM's image, before Codeman adds Node's binary and the gateway. Its CUDA needs hosts whose driver supports CUDA 13.0, which Codeman requires when it creates a vLLM pod (`VLLM_MIN_CUDA`). The [vLLM settings](../settings/vllm.md) and the parsers come from this version's source; an upgrade checks them against the new version's, and changes `VLLM_VERSION` in `src/inference/vllm.ts`, which a test compares with the Dockerfile.
 - **Transitive code:** the image holds PyTorch, CUDA's libraries, FlashInfer, Transformers, XGrammar and their Python dependencies, all from vLLM's build ([v0.31.0](../web/vllm/v0-31-0.md#images-and-cuda)). Codeman installs nothing in it but Node's binary and the gateway.
 - **Known vulnerabilities** (GitHub's advisories for vllm-project/vllm, 2026-10-13): over 100 published, mostly denials of service from crafted requests, many through multimodal inputs, and some remote code execution through a model's or a request's code (`trust_remote_code`, `mm_processor_kwargs`); each lists a fix at or before 0.31.0, which itself fixes several high ones. Accepted for 0.31.0: vLLM listens only on the pod's loopback, behind Codeman's gateway, which forwards only the OpenAI-compatible routes and only for the runs' tokens; `trust-remote-code`, plugins and chat templates are refused ([vLLM settings](../settings/vllm.md#refused-keys)).
 - **What it sends out:** anonymous usage statistics to `https://stats.vllm.ai` by default; the image sets `VLLM_NO_USAGE_STATS=1` and `DO_NOT_TRACK=1`, and the gateway sets them again ([envs.py](../web/vllm/vllm-envs-py-at-v0-31-0.md)). Arguments that send the cache, events, traces or requests elsewhere are refused. It downloads the model from Hugging Face.
@@ -137,8 +137,8 @@ Audited on 2026-10-07 for the [backend plan](../plans/2026-10-07-firestore-backe
 ### Cloud Firestore, in a Firebase project
 
 - **What:** Google's managed document database, with transactions and a free daily quota, reached over HTTPS ([usage and limits](../web/firebase/usage-and-limits.md)). Codeman uses the project's `(default)` database, Standard edition, in Native mode.
-- **Why:** what jobs share across runs and repositories, atomically: the ledger now, budget reservations, pod leases and endpoints' intervals next. GitHub cannot hold it, and the responsible person wants no Codeman service to host.
-- **Data:** Codeman's records of runs (repository and task numbers, stages, models, limits, costs, tokens, pods) and events. No secret, no code, no issue text.
+- **Why:** what jobs share across runs and repositories, atomically: the ledger with its budget reservations, the pod registry with its leases, the Serverless endpoints' runs, the board and the batches. GitHub cannot hold it, and the responsible person wants no Codeman service to host.
+- **Data:** Codeman's records of runs (repository and task numbers, stages, models, limits, costs, tokens, pods) and events; the pods it created (model, GPU type, image, leases); each repository's ready tasks on the board (repository, task numbers, stages) and the batches; and the cache of the context each pod's model fitted its GPU with ([data layout](../backend/data-layout.md)). No secret, no code, no issue text.
 - **Credentials:** none stored. Jobs act as a service account through Workload Identity Federation ([deployment pipelines](../web/google-cloud/configure-workload-identity-federation-with-deployment-pipelines.md)); the service account has only Cloud Datastore User (`roles/datastore.user`, [IAM roles](../web/firebase/identity-and-access-management-iam.md)), and its tokens last an hour, scoped to Firestore. The security rules deny every client ([rules](../web/firebase/get-started-with-cloud-firestore-security-rules.md)).
 - **Spending:** none within the free quota ([cost](../backend/backend.md)), which applies to one database per project ([billing](../web/firebase/understand-cloud-firestore-billing.md)); a project without a billing account cannot go beyond it.
 - **Terms:** Google Cloud's and Firebase's terms; Google's documentation is CC BY 4.0, so the pages in `docs/web/` are copies.

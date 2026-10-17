@@ -1,6 +1,6 @@
 # Profiles
 
-`profiles` is a list of profiles, each with a `name`, optional conditions beside it, and the settings it changes: only `provider`, `model` and the provider's settings. Budgets and limits stay at the top level. The choice was made in the [inference profiles plan](../plans/2026-10-06-parallel-tasks-and-inference-profiles.md) (decisions 4 to 6), the names in the [provider settings plan](../plans/2026-10-08-provider-settings.md), the conditions and counts in the [plan for profiles that pick the tasks](../plans/2026-10-08-profiles-pick-the-tasks.md), and counts as batches in the [plan for GPU batches across repositories](../plans/2026-10-13-gpu-batches-across-repositories.md).
+`profiles` is a list of profiles, each with a `name` (1 to 64 letters, digits, `.`, `_` or `-`, starting with a letter or a digit, and unique in the list), optional conditions beside it, and the settings it changes: only `provider`, `model` and the provider's settings. Budgets and limits stay at the top level. The choice was made in the [inference profiles plan](../plans/2026-10-06-parallel-tasks-and-inference-profiles.md) (decisions 4 to 6), the names in the [provider settings plan](../plans/2026-10-08-provider-settings.md), the conditions and counts in the [plan for profiles that pick the tasks](../plans/2026-10-08-profiles-pick-the-tasks.md), and counts as batches in the [plan for GPU batches across repositories](../plans/2026-10-13-gpu-batches-across-repositories.md).
 
 ```yaml
 model: deepseek/deepseek-v4.1-flash      # when no profile applies
@@ -9,7 +9,7 @@ profiles:
     stages: [code, test]
     max-tasks: 2
     provider: runpod-pod
-    gpu: NVIDIA RTX A6000
+    gpu: "NVIDIA RTX A6000"
     model: qwen3-coder:30b
 ```
 
@@ -53,7 +53,7 @@ On a pod, the most tasks a profile serves is also how many requests its Ollama s
 
 The list is one value: a layer that sets `profiles` overrides its base's list whole, so a repository's file with `profiles` replaces the organization's list, its counts too, and `profiles: []` removes it. A profile's base is the top level, a manual run's inputs included, and its values override it: a manual run's `model` applies only to runs whose profile sets none.
 
-A task's `/codeman set model` is for the top level's provider: it overrides the profiles on that provider, a profile on another provider keeps its own model, and where it does not fit the top level's provider, it is reported as a problem, and the run goes on without it ([the model](provider-settings-across-layers.md#the-model)). With no top-level model, it gives the top level one for that task, which then serves the task's runs that no profile serves. A task's `/codeman set gpu` applies to the runs whose provider accepts it, and is reported as a problem when none of the settings' providers does.
+A task's `/codeman set model` is for the top level's provider: it overrides the profiles on that provider, and a profile on another provider keeps its own model. With no top-level model, it gives the top level one for that task, which then serves the task's runs that no profile serves. A task's `/codeman set gpu` applies to the runs whose provider accepts it. If either the task's `model` or its `gpu` does not fit, both are left out, and the run goes on without them ([the model](provider-settings-across-layers.md#the-model)).
 
 ## Checks
 
@@ -62,7 +62,7 @@ A task's `/codeman set model` is for the top level's provider: it overrides the 
 
 ## Budgets
 
-The task and the months count every run in the ledger, whatever served it; with an organization's budget, `open-key` reads the billing of the Runpod account when a profile names a Runpod provider. A run's tasks reserve their limits at once; one refused for the month goes back to its previous state, and the others keep the profile they were picked with. See [budget](../budget/budget.md).
+The budgets stay at the top level, and count every run in the ledger, whatever profile served it. What a run's tasks reserve, and which accounts' keys `open-key` needs, are in [budget](../budget/budget.md).
 
 ## Example
 

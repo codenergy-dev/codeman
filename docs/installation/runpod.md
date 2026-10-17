@@ -4,9 +4,9 @@ Instead of OpenRouter, Codeman can serve the model itself on GPUs rented from [R
 
 ## The account
 
-1. Create a Runpod account, or a team, for Codeman only, shared by the organization's repositories: with `organization-monthly-budget`, the whole account's billing counts in the organization's month. Each repository's `monthly-budget` counts its own runs, as Codeman's ledger estimates them.
+1. Create a Runpod account, or a team, for Codeman only, shared by the organization's repositories, or by those of the organizations of its [pool](../runs/batches.md#pools): with `organization-monthly-budget`, the whole account's billing counts in the organization's month, or, with a pool, is split among its organizations' months ([spend](../budget/spend.md#self-hosted-runs)). Each repository's `monthly-budget` counts its own runs, as Codeman's ledger estimates them.
 2. Add prepaid credits, about the organization's monthly budget, and leave auto-pay off. At a balance of US$ 0, Runpod stops every pod, so the credits cap what Codeman can spend there.
-3. Create an API key on the console's **Credentials** page, **API Keys** tab, with **All** permissions (pods and billing need it), and add it as the secret `CODEMAN_RUNPOD_API_KEY`. Only the key jobs of the workflow receive it.
+3. Create an API key on the console's **Credentials** page, **API Keys** tab, with **All** permissions (pods and billing need it), and add it as the secret `CODEMAN_RUNPOD_API_KEY`. Only the workflow's `open-key`, `close-key` and `release-pod` jobs receive it ([secrets](../security/secrets.md)).
 
 ## Pods
 
@@ -15,7 +15,7 @@ Instead of OpenRouter, Codeman can serve the model itself on GPUs rented from [R
    ```yaml
    provider: runpod-pod
    model: qwen3-coder:30b        # an Ollama model name
-   gpu: "NVIDIA RTX A6000"       # the GPU ID, quoted; on Secure Cloud
+   gpu: "NVIDIA RTX A6000"       # the GPU ID, quoted or not; on Secure Cloud
    ```
 
    `gpu` is the GPU ID in [Runpod's list of GPU types](https://docs.runpod.io/references/gpu-types) (first column), not its display name: `NVIDIA RTX PRO 6000 Blackwell Server Edition MIG 2g.48gb`, not `PRO 6000 MIG 48GB` ([what Codeman relies on](../web/runpod/gpu-types.md)). Choose a GPU with enough memory for the model and its cache: the pod serves as many requests at once as the profile's tasks, with the largest context that fits the GPU, from 64000 tokens up to the model's own, and fails to start, saying what to change, when the model does not fit wholly on the GPU even with 64000 ([memory](../settings/ollama.md#memory)).
@@ -40,11 +40,11 @@ Instead of OpenRouter, Codeman can serve the model itself on GPUs rented from [R
      reasoning-parser: qwen3
    ```
 
-   vLLM's image needs hosts with CUDA 13.0 or newer: Codeman requires them, and stops the run before creating a pod when none of the GPU type has room. Its pods take longer to start than Ollama's, about 6 to 9 minutes for a 27B model.
-2. Codeman runs its own pod images, one per engine, `ghcr.io/codenergy-dev/codeman-ollama` and `ghcr.io/codenergy-dev/codeman-vllm`, public and pinned by digest in the version you use (`POD_IMAGES` in `src/inference/images.ts`; versions before the image per engine pin `ghcr.io/codenergy-dev/codeman-pod`); there is nothing to set up. A version that pins no vLLM image yet stops a run with `engine: vllm` before any pod is created ([pod images](../settings/vllm.md#pod-images)). To run an Ollama image of your own, set `pod-image: <image>@sha256:<digest>` on the `open-key` step; vLLM pods always run Codeman's.
+   vLLM's image needs hosts with CUDA 13.0 or newer: Codeman requires them, and stops the run before creating a pod when Runpod offers none of the GPU type, or none has room ([CUDA](../settings/vllm.md#cuda)). Its pods take longer to start than Ollama's, about 6 to 9 minutes for a 27B model.
+2. Codeman runs its own pod images, one per engine, `ghcr.io/codenergy-dev/codeman-ollama` and `ghcr.io/codenergy-dev/codeman-vllm`, public and pinned by digest in the version you use (`POD_IMAGES` in `src/inference/images.ts`; versions before the image per engine pin `ghcr.io/codenergy-dev/codeman-pod`); there is nothing to set up. A version that pins no image for an engine stops that engine's runs before any pod is created ([pod images](../settings/vllm.md#pod-images)). To run an Ollama image of your own, set `pod-image: <image>@sha256:<digest>` on the `open-key` step; vLLM pods always run Codeman's.
 
    The tasks with the same pod settings (model, `gpu`, image, `pod-reuse`, and the Ollama or vLLM settings), in any repository of the organization or its [pool](../runs/batches.md#pools), share one pod, up to its parallel requests, and a pod kept after a run serves the next run on its settings ([shared pods](../inference/pods.md#shared-pods)). That needs an image whose gateway serves several runs at once, built from Codeman's code since shared pods. The image pinned before them serves one run at a time, and Codeman gives each task a pod of its own on it; an image of your own must serve several runs, or be listed in `SINGLE_RUN_IMAGES`, or its runs fail. Ollama settings, and fitting the model to the GPU, need an image built since them, too: the images pinned before cannot apply them, a run with Ollama settings stops on them before any pod is created, and a run without serves on them as before ([pod images](../settings/ollama.md#pod-images)).
-3. Codeman keeps its pods in the [backend](setup.md#4-set-up-the-backend), and terminates the pods of the Runpod account that carry the organization's environment (`CODEMAN_ORGANIZATION`, or `CODEMAN_REPOSITORY` of one of its repositories) and that its registry does not hold. Create other pods of the account without those variables, or in another account; Codeman never touches them.
+3. Codeman keeps its pods in the [backend](setup.md#4-set-up-the-backend), and terminates as orphans the pods of the Runpod account that its pool's registry does not hold: those that carry the pool's `CODEMAN_POOL`, and, under the conditions in [pods](../inference/pods.md), the organization's pods from before pools and those it created for another pool. It never touches a pod without Codeman's `CODEMAN_*` environment, nor another pool's pod that another organization created. Create other pods of the account without those variables, or in another account.
 
 ## Serverless
 
