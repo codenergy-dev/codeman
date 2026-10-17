@@ -1,4 +1,4 @@
-# Profiles
+# Mixing providers
 
 A repository can use different providers for different stages, such as OpenRouter's strongest model to plan and route, and a pod for the stages that write and test code. Add a list of profiles to `.codeman/settings.yml` (or to the organization's [shared settings](shared-settings.md)); the top-level settings apply where no profile does:
 

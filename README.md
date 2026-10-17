@@ -40,7 +40,7 @@ model: qwen3-coder:30b
 gpu: "NVIDIA RTX A6000"
 ```
 
-Codeman then starts a GPU, serves the model with Ollama or vLLM behind its own gateway, shares it among the tasks on the same model and GPU of the organization, or of its [pool](docs/installation/setup.md#a-pool-of-organizations), and stops it when no task needs it any more. A Serverless endpoint works too (`provider: runpod-serverless`). Each provider takes only its own settings; see [self-hosted inference](docs/installation/runpod.md). [Profiles](docs/installation/profiles.md) mix providers in one task, such as OpenRouter to plan and a GPU to write the code, under the same budgets.
+Codeman then starts a GPU, serves the model with Ollama or vLLM behind its own gateway, shares it among the tasks on the same model and GPU of the organization, or of its [pool](docs/installation/setup.md#a-pool-of-organizations), and stops it when no task needs it any more. A Serverless endpoint works too (`provider: runpod-serverless`). Each provider takes only its own settings; see [self-hosted inference](docs/installation/runpod.md). [Profiles](docs/installation/mixing-providers.md) mix providers in one task, such as OpenRouter to plan and a GPU to write the code, under the same budgets.
 
 The workflow runs once a day, when you start it manually, when a maintainer comments a `/codeman` command, when the `codeman` label is added to or removed from an issue, when an issue with it is closed or reopened, and when a review on one of Codeman's pull requests asks for changes or mentions `/codeman`:
 

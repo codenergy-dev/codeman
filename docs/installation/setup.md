@@ -42,7 +42,7 @@ Add these under **Settings → Secrets and variables → Actions**, either in th
 | --- | --- | --- |
 | Variable | `CODEMAN_GITHUB_APP_CLIENT_ID` | The App's Client ID |
 | Secret | `CODEMAN_GITHUB_APP_PRIVATE_KEY` | The full contents of the private key file |
-| Secret | `CODEMAN_OPENROUTER_MANAGEMENT_KEY` | The OpenRouter management key; not needed when neither the settings nor a [profile](profiles.md) use the `openrouter` provider |
+| Secret | `CODEMAN_OPENROUTER_MANAGEMENT_KEY` | The OpenRouter management key; not needed when neither the settings nor a [profile](mixing-providers.md) use the `openrouter` provider |
 | Secret | `CODEMAN_KEY_ENCRYPTION_SECRET` | A random value of at least 32 characters. It encrypts each run's key or gateway token between `open-key` and `agent`, within one workflow run, so the organizations of a pool need not share it |
 | Secret | `CODEMAN_RUNPOD_API_KEY` | The `runpod-pod` and `runpod-serverless` providers only, in the settings or a profile: the Runpod account's API key |
 | Secret | `CODEMAN_RUNPOD_SERVERLESS_KEY` | The `runpod-serverless` provider only: a key restricted to the endpoint |
@@ -189,7 +189,7 @@ Codeman reads `.codeman/settings.yml` and `.codemanignore` from the default bran
 
 The agent job needs a Linux runner (x64 or arm64).
 
-A run works on one task by default. A [profile](profiles.md) with a count of tasks, such as `max-tasks: 2` (up to 10), in `.codeman/settings.yml` lets a run work on that many at once, each with its own key and agent; the run ends when its slowest task does. On OpenRouter, it only finishes tasks sooner: each pays for its own tokens. On pods, a count is a batch's: tasks with the same pod settings, of this and the pool's other repositories, share one pod and split its cost by the second, once the pod image supports it (see [pods](runpod.md#pods) and [batches across repositories](../runs/batches.md)); on Serverless, each task counts the worker time its requests used, and time that tasks of any of the organization's repositories used the worker at once is split among them as they close (a run's own limit still counts it whole while it runs; see [Serverless](../inference/serverless.md)). The budgets hold across them: each run's limit is reserved in Codeman's ledger before it opens, so tasks that open at once never pass a budget together; see [budget](../budget/budget.md).
+A run works on one task by default. A [profile](mixing-providers.md) with a count of tasks, such as `max-tasks: 2` (up to 10), in `.codeman/settings.yml` lets a run work on that many at once, each with its own key and agent; the run ends when its slowest task does. On OpenRouter, it only finishes tasks sooner: each pays for its own tokens. On pods, a count is a batch's: tasks with the same pod settings, of this and the pool's other repositories, share one pod and split its cost by the second, once the pod image supports it (see [pods](runpod.md#pods) and [batches across repositories](../runs/batches.md)); on Serverless, each task counts the worker time its requests used, and time that tasks of any of the organization's repositories used the worker at once is split among them as they close (a run's own limit still counts it whole while it runs; see [Serverless](../inference/serverless.md)). The budgets hold across them: each run's limit is reserved in Codeman's ledger before it opens, so tasks that open at once never pass a budget together; see [budget](../budget/budget.md).
 
 ## Try it
 

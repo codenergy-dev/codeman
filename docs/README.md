@@ -8,7 +8,7 @@ One subject per file, grouped by what the reader wants to do. The [root README](
 - [Backend maintenance](installation/backend-maintenance.md): reading, changing, deleting and restoring the backend's pool, provider and attribute condition, service account and roles, APIs and Firestore, and seeing who changed them.
 - [Shared settings](installation/shared-settings.md): settings an organization gives all its repositories.
 - [Self-hosted inference on Runpod](installation/runpod.md): the Runpod account, pods and a Serverless endpoint.
-- [Profiles](installation/profiles.md): how to use different providers and models for different runs.
+- [Mixing providers](installation/mixing-providers.md): how to use different providers and models for different runs.
 - [Upgrading](installation/upgrading.md): old setting names, a model per provider, profiles that pick the tasks, pods that fit the GPU, vLLM on pods, GPU batches across repositories, Codeman's commit from a variable, a spent pod that waits for its close, and workflow files copied before the backend.
 
 ## Using it

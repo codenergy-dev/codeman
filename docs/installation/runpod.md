@@ -1,6 +1,6 @@
 # Self-hosted inference on Runpod
 
-Instead of OpenRouter, Codeman can serve the model itself on GPUs rented from [Runpod](https://www.runpod.io): on a pod it creates for the task (`provider: runpod-pod`), or on the workers of a Serverless endpoint you create (`provider: runpod-serverless`). Each provider takes its own settings ([providers](../settings/providers.md)). See [self-hosted inference](../inference/self-hosted.md) for how it works, what it costs and [which to choose](../inference/self-hosted.md#choosing), and [security](../security/secrets.md) for the secrets. OpenRouter's management key is not needed then, unless a [profile](profiles.md) uses OpenRouter; the encryption secret still is.
+Instead of OpenRouter, Codeman can serve the model itself on GPUs rented from [Runpod](https://www.runpod.io): on a pod it creates for the task (`provider: runpod-pod`), or on the workers of a Serverless endpoint you create (`provider: runpod-serverless`). Each provider takes its own settings ([providers](../settings/providers.md)). See [self-hosted inference](../inference/self-hosted.md) for how it works, what it costs and [which to choose](../inference/self-hosted.md#choosing), and [security](../security/secrets.md) for the secrets. OpenRouter's management key is not needed then, unless a [profile](mixing-providers.md) uses OpenRouter; the encryption secret still is.
 
 ## The account
 
