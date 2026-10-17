@@ -182,7 +182,3 @@ The Ollama image is the `ollama` entry of `POD_IMAGES`, or the `pod-image` input
 - **Another image that reports no fit:** "Pod `<id>`'s gateway did not report how … fits the GPU: its image cannot check it."
 
 Such a pod fails the run like a pod that did not serve its model, and is terminated when the task created it.
-
-## Adding a key
-
-A key is added to `OLLAMA_SETTINGS`, this table and its test together, after checking it in the source of the Ollama version the pod image pins, recorded in [`docs/web/ollama/`](../web/ollama/). Upgrading Ollama means checking the list against the new version's source.

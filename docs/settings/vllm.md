@@ -272,7 +272,3 @@ A new vLLM pod starts vLLM's processes, downloads the model, loads it, compiles 
 - **`enforce-eager: true`** skips the compilation and the graphs, for 1.5 to 2 minutes less per start, at the cost of slower decoding for every request ([optimization levels](../web/vllm/optimization-levels.md)). Pods are kept and shared, so starts are rarer than requests.
 - **Nothing is cached across pods**, neither the model nor the compilation.
 - **A new context compiles again**, so a pod that starts from the cache of fits saves the restarts' minutes.
-
-## Adding a key, or upgrading vLLM
-
-A key is added to `VLLM_SETTINGS`, this table and its test together, after checking it in the source of the vLLM version the image pins, recorded in [`docs/web/vllm/`](../web/vllm/). Upgrading vLLM means changing `VLLM_VERSION` and the Dockerfile together, recording the new version's pages, and checking the keys, the refused ones, the parsers, the CUDA floor (`VLLM_MIN_CUDA`) and the messages the gateway reads (auto-fit, `/metrics`) against them.

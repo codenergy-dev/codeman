@@ -1,64 +1,151 @@
 # Development
 
-Requires Node.js 24 (see `.nvmrc`).
+This page is for whoever changes Codeman itself: how to build and test it, where the code lives, and how a change reaches the repositories that run it.
+
+## Setup
+
+Codeman requires Node.js 24 (see `.nvmrc`).
 
 ```sh
 npm ci          # install exact versions from package-lock.json, without install scripts
 npm run check   # lint, type check, test and build
 ```
 
+## Scripts
+
 | Script | What it does |
 | --- | --- |
 | `npm run lint` | Biome lint and format check |
 | `npm run format` | Apply Biome fixes and formatting |
 | `npm run typecheck` | `tsc`, no output |
-| `npm test` | `node:test` on `src/**/*.test.ts`. The sandbox test runs only on Linux with `CODEMAN_SANDBOX_TEST=1`, because it creates a system user with `sudo`; CI sets it. The store's contract tests run on Firestore's emulator when there is one, and are skipped otherwise, as on CI; see [the emulator](#firestores-emulator). `src/docs.test.ts` checks that every relative link in `README.md`, `AGENTS.md` and `docs/`, and every path of `docs/` named in the code, the templates and the pod image, names a file and a heading that exist. |
-| `npm run build` | Bundle `src/index.ts` into `dist/index.js`, and the gateway, `src/gateway/main.ts`, into `dist/gateway.js` |
+| `npm test` | `node:test` on `src/**/*.test.ts`; see [tests](#tests) |
+| `npm run build` | Bundle `src/index.ts` into `dist/index.js`, and the [gateway](../glossary.md#gateway), `src/gateway/main.ts`, into `dist/gateway.js` |
+| `npm run check` | Lint, type check, test and build, in that order |
 
-## Layout
+## Tests
 
-- `action.yml`: action metadata. Runs `dist/index.js` on Node 24.
-- `src/`: source and tests (`*.test.ts` next to the code they test).
-  - `src/steps/`: the steps of the six workflow jobs, in five modules: `select.ts`, `agent.ts`, `apply.ts`, `keys.ts` (`openKey`, `closeKey` and `release`, for `open-key`, `close-key` and `release-pod`) and `common.ts`, which they share. `STEPS` in `src/main.ts` maps each job to its step. Each step takes `Services` (`src/services.ts`), which has eight members: the runtime, the platform's conventions, its API (`platform`, with the `workflow-token` for `workflows` access), its CI's results (`ci`), the inference provider, the providers' accounts that the budgets read (`accounts`), the store and the job's ledger.
-  - `src/inference/`: the registry of providers and the settings each accepts (`providers.ts`; see [providers](../settings/providers.md)), the Ollama and vLLM settings a pod takes (`ollama.ts`, `vllm.ts`; see [Ollama settings](../settings/ollama.md) and [vLLM settings](../settings/vllm.md)), the pod images by engine (`images.ts`), the check of a vLLM pod's model on Hugging Face (`huggingface.ts`), the `InferenceProvider`, `GpuProvider` and `InferenceEngine` interfaces and their adapters (OpenRouter, Runpod, Ollama, vLLM); see [self-hosted inference](../inference/self-hosted.md).
-  - `src/gateway/`: the gateway in front of a self-hosted engine, which runs in Codeman's pod image (`docker/pod/Dockerfile`) and in the agent job, and, in the pod, fits the model to the GPU (`fit.ts`; see [memory](../settings/ollama.md#memory)) or starts vLLM for the pod's requests (`vllm.ts`; see [memory](../settings/vllm.md#memory)). It uses Node's modules only.
-  - `src/platform/`: the `Platform`, `CiResults` and `Conventions` interfaces and the types they share. Adapters live in a directory each, such as `src/platform/github/`; see [platforms](platforms.md) for what they must guarantee.
-  - `src/runtime/`: the `Runtime` interface and its adapters, such as `src/runtime/github-actions.ts`. Only runtime adapters import `@actions/core`.
-  - `src/testing/`: fakes for tests: an in-memory platform unlike GitHub, its CI, a runtime that keeps what steps report, an inference provider, and a GPU cloud with its pods' gateways; and the example settings of [profiles](../settings/profiles.md#example), which the tests read.
-  - `src/harness/`: the `Harness` interface and its adapters. To add a harness, implement `install` and `command` and register it in `src/harness/index.ts`.
-  - `src/store/`: the `Store` interface of the [backend](../backend/backend.md), on Firestore and in memory, with the contract tests both pass; Google's authentication; the data layout. `src/ledger.ts` records runs in it.
-- `dist/`: the bundled action. Committed, because GitHub runs actions straight from the repository. CI fails when it does not match the source, so run `npm run build` before committing.
-- `templates/`: files that target repositories copy; see [template version](#template-version).
-- `firebase/firestore.rules`: the backend's security rules, which deny every client; [installation](../installation/setup.md#4-set-up-the-backend) publishes them.
-- `docker/pod/`: Codeman's pod images, one target per engine ([pod images](#pod-images)).
-- `docs/web/`: the documentation of the third-party services Codeman uses, one page per file under `docs/web/<third-party>/`, and in `docs/web/tools/` how each kind of page is fetched. The format is in `AGENTS.md` ("Third-party documentation"). Pages are copies only where their license allows; the others hold what Codeman relies on, in our own words.
+Tests sit next to the code they test, as `*.test.ts`. Most run everywhere. These depend on the machine or check the repository itself:
 
-## Template version
+| Test | Runs when | Skipped when |
+| --- | --- | --- |
+| [`src/sandbox.test.ts`](../../src/sandbox.test.ts), the [sandbox](../glossary.md#sandbox) | On Linux, with `CODEMAN_SANDBOX_TEST=1`. It creates a system user and needs passwordless `sudo`, like GitHub's Linux runners. CI sets the variable | On any other system, or without the variable |
+| [`src/store/emulator.test.ts`](../../src/store/emulator.test.ts), the [store](../glossary.md#store) on Firestore's emulator | An emulator is running, or one is in Firebase's cache; see [Firestore's emulator](#firestores-emulator) | Neither is there, as on CI |
+| [`src/docs.test.ts`](../../src/docs.test.ts), the links | Always | Never |
+| [`src/webdocs.test.ts`](../../src/webdocs.test.ts), the format of `docs/web/` | Always | Never |
 
-Repositories run the Codeman commit their `CODEMAN_COMMIT_SHA` variable names, with workflow files copied from `templates/` at some commit, maybe an older one. Every Codeman step of both templates passes `template-version`, and `TEMPLATE_VERSION` in [`src/action.ts`](../../src/action.ts) is the version the code expects: on any other, every step fails before it starts, saying to copy the templates from the variable's commit ([installation](../installation/setup.md#5-add-the-workflow-and-settings)).
+- **`src/docs.test.ts`** checks each relative link in `README.md`, `AGENTS.md` and `docs/`, but not in full copies of third-party pages. It also checks each `docs/<path>.md#<anchor>` named in `src/`, `templates/`, `docker/` and `action.yml`, and the templates' URLs under `github.com/codenergy-dev/codeman/blob/main/`. Each must name a file that exists, and its anchor a heading of that file. It reads tracked and new files, never ignored ones or `logs/`.
+- **`src/webdocs.test.ts`** checks that each page of `docs/web/` follows the format that `AGENTS.md` sets ("Third-party documentation").
+- Other tests read specific pages of `docs/`: they are listed in [tests that read the docs](documentation.md#tests-that-read-the-docs).
 
-- **Bump it** (add one, and write the new value in every `template-version:` of both templates) when the code comes to depend on something in the templates that older copies lack or do differently: an input or an output it reads, a job, a permission, a secret, a step, or the checkout's path. Say what changed in [upgrading](../installation/upgrading.md).
-- **Keep it** for comments, and for changes the code does not depend on, such as a step a repository may do without. Each bump makes every repository copy its files again.
-- `src/templates.test.ts` fails when a template's value differs from `TEMPLATE_VERSION`, but cannot tell whether a change needed a bump: the reviewer of a change to `templates/` decides.
+## What CI checks
 
-## Pod images
+[`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) runs on every push to `main` and every pull request. Its one job, `check`, has `contents: read` and 10 minutes, on `ubuntu-latest`:
 
-`docker/pod/Dockerfile` has a target per engine, `ollama` and `vllm`, each the engine's official image with Node's binary and `dist/gateway.js`. [`.github/workflows/pod-image.yml`](../../.github/workflows/pod-image.yml) builds both when `docker/pod/`, the workflow or `dist/gateway.js` changes on `main` (or when run by hand), and publishes each to GitHub's container registry as `ghcr.io/<owner>/codeman-<engine>:<commit>`; its summary lists both digests. The vLLM leg frees the runner's disk first and may take most of its 60 minutes the first time, while GHCR has none of vLLM's layers.
+1. Check out the repository, without keeping its credentials.
+2. Set up the Node.js version of `.nvmrc`, with no package cache.
+3. `npm ci`.
+4. `npm run lint`.
+5. `npm run typecheck`.
+6. `npm test`, with `CODEMAN_SANDBOX_TEST=1`, so the sandbox test runs.
+7. `npm run build`.
+8. Fail when `dist/` differs from what the build wrote: "dist/ is out of date. Run 'npm run build' and commit the result."
 
-Pods run the images pinned in `POD_IMAGES`, not the latest build. A change to `docker/pod/` or to `dist/gateway.js`, the gateway included, reaches pods only once the new digests are pinned (step 2), in a commit after the one the images were built from.
+CI has no Firestore emulator, so the emulator's tests are skipped there. The pod images have a workflow of their own; see [pod images](#pod-images).
 
-1. **Make a new package public, once.** A package GHCR creates is private, and Runpod pulls images without credentials, so a pod on a private image never starts. After the first publish of `codeman-ollama` and of `codeman-vllm`: on GitHub, the owner's **Packages** tab, the package, **Package settings**, **Danger Zone**, **Change visibility**, **Public**, and type the package's name to confirm. An organization must allow public packages (organization **Settings**, **Packages**, **Package creation**). Check it with `docker pull ghcr.io/<owner>/codeman-<engine>@sha256:<digest>` while logged out.
-2. **Pin each digest** in `POD_IMAGES` in [`src/inference/images.ts`](../../src/inference/images.ts), one line per engine: `vllm: "ghcr.io/codenergy-dev/codeman-vllm@sha256:<digest>"`, in a commit of its own, after checking that the image's tag is the commit it was built from. A test checks that each pinned image is its engine's package by digest.
-3. **Keep older images listed.** When the Ollama image changes, the image it replaces stays known where it must: images whose gateway serves one run at a time stay in `SINGLE_RUN_IMAGES` (`src/inference/ollama.ts`), so each task gets a pod of its own on them; images whose gateway cannot apply [Ollama settings](../settings/ollama.md#pod-images) stay in `IMAGES_WITHOUT_OLLAMA_SETTINGS`, so a run with some stops before creating a pod on them. Both lists keep the `ghcr.io/codenergy-dev/codeman-pod` digests pinned before the image per engine, since pods on them may still exist. An image built from this code needs neither.
+## Source layout
 
-## Firestore's emulator
+### Entry points and steps
 
-`src/store/emulator.test.ts` runs the store's contract tests (`src/store/contract.ts`) on Firestore's emulator, the same tests the store in memory passes, and five checks that need its transactions or its rules: two runs that reserve their limits in the ledger at once never pass the monthly budget together; two Serverless runs that close at once split the time they shared on the endpoint's worker; two tasks that claim a pod's settings in the pod registry at once get one creator; two `select`s at once reserve each task of the board once; and the security rules deny every client. It uses, in this order:
+[`src/index.ts`](../../src/index.ts) is the action's entry point. It creates the GitHub Actions runtime and calls `run` in [`src/main.ts`](../../src/main.ts) with `gitHubServices`. `run` checks the [template version](#template-version), then runs the step its `step` input names, from `STEPS`.
 
-1. The emulator that `FIRESTORE_EMULATOR_HOST` names (`host:port`), already running. The rules' test still needs the next one.
-2. The newest `cloud-firestore-emulator-v*.jar` in Firebase's cache, `~/.cache/firebase/emulators/`, which the Firebase CLI downloads (`firebase setup:emulators:firestore`); the test starts it with `java -jar` (Java 21) on a free port of the loopback, and stops it at the end.
+Each of the six workflow jobs runs one step, in five modules of `src/steps/`:
 
-With neither, the tests are skipped. Each test uses a project of its own, so they share no documents. The emulator takes requests without a token, and only tests reach it: the action never reads `FIRESTORE_EMULATOR_HOST`.
+| Job | Module | Function |
+| --- | --- | --- |
+| `select` | [`src/steps/select.ts`](../../src/steps/select.ts) | `select` |
+| `open-key` | [`src/steps/keys.ts`](../../src/steps/keys.ts) | `openKey` |
+| `agent` | [`src/steps/agent.ts`](../../src/steps/agent.ts) | `agent` |
+| `apply` | [`src/steps/apply.ts`](../../src/steps/apply.ts) | `apply` |
+| `close-key` | [`src/steps/keys.ts`](../../src/steps/keys.ts) | `closeKey` |
+| `release-pod` | [`src/steps/keys.ts`](../../src/steps/keys.ts) | `release` |
+
+The steps share [`src/steps/common.ts`](../../src/steps/common.ts). What each job does is in [jobs](../runs/runs-and-jobs.md#jobs).
+
+Each step takes `Services` ([`src/services.ts`](../../src/services.ts)), which has eight members:
+
+| Member | Gives |
+| --- | --- |
+| `runtime` | The runtime the step runs in |
+| `conventions` | The platform's conventions |
+| `platform(access)` | The platform's API: with the `workflow-token` input for `workflows` access, else with `github-token` |
+| `ci()` | Its CI's results |
+| `inference()` | The [inference provider](../glossary.md#inference-provider) |
+| `accounts()` | The providers' accounts that the budgets read |
+| `store()` | The store of the [backend](../glossary.md#backend) |
+| `ledger(job, pool)` | The job's [ledger](../glossary.md#ledger) |
+
+The gateway has its own entry point, [`src/gateway/main.ts`](../../src/gateway/main.ts), bundled into `dist/gateway.js`. It runs in Codeman's pod images and in the agent job, and uses Node's modules only.
+
+### Interfaces and adapters
+
+| Interface | Directory | Adapters | Doc |
+| --- | --- | --- | --- |
+| `Platform`, `CiResults`, `Conventions` | [`src/platform/`](../../src/platform/) | A directory each, such as `src/platform/github/` | [Platforms](platforms.md) |
+| `Runtime` | [`src/runtime/`](../../src/runtime/) | `src/runtime/github-actions.ts` | [Platforms](platforms.md) |
+| `Harness` | [`src/harness/`](../../src/harness/) | `src/harness/opencode.ts` | [Agent harness](dependencies.md#agent-harness-opencode) |
+| `InferenceProvider`, `GpuProvider`, `InferenceEngine` | [`src/inference/`](../../src/inference/) | OpenRouter, Runpod, Ollama, vLLM | [Self-hosted inference](../inference/self-hosted.md) |
+| `Store` | [`src/store/`](../../src/store/) | Firestore, and memory for tests | [The store](../backend/backend.md#the-store) |
+
+- Only runtime adapters import `@actions/core`.
+- To add a [harness](../glossary.md#harness), implement `install` and `command`, and register it in `src/harness/index.ts`.
+- To add a platform, see what an adapter must guarantee in [platforms](platforms.md).
+- [`src/testing/`](../../src/testing/) holds the fakes that tests pass as `Services`: an in-memory platform unlike GitHub, its CI, a runtime that keeps what steps report, an inference provider, and a GPU cloud with its pods' gateways. It also reads the example settings of [profiles](../settings/profiles.md#example), which the tests run. See [platforms](platforms.md#how-steps-get-them).
+
+### Other modules
+
+| Concern | Modules | Doc |
+| --- | --- | --- |
+| Providers and their settings | `src/inference/providers.ts` | [Providers](../settings/providers.md) |
+| Pod engines' settings | `src/inference/ollama.ts`, `src/inference/vllm.ts` | [Ollama settings](../settings/ollama.md), [vLLM settings](../settings/vllm.md) |
+| Pod images by [engine](../glossary.md#engine) | `src/inference/images.ts` | [Pod images](#pod-images) |
+| A vLLM pod's model on Hugging Face | `src/inference/huggingface.ts` | [The model](../settings/vllm.md#the-model) |
+| The [pod registry](../glossary.md#pod-registry) | `src/inference/registry.ts` | [Pods](../inference/pods.md) |
+| The gateway | `src/gateway/` | [The gateway](../inference/self-hosted.md#the-gateway) |
+| Fitting the model to the GPU | `src/gateway/fit.ts`, `src/gateway/vllm.ts` | [Ollama's memory](../settings/ollama.md#memory), [vLLM's](../settings/vllm.md#memory) |
+| The store on Firestore, Google's authentication, the data layout | `src/store/firestore.ts`, `src/store/google.ts`, `src/store/layout.ts` | [Backend](../backend/backend.md), [data layout](../backend/data-layout.md) |
+| The ledger | `src/ledger.ts` | [The ledger](../backend/backend.md#the-ledger) |
+| Budgets and spend | `src/budget.ts`, `src/spend.ts` | [Budget](../budget/budget.md), [spend](../budget/spend.md) |
+| The board, batches and pools | `src/board.ts`, `src/batches.ts`, `src/pool.ts` | [Batches across repositories](../runs/batches.md) |
+| Settings and their YAML | `src/settings.ts`, `src/yaml.ts` | [Settings](../settings/reference.md) |
+| Tasks and their state labels | `src/tasks.ts`, `src/state.ts` | [Task lifecycle](../tasks/lifecycle.md) |
+| Commands | `src/commands.ts`, `src/problems.ts` | [Commands](../tasks/commands.md) |
+| Stages | `src/stages.ts` | [Stages](../tasks/stages.md) |
+| The status comment and the [task record](../glossary.md#task-record) | `src/status.ts`, `src/record.ts` | [Comments](../tasks/comments.md) |
+| Messages in the task's language | `src/i18n/` (`en`, `pt-BR`) | [Conversation language](../tasks/comments.md#conversation-language) |
+| The sandbox and collecting the agent's changes | `src/sandbox.ts`, `src/collect.ts` | [Agent sandbox](../runs/agent.md#agent-sandbox) |
+| The agent's rules and prompt | `src/rules.ts`, `src/prompt.ts` | [Agent rules](../runs/agent.md#agent-rules) |
+| The agent's output, and the plan's check | `src/output.ts`, `src/validate.ts` | [Agent output](../runs/agent.md#agent-output) |
+| The change policy | `src/policy.ts` | [Change policy](../runs/changes.md#change-policy) |
+| Results of accepted workflows | `src/results.ts` | [Results](../runs/changes.md#results) |
+| The pull request | `src/pull.ts` | [The pull request](../tasks/stages.md#the-pull-request) |
+| The task key between jobs | `src/crypto.ts` | [The key between jobs](../inference/openrouter.md#the-key-between-jobs) |
+| Third-party documentation | `src/webdocs.ts` | [Third-party documentation](../runs/changes.md#third-party-documentation) |
+| Codeman's checkout and the template version | `src/action.ts` | [Codeman's checkout](../runs/runs-and-jobs.md#codemans-checkout), [template version](#template-version) |
+| Safe text for logs and Markdown | `src/text.ts` | [Safe rendering](../tasks/comments.md#safe-rendering) |
+
+### Outside src/
+
+| Path | Holds |
+| --- | --- |
+| `action.yml` | The action's metadata. It runs `dist/index.js` on Node 24 |
+| `dist/` | The bundled action and gateway |
+| `templates/` | The files that target repositories copy; see [template version](#template-version) |
+| `firebase/firestore.rules` | The backend's security rules, which deny every client. [Installation](../installation/setup.md#4-set-up-the-backend) publishes them |
+| `docker/pod/` | Codeman's pod images, one target per engine; see [pod images](#pod-images) |
+| `docs/web/` | The documentation of the third-party services Codeman uses |
+
+- **`dist/` is committed**, because GitHub runs actions straight from the repository. CI fails when it does not match the source, so run `npm run build` before committing.
+- **`docs/web/`** has one page per file under `docs/web/<third-party>/`, and in `docs/web/tools/` how each kind of page is fetched. The format is in `AGENTS.md` ("Third-party documentation"). Pages are full copies only where their license allows. The others hold what Codeman relies on, in our own words.
 
 ## Conventions
 
@@ -66,3 +153,152 @@ With neither, the tests are skipped. Each test uses a project of its own, so the
 - Imports of local files use the `.ts` extension; Node runs the tests without a build step.
 - Use only TypeScript syntax that can be erased (`erasableSyntaxOnly`): no `enum`, `namespace` or parameter properties.
 - Keep logic in pure functions that tests can call directly. `src/main.ts` wires the steps to GitHub; nothing else picks a platform.
+
+## Releasing
+
+Codeman has no tags or packages: every commit of `main` is a version that repositories may run.
+
+- **Merging to `main` releases.** Each repository runs the commit that its `CODEMAN_COMMIT_SHA` variable names, its [Codeman's commit](../glossary.md#codemans-commit). It moves to a new one only when that variable changes ([installation](../installation/setup.md#5-add-the-workflow-and-settings)).
+- **A user-facing change** goes in [upgrading](../installation/upgrading.md): what changed, and what to do.
+- **A change the templates must follow** bumps the [template version](#template-version).
+- **A change to the gateway or the pod images** reaches pods only after a re-pin; see [pod images](#pod-images).
+
+## Template version
+
+Repositories run the Codeman commit that their `CODEMAN_COMMIT_SHA` variable names. Their workflow files were copied from `templates/` at some commit, maybe an older one. The template version tells the code whether those files fit it.
+
+- Every Codeman step of both templates passes `template-version`.
+- `TEMPLATE_VERSION` in [`src/action.ts`](../../src/action.ts) is the version the code expects.
+- On any other value, every step fails before it starts. It says to copy `codeman.yml` and `codeman-task.yml` again from the variable's commit ([installation](../installation/setup.md#5-add-the-workflow-and-settings)).
+
+```mermaid
+flowchart TD
+  A["A job runs a Codeman step<br/>with its template-version input"] --> B{"Equal to TEMPLATE_VERSION<br/>in src/action.ts?"}
+  B -- yes --> C["Run the step that the step input names"]
+  B -- "no: missing, older or not a number" --> D["Fail before the step starts:<br/>copy both templates again<br/>from CODEMAN_COMMIT_SHA's commit"]
+  B -- "no: newer" --> E["Fail: copy them again,<br/>or set CODEMAN_COMMIT_SHA<br/>to the files' commit"]
+```
+
+### When to bump
+
+> [!IMPORTANT]
+> Each bump makes every repository copy its workflow files again. Bump only when the code needs it.
+
+- **Bump it** when the code comes to depend on something in the templates that older copies lack or do differently: an input or an output it reads, a job, a permission, a secret, a step, or the checkout's path.
+  1. Add one to `TEMPLATE_VERSION`.
+  2. Write the new value in every `template-version:` of both templates.
+  3. Say what changed in [upgrading](../installation/upgrading.md).
+- **Keep it** for comments, and for changes the code does not depend on, such as a step a repository may do without.
+- `src/templates.test.ts` fails when a template's value differs from `TEMPLATE_VERSION`. It cannot tell whether a change needed a bump: the reviewer of a change to `templates/` decides.
+
+```mermaid
+flowchart TD
+  A["A change to templates/,<br/>or to code that reads what they pass"] --> B{"Does the code now depend on it?<br/>An input, output, job, permission,<br/>secret, step or checkout path"}
+  B -- yes --> C["TEMPLATE_VERSION + 1, and the same value<br/>in every template-version of both templates"]
+  C --> D["Describe it in installation/upgrading.md"]
+  B -- "no: a comment, an optional step" --> E["Keep the version"]
+```
+
+## Pod images
+
+[Pods](../glossary.md#pod) run one of Codeman's images, one per engine. Each is the engine's official image, plus Node's binary and the gateway, `dist/gateway.js`. [`docker/pod/Dockerfile`](../../docker/pod/Dockerfile) has a target per engine.
+
+| Engine | Dockerfile target | Package |
+| --- | --- | --- |
+| Ollama | `ollama` | `ghcr.io/<owner>/codeman-ollama` |
+| vLLM | `vllm` | `ghcr.io/<owner>/codeman-vllm` |
+
+> [!IMPORTANT]
+> Pods run the images pinned in `POD_IMAGES`, not the latest build. A change to `docker/pod/` or to `dist/gateway.js`, the gateway included, reaches pods only once the new digests are pinned, in a commit after the one the images were built from.
+
+```mermaid
+sequenceDiagram
+  actor M as Maintainer
+  participant WF as pod-image.yml, one leg per engine
+  participant R as GitHub container registry
+  participant S as src/inference/images.ts
+  M->>WF: Push to main that changes the image or the gateway, or run it by hand
+  WF->>WF: Free the disk, vLLM only, then build the engine's target
+  WF->>R: Push the image, tagged with the commit
+  WF-->>M: The run's summary lists the digests
+  opt First publish of a package
+    M->>R: Make the package public
+    M->>R: Pull it by digest while logged out
+  end
+  M->>S: Pin each digest in POD_IMAGES, in a commit of its own
+  Note over M,S: Until then, new pods run the image pinned before, and its gateway
+```
+
+### Publish
+
+[`.github/workflows/pod-image.yml`](../../.github/workflows/pod-image.yml) builds and publishes both images, one leg per engine:
+
+- **When:** a push to `main` that changes `docker/pod/`, `dist/gateway.js` or the workflow, or a manual run.
+- **Where:** GitHub's container registry, as `ghcr.io/<owner>/codeman-<engine>:<commit>`.
+- **Output:** the run's summary lists both digests.
+- **Time:** the vLLM leg first frees the runner's disk. It may take most of its 60 minutes the first time, while GHCR has none of vLLM's layers.
+
+### Make a new package public, once
+
+A package that GHCR creates is private. Runpod pulls images without credentials, so a pod on a private image never starts.
+
+After the first publish of `codeman-ollama` and of `codeman-vllm`:
+
+1. On GitHub, open the owner's **Packages** tab, then the package.
+2. Go to **Package settings** › **Danger Zone** › **Change visibility** › **Public**, and type the package's name to confirm. The package is public.
+3. While logged out, run `docker pull ghcr.io/<owner>/codeman-<engine>@sha256:<digest>`. The pull succeeds.
+
+An organization must allow public packages: organization **Settings** › **Packages** › **Package creation**.
+
+### Pin the digests
+
+1. Check that each image's tag is the commit it was built from.
+2. In [`src/inference/images.ts`](../../src/inference/images.ts), set the engine's line of `POD_IMAGES`, such as `vllm: "ghcr.io/codenergy-dev/codeman-vllm@sha256:<digest>"`.
+3. Commit it on its own, after the commit the images were built from.
+
+A test checks that each pinned image is its engine's package, by digest. The pinned digest is what the glossary calls a [pinned pod image](../glossary.md#pinned-pod-image).
+
+### Keep older images listed
+
+Pods on an image pinned before may still exist. Codeman must know what their gateway cannot do, so it lists such images by digest in [`src/inference/ollama.ts`](../../src/inference/ollama.ts):
+
+| List | Holds the images whose gateway | Effect |
+| --- | --- | --- |
+| `SINGLE_RUN_IMAGES` | Serves one run at a time | Each task gets a pod of its own on them |
+| `IMAGES_WITHOUT_OLLAMA_SETTINGS` | Cannot apply [Ollama settings](../settings/ollama.md#pod-images) | A run with some stops before creating a pod on them |
+
+- When the Ollama image changes, the image it replaces stays in the lists where it belongs.
+- Both lists hold `ghcr.io/codenergy-dev/codeman-pod` digests, pinned before the images per engine.
+- An image built from the current code needs neither list.
+
+## Firestore's emulator
+
+`src/store/emulator.test.ts` runs the store's contract tests ([`src/store/contract.ts`](../../src/store/contract.ts)) on Firestore's emulator: the same tests that the store in memory passes. It adds five checks that need the emulator's transactions or its rules:
+
+- Two runs that reserve their limits in the ledger at once never pass the monthly budget together.
+- Two Serverless runs that close at once split the time they shared on the endpoint's worker.
+- Two tasks that claim a pod's settings in the pod registry at once get one creator.
+- Two `select`s at once reserve each task of the [board](../glossary.md#board) once.
+- The security rules deny every client.
+
+```mermaid
+flowchart TD
+  A{"FIRESTORE_EMULATOR_HOST set?"} -- yes --> B["Use that running emulator"]
+  A -- no --> C{"A jar in Firebase's cache,<br/>and java runs?"}
+  C -- yes --> D["Start the newest jar on a free port<br/>of the loopback, and stop it at the end"]
+  C -- no --> E["Skip the emulator's tests, as on CI"]
+  B --> F{"A jar in Firebase's cache,<br/>and java runs?"}
+  D --> F
+  F -- yes --> G["The rules test starts its own emulator<br/>with firebase/firestore.rules"]
+  F -- no --> H["Skip the rules test"]
+```
+
+The test uses, in this order:
+
+1. The emulator that `FIRESTORE_EMULATOR_HOST` names (`host:port`), already running. The rules test still needs the next one.
+2. The newest `cloud-firestore-emulator-v*.jar` in Firebase's cache, `~/.cache/firebase/emulators/`, which the Firebase CLI downloads (`firebase setup:emulators:firestore`). The test starts it with `java -jar` on a free port of the loopback, and stops it at the end.
+
+- **Java:** the test only checks that `java -version` runs. Firebase asks for Java 21 or later for its latest emulator ([the emulator](../web/firebase/connect-your-app-to-the-cloud-firestore-emulator.md)). An older Java fails the tests with "Firestore's emulator exited at start." instead of skipping them.
+- **With neither**, the tests are skipped.
+- **Each test uses a project of its own**, so they share no documents.
+- **Only tests reach it.** The emulator takes requests without a token, and the action never reads `FIRESTORE_EMULATOR_HOST`.
