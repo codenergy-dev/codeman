@@ -1,32 +1,126 @@
 # The agent
 
+This page says how the `agent` job isolates the agent, which rules the agent gets, and what it must report.
+
 ## Agent sandbox
 
-The agent reads text that may be hostile (see [security](../security/risks.md)) and runs shell commands. It runs as `codeman-agent`, a user without `sudo`, on a copy of the checkout in that user's home.
+The agent reads text that may be hostile (see [security](../security/risks.md)) and runs shell commands. It runs in a [sandbox](../glossary.md#sandbox): as `codeman-agent`, a user without `sudo`, on a copy of the checkout in that user's home.
 
-- It cannot read the runner's processes, so it cannot reach the job's tokens or the secrets of other steps.
-- The runner's home, which holds the job's temporary files, is closed to other users before the agent starts. The agent is not in the `docker` group.
-- Its environment is rebuilt from an allowlist: its own `HOME` and XDG directories, `TMPDIR` set to `/tmp` (outside its working tree, for scratch work), the job's `PATH` without entries in the runner's home, and the harness's variables. Nothing else from the runner passes, including what `sudo`'s PAM session adds from `/etc/environment`.
-- Its tools and network are not restricted: it can use what the runner image has and what earlier steps of the job set up. The sandbox protects credentials, not the runner.
-- Its credential (the run's OpenRouter key, or its token for a self-hosted gateway) reaches it only through its environment. It is the only credential the agent holds: a Serverless endpoint's key stays in Codeman's step, outside the sandbox.
-- The agent has `agent-minutes` to run: 50 in the template, inside the `agent` job's 60-minute timeout. Codeman then stops the harness. The fix pass of the [agent output](#agent-output) gets what is left of that time, and runs only when at least 2 minutes are.
-- When the harness exits or is stopped, and after the fix pass, Codeman seals the sandbox before it collects: it removes the agent's scheduled work (`cron`, `at`, a systemd user service kept alive by lingering), locks the account, kills every process of that user and checks none survive, then takes its home and working tree away from it (`chown` to root, without following symlinks). So no process the agent left can change a path while root reads it.
-- Codeman finds changes with `git status`, using the original checkout's `.git` against the agent's copy; the agent's `.git` is never used, and git does not enter submodules, whose repositories and configuration the agent controls (submodules are not collected). The agent owns its home, so collection first refuses a working tree that is a symbolic link, and copies each changed path only after a check that opens nothing classes it a regular file; so root never follows a link out of the sandbox or blocks on a named pipe. Changed files are copied without following symlinks. Untracked files that the `.gitignore` files of the agent's copy ignore, as the agent left them, are not collected. Only regular files are copied: symlinks, special files (named pipes, sockets) and directories that git lists as one entry (a repository the agent cloned or created inside the working tree) are listed as changed without their content, and so is a path that cannot be copied, so one path never costs the run its result. `apply` drops them all as not regular files, and the run comment lists them ([change policy](changes.md#change-policy)).
-- Codeman's own checkout, which the `agent` job puts in the workspace (`.codeman/action`, after the repository's checkout), is left out of the agent's copy and of the changes Codeman collects, wherever the workflow puts it inside the workspace. The original, which runs, is in the runner's home, out of the agent's reach, and no Codeman code runs after the agent in that job (the action has no post step). Under `.codeman/`, it would never reach the task branch anyway: `apply` drops every change there ([change policy](changes.md#change-policy)).
+> [!IMPORTANT]
+> The sandbox protects credentials, not the runner. The agent's tools and network are not restricted.
+
+| The agent can | The agent cannot |
+| --- | --- |
+| Use what the runner image has, and what earlier steps of the job set up | Read the runner's processes, so it cannot reach the job's tokens or the secrets of other steps |
+| Reach the network | Use `sudo`, or the `docker` group, which it is not in |
+| Use its own credential, through its environment | Read the runner's home, which holds the job's temporary files |
+| Write in its copy of the checkout and in its home | See a Serverless endpoint's key, which stays in Codeman's step, outside the sandbox |
+| | Leave work running after the [seal](#sealing) |
+
+```mermaid
+flowchart LR
+  user["Create codeman-agent,<br/>close the runner's home"] --> copy["Copy the checkout,<br/>without .codeman/action"]
+  copy --> files["Write the task file,<br/>the rules, workflow results"]
+  files --> run["Run the harness,<br/>up to agent-minutes"]
+  run --> check{"Output invalid,<br/>and 2 minutes left?"}
+  check -->|yes| fix["Resume the session once,<br/>with the problems"]
+  check -->|no| seal["Seal the sandbox"]
+  fix --> seal
+  seal --> collect["Collect the changes"]
+  collect --> upload["Upload codeman-result"]
+```
+
+### Before the agent runs
+
+- The runner's home is closed to other users before the agent starts.
+- The agent's environment is rebuilt from an allowlist: its own `HOME` and XDG directories, `TMPDIR` set to `/tmp` (outside its working tree, for scratch work), the job's `PATH` without entries in the runner's home, and the harness's variables.
+- Nothing else from the runner passes, including what `sudo`'s PAM session adds from `/etc/environment`.
+- Its credential is the run's OpenRouter key, or its token for a self-hosted gateway. It reaches the agent only through its environment, and it is the only credential the agent holds.
+
+### Time limit
+
+- The agent has `agent-minutes` to run: 50 in the template, inside the `agent` job's 60-minute timeout. Codeman then stops the harness.
+- The fix pass of the [agent output](#agent-output) gets what is left of that time, and runs only when at least 2 minutes are.
+
+### Sealing
+
+When the harness exits or is stopped, and after the fix pass, Codeman seals the sandbox before it collects:
+
+1. It removes the agent's scheduled work: `cron`, `at`, and a systemd user service kept alive by lingering.
+2. It locks the account.
+3. It kills every process of that user, and checks none survive.
+4. It takes the agent's home and working tree away from it: `chown` to root, without following symlinks.
+
+So no process the agent left can change a path while root reads it.
+
+### Collecting
+
+1. Collection first refuses a working tree that is a symbolic link, since the agent owns its home.
+2. Codeman finds changes with `git status`, using the original checkout's `.git` against the agent's copy. The agent's `.git` is never used.
+3. Git does not enter submodules, whose repositories and configuration the agent controls, so submodules are not collected.
+4. Untracked files that the `.gitignore` files of the agent's copy ignore, as the agent left them, are not collected.
+5. Codeman copies each changed path only after a check that opens nothing classes it a regular file. So root never follows a link out of the sandbox, or blocks on a named pipe. Changed files are copied without following symlinks.
+
+Only regular files are copied. These are listed as changed without their content:
+
+- symlinks;
+- special files, such as named pipes and sockets;
+- directories that git lists as one entry, such as a repository the agent cloned or created inside the working tree;
+- a path that cannot be copied, so one path never costs the run its result.
+
+`apply` drops them all as not regular files, and the run comment lists them ([change policy](changes.md#change-policy)).
+
+### Codeman's own checkout
+
+The `agent` job puts Codeman's checkout in the workspace, at `.codeman/action`, after the repository's checkout.
+
+- It is left out of the agent's copy and of the changes Codeman collects, wherever the workflow puts it inside the workspace.
+- The original, which runs, is in the runner's home, out of the agent's reach.
+- No Codeman code runs after the agent in that job: the action has no post step.
+- Under `.codeman/`, it would never reach the task branch anyway: `apply` drops every change there ([change policy](changes.md#change-policy)).
 
 ## Agent rules
 
-Every agent run gets Codeman's working rules: every `##` section of Codeman's own [`AGENTS.md`](../../AGENTS.md) (language, documentation, plans, commits, third-party code, third-party documentation, decisions), after a short section on applying them without a person to ask. They come from Codeman's checkout at `CODEMAN_COMMIT_SHA`, so they change only when that variable does. The agent job writes them to `.codeman/rules.md` in the agent's copy, and the harness loads that file as instructions next to the repository's `AGENTS.md` (OpenCode: the `instructions` setting). The repository's files are not changed.
+Every [agent run](../glossary.md#agent-run) gets Codeman's working rules: every `##` section of Codeman's own [`AGENTS.md`](../../AGENTS.md), after a short section on applying them without a person to ask. The sections are language, documentation, plans, commits, third-party code, third-party documentation, and decisions.
 
-- The repository's `AGENTS.md` (or `CLAUDE.md`) wins for its own conventions, such as where documentation lives or which language it uses. The rules in the task file always hold: plan path and format, output file, protected paths, no secrets.
-- A section the repository's file already contains is left out: when 60% or more of its three-word sequences appear there, ignoring case and punctuation. So a repository that copied Codeman's `AGENTS.md`, even with edits, does not get it twice. The job's log lists the sections left out.
+- They come from Codeman's checkout at `CODEMAN_COMMIT_SHA`, so they change only when that variable does.
+- The agent job writes them to `.codeman/rules.md` in the agent's copy. The harness loads that file as instructions next to the repository's `AGENTS.md` (OpenCode: the `instructions` setting).
+- The repository's files are not changed.
+
+Which rules win:
+
+- The repository's `AGENTS.md` (or `CLAUDE.md`) wins for its own conventions, such as where documentation lives or which language it uses.
+- The rules in the task file always hold: plan path and format, output file, protected paths, no secrets.
+
+A section the repository's file already contains is left out: when 60% or more of its three-word sequences appear there, ignoring case and punctuation. So a repository that copied Codeman's `AGENTS.md`, even with edits, does not get it twice. The job's log lists the sections left out.
 
 ## Agent output
 
-The agent reports in `.codeman/output.json`: a summary and decisions when planning; a summary and the route when routing ([routing](../tasks/stages.md#routing)); and a status, a summary, a reason, a commit message and decisions in a routed stage. What it writes there ends up in comments on GitHub, which hold at most 65,536 characters, so each text has a limit; see [settings](../settings/reference.md).
+The agent reports in `.codeman/output.json`.
 
-- The prompt states the limits. Codeman accepts each text up to twice its limit, without telling the agent: LLMs count characters poorly, and a text a little too long is not worth losing a run. The commit message's limit is 1,000 characters.
-- Counts have no margin: at most `max-decisions` decisions, with 2 to `max-options` options each.
-- All decisions of one output together (titles, questions and labels) may have at most 50,000 characters; the agent is told 25,000.
-- When the harness exits, the agent job checks the output as `apply` will, reading the file as the agent while the sandbox is still live. If it is missing or invalid, or a text would be cut, and the harness did not run out of time and at least two minutes of the agent's time are left, it continues the agent's session once with the problems, stated with the limits the agent was told. A fix that fails or runs out of time leaves the first outcome.
-- `apply` validates the output again. A text still longer than twice its limit is cut, and the run comment lists it under Problems. Any other problem blocks the task.
+| Agent run | Reports |
+| --- | --- |
+| Planning | A summary and decisions |
+| Routing | A summary and the route ([routing](../tasks/stages.md#routing)) |
+| A routed stage | A status, a summary, a reason, a commit message and decisions |
+
+What it writes there ends up in comments on GitHub, which hold at most 65,536 characters, so each text has a limit; see [settings](../settings/reference.md).
+
+| Limit | The agent is told | Codeman accepts |
+| --- | --- | --- |
+| Each text | Its limit | Up to twice its limit |
+| The commit message | 1,000 characters | Up to twice that |
+| Decisions per output | `max-decisions` | The same: counts have no margin |
+| Options per decision | 2 to `max-options` | The same |
+| All decisions of one output together: titles, questions and labels | 25,000 characters | 50,000 characters |
+
+The margin is not told to the agent: LLMs count characters poorly, and a text a little too long is not worth losing a run.
+
+### The fix pass
+
+1. When the harness exits, the agent job checks the output as `apply` will. It reads the file as the agent, while the sandbox is still live.
+2. If the output is missing or invalid, or a text would be cut, the job continues the agent's session once with the problems. It states them with the limits the agent was told.
+3. It does so only when the harness did not run out of time, and at least two minutes of the agent's time are left.
+4. A fix that fails or runs out of time leaves the first outcome.
+
+`apply` validates the output again. A text still longer than twice its limit is cut, and the run comment lists it under Problems. Any other problem blocks the task.
