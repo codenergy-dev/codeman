@@ -1,22 +1,170 @@
 # Data layout
 
-What belongs to an organization, the repositories' owner (a user account is its own organization), is under it: its runs and events, which the budgets read. What a [pool](../runs/batches.md#pools) of organizations shares is under the pool, named by its ID (`organization-a+organization-b`, or the organization's login alone): the pod registry, the Serverless endpoints' runs, the board and the batches. The cache of fits depends on no organization. One project can serve several organizations and pools. Owners, repositories and pools are lowercase, as GitHub compares them ([`src/store/layout.ts`](../../src/store/layout.ts)).
+This page lists the documents Codeman keeps in its [backend](../glossary.md#backend): where each lives, which job writes and reads it, and its fields ([`src/store/layout.ts`](../../src/store/layout.ts)).
 
-| Path | One document per | Fields |
+- What belongs to an organization, the repositories' owner, is under it: its runs and events, which the budgets read. A user account is its own organization.
+- What a [pool](../glossary.md#pool-of-organizations) shares is under the pool, named by its ID ([pools](../runs/batches.md#pools)): the pod registry, the Serverless endpoints' runs, the board and the batches.
+- The [cache of fits](../glossary.md#cache-of-fits) depends on no organization.
+- One project can serve several organizations and pools.
+- Owners, repositories and pools are lowercase, as GitHub compares them.
+
+## Overview
+
+```text
+organizations/{owner}                        the organization's pool declaration
+├── runs/{run}                               ledger runs
+├── events/{run}-{type}[-{subject}]          what the jobs did
+└── pods/, contexts/, endpoints/             from before pools: history
+pools/{pool}
+├── pods/{nonce}                             the pod registry
+├── board/{owner%2Fname}                     each repository's ready tasks
+├── batches/{run}-{attempt}-{n}              batches on one pod
+└── endpoints/{endpoint}/runs/{run}-{reservation}
+                                             Serverless runs' billed times
+contexts/{key}                               the cache of fits
+```
+
+## Collections
+
+| Path | Written by | Read by | Lifetime |
+| --- | --- | --- | --- |
+| `organizations/{owner}` | `select`, which declares the organization's pool | The `select` of every member of the pool | Rewritten by each `select` |
+| `organizations/{owner}/runs/{run}` | `select`, `open-key`, `close-key` | `open-key` (the reservation), `close-key` (the task's total, the split), and the job that records a pod's untracked time | Kept |
+| `organizations/{owner}/events/…` | `select` and the [key jobs](../glossary.md#key-jobs) | No job: they are an audit | Kept |
+| `organizations/{owner}/pods`, `contexts`, `endpoints` | No job any more | The budgets, for the older pods' untracked time | History from before pools ([upgrading](../installation/upgrading.md#gpu-batches-across-repositories)) |
+| `pools/{pool}/pods/{nonce}` | `open-key` (claim, register, sweep), `close-key` and `release-pod` (leave), and the job that terminates the pod (untracked time) | `open-key`; the budgets, for untracked time | Kept, `live: false` once ended |
+| `pools/{pool}/board/{owner%2Fname}` | `select`, which rewrites its repository's snapshot whole | The pool's `select`s | Read until `expiresAt`, 25 hours later |
+| `pools/{pool}/batches/{run}-{attempt}-{n}` | `select` | `select`; `open-key`, for a pod's room | Read until `expiresAt`, 30 minutes after it forms; kept as history |
+| `pools/{pool}/endpoints/{endpoint}/runs/…` | `close-key` | `close-key`, for the split | Kept |
+| `contexts/{key}` | The `open-key` that created a pod, once the pod serves with a context it searched for | The `open-key` that creates a pod | Replaced on each search |
+
+## Fields
+
+### Organization
+
+`organizations/{owner}`: one document per organization ([the handshake](../runs/batches.md#pools)).
+
+| Field | Value |
+| --- | --- |
+| `pool` | The ID of the pool it declares |
+| `members` | The pool's organizations |
+| `declaredAt` | When `select` wrote it |
+
+### Ledger runs
+
+`organizations/{owner}/runs/{run}`: one [ledger run](../glossary.md#ledger-run) per agent run. Each phase adds its fields; the states are in [budget](../budget/budget.md#a-ledger-runs-states).
+
+| Phase | Fields |
+| --- | --- |
+| Picked, by `select` | `repository` (`owner/name`), `task`, `workflowRun`, `attempt`, `month` (`2026-10`), `status: picked`, `pickedAt`, `stage`, `model`, `provider` (`openrouter`, `runpod-pod` or `runpod-serverless`), `profile`; `batch`, the [batch](../glossary.md#batch) of a pod's run |
+| Reserved, by `open-key` | `status: open`, `reservedAt`, `expiresAt`, `limit`; `carried`, on the task's first run in the ledger |
+| Opened | `openedAt` |
+| Refused | `status: refused`, `refusedAt`, `refusal` (the `open-key` status), `reason` |
+| Failed | `status: failed`, `failedAt`, `reason`, and a `cost` of 0 |
+| Closed, by `close-key` | `status: closed`, `closedAt`, `cost`, and when known `inputTokens`, `outputTokens`, `requests`, `maxInputTokens`, `tokensPerSecond`, `pod` and `podCost`, `endpoint` (Serverless) |
+| Reopened | `spentBefore`, when `open-key` ran again after the run closed |
+| Refreshed | A new `cost` or `podCost`; `status: expired` |
+
+Only a refresh of an OpenRouter run's cost from its key writes `expired`. Other runs whose reservation expired stay `open`, and the budgets tell from `expiresAt`.
+
+### Events
+
+`organizations/{owner}/events/{run}-{type}[-{subject}]`: one document per thing a job did. Every event has `type`, `repository`, `task`, `run`, `workflowRun`, `attempt` (the job's), `job` and `at`, plus its type's own fields:
+
+| Type | Own fields | Written by |
 | --- | --- | --- |
-| `organizations/{owner}` | Organization | `pool` (the pool's ID it declares), `members`, `declaredAt` |
-| `organizations/{owner}/runs/{run}` | Run of a task's agent | `repository` (`owner/name`), `task`, `workflowRun`, `attempt`, `month` (`2026-10`), `status` (`picked`, `open`, `refused`, `failed`, `closed`, `expired`: only a refresh of an OpenRouter run's cost from its key writes `expired`; other runs whose reservation expired stay `open`, and the budgets tell from `expiresAt`), `pickedAt`, `stage`, `model`, `provider` (`openrouter`, `runpod-pod` or `runpod-serverless`; runs picked before providers have the account, `openrouter` or `runpod`, and a `mode`: `openrouter`, `pod` or `serverless`), `profile`; then `reservedAt`, `expiresAt`, `limit`, `carried` (on the task's first run in the ledger) and `openedAt`, or `refusedAt`, `refusal` and `reason`, or `failedAt`, `reason` and a `cost` of 0; then `closedAt`, `cost`, `inputTokens`, `outputTokens`, `requests`, `maxInputTokens`, `tokensPerSecond`, `pod` and `podCost`, `endpoint` (Serverless), when known; `spentBefore` when `open-key` ran again after the run closed; `batch`, the batch of a pod's run |
-| `organizations/{owner}/events/{run}-{type}[-{subject}]` | Thing a job did | `type`, `repository`, `task`, `run`, `workflowRun`, `attempt` (the job's), `job`, `at`, and the type's own fields |
-| `pools/{pool}/pods/{nonce}` | Pod Codeman created, named by the nonce of its admin token | `settings` (a hash), `model`, `gpuType`, `image`, `reuse`, `provider` (`runpod`, the cloud that runs and bills the pod), `account` (the GPU account's fingerprint), `organization` (its creator's), `capacity` (the runs it serves at once, when limited), `batch` (its creator's), `status` (`creating`, `serving`, `abandoned`, `ended`), `live`, `claimedAt`, `claimedBy`, `creatingUntil`, `leases` (`holder`: `owner/name#task`, `run`, `kind`: `run` or `keep`, `until`), `seats` (holders, by seat); then `pod`, `createdAt`, `pricePerSecond`; `endedAt` and `reason`; when a job terminated it, `terminatedAt`, `month`, `lifeCost`, `counted`, `untracked` and `untrackedBy` (each organization's share) |
-| `pools/{pool}/board/{owner%2Fname}` | Repository's snapshot of ready tasks | `repository`, `branch` (default), `workflow` (its Codeman workflow's file), `updatedAt`, `expiresAt`, `tasks` (`number`, `stage`, `updatedAt` (the issue's), `since`, `offers`: JSON text of each count's `tasks`, `profile` and `key`) |
-| `pools/{pool}/batches/{run}-{attempt}-{n}` | Batch of tasks on one pod, named by the run that formed it | `key`, `profile`, `size`, `formedBy` (`repository`, `workflowRun`, `attempt`), `formedAt`, `expiresAt`, `members` (`repository`, `number`, `status`: `reserved`, `started` or `dropped`) |
-| `contexts/{key}` | Combination of a pod's image, model, GPU type and Ollama settings, or engine and vLLM settings, by their hash (`fitKey` in [`src/inference/selfhosted.ts`](../../src/inference/selfhosted.ts)) | The context that fitted it: `image`, `model`, `digest` (the model's, from Ollama), `gpuType`, `ollama` (the variables, without `OLLAMA_CONTEXT_LENGTH`), `contextLength`, `modelContextLength`, `parallel` (the requests Ollama serves at once), `loads`, `pod` (the pod that searched), `recordedAt`. A vLLM pod's has `engine: vllm`, `vllm` (its settings, without `max-model-len`) instead of `ollama` and `digest`, `concurrency` and `cacheTokens` (the requests of the context and the tokens its K/V cache holds), and `loads` counts vLLM's starts ([vLLM settings](../settings/vllm.md#memory)) |
-| `pools/{pool}/endpoints/{endpoint}/runs/{run}-{reservation}` | Serverless run's time on the endpoint's worker, by the run and its reservation's time in milliseconds | `run`, `repository`, `task`, `reservedAt`, `from` and `to` (its billed times' bounds), `pricePerSecond`, `busy` (its billed times, as JSON text of `[from, to]` pairs in milliseconds), `estimate` (its gateway's), `share` (the last split's), `splitAt` |
+| `task-picked` | `action`, `stage` | `select`, for every task it picks, also those without an agent |
+| `key-opened` | `limit` | `open-key` |
+| `key-refused` | `status`, `reason` | `open-key` |
+| `key-failed` | `reason` | `open-key` |
+| `pod-created`, `pod-joined`, `pod-terminated` | `pod`, also the subject; `reason` for a termination | The key jobs |
+| `run-stopped` | `result`: the agent job's, when it did not succeed | `close-key` |
+| `run-closed` | `cost` | `close-key` |
 
-- A run's ID is `{workflow run}-{attempt}-{task}`: the workflow run, the attempt in which `select` picked the task, and the task. Workflow runs' IDs grow with time, so runs sort in the order they started. `select` gives it to the task's jobs (its `ledger-run` output). A re-run of failed jobs keeps the attempt that picked the task, and so writes the same run; a re-run of the whole workflow picks again, as a new run.
-- Event types: `task-picked` (`action`, `stage`; for every task `select` picks, also those without an agent), `key-opened` (`limit`), `key-refused` (`status`, `reason`), `key-failed` (`reason`), `pod-created`, `pod-joined` and `pod-terminated` (`pod`, also the subject; `reason` for a termination), `run-stopped` (`result`: the agent job's, when it did not succeed) and `run-closed` (`cost`).
-- The queries the budgets need, an organization's or a repository's runs of a month, a task's runs, a pod's runs, and the pods that ended in a month, filter on equality only, which Firestore's automatic single-field indexes serve; so do the registry's, the pool's live pods, of some settings or all. The split's, an endpoint's runs whose times end after a moment, is a range on one field, which they serve too.
-- A pod's document is written before the pod exists, by the task that takes the creation lease, and stays after it ends, as its record.
-- The cache of fits is read by the `open-key` that creates a pod, and written by it once the pod serves with a context it searched for, replacing what was there ([memory](../settings/ollama.md#memory)). It holds no secret.
-- **Before pools**, pods, the cache of fits and the endpoints' runs were under `organizations/{owner}/` (`pods`, `contexts`, `endpoints`). They stay as history, unread, except the older pods' untracked time, which the organization's month still counts.
-- The board's snapshots are rewritten whole by each `select` of their repository, and read only until `expiresAt`, 25 hours later; batches are read only until theirs, 30 minutes after they form, and stay as history ([batches across repositories](../runs/batches.md)).
+### Pod registry
+
+`pools/{pool}/pods/{nonce}`: one document per pod Codeman created, named by the nonce of its admin token ([pods](../inference/pods.md#the-registry)). The task that takes the creation lease writes it before the pod exists.
+
+| Field | Value |
+| --- | --- |
+| `settings` | The hash of the [pod settings](../glossary.md#pod-settings) |
+| `model`, `gpuType`, `image`, `reuse` | What it serves |
+| `provider` | `runpod`: the cloud that runs and bills the pod |
+| `account` | The GPU account's fingerprint |
+| `organization` | Its creator's |
+| `capacity` | The runs it serves at once, when limited |
+| `batch` | Its creator's batch |
+| `status` | `creating`, `serving`, `abandoned` or `ended` |
+| `live` | Whether the registry holds it: until it ends |
+| `claimedAt`, `claimedBy`, `creatingUntil` | The creation lease |
+| `leases` | Each with `holder` (`owner/name#task`), `run`, `kind` (`run` or `keep`) and `until` |
+| `seats` | The holders, by [seat](../glossary.md#seat) |
+| `pod`, `createdAt`, `pricePerSecond` | Once the pod exists |
+| `endedAt`, `reason` | Once it ends |
+| `terminatedAt`, `month`, `lifeCost`, `counted`, `untracked`, `untrackedBy` | When a job terminated it: its [untracked time](../glossary.md#untracked-time), and each organization's share of it |
+
+### Board
+
+`pools/{pool}/board/{owner%2Fname}`: one snapshot of ready tasks per repository ([the board](../runs/batches.md#the-board)).
+
+| Field | Value |
+| --- | --- |
+| `repository` | `owner/name` |
+| `branch` | The default branch |
+| `workflow` | Its Codeman workflow's file |
+| `updatedAt`, `expiresAt` | When it was written, and until when it is read |
+| `tasks` | Each with `number`, `stage`, `updatedAt` (the issue's), `since`, and `offers`: JSON text of each count's `tasks`, `profile` and `key` |
+
+### Batches
+
+`pools/{pool}/batches/{run}-{attempt}-{n}`: one batch of tasks on one pod, named by the workflow run that formed it ([forming batches](../runs/batches.md#forming-batches)).
+
+| Field | Value |
+| --- | --- |
+| `key`, `profile`, `size` | What the batch serves, and its count |
+| `formedBy` | `repository`, `workflowRun`, `attempt` |
+| `formedAt`, `expiresAt` | When it formed, and until when it is read |
+| `members` | Each with `repository`, `number`, and `status`: `reserved`, `started` or `dropped` |
+
+### Cache of fits
+
+`contexts/{key}`: one combination of a pod's image, model, GPU type and engine settings, by their hash (`fitKey` in [`src/inference/selfhosted.ts`](../../src/inference/selfhosted.ts)). It holds the context that fitted it, and no secret ([Ollama's memory](../settings/ollama.md#memory)).
+
+| Field | Ollama | vLLM |
+| --- | --- | --- |
+| `image`, `model`, `gpuType`, `contextLength`, `modelContextLength`, `pod` (the pod that searched), `recordedAt` | Yes | Yes |
+| `digest` | The model's, from Ollama | No |
+| `ollama` | The variables, without `OLLAMA_CONTEXT_LENGTH` | No |
+| `parallel` | The requests Ollama serves at once | No |
+| `engine` | No | `vllm` |
+| `vllm` | No | Its settings, without `max-model-len` |
+| `concurrency`, `cacheTokens` | No | The requests of the context, and the tokens its K/V cache holds ([vLLM's memory](../settings/vllm.md#memory)) |
+| `loads` | Ollama's loads | vLLM's starts |
+
+### Serverless endpoint runs
+
+`pools/{pool}/endpoints/{endpoint}/runs/{run}-{reservation}`: one Serverless run's time on the endpoint's worker, by the run and its reservation's time in milliseconds ([splitting](../inference/serverless.md#splitting-shared-worker-time)).
+
+| Field | Value |
+| --- | --- |
+| `run`, `repository`, `task`, `reservedAt` | The run |
+| `from`, `to` | The bounds of its billed times |
+| `pricePerSecond` | The worker's price |
+| `busy` | Its billed times, as JSON text of `[from, to]` pairs in milliseconds |
+| `estimate` | Its gateway's estimate |
+| `share`, `splitAt` | The last split's share, and when it ran |
+
+## IDs
+
+- A run's ID is `{workflow run}-{attempt}-{task}`: the [workflow run](../glossary.md#workflow-run), the attempt in which `select` picked the task, and the task.
+- Workflow runs' IDs grow with time, so runs sort in the order they started.
+- `select` gives the ID to the task's jobs, in its `ledger-run` output.
+- A re-run of failed jobs keeps the attempt that picked the task, and so writes the same run. A re-run of the whole workflow picks again, as a new run.
+
+## Queries and indexes
+
+Firestore's automatic single-field indexes serve every query:
+
+- The budgets' queries filter on equality only: an organization's or a repository's runs of a month, a task's runs, a pod's runs, and the pods that ended in a month.
+- So do the registry's: the pool's live pods, of some settings or all.
+- The split's query, an endpoint's runs whose times end after a moment, is a range on one field.

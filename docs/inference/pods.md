@@ -1,22 +1,235 @@
 # Pods
 
-Codeman keeps a [pool](../runs/batches.md#pools)'s pods in a registry in the [backend](../backend/backend.md) (`pools/{pool}/pods`): a document per pod, with the settings it serves, the GPU account's fingerprint, its capacity and batch, and the leases of the tasks that use or keep it ([data layout](../backend/data-layout.md)). The choices were made in the [pod registry plan](../plans/2026-10-07-pod-registry.md) and the [plan for GPU batches across repositories](../plans/2026-10-13-gpu-batches-across-repositories.md), which record their decisions.
+With `provider: runpod-pod`, Codeman creates [pods](../glossary.md#pod) on Runpod and shares each among the tasks that run on the same settings. This page explains how pods are shared, held and ended.
 
-1. **Orphans.** `open-key` lists the account's pods, then reads the registry's live pods of its account. It terminates the pods of its pool (`CODEMAN_POOL`) that no live document holds; the organization's pods from before pools (`CODEMAN_ORGANIZATION`, or `CODEMAN_REPOSITORY` of one of its repositories, without `CODEMAN_POOL`), which no registry reads any more; the pods the organization created for another pool, only when that pool's registry does not hold them either; and the registry's pods whose leases all expired, or that stopped or failed; a pod the provider no longer has leaves the registry. It never touches a pod without Codeman's environment, another pool's that another organization created, nor a pod of another account. A task that keeps a pod of other settings, as after a model change, drops that keep lease. Each termination is logged with its reason, and recorded as a `pod-terminated` event. A creator writes its pod's document before it creates the pod, and the sweep lists pods before it reads the documents, so a pod being created is always held.
-2. **Claiming.** In one store transaction, `open-key` reads the live pods of its settings (a hash of model, GPU type, image and `pod-reuse`, and the [Ollama settings](../settings/ollama.md) when there are some, the derived `num-parallel` included; for a vLLM pod, the engine and its [vLLM settings](../settings/vllm.md), the derived `max-num-seqs` included) on its GPU account (the account's fingerprint, an HMAC of a fixed label with the key) and joins the oldest that serves them and has room, with a run lease (see [shared pods](#shared-pods)); or, while another task holds the settings' creation lease, waits, looking again every 10 seconds; or takes the creation lease, for 5 minutes, and creates the pod. Tasks that claim at once see each other's writes, or run their transaction again: one creates, the others wait for its pod. A creation lease that expires, as when its job died, goes to the next task, and a pod created after its creator's lease was taken is terminated; its creator joins the other. A task claims 40 times at most (its waits, and the pods it could not create or join), so its waits for another task's creation add up to about 7 minutes at most; then `open-key` fails, and the task becomes `codeman:blocked` ([budget](../budget/budget.md)).
-3. **Creating.** Codeman's image for the engine, pinned by digest, on Secure Cloud, with the model, the engine (`CODEMAN_ENGINE`), the admin token's hash, its limits, the Ollama settings (`CODEMAN_OLLAMA`, only when there are some), the GPU type's memory from Runpod's catalog (`CODEMAN_GPU_MEMORY_GB`), the context that fitted the same settings before, with its model's digest (`CODEMAN_FIT`, from the cache of fits, when there is one), and the creating organization, the pool (`CODEMAN_POOL`), the account's fingerprint (`CODEMAN_ACCOUNT`, never the key), the settings' hash and the document's nonce in the environment. A vLLM pod gets its vLLM settings (`CODEMAN_VLLM`) instead of Ollama's and the GPU's memory, a host with CUDA 13.0 or newer (`minCudaVersion`), and a container disk sized for its model; before creating it, `open-key` checks that such a host has room and that Hugging Face serves the model publicly, and stops the run otherwise, at no cost ([vLLM settings](../settings/vllm.md#cuda)). The run's cost starts with the pod, since Runpod bills the image and model pulls. It waits up to 25 minutes for the gateway to report the model served, and ends and terminates a pod that does not. A gateway that reports its start failed, such as a model that does not fit the GPU, fails the run at once with its reason; the tasks that waited for the pod fail with it rather than create another.
-4. **Starting.** In the pod, the gateway starts Ollama with the pod's Ollama settings, and pulls the model. It reads the model's architecture and own context length (`/api/show`) and its digest and size (`/api/tags`). With a `context-length` in the settings, it loads the model with it; otherwise it restarts Ollama with each context it tries, from the cached one or an estimate, down to 64000 tokens, and serves the largest that fits ([memory](../settings/ollama.md#memory)). After each load it checks with `/api/ps` that the model is wholly on the GPU. Then it reports the fit in its status, which `open-key` logs, gives the agent as its context length, and, for a pod the task created after a search, records in the cache of fits. A vLLM pod's gateway starts vLLM instead, with its settings and a context whose K/V cache holds `max-num-seqs` requests, restarting it at most twice to find one, then probes a tool call ([memory](../settings/vllm.md#memory), [tool calls](../settings/vllm.md#tool-calls)). A start that fails is reported in the status for 2 minutes, then the pod terminates itself.
-5. **Leases.** A task holds one lease on a pod: a run lease while its run is open, for 2 hours at most, as a reservation; then, with `pod-reuse: task` (the default), a keep lease from its `close-key`, for 15 minutes, which keeps the pod for the next run on its settings. `close-key` ends the run on the gateway and reads its usage, trying 3 times, 5 seconds apart, since calling `/admin/end` again returns the same usage: the run's cost is the pod's time since the run started, at its billed rate, or its share of a shared pod. Without the gateway's figure (it never answered, or did not know the run, as after a restart, which `close-key` warns of), a run on a shared pod counts the pod's time since it started, capped at its limit, which its share never passes, and `close-key` warns that the cost is an estimate ([choice 4 of the plan for keeping a spent pod for its close](../plans/2026-10-15-keep-a-spent-pod-for-its-close.md)). `release-pod` ends the task's keep lease when `apply` says the task does not go on (it is not ready, routing or in a routed stage). The job that leaves no unexpired lease on the pod ends it in the registry and terminates it: `close-key` with `pod-reuse: run` or when the gateway does not answer, or `release-pod`. A pod whose gateway did not answer a close, or that a task could not join, takes no new task, and stays while other leases hold it. When the job cannot reach the registry, the pod stays, and terminates itself once no run uses it, after 15 idle minutes (step 6).
-6. A pod also terminates itself: it asks Runpod to, with the pod-scoped key Runpod gives it, and stops its container either way. It does so when its model is not served within 25 minutes of its creation (and at once when its container restarts after that), 2 minutes after its start failed, and after 15 minutes without a run being served. The gateway stops a run that spent its budget or went 30 minutes without a request, alone or with every other run on the pod; from then on the run takes none of the pod's time. A pod left without a run that way waits the same 15 minutes, counted from the last stop, for the key jobs to end its runs and read their usage, and then for the next runs of the tasks that keep it; when a `close-key` or `release-pod` leaves no lease on it, that job terminates it at once ([the plan for keeping a spent pod for its close](../plans/2026-10-15-keep-a-spent-pod-for-its-close.md)). Codeman's pinned images do so from those published from `e26a8c9`. Pods on images built before that plan, such as a pod created before that pin or an older `pod-image`, terminate at once when every run on them is spent or silent.
+Codeman keeps a [pool](../glossary.md#pool-of-organizations)'s pods in its [pod registry](../glossary.md#pod-registry), in the [backend](../backend/backend.md) (`pools/{pool}/pods`). Each pod has a document with:
+
+- the [pod settings](../glossary.md#pod-settings) it serves;
+- the GPU account's fingerprint;
+- its [capacity](../glossary.md#capacity) and [batch](../glossary.md#batch);
+- the [leases](../glossary.md#lease) of the tasks that use or keep it.
+
+The fields are in [data layout](../backend/data-layout.md#pod-registry). The choices were made in the [pod registry plan](../plans/2026-10-07-pod-registry.md) and the [plan for GPU batches across repositories](../plans/2026-10-13-gpu-batches-across-repositories.md), which record their decisions.
 
 ## Shared pods
 
-The pool's tasks whose pods' settings are the same share one pod, whether they run at once or one after another, in any of its repositories ([decision 2 of the pod registry plan](../plans/2026-10-07-pod-registry.md)), up to the pod's capacity. Each keeps its own run, token, limit and share.
+The pool's tasks whose pod settings are the same share one pod, whether they run at once or one after another, in any of its repositories ([decision 2 of the pod registry plan](../plans/2026-10-07-pod-registry.md)), up to the pod's capacity. Each task keeps its own run, token, limit and share.
 
-**Capacity.** A pod's capacity is its parallel requests: the `OLLAMA_NUM_PARALLEL` or the `max-num-seqs` it gets, the profile's count by default. It takes a task only while its unexpired run leases and the tasks of its [batch](../runs/batches.md#on-the-pod) that have not joined are fewer than that; a task of its batch always joins it, and a task that finds every pod of its settings full creates another. So two batches of 4 on the same settings get two pods. A pod that gets neither, on an older image, has no limit.
+### Capacity
 
-1. **Seats.** The registry gives each task a seat on the pod when it first joins it, for the pod's life, and the gateway names the task's runs by it: two repositories' tasks with the same issue number never mix.
-2. **Starting.** Each task starts its own run on the pod, with its own token and limit. A task that waited for the pod's start shares it: its run's cost starts with the pod's creation; one that joins a pod already serving starts then.
-3. **Splitting.** Each second of the pod is split evenly among the runs on it; a second with no run goes to the tasks that keep the pod then ([decision 3 of the parallel tasks plan](../plans/2026-10-06-parallel-tasks-and-inference-profiles.md)). The gateway measures both, since it sees every run; `release-pod` releases the task on the gateway before it ends its keep lease.
-4. **Keeping.** A kept pod serves the next run on its settings, whichever task kept it, of whichever repository of the pool; keep leases do not count against its capacity, so it serves the next batch.
-5. **Older images.** The pod image pinned before shared pods serves one run at a time: Codeman lists it (`SINGLE_RUN_IMAGES` in [`ollama.ts`](../../src/inference/ollama.ts)), and its pods' settings include the task, so each task has a pod of its own, which it keeps for its next run. Any other image (`pod-image`) must serve several runs: a pod whose gateway reports an older `version` fails the run, and the error says to list its image. The images pinned before Ollama settings cannot apply them: a run with Ollama settings stops on them before any pod is created, and runs without get neither the derived `num-parallel` nor the computed context, nor the check of the GPU, and keep their settings key ([Ollama settings](../settings/ollama.md#pod-images)).
+A pod's capacity is its [parallel requests](../glossary.md#parallel-requests): the `OLLAMA_NUM_PARALLEL` or the `max-num-seqs` it gets, the profile's count by default.
+
+- A pod takes a task only while its unexpired run leases, and the tasks of its [batch](../runs/batches.md#on-the-pod) that have not joined, are fewer than its capacity.
+- A task of its batch always joins it.
+- A task that finds every pod of its settings full creates another. So two batches of 4 on the same settings get two pods.
+
+### Seats
+
+The registry gives each task a [seat](../glossary.md#seat) on the pod when it first joins it, for the pod's life. The [gateway](../glossary.md#gateway) names the task's runs by it, so two repositories' tasks with the same issue number never mix.
+
+### Starting
+
+Each task starts its own run on the pod, with its own token and limit.
+
+- A task that waited for the pod's start shares it: its run's cost starts with the pod's creation.
+- A task that joins a pod already serving starts then.
+
+### Splitting
+
+Each second of the pod is split evenly among the runs on it ([decision 3 of the parallel tasks plan](../plans/2026-10-06-parallel-tasks-and-inference-profiles.md)). A second with no run, [kept time](../glossary.md#kept-time), goes to the tasks that keep the pod then.
+
+For example, tasks A and B run on a pod together for 10 minutes: each run counts 5 minutes of the pod's price. Then A's run closes and A keeps the pod for 2 minutes while B's run goes on: B counts those 2 minutes whole. Then B closes too, and both keep the pod for 1 minute with no run: each counts 30 seconds.
+
+The gateway measures both runs' shares and the kept time, since it sees every run. `release-pod` releases the task on the gateway before it ends the task's keep lease.
+
+### Keeping
+
+A kept pod serves the next run on its settings, whichever task kept it, of whichever repository of the pool. Keep leases do not count against its capacity, so a kept pod also serves the next batch.
+
+## Leases
+
+A task holds one lease on a pod at a time.
+
+```mermaid
+stateDiagram-v2
+  [*] --> run: open-key joins or creates the pod
+  run --> keep: close-key, with pod-reuse task, when the gateway answered
+  run --> [*]: close-key, with pod-reuse run or a silent gateway
+  run --> [*]: 2 hours pass
+  keep --> run: the task's next run joins the pod
+  keep --> [*]: release-pod, 15 minutes, or the sweep
+```
+
+| Lease | Taken by | Lasts | Ends when | Counts against capacity |
+| --- | --- | --- | --- | --- |
+| Creation | The `open-key` that creates the pod, on its settings | 5 minutes | The pod is registered; or it expires, as when its job died, and the next task takes it | Not a run lease |
+| Run | `open-key`, when it joins or creates the pod | 2 hours at most, as a [budget reservation](../budget/budget.md) | `close-key` turns it into a keep lease or drops it | Yes |
+| Keep | `close-key`, with `pod-reuse: task` (the default) and a gateway that answered | 15 minutes | `release-pod`, the task's next run, its expiry, or the sweep when the task now runs on other settings | No |
+
+- `release-pod` ends the task's keep lease when `apply` says the task does not go on: it is not ready, routing or in a routed stage.
+- The job that leaves no unexpired lease on the pod ends it in the registry and terminates it. That is `close-key` with `pod-reuse: run` or when the gateway does not answer, or `release-pod`.
+- A pod whose gateway did not answer a close, or that a task could not join, takes no new task. It stays while other leases hold it.
+- When the job cannot reach the registry, the pod stays. It terminates itself once no run uses it, after 15 idle minutes ([self-termination](#self-termination)).
+
+## Timers
+
+| Timer | Value |
+| --- | --- |
+| Creation lease | 5 minutes |
+| Claims while another task creates the pod | Every 10 seconds, 40 claims at most: about 7 minutes |
+| Run lease | 2 hours at most |
+| Keep lease | 15 minutes |
+| The model served | Within 25 minutes of the pod's creation |
+| A failed start reported | 2 minutes, then the pod terminates itself |
+| A pod with no run served | 15 minutes, then it terminates itself |
+| A run without a request | 30 minutes, then the gateway stops it |
+| The gateway's checks of its runs and its pod | Every 15 seconds |
+| `close-key`'s calls to `/admin/end` | 3 tries, 5 seconds apart |
+
+## How it works
+
+### The registry
+
+```mermaid
+stateDiagram-v2
+  [*] --> creating: a task takes the creation lease
+  creating --> serving: the pod exists and its ID is registered
+  creating --> ended: the creation lease expired, or the pod was not created
+  serving --> abandoned: the gateway missed a close, or a task could not join
+  serving --> ended: no unexpired lease, or the pod stopped, failed or is gone
+  abandoned --> ended: no unexpired lease, or the pod stopped, failed or is gone
+  ended --> [*]
+```
+
+| Status | Takes new tasks | Meaning |
+| --- | --- | --- |
+| `creating` | No: tasks wait for it while it has room | A task holds the creation lease; the pod has no ID yet |
+| `serving` | Yes, while it has room | The pod serves its settings' tasks |
+| `abandoned` | No | Its gateway did not answer a close, or a task could not join it; it stays while other leases hold it |
+| `ended` | No | `live` is false; the job that ended it terminated it. A pod that did not serve its model ends too |
+
+A creator writes its pod's document before it creates the pod. The document stays after the pod ends, as its record.
+
+### Opening a run
+
+```mermaid
+sequenceDiagram
+  participant K as open-key
+  participant R as Runpod
+  participant P as Pod registry
+  participant G as Pod gateway
+  K->>R: List the account's pods
+  K->>P: Read the pool's live pods
+  K->>R: Terminate the orphans
+  loop Every 10 s, 40 claims at most
+    K->>P: Claim the settings, in a transaction
+    alt A serving pod has room
+      P-->>K: Join, with a run lease and a seat
+    else Another task holds the creation lease
+      P-->>K: Wait
+    else
+      P-->>K: Create, with the creation lease
+    end
+  end
+  opt Create
+    K->>R: Create the pod
+    K->>P: Register its ID, now serving
+  end
+  K->>G: Poll /health, up to 25 minutes from the pod's creation
+  K->>G: POST /admin/run with the token's hash, the limit and the seat
+  K-->>K: Encrypt the token, output the gateway's URL
+```
+
+#### Sweeping orphans
+
+`open-key` first lists the account's pods, then reads the registry's live pods of its account.
+
+| Pod found | Action |
+| --- | --- |
+| A pod of its pool (`CODEMAN_POOL`) that no live document holds | Terminated |
+| The organization's pod from before pools: `CODEMAN_ORGANIZATION`, or `CODEMAN_REPOSITORY` of one of its repositories, without `CODEMAN_POOL`. No registry reads it any more | Terminated |
+| A pod the organization created for another pool, when that pool's registry does not hold it either | Terminated |
+| A registry pod whose leases all expired, or that stopped or failed | Ended in the registry, and terminated |
+| A registry pod whose creation lease expired | Ended in the registry |
+| A registry pod the provider no longer has | Leaves the registry |
+| This task's keep lease on a pod of other settings, as after a model change | The lease is dropped |
+| A pod without Codeman's environment, another pool's that another organization created, or a pod of another account | Never touched |
+
+Each termination is logged with its reason, and recorded as a `pod-terminated` event. The sweep lists pods before it reads the documents, and a creator writes its document first, so a pod being created is always held.
+
+#### Claiming
+
+In one store transaction, `open-key` reads the live pods of its pod settings on its GPU account. The settings are a hash of:
+
+- the model, GPU type, image and `pod-reuse`;
+- for an Ollama pod, the [Ollama settings](../settings/ollama.md) when there are some, the derived `num-parallel` included;
+- for a vLLM pod, the engine and its [vLLM settings](../settings/vllm.md), the derived `max-num-seqs` included.
+
+The account is its fingerprint: an HMAC of a fixed label with the account key. Then `open-key` does one of three things:
+
+1. It joins the oldest pod that serves the settings and has room, with a run lease ([shared pods](#shared-pods)).
+2. While another task holds the settings' creation lease, it waits, and claims again every 10 seconds.
+3. Otherwise, it takes the creation lease, for 5 minutes, and creates the pod.
+
+Tasks that claim at once see each other's writes, or run their transaction again: one creates, the others wait for its pod. A pod created after its creator's lease was taken is terminated, and its creator joins the other.
+
+A task claims 40 times at most, counting its waits and the pods it could not create or join. Its waits for another task's creation so add up to about 7 minutes at most. Then `open-key` fails, and the task becomes `codeman:blocked` ([budget](../budget/budget.md#outcomes-of-open-key)).
+
+#### Creating
+
+The pod runs Codeman's image for its [engine](../glossary.md#engine), pinned by digest, on Secure Cloud. Its environment holds:
+
+| Variable | Value |
+| --- | --- |
+| `CODEMAN_MODEL`, `CODEMAN_ENGINE` | The model and the engine |
+| `CODEMAN_ADMIN_SHA256` | The admin token's hash |
+| `CODEMAN_START_BY`, `CODEMAN_KEPT_IDLE_MINUTES`, `CODEMAN_RUN_IDLE_MINUTES` | Its limits ([timers](#timers)) |
+| `CODEMAN_OLLAMA` | An Ollama pod's settings, only when there are some |
+| `CODEMAN_GPU_MEMORY_GB` | An Ollama pod's GPU memory, from Runpod's catalog |
+| `CODEMAN_VLLM` | A vLLM pod's settings |
+| `CODEMAN_FIT` | The context that fitted the same settings before, from the [cache of fits](../glossary.md#cache-of-fits), when there is one; for Ollama, with its model's digest |
+| `CODEMAN_ORGANIZATION`, `CODEMAN_POOL` | The creating organization and its pool |
+| `CODEMAN_ACCOUNT` | The account's fingerprint, never the key |
+| `CODEMAN_POD_SETTINGS`, `CODEMAN_NONCE` | The settings' hash and the document's nonce |
+
+A vLLM pod also gets a host with CUDA 13.0 or newer (`minCudaVersion`), and a container disk sized for its model. Before creating it, `open-key` checks that such a host has room and that Hugging Face serves the model publicly. Otherwise it stops the run, at no cost ([vLLM settings](../settings/vllm.md#cuda)).
+
+The run's cost starts with the pod, since Runpod bills the image and model pulls. `open-key` waits up to 25 minutes for the gateway to report the model served, and ends and terminates a pod that does not.
+
+A gateway that reports its start failed, such as for a model that does not fit the GPU, fails the run at once, with its reason. The tasks that waited for the pod fail with it rather than create another.
+
+#### Starting
+
+In the pod, the gateway starts the engine with the pod's settings, finds the largest context that fits the GPU, and reports that [fit](../glossary.md#fit) in its status. How it fits is in [context and the GPU](../settings/pod-engines.md#context-and-the-gpu), and in [Ollama's memory](../settings/ollama.md#memory) and [vLLM's](../settings/vllm.md#memory).
+
+`open-key` logs the fit and gives the agent its context length. For a pod the task created after a search, it records the fit in the cache of fits. A start that fails is reported in the status for 2 minutes, then the pod terminates itself.
+
+### Closing a run
+
+`close-key`:
+
+1. **Ends the run on the gateway** and reads its usage, with `/admin/end`. It tries 3 times, 5 seconds apart, since calling `/admin/end` again returns the same usage.
+2. **Costs the run** (below).
+3. **Leaves the pod**: it turns its run lease into a keep lease, or drops it ([leases](#leases)). It terminates the pod when no unexpired lease remains.
+
+| The gateway | The run's cost |
+| --- | --- |
+| Answered | Its share of the pod since the run started, at the pod's billed rate. Alone on the pod, its share is the pod's whole time |
+| Never answered, or did not know the run, as after a restart, which `close-key` warns of | The pod's time since the run started, capped at its limit, which its share never passes. `close-key` warns that the cost is an estimate ([choice 4 of the plan for keeping a spent pod for its close](../plans/2026-10-15-keep-a-spent-pod-for-its-close.md)) |
+
+What the task counts for the pod, beyond its runs, is in [spend](../budget/spend.md#self-hosted-runs).
+
+### Self-termination
+
+A pod terminates itself: it asks Runpod to, with the pod-scoped key Runpod gives it, and stops its container either way.
+
+| When | Why |
+| --- | --- |
+| Its model is not served within 25 minutes of its creation; and at once when its container restarts after that | The start took too long |
+| 2 minutes after its start failed | The key jobs that wait for it have read why |
+| 15 minutes without a run being served | No run came to use it |
+| 15 minutes after the gateway stopped its last run | No key job ended the stopped runs in time |
+
+The gateway stops a run that spent its budget or went 30 minutes without a request, alone or with every other run on the pod. From then on, the run takes none of the pod's time.
+
+A pod left without a run that way waits the same 15 minutes, counted from the last stop. It waits for the key jobs to end its runs and read their usage, and then for the next runs of the tasks that keep it. When a `close-key` or `release-pod` leaves no lease on it, that job terminates it at once ([the plan for keeping a spent pod for its close](../plans/2026-10-15-keep-a-spent-pod-for-its-close.md)). Pods on older images behave otherwise ([upgrading](../installation/upgrading.md#a-spent-pod-waits-for-its-close)).

@@ -1,9 +1,134 @@
 # Serverless
 
-- `open-key` checks the endpoint before each run: a queue, 0 active workers, exactly 1 max worker (0, which Runpod sets after 7 days without requests, is refused too), an idle timeout of 300 seconds or less, and a vLLM worker that serves the task's model and calls tools (`ENABLE_AUTO_TOOL_CHOICE` and `TOOL_CALL_PARSER`). Runpod's API does not say whether an endpoint runs on Secure Cloud; the installation steps do.
-- The agent job runs the gateway on the loopback, with the endpoint's key (`CODEMAN_RUNPOD_SERVERLESS_KEY`, which only the agent job gets: [secrets](../security/secrets.md)), and gives the agent a local URL and the run's token. When the agent ends, the gateway stops, and its usage becomes the job's `gateway-usage` output, with the times its estimate counts (`busy`). GitHub keeps 1 MB of a job's outputs ([workflow syntax](../web/github/workflow-syntax-for-github-actions.md#jobsjob_idoutputs)): a report above 200,000 characters, which would take thousands of separate times, leaves them out, and the run then takes no part in the split below.
-- The gateway sends each request through the endpoint's job queue ([`src/gateway/queue.ts`](../../src/gateway/queue.ts); [operation reference](../web/runpod/operation-reference.md)): it queues a job (`/run`) and reads its output (`/stream`) until the job ends. A job waits as long as no worker serves it, while the gateway keeps a streamed request alive; Runpod's OpenAI-compatible route gave up after 5 minutes. A job nobody waits for anymore, because the agent gave up on its request or the run ended, is cancelled (`/cancel`), so it neither runs later nor piles up in the queue. A job may run 30 minutes once a worker takes it, and lives an hour at most, its wait in the queue included (`executionTimeout` and `ttl`: [send API requests](../web/runpod/send-api-requests.md)).
-- Runpod bills endpoints by the hour at the finest, so a run's cost is estimated, at the flex price of the endpoint's dearest GPU type. Runpod bills a worker only while it is running: from its handler's start, the model's load included, through its requests and its idle timeout; not while it pulls its image or a cached model, nor while it waits for a GPU ([worker states](../web/runpod/overview.md#worker-states)). So the gateway asks the endpoint's `/health` every 5 seconds ([operation reference](../web/runpod/operation-reference.md#health)), and counts the time when a worker is running (`running` above 0) and the run has a request open or is within the idle timeout after one. Between two samples, the time counts unless both saw no worker running; a sample that fails, or that the gateway cannot read, is unknown and counts, as does the time after the last sample, which includes the idle timeout after the run's last request. The run's limit (`402`) uses the same estimate ([decision 1 of the plan](../plans/2026-10-06-serverless-cost-from-worker-state.md)). An endpoint's workers may serve other repositories, and the other tasks of a run that works on several at once, each through its own agent job's gateway: their time counts for this run only while it has a request open or within the idle timeout after one. The run's limit counts time it shares with other runs whole, since its gateway cannot see theirs (decision 3 of the [Serverless split plan](../plans/2026-10-07-serverless-cost-split.md)).
-- **Splitting.** Runs that used an endpoint's worker at the same times split that time in the [ledger](../backend/backend.md#the-ledger), as runs on a [shared pod](pods.md#shared-pods) split its seconds ([Serverless split plan](../plans/2026-10-07-serverless-cost-split.md)). `close-key` writes the run's billed times under the endpoint, and in one store transaction reads the endpoint's runs of the last hours, splits each millisecond evenly among the runs whose times hold it, each at its own price, and writes each overlapping run's share as its cost. A run that closes first counts its whole estimate until another run that overlapped it closes; each later close lowers the costs it overlaps, never below a run's share, so the runs' costs add up to the worker's estimated time. Only closed runs change: an open run counts its limit, and a run `open-key` opened again keeps what its earlier attempt spent. The budgets read the new costs at once (the task's total and both months); a task's spend table shows them at its next run, when `close-key` reports its runs' costs again. Each run's times are its own gateway's estimate, so a millisecond one gateway counted and another did not counts for the first alone.
-- A run without a worker fails, as a pod run without a GPU does: when a request has waited 25 minutes while every sample saw no worker initializing or running, the gateway fails the waiting requests, stops serving the run, and the agent job stops the agent and fails, saying why. Unknown samples neither stop the run nor prove a worker. The wait costs nothing, except the idle timeout after the last request ([decision 2](../plans/2026-10-06-serverless-cost-from-worker-state.md)).
-- An agent job that fails before the agent reaches its model reports that nothing was used. Without a report, as after a cancelled job, the run counts its whole limit.
+With `provider: runpod-serverless`, an [agent run](../glossary.md#agent-run) uses the workers of a Runpod Serverless endpoint that a maintainer created ([installation](../installation/runpod.md#serverless)). This page explains what Codeman requires of the endpoint, and how it estimates and splits what a run costs.
+
+## Endpoint requirements
+
+`open-key` checks the endpoint before each run, and refuses it unless:
+
+| Check | Required |
+| --- | --- |
+| Type | A queue (`QUEUE`), which the vLLM worker needs |
+| Active workers | 0, since an active worker is billed all the time |
+| Max workers | Exactly 1. 0, which Runpod sets after 7 days without requests, is refused too |
+| Idle timeout | 300 seconds or less |
+| The worker | Runpod's vLLM worker, serving the task's model |
+| Tool calls | `ENABLE_AUTO_TOOL_CHOICE` and `TOOL_CALL_PARSER` set on the worker |
+
+Runpod's API does not say whether an endpoint runs on Secure Cloud. The [installation steps](../installation/runpod.md#serverless) do.
+
+## What a run costs
+
+Runpod bills endpoints by the hour at the finest, so a run's cost is an estimate. It is priced at the flex price of the endpoint's dearest GPU type.
+
+Runpod bills a worker only while it is running ([worker states](../web/runpod/overview.md#worker-states)):
+
+| The worker | Billed |
+| --- | --- |
+| Pulls its image or a cached model | No |
+| Waits for a GPU | No |
+| Runs its handler, from its start: the model's load, the requests, the idle timeout after them | Yes |
+
+### The estimate
+
+The [gateway](../glossary.md#gateway) asks the endpoint's `/health` every 5 seconds ([operation reference](../web/runpod/operation-reference.md#health)). It counts the time when a worker is running (`running` above 0) and the run has a request open, or is within the idle timeout after one.
+
+| Between two samples | Counts |
+| --- | --- |
+| Both saw no worker running | No |
+| Either saw a worker running | Yes |
+| A sample failed, or the gateway could not read it: unknown | Yes |
+| After the last sample, which includes the idle timeout after the run's last request | Yes |
+
+The run's limit (`402`) uses the same estimate ([decision 1 of the plan](../plans/2026-10-06-serverless-cost-from-worker-state.md)).
+
+### Other runs on the worker
+
+An endpoint's workers may serve other repositories, and the other tasks of a [workflow run](../glossary.md#workflow-run) that works on several at once. Each run goes through its own agent job's gateway.
+
+- The other runs' time counts for this run only while it has a request open, or within the idle timeout after one.
+- The run's limit counts the time it shares with other runs whole, since its gateway cannot see theirs (decision 3 of the [Serverless split plan](../plans/2026-10-07-serverless-cost-split.md)).
+- In the [ledger](../glossary.md#ledger), the shared time is split once the runs close ([below](#splitting-shared-worker-time)).
+
+## Splitting shared worker time
+
+Runs that used an endpoint's worker at the same times split that time in the [ledger](../backend/backend.md#the-ledger), as runs on a [shared pod](pods.md#shared-pods) split its seconds ([Serverless split plan](../plans/2026-10-07-serverless-cost-split.md)).
+
+- Each millisecond is split evenly among the runs whose billed times hold it, each at its own price.
+- A run that closes first counts its whole estimate, until another run that overlapped it closes.
+- Each later close lowers the costs it overlaps, never below a run's share. So the runs' costs add up to the worker's estimated time.
+- Only closed runs change. An open run counts its limit, and a run that `open-key` opened again keeps what its earlier attempt spent.
+- Each run's times are its own gateway's estimate. A millisecond one gateway counted and another did not counts for the first alone.
+
+For example, runs A and B use one endpoint at the same price p per second. A is billed from 0 to 600 s, B from 300 to 900 s.
+
+| Step | A counts | B counts |
+| --- | --- | --- |
+| A closes first | 600p | (open: its limit) |
+| B closes; the shared 300-600 s is split | 300p + 150p = 450p | 150p + 300p = 450p |
+
+The total is 900p: the worker's estimated time.
+
+The budgets read the new costs at once: the task's total and both months. A task's [spend table](../budget/spend.md#the-spend-table) shows them at its next run, when `close-key` reports its runs' costs again.
+
+## When a run has no worker or no report
+
+| Case | What happens | The run counts |
+| --- | --- | --- |
+| A request waited 25 minutes while every sample saw no worker initializing or running | The gateway fails the waiting requests and stops serving the run. The agent job stops the agent and fails, saying why | Nothing for the wait, except the idle timeout after the last request ([decision 2](../plans/2026-10-06-serverless-cost-from-worker-state.md)) |
+| Unknown samples during the wait | They neither stop the run nor prove a worker | |
+| The agent job failed before the agent reached its model | It reports that nothing was used | 0 |
+| No report, as after a cancelled job | | Its whole limit |
+| A report above 200,000 characters | It leaves out its billed times, and the run takes no part in the split | Its own estimate |
+
+GitHub keeps 1 MB of a job's outputs ([workflow syntax](../web/github/workflow-syntax-for-github-actions.md#jobsjob_idoutputs)). A report above 200,000 characters would take thousands of separate times.
+
+## How it works
+
+### The gateway in the agent job
+
+The agent job runs the gateway on the loopback, with the endpoint's key: `CODEMAN_RUNPOD_SERVERLESS_KEY`, which only the agent job gets ([secrets](../security/secrets.md)). It gives the agent a local URL and the run's [run token](../glossary.md#run-token).
+
+When the agent ends, the gateway stops. Its usage becomes the job's `gateway-usage` output, with the times its estimate counts (`busy`).
+
+### The request path
+
+```mermaid
+sequenceDiagram
+  participant A as Agent
+  participant G as Gateway, on the loopback
+  participant Q as Endpoint's job queue
+  participant W as vLLM worker
+  loop Every 5 s
+    G->>Q: GET /health
+  end
+  A->>G: A request, with the run token
+  G->>Q: POST /run
+  G-->>A: SSE comments while it waits
+  Q->>W: The job, once a worker takes it
+  loop Until the job ends
+    G->>Q: GET /stream
+    Q-->>G: Output
+    G-->>A: Output
+  end
+  A->>G: The agent ends, or gives up on a request
+  G->>Q: POST /cancel for each unfinished job
+```
+
+The gateway sends each request through the endpoint's job queue ([`src/gateway/queue.ts`](../../src/gateway/queue.ts); [operation reference](../web/runpod/operation-reference.md)). Each request becomes a [Serverless job](../glossary.md#serverless-job):
+
+1. The gateway queues the job (`/run`).
+2. It reads the job's output (`/stream`) until the job ends.
+3. A job waits as long as no worker serves it, while the gateway keeps a streamed request alive. Runpod's OpenAI-compatible route gave up after 5 minutes.
+4. A job nobody waits for any more, because the agent gave up on its request or the run ended, is cancelled (`/cancel`). So it neither runs later nor piles up in the queue.
+
+| Job limit | Value |
+| --- | --- |
+| Running, once a worker takes it (`executionTimeout`) | 30 minutes |
+| Its whole life, its wait in the queue included (`ttl`) | 1 hour |
+
+Both are set on each job ([send API requests](../web/runpod/send-api-requests.md)).
+
+### Recording the split
+
+`close-key` writes the run's billed times under the endpoint. In one store transaction, it then reads the endpoint's runs of the last hours, splits their times, and writes each overlapping run's share as its cost ([data layout](../backend/data-layout.md#serverless-endpoint-runs)).
