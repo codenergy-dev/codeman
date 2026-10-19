@@ -82,6 +82,7 @@ New to Codeman? Read the [README](../README.md), then follow [Installation](inst
 | [Writing the docs](development/documentation.md) | Shape a page, and keep its links and anchors |
 | [Platforms](development/platforms.md) | Add a platform or runtime behind Codeman's interfaces |
 | [Dependencies](development/dependencies.md) | See what Codeman depends on, why, and the audits |
+| [Running Actions locally](development/local-actions.md) | Run the tests that need GitHub's runner, on your machine |
 
 Two directories stay in the repository and are not published on the site:
 

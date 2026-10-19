@@ -19,6 +19,7 @@ npm run check   # lint, type check, test and build
 | `npm run format` | Apply Biome fixes and formatting |
 | `npm run typecheck` | `tsc`, no output |
 | `npm test` | `node:test` on `src/**/*.test.ts`; see [tests](#tests) |
+| `npm run test:runner` | `npm ci`, then `npm test` with the sandbox test, in a local stand-in for GitHub's runner; `npm run test:runner -- <command>` runs another command there. Needs Docker; see [running Actions locally](local-actions.md) |
 | `npm run build` | Bundle `src/index.ts` into `dist/index.js`, and the [gateway](../glossary.md#gateway), `src/gateway/main.ts`, into `dist/gateway.js` |
 | `npm run check` | Lint, type check, test and build, in that order |
 
@@ -28,7 +29,7 @@ Tests sit next to the code they test, as `*.test.ts`. Most run everywhere. These
 
 | Test | Runs when | Skipped when |
 | --- | --- | --- |
-| [`src/sandbox.test.ts`](../../src/sandbox.test.ts), the [sandbox](../glossary.md#sandbox) | On Linux, with `CODEMAN_SANDBOX_TEST=1`. It creates a system user and needs passwordless `sudo`, like GitHub's Linux runners. CI sets the variable | On any other system, or without the variable |
+| [`src/sandbox.test.ts`](../../src/sandbox.test.ts), the [sandbox](../glossary.md#sandbox) | Its tests that run the agent: on Linux, with `CODEMAN_SANDBOX_TEST=1`. They create a system user, change the machine's permissions, and need passwordless `sudo`, like GitHub's Linux runners. CI sets the variable, and so does `npm run test:runner` ([running Actions locally](local-actions.md)). Its other tests run everywhere | On any other system, or without the variable |
 | [`src/store/emulator.test.ts`](../../src/store/emulator.test.ts), the [store](../glossary.md#store) on Firestore's emulator | An emulator is running, or one is in Firebase's cache; see [Firestore's emulator](#firestores-emulator) | Neither is there, as on CI |
 | [`src/docs.test.ts`](../../src/docs.test.ts), the links | Always | Never |
 | [`src/webdocs.test.ts`](../../src/webdocs.test.ts), the format of `docs/web/` | Always | Never |
@@ -142,6 +143,7 @@ The gateway has its own entry point, [`src/gateway/main.ts`](../../src/gateway/m
 | `templates/` | The files that target repositories copy; see [template version](#template-version) |
 | `firebase/firestore.rules` | The backend's security rules, which deny every client. [Installation](../installation/setup.md#4-set-up-the-backend) publishes them |
 | `docker/pod/` | Codeman's pod images, one target per engine; see [pod images](#pod-images) |
+| `docker/runner/`, `scripts/runner.sh` | A local stand-in for GitHub's `ubuntu-latest` runner, and the script that runs a command in it; see [running Actions locally](local-actions.md) |
 | `docs/web/` | The documentation of the third-party services Codeman uses |
 
 - **`dist/` is committed**, because GitHub runs actions straight from the repository. CI fails when it does not match the source, so run `npm run build` before committing.
@@ -153,6 +155,7 @@ The gateway has its own entry point, [`src/gateway/main.ts`](../../src/gateway/m
 - Imports of local files use the `.ts` extension; Node runs the tests without a build step.
 - Use only TypeScript syntax that can be erased (`erasableSyntaxOnly`): no `enum`, `namespace` or parameter properties.
 - Keep logic in pure functions that tests can call directly. `src/main.ts` wires the steps to GitHub; nothing else picks a platform.
+- In the `agent` job, run a program only through `program(name)` from `src/sandbox.ts`, or `sudo(name, ...)` and its siblings, never by its name. A test checks it.
 
 ## Releasing
 
