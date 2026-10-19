@@ -39,7 +39,7 @@ Each run that moves the task also posts a new comment on the issue, so the issue
 4. what comes next: the next stage, the maintainers' decisions, accepting workflows, a maintainer, or reviewing the pull request;
 5. what the run spent.
 
-A run of planning or of a routed stage that only waits to try again later updates the panel only. It waits because the monthly budget, or the organization's, is reached. A routing run refused that way still posts a run comment.
+A run of planning, routing or a routed stage that only waits to try again later updates the panel only. It waits because the monthly budget, or the organization's, is reached.
 
 ### Size limits
 

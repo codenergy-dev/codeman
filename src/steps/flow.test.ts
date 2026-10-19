@@ -6,6 +6,7 @@ import { after, test } from "node:test";
 import type { Change, Manifest } from "../collect.ts";
 import { decodeStatus, encodeStatus, isStatusComment } from "../record.ts";
 import { ROUTED_STAGES, type RoutedStage } from "../stages.ts";
+import { isRunComment } from "../status.ts";
 import { FakePlatform, fakeServices } from "../testing/fake-platform.ts";
 import { FakeRuntime } from "../testing/fake-runtime.ts";
 import { exampleSettings } from "../testing/settings-example.ts";
@@ -1269,6 +1270,42 @@ test("parallel tasks: next-run starts another run only when some task moved", as
     status ?? "",
     /The organization's monthly budget is reached: US\$ 29\.50 used of US\$ 30\.00, and this run may use up to US\$ 2\.00\. Codeman will try again in a later run\./,
   );
+});
+
+test("a routing run the budget refuses updates the panel only", async () => {
+  const platform = new FakePlatform({ ".codeman/settings.yml": "model: a/b\n" });
+  const { issue } = await plannedTask(platform);
+  const runComments = () => platform.botComments(issue).filter(isRunComment).length;
+  const planned = runComments();
+  const panel = () => platform.botComments(issue).find((body) => body.includes("codeman:status"));
+
+  const refusals: [string, Record<string, string>, RegExp][] = [
+    ["", { "key-status": "over-budget" }, /The monthly budget is reached/],
+    [
+      "organization-monthly-budget: 30",
+      { "key-status": "over-organization-budget", "organization-month-spent": "29.5" },
+      /The organization's monthly budget is reached/,
+    ],
+  ];
+  for (const [settings, status, message] of refusals) {
+    const selected = new FakeRuntime({ inputs: { workdir, settings } });
+    await select(fakeServices(platform, selected));
+    assert.equal(selected.outputs.action, "route");
+    const refused = await applyLeg(platform, "1", {
+      "key-job-result": "success",
+      ...status,
+      "agent-job-result": "skipped",
+    });
+    assert.deepEqual(stateLabels(platform, issue), ["codeman:ready"]);
+    assert.equal(refused.outputs.chain, undefined);
+    assert.match(panel() ?? "", message);
+    assert.equal(runComments(), planned, "no run comment for a run that moved nothing");
+  }
+
+  // Once the month has room, the routing run moves the task and reports it.
+  await routeStep(platform, ["code", "review"]);
+  assert.deepEqual(stateLabels(platform, issue), ["codeman:coding"]);
+  assert.equal(runComments(), planned + 1);
 });
 
 /** Writes `.codeman/settings.yml` on the default branch, as a maintainer's commit does. */

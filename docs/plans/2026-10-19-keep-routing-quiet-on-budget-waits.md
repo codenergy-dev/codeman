@@ -1,7 +1,7 @@
 ---
-status: in progress
+status: completed
 created_at: 2026-10-19T13:28:32-03:00
-updated_at: 2026-10-19T13:30:30-03:00
+updated_at: 2026-10-19T13:32:43-03:00
 commit: 073b567
 ---
 
@@ -86,6 +86,8 @@ No step changes the templates, so the [template version](../development/guide.md
 
 ### 1. Keep a routing run quiet when the budget refuses it
 
+**Done on 2026-10-19.** Not committed yet. The test case sits after "parallel tasks: next-run starts another run only when some task moved", next to `applyLeg`, and runs both refusals in one loop. Without the change in `apply.ts` it fails on the run comments. `docs/tasks/lifecycle.md` and `docs/budget/budget.md` needed no change.
+
 Assuming decision 1a.
 
 Root cause: `src/steps/apply.ts:1155`. `quiet` lists `plan` and `implement`, but not `route`.
@@ -122,6 +124,8 @@ Commit message: `Keep a routing run quiet when the budget refuses it`.
 Body: say that runs that wait for the budget update the panel only since the run comments, and that `route` came later and was left out, so each refused retry posted a comment.
 
 ### 2. Close the plans
+
+**Done on 2026-10-19.** `npm run lint`, `npm run typecheck` and `npm test` pass: 631 tests, 628 pass and 3 skipped.
 
 1. In the [correction plan](2026-10-16-correct-the-docs-against-the-code.md), link this plan from decision 4.
 2. Set this plan to `completed`.

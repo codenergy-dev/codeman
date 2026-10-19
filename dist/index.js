@@ -34111,7 +34111,7 @@ async function finish(io, task, state, view) {
     budget: task.settings["task-budget"]
   };
   await io.repo.setState(task.number, await io.repo.currentLabels(task.number), state);
-  const quiet = view.retry && (task.action === "plan" || task.action === "implement");
+  const quiet = view.retry && (task.action === "plan" || task.action === "route" || task.action === "implement");
   if (!quiet) {
     const id = await io.repo.comment(
       task.number,

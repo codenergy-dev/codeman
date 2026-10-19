@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-10-16T17:52:56-03:00
-updated_at: 2026-10-19T13:11:32-03:00
+updated_at: 2026-10-19T13:32:43-03:00
 commit: ebb63ac
 ---
 
@@ -40,7 +40,7 @@ Each decision asked whether to document the current behavior or change the code.
 3. **`max-runs` blocks one round later for review than for other stages.** An unfinished stage blocks at `runs >= max` (`src/steps/apply.ts:367`). Review blocks at `rounds > max` (`apply.ts:477`).
    - a) Document both limits exactly.
    - b) Align the code (recommended: ask whether the difference is intended).
-4. **A `route` run refused for the monthly budget still posts a run comment.** `quiet` covers only `plan` and `implement` (`apply.ts:1154`).
+4. **A `route` run refused for the monthly budget still posts a run comment.** `quiet` covers only `plan` and `implement` (`apply.ts:1154`). Fixed by the [plan for quiet routing on budget waits](2026-10-19-keep-routing-quiet-on-budget-waits.md), step 1.
    - a) Document "except routing".
    - b) Add `route` to `quiet` (recommended: it looks like a bug).
 5. **The settings log prints raw layer values.** It lists provider settings that a change of provider dropped, and does not name the provider's defaults (`src/settings.ts:960-982`).
