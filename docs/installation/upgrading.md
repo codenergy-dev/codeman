@@ -77,6 +77,7 @@ flowchart TD
 | 2026-10-14 | [Backend mapping gains repository_id](#backend-mapping-gains-repository_id) | `c4da7e2` | Backends set up before, moving to the listed-repositories condition | Update the mapping | No |
 | 2026-10-15 | [The dispatch reads the default branch](#the-dispatch-reads-the-default-branch) | `e26a8c9` | Repositories whose batches take another repository's tasks | Copy `codeman.yml` | Dispatches fail |
 | 2026-10-15 | [A spent pod waits for its close](#a-spent-pod-waits-for-its-close) | `ca7f3e8`; on pods from `c69ea45` | Pod runs | None | No |
+| 2026-10-19 | [Review rounds block at max-runs](#review-rounds-block-at-max-runs) | `503e9fc` | Tasks that reach review | None, or raise `max-runs` | No |
 
 The [older versions](#older-versions) entries say what Codeman does with tasks, pod images and records from before some of these changes.
 
@@ -180,6 +181,28 @@ Behind the change ([profiles](../settings/profiles.md#how-many-tasks-a-run-takes
 #### How to verify
 
 Run Codeman by hand: `select` passes. A run with ready tasks starts a `task` job per task it took, up to the largest count.
+
+### Review rounds block at max-runs
+
+- **Since:** 2026-10-19, `503e9fc` ([plan for the max-runs counters](../plans/2026-10-19-align-the-max-runs-counters.md)).
+- **Who is affected:** every repository whose tasks reach review; most, those with `max-runs: 1`.
+- **Breaking:** no. Nothing changes in settings or workflow files.
+
+[Review rounds](../glossary.md#review-round) now block a task at the `max-runs`th `changes` in a row, as a stage's [runs in a row](../glossary.md#runs-in-a-row) do at the `max-runs`th unfinished run ([runs in a row and review rounds](../tasks/stages.md#runs-in-a-row-and-review-rounds)):
+
+- review blocks one round sooner: with `max-runs: 3`, at the 3rd `changes` in a row instead of the 4th;
+- with `max-runs: 1`, every `changes` blocks the task: review no longer sends the work back on its own;
+- tasks in progress follow the new rule from their next `changes`. Their record needs no change.
+
+#### What to do
+
+Nothing. To keep review's old limit, set `max-runs` one higher, which also gives each stage one more run.
+
+Copying `codeman.yml` again is optional: it updates the description of the manual run's `max-runs` input.
+
+#### How to verify
+
+A task blocked by review's rounds says "Review asked for changes 3 times in a row (`max-runs` is 3)".
 
 ## Workflow files and secrets
 
