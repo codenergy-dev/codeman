@@ -2,7 +2,7 @@
 title: Workflow syntax for GitHub Actions
 url: https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax
 created_at: 2026-10-07T21:03:01-03:00
-updated_at: 2026-10-14T17:40:56-03:00
+updated_at: 2026-10-19T13:29:35-03:00
 tool: docs/web/tools/github.md
 ---
 
@@ -14,6 +14,7 @@ GitHub's reference of the workflow syntax is too large to keep here (about 230 K
 
 - `permissions` sets the `GITHUB_TOKEN`'s access, for the whole workflow or a job; each permission is `read`, `write` or `none`, and those not named become `none` (the section's first paragraphs).
 - `id-token: write` lets a job fetch an OpenID Connect token (the table of permissions).
+- The table of permissions has no key for variables: `actions`, `artifact-metadata`, `attestations`, `checks`, `code-quality`, `contents`, `copilot-requests`, `deployments`, `discussions`, `id-token`, `issues`, `packages`, `pages`, `pull-requests`, `security-events`, `statuses` and `vulnerability-alerts`. So the `GITHUB_TOKEN` cannot be granted the GitHub App permission "Variables".
 - With `pull_request_target`, the `GITHUB_TOKEN` gets read/write repository permission, even when the event comes from a public fork.
 - "Changing the permissions in a forked repository": the key can add and remove read permissions for forked repositories, but typically cannot grant write access; the exception is when an admin selected **Send write tokens to workflows from pull requests** in the GitHub Actions settings.
 - "Permissions for workflow runs triggered by Dependabot": those runs use a read-only `GITHUB_TOKEN` and cannot access any secrets, as if they came from a fork.
