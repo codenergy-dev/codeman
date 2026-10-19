@@ -6185,7 +6185,7 @@ var require_client_h1 = __commonJS({
         } else {
           socket[kReset] = true;
         }
-        const pause = request2.onHeaders(statusCode, headers, this.resume, statusText) === false;
+        const pause2 = request2.onHeaders(statusCode, headers, this.resume, statusText) === false;
         if (request2.aborted) {
           return -1;
         }
@@ -6199,7 +6199,7 @@ var require_client_h1 = __commonJS({
           socket[kBlocking] = false;
           client[kResume]();
         }
-        return pause ? constants3.ERROR.PAUSED : 0;
+        return pause2 ? constants3.ERROR.PAUSED : 0;
       }
       onBody(buf) {
         const { client, socket, statusCode, maxResponseSize } = this;
@@ -29999,50 +29999,219 @@ function status(error3) {
 }
 
 // src/steps/agent.ts
-import { existsSync as existsSync2, lstatSync as lstatSync2, mkdirSync as mkdirSync4, readFileSync as readFileSync5, rmSync as rmSync4, writeFileSync as writeFileSync5 } from "node:fs";
+import { existsSync as existsSync2, lstatSync as lstatSync3, mkdirSync as mkdirSync4, readFileSync as readFileSync5, rmSync as rmSync4, writeFileSync as writeFileSync5 } from "node:fs";
 import { join as join7 } from "node:path";
 
 // src/collect.ts
 import { spawnSync as spawnSync2 } from "node:child_process";
-import { lstatSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { lstatSync as lstatSync2, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join as join3 } from "node:path";
 
 // src/sandbox.ts
 import { spawn, spawnSync } from "node:child_process";
+import { lstatSync, readdirSync, readlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { createInterface } from "node:readline";
 var AGENT_USER = "codeman-agent";
 var AGENT_HOME = `/home/${AGENT_USER}`;
 var SAFE_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
-function sudoCapture(args) {
-  const result = spawnSync("sudo", ["-n", ...args], {
-    encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024
-  });
-  return { status: result.status, stdout: result.stdout ?? "" };
+var TRUSTED_DIRS = ["/usr/bin", "/usr/sbin", "/bin", "/sbin"];
+var realFileStats = {
+  lstat: (path) => lstatSync(path, { throwIfNoEntry: false }),
+  readlink: (path) => readlinkSync(path),
+  readdir: (path) => readdirSync(path)
+};
+var MAX_LINKS = 40;
+function walk(path, fs3) {
+  const root = fs3.lstat("/");
+  if (!root) return { steps: [], missing: { path: "/", parent: "/" } };
+  const steps = [{ path: "/", stats: root }];
+  const parts = (text) => text.split("/").filter((part) => part !== "" && part !== ".");
+  let pending = parts(path);
+  let current = "";
+  let links = 0;
+  while (pending.length > 0) {
+    const part = pending.shift();
+    if (part === "..") {
+      current = current.slice(0, current.lastIndexOf("/"));
+      continue;
+    }
+    const entry = `${current}/${part}`;
+    const stats = fs3.lstat(entry);
+    if (!stats) return { steps, missing: { path: entry, parent: current || "/" } };
+    steps.push({ path: entry, stats });
+    if (stats.isSymbolicLink()) {
+      if (++links > MAX_LINKS) return { steps, loop: true };
+      const target = fs3.readlink(entry);
+      if (target.startsWith("/")) current = "";
+      pending = [...parts(target), ...pending];
+      continue;
+    }
+    current = entry;
+  }
+  return { steps };
 }
-function sudo(args, input) {
-  const result = spawnSync("sudo", ["-n", ...args], {
+function untrustedReason(path, fs3) {
+  const { steps, missing, loop } = walk(path, fs3);
+  if (loop) return `${path} goes through more than ${MAX_LINKS} links`;
+  for (const { path: entry, stats } of steps) {
+    if (stats.uid !== 0) return `${entry} is not owned by root`;
+    if (!stats.isSymbolicLink() && (stats.mode & 18) !== 0) {
+      return `${entry} is writable by others than root`;
+    }
+  }
+  return missing && `${missing.path} does not exist`;
+}
+var writableByOthers = (stats) => !stats.isSymbolicLink() && (stats.mode & 2) !== 0;
+function openToOthers(path, fs3) {
+  const { steps, missing, loop } = walk(path, fs3);
+  if (loop) return true;
+  const parent = missing && fs3.lstat(missing.parent);
+  if (parent && writableByOthers(parent)) return true;
+  return steps.some(
+    ({ stats }, index) => writableByOthers(stats) && !((stats.mode & 512) !== 0 && index < steps.length - 1)
+  );
+}
+function pathProblems(jobPath, fs3) {
+  const entries = [...new Set(jobPath.split(":").filter((entry) => entry.startsWith("/")))];
+  return entries.filter((entry) => {
+    if (openToOthers(entry, fs3)) return true;
+    let names;
+    try {
+      names = fs3.readdir(entry);
+    } catch {
+      return false;
+    }
+    return names.some((name) => openToOthers(`${entry}/${name}`, fs3));
+  });
+}
+function closeArgs(resolve = program) {
+  return [
+    "/",
+    "-xdev",
+    "-perm",
+    "-0002",
+    "(",
+    "-type",
+    "f",
+    "-o",
+    "-type",
+    "d",
+    "!",
+    "-perm",
+    "-1000",
+    ")",
+    "-exec",
+    resolve("chmod"),
+    "o-w",
+    "--",
+    "{}",
+    "+"
+  ];
+}
+function findProgram(name, fs3) {
+  if (name === "" || name.includes("/")) throw new Error(`Not a program name: ${name}`);
+  const reasons = [];
+  for (const dir of TRUSTED_DIRS) {
+    const candidate = `${dir}/${name}`;
+    if (!fs3.lstat(candidate)) continue;
+    const reason = untrustedReason(candidate, fs3);
+    if (reason === void 0) return candidate;
+    reasons.push(reason);
+  }
+  throw new Error(
+    `Codeman runs ${name} only from ${TRUSTED_DIRS.join(", ")}, owned by root and writable by no other user. This runner has none${reasons.length > 0 ? `: ${reasons.join("; ")}` : ""}.`
+  );
+}
+var programs = /* @__PURE__ */ new Map();
+function program(name) {
+  let path = programs.get(name);
+  if (path === void 0) {
+    path = findProgram(name, realFileStats);
+    programs.set(name, path);
+  }
+  return path;
+}
+function optionalProgram(name) {
+  try {
+    return program(name);
+  } catch {
+    return void 0;
+  }
+}
+var REQUIRED_PROGRAMS = [
+  "sudo",
+  "id",
+  "useradd",
+  "usermod",
+  "chown",
+  "chmod",
+  "install",
+  "rm",
+  "cp",
+  "mkdir",
+  "tee",
+  "pkill",
+  "pgrep",
+  "git",
+  "test",
+  "env",
+  "find",
+  "realpath",
+  "bash",
+  "sh"
+];
+function sudoArgs(name, args, user, resolve = program) {
+  return ["-n", ...user ? ["-u", user] : [], "--", resolve(name), ...args];
+}
+function runSudo(name, args, user, input) {
+  return spawnSync(program("sudo"), sudoArgs(name, args, user), {
     encoding: "utf8",
     input,
     maxBuffer: 64 * 1024 * 1024
   });
+}
+function checkedSudo(name, args, user, input) {
+  const result = runSudo(name, args, user, input);
   if (result.status !== 0) {
-    throw new Error(`sudo ${args[0]} failed: ${truncate(result.stderr.trim(), 500)}`);
+    throw new Error(`sudo ${name} failed: ${truncate((result.stderr ?? "").trim(), 500)}`);
   }
   return result.stdout;
 }
-function createAgentUser() {
-  if (spawnSync("id", ["-u", AGENT_USER]).status !== 0) {
-    sudo(["useradd", "--create-home", "--shell", "/bin/bash", AGENT_USER]);
+function sudoCapture(name, args) {
+  const result = runSudo(name, args);
+  return { status: result.status, stdout: result.stdout ?? "" };
+}
+function sudoAs(user, name, args, input) {
+  return checkedSudo(name, args, user, input);
+}
+function sudo(name, args, input) {
+  return checkedSudo(name, args, void 0, input);
+}
+function createAgentUser(log) {
+  for (const name of REQUIRED_PROGRAMS) program(name);
+  closeWorldWritable(log);
+  if (spawnSync(program("id"), ["-u", AGENT_USER]).status !== 0) {
+    sudo("useradd", ["--create-home", "--shell", "/bin/bash", AGENT_USER]);
   }
-  sudo(["chown", `${AGENT_USER}:${AGENT_USER}`, AGENT_HOME]);
-  sudo(["chmod", "700", AGENT_HOME]);
-  sudo(["chmod", "o-rwx", homedir()]);
+  sudo("chown", [`${AGENT_USER}:${AGENT_USER}`, AGENT_HOME]);
+  sudo("chmod", ["700", AGENT_HOME]);
+  sudo("chmod", ["o-rwx", homedir()]);
+}
+function closeWorldWritable(log) {
+  const start = Date.now();
+  sudo("find", closeArgs());
+  log.info(`Closed the runner's world-writable paths in ${(Date.now() - start) / 1e3} s.`);
+  const problems = pathProblems(process.env.PATH ?? "", realFileStats);
+  if (problems.length > 0) {
+    throw new Error(
+      `Codeman does not run the agent: ${AGENT_USER} could add or change programs in ${problems.join(", ")}, on the job's PATH, which later steps run as the runner's user.`
+    );
+  }
 }
 function installForAgent(source, name) {
   const target = `/opt/codeman/${name}`;
-  sudo(["install", "-D", "-m", "0755", source, target]);
+  sudo("install", ["-D", "-m", "0755", source, target]);
   return target;
 }
 function copyToAgent(source, target, exclude = []) {
@@ -30051,38 +30220,42 @@ function copyToAgent(source, target, exclude = []) {
       throw new Error(`Cannot leave out ${path}: not a path inside the copy.`);
     }
   }
-  sudo(["rm", "-rf", target]);
-  sudo(["cp", "-a", source, target]);
-  for (const path of exclude) sudo(["rm", "-rf", "--", `${target}/${path}`]);
-  sudo(["chown", "-R", `${AGENT_USER}:${AGENT_USER}`, target]);
+  sudo("rm", ["-rf", target]);
+  sudo("cp", ["-a", source, target]);
+  for (const path of exclude) sudo("rm", ["-rf", "--", `${target}/${path}`]);
+  sudo("chown", ["-R", `${AGENT_USER}:${AGENT_USER}`, target]);
 }
 function writeAsAgent(file, content) {
-  sudo(["-u", AGENT_USER, "mkdir", "-p", file.slice(0, file.lastIndexOf("/"))]);
-  sudo(["-u", AGENT_USER, "tee", file], content);
+  sudoAs(AGENT_USER, "mkdir", ["-p", file.slice(0, file.lastIndexOf("/"))]);
+  sudoAs(AGENT_USER, "tee", [file], content);
 }
 function killAgentProcesses() {
-  spawnSync("sudo", ["-n", "pkill", "-KILL", "-u", AGENT_USER]);
+  spawnSync(program("sudo"), sudoArgs("pkill", ["-KILL", "-u", AGENT_USER]));
 }
-function trySudo(args) {
-  spawnSync("sudo", ["-n", ...args], { stdio: "ignore" });
+function trySudo(name, args, user) {
+  if (optionalProgram(name) === void 0) return;
+  spawnSync(program("sudo"), sudoArgs(name, args, user), { stdio: "ignore" });
+}
+function pause(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 function sealAgentSandbox(worktree) {
-  trySudo(["crontab", "-r", "-u", AGENT_USER]);
-  trySudo(["-u", AGENT_USER, "bash", "-c", "atq 2>/dev/null | awk '{print $1}' | xargs -r atrm"]);
-  trySudo(["loginctl", "disable-linger", AGENT_USER]);
-  trySudo(["loginctl", "terminate-user", AGENT_USER]);
-  trySudo(["usermod", "-L", "-s", "/usr/sbin/nologin", AGENT_USER]);
+  trySudo("crontab", ["-r", "-u", AGENT_USER]);
+  trySudo("bash", ["-c", "atq 2>/dev/null | awk '{print $1}' | xargs -r atrm"], AGENT_USER);
+  trySudo("loginctl", ["disable-linger", AGENT_USER]);
+  trySudo("loginctl", ["terminate-user", AGENT_USER]);
+  trySudo("usermod", ["-L", "-s", "/usr/sbin/nologin", AGENT_USER]);
   let alive = true;
   for (let attempt = 0; alive && attempt < 20; attempt++) {
     killAgentProcesses();
-    alive = spawnSync("sudo", ["-n", "pgrep", "-u", AGENT_USER]).status === 0;
-    if (alive) spawnSync("sleep", ["0.1"]);
+    alive = spawnSync(program("sudo"), sudoArgs("pgrep", ["-u", AGENT_USER])).status === 0;
+    if (alive) pause(100);
   }
   if (alive) {
     throw new Error("A process of the agent survived; refusing to collect from a live sandbox.");
   }
-  sudo(["chown", "-h", "root:root", AGENT_HOME]);
-  sudo(["chown", "-R", "-h", "root:root", worktree]);
+  sudo("chown", ["-h", "root:root", AGENT_HOME]);
+  sudo("chown", ["-R", "-h", "root:root", worktree]);
 }
 function agentPath(jobPath, runnerHome) {
   const entries = [...jobPath.split(":"), ...SAFE_PATH.split(":")].filter(
@@ -30123,7 +30296,7 @@ async function runAsAgent(command, cwd, timeoutMs, log, stop) {
     AGENT_USER,
     "-H",
     "--",
-    "/bin/bash",
+    program("bash"),
     "-c",
     launcher(agentEnv(agentPath(process.env.PATH ?? "", homedir()))),
     "codeman-agent",
@@ -30132,7 +30305,7 @@ async function runAsAgent(command, cwd, timeoutMs, log, stop) {
     command.file,
     ...command.args
   ];
-  const child = spawn("sudo", args, {
+  const child = spawn(program("sudo"), args, {
     env: { PATH: process.env.PATH ?? SAFE_PATH, ...command.env },
     stdio: ["ignore", "pipe", "pipe"]
   });
@@ -30180,9 +30353,8 @@ function parseStatus(output) {
   }
   return changes;
 }
-function statusCommand(gitDir, worktree) {
+function statusArgs(gitDir, worktree) {
   return [
-    "git",
     "--no-optional-locks",
     "-c",
     "safe.directory=*",
@@ -30200,7 +30372,7 @@ function statusCommand(gitDir, worktree) {
 }
 function collectChanges(options) {
   requireRealDirectory(options.worktree);
-  const status2 = sudo(statusCommand(options.gitDir, options.worktree));
+  const status2 = sudo("git", statusArgs(options.gitDir, options.worktree));
   const changes = parseStatus(status2).filter(
     ({ path }) => !options.exclude.some((prefix) => path === prefix || path.startsWith(`${prefix}/`))
   );
@@ -30216,7 +30388,7 @@ function collectChanges(options) {
   const copies = candidates.filter(({ path }) => kinds.get(path) === "file").map(({ path }) => path);
   const failed2 = copyPaths(options.worktree, tree, copies);
   if (copies.length > 0) {
-    sudo(["chown", "-R", `${process.getuid?.()}:${process.getgid?.()}`, tree]);
+    sudo("chown", ["-R", `${process.getuid?.()}:${process.getgid?.()}`, tree]);
   }
   return changes.map((change) => {
     if (change.status === "deleted" || change.type !== void 0) return change;
@@ -30238,19 +30410,18 @@ function collectChanges(options) {
   });
 }
 function requireRealDirectory(path) {
-  if (sudoCapture(["test", "-h", path]).status === 0) {
+  if (sudoCapture("test", ["-h", path]).status === 0) {
     throw new Error(`The work tree ${path} is a symbolic link; refusing to collect through it.`);
   }
-  if (sudoCapture(["test", "-d", path]).status !== 0) {
+  if (sudoCapture("test", ["-d", path]).status !== 0) {
     throw new Error(`The work tree ${path} is not a directory; refusing to collect.`);
   }
 }
 function classifyPaths(worktree, paths) {
   if (paths.length === 0) return /* @__PURE__ */ new Map();
-  const { stdout } = sudoCapture([
-    "/usr/bin/env",
+  const { stdout } = sudoCapture("env", [
     `--chdir=${worktree}`,
-    "find",
+    program("find"),
     ...paths.map((path) => `./${path}`),
     "-maxdepth",
     "0",
@@ -30275,10 +30446,9 @@ function parseFindTypes(output, paths) {
   return kinds;
 }
 function copyPaths(worktree, tree, paths) {
-  const copy = (list4) => sudo([
-    "/usr/bin/env",
+  const copy = (list4) => sudo("env", [
     `--chdir=${worktree}`,
-    "cp",
+    program("cp"),
     "-P",
     "--preserve=mode",
     "--parents",
@@ -30292,7 +30462,7 @@ function copyPaths(worktree, tree, paths) {
   try {
     copy(paths);
   } catch {
-    sudo(["rm", "-rf", "--", tree]);
+    sudo("rm", ["-rf", "--", tree]);
     mkdirSync(tree, { recursive: true });
     for (const path of paths) {
       try {
@@ -30306,7 +30476,7 @@ function copyPaths(worktree, tree, paths) {
 }
 function lstatOrUndefined(path) {
   try {
-    return lstatSync(path);
+    return lstatSync2(path);
   } catch {
     return void 0;
   }
@@ -30317,7 +30487,7 @@ function liveReadCommand(source, maxBytes) {
 }
 function copyLiveAgentFile(source, target, maxBytes) {
   const result = spawnSync2(
-    "sudo",
+    program("sudo"),
     ["-n", "-u", AGENT_USER, "--", ...liveReadCommand(source, maxBytes)],
     { timeout: 3e4, maxBuffer: maxBytes + 1024 }
   );
@@ -30326,17 +30496,17 @@ function copyLiveAgentFile(source, target, maxBytes) {
   return true;
 }
 function copySealedAgentFile(source, target, maxBytes) {
-  const lexical = sudoCapture(["realpath", "-s", "--", source]).stdout.trim();
-  const resolved = sudoCapture(["realpath", "--", source]).stdout.trim();
+  const lexical = sudoCapture("realpath", ["-s", "--", source]).stdout.trim();
+  const resolved = sudoCapture("realpath", ["--", source]).stdout.trim();
   if (!lexical || lexical !== resolved) return false;
-  if (sudoCapture(["test", "-f", source]).status !== 0) return false;
+  if (sudoCapture("test", ["-f", source]).status !== 0) return false;
   try {
-    sudo(["cp", "-P", source, target]);
+    sudo("cp", ["-P", source, target]);
   } catch {
     return false;
   }
-  sudo(["chown", "-h", `${process.getuid?.()}:${process.getgid?.()}`, target]);
-  const stats = lstatSync(target);
+  sudo("chown", ["-h", `${process.getuid?.()}:${process.getgid?.()}`, target]);
+  const stats = lstatSync2(target);
   return stats.isFile() && stats.size <= maxBytes;
 }
 
@@ -30451,7 +30621,7 @@ var openCode = {
     mkdirSync2(dir, { recursive: true });
     const file = join4(dir, "opencode.tgz");
     writeFileSync2(file, tarball);
-    const tar = spawnSync3("tar", ["-xzf", file, "-C", dir, "package/bin/opencode"], {
+    const tar = spawnSync3(program("tar"), ["-xzf", file, "-C", dir, "package/bin/opencode"], {
       stdio: "inherit"
     });
     if (tar.status !== 0) throw new Error("Extracting OpenCode failed.");
@@ -32036,10 +32206,10 @@ function extract(zip, target) {
   const file = `${target}.zip`;
   writeFileSync4(file, zip);
   try {
-    const listing = spawnSync5("unzip", ["-Z", "-t", file], { encoding: "utf8" });
+    const listing = spawnSync5(program("unzip"), ["-Z", "-t", file], { encoding: "utf8" });
     const size = Number(/([0-9]+) bytes uncompressed/.exec(listing.stdout)?.[1] ?? Number.NaN);
     if (listing.status !== 0 || !(size <= MAX_EXTRACTED_BYTES)) return false;
-    return spawnSync5("unzip", ["-q", "-o", file, "-d", target]).status === 0;
+    return spawnSync5(program("unzip"), ["-q", "-o", file, "-d", target]).status === 0;
   } finally {
     rmSync3(file, { force: true });
   }
@@ -32502,7 +32672,7 @@ async function agentJob(services, reached) {
   const minutes = positiveNumber(runtime2, "agent-minutes");
   const workspace = runtime2.workspace();
   runtime2.startGroup(`Install ${harness.name}`);
-  createAgentUser();
+  createAgentUser(runtime2);
   const executable = installForAgent(
     await harness.install(join7(workdir(runtime2), "harness")),
     harness.name
@@ -32649,13 +32819,13 @@ function readAgentOutput(runtime2, source) {
 function repositoryRules(workspace) {
   for (const name of ["AGENTS.md", "CLAUDE.md"]) {
     const file = join7(workspace, name);
-    if (existsSync2(file) && lstatSync2(file).isFile()) return readFileSync5(file, "utf8");
+    if (existsSync2(file) && lstatSync3(file).isFile()) return readFileSync5(file, "utf8");
   }
   return void 0;
 }
 
 // src/steps/apply.ts
-import { existsSync as existsSync3, lstatSync as lstatSync3, mkdirSync as mkdirSync5, readFileSync as readFileSync6, writeFileSync as writeFileSync6 } from "node:fs";
+import { existsSync as existsSync3, lstatSync as lstatSync4, mkdirSync as mkdirSync5, readFileSync as readFileSync6, writeFileSync as writeFileSync6 } from "node:fs";
 import { join as join8 } from "node:path";
 
 // src/inference/spend.ts
@@ -33433,7 +33603,7 @@ async function applyPlan(task, io) {
   const checked2 = checkPlanResult(manifest, task.planPath);
   if (!checked2.ok) return blocked(io, task, checked2.error);
   const planFile = join8(dir, "tree", task.planPath);
-  if (!lstatSync3(planFile).isFile()) return blocked(io, task, `${task.planPath} is not a file.`);
+  if (!lstatSync4(planFile).isFile()) return blocked(io, task, `${task.planPath} is not a file.`);
   const plan = decodeText(readFileSync6(planFile));
   if (plan === void 0) return blocked(io, task, `${task.planPath} is not UTF-8 text.`);
   const outputFile = join8(dir, "output.json");
@@ -33953,7 +34123,7 @@ function afterAccept(t, state, record, by, workflows) {
 async function checkWebFiles(repo, ref, tree, checked2) {
   const text = (path) => {
     const file = join8(tree, path);
-    return lstatSync3(file).isFile() ? readFileSync6(file, "utf8") : "";
+    return lstatSync4(file).isFile() ? readFileSync6(file, "utf8") : "";
   };
   const written = checked2.accepted.filter(
     (change) => change.status !== "deleted" && isWebPath(change.path)
@@ -34007,7 +34177,7 @@ function readChanges(tree, accepted, settings) {
   return accepted.map((change) => {
     if (change.status === "deleted") return { path: change.path, content: null };
     const file = join8(tree, change.path);
-    const stats = lstatSync3(file);
+    const stats = lstatSync4(file);
     if (!stats.isFile() || stats.size > settings["max-file-bytes"]) {
       throw new Error(`${oneLine(change.path)} changed after it was checked.`);
     }

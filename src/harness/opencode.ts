@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { program } from "../sandbox.ts";
 import type { Harness, HarnessCommand, HarnessOptions } from "./harness.ts";
 
 /** Pinned version and npm `dist.integrity` of each platform package. See docs/development/dependencies.md. */
@@ -99,7 +100,7 @@ export const openCode: Harness = {
     mkdirSync(dir, { recursive: true });
     const file = join(dir, "opencode.tgz");
     writeFileSync(file, tarball);
-    const tar = spawnSync("tar", ["-xzf", file, "-C", dir, "package/bin/opencode"], {
+    const tar = spawnSync(program("tar"), ["-xzf", file, "-C", dir, "package/bin/opencode"], {
       stdio: "inherit",
     });
     if (tar.status !== 0) throw new Error("Extracting OpenCode failed.");

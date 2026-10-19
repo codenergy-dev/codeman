@@ -13,7 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { liveReadCommand, parseFindTypes, parseStatus, statusCommand } from "./collect.ts";
+import { liveReadCommand, parseFindTypes, parseStatus, statusArgs } from "./collect.ts";
 
 /** A PATH whose `dd` is GNU's, as on Linux runners: `gdd` on macOS, if installed. */
 function gnuDdPath(dir: string): string | undefined {
@@ -102,9 +102,9 @@ test("the status command stays out of submodules, whose configuration the agent 
     const later = new Date(Date.now() + 5_000);
     utimesSync(join(lib, "f"), later, later);
 
-    const command = statusCommand(join(repo, ".git"), work);
+    const command = statusArgs(join(repo, ".git"), work);
     const run = (args: string[]) => {
-      const result = spawnSync(args[0] ?? "", args.slice(1), { env, encoding: "utf8" });
+      const result = spawnSync("git", args, { env, encoding: "utf8" });
       assert.equal(result.status, 0, result.stderr);
       return parseStatus(result.stdout);
     };

@@ -14,12 +14,13 @@ The agent reads text that may be hostile (see [security](../security/risks.md)) 
 | Use what the runner image has, and what earlier steps of the job set up | Read the runner's processes, so it cannot reach the job's tokens or the secrets of other steps |
 | Reach the network | Use `sudo`, or the `docker` group, which it is not in |
 | Use its own credential, through its environment | Read the runner's home, which holds the job's temporary files |
-| Write in its copy of the checkout and in its home | See a Serverless endpoint's key, which stays in Codeman's step, outside the sandbox |
+| Write in its copy of the checkout, in its home, and in temporary directories such as `/tmp` | See a Serverless endpoint's key, which stays in Codeman's step, outside the sandbox |
 | | Leave work running after the [seal](#sealing) |
+| | Change a program or a file that runs outside the sandbox: those Codeman runs, and those the job's later steps run |
 
 ```mermaid
 flowchart LR
-  user["Create codeman-agent,<br/>close the runner's home"] --> copy["Copy the checkout,<br/>without .codeman/action"]
+  user["Close the world-writable paths,<br/>create codeman-agent,<br/>close the runner's home"] --> copy["Copy the checkout,<br/>without .codeman/action"]
   copy --> files["Write the task file,<br/>the rules, workflow results"]
   files --> run["Run the harness,<br/>up to agent-minutes"]
   run --> check{"Output invalid,<br/>and 2 minutes left?"}
@@ -32,6 +33,11 @@ flowchart LR
 
 ### Before the agent runs
 
+- Codeman runs each program it needs by its path in `/usr/bin`, `/usr/sbin`, `/bin` or `/sbin`, after checking that only root can change it. Root must own the file and every directory on the way to it, links followed, and no other user may write any of them.
+- Codeman never runs a program by a name looked up in the job's `PATH`, whose directories the agent may write. A runner that lacks a program fails, naming it, before the run reaches its model.
+- Codeman takes write access away from other users on every file and directory of the runner's root file system, except directories with the sticky bit, such as `/tmp`. GitHub's Ubuntu images leave `/opt`, `/usr/share` and `/usr/local/bin` writable by every user ([`configure-system.sh`](../web/github/runner-images-configure-system-sh-at-82d1b86.md), [`install-nodejs.sh`](../web/github/runner-images-install-nodejs-sh-at-82d1b86.md)). The agent installs its tools in its home: a global `npm install` into `/usr/local` fails.
+- Codeman then checks the job's `PATH`. If `codeman-agent` could still add or change a program in one of its directories, the job fails before the agent starts, naming the directory.
+- These permissions last as long as the machine. A GitHub-hosted runner's VM ends with the job; a self-hosted runner keeps them.
 - The runner's home is closed to other users before the agent starts.
 - The agent's environment is rebuilt from an allowlist: its own `HOME` and XDG directories, `TMPDIR` set to `/tmp` (outside its working tree, for scratch work), the job's `PATH` without entries in the runner's home, and the harness's variables.
 - Nothing else from the runner passes, including what `sudo`'s PAM session adds from `/etc/environment`.

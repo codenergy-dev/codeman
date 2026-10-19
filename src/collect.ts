@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { lstatSync, mkdirSync, rmSync, type Stats, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { AGENT_USER, sudo, sudoCapture } from "./sandbox.ts";
+import { AGENT_USER, program, sudo, sudoCapture } from "./sandbox.ts";
 
 export interface Change {
   path: string;
@@ -48,13 +48,13 @@ export function parseStatus(output: string): Pick<Change, "path" | "status" | "t
 }
 
 /**
- * The `git status` that lists the agent's changes: the trusted `.git` against the agent's work
- * tree, with only trusted configuration. Git does not enter submodules, whose repositories and
- * configuration the agent controls; Codeman never commits a submodule change anyway.
+ * The arguments of the `git status` that lists the agent's changes: the trusted `.git` against
+ * the agent's work tree, with only trusted configuration. Git does not enter submodules, whose
+ * repositories and configuration the agent controls; Codeman never commits a submodule change
+ * anyway.
  */
-export function statusCommand(gitDir: string, worktree: string): string[] {
+export function statusArgs(gitDir: string, worktree: string): string[] {
   return [
-    "git",
     "--no-optional-locks",
     "-c",
     "safe.directory=*",
@@ -90,7 +90,7 @@ export function collectChanges(options: {
   // the sandbox. `sealAgentSandbox` has taken the paths away from the agent; refuse one anyway.
   requireRealDirectory(options.worktree);
 
-  const status = sudo(statusCommand(options.gitDir, options.worktree));
+  const status = sudo("git", statusArgs(options.gitDir, options.worktree));
   const changes = parseStatus(status).filter(
     ({ path }) =>
       !options.exclude.some((prefix) => path === prefix || path.startsWith(`${prefix}/`)),
@@ -112,7 +112,7 @@ export function collectChanges(options: {
     .map(({ path }) => path);
   const failed = copyPaths(options.worktree, tree, copies);
   if (copies.length > 0) {
-    sudo(["chown", "-R", `${process.getuid?.()}:${process.getgid?.()}`, tree]);
+    sudo("chown", ["-R", `${process.getuid?.()}:${process.getgid?.()}`, tree]);
   }
 
   return changes.map((change): Change => {
@@ -138,10 +138,10 @@ export function collectChanges(options: {
 
 /** Fails collection if the work tree is a symlink or not a directory, so root reads nothing else. */
 function requireRealDirectory(path: string): void {
-  if (sudoCapture(["test", "-h", path]).status === 0) {
+  if (sudoCapture("test", ["-h", path]).status === 0) {
     throw new Error(`The work tree ${path} is a symbolic link; refusing to collect through it.`);
   }
-  if (sudoCapture(["test", "-d", path]).status !== 0) {
+  if (sudoCapture("test", ["-d", path]).status !== 0) {
     throw new Error(`The work tree ${path} is not a directory; refusing to collect.`);
   }
 }
@@ -156,10 +156,9 @@ export function classifyPaths(
   paths: readonly string[],
 ): Map<string, "file" | "symlink" | "other"> {
   if (paths.length === 0) return new Map();
-  const { stdout } = sudoCapture([
-    "/usr/bin/env",
+  const { stdout } = sudoCapture("env", [
     `--chdir=${worktree}`,
-    "find",
+    program("find"),
     ...paths.map((path) => `./${path}`),
     "-maxdepth",
     "0",
@@ -196,10 +195,9 @@ export function parseFindTypes(
  */
 function copyPaths(worktree: string, tree: string, paths: readonly string[]): Set<string> {
   const copy = (list: readonly string[]) =>
-    sudo([
-      "/usr/bin/env",
+    sudo("env", [
       `--chdir=${worktree}`,
-      "cp",
+      program("cp"),
       "-P",
       "--preserve=mode",
       "--parents",
@@ -214,7 +212,7 @@ function copyPaths(worktree: string, tree: string, paths: readonly string[]): Se
     copy(paths);
   } catch {
     // Start again from an empty tree, so no copy ever lands on what the first attempt left.
-    sudo(["rm", "-rf", "--", tree]);
+    sudo("rm", ["-rf", "--", tree]);
     mkdirSync(tree, { recursive: true });
     for (const path of paths) {
       try {
@@ -252,7 +250,7 @@ export function liveReadCommand(source: string, maxBytes: number): string[] {
 /** Copies a file out of the live sandbox, read as the agent; see `LIVE_READ_SCRIPT`. */
 export function copyLiveAgentFile(source: string, target: string, maxBytes: number): boolean {
   const result = spawnSync(
-    "sudo",
+    program("sudo"),
     ["-n", "-u", AGENT_USER, "--", ...liveReadCommand(source, maxBytes)],
     { timeout: 30_000, maxBuffer: maxBytes + 1024 },
   );
@@ -269,18 +267,18 @@ export function copyLiveAgentFile(source: string, target: string, maxBytes: numb
 export function copySealedAgentFile(source: string, target: string, maxBytes: number): boolean {
   // Refuse a source reached through a symlink the agent left, so root never follows one out of the
   // sandbox: the lexical path and the fully resolved path match only when no component is a link.
-  const lexical = sudoCapture(["realpath", "-s", "--", source]).stdout.trim();
-  const resolved = sudoCapture(["realpath", "--", source]).stdout.trim();
+  const lexical = sudoCapture("realpath", ["-s", "--", source]).stdout.trim();
+  const resolved = sudoCapture("realpath", ["--", source]).stdout.trim();
   if (!lexical || lexical !== resolved) return false;
   // Only a regular file: cp would block on a named pipe.
-  if (sudoCapture(["test", "-f", source]).status !== 0) return false;
+  if (sudoCapture("test", ["-f", source]).status !== 0) return false;
   try {
-    sudo(["cp", "-P", source, target]);
+    sudo("cp", ["-P", source, target]);
   } catch {
     return false;
   }
   // -h: change the link itself if the agent left a symlink, never what it points to.
-  sudo(["chown", "-h", `${process.getuid?.()}:${process.getgid?.()}`, target]);
+  sudo("chown", ["-h", `${process.getuid?.()}:${process.getgid?.()}`, target]);
   const stats = lstatSync(target);
   return stats.isFile() && stats.size <= maxBytes;
 }

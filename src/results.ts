@@ -3,6 +3,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { CiResults } from "./platform/platform.ts";
 import type { CiRun } from "./platform/types.ts";
+import { program } from "./sandbox.ts";
 
 export const RESULTS_DIR = ".codeman/results";
 export const MAX_LOG_BYTES = 64 * 1024;
@@ -92,11 +93,11 @@ function extract(zip: Buffer, target: string): boolean {
   const file = `${target}.zip`;
   writeFileSync(file, zip);
   try {
-    const listing = spawnSync("unzip", ["-Z", "-t", file], { encoding: "utf8" });
+    const listing = spawnSync(program("unzip"), ["-Z", "-t", file], { encoding: "utf8" });
     const size = Number(/([0-9]+) bytes uncompressed/.exec(listing.stdout)?.[1] ?? Number.NaN);
     if (listing.status !== 0 || !(size <= MAX_EXTRACTED_BYTES)) return false;
     // -o: overwrite; unzip keeps entries inside `target`, and never runs anything.
-    return spawnSync("unzip", ["-q", "-o", file, "-d", target]).status === 0;
+    return spawnSync(program("unzip"), ["-q", "-o", file, "-d", target]).status === 0;
   } finally {
     rmSync(file, { force: true });
   }

@@ -9,22 +9,203 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { test } from "node:test";
 import { collectChanges, copyLiveAgentFile, copySealedAgentFile } from "./collect.ts";
 import {
   AGENT_HOME,
   AGENT_USER,
+  closeArgs,
   copyToAgent,
   createAgentUser,
+  type FileStats,
+  findProgram,
   killAgentProcesses,
+  pathProblems,
   runAsAgent,
   sealAgentSandbox,
+  sudoArgs,
+  untrustedReason,
 } from "./sandbox.ts";
 import { FakeRuntime } from "./testing/fake-runtime.ts";
 
 // Creates a system user and needs passwordless sudo, like GitHub's Linux runners. CI sets this.
 const enabled = process.platform === "linux" && process.env.CODEMAN_SANDBOX_TEST === "1";
+
+type FakeEntry = { uid?: number; mode: number } | { uid?: number; link: string };
+
+/** A fake file system: each path's owner (root by default) and mode, or a link's target. */
+function fakeFs(entries: Record<string, FakeEntry>): FileStats {
+  return {
+    lstat: (path) => {
+      const entry = entries[path];
+      if (!entry) return undefined;
+      const link = "link" in entry;
+      return { uid: entry.uid ?? 0, mode: link ? 0o777 : entry.mode, isSymbolicLink: () => link };
+    },
+    readlink: (path) => {
+      const entry = entries[path];
+      if (!entry || !("link" in entry)) throw new Error(`Not a link: ${path}`);
+      return entry.link;
+    },
+    readdir: (path) => {
+      if (!entries[path]) throw new Error(`No directory: ${path}`);
+      const prefix = path === "/" ? "/" : `${path}/`;
+      return Object.keys(entries)
+        .filter((other) => other.startsWith(prefix) && !other.slice(prefix.length).includes("/"))
+        .map((other) => other.slice(prefix.length))
+        .filter((name) => name !== "");
+    },
+  };
+}
+
+/** Ubuntu's layout, where only root writes: /bin links to usr/bin. */
+const ubuntu: Record<string, FakeEntry> = {
+  "/": { mode: 0o755 },
+  "/usr": { mode: 0o755 },
+  "/usr/bin": { mode: 0o755 },
+  "/usr/bin/sudo": { mode: 0o4755 },
+  "/usr/sbin": { mode: 0o755 },
+  "/bin": { link: "usr/bin" },
+  "/sbin": { link: "usr/sbin" },
+  "/usr/local": { mode: 0o755 },
+  "/usr/local/bin": { mode: 0o755 },
+  "/opt": { mode: 0o755 },
+  "/tmp": { mode: 0o1777 },
+};
+
+test("a path is trusted only when root alone can change it", () => {
+  const reason = (path: string, extra: Record<string, FakeEntry> = {}) =>
+    untrustedReason(path, fakeFs({ ...ubuntu, ...extra }));
+  assert.equal(reason("/usr/bin/sudo"), undefined);
+  assert.equal(reason("/bin/sudo"), undefined, "through root's own link");
+  assert.match(reason("/opt/x/y", { "/opt": { mode: 0o777 } }) ?? "", /^\/opt is writable/);
+  assert.match(
+    reason("/usr/local/bin/x", { "/usr/local/bin": { uid: 1001, mode: 0o755 } }) ?? "",
+    /^\/usr\/local\/bin is not owned by root/,
+  );
+  assert.match(
+    reason("/usr/bin/x", { "/usr/bin/x": { mode: 0o775 } }) ?? "",
+    /^\/usr\/bin\/x is writable/,
+    "a group-writable file",
+  );
+  assert.match(
+    reason("/usr/bin/x", {
+      "/usr/bin/x": { link: "/opt/pipx_bin/x" },
+      "/opt": { mode: 0o777 },
+      "/opt/pipx_bin": { mode: 0o755 },
+      "/opt/pipx_bin/x": { mode: 0o755 },
+    }) ?? "",
+    /^\/opt is writable/,
+    "a link out of a trusted directory",
+  );
+  assert.match(
+    reason("/usr/bin/a", { "/usr/bin/a": { link: "b" }, "/usr/bin/b": { link: "a" } }) ?? "",
+    /more than 40 links/,
+  );
+  assert.match(reason("/usr/bin/x") ?? "", /^\/usr\/bin\/x does not exist/);
+});
+
+test("programs come only from trusted directories", () => {
+  const find = (extra: Record<string, FakeEntry>) =>
+    findProgram("x", fakeFs({ ...ubuntu, ...extra }));
+  const file = { mode: 0o755 };
+  assert.equal(find({ "/usr/local/bin/x": file, "/usr/bin/x": file }), "/usr/bin/x");
+  assert.equal(find({ "/usr/sbin/x": file }), "/usr/sbin/x");
+  assert.equal(find({ "/usr/bin/x": { mode: 0o777 }, "/usr/sbin/x": file }), "/usr/sbin/x");
+  const sbin = { "/sbin": { mode: 0o755 }, "/sbin/x": file };
+  assert.equal(find(sbin), "/sbin/x", "when only /sbin has it");
+  assert.throws(() => find({ "/usr/local/bin/x": file }), /Codeman runs x only from/);
+  assert.throws(
+    () => find({ "/opt/pipx_bin": { mode: 0o777 }, "/opt/pipx_bin/x": { mode: 0o777 } }),
+    /Codeman runs x only from/,
+  );
+  assert.throws(() => find({ "/usr/bin/x": { uid: 1001, mode: 0o755 } }), /not owned by root/);
+});
+
+test("sudo's arguments name the command by its trusted path", () => {
+  const resolve = (name: string) => `/t/${name}`;
+  assert.deepEqual(sudoArgs("git", ["status"], undefined, resolve), [
+    "-n",
+    "--",
+    "/t/git",
+    "status",
+  ]);
+  assert.deepEqual(sudoArgs("git", ["status"], AGENT_USER, resolve), [
+    "-n",
+    "-u",
+    "codeman-agent",
+    "--",
+    "/t/git",
+    "status",
+  ]);
+});
+
+test("the agent job runs no program by its name", () => {
+  for (const file of [
+    "sandbox.ts",
+    "collect.ts",
+    "results.ts",
+    "harness/opencode.ts",
+    "steps/agent.ts",
+  ]) {
+    const source = readFileSync(join(import.meta.dirname, file), "utf8");
+    assert.doesNotMatch(source, /\bspawn(Sync)?\(\s*["'`]/, `${file} spawns a program by its name`);
+    assert.doesNotMatch(
+      source,
+      /\b(sudo|sudoCapture|sudoAs)\(\s*\[/,
+      `${file} runs a program under sudo by its name`,
+    );
+  }
+});
+
+test("a PATH is safe only when the agent can change none of its programs", () => {
+  const problems = (path: string, extra: Record<string, FakeEntry> = {}) =>
+    pathProblems(path, fakeFs({ ...ubuntu, ...extra }));
+  assert.deepEqual(problems("/usr/local/bin:/usr/bin:/bin:relative"), []);
+  assert.deepEqual(problems("/usr/local/bin:/usr/bin", { "/usr/local/bin": { mode: 0o777 } }), [
+    "/usr/local/bin",
+  ]);
+  const pipx = { "/opt": { mode: 0o777 }, "/opt/pipx_bin": { mode: 0o755 } };
+  assert.deepEqual(problems("/opt/pipx_bin:/usr/bin", pipx), ["/opt/pipx_bin"], "a parent");
+  assert.deepEqual(
+    problems("/usr/local/bin:/usr/bin", { "/usr/local/bin/git": { mode: 0o777 } }),
+    ["/usr/local/bin"],
+    "a file in the directory",
+  );
+  assert.deepEqual(
+    problems("/usr/local/bin", {
+      "/usr/local/bin/npm": { link: "../../../opt/npm/cli.js" },
+      "/opt": { mode: 0o777 },
+      "/opt/npm": { mode: 0o755 },
+      "/opt/npm/cli.js": { mode: 0o755 },
+    }),
+    ["/usr/local/bin"],
+    "a link to a file the agent can change",
+  );
+  assert.deepEqual(problems("/tmp/tools/bin"), ["/tmp/tools/bin"], "missing, under a sticky /tmp");
+  assert.deepEqual(
+    problems("/tmp/tools/bin", {
+      "/tmp/tools": { uid: 1001, mode: 0o755 },
+      "/tmp/tools/bin": { uid: 1001, mode: 0o755 },
+    }),
+    [],
+    "under a sticky /tmp, in a directory of the runner's",
+  );
+  assert.deepEqual(problems("/usr/games", { "/usr": { mode: 0o777 } }), ["/usr/games"], "missing");
+});
+
+test("closing leaves links and sticky directories alone", () => {
+  const args = closeArgs((name) => `/t/${name}`).join(" ");
+  for (const part of [
+    "/ -xdev",
+    "-perm -0002",
+    "-type f -o -type d ! -perm -1000",
+    "-exec /t/chmod o-w -- {} +",
+  ]) {
+    assert.ok(args.includes(part), `${args} has ${part}`);
+  }
+});
 
 // A FIFO that cp would block on fails the test as a timeout, not a hang, if its filter regresses.
 test("the agent is contained and its changes are collected safely", {
@@ -56,7 +237,7 @@ test("the agent is contained and its changes are collected safely", {
   mkdirSync(join(repo, ".codeman", "action"), { recursive: true });
   writeFileSync(join(repo, ".codeman", "action", "action.yml"), "name: Codeman\n");
 
-  createAgentUser();
+  createAgentUser(new FakeRuntime());
   const worktree = `${AGENT_HOME}/work`;
   copyToAgent(repo, worktree, [".codeman/action"]);
   const copied = (path: string) => spawnSync("sudo", ["-n", "test", "-e", path]).status === 0;
@@ -90,6 +271,10 @@ test("the agent is contained and its changes are collected safely", {
     `ls -A '${home}' >/dev/null 2>&1 && echo yes > home.txt`,
     `ls -A '${runnerTemp}' >/dev/null 2>&1 && echo yes > temp.txt`,
     "[ -w /var/run/docker.sock ] && echo yes > docker.txt",
+    // Each directory of its PATH, and the trees GitHub's images leave writable by every user.
+    'for dir in $(echo "$PATH" | tr : " ") /opt /usr/share /usr/local/bin; do',
+    '  touch "$dir/codeman-probe" 2>/dev/null && echo "$dir" >> wrote.txt',
+    "done",
     "(sleep 300 >/dev/null 2>&1 &)",
     "exit 0",
   ].join("\n");
@@ -163,6 +348,7 @@ test("the agent is contained and its changes are collected safely", {
   assert.ok(!byPath.has("home.txt"), "the agent cannot read the runner's home");
   assert.ok(!byPath.has("temp.txt"), "the agent cannot read the job's temporary files");
   assert.ok(!byPath.has("docker.txt"), "the agent cannot use Docker");
+  assert.ok(!byPath.has("wrote.txt"), "the agent cannot add programs that run outside the sandbox");
 
   assert.equal(
     copySealedAgentFile(`${worktree}/.codeman/output.json`, join(out, "output.json"), 1024),
@@ -181,7 +367,7 @@ test("the agent is contained and its changes are collected safely", {
 });
 
 test("the agent stops when its run does, with the reason", { skip: !enabled }, async () => {
-  createAgentUser();
+  createAgentUser(new FakeRuntime());
   const stop = new AbortController();
   setTimeout(() => stop.abort(new Error("No worker started.")), 200);
   const runtime = new FakeRuntime();
@@ -214,7 +400,7 @@ test("collection refuses a work tree the agent turned into a symlink", { skip: !
   mkdirSync(secrets, { recursive: true });
   writeFileSync(join(secrets, "token.txt"), "secret\n");
 
-  createAgentUser();
+  createAgentUser(new FakeRuntime());
   const worktree = `${AGENT_HOME}/work`;
   spawnSync("sudo", ["-n", "rm", "-rf", worktree]);
   spawnSync("sudo", ["-n", "-u", AGENT_USER, "ln", "-s", secrets, worktree]);
@@ -225,4 +411,115 @@ test("collection refuses a work tree the agent turned into a symlink", { skip: !
     /symbolic link/,
   );
   assert.ok(!existsSync(join(out, "tree", "token.txt")), "nothing outside the sandbox is copied");
+});
+
+test("the agent does not start when it could add programs to the job's PATH", {
+  skip: !enabled,
+  timeout: 300_000,
+}, () => {
+  const saved = process.env.PATH;
+  // Missing, under the sticky /tmp: the agent could create it.
+  const missing = `/tmp/codeman-missing-${process.pid}/bin`;
+  process.env.PATH = `${missing}:${saved ?? ""}`;
+  try {
+    assert.throws(
+      () => createAgentUser(new FakeRuntime()),
+      (error: Error) => error.message.includes(`could add or change programs in ${missing},`),
+    );
+  } finally {
+    process.env.PATH = saved;
+  }
+});
+
+// Last: the planted `git` would otherwise reach this file's other tests. Other test files run
+// alongside, so a stub runs the real program for them, and records only a run by Codeman's step,
+// which carries CODEMAN_PLANTED, or by root, whose sudo drops it.
+test("Codeman runs no program the agent could have planted, and closes their directories", {
+  skip: !enabled,
+  timeout: 300_000,
+}, async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "codeman-planted-"));
+  const marker = join(root, "ran");
+  const repo = join(root, "repo");
+  mkdirSync(repo);
+  writeFileSync(join(repo, "README.md"), "hello\n");
+  const git = (...args: string[]) =>
+    execFileSync("/usr/bin/git", [
+      "-C",
+      repo,
+      "-c",
+      "user.name=t",
+      "-c",
+      "user.email=t@t",
+      ...args,
+    ]);
+  git("init", "-q");
+  git("add", ".");
+  git("commit", "-qm", "init");
+
+  // Where the agent could write them on GitHub's images: first on the job's PATH, and first in
+  // sudo's secure_path. An earlier test closed the directories; open them again, as the image does.
+  const asRoot = (...args: string[]) => execFileSync("/usr/bin/sudo", ["-n", "--", ...args]);
+  const planted = ["/opt/pipx_bin/sudo", "/usr/local/bin/git"];
+  for (const file of planted) {
+    assert.ok(!existsSync(file), `${file} is not the runner's own`);
+    const stub = join(root, basename(file));
+    writeFileSync(
+      stub,
+      [
+        "#!/bin/sh",
+        'if [ -n "$CODEMAN_PLANTED" ] || [ "$(/usr/bin/id -u)" = 0 ]; then',
+        `  echo "$0 $*" >> ${marker}`,
+        "  exit 0",
+        "fi",
+        `exec /usr/bin/${basename(file)} "$@"`,
+        "",
+      ].join("\n"),
+    );
+    asRoot("/usr/bin/mkdir", "-p", dirname(file));
+    asRoot("/usr/bin/chmod", "0777", dirname(file));
+    asRoot("/usr/bin/install", "-m", "0755", stub, file);
+  }
+  process.env.CODEMAN_PLANTED = "1";
+  try {
+    let failure: unknown;
+    try {
+      const runtime = new FakeRuntime();
+      createAgentUser(runtime);
+      const closed = runtime.logged("info").find((line) => line.startsWith("Closed the runner's"));
+      assert.ok(closed, "the closing's time is logged");
+      t.diagnostic(closed);
+      const worktree = `${AGENT_HOME}/work`;
+      copyToAgent(repo, worktree);
+      const run = await runAsAgent(
+        { file: "/bin/bash", args: ["-c", "echo changed >> README.md"], env: {} },
+        worktree,
+        60_000,
+        new FakeRuntime(),
+      );
+      assert.deepEqual(run, { exitCode: 0, timedOut: false });
+      sealAgentSandbox(worktree);
+      const changes = collectChanges({
+        gitDir: join(repo, ".git"),
+        worktree,
+        outDir: join(root, "result"),
+        exclude: [],
+      });
+      assert.deepEqual(
+        changes.map(({ path, status }) => ({ path, status })),
+        [{ path: "README.md", status: "modified" }],
+      );
+    } catch (error) {
+      failure = error;
+    }
+    const ran = existsSync(marker) ? readFileSync(marker, "utf8") : "";
+    assert.equal(ran, "", "Codeman ran none of the planted programs");
+    if (failure) throw failure;
+    for (const file of planted) {
+      assert.equal(lstatSync(dirname(file)).mode & 0o002, 0, `${dirname(file)} is closed`);
+    }
+  } finally {
+    delete process.env.CODEMAN_PLANTED;
+    asRoot("/usr/bin/rm", "-f", "--", ...planted);
+  }
 });

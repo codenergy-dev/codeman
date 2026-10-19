@@ -82,7 +82,7 @@ async function agentJob(services: Services, reached: () => void): Promise<void> 
   const workspace = runtime.workspace();
 
   runtime.startGroup(`Install ${harness.name}`);
-  createAgentUser();
+  createAgentUser(runtime);
   const executable = installForAgent(
     await harness.install(join(workdir(runtime), "harness")),
     harness.name,
