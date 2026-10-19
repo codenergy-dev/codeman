@@ -31235,7 +31235,7 @@ Tests: ${test ?? "(no report)"}`,
   deferredWorkflows: (stage, paths, reason, next) => `The ${STAGES2[stage]} stage needs ${paths} to run: ${reason} The workflows are staged and wait for a maintainer, so the task goes on ${next ? `to the ${STAGES2[next]} stage meanwhile, up to the end of its route` : "to the end of its route meanwhile"}. Once they are accepted and their runs finish, the ${STAGES2[stage]} stage goes on with their results.`,
   acceptAfterReview: (paths) => `Review passed. The task waits for the staged workflows to be accepted: ${paths}. Read them, with review's report on the pull request, and comment \`/codeman accept-workflows\`. The pull request stays a draft until then, since merged now they would never run.`,
   stageDecisions: (stage, count3) => `The ${STAGES2[stage]} stage needs ${count3} decision(s) from the maintainers.`,
-  reviewRounds: (rounds, max) => `Review sent the work back to the code stage ${rounds} times in a row (\`max-runs\` is ${max}). Comment \`/codeman continue <guidance>\` to go on.`,
+  reviewRounds: (rounds, max) => `Review sent the work back to the code stage ${rounds} times in a row (\`max-runs\` is ${max}). Comment \`/codeman continue <guidance>\` to allow ${max} more rounds.`,
   skipped: (reason) => `Skipped: ${reason}`,
   routeChosen: (stages) => `The routing agent chose these stages, in order: ${stages}.`,
   routeLabel: "Route",
@@ -31499,7 +31499,7 @@ Testes: ${test ?? "(sem relat\xF3rio)"}`,
   deferredWorkflows: (stage, paths, reason, next) => `A ${OF_STAGE(stage)} precisa que ${paths} rode: ${reason} Os workflows est\xE3o guardados e aguardam um mantenedor, ent\xE3o a tarefa segue ${next ? `para a ${OF_STAGE(next)} enquanto isso, at\xE9 o fim da sua rota` : "at\xE9 o fim da sua rota enquanto isso"}. Quando forem aceitos e as execu\xE7\xF5es terminarem, a ${OF_STAGE(stage)} continua com os resultados.`,
   acceptAfterReview: (paths) => `A revis\xE3o passou. A tarefa aguarda que os workflows guardados sejam aceitos: ${paths}. Leia-os, junto com o relat\xF3rio da revis\xE3o no pull request, e comente \`/codeman accept-workflows\`. O pull request continua em rascunho at\xE9 l\xE1, porque, mergeados agora, eles nunca rodariam.`,
   stageDecisions: (stage, count3) => `A ${OF_STAGE(stage)} precisa de ${count3} decis\xE3o(\xF5es) dos mantenedores.`,
-  reviewRounds: (rounds, max) => `A revis\xE3o devolveu o trabalho \xE0 etapa de c\xF3digo ${rounds} vezes seguidas (\`max-runs\` \xE9 ${max}). Comente \`/codeman continue <orienta\xE7\xE3o>\` para continuar.`,
+  reviewRounds: (rounds, max) => `A revis\xE3o devolveu o trabalho \xE0 etapa de c\xF3digo ${rounds} vezes seguidas (\`max-runs\` \xE9 ${max}). Comente \`/codeman continue <orienta\xE7\xE3o>\` para permitir mais ${max} rodadas.`,
   skipped: (reason) => `Pulada: ${reason}`,
   routeChosen: (stages) => `O agente de roteamento escolheu estas etapas, nesta ordem: ${stages}.`,
   routeLabel: "Rota",
@@ -33506,13 +33506,13 @@ async function applyStage(task, io) {
   const fresh = task.resume || task.record.stage !== stage;
   const runs = (fresh ? 0 : task.record.runs ?? 0) + 1;
   const maxRuns = task.settings["max-runs"];
-  const fixed = task.requests.some((request2) => request2.kind === "fix");
+  const requested = task.requests.length > 0;
   const record = {
     ...task.record,
     stage,
     runs,
     awaiting: void 0,
-    reviewRounds: fixed ? 0 : task.record.reviewRounds
+    reviewRounds: requested ? 0 : task.record.reviewRounds
   };
   const unfinished = (outcome, message, report) => finish(io, task, runs >= maxRuns ? "blocked" : ROUTED_STAGE_STATE[stage], {
     outcome,

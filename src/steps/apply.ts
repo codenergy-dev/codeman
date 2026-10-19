@@ -350,14 +350,15 @@ async function applyStage(task: TaskContext, io: Io): Promise<void> {
   const fresh = task.resume || task.record.stage !== stage;
   const runs = (fresh ? 0 : (task.record.runs ?? 0)) + 1;
   const maxRuns = task.settings["max-runs"];
-  const fixed = task.requests.some((request) => request.kind === "fix");
+  // A maintainer's request starts the review rounds over, as it does the runs in a row.
+  const requested = task.requests.length > 0;
   // A run that awaits a workflow sets `awaiting` again; any other outcome ends the wait.
   const record: TaskRecord = {
     ...task.record,
     stage,
     runs,
     awaiting: undefined,
-    reviewRounds: fixed ? 0 : task.record.reviewRounds,
+    reviewRounds: requested ? 0 : task.record.reviewRounds,
   };
   const unfinished = (
     outcome: "partial" | "out-of-time",

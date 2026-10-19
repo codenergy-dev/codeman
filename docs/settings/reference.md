@@ -127,7 +127,7 @@ No setting is required. A provider may require some of its own settings ([provid
 | It counts | The task is blocked by | By default | A new count starts with |
 | --- | --- | --- | --- |
 | A [routed stage's](../glossary.md#routed-stage) agent runs in a row that end without finishing it: partial, or out of time | The run that reaches `max-runs` | The 3rd run | `/codeman fix` or `/codeman continue` |
-| Review's rounds in a row asking for changes | The round after `max-runs` | The 4th round | `/codeman fix`, or a review that passes |
+| Review's rounds in a row asking for changes | The round after `max-runs` | The 4th round | `/codeman fix`, `/codeman continue`, or a review that passes |
 
 ### Agent output limits
 

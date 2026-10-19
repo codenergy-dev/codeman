@@ -168,10 +168,9 @@ Two counters stop a task that does not converge. Both are bounded by `max-runs`.
 | --- | --- | --- |
 | Counts | Each run of the same stage that ends unfinished (`partial` or out of time), from 1. A run that reports `awaiting-workflow` does not count. | Each `changes` from review |
 | Blocks the task | When the `max-runs`th run in a row ends unfinished | When the rounds exceed `max-runs`: with `max-runs: 3`, the fourth `changes` in a row |
-| Starts over | When another stage runs, or a `fix` or `continue` request resumes the task | When review passes, and in the runs that carry out a `fix` request |
+| Starts over | When another stage runs, or a `fix` or `continue` request resumes the task | When review passes, and in the runs that carry out a `fix` or `continue` request |
 
-- After the runs in a row block a task, `/codeman continue <guidance>` grants `max-runs` more runs.
-- `/codeman continue` does not reset the review rounds: it runs review again, and another `changes` blocks the task again.
+After either counter blocks a task, `/codeman continue <guidance>` grants `max-runs` more.
 
 ### The pull request
 

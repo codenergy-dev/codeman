@@ -531,6 +531,34 @@ test("a review with commands in codeman:ready does not stop the task from routin
   assert.deepEqual([runtime.outputs.action, runtime.outputs.stage], ["route", "route"]);
 });
 
+test("continue after review blocks for its rounds gives review a fresh count", async () => {
+  const platform = new FakePlatform({ ".codeman/settings.yml": "model: a/b\nmax-runs: 3\n" });
+  const { issue } = await plannedTask(platform);
+  await routeStep(platform, ["review"]);
+  const panel = platform.comments.get(issue)?.find((comment) => isStatusComment(comment.body));
+  const before = record(platform, issue);
+  assert.ok(panel && before);
+  panel.body = panel.body.replace(
+    /<!-- codeman:status [A-Za-z0-9_-]* -->/,
+    encodeStatus({ ...before, reviewRounds: 3 }),
+  );
+
+  let runtime = await selectStep(platform);
+  assert.deepEqual([runtime.outputs.action, runtime.outputs.stage], ["implement", "review"]);
+  agentResult({}, { status: "changes", summary: "Report.", reason: "Name the unit." });
+  await applyStep(platform);
+  assert.deepEqual(stateLabels(platform, issue), ["codeman:blocked"]);
+  assert.match(platform.botComments(issue).at(-1) ?? "", /to allow 3 more rounds\./);
+
+  platform.say(issue, "alice", "/codeman continue Go on.");
+  runtime = await selectStep(platform);
+  assert.deepEqual([runtime.outputs.action, runtime.outputs.stage], ["implement", "review"]);
+  agentResult({}, { status: "changes", summary: "Report.", reason: "Name the unit." });
+  await applyStep(platform);
+  assert.deepEqual(stateLabels(platform, issue), ["codeman:routing"]);
+  assert.equal(record(platform, issue)?.reviewRounds, 1);
+});
+
 test("the web stage commits only valid pages under docs/web/, and the panel lists old ones", async () => {
   const platform = new FakePlatform({ ".codeman/settings.yml": "model: a/b\n" });
   const { issue, branch } = await plannedTask(platform);
