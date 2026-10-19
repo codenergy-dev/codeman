@@ -259,7 +259,8 @@ export function acceptRequest(
  * What the commands since the last handled comment and review ask for, in the task's state.
  * A new plan wins, then resuming, then answers. Comments do not wait for their state: the task's
  * next run marks every comment it read as handled, and a `record` run reports the `fix` and
- * `continue` it cannot apply.
+ * `continue` it cannot apply. Only comments make a `record` run, since it reads only comments: a
+ * review's commands wait for a state that resumes the work.
  */
 export function pendingWork(
   sources: readonly CommandSource[],
@@ -268,7 +269,7 @@ export function pendingWork(
   const kinds = new Set(sources.map(({ command }) => command.kind));
   if (kinds.has("replan")) return "replan";
   if (RESUMABLE.has(state) && (kinds.has("fix") || kinds.has("continue"))) return "resume";
-  if (DECIDING.has(state) && sources.length > 0) return "record";
+  if (DECIDING.has(state) && sources.some((source) => source.commentId > 0)) return "record";
   return undefined;
 }
 

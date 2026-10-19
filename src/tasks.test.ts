@@ -463,6 +463,20 @@ test("a review that requests changes is a fix request", () => {
   );
 });
 
+test("a review's commands make no record run", () => {
+  const changes = reviewCommands(
+    authorizedReviews([review(1, "changes-requested", "Please rename.")], [], maintainers, 0),
+  );
+  assert.equal(pendingWork(changes, "awaiting-decision"), undefined);
+  const approve = reviewCommands(
+    authorizedReviews([review(2, "commented", "/codeman approve")], [], maintainers, 0),
+  );
+  assert.equal(pendingWork(approve, "ready"), undefined);
+  const answer = commandsAfter(authorized([comment(3, "/codeman decide 1 a")]), 0);
+  assert.equal(pendingWork([...changes, ...answer], "awaiting-decision"), "record");
+  assert.equal(pendingWork([...approve, ...answer], "ready"), "record");
+});
+
 test("commenters include review authors", () => {
   assert.deepEqual(commenters([review(1, "commented", "", "carol")]), ["carol"]);
 });

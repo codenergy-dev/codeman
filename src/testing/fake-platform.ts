@@ -16,6 +16,7 @@ import type {
   RepositoryRef,
   Review,
   ReviewComment,
+  ReviewVerdict,
   TreeFile,
   User,
 } from "../platform/types.ts";
@@ -120,6 +121,18 @@ export class FakePlatform implements Platform {
       { login: author, bot: false },
       body,
     );
+  }
+
+  /** A review by a person, on a pull request. Its ID comes from the comments' counter. */
+  review(changeRequest: number, author: string, verdict: ReviewVerdict, body: string): number {
+    const id = this.#nextId++;
+    this.#thread(this.reviews, changeRequest).push({
+      id,
+      author: { login: author, bot: false },
+      verdict,
+      body,
+    });
+    return id;
   }
 
   /** The text of a file on a branch, or undefined. */
@@ -343,7 +356,7 @@ export class FakePlatform implements Platform {
     return changeRequest;
   }
 
-  #thread(threads: Map<number, Comment[]>, number: number): Comment[] {
+  #thread<T>(threads: Map<number, T[]>, number: number): T[] {
     const thread = threads.get(number) ?? [];
     threads.set(number, thread);
     return thread;

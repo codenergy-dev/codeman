@@ -196,6 +196,8 @@ The routing agent chooses the routed stages that carry out the request.
 
 `/codeman replan` also works on the pull request.
 
+A review posted while the task is `codeman:awaiting-decision` waits until the decisions are answered, then counts.
+
 ### Handled requests
 
 Codeman records the last comment and review it handled.

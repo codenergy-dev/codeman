@@ -457,6 +457,80 @@ test("a fix posted while decisions are pending is reported in the run comment", 
   assert.deepEqual(readTask(runtime).requests, []);
 });
 
+test("a review while decisions are pending waits for them, and then counts", async () => {
+  const platform = new FakePlatform({ ".codeman/settings.yml": "model: a/b\n" });
+  const { issue } = await plannedTask(platform);
+  await routeStep(platform, ["code", "review"]);
+  await selectStep(platform);
+  agentResult(
+    { "src/limit.ts": "export const limit = 10;\n" },
+    { status: "done", summary: "Added the limiter.", commitMessage: "Add a limiter" },
+  );
+  await applyStep(platform);
+  await selectStep(platform);
+  agentResult(
+    {},
+    {
+      status: "decisions",
+      summary: "Report.",
+      decisions: [
+        {
+          id: 1,
+          title: "Unit",
+          question: "Per second or per minute?",
+          options: [
+            { key: "a", label: "Second" },
+            { key: "b", label: "Minute" },
+          ],
+          recommendation: "b",
+        },
+      ],
+    },
+  );
+  await applyStep(platform);
+  assert.deepEqual(stateLabels(platform, issue), ["codeman:awaiting-decision"]);
+  assert.equal(record(platform, issue)?.pullRequest, 1001);
+
+  // The review starts no run while the decisions are pending.
+  const reviewId = platform.review(1001, "alice", "changes-requested", "Name the unit.");
+  const comments = platform.botComments(issue);
+  assert.equal((await selectStep(platform)).outputs.action, "none");
+  assert.deepEqual(platform.botComments(issue), comments);
+
+  platform.say(issue, "alice", "/codeman approve");
+  assert.equal((await selectStep(platform)).outputs.action, "record");
+  await applyStep(platform, false);
+  assert.deepEqual(stateLabels(platform, issue), ["codeman:ready"]);
+
+  // Once they are answered, the review's request counts.
+  const runtime = await selectStep(platform);
+  assert.deepEqual([runtime.outputs.action, runtime.outputs.stage], ["route", "route"]);
+  assert.equal(readTask(runtime).route?.trigger, "fix");
+  assert.deepEqual(
+    readTask(runtime).reviews.map((review) => [review.id, review.body]),
+    [[reviewId, "Name the unit."]],
+  );
+  routeResult(["code", "review"]);
+  await applyStep(platform);
+  assert.equal(record(platform, issue)?.processedReviewId, reviewId);
+});
+
+test("a review with commands in codeman:ready does not stop the task from routing", async () => {
+  const platform = new FakePlatform({ ".codeman/settings.yml": "model: a/b\n" });
+  const { issue } = await plannedTask(platform);
+  const panel = platform.comments.get(issue)?.find((comment) => isStatusComment(comment.body));
+  const before = record(platform, issue);
+  assert.ok(panel && before);
+  panel.body = panel.body.replace(
+    /<!-- codeman:status [A-Za-z0-9_-]* -->/,
+    encodeStatus({ ...before, pullRequest: 1001 }),
+  );
+  platform.review(1001, "alice", "commented", "/codeman approve\n/codeman set max-runs 5");
+
+  const runtime = await selectStep(platform);
+  assert.deepEqual([runtime.outputs.action, runtime.outputs.stage], ["route", "route"]);
+});
+
 test("the web stage commits only valid pages under docs/web/, and the panel lists old ones", async () => {
   const platform = new FakePlatform({ ".codeman/settings.yml": "model: a/b\n" });
   const { issue, branch } = await plannedTask(platform);

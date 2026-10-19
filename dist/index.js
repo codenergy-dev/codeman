@@ -33257,7 +33257,7 @@ function pendingWork(sources, state) {
   const kinds = new Set(sources.map(({ command }) => command.kind));
   if (kinds.has("replan")) return "replan";
   if (RESUMABLE.has(state) && (kinds.has("fix") || kinds.has("continue"))) return "resume";
-  if (DECIDING.has(state) && sources.length > 0) return "record";
+  if (DECIDING.has(state) && sources.some((source) => source.commentId > 0)) return "record";
   return void 0;
 }
 function resumeRequests(sources) {

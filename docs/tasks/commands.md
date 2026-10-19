@@ -42,7 +42,7 @@ A maintainer is a user with `admin`, `maintain` or `write` access to the reposit
 - Answers are recorded in the [status comment](../glossary.md#status-comment) and in an `## Answers` section of the plan. When no decision is pending, the task becomes `codeman:ready`.
 
 > [!IMPORTANT]
-> A `fix` or `continue` posted while the task is `codeman:awaiting-decision` is not applied: the run that records the answers marks the comment handled, and its run comment says so. Post it again once the task is ready. A review that requests changes is kept: it waits until the task is ready.
+> A `fix` or `continue` posted while the task is `codeman:awaiting-decision` is not applied: the run that records the answers marks the comment handled, and its run comment says so. Post it again once the task is ready. A review posted meanwhile starts no run, and counts once the task is ready.
 
 ## When several commands arrive
 
