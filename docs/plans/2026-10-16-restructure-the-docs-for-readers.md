@@ -1,7 +1,7 @@
 ---
-status: in progress
+status: completed
 created_at: 2026-10-16T17:52:56-03:00
-updated_at: 2026-10-17T18:57:45-03:00
+updated_at: 2026-10-19T12:56:33-03:00
 commit: ebb63ac
 ---
 
@@ -292,9 +292,8 @@ The final scan covers 41 files:
 | Callouts | 0 | 47 |
 | Tables | 29 | 175 |
 
-Left open:
+On 2026-10-19 the responsible person read the new docs and approved them, which completes the plan. These items stay open, for the responsible person:
 
-- **The diagrams on GitHub.** A static check of the 42 Mermaid fences found no syntax problem, but none was seen rendered. Check them on GitHub once the commits are pushed.
 - **Audit dates the owner has to fill in.** `development/dependencies.md` says "Not recorded" for:
   - the GitHub Actions;
   - the pod images and their `node` base;
