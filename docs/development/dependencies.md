@@ -23,6 +23,7 @@ Every dependency is audited before it is added (see `AGENTS.md`). This page reco
 | Codeman's pod images, on `node:24.21.0-bookworm-slim` | Images, Codeman's own | By digest | What pods run | Not recorded | None recorded | [Codeman's pod images](#codemans-pod-images) |
 | Cloud Firestore, STS, IAM Credentials | Services | REST API v1 | The backend | 2026-10-07 | None recorded | [Cloud Firestore](#cloud-firestore-in-a-firebase-project) |
 | Firestore's emulator | Test tool, not installed | The newest in Firebase's cache | The store's tests | 2026-10-07 | None recorded | [Firestore's emulator](#firestores-emulator) |
+| The local runner image, on `ubuntu:noble-20260930.1` | Image, Codeman's own, local only | Base images by digest; Ubuntu's packages not pinned | Runs the tests that need GitHub's runner on a developer's machine | 2026-10-19 | None recorded | [The local runner image](#the-local-runner-image) |
 
 ## Audit log
 
@@ -34,6 +35,7 @@ Every dependency is audited before it is added (see `AGENTS.md`). This page reco
 | 2026-10-03 | Self-hosted inference: Runpod, Ollama, Runpod's vLLM worker | [Self-hosted inference](../plans/2026-10-02-self-hosted-inference.md) | No npm package added. Ollama's advisories accepted for 0.35.1 |
 | 2026-10-07 | The backend: Cloud Firestore, STS, IAM Credentials, the emulator | [Backend](../plans/2026-10-07-firestore-backend.md) | No npm package added |
 | 2026-10-13 | vLLM and its image, Hugging Face | [vLLM on pods](../plans/2026-10-13-vllm-on-pods.md) | vLLM's advisories each list a fix at or before 0.31.0; the rest accepted |
+| 2026-10-19 | Running Actions locally: act, `actions/runner`, `github/local-action`, a plain image | [Run GitHub Actions locally](../plans/2026-10-19-run-github-actions-locally.md#audit) | None adopted but the plain image. act 0.2.74, as installed, has CVE-2026-34041 and CVE-2026-34042, fixed in 0.2.86 |
 
 ## Where each dependency runs
 
@@ -276,6 +278,19 @@ Audited on 2026-10-13 for the [plan for vLLM on pods](../plans/2026-10-13-vllm-o
 - **Permissions:** [`.github/workflows/pod-image.yml`](../../.github/workflows/pod-image.yml) builds them, one leg per engine, when the Dockerfile, the workflow or `dist/gateway.js` changes.
   - It uses only `actions/checkout` (pinned) and the runner's `docker`, with `packages: write` and `contents: read`.
   - It removes preinstalled toolchains with `rm`, to make room for vLLM's image.
+
+## The local runner image
+
+Audited on 2026-10-19 for the [plan to run Actions locally](../plans/2026-10-19-run-github-actions-locally.md#audit).
+
+- **What:** [`docker/runner/Dockerfile`](../../docker/runner/Dockerfile), a stand-in for GitHub's `ubuntu-latest` runner, built and run by `scripts/runner.sh` ([running Actions locally](local-actions.md)). It is never published, and CI does not use it.
+- **Why:** the [sandbox](../glossary.md#sandbox) test needs Linux, a runner user with passwordless `sudo`, and the image's permissions and `PATH`. A plain image with `docker run` reproduces them; act, `actions/runner` and `github/local-action` were not adopted (see the plan's audit).
+- **Version and pin:**
+  - `ubuntu:noble-20260930.1`, by its index digest `sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac` ([the image](../web/docker-hub/ubuntu-noble-20260930-1.md)).
+  - Node.js and npm come from `node:24.21.0-bookworm-slim`, the pod images' pinned digest.
+  - `ca-certificates`, `git`, `sudo`, `procps` and `unzip` come from Ubuntu's archive at build time, not pinned: apt checks them against the archive's signed indexes.
+- **Transitive code:** the packages' dependencies, from Ubuntu. No npm package is added: the container runs `npm ci` from `package-lock.json`, with the repository's `.npmrc`.
+- **Permissions:** the container gets the working tree read-only, which it copies, and the network, for `npm ci`. It gets no Docker socket. It needs a Docker daemon on the developer's machine: Docker Engine is Apache-2.0, and Docker Desktop's subscription terms apply to the developer's organization.
 
 ## Backend
 
