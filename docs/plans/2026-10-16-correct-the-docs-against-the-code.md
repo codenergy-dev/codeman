@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-10-16T17:52:56-03:00
-updated_at: 2026-10-19T13:34:29-03:00
+updated_at: 2026-10-19T13:36:36-03:00
 commit: ebb63ac
 ---
 
@@ -40,6 +40,7 @@ Each decision asked whether to document the current behavior or change the code.
 3. **`max-runs` blocks one round later for review than for other stages.** An unfinished stage blocks at `runs >= max` (`src/steps/apply.ts:367`). Review blocks at `rounds > max` (`apply.ts:477`).
    - a) Document both limits exactly.
    - b) Align the code (recommended: ask whether the difference is intended).
+   - Done by the [plan to align the max-runs counters](2026-10-19-align-the-max-runs-counters.md): both block the task at the `max-runs`th.
 4. **A `route` run refused for the monthly budget still posts a run comment.** `quiet` covers only `plan` and `implement` (`apply.ts:1154`). Fixed by the [plan for quiet routing on budget waits](2026-10-19-keep-routing-quiet-on-budget-waits.md), step 1.
    - a) Document "except routing".
    - b) Add `route` to `quiet` (recommended: it looks like a bug).
@@ -188,7 +189,7 @@ Pinning the images from `e26a8c9` in `src/inference/images.ts` closed the last s
 The plan stays `in progress` until the code plans that the decisions call for exist. Correcting the docs surfaced these behaviors, which the docs now describe and those code plans should take up:
 
 - **A review during `awaiting-decision` chains `record` runs.** While a task is `codeman:awaiting-decision`, a maintainer review that requests changes, or has `/codeman` in its text, makes every run a `record` run. Each one chains to the next and posts a run comment until the decisions are answered. A probe on the fake platform reproduced it. This is likely a bug, related to decision 2. Fixed by the [plan for commands around decisions and review rounds](2026-10-19-commands-around-decisions-and-review-rounds.md), step 2.
-- **`/codeman continue` does not reset review rounds; a `fix` does.** After review blocks a task, the next round that asks for changes blocks it again, although the message says to continue. This goes with decision 3. Fixed by the [plan for commands around decisions and review rounds](2026-10-19-commands-around-decisions-and-review-rounds.md), step 3; the `max-runs` difference between stages and review stays open.
+- **`/codeman continue` does not reset review rounds; a `fix` does.** After review blocks a task, the next round that asks for changes blocks it again, although the message says to continue. This goes with decision 3. Fixed by the [plan for commands around decisions and review rounds](2026-10-19-commands-around-decisions-and-review-rounds.md), step 3. The `max-runs` difference between stages and review is fixed by the [plan to align the max-runs counters](2026-10-19-align-the-max-runs-counters.md).
 - **Commands ignored or refused in some places:**
   - Answers, `set` and `accept-workflows` written in a review's text are ignored.
   - Extra text on an `approve` or `decide` line makes the command invalid.

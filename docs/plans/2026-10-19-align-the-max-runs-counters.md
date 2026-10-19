@@ -1,7 +1,7 @@
 ---
-status: in progress
+status: completed
 created_at: 2026-10-19T13:29:34-03:00
-updated_at: 2026-10-19T13:31:07-03:00
+updated_at: 2026-10-19T13:36:36-03:00
 commit: 073b567
 ---
 
@@ -87,6 +87,8 @@ Answered on 2026-10-19 with the recommendation of each, under the responsible pe
 
 ### 1. Block review at its max-runs-th round
 
+**Done on 2026-10-19** in `503e9fc`. The line numbers of `src/steps/apply.ts` were still those of `073b567`. The new test case sits before "continue after review blocks for its rounds gives review a fresh count".
+
 Assuming decisions 1a and 3a. One commit: code, tests, docs, and `dist/` rebuilt with `npm run build`, since `src/steps/apply.ts` and the messages are bundled. Done when `npm run check` passes and `git status` shows `dist/index.js` in the commit.
 
 Code:
@@ -139,6 +141,8 @@ Body: `max-runs` blocked a stage at its Nth unfinished run but review at its (N+
 
 ### 2. Add the upgrading entry
 
+**Done on 2026-10-19** in `b1fca97`. The row and the section name step 1's commit, `503e9fc`.
+
 Assuming decision 2a. One commit, docs only; `dist/` does not change.
 
 - `docs/installation/upgrading.md`, a row in the changes table: date of step 1, "Review rounds block at max-runs", linked to its section, step 1's commit, "Tasks that reach review", "None, or raise `max-runs`", "No".
@@ -153,6 +157,8 @@ Done when the docs link checker in `npm test` passes.
 Commit message: `Describe the review rounds limit in upgrading`.
 
 ### 3. Close the plans
+
+**Done on 2026-10-19.** `npm run lint`, `npm run typecheck` and `npm test` pass: 632 tests, 629 pass and 3 skipped.
 
 1. In the [correction plan](2026-10-16-correct-the-docs-against-the-code.md), link this plan from decision 3, and from the Progress bullet "`/codeman continue` does not reset review rounds", which says the `max-runs` difference stays open.
 2. In the [plan for commands around decisions and review rounds](2026-10-19-commands-around-decisions-and-review-rounds.md), link this plan from its Out of scope bullet on the off-by-one.

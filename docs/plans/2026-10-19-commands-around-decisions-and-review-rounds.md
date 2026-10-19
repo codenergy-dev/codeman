@@ -1,7 +1,7 @@
 ---
 status: completed
 created_at: 2026-10-19T13:02:10-03:00
-updated_at: 2026-10-19T13:11:32-03:00
+updated_at: 2026-10-19T13:36:36-03:00
 commit: e12d349
 ---
 
@@ -189,7 +189,7 @@ Commit message: `Complete the plan for commands around decisions`.
 
 ## Out of scope
 
-- The `max-runs` off-by-one between stages and review: a stage blocks at `runs >= max-runs` and review at `rounds > max-runs`. That is decision 3 of the correction plan, and it gets a plan of its own.
+- The `max-runs` off-by-one between stages and review: a stage blocks at `runs >= max-runs` and review at `rounds > max-runs`. That is decision 3 of the correction plan, and it gets a plan of its own: the [plan to align the max-runs counters](2026-10-19-align-the-max-runs-counters.md).
 - Answers, `set` and `accept-workflows` in a review's text, which stay ignored. After step 2 they also no longer start a `record` run.
 - Commands that count in no state of the task, such as `decide` on a `codeman:done` task. The task's next run marks them handled without a report, as today.
 - A `fix` or `continue` posted while the task is `codeman:planning`.
