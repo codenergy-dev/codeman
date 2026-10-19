@@ -316,6 +316,8 @@ export const en: Messages = {
         return `Decision ${problem.id} does not exist.`;
       case "no-option":
         return `Decision ${problem.id} has no option \`${problem.option}\`.`;
+      case "awaits-decisions":
+        return `\`${problem.command}\` counts only once every decision is answered, so it was not applied. Comment it again then.`;
     }
   },
 };

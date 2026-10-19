@@ -325,6 +325,8 @@ export const ptBR: Messages = {
         return `A decisão ${problem.id} não existe.`;
       case "no-option":
         return `A decisão ${problem.id} não tem a opção \`${problem.option}\`.`;
+      case "awaits-decisions":
+        return `\`${problem.command}\` só vale depois que todas as decisões tiverem resposta, por isso não foi aplicado. Comente-o de novo nessa hora.`;
     }
   },
 };

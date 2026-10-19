@@ -31290,6 +31290,8 @@ Tests: ${test ?? "(no report)"}`,
         return `Decision ${problem2.id} does not exist.`;
       case "no-option":
         return `Decision ${problem2.id} has no option \`${problem2.option}\`.`;
+      case "awaits-decisions":
+        return `\`${problem2.command}\` counts only once every decision is answered, so it was not applied. Comment it again then.`;
     }
   }
 };
@@ -31552,6 +31554,8 @@ Testes: ${test ?? "(sem relat\xF3rio)"}`,
         return `A decis\xE3o ${problem2.id} n\xE3o existe.`;
       case "no-option":
         return `A decis\xE3o ${problem2.id} n\xE3o tem a op\xE7\xE3o \`${problem2.option}\`.`;
+      case "awaits-decisions":
+        return `\`${problem2.command}\` s\xF3 vale depois que todas as decis\xF5es tiverem resposta, por isso n\xE3o foi aplicado. Comente-o de novo nessa hora.`;
     }
   }
 };
@@ -31897,6 +31901,8 @@ function applyCommands(record, sources) {
       const decision = decisions.find((candidate) => candidate.id === command.id);
       if (decision) decision.answer = { text: command.text, by: author };
       else errors.push({ problem: { kind: "no-decision", id: command.id } });
+    } else if (command.kind === "fix" || command.kind === "continue") {
+      errors.push({ problem: { kind: "awaits-decisions", command: command.kind } });
     }
   }
   return { record: { ...record, decisions, processedCommentId }, errors };

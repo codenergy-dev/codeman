@@ -81,6 +81,19 @@ test("reports unknown decisions and options without applying them", () => {
   assert.equal(updated.processedCommentId, 12);
 });
 
+test("a fix or continue in a record run is reported, and its comment handled", () => {
+  const { record: updated, errors } = applyCommands(record, [
+    ...sources(11, "/codeman fix Rename it."),
+    ...sources(12, "/codeman continue"),
+  ]);
+  assert.deepEqual(errors, [
+    { problem: { kind: "awaits-decisions", command: "fix" } },
+    { problem: { kind: "awaits-decisions", command: "continue" } },
+  ]);
+  assert.equal(pendingDecisions(updated).length, 2);
+  assert.equal(updated.processedCommentId, 12);
+});
+
 test("does not change the original record", () => {
   applyCommands(record, sources(11, "/codeman approve"));
   assert.equal(pendingDecisions(record).length, 2);

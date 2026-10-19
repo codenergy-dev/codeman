@@ -413,6 +413,50 @@ test("a task the router blocked before review always ran routes again on continu
   assert.deepEqual(stateLabels(platform, issue), ["codeman:routing"]);
 });
 
+test("a fix posted while decisions are pending is reported in the run comment", async () => {
+  const platform = new FakePlatform({ ".codeman/settings.yml": "model: a/b\n" });
+  platform.maintainers.add("alice");
+  const issue = platform.openIssue("alice", "Add a limiter", "Limit requests.");
+  const { planPath } = readTask(await selectStep(platform));
+  agentResult(
+    { [planPath]: "# Plan\n" },
+    {
+      summary: "Adds a limiter.",
+      decisions: [
+        {
+          id: 1,
+          title: "Storage",
+          question: "Where do counters live?",
+          options: [
+            { key: "a", label: "Memory" },
+            { key: "b", label: "Redis" },
+          ],
+          recommendation: "a",
+        },
+      ],
+    },
+  );
+  await applyStep(platform);
+  assert.deepEqual(stateLabels(platform, issue), ["codeman:awaiting-decision"]);
+
+  platform.say(issue, "alice", "/codeman fix Rename it.");
+  assert.equal((await selectStep(platform)).outputs.action, "record");
+  await applyStep(platform, false);
+  assert.deepEqual(stateLabels(platform, issue), ["codeman:awaiting-decision"]);
+  assert.match(
+    platform.botComments(issue).at(-1) ?? "",
+    /`fix` counts only once every decision is answered, so it was not applied\./,
+  );
+
+  platform.say(issue, "alice", "/codeman approve");
+  assert.equal((await selectStep(platform)).outputs.action, "record");
+  await applyStep(platform, false);
+  const runtime = await selectStep(platform);
+  assert.deepEqual([runtime.outputs.action, runtime.outputs.stage], ["route", "route"]);
+  assert.deepEqual(readTask(runtime).route, { trigger: "decisions", fallback: "design" });
+  assert.deepEqual(readTask(runtime).requests, []);
+});
+
 test("the web stage commits only valid pages under docs/web/, and the panel lists old ones", async () => {
   const platform = new FakePlatform({ ".codeman/settings.yml": "model: a/b\n" });
   const { issue, branch } = await plannedTask(platform);

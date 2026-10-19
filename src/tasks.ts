@@ -257,7 +257,9 @@ export function acceptRequest(
 
 /**
  * What the commands since the last handled comment and review ask for, in the task's state.
- * A new plan wins, then resuming, then answers. Anything else waits for its state.
+ * A new plan wins, then resuming, then answers. Comments do not wait for their state: the task's
+ * next run marks every comment it read as handled, and a `record` run reports the `fix` and
+ * `continue` it cannot apply.
  */
 export function pendingWork(
   sources: readonly CommandSource[],

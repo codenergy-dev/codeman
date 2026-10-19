@@ -24,7 +24,9 @@ export type CommandProblem =
   | { kind: "settings-rejected"; error: string }
   | { kind: "text-too-long"; max: number }
   | { kind: "no-decision"; id: number }
-  | { kind: "no-option"; id: number; option: string };
+  | { kind: "no-option"; id: number; option: string }
+  /** A `fix` or `continue` posted while the task awaits decisions, where it does not count. */
+  | { kind: "awaits-decisions"; command: "fix" | "continue" };
 
 /** A problem with one command, and the command's text when there is one. */
 export interface CommandError {

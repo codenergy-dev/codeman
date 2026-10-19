@@ -175,6 +175,7 @@ export function pendingDecisions(record: TaskRecord): Decision[] {
 
 /**
  * Applies decision commands in order. `model` and `replan` are read elsewhere and ignored here.
+ * `fix` and `continue` are reported, since they count only once every decision is answered.
  * Returns the updated record and a message for each command that could not be applied.
  */
 export function applyCommands(
@@ -208,6 +209,9 @@ export function applyCommands(
       const decision = decisions.find((candidate) => candidate.id === command.id);
       if (decision) decision.answer = { text: command.text, by: author };
       else errors.push({ problem: { kind: "no-decision", id: command.id } });
+    } else if (command.kind === "fix" || command.kind === "continue") {
+      // A record run gets them only while the task awaits decisions, where they do not count.
+      errors.push({ problem: { kind: "awaits-decisions", command: command.kind } });
     }
   }
 
