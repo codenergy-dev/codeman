@@ -65,8 +65,10 @@ flowchart LR
 
 A repository variable overrides the organization's variable of the same name, and write access lets a person create one ([variables](../web/github/store-information-in-variables.md#creating-configuration-variables-for-a-repository), [precedence](../web/github/variables-reference.md#configuration-variable-precedence)):
 
-- `CODEMAN_SETTINGS` replaces the [organization's settings](../glossary.md#organizations-settings) whole for that repository, `organization-monthly-budget` and `pool` included ([shared settings](../installation/shared-settings.md)).
+- `CODEMAN_SETTINGS` replaces the [organization's settings](../glossary.md#organizations-settings) whole for that repository, `organization-monthly-budget` and `pool` included ([shared settings](../installation/shared-settings.md#settings-only-the-organization-sets)). Its runs also write the pool that variable sets, or the organization alone, as the pool the whole organization declares. Until another of the organization's repositories runs `select`, the other members batch with none of the organization's repositories ([the handshake](../runs/batches.md#the-handshake)).
 - `CODEMAN_COMMIT_SHA` chooses which commit of Codeman's `main` runs with the secrets ([risk 7](risks.md#7-codemans-own-code-and-dependencies)).
+
+Codeman does not detect these variables. Whoever can create one can already read every secret above, and spend or stop the pool's pods with them. So a check in `select` would hold back no one it targets.
 
 The backend is the exception. Its attribute condition admits only `codeman.yml` on the default branch ([installation](../installation/setup.md#4-set-up-the-backend)). So reaching it takes changing that file there, which a ruleset that requires a reviewed pull request holds back.
 

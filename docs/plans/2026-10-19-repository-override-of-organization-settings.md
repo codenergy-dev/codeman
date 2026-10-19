@@ -1,7 +1,7 @@
 ---
-status: in progress
+status: completed
 created_at: 2026-10-19T13:31:14-03:00
-updated_at: 2026-10-19T13:32:57-03:00
+updated_at: 2026-10-19T13:34:29-03:00
 commit: ffe11b3
 ---
 
@@ -106,12 +106,16 @@ Each step is one commit. A step is done when its files are changed as stated and
 
 ### 1. Record the reasoning
 
+**Done on 2026-10-19.**
+
 1. Record the answers to the decisions above, and set this plan `in progress`.
 2. Include the three `docs/web/github/` sections, if decision 3 keeps them.
 
 Commit message: `Plan the response to a repository CODEMAN_SETTINGS`.
 
 ### 2. State the boundary and the override's whole effect in the docs
+
+**Done on 2026-10-19.** In `installation/shared-settings.md`, the warning keeps only the point; a table below it gives each setting's effect on that repository's runs and on the others, followed by "Codeman does not detect such a variable".
 
 1. `security/overview.md#who-can-read-codemans-secrets`, the `CODEMAN_SETTINGS` bullet: add that the repository's runs also rewrite the pool the organization declares, for all its repositories ([the handshake](../runs/batches.md#the-handshake)). After the list, add: "Codeman does not detect these variables. Whoever can create one can already read every secret above, and spend or stop the pool's pods with them, so a check in `select` would hold back no one it targets."
 2. `installation/shared-settings.md`, the warning under "Settings only the organization sets":
@@ -125,6 +129,8 @@ Done when both pages say it, links resolve (`src/docs.test.ts`), and `npm test` 
 Commit message: `Document the organization-wide effect of a repository CODEMAN_SETTINGS`.
 
 ### 3. Close decision 6 in the correction plan
+
+**Done on 2026-10-19.**
 
 1. In the [correction plan](2026-10-16-correct-the-docs-against-the-code.md), decision 6: link this plan, and record that 6b was looked into and answered with no code change.
 2. In its Decisions intro, drop 6b from the code changes that get a plan, or mark it answered.

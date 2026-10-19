@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-10-16T17:52:56-03:00
-updated_at: 2026-10-19T13:32:43-03:00
+updated_at: 2026-10-19T13:34:29-03:00
 commit: ebb63ac
 ---
 
@@ -27,7 +27,7 @@ Some findings are behaviors that may be bugs rather than doc errors. Those are l
 
 Answered by the responsible person on 2026-10-16. They authorized correcting the problems found, which approves the recommended option of each decision below.
 
-The code changes those options call for (2b, 3b, 4b, 6b and 7a) each get a plan of their own. Until a change lands, the docs describe the code as it is. For 3b, that plan settles which limit both counters follow.
+The code changes those options call for (2b, 3b, 4b and 7a) each get a plan of their own. 6b was looked into in a plan of its own and answered with no code change. Until a change lands, the docs describe the code as it is. For 3b, that plan settles which limit both counters follow.
 
 Each decision asked whether to document the current behavior or change the code.
 
@@ -49,6 +49,7 @@ Each decision asked whether to document the current behavior or change the code.
 6. **A repository variable `CODEMAN_SETTINGS` replaces the organization's whole.** Anyone with write access can create one, which removes `organization-monthly-budget` and `pool` for that repository.
    - a) Document it as a warning, in shared settings and in security (recommended now).
    - b) Also look for a code or template mitigation, in a separate plan.
+   - Answered by the [plan for a repository override of the organization's settings](2026-10-19-repository-override-of-organization-settings.md): no code or template change. The docs state the boundary and the override's whole effect, the organization-wide pool declaration included.
 7. **Possible sandbox escape through `PATH`.** After the agent, Codeman's step resolves `sudo`, `unzip` and `id` from the job's `PATH` (`src/sandbox.ts:18,26,42,81,199`; `src/results.ts:95`). If a setup action put a directory that `codeman-agent` can write on that `PATH`, the agent could plant a binary there.
    - a) Investigate on the runner images in a separate security plan (recommended).
    - b) Only document the condition.

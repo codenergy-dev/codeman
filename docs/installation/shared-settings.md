@@ -45,12 +45,21 @@ Two settings are set only in `CODEMAN_SETTINGS`, not in `.codeman/settings.yml`.
 Each organization of a pool must declare the same list in its own `CODEMAN_SETTINGS`, use the same Runpod account and the same backend, and have the App installed.
 
 > [!WARNING]
-> Anyone with write access to a repository can create a repository variable `CODEMAN_SETTINGS` ([GitHub](../web/github/store-information-in-variables.md#creating-configuration-variables-for-a-repository)). That repository's runs then read neither the organization's `organization-monthly-budget` nor its `pool`, only what that variable sets, if anything. They no longer stop at the organization's monthly limit, and the repository leaves the pool or declares another list. These two settings hold only as far as you trust everyone with write access to the repositories that use Codeman ([security](../security/overview.md#who-can-read-codemans-secrets)).
+> Anyone with write access to a repository can create a repository variable `CODEMAN_SETTINGS` ([GitHub](../web/github/store-information-in-variables.md#creating-configuration-variables-for-a-repository)). These two settings hold only as far as you trust everyone with write access to the repositories that use Codeman.
+
+Such a variable replaces the organization's, and that repository's runs read only what it sets:
+
+| Setting | That repository's runs | The other repositories |
+| --- | --- | --- |
+| `organization-monthly-budget` | Without one in the variable, they no longer stop at the organization's monthly limit | The organization's other repositories still count those runs in its month |
+| `pool` | They declare the variable's pool, or the organization alone, as the whole organization's ([the handshake](../runs/batches.md#the-handshake)) | Until another of the organization's repositories runs `select`, the other members batch with none of the organization's repositories |
+
+Codeman does not detect such a variable ([security](../security/overview.md#who-can-read-codemans-secrets)).
 
 ## Limits
 
 - On GitHub Free, private repositories cannot read organization variables ([credentials](setup.md#3-add-the-credentials)).
-- A repository variable named `CODEMAN_SETTINGS` replaces the organization's whole, not value by value: GitHub gives the repository's variable precedence ([GitHub](../web/github/variables-reference.md#configuration-variable-precedence)). Use `.codeman/settings.yml` to override single values.
+- A repository variable named `CODEMAN_SETTINGS` replaces the organization's whole, not value by value: GitHub gives the repository's variable precedence ([GitHub](../web/github/variables-reference.md#configuration-variable-precedence)). Use `.codeman/settings.yml` to override single values. The `select` log still names it "organization variable CODEMAN_SETTINGS".
 - A variable holds at most 48 KB.
 - The variable is plain text, shown in the logs. Never put secrets in it; see [security](../security/secrets.md).
 - A malformed variable stops every run of those repositories, with an error that names the `settings` input.
