@@ -1,7 +1,7 @@
 ---
-status: in progress
+status: completed
 created_at: 2026-10-19T13:02:10-03:00
-updated_at: 2026-10-19T13:04:28-03:00
+updated_at: 2026-10-19T13:11:32-03:00
 commit: e12d349
 ---
 
@@ -84,6 +84,8 @@ Each step is one commit: code, tests, `dist/` rebuilt with `npm run build`, and 
 
 ### 1. Report a `fix` or `continue` posted while the task awaits decisions
 
+**Done on 2026-10-19** in `1cea2c1`.
+
 Assuming decision 1a.
 
 Code:
@@ -118,6 +120,8 @@ Commit message: `Report a fix or continue posted while decisions are pending`.
 
 ### 2. Let reviews wait while the task awaits decisions
 
+**Done on 2026-10-19** in `fed8e3a`.
+
 Assuming decision 2a.
 
 Code:
@@ -148,6 +152,8 @@ Body: say that a `record` run reads only comments, so review commands made every
 
 ### 3. Reset the review rounds on continue
 
+**Done on 2026-10-19** in `6c07f05`.
+
 Assuming decision 3a.
 
 Code:
@@ -173,6 +179,8 @@ Docs:
 Commit message: `Reset the review rounds on continue`.
 
 ### 4. Close the plans
+
+**Done on 2026-10-19.** `npm run check` passes: 630 tests, 627 pass and 3 skipped.
 
 1. In the [correction plan](2026-10-16-correct-the-docs-against-the-code.md), link this plan from decision 2 and from the two Progress bullets it takes up.
 2. Set this plan to `completed`.

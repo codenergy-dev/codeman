@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-10-16T17:52:56-03:00
-updated_at: 2026-10-17T13:13:47-03:00
+updated_at: 2026-10-19T13:11:32-03:00
 commit: ebb63ac
 ---
 
@@ -34,7 +34,7 @@ Each decision asked whether to document the current behavior or change the code.
 1. **`/codeman set model` and `set gpu` are dropped together.** If either the task's `model` or its `gpu` does not fit, `resolveOwn` drops both (`src/steps/select.ts:234-242`). The docs say only the failing one is dropped, in 4 places.
    - a) Document "both are dropped" (recommended for now).
    - b) Change the code so it drops only the setting that failed.
-2. **A `fix` or `continue` posted while a task is `codeman:awaiting-decision` is lost silently.** The `record` run advances `processedCommentId` past the comment (`src/record.ts:186-211`, `src/tasks.ts:269`).
+2. **A `fix` or `continue` posted while a task is `codeman:awaiting-decision` is lost silently.** The `record` run advances `processedCommentId` past the comment (`src/record.ts:186-211`, `src/tasks.ts:269`). Fixed by the [plan for commands around decisions and review rounds](2026-10-19-commands-around-decisions-and-review-rounds.md), step 1.
    - a) Document it.
    - b) Report it as a problem in the run comment (recommended, as a code change), and document it until then.
 3. **`max-runs` blocks one round later for review than for other stages.** An unfinished stage blocks at `runs >= max` (`src/steps/apply.ts:367`). Review blocks at `rounds > max` (`apply.ts:477`).
@@ -186,8 +186,8 @@ Pinning the images from `e26a8c9` in `src/inference/images.ts` closed the last s
 
 The plan stays `in progress` until the code plans that the decisions call for exist. Correcting the docs surfaced these behaviors, which the docs now describe and those code plans should take up:
 
-- **A review during `awaiting-decision` chains `record` runs.** While a task is `codeman:awaiting-decision`, a maintainer review that requests changes, or has `/codeman` in its text, makes every run a `record` run. Each one chains to the next and posts a run comment until the decisions are answered. A probe on the fake platform reproduced it. This is likely a bug, related to decision 2.
-- **`/codeman continue` does not reset review rounds; a `fix` does.** After review blocks a task, the next round that asks for changes blocks it again, although the message says to continue. This goes with decision 3.
+- **A review during `awaiting-decision` chains `record` runs.** While a task is `codeman:awaiting-decision`, a maintainer review that requests changes, or has `/codeman` in its text, makes every run a `record` run. Each one chains to the next and posts a run comment until the decisions are answered. A probe on the fake platform reproduced it. This is likely a bug, related to decision 2. Fixed by the [plan for commands around decisions and review rounds](2026-10-19-commands-around-decisions-and-review-rounds.md), step 2.
+- **`/codeman continue` does not reset review rounds; a `fix` does.** After review blocks a task, the next round that asks for changes blocks it again, although the message says to continue. This goes with decision 3. Fixed by the [plan for commands around decisions and review rounds](2026-10-19-commands-around-decisions-and-review-rounds.md), step 3; the `max-runs` difference between stages and review stays open.
 - **Commands ignored or refused in some places:**
   - Answers, `set` and `accept-workflows` written in a review's text are ignored.
   - Extra text on an `approve` or `decide` line makes the command invalid.
