@@ -1,7 +1,7 @@
 ---
-status: in progress
+status: completed
 created_at: 2026-10-16T17:52:56-03:00
-updated_at: 2026-10-19T13:36:36-03:00
+updated_at: 2026-10-19T14:58:33-03:00
 commit: ebb63ac
 ---
 
@@ -54,12 +54,13 @@ Each decision asked whether to document the current behavior or change the code.
 7. **Possible sandbox escape through `PATH`.** After the agent, Codeman's step resolves `sudo`, `unzip` and `id` from the job's `PATH` (`src/sandbox.ts:18,26,42,81,199`; `src/results.ts:95`). If a setup action put a directory that `codeman-agent` can write on that `PATH`, the agent could plant a binary there.
    - a) Investigate on the runner images in a separate security plan (recommended).
    - b) Only document the condition.
+   - Done by the [plan for the agent job's programs](2026-10-19-resolve-privileged-tools-outside-the-agents-reach.md): Codeman runs its programs from root's directories, and closes the runner's world-writable paths before the agent starts.
 
 ## Steps
 
 Each step is one commit or a few, touching only the files named. A step is done when its rows below are fixed and `npm test` passes. Rows marked with a decision number wait for that decision.
 
-1. **Security statements** (high). **Done on 2026-10-17.** `security/overview.md` has the new section `## Who can read Codeman's secrets`. Replacing artifacts is not stated, since no saved source shows it; the `PATH` escape awaits decision 7. Done when all of these are fixed:
+1. **Security statements** (high). **Done on 2026-10-17.** `security/overview.md` has the new section `## Who can read Codeman's secrets`. Replacing artifacts is not stated, since no saved source shows it; the `PATH` escape is fixed by the [plan for the agent job's programs](2026-10-19-resolve-privileged-tools-outside-the-agents-reach.md) (decision 7). Done when all of these are fixed:
    - **Who can read Codeman's secrets.** Anyone with write access to a repository that receives Codeman's secrets can read every one of them, with a workflow on any branch. The docs say "whoever can change `codeman.yml` on the default branch" instead. Fix `security/overview.md` (checklist, "A public App and a pool"), `security/forks.md` (recommendation 3), `security/risks.md` §7 and `installation/setup.md:175`. State the boundary once, in `security/overview.md`, and link to it.
    - **Who can change `CODEMAN_SETTINGS`.** The docs disagree:
      - `security/secrets.md` says organization owners;
@@ -186,7 +187,7 @@ Every doc correction is in, as of 2026-10-17. `npm run lint`, `npm run typecheck
 
 Pinning the images from `e26a8c9` in `src/inference/images.ts` closed the last step of the [plan for keeping a spent pod for its close](2026-10-15-keep-a-spent-pod-for-its-close.md). It goes in a commit of its own.
 
-The plan stays `in progress` until the code plans that the decisions call for exist. Correcting the docs surfaced these behaviors, which the docs now describe and those code plans should take up:
+Every decision is closed as of 2026-10-19, the last one, 7, by the [plan for the agent job's programs](2026-10-19-resolve-privileged-tools-outside-the-agents-reach.md). Correcting the docs surfaced these behaviors, which the docs now describe and code plans should take up:
 
 - **A review during `awaiting-decision` chains `record` runs.** While a task is `codeman:awaiting-decision`, a maintainer review that requests changes, or has `/codeman` in its text, makes every run a `record` run. Each one chains to the next and posts a run comment until the decisions are answered. A probe on the fake platform reproduced it. This is likely a bug, related to decision 2. Fixed by the [plan for commands around decisions and review rounds](2026-10-19-commands-around-decisions-and-review-rounds.md), step 2.
 - **`/codeman continue` does not reset review rounds; a `fix` does.** After review blocks a task, the next round that asks for changes blocks it again, although the message says to continue. This goes with decision 3. Fixed by the [plan for commands around decisions and review rounds](2026-10-19-commands-around-decisions-and-review-rounds.md), step 3. The `max-runs` difference between stages and review is fixed by the [plan to align the max-runs counters](2026-10-19-align-the-max-runs-counters.md).
