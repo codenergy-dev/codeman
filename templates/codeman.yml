@@ -23,7 +23,7 @@ on:
         description: Spending limit per month for this repository, in USD.
         type: string
       max-runs:
-        description: Blocks a task when a routed stage's runs in a row without finishing it reach max-runs, or when review's rounds in a row asking for changes pass max-runs (with 3, the 3rd run or the 4th round).
+        description: Blocks a task when a routed stage's runs in a row without finishing it, or review's rounds in a row asking for changes, reach max-runs (with 3, the 3rd).
         type: string
       # Set when another repository's run formed a batch with this repository's tasks; only
       # logged: select starts the tasks Codeman's store reserved for this repository.

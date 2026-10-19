@@ -32,7 +32,7 @@ inputs:
   organization-monthly-budget:
     description: "(open-key) Spending limit per calendar month of the organization's repositories together, in USD, from select's tasks. Only the organization's settings (the settings input) set it. Empty means none."
   max-runs:
-    description: "(select) Blocks a task when a routed stage's runs in a row without finishing it reach max-runs, or when review's rounds in a row asking for changes pass max-runs (with 3, the 3rd run or the 4th round). Empty uses .codeman/settings.yml or 3."
+    description: "(select) Blocks a task when a routed stage's runs in a row without finishing it, or review's rounds in a row asking for changes, reach max-runs (with 3, the 3rd). Empty uses .codeman/settings.yml or 3."
   batch:
     description: "(select) The batches another repository's run formed with this repository's tasks, when it started this run. Only logged: select starts what Codeman's store reserved for the repository."
   key-expiry-hours:

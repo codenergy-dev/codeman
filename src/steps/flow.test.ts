@@ -532,6 +532,57 @@ test("a review with commands in codeman:ready does not stop the task from routin
   assert.deepEqual([runtime.outputs.action, runtime.outputs.stage], ["route", "route"]);
 });
 
+test("max-runs blocks a stage at its max-runs-th unfinished run, and review at its max-runs-th round", async () => {
+  const platform = new FakePlatform({ ".codeman/settings.yml": "model: a/b\nmax-runs: 2\n" });
+  const { issue } = await plannedTask(platform);
+  await routeStep(platform, ["code", "review"]);
+
+  // The code stage runs twice without finishing: the second run blocks the task.
+  let runtime = await selectStep(platform);
+  assert.deepEqual([runtime.outputs.action, runtime.outputs.stage], ["implement", "code"]);
+  agentResult({}, { status: "partial", summary: "Half of the limiter." });
+  await applyStep(platform);
+  assert.deepEqual(stateLabels(platform, issue), ["codeman:coding"]);
+  runtime = await selectStep(platform);
+  assert.deepEqual([runtime.outputs.action, runtime.outputs.stage], ["implement", "code"]);
+  agentResult({}, { status: "partial", summary: "Still half of the limiter." });
+  await applyStep(platform);
+  assert.deepEqual(stateLabels(platform, issue), ["codeman:blocked"]);
+  assert.match(
+    platform.botComments(issue).at(-1) ?? "",
+    /has run 2 times in a row without finishing \(`max-runs` is 2\)/,
+  );
+
+  // After a continue, review's first changes sends the work back.
+  platform.say(issue, "alice", "/codeman continue Go on.");
+  runtime = await selectStep(platform);
+  assert.deepEqual([runtime.outputs.action, runtime.outputs.stage], ["implement", "code"]);
+  agentResult(
+    { "src/limit.ts": "export const limit = 10;\n" },
+    { status: "done", summary: "Added the limiter.", commitMessage: "Add a limiter" },
+  );
+  await applyStep(platform);
+  assert.deepEqual(stateLabels(platform, issue), ["codeman:reviewing"]);
+  await selectStep(platform);
+  agentResult({}, { status: "changes", summary: "Report.", reason: "Name the unit." });
+  await applyStep(platform);
+  assert.deepEqual(stateLabels(platform, issue), ["codeman:routing"]);
+  assert.equal(record(platform, issue)?.reviewRounds, 1);
+
+  // Its second changes in a row blocks the task.
+  await routeStep(platform, ["review"]);
+  runtime = await selectStep(platform);
+  assert.deepEqual([runtime.outputs.action, runtime.outputs.stage], ["implement", "review"]);
+  agentResult({}, { status: "changes", summary: "Report.", reason: "Name the unit." });
+  await applyStep(platform);
+  assert.deepEqual(stateLabels(platform, issue), ["codeman:blocked"]);
+  assert.equal(record(platform, issue)?.reviewRounds, 2);
+  assert.match(
+    platform.botComments(issue).at(-1) ?? "",
+    /Review asked for changes 2 times in a row \(`max-runs` is 2\)/,
+  );
+});
+
 test("continue after review blocks for its rounds gives review a fresh count", async () => {
   const platform = new FakePlatform({ ".codeman/settings.yml": "model: a/b\nmax-runs: 3\n" });
   const { issue } = await plannedTask(platform);
@@ -541,7 +592,7 @@ test("continue after review blocks for its rounds gives review a fresh count", a
   assert.ok(panel && before);
   panel.body = panel.body.replace(
     /<!-- codeman:status [A-Za-z0-9_-]* -->/,
-    encodeStatus({ ...before, reviewRounds: 3 }),
+    encodeStatus({ ...before, reviewRounds: 2 }),
   );
 
   let runtime = await selectStep(platform);

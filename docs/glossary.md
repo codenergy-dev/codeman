@@ -287,7 +287,7 @@ Always qualified. A budget reservation is a run's limit, which `open-key` writes
 
 ### Review round
 
-One `changes` from review. When the rounds in a row exceed `max-runs`, the task is blocked. The count starts over when review passes, and in the runs that carry out a `fix` or `continue` request. See [runs in a row and review rounds](tasks/stages.md#runs-in-a-row-and-review-rounds).
+One `changes` from review. The `max-runs`th round in a row blocks the task. The count starts over when review passes, and in the runs that carry out a `fix` or `continue` request. See [runs in a row and review rounds](tasks/stages.md#runs-in-a-row-and-review-rounds).
 
 ### Routed stage
 

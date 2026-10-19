@@ -122,12 +122,12 @@ No setting is required. A provider may require some of its own settings ([provid
 | `max-files` | Whole number | `300` | 1 or more | Files one agent run may change |
 | `max-file-bytes` | Whole number, bytes | `1048576` (1 MiB) | 1 or more | Size limit of each changed file |
 
-`max-runs` counts two things, and each blocks the task at a different point:
+`max-runs` bounds two counts, and each blocks the task when it reaches `max-runs`: by default, at the 3rd.
 
-| It counts | The task is blocked by | By default | A new count starts with |
-| --- | --- | --- | --- |
-| A [routed stage's](../glossary.md#routed-stage) agent runs in a row that end without finishing it: partial, or out of time | The run that reaches `max-runs` | The 3rd run | `/codeman fix` or `/codeman continue` |
-| Review's rounds in a row asking for changes | The round after `max-runs` | The 4th round | `/codeman fix`, `/codeman continue`, or a review that passes |
+| It counts | A new count starts with |
+| --- | --- |
+| A [routed stage's](../glossary.md#routed-stage) agent runs in a row that end without finishing it: partial, or out of time | `/codeman fix` or `/codeman continue` |
+| Review's rounds in a row asking for changes | `/codeman fix`, `/codeman continue`, or a review that passes |
 
 ### Agent output limits
 

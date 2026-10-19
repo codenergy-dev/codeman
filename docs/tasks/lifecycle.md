@@ -100,7 +100,7 @@ How to go on from `codeman:blocked` depends on why the task blocked.
 | A routed stage reported `blocked` | `/codeman continue <guidance>`, or `/codeman replan <what to change>` when the request needs a revised plan |
 | A routed stage wrote no result or an invalid one | `/codeman continue <guidance>` |
 | A routed stage ran `max-runs` times in a row unfinished | `/codeman continue <guidance>` |
-| Review asked for changes more than `max-runs` times in a row | `/codeman continue <guidance>` |
+| Review asked for changes `max-runs` times in a row | `/codeman continue <guidance>` |
 | Planning failed, and the task already had a plan | `/codeman replan <what to change>` |
 | The task was never planned: its first plan failed, or no settings serve planning | Remove the `codeman:blocked` label. No command moves a task that has no plan. |
 | Codeman could not give the run access to its model: the key job failed, or the workflow does not pass a secret that a provider of the run needs | Fix the cause, then go on as for a failed run of the same stage: `/codeman continue` for routing and the routed stages; `/codeman replan`, or removing the label, for planning |

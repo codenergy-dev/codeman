@@ -350,6 +350,8 @@ async function applyStage(task: TaskContext, io: Io): Promise<void> {
   const fresh = task.resume || task.record.stage !== stage;
   const runs = (fresh ? 0 : (task.record.runs ?? 0)) + 1;
   const maxRuns = task.settings["max-runs"];
+  // Both counters block the task at their max-runs-th: a stage's runs in a row, review's rounds.
+  const reached = (count: number): boolean => count >= maxRuns;
   // A maintainer's request starts the review rounds over, as it does the runs in a row.
   const requested = task.requests.length > 0;
   // A run that awaits a workflow sets `awaiting` again; any other outcome ends the wait.
@@ -365,10 +367,10 @@ async function applyStage(task: TaskContext, io: Io): Promise<void> {
     message: string,
     report?: string,
   ): Promise<void> =>
-    finish(io, task, runs >= maxRuns ? "blocked" : ROUTED_STAGE_STATE[stage], {
+    finish(io, task, reached(runs) ? "blocked" : ROUTED_STAGE_STATE[stage], {
       outcome,
       record,
-      message: runs >= maxRuns ? `${message} ${t.maxRuns(stage, runs, maxRuns)}` : message,
+      message: reached(runs) ? `${message} ${t.maxRuns(stage, runs, maxRuns)}` : message,
       report,
       errors: warnings,
     });
@@ -475,7 +477,7 @@ async function applyStage(task: TaskContext, io: Io): Promise<void> {
     case "changes": {
       const rounds = (record.reviewRounds ?? 0) + 1;
       await postReview(io, t, task, record, summary, reason);
-      if (rounds > maxRuns) {
+      if (reached(rounds)) {
         return finish(io, task, "blocked", {
           outcome: "changes",
           record: { ...record, reviewRounds: rounds },

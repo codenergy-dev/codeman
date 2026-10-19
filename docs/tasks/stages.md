@@ -152,7 +152,7 @@ Each stage may report only some statuses.
 | `done` or `skipped`, but not from review | The route's next stage | Gives the next stage this stage's summary, or reason, as its notes. When code ends, it opens the [pull request](#the-pull-request) as a draft. |
 | `done` from review | `codeman:done` | Adds its proposed `.codemanignore` if the repository has none. Opens the pull request if there is none yet, or updates its description. Marks it ready for review, and posts review's report on it. |
 | `done` from review, while the agent's workflows are still staged | `codeman:awaiting-workflow` | Waits for them to be accepted; the pull request stays a draft. See [on-demand workflows](../runs/changes.md#on-demand-workflows). |
-| `changes` from review | `codeman:routing` | Posts the report on the pull request. The routing agent chooses what addresses it. Past `max-runs` [review rounds](#runs-in-a-row-and-review-rounds), the task becomes `codeman:blocked` instead. |
+| `changes` from review | `codeman:routing` | Posts the report on the pull request. The routing agent chooses what addresses it. At `max-runs` [review rounds](#runs-in-a-row-and-review-rounds) in a row, the task becomes `codeman:blocked` instead. |
 | `decisions` | `codeman:awaiting-decision` | Adds the new decisions after the plan's. When they are answered, the routing agent runs, with review's report if review asked them. |
 | `partial`, or out of [time](../runs/agent.md#time-limit) | The same stage | Runs the stage again. At `max-runs` [runs in a row](#runs-in-a-row-and-review-rounds), the task becomes `codeman:blocked` instead. |
 | `awaiting-workflow` | `codeman:awaiting-workflow` | Waits for the workflows' runs. When they are still staged, the stage records the wait and the route goes on ([on-demand workflows](../runs/changes.md#on-demand-workflows)). A workflow that is neither on the branch nor staged blocks the task. |
@@ -162,12 +162,12 @@ When the agent reported `blocked`, the run comment also suggests `/codeman repla
 
 ### Runs in a row and review rounds
 
-Two counters stop a task that does not converge. Both are bounded by `max-runs`.
+Two counters stop a task that does not converge. Both are bounded by `max-runs`, the same way: the `max-runs`th in a row blocks the task.
 
 | | Runs in a row | Review rounds |
 | --- | --- | --- |
 | Counts | Each run of the same stage that ends unfinished (`partial` or out of time), from 1. A run that reports `awaiting-workflow` does not count. | Each `changes` from review |
-| Blocks the task | When the `max-runs`th run in a row ends unfinished | When the rounds exceed `max-runs`: with `max-runs: 3`, the fourth `changes` in a row |
+| Blocks the task | When the `max-runs`th run in a row ends unfinished: with `max-runs: 3`, the third | At the `max-runs`th `changes` in a row: with `max-runs: 3`, the third |
 | Starts over | When another stage runs, or a `fix` or `continue` request resumes the task | When review passes, and in the runs that carry out a `fix` or `continue` request |
 
 After either counter blocks a task, `/codeman continue <guidance>` grants `max-runs` more.

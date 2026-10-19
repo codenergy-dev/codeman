@@ -79,7 +79,7 @@ export interface TaskRecord {
   route?: Route | undefined;
   /** What the last stage left for the next one: its report, or why it had nothing to do. */
   handoff?: { stage: RoutedStage; text: string } | undefined;
-  /** Times review sent the work back to code in a row. */
+  /** Review's rounds in a row asking for changes. */
   reviewRounds?: number | undefined;
   /** Each stage's last summary, for the pull request's description. */
   reports?: Partial<Record<RoutedStage, string>> | undefined;

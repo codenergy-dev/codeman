@@ -263,7 +263,7 @@ export const ptBR: Messages = {
   stageDecisions: (stage, count) =>
     `A ${OF_STAGE(stage)} precisa de ${count} decisão(ões) dos mantenedores.`,
   reviewRounds: (rounds, max) =>
-    `A revisão devolveu o trabalho à etapa de código ${rounds} vezes seguidas (\`max-runs\` é ${max}). Comente \`/codeman continue <orientação>\` para permitir mais ${max} rodadas.`,
+    `A revisão pediu mudanças ${rounds} vezes seguidas (\`max-runs\` é ${max}). Comente \`/codeman continue <orientação>\` para permitir mais ${max} rodadas.`,
   skipped: (reason) => `Pulada: ${reason}`,
   routeChosen: (stages) => `O agente de roteamento escolheu estas etapas, nesta ordem: ${stages}.`,
   routeLabel: "Rota",

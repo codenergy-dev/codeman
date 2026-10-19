@@ -77,7 +77,7 @@ provider: openrouter
 task-budget: 2
 monthly-budget: 20
 
-# Consecutive implementation runs before a task is blocked.
+# Runs of a stage in a row without finishing it, or review rounds in a row asking for changes, before a task is blocked.
 max-runs: 3
 
 # Limits on what one run may change.

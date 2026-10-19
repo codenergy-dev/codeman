@@ -255,7 +255,7 @@ export const en: Messages = {
   stageDecisions: (stage, count) =>
     `The ${STAGES[stage]} stage needs ${count} decision(s) from the maintainers.`,
   reviewRounds: (rounds, max) =>
-    `Review sent the work back to the code stage ${rounds} times in a row (\`max-runs\` is ${max}). Comment \`/codeman continue <guidance>\` to allow ${max} more rounds.`,
+    `Review asked for changes ${rounds} times in a row (\`max-runs\` is ${max}). Comment \`/codeman continue <guidance>\` to allow ${max} more rounds.`,
   skipped: (reason) => `Skipped: ${reason}`,
   routeChosen: (stages) => `The routing agent chose these stages, in order: ${stages}.`,
   routeLabel: "Route",
