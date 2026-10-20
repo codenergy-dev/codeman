@@ -16,6 +16,7 @@ const FAKES: Record<string, () => Promise<FakeModule>> = {
   google: () => import("./google/google.ts"),
   npm: () => import("./npm/npm.ts"),
   openrouter: () => import("./openrouter/openrouter.ts"),
+  runpod: () => import("./runpod/runpod.ts"),
 };
 
 const env = process.env;
