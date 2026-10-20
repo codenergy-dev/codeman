@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-10-20T12:50:34-03:00
-updated_at: 2026-10-20T14:00:00-03:00
+updated_at: 2026-10-20T15:00:00-03:00
 commit: 21130fe
 ---
 
@@ -179,6 +179,17 @@ Answered by the responsible person on 2026-10-20: every recommendation below was
    - b) Assert concurrency only from the tee's timestamps.
 
    **Recommendation: a).** **Answer: a).** `AGENTS.md` requires the responsible person's request to refresh a page.
+
+### Answered after spike 0.2
+
+Answered by the responsible person on 2026-10-20.
+
+10. **Phase 6, after spike 0.2 met its drop rule** (a failed job inside a reusable workflow stops act's whole run, so `always()` jobs such as `next-run` never start; `upload-artifact` v7 fails against act's artifact server).
+    - a) Keep two act smoke scenarios, on success paths only, with the fake GitHub serving the artifact API.
+    - b) Drop phase 6.
+    - c) Defer phase 6 until a newer act.
+
+    **Answer: a).** Failure scenarios run on the simulator only. Step 6.1 takes the spike's hardening.
 
 ## Design
 
@@ -479,9 +490,15 @@ Commit message per step, such as `Add the e2e happy-path scenarios`.
 It runs each invocation from an empty temporary directory, with:
 
 - `-s GITHUB_TOKEN=<fake>`, and `--env-file`, `--secret-file` and `--var-file` written by the runtime, empty but for what the scenario sets;
-- `--env GITHUB_RUN_ID=<n>`, `GITHUB_RUN_ATTEMPT`, `RUNNER_TEMP=/home/runner/work/_temp`, and the OIDC request URL and token of that invocation;
+- `--env GITHUB_RUN_ID=<n>`, `GITHUB_RUN_ATTEMPT`, `RUNNER_TEMP=/tmp`, and the OIDC request URL and token of that invocation;
 - `--no-cache-server`, `--container-daemon-socket -`, the Compose network, `--init`, `SYS_ADMIN` and unconfined seccomp and AppArmor;
-- the fake GitHub as the GitHub instance, and the e2e runner image for `ubuntu-latest`.
+- the fake GitHub on a `*.localhost` host with a fixed IP, through the `--env` URLs and without `--github-instance`, and the e2e runner image for `ubuntu-latest`;
+- `--rm`, `--pull=false`, `--action-offline-mode` with an action cache the driver checks holds every pinned action before act starts;
+- `XDG_CONFIG_HOME` and `XDG_CACHE_HOME` in the runtime's directory, so act writes nothing in the home directory;
+- the artifact API served by the fake GitHub, not act's artifact server (decision 10), and nothing bound beyond `127.0.0.1`;
+- one invocation at a time, since `act-toolcache` is shared and world-writable.
+
+`${{ runner.temp }}` stays `/tmp` whatever `RUNNER_TEMP` says (0.2 results): the driver sets `RUNNER_TEMP=/tmp`, so the templates' artifact paths and Codeman's temporary directory agree.
 
 The runtime turns the fake's dispatches into the next `act workflow_dispatch`, and serializes invocations per repository.
 
@@ -489,7 +506,7 @@ Done when the driver's tests show it refuses to start without the fake token and
 
 #### 6.2 Run two scenarios under act
 
-`happy-path/openrouter-to-done` and `pods/ollama-keep-and-release`, with `runner: act`, on the real templates. Add `security/set-env-in-agent-output`: the agent prints `::set-env::`, and no later step sees the variable.
+`happy-path/openrouter-to-done` and `pods/ollama-keep-and-release`, with `runner: act`, on the real templates, success paths only (decision 10). Add `security/set-env-in-agent-output`: the agent prints `::set-env::`, and no later step sees the variable.
 
 Done when the three pass three times in a row.
 
