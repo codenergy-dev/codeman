@@ -14,6 +14,7 @@ import type { FakeModule } from "./http.ts";
 /** The fakes by name: one line each, which loads the fake's module only when it runs. */
 const FAKES: Record<string, () => Promise<FakeModule>> = {
   google: () => import("./google/google.ts"),
+  llm: () => import("./llm/llm.ts"),
   npm: () => import("./npm/npm.ts"),
   openrouter: () => import("./openrouter/openrouter.ts"),
   runpod: () => import("./runpod/runpod.ts"),
