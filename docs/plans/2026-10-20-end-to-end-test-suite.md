@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-10-20T12:50:34-03:00
-updated_at: 2026-10-20T15:00:00-03:00
+updated_at: 2026-10-20T19:00:00-03:00
 commit: 21130fe
 ---
 
@@ -107,7 +107,7 @@ Answered by the responsible person on 2026-10-20.
    - c) Real Ollama and real vLLM on CPU, with the scenario scripting the replies.
 
    **Answer: c),** with `qwen2.5:0.5b` and `Qwen/Qwen2.5-0.5B-Instruct` at a pinned revision. What matters is concurrency, the context split between tasks and the engine's configuration, not the model's output. Design:
-   - A tee proxy in each e2e pod image takes the engine's port. It forwards each chat request to the real engine with `max_tokens` capped, waits for the engine's reply, then returns the scenario's scripted reply.
+   - A tee proxy in each e2e pod image takes the engine's port. For each chat request it sends the real engine a short fixed prompt with `temperature: 0` and `max_tokens` capped, waits for the engine's reply, then returns the scenario's scripted reply. Spike 0.1 changed this from forwarding the agent's prompt: on CPU in bf16 a real prompt takes minutes, and one past 8192 tokens is refused. Concurrency, the context split and the engines' settings are still exercised and asserted.
    - For Ollama, it rewrites `size_vram` in `/api/ps` against a virtual VRAM budget, so the real fit search runs on real sizes.
    - The shipped `dist/gateway.js` runs unchanged.
    - vLLM uses the official CPU image with `VLLM_CPU_KVCACHE_SPACE` and `enforce-eager`. One vLLM pod at a time, in its own Compose profile, after a spike.
@@ -168,7 +168,7 @@ Answered by the responsible person on 2026-10-20: every recommendation below was
    - a) Ask developers to raise it to 10 to 12 GB.
    - b) Keep 8 GB: the runtime runs scenarios one at a time, vLLM scenarios alone, and refuses to start a profile when Docker reports less memory than it needs.
 
-   **Recommendation: b).** **Answer: b),** measured in spike 0.1. Advise 10 GB in the docs if the measure leaves under 1 GB free.
+   **Recommendation: b).** **Answer: b),** measured in spike 0.1. Advise 10 GB in the docs if the measure leaves under 1 GB free. Spike 0.1 measured a vLLM pod at about 5.5 GiB, which leaves under 1 GB free: the docs advise 10 GB for the `vllm` profile.
 8. **`gh` in the templates' `run:` steps** (the commit check, `next-run`, `dispatch`, `forward-review`).
    - a) GitHub's `gh` release, pinned, checked by its checksum, in the e2e runner image only, with `GH_HOST` on the fake.
    - b) A shim that calls the fake.
@@ -285,6 +285,100 @@ Each step is one commit, done when `npm run check` passes and what it names hold
 2. Run `ollama/ollama:0.35.1` with `qwen2.5:0.5b`, `OLLAMA_NUM_PARALLEL=2`, and check whether `/api/pull` needs the registry when the blobs are present.
 
 Done when the plan's results record, for vLLM: the time to `/health`, `/v1/models`' `max_model_len`, `/metrics`' `cache_config_info`, a parsed `ping` tool call, and the peak memory; for Ollama: `/api/ps`, llama-server's `-c` and `-np`, and the pull's behavior offline. If vLLM fails, the plan takes the next [fallback](#out-of-scope) (`--dtype float32` from the wrapper, then the tee emulating vLLM) and goes back to review.
+
+#### 0.1 results
+
+Run on 2026-10-20 on the plan's machine (Docker Desktop VM, 8 CPUs, 7.8 GB), `HEAD` `b139ff0`. Memory is `docker stats --no-stream` of the spike's own container, sampled every second; "anon" is the cgroup's `memory.stat`, without the page cache of the weights.
+
+**Verdict: pass with changes.** Both engines run on CPU with the pinned images and models, bf16 included. vLLM needs more memory and time than estimated, and the tee must not forward the agent's real prompt to it.
+
+##### Downloads
+
+| Input | Pinned | Measured |
+| --- | --- | --- |
+| `vllm/vllm-openai-cpu:v0.31.0@sha256:495c84fe…` | Index digest | 25 min to pull, 6.73 GB on disk |
+| `ollama/ollama:0.35.1@sha256:292ee794…` | Index digest, as in `docker/pod/Dockerfile` | First pull failed after 2 h (`short read: … unexpected EOF`); the retry took 35 min. 9.37 GB on disk |
+| `Qwen/Qwen2.5-0.5B-Instruct` | `7ae5576` | `hf download` (hf 1.33.0, inside the vLLM image) into a volume: 5 min, 1.0 GB. `refs/main` is `7ae557604adf67be50417f59c2c2f167def9a775`. Every vLLM run used `HF_HUB_OFFLINE=1` |
+| `qwen2.5:0.5b` | `a8b0c515…` | `/api/pull` 2 min 20 s, 398 MB; `/api/tags` digest `a8b0c51577010a279d933d14c2a8ab4b268079d44c5c8830c0a93900f1827c67` |
+
+##### vLLM
+
+Arguments as `vllmServeArguments` builds them (`serve <model> --served-model-name <model> --enable-auto-tool-choice --max-num-seqs 2 --enforce-eager --tool-call-parser hermes --max-model-len <n|auto>`), on `0.0.0.0` instead of the loopback, with `VLLM_CPU_KVCACHE_SPACE=1`, `VLLM_CPU_OMP_THREADS_BIND=nobind`, `OMP_NUM_THREADS=4` and `--shm-size=1g`.
+
+| | `--max-model-len 8192` | `--max-model-len auto` | `8192`, `--dtype float32` |
+| --- | --- | --- | --- |
+| Time to `/health` | 82 s (cold cache) | 126 s | 111 s |
+| `/v1/models` `max_model_len` | 8192 | 32768 (log: `Auto-fit max_model_len: full model context length 32768 fits`, which `autoFitModelContext` matches) | 8192 |
+| `cache_config_info` | `kv_cache_size_tokens="87296"` (682 blocks of 128), `kv_cache_max_concurrency="10.65625"`, `kv_cache_memory_bytes="1073741824"`, `block_size="128"`, `cache_dtype="auto"`, `enable_prefix_caching="True"`, `gpu_memory_utilization="0.92"` | Same cache, `kv_cache_max_concurrency="2.6640625"` | `kv_cache_size_tokens="43648"`, concurrency `5.328125` |
+| `ping` probe, the gateway's own body (`tool_choice: "auto"`, `temperature: 0`) | Parsed `tool_calls[0].function.name == "ping"`, `arguments: "{}"`, `finish_reason: tool_calls`. **First request: 214 s** | Same call. First request: 233 s | Same call. First request: 176 s |
+| Later requests | 152-token prompt, 8 tokens: 1.3 s. 2,843-token prompt: 69 s and 86 s | Not measured | 2,842-token prompt: 18 s |
+| 3 concurrent requests, 150 tokens each | `num_requests_running` 2.0 and `num_requests_waiting` 1.0 for 25 s; two end at 27 s, the third at 47 s | Not measured | Same pattern: 26 s, 26 s, 49 s |
+| Peak memory | 5.42 GiB (anon 4.28 GiB; API server 1.2 GB, engine core 0.9 GB, worker 2.8 GB RSS) | 4.50 GiB (probe only) | 6.47 GiB (anon 6.3 GiB). Not viable in 7.8 GB |
+
+Notes:
+
+- The gauges exist under the plan's names, plus `vllm:num_requests_waiting_by_reason{reason="capacity"|"deferred"}`. `/metrics` has 389 `vllm:` lines.
+- The first request is slow whatever the dtype: about 3 to 4 minutes of one busy thread in the worker, with `prompt_tokens_total` at 0 until it ends. The gateway's probe is that first request. It passed within its 5-minute try each time, with little margin.
+- bf16 logs `Failed to create oneDNN linear, fallback to torch linear` (the CPU has no AVX-512 BF16). Prefill runs at about 35 tokens/s in bf16 and 160 in float32. Decode is the same in both, about 11 tokens/s across 2 sequences.
+- The model's `generation_config.json` overrides vLLM's default sampling (`temperature 0.7`, `top_k 20`, `top_p 0.8`, `repetition_penalty 1.1`).
+- Harmless warnings: `numa_migrate_pages failed. errno: 1`, `numa_set_membind failed`.
+
+##### Ollama
+
+Run with `OLLAMA_NUM_PARALLEL=2`, `OLLAMA_CONTEXT_LENGTH=32768` (the only candidate for this model: its own context, below the 64000 floor), `OLLAMA_KEEP_ALIVE=-1`. The `server config` log line shows all three.
+
+- `/api/ps`: `context_length: 32768`, `size: 1481543514`, `size_vram: 0`, `expires_at: 2319-01-30T21:45:04Z`, digest `a8b0c515…`.
+- llama-server: `--model …/sha256-c5396e06… -c 65536 -np 2 --flash-attn auto -b 2048 -ub 2048 --context-shift --keep 4 --offline --no-jinja --chat-template chatml`. Its log: `n_ctx = 65536`, `n_ctx_seq = 32768`, `n_seq_max = 2`, K/V 768 MiB in f16, model 346 MiB.
+- `/api/show`: `qwen2.context_length 32768`, `head_count_kv 2`, `block_count 24`, no `sliding_window`; capabilities `completion`, `tools`.
+- `ping` on `/v1/chat/completions`: a parsed tool call in 1.1 s.
+- 3 concurrent chats, 300 tokens each: two end at 11.3 s, the third at 21.1 s, so 2 run in parallel.
+- Peak memory: 1.41 GiB.
+- `/api/pull` of a model already present, online: `success` in 1.6 s.
+- `/api/pull` with no network, after `docker network disconnect`. It always needs the registry, even when the blobs are present:
+  - A freshly started `ollama serve` fails at once: `dial tcp: lookup registry.ollama.ai … network is unreachable`.
+  - The Ollama that had pulled before hung on `pulling manifest` for 12 min 34 s, then failed with `read: connection timed out`.
+  - The gateway's `pullModel` has no timeout, so an offline pod would hang until `CODEMAN_START_BY`.
+
+##### The gateway in front of Ollama on CPU
+
+`docker build --target ollama -f docker/pod/Dockerfile` from a copy of `dist/gateway.js` (last changed in `ca7f3e8`, sha256 `eabc55bb…`). Run with `CODEMAN_MODEL=qwen2.5:0.5b`, `CODEMAN_ENGINE=ollama`, `CODEMAN_ADMIN_SHA256`, `CODEMAN_START_BY` (now + 25 min), `CODEMAN_OLLAMA={"OLLAMA_NUM_PARALLEL":"2"}` and `CODEMAN_GPU_MEMORY_GB=24`, with network.
+
+Six seconds after it started: pull, `Fitting qwen2.5:0.5b to the GPU, from 32768 tokens`, one load, `1.5 GB off the GPU`, then the floor message. `/health` answers `{"ready":false,"failed":true}`, and `/admin/status.failure` holds the same message. The fit fails exactly at `onGpu` on `size_vram: 0`. The tee's `/api/ps` rewrite is the one change it needs; with `context-length` set, the single load fails the same way.
+
+##### Changes the plan needs
+
+1. **Decision 7, memory.** A vLLM pod peaks at 4.5 to 5.4 GiB, not 3.5 to 4. That leaves under 1 GB free next to the emulator, a runner with OpenCode and the fakes. As decision 7 says, the docs advise 10 GB. The runtime's check for the `vllm` profile counts about 5.5 GiB for the pod. float32 (6.5 GiB) is not a fallback on 8 GB: keep bf16.
+2. **The tee must not forward the agent's prompt to vLLM.** bf16 prefill runs at about 35 tokens/s, so a real OpenCode prompt costs minutes, and one longer than `max-model-len 8192` is refused. The tee forwards a short fixed prompt with `temperature: 0` and `max_tokens` capped, and checks the context split through `/v1/models`, `/metrics` and `/api/ps`. Ollama gets the same policy.
+3. **vLLM time to ready: about 5 to 6 minutes.** That is the start (1.5 to 2 min) plus the probe's first request (3 to 4 min). Scenario timeouts, the fake Runpod's pod start and `open-key`'s wait must allow it. Step 3.3's health check of a `pod-vllm` must not require a warm engine sooner.
+4. **The tee's synthetic pull is required, not optional.** Without it, an offline pod fails at once or hangs for over 12 minutes (see Ollama above).
+5. **Assertion values** for vLLM with `VLLM_CPU_KVCACHE_SPACE=1`:
+   - `kv_cache_size_tokens` 87296;
+   - concurrency 10.65625 at 8192 and 2.6640625 at 32768;
+   - the auto-fit line names 32768.
+
+   For Ollama: llama-server `-c 65536 -np 2`, and `/api/ps` `context_length` 32768.
+6. **Step 3.3, downloads.** The first run downloads about 6.4 GB (images and models) and stores about 17 GB of images. Pulls can fail midway: the seed services and the docs say to retry.
+
+<details>
+<summary>Commands</summary>
+
+```sh
+docker pull --platform linux/amd64 vllm/vllm-openai-cpu:v0.31.0@sha256:495c84fe30f3572b83a78100a1e8ba423dbb77fc532ecefebe114e6b77327bd9
+docker pull --platform linux/amd64 ollama/ollama:0.35.1@sha256:292ee7945dfc3d5840a181f3ab86fedb1e66703e02c8af98b50f4da56b7e278c
+docker run --rm -v e2e-spike01-hf:/root/.cache/huggingface --entrypoint hf <vllm image> download Qwen/Qwen2.5-0.5B-Instruct --exclude '*.md'
+
+docker run -d --init --shm-size=1g -p 127.0.0.1:18100:8000 -v e2e-spike01-hf:/root/.cache/huggingface \
+  -e VLLM_CPU_KVCACHE_SPACE=1 -e VLLM_CPU_OMP_THREADS_BIND=nobind -e OMP_NUM_THREADS=4 -e HF_HUB_OFFLINE=1 \
+  -e VLLM_NO_USAGE_STATS=1 -e DO_NOT_TRACK=1 --entrypoint vllm <vllm image> \
+  serve Qwen/Qwen2.5-0.5B-Instruct --host 0.0.0.0 --port 8000 --served-model-name Qwen/Qwen2.5-0.5B-Instruct \
+  --enable-auto-tool-choice --max-num-seqs 2 --enforce-eager --tool-call-parser hermes --max-model-len 8192   # then auto; then 8192 --dtype float32
+
+docker run -d --init -p 127.0.0.1:18101:11434 -v e2e-spike01-ollama:/root/.ollama -e OLLAMA_HOST=0.0.0.0:11434 \
+  -e OLLAMA_NUM_PARALLEL=2 -e OLLAMA_CONTEXT_LENGTH=32768 -e OLLAMA_KEEP_ALIVE=-1 <ollama image> serve
+docker network disconnect bridge <ollama container>; docker exec <ollama container> ollama pull qwen2.5:0.5b
+```
+
+</details>
 
 #### 0.2 Run the jail and a reusable workflow under act
 
@@ -421,7 +515,7 @@ Node built-ins only. Each fake has its tests under `e2e/fakes/`, which need no D
 | 2.3 | Google: OIDC issuer with JWKS, STS, IAM Credentials, faults | A token with a wrong audience or repository is refused like Google's; a valid one yields `owner`, accepted by the emulator |
 | 2.4 | OpenRouter: keys with limits, expiry and disabling, analytics with a configurable lag, `/chat/completions` through the scripted model | Usage appears only after the lag; a spent key answers 402 |
 | 2.5 | Runpod: pods through the runtime (decision 2), catalog, prices, CUDA versions, GPU memory, billing, Serverless endpoints and queue, the `{id}-{port}` proxy, faults | A created pod's `env` reaches the runtime's request unchanged; a terminated pod stops billing |
-| 2.6 | The scripted model and the tee: OpenAI SSE with tool-call deltas and `usage`; the tee's forwarding with `max_tokens` capped, `/api/ps` rewrite, synthetic pull, inspection port | A scripted round yields the same tool calls each time; the tee holds the reply until the engine's ends |
+| 2.6 | The scripted model and the tee: OpenAI SSE with tool-call deltas and `usage`; the tee's fixed prompt to the engine with `max_tokens` capped, `/api/ps` rewrite, synthetic pull (required: Ollama's pull needs the registry even for a present model, and the gateway's pull has no timeout), inspection port | A scripted round yields the same tool calls each time; the tee holds the reply until the engine's ends |
 | 2.7 | npm cache (decision 4) | It serves OpenCode's tarball, and Codeman's integrity check passes on it |
 
 Commit message per step, such as `Add a fake GitHub for the e2e suite`.
