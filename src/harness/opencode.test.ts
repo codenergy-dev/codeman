@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { test } from "node:test";
 import { openCode, openCodeConfig } from "./opencode.ts";
 
@@ -113,4 +114,21 @@ test("with self-hosted inference, the only provider is the gateway's, and the to
     name: "qwen3-coder:30b",
     limit: { context: 65536, output: 16384 },
   });
+});
+
+test("only the e2e build turns OpenCode's model catalog fetch off", () => {
+  const options = { executable: "/opt/codeman/opencode", model: "a/b", apiKey: "k", prompt: "p" };
+  assert.equal(openCode.command(options).env.OPENCODE_DISABLE_MODELS_FETCH, undefined);
+  // The e2e build's flag, in a process of its own, so this one keeps it off.
+  const script = `globalThis.__CODEMAN_E2E__ = true;
+const { openCode } = await import(${JSON.stringify(new URL("./opencode.ts", import.meta.url).href)});
+console.log(JSON.stringify(openCode.command(${JSON.stringify(options)}).env));`;
+  const env = JSON.parse(
+    execFileSync(process.execPath, ["--input-type=module", "-e", script], {
+      env: { ...process.env, CODEMAN_E2E_ENDPOINTS: "{}" },
+      encoding: "utf8",
+    }),
+  ) as Record<string, string>;
+  assert.equal(env.OPENCODE_DISABLE_MODELS_FETCH, "1");
+  assert.equal(env.OPENROUTER_API_KEY, "k");
 });

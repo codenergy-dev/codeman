@@ -30657,7 +30657,10 @@ var openCode = {
       // Secrets only in the environment: any user can list arguments.
       env: {
         ...provider ? {} : { OPENROUTER_API_KEY: apiKey },
-        OPENCODE_CONFIG_CONTENT: JSON.stringify(config)
+        OPENCODE_CONFIG_CONTENT: JSON.stringify(config),
+        // The e2e suite runs offline: OpenCode keeps the catalog its release embeds, and skips
+        // the background refresh from models.opencode.ai (docs/web/opencode/, models-dev.ts).
+        ...E2E ? { OPENCODE_DISABLE_MODELS_FETCH: "1" } : {}
       }
     };
   }

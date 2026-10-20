@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { after, before, beforeEach, test } from "node:test";
-import { OpenRouterFake } from "../openrouter/openrouter.ts";
+import { OpenRouterFake, fromEnv as openRouterFromEnv } from "../openrouter/openrouter.ts";
 import { openAiBackend, type QueueBackend } from "../runpod/serverless.ts";
 import { LlmFake } from "./llm.ts";
 import { completions, queueBackend, remoteCompletions } from "./openai.ts";
@@ -158,4 +158,46 @@ test("a Runpod queue worker plays the script, over HTTP or in-process", async ()
       data: [{ id: "e2e-model", object: "model", created: 0, owned_by: "codeman-e2e" }],
     },
   ]);
+});
+
+test("the fake OpenRouter as its own service answers from the model's server, after resets too", async () => {
+  assert.throws(
+    () =>
+      openRouterFromEnv({
+        FAKE_OPENROUTER_MANAGEMENT_KEY: MANAGEMENT,
+        FAKE_OPENROUTER_COMPLETIONS: `${llmOrigin}/v1`,
+      }),
+    /must be an origin/,
+  );
+  const service = openRouterFromEnv({
+    FAKE_OPENROUTER_MANAGEMENT_KEY: MANAGEMENT,
+    FAKE_OPENROUTER_COMPLETIONS: llmOrigin,
+  });
+  const serviceOrigin = await service.listen();
+  try {
+    const expected = await direct();
+    for (let run = 0; run < 2; run++) {
+      await reset();
+      service.reset();
+      const created = await fetch(`${serviceOrigin}/api/v1/keys`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${MANAGEMENT}`, "content-type": "application/json" },
+        body: JSON.stringify({ name: "codeman/acme/app/1/8" }),
+      });
+      const runKey = ((await created.json()) as { key: string }).key;
+      const session = new Session(taskFile(SCENARIO, "i1", "code"));
+      const calls = await session.run(async (request) => {
+        const response = await fetch(`${serviceOrigin}/api/v1/chat/completions`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${runKey}`, "content-type": "application/json" },
+          body: JSON.stringify(request),
+        });
+        assert.equal(response.status, 200);
+        return accumulate(sseEvents(await response.text()));
+      });
+      assert.deepEqual(calls, expected, `run ${run}`);
+    }
+  } finally {
+    await service.close();
+  }
 });

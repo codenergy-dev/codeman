@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import type { ServerResponse } from "node:http";
 import { type FakeRequest, FakeServer, HttpError, json, type Reply } from "../http.ts";
+import { remoteCompletions } from "../llm/openai.ts";
 import { type Generation, meta, orError, query, SECONDS_UTC } from "./analytics.ts";
 import {
   type ChatRequest,
@@ -55,6 +56,8 @@ export interface OpenRouterSetup {
   credits?: number;
   prices?: Prices;
   lags?: Partial<Lags>;
+  /** What answers chat completions by default, and again after each reset: `fixedText()` if absent. */
+  completions?: Completions;
 }
 
 const DEFAULT_PRICES: Prices = { prompt: 0.000001, completion: 0.000004 };
@@ -245,7 +248,7 @@ export class OpenRouterFake {
   }
 
   #defaults(): void {
-    this.#fallback = fixedText();
+    this.#fallback = this.#setup.completions ?? fixedText();
     this.#lags = { usageMs: 0, analyticsMs: 0, ...this.#setup.lags };
     this.#prices = this.#setup.prices ?? DEFAULT_PRICES;
   }
@@ -574,7 +577,8 @@ function pricesOf(value: unknown): Prices {
 /**
  * The fake for e2e/fakes/main.ts. `FAKE_OPENROUTER` holds its setup as JSON:
  * `{ managementKey, credits?, prices?: { prompt, completion }, lags?: { usageMs, analyticsMs } }`;
- * without it, the management key is `FAKE_OPENROUTER_MANAGEMENT_KEY`.
+ * without it, the management key is `FAKE_OPENROUTER_MANAGEMENT_KEY`. `FAKE_OPENROUTER_COMPLETIONS`,
+ * the scripted model's origin, answers chat completions from it (e2e/fakes/llm/).
  */
 export function fromEnv(env: NodeJS.ProcessEnv): FakeServer {
   const setup = (env.FAKE_OPENROUTER ? JSON.parse(env.FAKE_OPENROUTER) : {}) as Record<
@@ -588,12 +592,17 @@ export function fromEnv(env: NodeJS.ProcessEnv): FakeServer {
   if (setup.credits !== undefined && typeof setup.credits !== "number") {
     throw new Error("FAKE_OPENROUTER's credits must be a number.");
   }
+  const model = env.FAKE_OPENROUTER_COMPLETIONS;
+  if (model !== undefined && URL.parse(model)?.origin !== model) {
+    throw new Error("FAKE_OPENROUTER_COMPLETIONS must be an origin, such as http://llm:8080.");
+  }
   try {
     return new OpenRouterFake({
       managementKey,
       credits: setup.credits as number | undefined,
       prices: setup.prices === undefined ? undefined : pricesOf(setup.prices),
       lags: setup.lags === undefined ? undefined : lagsOf(setup.lags),
+      completions: model === undefined ? undefined : remoteCompletions(model),
     }).server;
   } catch (error) {
     if (!(error instanceof HttpError)) throw error;
