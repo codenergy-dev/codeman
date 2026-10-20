@@ -12,6 +12,7 @@ Every dependency is audited before it is added (see `AGENTS.md`). This page reco
 | `@types/node` | npm, development | 24.13.6 | Node.js types | 2026-09-23 | None reported by `npm audit` | [Development](#development) |
 | `esbuild` | npm, development | 0.28.2 | Bundles the action and the gateway | 2026-09-23 | None reported by `npm audit` | [Development](#development) |
 | `@biomejs/biome` | npm, development | 2.5.14 | Lint and format | 2026-09-23 | None reported by `npm audit` | [Development](#development) |
+| `yaml` | npm, development | 2.9.1 | Parses the e2e suite's scenarios and the templates, in `e2e/` only | 2026-10-20 | One maintainer, no provenance attestation, accepted | [Development](#development) |
 | GitHub Actions, 5 | Actions | Full commit SHA | CI, the pod images, the target repository's workflow | Not recorded | None recorded | [GitHub Actions](#github-actions) |
 | GitHub, OpenRouter, npm registry and the other APIs | Services | Not pinned | What Codeman calls with `fetch` or the packages | Not recorded | None recorded | [External services](#external-services) |
 | OpenCode | Harness, downloaded | 1.18.32, by npm integrity | Runs the agent | Advisories checked 2026-09-24 | CVE-2026-88624, accepted | [Agent harness](#agent-harness-opencode) |
@@ -22,8 +23,13 @@ Every dependency is audited before it is added (see `AGENTS.md`). This page reco
 | Runpod's vLLM worker | Image, chosen by a maintainer | `runpod/worker-v1-vllm:<version>` | Serverless endpoints | 2026-10-03 | None recorded | [Runpod's vLLM worker](#runpods-vllm-worker) |
 | Codeman's pod images, on `node:24.21.0-bookworm-slim` | Images, Codeman's own | By digest | What pods run | Not recorded | None recorded | [Codeman's pod images](#codemans-pod-images) |
 | Cloud Firestore, STS, IAM Credentials | Services | REST API v1 | The backend | 2026-10-07 | None recorded | [Cloud Firestore](#cloud-firestore-in-a-firebase-project) |
-| Firestore's emulator | Test tool, not installed | The newest in Firebase's cache | The store's tests | 2026-10-07 | None recorded | [Firestore's emulator](#firestores-emulator) |
+| Firestore's emulator | Test tool, in the e2e emulator image | v1.22.0 by SHA-256, on `eclipse-temurin:21.0.12_8-jre-noble` by digest | The store's tests and the e2e suite | 2026-10-20 | None recorded | [Firestore's emulator](#firestores-emulator) |
 | The local runner image, on `ubuntu:noble-20260930.1` | Image, Codeman's own, local only | Base images by digest; Ubuntu's packages not pinned | Runs the tests that need GitHub's runner on a developer's machine | 2026-10-19 | None recorded | [The local runner image](#the-local-runner-image) |
+| act | Test tool, on the developer's machine | 0.2.89, Homebrew's bottle | Runs the real templates for the e2e smoke scenarios | 2026-10-20 | Injects the host's `gh` token when given no `GITHUB_TOKEN` secret; the driver always passes a fake one | [act](#act) |
+| vLLM's CPU image | Image, e2e only | `vllm/vllm-openai-cpu:v0.31.0`, by index digest | vLLM on CPU in the e2e vLLM pod | 2026-10-20 | vLLM 0.31.0's, as above | [vLLM's CPU image](#vllms-cpu-image) |
+| `qwen2.5:0.5b` and `Qwen/Qwen2.5-0.5B-Instruct` | Models, e2e only | Ollama manifest digest; Hugging Face commit | The same tiny model on both e2e engines | 2026-10-20 | None recorded | [The e2e models](#the-e2e-models) |
+| Docker Compose | Tool, bundled with Docker Desktop | v5.1.0 on the machine of the audit, not pinned | Starts the e2e suite's infrastructure | 2026-10-20 | None for v5.1.0 | [Docker Compose](#docker-compose) |
+| GitHub CLI, `gh` | Tool, in the e2e runner image | v2.102.0, by SHA-256 | The templates' `run:` steps in the e2e suite | 2026-10-20 | None for v2.102.0 | [GitHub CLI](#github-cli) |
 
 ## Audit log
 
@@ -37,6 +43,13 @@ Every dependency is audited before it is added (see `AGENTS.md`). This page reco
 | 2026-10-13 | vLLM and its image, Hugging Face | [vLLM on pods](../plans/2026-10-13-vllm-on-pods.md) | vLLM's advisories each list a fix at or before 0.31.0; the rest accepted |
 | 2026-10-19 | Running Actions locally: act, `actions/runner`, `github/local-action`, a plain image | [Run GitHub Actions locally](../plans/2026-10-19-run-github-actions-locally.md#audit) | None adopted but the plain image. act 0.2.74, as installed, has CVE-2026-34041 and CVE-2026-34042, fixed in 0.2.86 |
 | 2026-10-19 | The agent's jail: ai-jail, bubblewrap, `util-linux` | [Jail the agent](../plans/2026-10-19-jail-the-agent-in-a-read-only-mount-namespace.md#audit) | Nothing added: `unshare`, `mount`, `findmnt` and `setpriv` come from Ubuntu's `util-linux` and `mount`, required packages already on the runner. ai-jail and bubblewrap not adopted |
+| 2026-10-20 | `yaml` for the e2e suite | [End-to-end test suite](../plans/2026-10-20-end-to-end-test-suite.md#audit) | 2.9.1 added as a development dependency: ISC, no dependencies, no install scripts, no known vulnerabilities (CVE-2026-33532 fixed in 2.8.3). One maintainer and no provenance attestation, accepted (decision 4). `npm audit`: no vulnerabilities |
+| 2026-10-20 | act for the e2e smoke scenarios | [End-to-end test suite](../plans/2026-10-20-end-to-end-test-suite.md#audit) | 0.2.89 adopted for the smoke scenarios only, reversing decision 1 of [Run GitHub Actions locally](../plans/2026-10-19-run-github-actions-locally.md#decisions). CVE-2026-34041 and CVE-2026-34042 fixed in 0.2.86. Without a `GITHUB_TOKEN` secret it injects the host's `gh auth token`: the driver always passes a fake one |
+| 2026-10-20 | The e2e engines: vLLM's CPU image, `qwen2.5:0.5b`, `Qwen/Qwen2.5-0.5B-Instruct` | [End-to-end test suite](../plans/2026-10-20-end-to-end-test-suite.md#audit) | `vllm/vllm-openai-cpu:v0.31.0` pinned by index digest, the vLLM version Codeman pins. Both models Apache-2.0, not gated, pinned by manifest digest and by commit |
+| 2026-10-20 | The e2e emulator image: Temurin 21 JRE and Firestore's emulator jar | [End-to-end test suite](../plans/2026-10-20-end-to-end-test-suite.md#audit) | `eclipse-temurin:21.0.12_8-jre-noble` by digest, jar v1.22.0 by the SHA-256 firebase-tools 15.34.0 records (decision 3). The emulator's pin changes from the newest in Firebase's cache |
+| 2026-10-20 | Docker Compose | [End-to-end test suite](../plans/2026-10-20-end-to-end-test-suite.md#audit) | v5.1.0, bundled with Docker Desktop: Apache-2.0, no advisory for it |
+| 2026-10-20 | GitHub CLI for the e2e runner image | [End-to-end test suite](../plans/2026-10-20-end-to-end-test-suite.md#audit) | v2.102.0 (decision 8): MIT, maintained by GitHub, each published advisory fixed at or before it. Linux archives pinned by the SHA-256 of the release's checksums file |
+| 2026-10-20 | The e2e suite's Google side: floci-gcp 0.11.0 | [End-to-end test suite](../plans/2026-10-20-end-to-end-test-suite.md#audit) | Not adopted: its STS exchanges only access tokens for GCS downscoping (no Workload Identity Federation, no JWT or JWKS check), its IAM Credentials refuses the `datastore` scope and checks no token, its Firestore is gRPC only, and its Compose file mounts the Docker socket. Pre-1.0, one main maintainer, no release checksums; its AWS sibling had two critical RCEs in September 2026. An in-house fake on Node's built-ins replaces it |
 
 ## Where each dependency runs
 
@@ -89,6 +102,7 @@ The diagram shows where each dependency's code runs, and what it reaches. The [s
 | `@types/node` | 24.13.6 | Node.js types | Node 24 is the Actions runtime (`node24`). |
 | `esbuild` | 0.28.2 | Bundles `dist/index.js` and the gateway, `dist/gateway.js` | Its install script only verifies the binary; not needed. |
 | `@biomejs/biome` | 2.5.14 | Lint and format | One binary, from the one of its 8 platform packages (`@biomejs/cli-*`) that matches the machine; no other transitive dependencies. Chosen over ESLint + typescript-eslint (95 packages). |
+| `yaml` | 2.9.1 | Parses the e2e suite's scenario files and the templates, in `e2e/` only | ISC, no dependencies, no install scripts; ships a `yaml` CLI in `node_modules/.bin`. One maintainer (`eemeli`) and no provenance attestation, only registry signatures: accepted ([e2e plan](../plans/2026-10-20-end-to-end-test-suite.md#answered), decision 4). Node has no YAML parser, and `src/yaml.ts` rejects multi-line values on purpose. |
 
 Tests use the built-in `node:test` runner; Node 24 runs TypeScript directly.
 
@@ -293,6 +307,76 @@ Audited on 2026-10-19 for the [plan to run Actions locally](../plans/2026-10-19-
 - **Transitive code:** the packages' dependencies, from Ubuntu. No npm package is added: the container runs `npm ci` from `package-lock.json`, with the repository's `.npmrc`.
 - **Permissions:** the container gets the working tree read-only, which it copies, and the network, for `npm ci`. It gets no Docker socket. It gets `SYS_ADMIN` and no seccomp or AppArmor profile, which the agent's jail needs to create namespaces and mount ([running Actions locally](local-actions.md#run-the-tests)). It needs a Docker daemon on the developer's machine: Docker Engine is Apache-2.0, and Docker Desktop's subscription terms apply to the developer's organization.
 
+## The end-to-end test suite
+
+Audited on 2026-10-20 for the [end-to-end test suite plan](../plans/2026-10-20-end-to-end-test-suite.md#audit). What it adds runs only on a developer's machine, under `e2e/`: none of it reaches `dist/`, the pod images or a target repository. Firestore's emulator image is under [Firestore's emulator](#firestores-emulator), and `yaml` under [Development](#development). Already audited and reused: `ollama/ollama:0.35.1`, `node:24.21.0-bookworm-slim` and `ubuntu:noble-20260930.1`.
+
+### act
+
+- **What:** [nektos/act](https://github.com/nektos/act), which reads `.github/workflows/` and runs each job in a Docker container.
+- **Why:** the e2e suite's two smoke scenarios run the real templates under it, on success paths only (decision 10). The other scenarios run on the suite's own workflow simulator. This reverses decision 1 of [Run GitHub Actions locally](../plans/2026-10-19-run-github-actions-locally.md#decisions) for those scenarios only.
+- **Version and pin:** 0.2.89, the latest release (2026-06-01), installed from Homebrew's bottle, whose SHA-256 the formula records ([formula](../web/homebrew/formula-act.md)). Its source was read at the tag's commit `4f41128` ([cmd/root.go](../web/nektos/act-cmd-root-go-at-4f41128.md), [run_context.go](../web/nektos/act-pkg-runner-run-context-go-at-4f41128.md), [gh.go](../web/nektos/act-pkg-gh-gh-go-at-4f41128.md)).
+- **License and maintenance:** MIT, community maintained. No commit on `master` since 2026-06-01.
+- **Transitive code:** one Go binary, with 38 direct and 61 indirect modules ([audit of 2026-10-19](../plans/2026-10-19-run-github-actions-locally.md#audit)).
+- **Known vulnerabilities:** CVE-2026-34041 (`::set-env::` and `::add-path::` processed from any step's output, [advisory](../web/nektos/set-env-and-add-path-workflow-commands-unconditionally-processed.md)) and CVE-2026-34042 (an unauthenticated cache server on every interface, [advisory](../web/nektos/remote-code-execution-possible-actions-cache-server-allows-malicious-cache-injec.md)), both fixed in 0.2.86.
+- **Permissions:** it drives the Docker daemon. By default it mounts the Docker socket into each job, starts a cache server on the LAN address, and binds its artifact server there too. The e2e driver passes `--container-daemon-socket -`, `--no-cache-server` and `--pull=false`, uses the fake GitHub's artifact API instead of act's server, and binds nothing beyond `127.0.0.1` ([step 6.1](../plans/2026-10-20-end-to-end-test-suite.md#61-add-the-act-driver)).
+
+> [!WARNING]
+> When no `GITHUB_TOKEN` secret is given, act runs `gh auth token` on the host and injects the developer's real token into the jobs ([gh.go](../web/nektos/act-pkg-gh-gh-go-at-4f41128.md)). An action missing from its cache is cloned with the `GITHUB_TOKEN` secret as the password, from github.com when no other host is given. The driver always passes a fake token and explicit env, secret and variable files, from an empty directory, in offline mode with every pinned action checked in its cache before act starts.
+
+Other limits, from the plan's [spike 0.2](../plans/2026-10-20-end-to-end-test-suite.md#02-results):
+
+- act reads `.env`, `.secrets` and `.vars` from its working directory, and writes its configuration and cache in the home directory; the driver runs from an empty directory, with `XDG_CONFIG_HOME` and `XDG_CACHE_HOME` in its own.
+- Its `act-toolcache` volume, mounted on `/opt/hostedtoolcache`, is world-writable and shared by every invocation: invocations run one at a time.
+- A failed job inside a reusable workflow stops the whole run, so failure scenarios run only on the simulator. It ignores `permissions`, `concurrency` and `timeout-minutes`, and has no OIDC.
+
+### vLLM's CPU image
+
+- **What:** vLLM's official CPU image, `vllm/vllm-openai-cpu`, which its CPU installation page names for pre-built images ([cpu.x86.inc.md](../web/vllm/docs-getting-started-installation-cpu-x86-inc-md-at-v0-31-0.md)).
+- **Why:** the e2e vLLM pod runs the vLLM version Codeman pins, on the developer's CPU, so the gateway's fit, the K/V cache's capacity and `/metrics` are vLLM's own.
+- **Version and pin:** `v0.31.0`, by its index digest `sha256:495c84fe30f3572b83a78100a1e8ba423dbb77fc532ecefebe114e6b77327bd9`; linux/amd64 manifest `sha256:8024248339dc6878daa5349344ed29d49c8a6732f6bdf7400fda32ce33e4b30b`, 1.57 GB compressed, pushed 2026-10-04 ([the image](../web/docker-hub/vllm-vllm-openai-cpu-v0-31-0.md)).
+  - On x86 it chooses AVX-512 or AVX2 kernels at run time ([platform](../web/vllm/vllm-platforms-cpu-py-at-v0-31-0.md)).
+  - Its K/V cache's size is set by `VLLM_CPU_KVCACHE_SPACE`; otherwise it takes a fraction of the container's memory ([CPU](../web/vllm/cpu.md), [worker](../web/vllm/vllm-v1-worker-cpu-worker-py-at-v0-31-0.md), [memory](../web/vllm/vllm-utils-cpu-resource-utils-py-at-v0-31-0.md)).
+- **License and maintenance:** Apache-2.0, from [vllm-project/vllm](https://github.com/vllm-project/vllm)'s build, as the [GPU image](#vllm-in-codemans-vllm-pod-image).
+- **Transitive code:** PyTorch for CPU, Ubuntu 22.04's packages, tcmalloc and Intel's OpenMP runtime, and gcc 15, from vLLM's build. The e2e image adds Node's binary from the pod images' pinned input, `dist/gateway.js`, and the suite's tee.
+- **Known vulnerabilities:** those of vLLM 0.31.0, [above](#vllm-in-codemans-vllm-pod-image). It serves only the e2e suite's Compose network.
+- **Permissions:** it runs as root in its container. With `HF_HUB_OFFLINE=1`, it reads the model from a volume filled once.
+
+### The e2e models
+
+The same model on both engines: Qwen2.5 0.5B Instruct, small enough for a CPU, with a Hermes tool-call template. What matters to the suite is the engines' concurrency and context, not the model's replies, which the tee scripts.
+
+| Model | Engine | Pin | Size | License |
+| --- | --- | --- | --- | --- |
+| `qwen2.5:0.5b` | Ollama | Manifest `sha256:a8b0c51577010a279d933d14c2a8ab4b268079d44c5c8830c0a93900f1827c67` ([manifest](../web/ollama/qwen2-5-0-5b.md)) | 398 MB, GGUF Q4_K_M | Apache-2.0 |
+| `Qwen/Qwen2.5-0.5B-Instruct` | vLLM | Commit `7ae557604adf67be50417f59c2c2f167def9a775` ([model](../web/hugging-face/qwen-qwen2-5-0-5b-instruct-at-7ae5576.md)) | 988 MB, safetensors bf16 | Apache-2.0 |
+
+- **Why:** 24 layers with 2 K/V heads of size 64 make 12 KB of K/V per token, so a 32,768-token context fits several seats in the VM's memory. `qwen3:0.6b` (112 KB per token) and `smollm2:135m` (no tool-call template) were not chosen.
+- **Pin:** a tag or `main` can move. The one-shot seed services of the Compose file check the manifest's digest and the Hugging Face commit before any scenario runs.
+- **Data:** the downloads are public and unauthenticated, from `registry.ollama.ai` and the Hugging Face Hub, once per machine. Neither model is gated.
+
+### Docker Compose
+
+- **What:** Docker's tool that starts a set of containers, networks and volumes from one file. The e2e suite uses its profiles, health checks with `up --wait`, named volumes, memory limits and an internal network ([services](../web/docker/define-services-in-docker-compose.md), [networks](../web/docker/define-and-manage-networks-in-docker-compose.md), [volumes](../web/docker/define-and-manage-volumes-in-docker-compose.md), [deploy](../web/docker/compose-deploy-specification.md), [profiles](../web/docker/learn-how-to-use-profiles-in-docker-compose.md), [`up`](../web/docker/docker-compose-up.md)).
+- **Version and pin:** not pinned: it comes with the developer's Docker. The audit's machine has v5.1.0, bundled with Docker Desktop 4.66.1 ([release](../web/docker/compose-v5-1-0.md)).
+- **License and maintenance:** Apache-2.0, [docker/compose](https://github.com/docker/compose), maintained by Docker, with a release every few weeks.
+- **Known vulnerabilities:** one published advisory, CVE-2025-62725 (high), fixed in v2.40.2.
+- **Permissions:** it runs as the developer and drives the Docker daemon, as `docker` does. No container of the suite gets the Docker socket (decision 2).
+
+### GitHub CLI
+
+- **What:** `gh`, GitHub's command-line client, which the templates' `run:` steps call: the commit check, `next-run`, `dispatch` and `forward-review`.
+- **Why:** the e2e runner image runs those steps against the fake GitHub, with `GH_HOST` on it, so `gh`'s own calls, such as its GraphQL query for the default branch, meet the fake's token permissions (decision 8). A shim would hide them.
+- **Version and pin:** v2.102.0, of 2026-09-30, the newest release at least two weeks old on 2026-10-20 ([release](../web/github-cli/cli-v2-102-0.md)). The image downloads the Linux archive and checks its SHA-256, from the release's checksums file:
+  - `gh_2.102.0_linux_amd64.tar.gz`: `bb766f710eef8ede859c18578c72c327597cd4c8a85b06001b1f3843c6019386`;
+  - `gh_2.102.0_linux_arm64.tar.gz`: `7862c86c72f43df3a2d93ddde6f473285b4e2af61b494849846827e513ef6484`.
+
+  The release's build attestations were not verified.
+- **License and maintenance:** MIT, [cli/cli](https://github.com/cli/cli), maintained by GitHub, with a release every few weeks.
+- **Transitive code:** one Go binary, with 61 direct and 118 indirect modules.
+- **Known vulnerabilities:** 17 published advisories, each fixed at or before v2.102.0, which fixes four. v2.102.1, of 2026-10-20, only updates the Go toolchain.
+- **Permissions:** it runs in the e2e runner image's jobs, with the fake GitHub's tokens only.
+
 ## Backend
 
 Audited on 2026-10-07 for the [backend plan](../plans/2026-10-07-firestore-backend.md). No npm package is added (decision 2):
@@ -323,4 +407,8 @@ Audited on 2026-10-07 for the [backend plan](../plans/2026-10-07-firestore-backe
 
 - **What:** Google's `cloud-firestore-emulator` jar, which the Firebase CLI downloads into `~/.cache/firebase/emulators/`. It runs on Java 21.
 - **Why:** only for Codeman's tests, on a developer's machine: the contract tests run against it when it is there ([Firestore's emulator](guide.md#firestores-emulator)).
-- **Version and pin:** none. The tests use the newest jar in the cache. Codeman neither installs nor downloads it, and CI does not run it.
+- **Version and pin:** v1.22.0, in the e2e emulator image (decision 3 of the [e2e plan](../plans/2026-10-20-end-to-end-test-suite.md#answered-in-review)), which the store's tests reach through `FIRESTORE_EMULATOR_HOST`. Without it, they use the newest jar in Firebase's cache, which Codeman does not install. CI does not run it.
+  - The jar: `https://storage.googleapis.com/firebase-preview-drop/emulator/cloud-firestore-emulator-v1.22.0.jar`, 136,707,194 bytes, SHA-256 `9b6498b7f62714d67f48f59b3818883cd682dbcd46b9f59511de81c97bb5166c`, as firebase-tools 15.34.0 records it ([emulator info](../web/firebase/firebase-tools-downloadableemulatorinfo-json-at-48f511a.md)). The image's Dockerfile checks it with `ADD --checksum` ([Dockerfile reference](../web/docker/dockerfile-reference.md)).
+  - The base: `eclipse-temurin:21.0.12_8-jre-noble`, by its index digest `sha256:7739f0ffce786528961eea6bf46d9610ee968ac6127c9b2e93494757bdecce9f` ([the image](../web/docker-hub/eclipse-temurin-21-0-12-8-jre-noble.md)): Eclipse Temurin's Java 21 runtime on Ubuntu Noble, about 100 MB compressed. Its newer build, `21.0.12.1_1` of 2026-10-17, was under two weeks old.
+  - Not `google/cloud-sdk:emulators`: 452 MB with gcloud, Python and every emulator, re-pushed weekly, the jar's version hidden.
+- **Permissions:** Temurin's image sets no user, so the container runs as root unless the e2e image sets one. It listens on the e2e suite's Compose network only, and holds no credential: the fake Google's token, `owner`, is what the emulator takes as an administrator.
