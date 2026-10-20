@@ -19772,6 +19772,9 @@ function actionPathIn(workspace, root = ACTION_ROOT) {
   return path.split(sep).join("/");
 }
 
+// src/e2e.ts
+var E2E = false ? redirects(process.env) : void 0;
+
 // src/pool.ts
 var MAX_POOL_MEMBERS = 10;
 var LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/;
@@ -20415,7 +20418,7 @@ function isOpenRouterModel(text) {
   return text.length <= 100 && OPENROUTER_MODEL.test(text);
 }
 var ENDPOINT_ID = /^[a-z0-9]{1,64}$/i;
-var RUNPOD_API_HOST = "api.runpod.ai";
+var RUNPOD_API = E2E?.endpoints.runpodServerless ?? "https://api.runpod.ai";
 function endpointId(text) {
   if (ENDPOINT_ID.test(text)) return { ok: true, value: text };
   let url;
@@ -20424,20 +20427,20 @@ function endpointId(text) {
   } catch {
     return {
       ok: false,
-      error: `\`endpoint\` must be an endpoint's ID, letters and digits, or its URL, such as \`https://${RUNPOD_API_HOST}/v2/abc123xyz/run\`.`
+      error: `\`endpoint\` must be an endpoint's ID, letters and digits, or its URL, such as \`${RUNPOD_API}/v2/abc123xyz/run\`.`
     };
   }
-  if (url.protocol !== "https:" || url.hostname !== RUNPOD_API_HOST || url.port !== "") {
+  if (url.origin !== RUNPOD_API) {
     return {
       ok: false,
-      error: `\`endpoint\` takes only URLs of \`https://${RUNPOD_API_HOST}\`, where the endpoint's key goes, not \`${url.protocol}//${url.host}\`.`
+      error: `\`endpoint\` takes only URLs of \`${RUNPOD_API}\`, where the endpoint's key goes, not \`${url.protocol}//${url.host}\`.`
     };
   }
   const [, version, id = ""] = url.pathname.split("/");
   if (url.username || url.password || version !== "v2" || !ENDPOINT_ID.test(id)) {
     return {
       ok: false,
-      error: `\`endpoint\`'s URL must be the endpoint's, such as \`https://${RUNPOD_API_HOST}/v2/abc123xyz/run\`.`
+      error: `\`endpoint\`'s URL must be the endpoint's, such as \`${RUNPOD_API}/v2/abc123xyz/run\`.`
     };
   }
   return { ok: true, value: id };
@@ -24558,7 +24561,7 @@ function zero() {
   return { spent: 0 };
 }
 function gpuProvider(account, key) {
-  if (account === "runpod") return new Runpod(key);
+  if (account === "runpod") return E2E ? E2E.gpu(new Runpod(key, E2E.fetch)) : new Runpod(key);
   throw new Error(`Unknown GPU account "${account}".`);
 }
 function inferenceProvider(runtime2, store) {
@@ -24570,12 +24573,13 @@ function inferenceProvider(runtime2, store) {
     accountKey: runtime2.input("gpu-key", { required: true }),
     image: podImage(choice.engine, runtime2.input("pod-image")),
     usage: runtime2.input("gateway-usage"),
-    store
+    store,
+    fetch: E2E?.fetch
   });
 }
 function openRouterProvider(runtime2, managementKey) {
   return new OpenRouterProvider(
-    new OpenRouter(managementKey),
+    new OpenRouter(managementKey, E2E?.fetch),
     runtime2.repository,
     () => positiveNumber(runtime2, "key-expiry-hours")
   );
@@ -30576,7 +30580,12 @@ function openCodeConfig(model, instructions, provider) {
         options: { baseURL: provider.baseUrl, apiKey: provider.apiKey },
         models: { [model]: { name: model, ...limit } }
       }
-    } : { openrouter: { models: { [model]: {} } } },
+    } : {
+      openrouter: {
+        ...E2E?.endpoints.openRouter ? { options: { baseURL: `${E2E.endpoints.openRouter}/api/v1` } } : {},
+        models: { [model]: {} }
+      }
+    },
     permission: {
       read: "allow",
       edit: "allow",
@@ -30601,7 +30610,7 @@ var openCode = {
     const pkg = PACKAGES[platform2];
     if (!pkg) throw new Error(`The OpenCode harness does not support ${platform2} runners.`);
     const url = `https://registry.npmjs.org/${pkg.name}/-/${pkg.name}-${OPENCODE_VERSION}.tgz`;
-    const response = await fetch(url);
+    const response = await (E2E?.fetch ?? fetch)(url);
     if (!response.ok) throw new Error(`Downloading ${url} failed with ${response.status}.`);
     const tarball = Buffer.from(await response.arrayBuffer());
     const integrity = `sha512-${createHash3("sha512").update(tarball).digest("base64")}`;
@@ -35532,7 +35541,7 @@ function gitHubServices(runtime2) {
   let provider;
   let store;
   const theStore = () => {
-    store ??= backendStore(runtime2);
+    store ??= backendStore(runtime2, E2E?.fetch);
     return store;
   };
   const inference = () => {

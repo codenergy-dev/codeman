@@ -1,3 +1,4 @@
+import { E2E } from "../e2e.ts";
 import type { RepositoryRef } from "../platform/types.ts";
 import { isLogin, isPoolId, MAX_POOL_MEMBERS, type Pool, soloPool } from "../pool.ts";
 import type { Runtime } from "../runtime/runtime.ts";
@@ -230,7 +231,7 @@ function zero(): Budgeted["recorded"] {
 
 /** The GPU cloud of an account that rents GPUs, with the account's key. */
 export function gpuProvider(account: string, key: string): GpuProvider {
-  if (account === "runpod") return new Runpod(key);
+  if (account === "runpod") return E2E ? E2E.gpu(new Runpod(key, E2E.fetch)) : new Runpod(key);
   throw new Error(`Unknown GPU account "${account}".`);
 }
 
@@ -248,11 +249,12 @@ export function inferenceProvider(runtime: Runtime, store: () => Store): Inferen
     image: podImage(choice.engine, runtime.input("pod-image")),
     usage: runtime.input("gateway-usage"),
     store,
+    fetch: E2E?.fetch,
   });
 }
 
 function openRouterProvider(runtime: Runtime, managementKey: string): OpenRouterProvider {
-  return new OpenRouterProvider(new OpenRouter(managementKey), runtime.repository, () =>
+  return new OpenRouterProvider(new OpenRouter(managementKey, E2E?.fetch), runtime.repository, () =>
     positiveNumber(runtime, "key-expiry-hours"),
   );
 }
@@ -290,7 +292,7 @@ export function selfHosted(
     usage: string;
     store: () => Store;
     gpu?: GpuProvider;
-    /** For tests: the gateways' fetch, and where vLLM's models are checked. */
+    /** For tests and the e2e build: the gateways' fetch, and where vLLM's models are checked. */
     fetch?: typeof fetch;
     hub?: ModelHub;
   },

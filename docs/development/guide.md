@@ -21,7 +21,25 @@ npm run check   # lint, type check, test and build
 | `npm test` | `node:test` on `src/**/*.test.ts`; see [tests](#tests) |
 | `npm run test:runner` | `npm ci`, then `npm test` with the sandbox test, in a local stand-in for GitHub's runner; `npm run test:runner -- <command>` runs another command there. Needs Docker; see [running Actions locally](local-actions.md) |
 | `npm run build` | Bundle `src/index.ts` into `dist/index.js`, and the [gateway](../glossary.md#gateway), `src/gateway/main.ts`, into `dist/gateway.js` |
+| `npm run build:e2e` | The same bundles, into `e2e/.build/`, with the [e2e build's](#the-e2e-build) redirects |
 | `npm run check` | Lint, type check, test and build, in that order |
+
+### The e2e build
+
+The [end-to-end suite](../plans/2026-10-20-end-to-end-test-suite.md) runs the bundles of `npm run build:e2e`, which reach its fakes instead of the real services. [`src/e2e.ts`](../../src/e2e.ts) reads `CODEMAN_E2E_ENDPOINTS`, a JSON object of the fakes by key; each value is an origin, such as `http://fake:8080`, and the requests keep their paths.
+
+| Key | Replaces |
+| --- | --- |
+| `openRouter` | `https://openrouter.ai`: the management API, and OpenCode's `openrouter` provider |
+| `runpod` | `https://api.runpod.io`, Runpod's REST API |
+| `runpodPods` | A pod's URL, `https://{id}-{port}.proxy.runpod.net`; this value is a URL with `{id}` and `{port}` |
+| `runpodServerless` | `https://api.runpod.ai`: the Serverless queues, and the origin the `endpoint` setting accepts |
+| `huggingFace` | `https://huggingface.co` |
+| `npm` | `https://registry.npmjs.org`, where OpenCode is downloaded; its pinned integrity is still checked |
+| `googleSts`, `googleIamCredentials`, `firestore` | Google's STS, IAM Credentials and Firestore |
+
+> [!IMPORTANT]
+> The published `dist/` never redirects: `npm run build` sets `__CODEMAN_E2E__` to `false`, so esbuild drops the code that reads the variable, and the build fails if `dist/` names `CODEMAN_E2E`.
 
 ## Tests
 

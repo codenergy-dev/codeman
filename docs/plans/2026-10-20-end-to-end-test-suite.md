@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-10-20T12:50:34-03:00
-updated_at: 2026-10-20T13:20:00-03:00
+updated_at: 2026-10-20T13:25:00-03:00
 commit: 21130fe
 ---
 
@@ -301,6 +301,11 @@ Done when:
 1. `npm run build` leaves `dist/` byte for byte as before: `git diff --exit-code dist/`.
 2. `grep -c CODEMAN_E2E dist/index.js dist/gateway.js` prints `0` for both.
 3. Unit tests cover the override's parsing, and its absence when the flag is false.
+
+> [!WARNING]
+> **Divergence, for review (2026-10-20).** Criterion 1 cannot hold: the wiring reads `E2E` from [`src/e2e.ts`](../../src/e2e.ts), so `dist/index.js` changes by about 30 lines. The changes are the wiring only: `var E2E = false ? redirects(process.env) : void 0;`, and `E2E?.fetch`, `E2E ? E2E.gpu(...) : new Runpod(key)` and `E2E?.endpoints...` at the wiring points. esbuild drops `redirects` and the parsing, so `dist/` holds no code that reads the variable (criterion 2 holds). `dist/gateway.js` is unchanged byte for byte: `src/inference/runpod.ts` is not touched, so the pod images need no rebuild. The `endpoint` setting's check compares the URL's origin with `https://api.runpod.ai`, which accepts and rejects the same URLs as before.
+>
+> The seam is one `fetch` that swaps a service's origin for its fake's, passed to the constructors' existing `fetch` parameters (`backendStore`, `OpenRouter`, `Runpod`, `selfHosted`, OpenCode's download), plus `E2E.gpu`, which sets Runpod's pod and queue URLs. The keys are in [the e2e build](../development/guide.md#the-e2e-build).
 
 Commit message: `Compile endpoint overrides into an e2e-only bundle`.
 

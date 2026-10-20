@@ -1,3 +1,4 @@
+import { E2E } from "../e2e.ts";
 import { ENGINES } from "./engines.ts";
 import { type OllamaSettings, ollamaEnvironment } from "./ollama.ts";
 import {
@@ -277,8 +278,8 @@ export function isOpenRouterModel(text: string): boolean {
 
 /** Runpod's Serverless endpoint IDs. */
 const ENDPOINT_ID = /^[a-z0-9]{1,64}$/i;
-/** The only host whose endpoint URLs Codeman takes: the endpoint's key goes there. */
-const RUNPOD_API_HOST = "api.runpod.ai";
+/** The only origin whose endpoint URLs Codeman takes: the endpoint's key goes there. */
+const RUNPOD_API = E2E?.endpoints.runpodServerless ?? "https://api.runpod.ai";
 
 /**
  * A Serverless endpoint's ID, from the ID itself or a URL of the endpoint from Runpod's console
@@ -294,20 +295,20 @@ export function endpointId(
   } catch {
     return {
       ok: false,
-      error: `\`endpoint\` must be an endpoint's ID, letters and digits, or its URL, such as \`https://${RUNPOD_API_HOST}/v2/abc123xyz/run\`.`,
+      error: `\`endpoint\` must be an endpoint's ID, letters and digits, or its URL, such as \`${RUNPOD_API}/v2/abc123xyz/run\`.`,
     };
   }
-  if (url.protocol !== "https:" || url.hostname !== RUNPOD_API_HOST || url.port !== "") {
+  if (url.origin !== RUNPOD_API) {
     return {
       ok: false,
-      error: `\`endpoint\` takes only URLs of \`https://${RUNPOD_API_HOST}\`, where the endpoint's key goes, not \`${url.protocol}//${url.host}\`.`,
+      error: `\`endpoint\` takes only URLs of \`${RUNPOD_API}\`, where the endpoint's key goes, not \`${url.protocol}//${url.host}\`.`,
     };
   }
   const [, version, id = ""] = url.pathname.split("/");
   if (url.username || url.password || version !== "v2" || !ENDPOINT_ID.test(id)) {
     return {
       ok: false,
-      error: `\`endpoint\`'s URL must be the endpoint's, such as \`https://${RUNPOD_API_HOST}/v2/abc123xyz/run\`.`,
+      error: `\`endpoint\`'s URL must be the endpoint's, such as \`${RUNPOD_API}/v2/abc123xyz/run\`.`,
     };
   }
   return { ok: true, value: id };

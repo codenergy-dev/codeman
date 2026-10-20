@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { E2E } from "../e2e.ts";
 import { program } from "../sandbox.ts";
 import type { Harness, HarnessCommand, HarnessOptions } from "./harness.ts";
 
@@ -61,7 +62,14 @@ export function openCodeConfig(
             models: { [model]: { name: model, ...limit } },
           },
         }
-      : { openrouter: { models: { [model]: {} } } },
+      : {
+          openrouter: {
+            ...(E2E?.endpoints.openRouter
+              ? { options: { baseURL: `${E2E.endpoints.openRouter}/api/v1` } }
+              : {}),
+            models: { [model]: {} },
+          },
+        },
     permission: {
       read: "allow",
       edit: "allow",
@@ -89,7 +97,7 @@ export const openCode: Harness = {
     if (!pkg) throw new Error(`The OpenCode harness does not support ${platform} runners.`);
 
     const url = `https://registry.npmjs.org/${pkg.name}/-/${pkg.name}-${OPENCODE_VERSION}.tgz`;
-    const response = await fetch(url);
+    const response = await (E2E?.fetch ?? fetch)(url);
     if (!response.ok) throw new Error(`Downloading ${url} failed with ${response.status}.`);
     const tarball = Buffer.from(await response.arrayBuffer());
     const integrity = `sha512-${createHash("sha512").update(tarball).digest("base64")}`;

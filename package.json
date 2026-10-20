@@ -10,6 +10,7 @@
   },
   "scripts": {
     "build": "node scripts/build.ts",
+    "build:e2e": "node scripts/build.ts --e2e",
     "lint": "biome ci .",
     "format": "biome check --write .",
     "typecheck": "tsc",

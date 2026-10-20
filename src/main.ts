@@ -1,4 +1,5 @@
 import { actionCommit, templateVersionProblem } from "./action.ts";
+import { E2E } from "./e2e.ts";
 import { inferenceProvider, providerAccounts } from "./inference/index.ts";
 import type { InferenceProvider } from "./inference/provider.ts";
 import { Ledger } from "./ledger.ts";
@@ -35,7 +36,7 @@ export function gitHubServices(runtime: Runtime): Services {
   // One store per job, so its token serves every request.
   let store: Store | undefined;
   const theStore = () => {
-    store ??= backendStore(runtime);
+    store ??= backendStore(runtime, E2E?.fetch);
     return store;
   };
   const inference = () => {
