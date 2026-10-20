@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import {
+  chmodSync,
   existsSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   writeFileSync,
 } from "node:fs";
@@ -532,5 +534,91 @@ test("the agent cannot plant programs that run outside its jail", {
     assert.ok(!existsSync(marker), "no planted program ran");
   } finally {
     asRoot("/usr/bin/rm", "-f", "--", ...planted);
+  }
+});
+
+// The jail shares the network, and the system's services run outside it. Through each one the
+// agent tries to run a command that leaves a marker in a directory only the host's /tmp holds:
+// inside the jail, /tmp is a new tmpfs, so a marker means the command ran outside.
+// See docs/plans/2026-10-19-jail-the-agent-in-a-read-only-mount-namespace.md, step 3.
+test("the agent cannot run a command outside its jail through the system's services", {
+  skip: !enabled,
+  timeout: 120_000,
+}, async (t) => {
+  const escaped = mkdtempSync("/tmp/codeman-escaped-");
+  chmodSync(escaped, 0o777);
+  const asRoot = (...args: string[]) =>
+    spawnSync("/usr/bin/sudo", ["-n", "--", ...args], { encoding: "utf8" });
+  createAgentUser();
+  const worktree = `${AGENT_HOME}/work`;
+  asRoot("/usr/bin/mkdir", "-p", worktree);
+  asRoot("/usr/bin/chown", `${AGENT_USER}:${AGENT_USER}`, worktree);
+  try {
+    const script = [
+      // Prints the route, then whether its program is missing, or its exit code and last line.
+      "attempt() {",
+      "  local route=$1 name=$2; shift 2",
+      '  if ! command -v "$name" >/dev/null; then echo "route $route: $name is missing"; return; fi',
+      '  local out; out=$("$@" 2>&1 </dev/null); local code=$?',
+      '  echo "route $route: exit $code: $(printf %s "$out" | tail -n 1)"',
+      "}",
+      // sshd runs a command through the login shell, nologin; sftp's subsystem too, unless
+      // sshd serves it in process.
+      "mkdir -p ~/.ssh && chmod 700 ~/.ssh",
+      "ssh-keygen -q -t ed25519 -N '' -f ~/.ssh/probe >/dev/null 2>&1",
+      "cat ~/.ssh/probe.pub >> ~/.ssh/authorized_keys 2>/dev/null; chmod 600 ~/.ssh/authorized_keys",
+      `printf 'put /etc/hostname ${escaped}/sftp\\n' > ~/sftp.batch`,
+      'ssh_opts="-o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no' +
+        ' -o UserKnownHostsFile=/dev/null -i $HOME/.ssh/probe"',
+      `attempt ssh ssh ssh $ssh_opts ${AGENT_USER}@localhost touch ${escaped}/ssh`,
+      `attempt sftp sftp sftp $ssh_opts -b $HOME/sftp.batch ${AGENT_USER}@localhost`,
+      `attempt cron crontab bash -c "echo '* * * * * touch ${escaped}/cron' | crontab -"`,
+      `attempt at at bash -c "echo 'touch ${escaped}/at' | at now"`,
+      // Over the system bus: a transient unit, and lingering, which would keep a user manager.
+      "attempt systemd systemd-run systemd-run --no-ask-password --unit=codeman-probe" +
+        ` -- /usr/bin/touch ${escaped}/systemd`,
+      "attempt linger loginctl loginctl --no-ask-password enable-linger",
+      // Abstract Unix sockets have no file, so read-only mounts do not reach them. List the bound,
+      // unconnected ones in the shared network namespace.
+      `awk 'NR > 1 && $6 == "01" && substr($8, 1, 1) == "@" { print "abstract " $8 }' /proc/net/unix | sort -u`,
+      "exit 0",
+    ].join("\n");
+    const runtime = new FakeRuntime();
+    const run = await runAsAgent(
+      { file: "/bin/bash", args: ["-c", script], env: {} },
+      worktree,
+      60_000,
+      runtime,
+    );
+    assert.deepEqual(run, { exitCode: 0, timedOut: false });
+    const lines = runtime.logged("info").map((line) => line.replace(/^│ /, ""));
+    for (const line of lines.filter((line) => line.startsWith("route "))) t.diagnostic(line);
+
+    // A job of `at now` or a transient unit would run within a second or two.
+    await new Promise((resolve) => setTimeout(resolve, 3_000));
+    assert.deepEqual(readdirSync(escaped), [], "no command the agent started ran outside its jail");
+    const scheduled = existsSync("/var/spool/cron")
+      ? asRoot("/usr/bin/find", "/var/spool/cron", "-user", AGENT_USER).stdout.trim()
+      : "";
+    assert.equal(scheduled, "", "the agent scheduled nothing with cron or at");
+    assert.ok(!existsSync(`/var/lib/systemd/linger/${AGENT_USER}`), "the agent does not linger");
+
+    // Each listener here must be reviewed: what it is, and why the agent's connection to it cannot
+    // run anything outside the jail. Names may hold patterns, for parts that change between runs.
+    const known: RegExp[] = [];
+    const sockets = lines
+      .filter((line) => line.startsWith("abstract "))
+      .map((line) => line.slice("abstract ".length));
+    t.diagnostic(`Abstract Unix sockets: ${sockets.join(", ") || "none"}.`);
+    const unknown = sockets.filter((name) => !known.some((pattern) => pattern.test(name)));
+    const owners = existsSync("/usr/bin/ss")
+      ? asRoot("/usr/bin/ss", "-xlpn")
+          .stdout.split("\n")
+          .filter((line) => unknown.some((name) => line.includes(name)))
+      : [];
+    assert.deepEqual(unknown, [], `Unreviewed abstract Unix sockets:\n${owners.join("\n")}`);
+  } finally {
+    sealAgentSandbox(worktree);
+    asRoot("/usr/bin/rm", "-rf", "--", escaped, `${AGENT_HOME}/.ssh`, `${AGENT_HOME}/sftp.batch`);
   }
 });

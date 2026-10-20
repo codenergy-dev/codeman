@@ -39,7 +39,7 @@ You need Docker. The first run builds the image, in a few minutes.
 
 | | GitHub's `ubuntu-latest` | The local image |
 | --- | --- | --- |
-| Machine | A VM per job, with systemd | A container, with `tini` as PID 1 and no systemd: `loginctl`, lingering and user services are not tested |
+| Machine | A VM per job, with systemd | A container, with `tini` as PID 1 and no systemd: `loginctl`, lingering and user services are not tested. No `sshd`, `cron`, `atd` or system bus either: the sandbox test of the system's services finds each route missing |
 | Root file system | ext4 | overlayfs. Docker mounts `/etc/hosts` and `/etc/resolv.conf` apart, so `find -xdev` stops there |
 | `runner` | uid 1001, passwordless `sudo`; its groups and its exact `sudoers` rule are not recorded | uid 1001, group 1001, `NOPASSWD:ALL` in `/etc/sudoers.d/runner`, Ubuntu's `secure_path`. The base image's `ubuntu` user, uid 1000, stays |
 | Permissions | The build scripts' world-writable trees, and whatever else the image leaves open | Only the build scripts' trees |

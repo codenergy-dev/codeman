@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-10-19T21:47:20-03:00
-updated_at: 2026-10-19T22:17:09-03:00
+updated_at: 2026-10-20T10:41:00-03:00
 commit: 8d8bdef
 ---
 
@@ -140,6 +140,19 @@ The responsible person pushes and reports CI. Then, on `ubuntu-latest`:
    - the timings of the sandbox test and of `npm test`.
 3. Set this plan to `completed`, or bring it back for review with what failed.
 
+**Item 2's services, as a test** (added on 2026-10-20). The sandbox test "the agent cannot run a command outside its jail through the system's services" tries each route from inside the jail, so CI checks it on every push:
+
+| Route | What the agent tries | It fails when |
+| --- | --- | --- |
+| `sshd` | A key in its own `authorized_keys`, then `ssh` and `sftp` to itself on `localhost`, each leaving a marker | A marker exists |
+| `cron`, `at` | A crontab, and an `at now` job, each leaving a marker | A marker exists, or `/var/spool/cron` holds a file of `codeman-agent` |
+| D-Bus | `systemd-run` of a transient unit that leaves a marker, and `loginctl enable-linger` | A marker exists, or `codeman-agent` lingers |
+| Abstract Unix sockets | Lists the bound ones in `/proc/net/unix` | One is not in the test's reviewed list, which starts empty; the failure names each socket's owner, from `ss -xlp` |
+
+- The markers go in a directory of the host's `/tmp`, open to every user. Inside the jail, `/tmp` is a new tmpfs, so a marker means the command ran outside.
+- Each route's outcome is printed as a diagnostic, `route <name>: ...`, including when its program is missing.
+- The first run on GitHub's VM fails if any abstract socket listens there. Each one is then reviewed and added to the list, with what it is and why a connection from the agent cannot run anything outside the jail.
+
 ## Results
 
 Measured on 2026-10-19, on the [local runner image](../development/local-actions.md), on an x86_64 host with Docker's 6.12 kernel:
@@ -170,7 +183,18 @@ On GitHub's runner, after the responsible person pushed `c5179dd`, on 2026-10-20
 | The `npm test` step | 49 s, against 8 min 21 s with the walk ([CI run 39306607913](https://github.com/codenergy-dev/codeman/actions/runs/39306607913)) |
 | The logged jail setup time | Not read: the job's log needs a login |
 
-The rest of step 3's item 2 (`sshd`, `cron` and `at`, D-Bus, abstract Unix sockets) is not checked yet, so this plan stays `in progress`.
+The test of the system's services, on the local runner image on 2026-10-20, with `openssh-server`, `cron` and `at` installed and started in a throwaway container:
+
+| Route | Result | With `/bin/bash` as the agent's shell, as a control |
+| --- | --- | --- |
+| `ssh` | Refused: "This account is currently not available." | Ran outside the jail: the test failed, naming it |
+| `sftp` | Refused: Ubuntu's `sftp-server` runs through the login shell | Ran outside the jail: the test failed, naming it |
+| `crontab` | Denied: `/var/spool/cron/: mkstemp: Permission denied` | Denied |
+| `at` | Denied: "You do not have permission to use at." | Denied |
+| `systemd-run`, `loginctl` | No system bus in a container: not tested | Not tested |
+| Abstract Unix sockets | None in the container's network namespace | None |
+
+On the image as built, without those packages, every route is missing and the test passes. The routes are still unchecked on GitHub's VM, where `sshd`, `cron`, `at` and the system bus may run, so this plan stays `in progress` until CI runs the test there.
 
 ## Out of scope
 
