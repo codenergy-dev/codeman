@@ -2,13 +2,20 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { Fetch } from "../budget.ts";
 import { E2E } from "../e2e.ts";
 import { program } from "../sandbox.ts";
 import type { Harness, HarnessCommand, HarnessOptions } from "./harness.ts";
 
+/** An OpenCode platform package: its npm name and `dist.integrity`. */
+export interface OpenCodePackage {
+  name: string;
+  integrity: string;
+}
+
 /** Pinned version and npm `dist.integrity` of each platform package. See docs/development/dependencies.md. */
 export const OPENCODE_VERSION = "1.18.32";
-const PACKAGES: Record<string, { name: string; integrity: string }> = {
+export const OPENCODE_PACKAGES: Record<string, OpenCodePackage> = {
   "linux-x64": {
     name: "opencode-linux-x64",
     integrity:
@@ -88,22 +95,27 @@ export function openCodeConfig(
   };
 }
 
+/** `pkg`'s tarball from the npm registry, checked against its pinned integrity. */
+export async function downloadOpenCode(pkg: OpenCodePackage, fetchFn: Fetch): Promise<Buffer> {
+  const url = `https://registry.npmjs.org/${pkg.name}/-/${pkg.name}-${OPENCODE_VERSION}.tgz`;
+  const response = await fetchFn(url);
+  if (!response.ok) throw new Error(`Downloading ${url} failed with ${response.status}.`);
+  const tarball = Buffer.from(await response.arrayBuffer());
+  const integrity = `sha512-${createHash("sha512").update(tarball).digest("base64")}`;
+  if (integrity !== pkg.integrity) {
+    throw new Error(`${pkg.name}@${OPENCODE_VERSION} does not match its pinned integrity.`);
+  }
+  return tarball;
+}
+
 export const openCode: Harness = {
   name: "opencode",
 
   async install(dir: string): Promise<string> {
     const platform = `${process.platform}-${process.arch}`;
-    const pkg = PACKAGES[platform];
+    const pkg = OPENCODE_PACKAGES[platform];
     if (!pkg) throw new Error(`The OpenCode harness does not support ${platform} runners.`);
-
-    const url = `https://registry.npmjs.org/${pkg.name}/-/${pkg.name}-${OPENCODE_VERSION}.tgz`;
-    const response = await (E2E?.fetch ?? fetch)(url);
-    if (!response.ok) throw new Error(`Downloading ${url} failed with ${response.status}.`);
-    const tarball = Buffer.from(await response.arrayBuffer());
-    const integrity = `sha512-${createHash("sha512").update(tarball).digest("base64")}`;
-    if (integrity !== pkg.integrity) {
-      throw new Error(`${pkg.name}@${OPENCODE_VERSION} does not match its pinned integrity.`);
-    }
+    const tarball = await downloadOpenCode(pkg, E2E?.fetch ?? fetch);
 
     mkdirSync(dir, { recursive: true });
     const file = join(dir, "opencode.tgz");

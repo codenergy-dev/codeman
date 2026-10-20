@@ -36,5 +36,5 @@ test("main refuses a fake it does not know", async () => {
   });
   const [code] = await once(child, "exit");
   assert.notEqual(code, 0);
-  assert.match(stderr, /No fake "nope"; the fakes are google\./);
+  assert.match(stderr, /No fake "nope"; the fakes are [a-z, ]*\bgoogle\b[a-z, ]*\./);
 });

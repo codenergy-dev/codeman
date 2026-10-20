@@ -30545,7 +30545,7 @@ import { createHash as createHash3 } from "node:crypto";
 import { chmodSync, mkdirSync as mkdirSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import { join as join4 } from "node:path";
 var OPENCODE_VERSION = "1.18.32";
-var PACKAGES = {
+var OPENCODE_PACKAGES = {
   "linux-x64": {
     name: "opencode-linux-x64",
     integrity: "sha512-CIatvoyi8V5a56xyw6ZUnsKxB9wqYIZqfNeqUNWhBBY4aENAm907LP0xXAwL6tR0cYbqNl2+Dvx8mOqXIxbDeQ=="
@@ -30603,20 +30603,24 @@ function openCodeConfig(model, instructions, provider) {
     }
   };
 }
+async function downloadOpenCode(pkg, fetchFn) {
+  const url = `https://registry.npmjs.org/${pkg.name}/-/${pkg.name}-${OPENCODE_VERSION}.tgz`;
+  const response = await fetchFn(url);
+  if (!response.ok) throw new Error(`Downloading ${url} failed with ${response.status}.`);
+  const tarball = Buffer.from(await response.arrayBuffer());
+  const integrity = `sha512-${createHash3("sha512").update(tarball).digest("base64")}`;
+  if (integrity !== pkg.integrity) {
+    throw new Error(`${pkg.name}@${OPENCODE_VERSION} does not match its pinned integrity.`);
+  }
+  return tarball;
+}
 var openCode = {
   name: "opencode",
   async install(dir) {
     const platform2 = `${process.platform}-${process.arch}`;
-    const pkg = PACKAGES[platform2];
+    const pkg = OPENCODE_PACKAGES[platform2];
     if (!pkg) throw new Error(`The OpenCode harness does not support ${platform2} runners.`);
-    const url = `https://registry.npmjs.org/${pkg.name}/-/${pkg.name}-${OPENCODE_VERSION}.tgz`;
-    const response = await (E2E?.fetch ?? fetch)(url);
-    if (!response.ok) throw new Error(`Downloading ${url} failed with ${response.status}.`);
-    const tarball = Buffer.from(await response.arrayBuffer());
-    const integrity = `sha512-${createHash3("sha512").update(tarball).digest("base64")}`;
-    if (integrity !== pkg.integrity) {
-      throw new Error(`${pkg.name}@${OPENCODE_VERSION} does not match its pinned integrity.`);
-    }
+    const tarball = await downloadOpenCode(pkg, E2E?.fetch ?? fetch);
     mkdirSync2(dir, { recursive: true });
     const file = join4(dir, "opencode.tgz");
     writeFileSync2(file, tarball);
