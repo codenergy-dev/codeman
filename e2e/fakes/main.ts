@@ -15,6 +15,7 @@ import type { FakeModule } from "./http.ts";
 const FAKES: Record<string, () => Promise<FakeModule>> = {
   google: () => import("./google/google.ts"),
   npm: () => import("./npm/npm.ts"),
+  openrouter: () => import("./openrouter/openrouter.ts"),
 };
 
 const env = process.env;
