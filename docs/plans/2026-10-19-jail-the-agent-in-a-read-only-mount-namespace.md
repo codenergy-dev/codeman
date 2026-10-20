@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-10-19T21:47:20-03:00
-updated_at: 2026-10-19T21:54:49-03:00
+updated_at: 2026-10-19T22:17:09-03:00
 commit: 8d8bdef
 ---
 
@@ -151,7 +151,26 @@ Measured on 2026-10-19, on the [local runner image](../development/local-actions
 | A harness that does nothing, through `sudo`, the jail's setup and `setpriv` | 79 to 83 ms, against about 5 s for the walk on the same image |
 | The regression test, with the read-only remounts removed | Fails: the agent wrote `/opt/pipx_bin/sudo` and `/usr/local/bin/git` |
 
-Step 3 adds GitHub's numbers.
+A probe ran a script as the agent through the jail on the same image, on 2026-10-20:
+
+| Inside the jail | Result |
+| --- | --- |
+| `node`, `npm` and `git` from the image | Run: Node.js 24.21.0, npm 11.19.0, git 2.43.0 |
+| `npm install` of a package in the work tree, then `node` loading it | Works |
+| Writing `/tmp`, the work tree and the agent's home | Works |
+| Writing `/opt/pipx_bin` or `/usr/local/bin`; `npm install -g`; `sudo` | Denied |
+| Processes visible | Only the jail's own: 6 |
+| `https://registry.npmjs.org/` | 200 |
+
+On GitHub's runner, after the responsible person pushed `c5179dd`, on 2026-10-20 ([CI run 39351050857](https://github.com/codenergy-dev/codeman/actions/runs/39351050857)):
+
+| Check | Result |
+| --- | --- |
+| CI, with `CODEMAN_SANDBOX_TEST=1` | Passed. Every sandbox test ran on the VM, so each of its mounts was remounted read-only: the jail fails closed otherwise |
+| The `npm test` step | 49 s, against 8 min 21 s with the walk ([CI run 39306607913](https://github.com/codenergy-dev/codeman/actions/runs/39306607913)) |
+| The logged jail setup time | Not read: the job's log needs a login |
+
+The rest of step 3's item 2 (`sshd`, `cron` and `at`, D-Bus, abstract Unix sockets) is not checked yet, so this plan stays `in progress`.
 
 ## Out of scope
 
