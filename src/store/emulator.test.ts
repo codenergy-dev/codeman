@@ -1,15 +1,11 @@
 import assert from "node:assert/strict";
-import { type ChildProcess, spawn, spawnSync } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, readdirSync } from "node:fs";
-import { createServer } from "node:net";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { after, before, test } from "node:test";
-import { setTimeout as sleep } from "node:timers/promises";
 import { exchange } from "../board.ts";
 import { PodRegistry } from "../inference/registry.ts";
 import { Ledger } from "../ledger.ts";
+import { emulatorJar, startEmulator } from "../testing/emulator.ts";
 import { FakeRuntime } from "../testing/fake-runtime.ts";
 import { closeOnEndpoint, minutes, NOON, seedRuns, serverlessRun } from "../testing/ledger-runs.ts";
 import { storeContract } from "./contract.ts";
@@ -33,7 +29,7 @@ let host = external ?? "";
 
 before(async () => {
   if (skip || external || !jar) return;
-  host = await startEmulator(jar);
+  host = await start(jar);
 });
 after(() => {
   for (const emulator of started) emulator.kill();
@@ -134,7 +130,7 @@ const rulesSkip = jar
   : "loading the rules needs the emulator in Firebase's cache, and Java";
 test("Firestore emulator: the security rules deny every client", { skip: rulesSkip }, async () => {
   if (!jar) return;
-  const ruled = await startEmulator(jar, ["--rules", RULES]);
+  const ruled = await start(jar, ["--rules", RULES]);
   const store = Firestore.emulator(ruled, project());
   await assert.rejects(store.get("organizations/o"), /403 PERMISSION_DENIED/);
   await assert.rejects(
@@ -147,50 +143,8 @@ function project(): string {
   return `codeman-test-${randomBytes(4).toString("hex")}`;
 }
 
-/** The newest emulator in Firebase's cache, when Java can run it. */
-function emulatorJar(): string | undefined {
-  const dir = join(homedir(), ".cache", "firebase", "emulators");
-  if (!existsSync(dir)) return undefined;
-  const jars = readdirSync(dir)
-    .filter((name) => /^cloud-firestore-emulator-v[\d.]+\.jar$/.test(name))
-    .sort((a, b) => a.localeCompare(b, "en", { numeric: true }));
-  const newest = jars.at(-1);
-  if (!newest || spawnSync("java", ["-version"], { stdio: "ignore" }).status !== 0) {
-    return undefined;
-  }
-  return join(dir, newest);
-}
-
-/** Starts an emulator on a free port of the loopback, and waits until it answers. */
-async function startEmulator(path: string, args: readonly string[] = []): Promise<string> {
-  const port = await freePort();
-  const emulator = spawn("java", ["-jar", path, "--host=127.0.0.1", `--port=${port}`, ...args], {
-    stdio: "ignore",
-  });
-  started.push(emulator);
-  const address = `127.0.0.1:${port}`;
-  for (let waited = 0; waited < 60_000; waited += 250) {
-    if (emulator.exitCode !== null) throw new Error("Firestore's emulator exited at start.");
-    const up = await fetch(`http://${address}/`).then(
-      (response) => response.ok,
-      () => false,
-    );
-    if (up) return address;
-    await sleep(250);
-  }
-  throw new Error("Firestore's emulator did not start within a minute.");
-}
-
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const server = createServer();
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      server.close(() =>
-        typeof address === "object" && address
-          ? resolve(address.port)
-          : reject(new Error("No port.")),
-      );
-    });
-  });
+async function start(path: string, args: readonly string[] = []): Promise<string> {
+  const emulator = await startEmulator(path, args);
+  started.push(emulator.process);
+  return emulator.host;
 }

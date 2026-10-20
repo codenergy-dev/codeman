@@ -18,7 +18,7 @@ npm run check   # lint, type check, test and build
 | `npm run lint` | Biome lint and format check |
 | `npm run format` | Apply Biome fixes and formatting |
 | `npm run typecheck` | `tsc`, no output |
-| `npm test` | `node:test` on `src/**/*.test.ts`; see [tests](#tests) |
+| `npm test` | `node:test` on `src/**/*.test.ts`, and on `e2e/**/*.test.ts`, the e2e suite's fakes, which need no Docker; see [tests](#tests) |
 | `npm run test:runner` | `npm ci`, then `npm test` with the sandbox test, in a local stand-in for GitHub's runner; `npm run test:runner -- <command>` runs another command there. Needs Docker; see [running Actions locally](local-actions.md) |
 | `npm run build` | Bundle `src/index.ts` into `dist/index.js`, and the [gateway](../glossary.md#gateway), `src/gateway/main.ts`, into `dist/gateway.js` |
 | `npm run build:e2e` | The same bundles, into `e2e/.build/`, with the [e2e build's](#the-e2e-build) redirects |
@@ -49,6 +49,7 @@ Tests sit next to the code they test, as `*.test.ts`. Most run everywhere. These
 | --- | --- | --- |
 | [`src/sandbox.test.ts`](../../src/sandbox.test.ts), the [sandbox](../glossary.md#sandbox) | Its tests that run the agent: on Linux, with `CODEMAN_SANDBOX_TEST=1`. They create a system user, run the agent's [jail](../runs/agent.md#the-jail), and need passwordless `sudo` and the right to create namespaces, like GitHub's Linux runners. CI sets the variable, and so does `npm run test:runner` ([running Actions locally](local-actions.md)). Its other tests, the jail's arguments and setup among them, run everywhere | On any other system, or without the variable |
 | [`src/store/emulator.test.ts`](../../src/store/emulator.test.ts), the [store](../glossary.md#store) on Firestore's emulator | An emulator is running, or one is in Firebase's cache; see [Firestore's emulator](#firestores-emulator) | Neither is there, as on CI |
+| [`e2e/fakes/google/emulator.test.ts`](../../e2e/fakes/google/emulator.test.ts), the fake Google's token on Firestore's emulator, past the security rules | The emulator is in Firebase's cache, with Java | It is not, as on CI |
 | [`src/docs.test.ts`](../../src/docs.test.ts), the links | Always | Never |
 | [`src/webdocs.test.ts`](../../src/webdocs.test.ts), the format of `docs/web/` | Always | Never |
 
