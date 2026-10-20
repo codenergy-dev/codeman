@@ -44,7 +44,7 @@ You need Docker. The first run builds the image, in a few minutes.
 | `runner` | uid 1001, passwordless `sudo`; its groups and its exact `sudoers` rule are not recorded | uid 1001, group 1001, `NOPASSWD:ALL` in `/etc/sudoers.d/runner`, Ubuntu's `secure_path`. The base image's `ubuntu` user, uid 1000, stays |
 | Permissions | The build scripts' world-writable trees, and whatever else the image leaves open | Only the build scripts' trees |
 | `PATH` | x64's, plus each setup action's entries | x64's, plus setup-node's entry |
-| Software | Thousands of tools; git from a PPA; Docker, cron and `at` | Ubuntu's base, Node.js, git 2.43, `sudo`, `procps`, `unzip` |
+| Software | Thousands of tools; git from a PPA; Docker and cron, but no `at` | Ubuntu's base, Node.js, git 2.43, `sudo`, `procps`, `unzip` |
 | Docker | A socket | None: the sandbox test's Docker check passes without testing anything |
 | Namespaces and mounts | Root has every capability | Granted by `scripts/runner.sh`'s flags; the kernel is Docker's, without AppArmor |
 | Architecture | x64; `ubuntu-24.04-arm` for arm64 | The host's; arm64 is not tested |

@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-10-19T21:47:20-03:00
-updated_at: 2026-10-20T10:41:00-03:00
+updated_at: 2026-10-20T11:40:00-03:00
 commit: 8d8bdef
 ---
 
@@ -194,7 +194,28 @@ The test of the system's services, on the local runner image on 2026-10-20, with
 | `systemd-run`, `loginctl` | No system bus in a container: not tested | Not tested |
 | Abstract Unix sockets | None in the container's network namespace | None |
 
-On the image as built, without those packages, every route is missing and the test passes. The routes are still unchecked on GitHub's VM, where `sshd`, `cron`, `at` and the system bus may run, so this plan stays `in progress` until CI runs the test there.
+On the image as built, without those packages, every route is missing and the test passes.
+
+On GitHub's runner, after the responsible person pushed `cc7fb68`, on 2026-10-20, CI failed only on the abstract sockets, as expected:
+
+| Route | Result |
+| --- | --- |
+| `ssh` | Refused before the login shell: "Permission denied (publickey,password)". So `nologin` was not reached there |
+| `sftp` | Refused: "Connection closed" |
+| `crontab` | Denied: `/var/spool/cron/: mkstemp: Permission denied` |
+| `at` | Missing on the image |
+| `systemd-run` | Refused by polkit: "Interactive authentication required." |
+| `loginctl enable-linger` | Failed before polkit: "No such device or address", since without a user name it asks for the caller's session, which the agent has none of. The test now names `codeman-agent`, so polkit decides |
+| Abstract Unix sockets | `@/org/kernel/linux/storage/multipathd` (`multipathd`, through systemd) and `@ISCSIADM_ABSTRACT_NAMESPACE` (systemd, for `iscsid`) |
+| The logged jail setup time | 56 ms |
+| The `npm test` step | 45 s |
+
+Both sockets were reviewed against Ubuntu's source packages in `noble-updates`, and added to the test's list:
+
+- `multipathd` lets a client that is not root, by `SO_PEERCRED`, run only `list` and `show` ([source](../web/ubuntu/multipath-tools-0-9-4-5ubuntu8-2-source-package.md)).
+- `iscsid` refuses any client that is not root, by `SO_PEERCRED`, before reading its request ([source](../web/ubuntu/open-iscsi-2-1-9-3ubuntu5-5-source-package.md)). A connection may start `iscsid` through systemd, as its unit defines it: nothing the agent chooses.
+
+This plan stays `in progress` until CI passes with those changes, and shows polkit's answer to lingering.
 
 ## Out of scope
 

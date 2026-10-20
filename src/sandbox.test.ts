@@ -577,7 +577,7 @@ test("the agent cannot run a command outside its jail through the system's servi
       // Over the system bus: a transient unit, and lingering, which would keep a user manager.
       "attempt systemd systemd-run systemd-run --no-ask-password --unit=codeman-probe" +
         ` -- /usr/bin/touch ${escaped}/systemd`,
-      "attempt linger loginctl loginctl --no-ask-password enable-linger",
+      `attempt linger loginctl loginctl --no-ask-password enable-linger ${AGENT_USER}`,
       // Abstract Unix sockets have no file, so read-only mounts do not reach them. List the bound,
       // unconnected ones in the shared network namespace.
       `awk 'NR > 1 && $6 == "01" && substr($8, 1, 1) == "@" { print "abstract " $8 }' /proc/net/unix | sort -u`,
@@ -605,7 +605,14 @@ test("the agent cannot run a command outside its jail through the system's servi
 
     // Each listener here must be reviewed: what it is, and why the agent's connection to it cannot
     // run anything outside the jail. Names may hold patterns, for parts that change between runs.
-    const known: RegExp[] = [];
+    const known: RegExp[] = [
+      // multipathd: only `list` and `show` for a client that is not root, by SO_PEERCRED
+      // (docs/web/ubuntu/multipath-tools-0-9-4-5ubuntu8-2-source-package.md).
+      /^@\/org\/kernel\/linux\/storage\/multipathd$/,
+      // iscsid's management socket: refuses any client that is not root, by SO_PEERCRED
+      // (docs/web/ubuntu/open-iscsi-2-1-9-3ubuntu5-5-source-package.md).
+      /^@ISCSIADM_ABSTRACT_NAMESPACE$/,
+    ];
     const sockets = lines
       .filter((line) => line.startsWith("abstract "))
       .map((line) => line.slice("abstract ".length));
