@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-10-19T21:47:20-03:00
-updated_at: 2026-10-20T11:40:00-03:00
+updated_at: 2026-10-20T12:30:00-03:00
 commit: 8d8bdef
 ---
 
@@ -63,6 +63,13 @@ Answered by the responsible person on 2026-10-19.
 
 2. **How it is verified.** The responsible person pushes the change and reports CI on GitHub's runner. The local runner image is the check before the push.
 
+3. **How the jail closes lingering**, found by CI on 2026-10-20 (see [Results](#results)). Answered by the responsible person on 2026-10-20.
+   - a) Hide the system bus in the jail: an empty tmpfs over `/run/dbus`. Codeman's own code, no change to the runner, and it closes every service on that bus.
+   - b) A polkit rule on the runner that denies `set-self-linger` to `codeman-agent`. A host security setting, for that action only.
+   - c) Both.
+
+   **Answer: a).**
+
 ## Design
 
 ```mermaid
@@ -75,6 +82,7 @@ flowchart LR
 - The harness, the fix pass included, runs under `sudo -n --preserve-env=<harness's variables> -- unshare --mount --pid --ipc --fork --kill-child --propagation private -- bash -c <setup>`.
 - The setup runs as root in the new namespaces. It remounts every mount read-only, except under `/proc`, and fails closed on any error. It then mounts a new `/proc`, a `1777` tmpfs on `/tmp`, `/var/tmp` and `/dev/shm`, and binds `/home/codeman-agent` read-write, `nosuid` and `nodev`.
 - `setpriv --reuid --regid codeman-agent --init-groups --no-new-privs --inh-caps=-all --bounding-set=-all` runs the existing launcher, which rebuilds the environment. Root's shell stays as PID 1 of the namespace, so it reaps orphans, and the harness keeps the default signal actions.
+- The setup hides the system bus with an empty tmpfs over `/run/dbus`, where the runner has one ([decision 3](#decisions)).
 - The network is shared. Node, git and the harness are readable through the read-only tree: no other bind.
 - When the harness exits, root's shell exits, and the kernel kills every process left in the namespace.
 - `unshare --fork` ignores SIGTERM. So the time limit and a stop send SIGTERM to every process of `codeman-agent` with `pkill`, then SIGKILL 10 seconds later.
@@ -215,7 +223,17 @@ Both sockets were reviewed against Ubuntu's source packages in `noble-updates`, 
 - `multipathd` lets a client that is not root, by `SO_PEERCRED`, run only `list` and `show` ([source](../web/ubuntu/multipath-tools-0-9-4-5ubuntu8-2-source-package.md)).
 - `iscsid` refuses any client that is not root, by `SO_PEERCRED`, before reading its request ([source](../web/ubuntu/open-iscsi-2-1-9-3ubuntu5-5-source-package.md)). A connection may start `iscsid` through systemd, as its unit defines it: nothing the agent chooses.
 
-This plan stays `in progress` until CI passes with those changes, and shows polkit's answer to lingering.
+After the responsible person pushed `727ca1f`, on 2026-10-20, CI failed on lingering. Every other route stayed closed, as in the run before, and the jail's setup took 59 ms:
+
+| Route | Result |
+| --- | --- |
+| `loginctl enable-linger codeman-agent` | Succeeded, from inside the jail |
+
+Ubuntu's logind policy lets any user turn lingering on for itself, without a session or authentication ([`set-self-linger`](../web/ubuntu/usr-share-polkit-1-actions-org-freedesktop-login1-policy-in-systemd-255-4-1ubunt.md)). Lingering starts a systemd user manager for `codeman-agent` outside the jail, which reads its configuration from the agent's writable home. So `c5179dd` left a way for the agent to run commands outside the jail, until the seal turns lingering off after the harness. The read-only mounts do not stop it: a socket on a read-only mount can still be connected to.
+
+The fix ([decision 3](#decisions)): the jail hides `/run/dbus`, and the test also fails when `/run/dbus/system_bus_socket` is visible in the jail. On the local runner image, with `dbus-daemon --system` started in a throwaway container, every sandbox test passed; with the hiding removed, the test failed with "the jail hides the system bus".
+
+This plan stays `in progress` until CI passes on GitHub's runner with the fix.
 
 ## Out of scope
 

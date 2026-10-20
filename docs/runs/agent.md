@@ -57,13 +57,14 @@ flowchart LR
 | `/home/codeman-agent`, with its copy of the checkout | Read and write, `nosuid`, `nodev` |
 | `/tmp`, `/var/tmp`, `/dev/shm` | Its own, empty at the start, gone at the end |
 | `/proc` | Its own processes only |
+| `/run/dbus`, where the runner has a system bus | Hidden by an empty directory |
 | The network | Shared with the runner, so it reaches its model and a Serverless gateway on the loopback |
 
 - Codeman sets the jail up with `unshare`, `mount`, `findmnt` and `setpriv` from Ubuntu's `util-linux`, by their trusted paths. If a mount cannot be made read-only, the agent does not start.
 - The harness runs as `codeman-agent`, with no capability and with `no_new_privs`, so `sudo` and other set-user-ID programs give it nothing.
 - When the harness exits, every process left in the jail ends with it. Nothing it started in the background reaches the fix pass.
 - The agent installs its tools in its home: a global `npm install` into `/usr/local` fails.
-- The runner's services stay outside the jail and refuse the agent: `sshd` runs no command for it, `cron` takes no crontab from it, and polkit refuses it units and lingering over the system bus. Abstract Unix sockets have no file, so the read-only mounts do not reach them; those of GitHub's image, `multipathd`'s and `iscsid`'s, serve a user other than root nothing that changes the runner. A sandbox test tries each route on every CI run.
+- The runner's services stay outside the jail and refuse the agent: `sshd` runs no command for it, and `cron` takes no crontab from it. The jail hides the system bus, since a read-only mount still lets a socket be connected to, and polkit lets any user turn lingering on for itself, which would start a systemd manager for the agent outside the jail ([logind's policy](../web/ubuntu/usr-share-polkit-1-actions-org-freedesktop-login1-policy-in-systemd-255-4-1ubunt.md)). Abstract Unix sockets have no file, so the read-only mounts do not reach them; those of GitHub's image, `multipathd`'s and `iscsid`'s, serve a user other than root nothing that changes the runner. A sandbox test tries each route on every CI run.
 
 ### Time limit
 

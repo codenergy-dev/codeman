@@ -30249,6 +30249,7 @@ ${mount} -t proc -o nosuid,nodev,noexec proc /proc
 for dir in /tmp /var/tmp /dev/shm; do
   ${mount} -t tmpfs -o mode=1777,nosuid,nodev tmpfs "$dir"
 done
+if [ -d /run/dbus ]; then ${mount} -t tmpfs -o mode=755,nosuid,nodev,noexec tmpfs /run/dbus; fi
 ${mount} --bind ${AGENT_HOME} ${AGENT_HOME}
 ${mount} -o remount,bind,rw,nosuid,nodev ${AGENT_HOME}
 launcher=$1; shift

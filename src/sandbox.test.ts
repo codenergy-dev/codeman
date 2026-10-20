@@ -228,6 +228,10 @@ test("the jail makes every mount read-only but the agent's home, then drops to t
     tmpfs("/tmp"),
     tmpfs("/var/tmp"),
     tmpfs("/dev/shm"),
+    // The system bus is hidden where the host has one.
+    ...(existsSync("/run/dbus")
+      ? ["mount -t tmpfs -o mode=755,nosuid,nodev,noexec tmpfs /run/dbus"]
+      : []),
     `mount --bind ${AGENT_HOME} ${AGENT_HOME}`,
     `mount -o remount,bind,rw,nosuid,nodev ${AGENT_HOME}`,
     `setpriv --reuid=${AGENT_USER} --regid=${AGENT_USER} --init-groups --no-new-privs --inh-caps=-all --bounding-set=-all -- ${bash} -c LAUNCHER ${AGENT_USER} KEY /w /h`,
@@ -574,10 +578,12 @@ test("the agent cannot run a command outside its jail through the system's servi
       `attempt sftp sftp sftp $ssh_opts -b $HOME/sftp.batch ${AGENT_USER}@localhost`,
       `attempt cron crontab bash -c "echo '* * * * * touch ${escaped}/cron' | crontab -"`,
       `attempt at at bash -c "echo 'touch ${escaped}/at' | at now"`,
-      // Over the system bus: a transient unit, and lingering, which would keep a user manager.
+      // Over the system bus, which the jail hides: a transient unit, and lingering, which polkit
+      // grants any user and would start a systemd manager for the agent outside the jail.
       "attempt systemd systemd-run systemd-run --no-ask-password --unit=codeman-probe" +
         ` -- /usr/bin/touch ${escaped}/systemd`,
       `attempt linger loginctl loginctl --no-ask-password enable-linger ${AGENT_USER}`,
+      "[ -e /run/dbus/system_bus_socket ] && echo 'route bus: visible in the jail'",
       // Abstract Unix sockets have no file, so read-only mounts do not reach them. List the bound,
       // unconnected ones in the shared network namespace.
       `awk 'NR > 1 && $6 == "01" && substr($8, 1, 1) == "@" { print "abstract " $8 }' /proc/net/unix | sort -u`,
@@ -602,6 +608,7 @@ test("the agent cannot run a command outside its jail through the system's servi
       : "";
     assert.equal(scheduled, "", "the agent scheduled nothing with cron or at");
     assert.ok(!existsSync(`/var/lib/systemd/linger/${AGENT_USER}`), "the agent does not linger");
+    assert.ok(!lines.includes("route bus: visible in the jail"), "the jail hides the system bus");
 
     // Each listener here must be reviewed: what it is, and why the agent's connection to it cannot
     // run anything outside the jail. Names may hold patterns, for parts that change between runs.
