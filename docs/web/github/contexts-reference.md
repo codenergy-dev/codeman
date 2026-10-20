@@ -2,7 +2,7 @@
 title: Contexts reference
 url: https://docs.github.com/en/actions/reference/workflows-and-actions/contexts
 created_at: 2026-10-13T20:48:00-03:00
-updated_at: 2026-10-19T13:29:35-03:00
+updated_at: 2026-10-20T01:26:18-03:00
 tool: docs/web/tools/github.md
 ---
 
@@ -27,3 +27,9 @@ Each workflow key may use only some contexts:
 ## `vars` context
 
 - `vars` holds the configuration variables set at the organization, repository and environment levels, as one mapping of names to values ("`vars` context", and its example contents). It has no key per level: a name resolves to one value, by the [precedence](variables-reference.md#configuration-variable-precedence) of the levels.
+
+## `secrets` context
+
+- `secrets` holds the names and values of the secrets available to a workflow run, and always includes `GITHUB_TOKEN` (the section's opening paragraphs).
+- The context is the same for each job of a workflow run, and any step of a job can access it (the section's table, row `secrets`).
+- The page does not say which secrets reach the runner of a job that does not reference them.
