@@ -1,0 +1,79 @@
+---
+title: "floci-gcp: docs/services/index.md at 0fa563c"
+url: https://github.com/floci-io/floci-gcp/blob/0fa563c603c1876a09b050ffdce0d96bac00fedc/docs/services/index.md
+created_at: 2026-10-20T12:35:32-03:00
+updated_at: 2026-10-20T12:35:32-03:00
+tool: docs/web/tools/github-repositories.md
+license: MIT
+---
+
+# Services Overview
+
+floci-gcp serves its emulated GCP APIs on a single port (`4588`) using real GCP wire protocols. Supported SDK and gcloud operations work after the client is configured to use the emulator endpoint.
+
+## Service Matrix
+
+| Service | Protocol | Endpoint |
+|---|---|---|
+| [Compute Engine](compute.md) | REST JSON | `/compute/v1/projects/{project}/...` |
+| [Cloud Storage (GCS)](gcs.md) | gRPC v2 + REST XML + REST JSON | `google.storage.v2.Storage`, `/{bucket}/{object}`, `/storage/v1/b/{bucket}` |
+| [Pub/Sub](pubsub.md) | gRPC + REST JSON | `google.pubsub.v1.Publisher`, `google.pubsub.v1.Subscriber`, `/v1/projects/{project}/topics` |
+| [Firestore](firestore.md) | gRPC | `google.firestore.v1.Firestore` |
+| [Datastore](datastore.md) | gRPC + HTTP/protobuf | `google.datastore.v1.Datastore`, `/v1/projects/{project}:{method}` |
+| [Secret Manager](secret-manager.md) | gRPC + REST JSON | `google.cloud.secretmanager.v1.SecretManagerService`, `/v1/projects/{project}/secrets` |
+| [Cloud Logging](logging.md) | gRPC + REST JSON | `google.logging.v2.LoggingServiceV2`, `/v2/entries:write`, `/v2/entries:list` |
+| [Cloud KMS](kms.md) | gRPC + REST JSON | `google.cloud.kms.v1.KeyManagementService`, `/v1/projects/{project}/locations/{location}/keyRings` |
+| [IAM](iam.md) | REST JSON | `/v1/projects/{project}/serviceAccounts` |
+| [IAM Credentials](iam-credentials.md) | REST JSON | `/v1/projects/-/serviceAccounts/{sa}:generateAccessToken` |
+| [Security Token Service (STS)](sts.md) | REST JSON | `/v1/token` |
+| [Managed Kafka](managed-kafka.md) | REST JSON | `/v1/projects/{project}/locations/{location}/clusters` |
+| [GKE (Kubernetes Engine)](gke.md) | REST JSON | `container.*` host or `/container/v1/projects/{project}/locations/{location}/clusters` |
+| [Cloud SQL (PostgreSQL, MySQL)](cloud-sql-postgres.md) | REST JSON | `/v1/projects/{project}/instances` |
+| [Cloud Run](cloud-run.md) | REST JSON | `/v2/projects/{project}/locations/{location}/{services,jobs,workerPools,instances}` |
+| [Cloud Functions](cloud-functions.md) | REST JSON | `/v2/projects/{project}/locations/{location}/functions` |
+| [Cloud Tasks](cloud-tasks.md) | gRPC | `google.cloud.tasks.v2.CloudTasks` |
+| [Cloud Scheduler](scheduler.md) | gRPC + REST JSON | `google.cloud.scheduler.v1.CloudScheduler`, `/v1/projects/{project}/locations/{location}/jobs` |
+| [Cloud Monitoring](cloud-monitoring.md) | gRPC + REST JSON | `google.monitoring.v3.MetricService`, `/v3/projects/{project}` |
+| [Service Usage](service-usage.md) | REST JSON | `/v1/projects/{project}/services` |
+| [Resource Manager](service-usage.md#cloud-resource-manager-companion) | REST JSON | `/v1/projects/{projectId}`, IAM policy mixins |
+| [Eventarc](eventarc.md) | REST JSON | `/v1/projects/{project}/locations/{location}/triggers` |
+| [Firebase Auth](firebase-auth.md) | REST JSON | `/identitytoolkit.googleapis.com/v1/accounts:*`, `/securetoken.googleapis.com/v1/token` |
+| [BigQuery](bigquery.md) | REST JSON | `/bigquery/v2/projects/{project}` |
+| [Locations](locations.md) | gRPC + REST JSON | `google.cloud.location.Locations`, `/v1/projects/{project}/locations`, `/v2/projects/{project}/locations` |
+
+## Single-Port Design
+
+All emulated API endpoints, including gRPC, REST, and binary HTTP/protobuf, are available on port **4588** via ALPN negotiation:
+
+- `http2=true`: enables HTTP/2 support
+- `grpc.server.use-separate-server=false`: gRPC and HTTP APIs share the same port
+
+Clients using plain HTTP/1.1 are served REST or binary HTTP/protobuf endpoints. Clients using HTTP/2 (gRPC) are served gRPC endpoints. Docker-backed Kafka, PostgreSQL, and Kubernetes data planes expose separate generated endpoints for their native protocols.
+
+## Common Setup
+
+Before calling any service, set the appropriate emulator environment variable:
+
+```bash
+export PUBSUB_EMULATOR_HOST=localhost:4588
+export FIRESTORE_EMULATOR_HOST=localhost:4588
+export DATASTORE_EMULATOR_HOST=localhost:4588
+export STORAGE_EMULATOR_HOST=http://localhost:4588
+export SECRET_MANAGER_EMULATOR_HOST=localhost:4588
+```
+
+GCP SDKs automatically bypass credential validation when these variables are set. Some REST management SDKs, including Cloud Run and Cloud Functions, do not have emulator environment variables; configure their client endpoint explicitly as `http://localhost:4588` and use no credentials.
+
+For gcloud CLI:
+
+```bash
+gcloud config set project floci-local
+```
+
+## Auth Bypass
+
+With the default IAM authorization mode, floci-gcp does not cryptographically validate credentials. Requests with no credential, external credentials, and Floci-issued OAuth or impersonated tokens are accepted. Floci-issued downscoped GCS tokens are constrained by their Credential Access Boundary (CAB); in enforce mode, supported GCS REST bucket and object operations also evaluate stored bucket IAM allow policies using the retained source principal. This otherwise matches the behavior of GCP official emulators when `*_EMULATOR_HOST` is set. See the [IAM service guide](iam.md) for scope and exclusions.
+
+## Multi-Project Isolation
+
+All resources are namespaced by GCP project ID. Resources in `project-a` are invisible to `project-b`. See [Multi-Project Isolation](../configuration/multi-project.md).
