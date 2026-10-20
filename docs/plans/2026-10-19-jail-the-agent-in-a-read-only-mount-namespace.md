@@ -1,7 +1,7 @@
 ---
-status: in progress
+status: completed
 created_at: 2026-10-19T21:47:20-03:00
-updated_at: 2026-10-20T12:30:00-03:00
+updated_at: 2026-10-20T14:10:00-03:00
 commit: 8d8bdef
 ---
 
@@ -233,7 +233,19 @@ Ubuntu's logind policy lets any user turn lingering on for itself, without a ses
 
 The fix ([decision 3](#decisions)): the jail hides `/run/dbus`, and the test also fails when `/run/dbus/system_bus_socket` is visible in the jail. On the local runner image, with `dbus-daemon --system` started in a throwaway container, every sandbox test passed; with the hiding removed, the test failed with "the jail hides the system bus".
 
-This plan stays `in progress` until CI passes on GitHub's runner with the fix.
+After the responsible person pushed `152b029`, on 2026-10-20, CI passed, with every sandbox test run on the VM:
+
+| Check | Result |
+| --- | --- |
+| `systemd-run`, `loginctl enable-linger codeman-agent` | "Failed to connect to bus: No such file or directory": the bus is hidden |
+| `ssh`, `sftp`, `crontab`, `at` | As in the runs before: refused, denied, or missing |
+| Abstract Unix sockets | The two reviewed ones only |
+| The logged jail setup time | 68 ms |
+| The `npm test` step | 67 s |
+
+Every item of step 3 is checked, so this plan is `completed`.
+
+The security advisory [GHSA-xvqh-rjc8-cg65](https://github.com/codenergy-dev/codeman/security/advisories/GHSA-xvqh-rjc8-cg65), published on 2026-10-20 with `c5179dd` as its fix, needs editing: the commits from `c5179dd` to `727ca1f` let the agent linger, and `152b029` is the fix. The commits from `ef59709` to `7c20a0a`, which closed the image's world-writable paths with the walk, did not let a lingering agent plant programs.
 
 ## Out of scope
 
