@@ -70,6 +70,17 @@ export function textOf(message: ChatMessage | undefined): string {
   return content === undefined || content === null ? "" : JSON.stringify(content);
 }
 
+/**
+ * Whether a request comes from the agent's OpenCode: one of its user messages is Codeman's
+ * harness prompt, which its title request repeats too. Others, such as the gateway's probe of
+ * tool calls (src/gateway/vllm.ts, `probe`), do not.
+ */
+export function fromAgent(request: ChatRequest): boolean {
+  return request.messages.some(
+    (message) => message.role === "user" && textOf(message).includes(HARNESS_PROMPT),
+  );
+}
+
 export function identify(request: ChatRequest): Identified {
   const messages = request.messages;
   const tools = request.tools ?? [];
