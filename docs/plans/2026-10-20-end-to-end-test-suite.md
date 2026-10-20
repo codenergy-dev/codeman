@@ -1,7 +1,7 @@
 ---
-status: pending
+status: in progress
 created_at: 2026-10-20T12:50:34-03:00
-updated_at: 2026-10-20T12:50:34-03:00
+updated_at: 2026-10-20T13:20:00-03:00
 commit: 21130fe
 ---
 
@@ -94,7 +94,7 @@ Answered by the responsible person on 2026-10-20.
    - b) act on the real templates for every scenario.
    - c) Hybrid: a) for most scenarios, b) for one or two smoke scenarios after a spike.
 
-   **Answer: c).** The simulator follows the templates' job order, `if:` rules, matrix and reusable workflow, a per-repository concurrency queue, and dispatch chaining. act 0.2.89 runs the smoke scenarios. floci was evaluated for act's missing OIDC and rejected ([audit](#audit)); its replacement is open decision 1.
+   **Answer: c).** The simulator follows the templates' job order, `if:` rules, matrix and reusable workflow, a per-repository concurrency queue, and dispatch chaining. act 0.2.89 runs the smoke scenarios. floci was evaluated for act's missing OIDC and rejected ([audit](#audit)); its replacement is [decision 1 of the review](#answered-in-review).
 2. **Seams for the hard-coded endpoints.**
    - a) Environment overrides in production code.
    - b) Overrides compiled only into an e2e bundle, through esbuild's `define` (`__CODEMAN_E2E__`).
@@ -119,7 +119,9 @@ Answered by the responsible person on 2026-10-20.
 
    **Answer: a).** JSON is the fallback if YAML proves unworkable. The runtime validates each scenario against a TypeScript schema. Risk accepted: one maintainer, no provenance.
 
-### Open
+### Answered in review
+
+Answered by the responsible person on 2026-10-20: every recommendation below was approved, as were the design's choices (the simulator parses the templates, `npm test` adds the fakes' tests, a reverted fix must fail its scenario).
 
 1. **The Google side under test.**
 
@@ -128,7 +130,7 @@ Answered by the responsible person on 2026-10-20.
    | a) In-house fake OIDC issuer, STS and IAM Credentials; Firebase's emulator for Firestore | About 200 lines, no dependency. Tests the whole token path, including the signature, audience and condition. Mirrors Google's documented behavior; does not prove it |
    | b) Skip the token path in the e2e build (`Firestore.emulator`) | Smallest. Tests none of OIDC, STS or IAM |
 
-   **Recommendation: a).** It also gives each act invocation its own claims (repository, run ID, workflow) through a request token per invocation.
+   **Recommendation: a).** **Answer: a).** It also gives each act invocation its own claims (repository, run ID, workflow) through a request token per invocation.
 2. **How the fake Runpod starts pod containers.**
 
    | Option | Trade-off |
@@ -137,7 +139,7 @@ Answered by the responsible person on 2026-10-20.
    | b) The host-side orchestrator starts a container on the fake's request | No socket in any container. The orchestrator maps each pinned production image digest to a local e2e image, from an allowlist |
    | c) A fixed pool of pre-started pods | No Docker access. Cannot test the pod's environment from `open-key`, creation races or start failures |
 
-   **Recommendation: b).**
+   **Recommendation: b).** **Answer: b).**
 3. **The Firestore emulator.**
 
    | Option | Trade-off |
@@ -146,37 +148,37 @@ Answered by the responsible person on 2026-10-20.
    | b) The host's jar and Java | No image. Not reproducible across machines; containers reach it through the host |
    | c) `google/cloud-sdk:emulators` | 452 MB, gcloud, Python and every emulator; re-pushed weekly; jar version hidden |
 
-   **Recommendation: a).** `src/store/emulator.test.ts` can use it through `FIRESTORE_EMULATOR_HOST`, as it already allows.
+   **Recommendation: a).** **Answer: a).** `src/store/emulator.test.ts` can use it through `FIRESTORE_EMULATOR_HOST`, as it already allows.
 4. **OpenCode's download, 185 MB per agent job.**
    - a) An e2e-build seam to a local registry cache, filled once; Codeman still checks the pinned integrity.
    - b) The network on every agent job.
 
-   **Recommendation: a).** It removes the network from the agent's path and keeps the check that makes a cache safe.
+   **Recommendation: a).** **Answer: a).** It removes the network from the agent's path and keeps the check that makes a cache safe.
 5. **Timers and expiry** (run leases 2 h, keep leases 15 min, reservations 30 min, pod start 25 min).
    - a) Seed documents with past timestamps before a run.
    - b) A clock-scale seam in the e2e build.
 
-   **Recommendation: a).** No new seam; the code under test reads the real clock.
+   **Recommendation: a).** **Answer: a).** No new seam; the code under test reads the real clock.
 6. **Where it runs.**
    - a) Locally only, with `npm run test:e2e`.
    - b) Also in CI.
 
-   **Recommendation: a)** for now. CI gets its own plan: time, Docker on `ubuntu-latest`, and model downloads.
+   **Recommendation: a).** **Answer: a).** for now. CI gets its own plan: time, Docker on `ubuntu-latest`, and model downloads.
 7. **Docker Desktop's memory.** By estimate, four agent jobs on one Ollama pod need about 6.2 GB, and a vLLM pod with two agent jobs about 6.5 GB, of the VM's 7.8 GB.
    - a) Ask developers to raise it to 10 to 12 GB.
    - b) Keep 8 GB: the runtime runs scenarios one at a time, vLLM scenarios alone, and refuses to start a profile when Docker reports less memory than it needs.
 
-   **Recommendation: b),** measured in spike 0.1. Advise 10 GB in the docs if the measure leaves under 1 GB free.
+   **Recommendation: b).** **Answer: b),** measured in spike 0.1. Advise 10 GB in the docs if the measure leaves under 1 GB free.
 8. **`gh` in the templates' `run:` steps** (the commit check, `next-run`, `dispatch`, `forward-review`).
    - a) GitHub's `gh` release, pinned, checked by its checksum, in the e2e runner image only, with `GH_HOST` on the fake.
    - b) A shim that calls the fake.
 
-   **Recommendation: a).** The `metadata: read` bug was `gh`'s own GraphQL call for the default branch; a shim would hide it. It needs an audit row and `docs/web/github-cli/` pages for `gh workflow run`.
+   **Recommendation: a).** **Answer: a).** The `metadata: read` bug was `gh`'s own GraphQL call for the default branch; a shim would hide it. It needs an audit row and `docs/web/github-cli/` pages for `gh workflow run`.
 9. **The vLLM metrics page.** The concurrency assertions read `vllm:num_requests_running` and `vllm:num_requests_waiting`. The saved [metrics page](../web/vllm/vllm-v1-metrics-loggers-py-at-v0-31-0.md) covers only `cache_config_info`.
    - a) Refresh it to cover both gauges.
    - b) Assert concurrency only from the tee's timestamps.
 
-   **Recommendation: a).** `AGENTS.md` requires the responsible person's request to refresh a page.
+   **Recommendation: a).** **Answer: a).** `AGENTS.md` requires the responsible person's request to refresh a page.
 
 ## Design
 
