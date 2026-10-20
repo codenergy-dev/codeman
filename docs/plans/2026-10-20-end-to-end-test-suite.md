@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-10-20T12:50:34-03:00
-updated_at: 2026-10-20T13:25:00-03:00
+updated_at: 2026-10-20T14:00:00-03:00
 commit: 21130fe
 ---
 
@@ -287,6 +287,96 @@ On a scratch workflow with the e2e runner image, a stub HTTPS GitHub and the act
 - `RUNNER_TEMP` and the workspace's path.
 
 Done when each item is recorded pass or fail in the plan. If the matrix of a reusable workflow or the artifacts fail, phase 6 is dropped and the plan goes back to review.
+
+#### 0.2 results
+
+Run on 2026-10-20 with act 0.2.89, `codeman-runner:local` rebuilt from `docker/runner/Dockerfile` at `b139ff0`, the four actions at the SHAs `templates/` pins (fetched once from github.com, anonymously, with git and no credential helper), a stub HTTPS GitHub (Node, test CA made for the spike, git smart HTTP through `git http-backend`) on a scratch Docker network, and scratch workflows only. Every job ran as `runner` (uid 1001), with `tini` (`docker-init`) as PID 1 and seccomp off.
+
+| Item | Result | Note |
+| --- | --- | --- |
+| 1a. Reusable workflow called as a matrix, `secrets:`, outputs read by a later job | Pass | `fromJSON` matrix of 2 legs with `fail-fast: false` and an `if:` on the caller. The secret reached both legs. `always()` and `needs.work.result` work inside the reusable workflow. The later job read `needs.task.result` (`success`), and `needs.task.outputs` held the last leg's value only (`task-2-success`), as on GitHub |
+| 1b. A skipped job inside the reusable workflow | Pass | `needs.task.result` is `success`, the later job runs |
+| 1c. `always()` in the caller after a job inside the reusable workflow fails | **Fail** | act stops the whole run when a job inside a reusable workflow fails: `next-run`-like jobs with `if: always()` never start, so `needs.task.result == 'failure'` is never seen. The same `always()` after a failed plain job runs (`needs.a.result` is `failure`). No flag changes it |
+| 2a. `upload-artifact` v7.0.1 (`043fb46`) against act's artifact server | **Fail** | Two incompatibilities. 1. act rejects `CreateArtifact` with `unknown field "mime_type"`, which `@actions/artifact` always sends. 2. Without that field, the blob upload gets 401: the client drops the `=` padding of the signed URL's `sig`, and act's HMAC check fails. A 40-line proxy in front of act's server that removes `mime_type` and pads `sig` makes uploads work |
+| 2b. `download-artifact` v8.0.1 (`3e5f45b`) against act's artifact server | Pass | By name and all artifacts, with no proxy change on the download path. Artifacts are stored as `<artifact-server-path>/<run_id>/<name>/` |
+| 2c. Artifact actions and a fake GitHub | Pass, with a constraint | `@actions/artifact` refuses to run (`GHESNotSupportedError`) unless `GITHUB_SERVER_URL`'s host is `github.com`, ends in `.ghe.com` or ends in `.localhost`. The fake must be named `*.localhost` (the spike used `github-e2e.localhost`) |
+| 3. Sandbox tests as `runner`, with the jail | Pass | `npm ci`, then `CODEMAN_SANDBOX_TEST=1 npm test` inside an act job: 646 tests, 632 pass, 0 fail, 14 skipped (the Firestore emulator tests, as `npm run test:runner` without an emulator). "A harness that does nothing ran in the jail in 83 ms". `--container-options` takes `--init --cap-add SYS_ADMIN --security-opt seccomp=unconfined --security-opt apparmor=unconfined` and `-v` mounts. `docs.test.ts` needs the copy to be a git repository |
+| 4. `GITHUB_RUN_ID` per invocation | Pass | `--env GITHUB_RUN_ID=4242`, then `4243` and `4244`, reach `$GITHUB_RUN_ID` and `github.run_id` in every job, reusable workflow included; `run_attempt` from `GITHUB_RUN_ATTEMPT`, `run_number` stays `1`. The artifact server's directory and `ACTIONS_RUNTIME_TOKEN` follow it |
+| 5a. `uses:` from `--local-repository <owner>/<repo>@<sha>=<dir>` | Pass | Upload and download artifact. No clone |
+| 5b. `uses:` from an offline action cache | Pass | `--action-cache-path <dir> --action-offline-mode`, with each action as a git clone in `<dir>/<owner>-<repo>@<sha>`: checkout and create-github-app-token ran with no request anywhere. act still prints `git clone '<url>'` |
+| 5c. An action missing from the cache | Clone attempt | act clones it from `GITHUB_SERVER_URL` given with `--env`, else from `--github-instance`, else from github.com, sending the `GITHUB_TOKEN` secret as the password. Its Go TLS uses the host's trust store, so it fails on the test CA. One spike run, with a broken wrapper that dropped both, sent `fake-token` to github.com for a repository that does not exist |
+| 5d. `actions/checkout` v7.0.1 against the fake | Pass | It calls `GET /repos/{owner}/{repo}/hash-algorithm` with the token, then git smart HTTP with `x-access-token:<token>`. git needs the CA (`GIT_SSL_CAINFO`, or the image's store) and `http.curloptResolve=<host>:<port>:<ip>`: libcurl sends every `*.localhost` to 127.0.0.1 |
+| 5e. `actions/create-github-app-token` v3.2.0 against the fake | Pass | `GET /repos/{owner}/{repo}/installation` and `POST /app/installations/{id}/access_tokens` with the App JWT, then `DELETE /installation/token` in its post step. Node trusts the fake through `NODE_EXTRA_CA_CERTS` |
+| 6a. Workspace path | Recorded | `GITHUB_WORKSPACE` and `github.workspace` are act's working directory's host path (here `/private/tmp/.../run`), on a volume, owned by `runner`. Not `/home/runner/work/<repo>/<repo>` |
+| 6b. `RUNNER_TEMP` | **Partial** | `--env RUNNER_TEMP=/home/runner/work/_temp` sets the variable, but `${{ runner.temp }}` stays `/tmp`. The templates pass `${{ runner.temp }}/codeman/...` to the artifact actions while Codeman reads `process.env.RUNNER_TEMP`, so under act they name different directories |
+| 6c. `/opt/hostedtoolcache` | Recorded | act mounts its named volume `act-toolcache` there, world-writable and shared by every invocation. Here it dated from 2026-10-19: it shadows the image's tool cache, and keeps whatever a job writes there |
+| 7a. A stub HTTPS GitHub from `--env GITHUB_API_URL`, `GITHUB_SERVER_URL`, `GITHUB_GRAPHQL_URL` | Pass | The variables and `github.api_url`, `server_url`, `graphql_url` take them. act itself contacted the stub only to clone an uncached action (5c) |
+| 7b. Node trusts the stub with `NODE_EXTRA_CA_CERTS` | Pass | `fetch` from a step and from the JavaScript actions |
+| 7c. `ACTIONS_ID_TOKEN_REQUEST_URL` and `_TOKEN` from `--env` | Pass | Visible in every step, reusable-workflow jobs included; a step's `fetch` of the URL with `&audience=` reached the stub with `Bearer <token>` |
+| Also: `::set-env::`, `::add-path::` | Pass | Both refused ("command is disabled"); the next step does not see them |
+| Also: `secrets.GITHUB_TOKEN`, `github.token` | Recorded | Both are the `-s GITHUB_TOKEN` value; `GITHUB_TOKEN` is not in the environment |
+| Also: failed jobs' containers | Recorded | Without `--rm`, act leaves each failed job's container running, with its two volumes |
+| Not checked: `gh` against a `*.localhost` host | Not checked | `gh` is not installed. Go's resolver and `gh`'s handling of `github.localhost` are unknown for `github-e2e.localhost` |
+| Not checked: the real templates under act | Not checked | Out of the spike's scope |
+
+The act command line that ran items 1, 2 (with the proxy), 4, 5 and 7, from a directory holding only `.github/workflows/`:
+
+```sh
+S=<scratch directory>
+cd "$S/run"   # only .github/workflows/, no .env, .secrets, .vars, .actrc
+env -u GITHUB_TOKEN -u GH_TOKEN \
+  XDG_CONFIG_HOME="$S/xdg-config" XDG_CACHE_HOME="$S/xdg-cache" \
+  ACTIONS_RUNTIME_URL=http://host.docker.internal:34591/ ACTIONS_RESULTS_URL=http://host.docker.internal:34591/ \
+  act workflow_dispatch -W .github/workflows/main.yml \
+  -P ubuntu-latest=codeman-runner:local --pull=false \
+  --no-cache-server --container-daemon-socket - \
+  --network e2e-spike02-net --concurrent-jobs 1 \
+  --container-options "--init --cap-add SYS_ADMIN --security-opt seccomp=unconfined --security-opt apparmor=unconfined -v $S/stub/ca.crt:/etc/e2e/ca.crt:ro" \
+  --artifact-server-path "$S/artifacts" --artifact-server-addr 127.0.0.1 --artifact-server-port 34590 \
+  --action-cache-path "$S/cache" --action-offline-mode \
+  --local-repository actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a="$S/actions-src/upload-artifact" \
+  --local-repository actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c="$S/actions-src/download-artifact" \
+  --env-file "$S/files/env" --secret-file "$S/files/secrets" --var-file "$S/files/vars" \
+  -s GITHUB_TOKEN=fake-token -s KEY=fake-key \
+  --env GITHUB_RUN_ID=4243 --env GITHUB_RUN_ATTEMPT=1 --env GITHUB_REPOSITORY=acme/app \
+  --env RUNNER_TEMP=/home/runner/work/_temp \
+  --env GITHUB_API_URL=https://github-e2e.localhost:8443/api/v3 \
+  --env GITHUB_SERVER_URL=https://github-e2e.localhost:8443 \
+  --env GITHUB_GRAPHQL_URL=https://github-e2e.localhost:8443/api/graphql \
+  --env NODE_EXTRA_CA_CERTS=/etc/e2e/ca.crt --env GIT_SSL_CAINFO=/etc/e2e/ca.crt \
+  --env GIT_CONFIG_COUNT=1 --env GIT_CONFIG_KEY_0=http.curloptResolve \
+  --env GIT_CONFIG_VALUE_0=github-e2e.localhost:8443:<the fake's IP> \
+  --env "ACTIONS_ID_TOKEN_REQUEST_URL=https://github-e2e.localhost:8443/oidc/token?api-version=2.0" \
+  --env ACTIONS_ID_TOKEN_REQUEST_TOKEN=req-token-4243
+```
+
+- Port 34591 is the proxy that removes `mime_type` and pads `sig`, in front of act's server on 127.0.0.1:34590. Binding act's server to 127.0.0.1, and naming `host.docker.internal` in act's own environment, keeps it off the LAN: by default act binds it to the host's LAN address (`192.168.1.9` here).
+- The sandbox run (item 3) added `-v <Codeman copy>:/mnt/codeman:ro` to `--container-options`.
+- The checkout and app-token run (5b, 5d, 5e) used the same flags with a secret file holding a fake App key.
+
+**What the plan needs:**
+
+1. **Decide whether phase 6 stays.** Step 0.2's rule drops phase 6 when the reusable workflow's matrix or the artifacts fail, and both partly failed:
+   - 1c means a scenario under act cannot cover any failure inside `codeman-task.yml`: `next-run` and anything after a failed task never run. The two smoke scenarios have no failing job, so they are not affected.
+   - 2a means `upload-artifact` v7 fails against act 0.2.89, and there has been no commit on act's `master` since 2026-06-01.
+
+   | Option | Trade-off |
+   | --- | --- |
+   | a) Drop phase 6; the simulator covers everything | The rule as written. Loses the check that the real templates parse and chain under a real runner |
+   | b) Keep phase 6 for the two success-only smoke scenarios, with the fake GitHub serving the artifact API (`ACTIONS_RESULTS_URL` and a signed blob URL) instead of act's server | About 150 lines in the fake, which also answers `next-run`'s `GET /repos/{owner}/{repo}/actions/runs/{id}/artifacts` from the same store. No `--artifact-server-path` |
+   | c) b), but keep act's server behind the spike's proxy | Smallest, but it patches act's protocol on the fly, and the fake still has to read act's directory for `next-run` |
+
+   **Recommendation: b),** with 1c recorded as a limit of act: failure scenarios run only on the simulator. This deviates from the plan's rule, so it goes back to review.
+2. **Step 6.1, if phase 6 stays:**
+   - Add `--pull=false`, `--rm`, `--action-offline-mode` with `--action-cache-path` in the runtime's own directory, and `XDG_CONFIG_HOME` and `XDG_CACHE_HOME` there too, so act writes nothing in the developer's home.
+   - Fill the action cache with each action `templates/` pins, as `<owner>-<repo>@<sha>` git clones checked at their SHA, and fail before act starts when one is missing. Otherwise act clones it from `GITHUB_SERVER_URL` with the fake token.
+   - Name the fake GitHub `*.localhost` (for `@actions/artifact`). Give it a fixed address on the Compose network, and set `http.curloptResolve` for git in the e2e runner image, since libcurl sends `*.localhost` to 127.0.0.1. Check `gh` against that name in step 3.2 (decision 8).
+   - Do not pass `--github-instance`. `--env GITHUB_SERVER_URL`, `GITHUB_API_URL` and `GITHUB_GRAPHQL_URL` take precedence over it, for the jobs and for act's clones.
+   - `RUNNER_TEMP`: `${{ runner.temp }}` stays `/tmp` under act. Choose between leaving `RUNNER_TEMP` at act's `/tmp`, which matches the templates but fails the sandbox test "the agent cannot read the job's temporary files", and `/home/runner/work/_temp`, which splits the templates' artifact paths from Codeman's. Either way, record it as a limit of the smoke scenarios.
+   - Remove the `act-toolcache` volume before each invocation, or run invocations one at a time, since it is shared and world-writable.
+   - Record that the workspace is act's working directory's host path, so the empty directory needs `.github/workflows/` (for `uses: ./.github/workflows/codeman-task.yml`) and nothing else.
+3. **Step 3.2:** the e2e runner image trusts the test CA for git and `gh` (system store), not only `NODE_EXTRA_CA_CERTS`.
+4. **Audit row for act:** its artifact server binds the host's LAN address by default; the driver binds it to 127.0.0.1, or uses the fake's. Its authentication was not checked.
 
 ### Phase 1: the e2e build
 
