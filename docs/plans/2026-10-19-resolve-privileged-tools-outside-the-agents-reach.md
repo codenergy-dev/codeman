@@ -1,7 +1,7 @@
 ---
 status: completed
 created_at: 2026-10-19T13:42:29-03:00
-updated_at: 2026-10-19T14:58:33-03:00
+updated_at: 2026-10-19T21:53:18-03:00
 commit: db04a9c
 ---
 
@@ -214,6 +214,9 @@ Body: Codeman ran sudo, git and other programs by name. On GitHub's Ubuntu image
 - Other test files run alongside, and the planted `git` is on their `PATH`: for any other caller, each script runs the real program in `/usr/bin`. The test removes both scripts at its end.
 
 First, measure: on a branch, the sandbox test runs the walk below on `ubuntu-latest` and logs its time. Over 60 seconds, stop, and bring this plan back for review with the numbers (decision 2).
+
+> [!NOTE]
+> On GitHub's runner, after the push, the walk took minutes: the sandbox test took 476 s, and CI's `npm test` step 8 min 21 s. The [plan to jail the agent](2026-10-19-jail-the-agent-in-a-read-only-mount-namespace.md) replaces the walk and the `PATH` check with a read-only mount namespace.
 
 Measured on the [local runner image](../development/local-actions.md) instead, as the decisions say: the first closing took about 5 seconds (5.1 s, on a fresh container), and a second one under 0.1 s. GitHub's image has many more files, so this only bounds GitHub's time from below. The code logs the time, and the first runs on GitHub settle the 60-second threshold. `npm run test:runner` gave 640 tests, 626 passed, 0 failed, and 14 skipped: Firestore's emulator, as on CI. Every sandbox test passed.
 

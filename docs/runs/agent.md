@@ -4,25 +4,25 @@ This page says how the `agent` job isolates the agent, which rules the agent get
 
 ## Agent sandbox
 
-The agent reads text that may be hostile (see [security](../security/risks.md)) and runs shell commands. It runs in a [sandbox](../glossary.md#sandbox): as `codeman-agent`, a user without `sudo`, on a copy of the checkout in that user's home.
+The agent reads text that may be hostile (see [security](../security/risks.md)) and runs shell commands. It runs in a [sandbox](../glossary.md#sandbox): as `codeman-agent`, a user without `sudo`, on a copy of the checkout in that user's home, in a [jail](#the-jail) where the rest of the machine is read-only.
 
 > [!IMPORTANT]
-> The sandbox protects credentials, not the runner. The agent's tools and network are not restricted.
+> The sandbox protects credentials and the runner's files, not the network. The agent can reach any host, and read what the runner image has.
 
 | The agent can | The agent cannot |
 | --- | --- |
 | Use what the runner image has, and what earlier steps of the job set up | Read the runner's processes, so it cannot reach the job's tokens or the secrets of other steps |
 | Reach the network | Use `sudo`, or the `docker` group, which it is not in |
 | Use its own credential, through its environment | Read the runner's home, which holds the job's temporary files |
-| Write in its copy of the checkout, in its home, and in temporary directories such as `/tmp` | See a Serverless endpoint's key, which stays in Codeman's step, outside the sandbox |
+| Write in its copy of the checkout, in its home, and in its own `/tmp`, `/var/tmp` and `/dev/shm` | See a Serverless endpoint's key, which stays in Codeman's step, outside the sandbox |
 | | Leave work running after the [seal](#sealing) |
 | | Change a program or a file that runs outside the sandbox: those Codeman runs, and those the job's later steps run |
 
 ```mermaid
 flowchart LR
-  user["Close the world-writable paths,<br/>create codeman-agent,<br/>close the runner's home"] --> copy["Copy the checkout,<br/>without .codeman/action"]
+  user["Create codeman-agent,<br/>close the runner's home"] --> copy["Copy the checkout,<br/>without .codeman/action"]
   copy --> files["Write the task file,<br/>the rules, workflow results"]
-  files --> run["Run the harness,<br/>up to agent-minutes"]
+  files --> run["Run the harness in the jail,<br/>up to agent-minutes"]
   run --> check{"Output invalid,<br/>and 2 minutes left?"}
   check -->|yes| fix["Resume the session once,<br/>with the problems"]
   check -->|no| seal["Seal the sandbox"]
@@ -34,18 +34,39 @@ flowchart LR
 ### Before the agent runs
 
 - Codeman runs each program it needs by its path in `/usr/bin`, `/usr/sbin`, `/bin` or `/sbin`, after checking that only root can change it. Root must own the file and every directory on the way to it, links followed, and no other user may write any of them.
-- Codeman never runs a program by a name looked up in the job's `PATH`, whose directories the agent may write. A runner that lacks a program fails, naming it, before the run reaches its model.
-- Codeman takes write access away from other users on every file and directory of the runner's root file system, except directories with the sticky bit, such as `/tmp`. GitHub's Ubuntu images leave `/opt`, `/usr/share` and `/usr/local/bin` writable by every user ([`configure-system.sh`](../web/github/runner-images-configure-system-sh-at-82d1b86.md), [`install-nodejs.sh`](../web/github/runner-images-install-nodejs-sh-at-82d1b86.md)). The agent installs its tools in its home: a global `npm install` into `/usr/local` fails.
-- Codeman then checks the job's `PATH`. If `codeman-agent` could still add or change a program in one of its directories, the job fails before the agent starts, naming the directory.
-- These permissions last as long as the machine. A GitHub-hosted runner's VM ends with the job; a self-hosted runner keeps them.
+- Codeman never runs a program by a name looked up in the job's `PATH`, whose directories GitHub's images leave writable by every user. A runner that lacks a program fails, naming it, before the run reaches its model.
+- `codeman-agent`'s login shell is `/usr/sbin/nologin`, so a login, such as through `sshd`, runs no command for it.
 - The runner's home is closed to other users before the agent starts.
 - The agent's environment is rebuilt from an allowlist: its own `HOME` and XDG directories, `TMPDIR` set to `/tmp` (outside its working tree, for scratch work), the job's `PATH` without entries in the runner's home, and the harness's variables.
 - Nothing else from the runner passes, including what `sudo`'s PAM session adds from `/etc/environment`.
 - Its credential is the run's OpenRouter key, or its token for a self-hosted gateway. It reaches the agent only through its environment, and it is the only credential the agent holds.
 
+### The jail
+
+Each harness run, the fix pass included, runs in new mount, PID and IPC namespaces. GitHub's Ubuntu images leave `/opt`, `/usr/share` and `/usr/local/bin` writable by every user, ahead of `/usr/bin` on the `PATH` ([`configure-system.sh`](../web/github/runner-images-configure-system-sh-at-82d1b86.md), [`install-nodejs.sh`](../web/github/runner-images-install-nodejs-sh-at-82d1b86.md)). The jail keeps the agent from planting programs there, without changing them for anyone else.
+
+```mermaid
+flowchart LR
+  step["Codeman's step"] -->|"sudo unshare"| setup["As root, in new namespaces:<br/>every mount read-only,<br/>new /proc, /tmp, /var/tmp, /dev/shm,<br/>the agent's home writable"]
+  setup -->|"setpriv, no_new_privs"| agent["As codeman-agent:<br/>the harness"]
+```
+
+| In the jail | Agent's access |
+| --- | --- |
+| Every mount of the runner, such as `/`, `/opt`, `/usr/local/bin`, `/run` | Read-only |
+| `/home/codeman-agent`, with its copy of the checkout | Read and write, `nosuid`, `nodev` |
+| `/tmp`, `/var/tmp`, `/dev/shm` | Its own, empty at the start, gone at the end |
+| `/proc` | Its own processes only |
+| The network | Shared with the runner, so it reaches its model and a Serverless gateway on the loopback |
+
+- Codeman sets the jail up with `unshare`, `mount`, `findmnt` and `setpriv` from Ubuntu's `util-linux`, by their trusted paths. If a mount cannot be made read-only, the agent does not start.
+- The harness runs as `codeman-agent`, with no capability and with `no_new_privs`, so `sudo` and other set-user-ID programs give it nothing.
+- When the harness exits, every process left in the jail ends with it. Nothing it started in the background reaches the fix pass.
+- The agent installs its tools in its home: a global `npm install` into `/usr/local` fails.
+
 ### Time limit
 
-- The agent has `agent-minutes` to run: 50 in the template, inside the `agent` job's 60-minute timeout. Codeman then stops the harness.
+- The agent has `agent-minutes` to run: 50 in the template, inside the `agent` job's 60-minute timeout. Codeman then stops the harness: it sends SIGTERM to every process of `codeman-agent`, then SIGKILL after 10 seconds.
 - The fix pass of the [agent output](#agent-output) gets what is left of that time, and runs only when at least 2 minutes are.
 
 ### Sealing

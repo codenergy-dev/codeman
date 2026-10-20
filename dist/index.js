@@ -30009,7 +30009,7 @@ import { join as join3 } from "node:path";
 
 // src/sandbox.ts
 import { spawn, spawnSync } from "node:child_process";
-import { lstatSync, readdirSync, readlinkSync } from "node:fs";
+import { lstatSync, readlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { createInterface } from "node:readline";
 var AGENT_USER = "codeman-agent";
@@ -30018,8 +30018,7 @@ var SAFE_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 var TRUSTED_DIRS = ["/usr/bin", "/usr/sbin", "/bin", "/sbin"];
 var realFileStats = {
   lstat: (path) => lstatSync(path, { throwIfNoEntry: false }),
-  readlink: (path) => readlinkSync(path),
-  readdir: (path) => readdirSync(path)
+  readlink: (path) => readlinkSync(path)
 };
 var MAX_LINKS = 40;
 function walk(path, fs3) {
@@ -30061,53 +30060,6 @@ function untrustedReason(path, fs3) {
     }
   }
   return missing && `${missing.path} does not exist`;
-}
-var writableByOthers = (stats) => !stats.isSymbolicLink() && (stats.mode & 2) !== 0;
-function openToOthers(path, fs3) {
-  const { steps, missing, loop } = walk(path, fs3);
-  if (loop) return true;
-  const parent = missing && fs3.lstat(missing.parent);
-  if (parent && writableByOthers(parent)) return true;
-  return steps.some(
-    ({ stats }, index) => writableByOthers(stats) && !((stats.mode & 512) !== 0 && index < steps.length - 1)
-  );
-}
-function pathProblems(jobPath, fs3) {
-  const entries = [...new Set(jobPath.split(":").filter((entry) => entry.startsWith("/")))];
-  return entries.filter((entry) => {
-    if (openToOthers(entry, fs3)) return true;
-    let names;
-    try {
-      names = fs3.readdir(entry);
-    } catch {
-      return false;
-    }
-    return names.some((name) => openToOthers(`${entry}/${name}`, fs3));
-  });
-}
-function closeArgs(resolve = program) {
-  return [
-    "/",
-    "-xdev",
-    "-perm",
-    "-0002",
-    "(",
-    "-type",
-    "f",
-    "-o",
-    "-type",
-    "d",
-    "!",
-    "-perm",
-    "-1000",
-    ")",
-    "-exec",
-    resolve("chmod"),
-    "o-w",
-    "--",
-    "{}",
-    "+"
-  ];
 }
 function findProgram(name, fs3) {
   if (name === "" || name.includes("/")) throw new Error(`Not a program name: ${name}`);
@@ -30159,7 +30111,11 @@ var REQUIRED_PROGRAMS = [
   "find",
   "realpath",
   "bash",
-  "sh"
+  "sh",
+  "unshare",
+  "mount",
+  "findmnt",
+  "setpriv"
 ];
 function sudoArgs(name, args, user, resolve = program) {
   return ["-n", ...user ? ["-u", user] : [], "--", resolve(name), ...args];
@@ -30188,26 +30144,16 @@ function sudoAs(user, name, args, input) {
 function sudo(name, args, input) {
   return checkedSudo(name, args, void 0, input);
 }
-function createAgentUser(log) {
+var NOLOGIN = "/usr/sbin/nologin";
+function createAgentUser() {
   for (const name of REQUIRED_PROGRAMS) program(name);
-  closeWorldWritable(log);
   if (spawnSync(program("id"), ["-u", AGENT_USER]).status !== 0) {
-    sudo("useradd", ["--create-home", "--shell", "/bin/bash", AGENT_USER]);
+    sudo("useradd", ["--create-home", "--shell", NOLOGIN, AGENT_USER]);
   }
+  sudo("usermod", ["--shell", NOLOGIN, AGENT_USER]);
   sudo("chown", [`${AGENT_USER}:${AGENT_USER}`, AGENT_HOME]);
   sudo("chmod", ["700", AGENT_HOME]);
   sudo("chmod", ["o-rwx", homedir()]);
-}
-function closeWorldWritable(log) {
-  const start = Date.now();
-  sudo("find", closeArgs());
-  log.info(`Closed the runner's world-writable paths in ${(Date.now() - start) / 1e3} s.`);
-  const problems = pathProblems(process.env.PATH ?? "", realFileStats);
-  if (problems.length > 0) {
-    throw new Error(
-      `Codeman does not run the agent: ${AGENT_USER} could add or change programs in ${problems.join(", ")}, on the job's PATH, which later steps run as the runner's user.`
-    );
-  }
 }
 function installForAgent(source, name) {
   const target = `/opt/codeman/${name}`;
@@ -30229,8 +30175,11 @@ function writeAsAgent(file, content) {
   sudoAs(AGENT_USER, "mkdir", ["-p", file.slice(0, file.lastIndexOf("/"))]);
   sudoAs(AGENT_USER, "tee", [file], content);
 }
+function signalAgentProcesses(signal) {
+  spawnSync(program("sudo"), sudoArgs("pkill", [`-${signal}`, "-u", AGENT_USER]));
+}
 function killAgentProcesses() {
-  spawnSync(program("sudo"), sudoArgs("pkill", ["-KILL", "-u", AGENT_USER]));
+  signalAgentProcesses("KILL");
 }
 function trySudo(name, args, user) {
   if (optionalProgram(name) === void 0) return;
@@ -30244,7 +30193,7 @@ function sealAgentSandbox(worktree) {
   trySudo("bash", ["-c", "atq 2>/dev/null | awk '{print $1}' | xargs -r atrm"], AGENT_USER);
   trySudo("loginctl", ["disable-linger", AGENT_USER]);
   trySudo("loginctl", ["terminate-user", AGENT_USER]);
-  trySudo("usermod", ["-L", "-s", "/usr/sbin/nologin", AGENT_USER]);
+  trySudo("usermod", ["-L", "-s", NOLOGIN, AGENT_USER]);
   let alive = true;
   for (let attempt = 0; alive && attempt < 20; attempt++) {
     killAgentProcesses();
@@ -30287,24 +30236,57 @@ export ${Object.entries(env).map(([name, value]) => `${name}='${value}'`).join("
 cd "$1" || exit 1; shift
 exec "$@"`;
 }
-async function runAsAgent(command, cwd, timeoutMs, log, stop) {
+function jailScript(resolve = program) {
+  const mount = resolve("mount");
+  return `set -euo pipefail
+targets=$(${resolve("findmnt")} -rn -o TARGET)
+while IFS= read -r target; do
+  target=$(printf '%b' "$target")
+  case "$target" in /proc | /proc/*) continue ;; esac
+  ${mount} -o remount,bind,ro "$target"
+done <<< "$targets"
+${mount} -t proc -o nosuid,nodev,noexec proc /proc
+for dir in /tmp /var/tmp /dev/shm; do
+  ${mount} -t tmpfs -o mode=1777,nosuid,nodev tmpfs "$dir"
+done
+${mount} --bind ${AGENT_HOME} ${AGENT_HOME}
+${mount} -o remount,bind,rw,nosuid,nodev ${AGENT_HOME}
+launcher=$1; shift
+${resolve("setpriv")} --reuid=${AGENT_USER} --regid=${AGENT_USER} --init-groups --no-new-privs   --inh-caps=-all --bounding-set=-all -- ${resolve("bash")} -c "$launcher" ${AGENT_USER} "$@"
+exit $?`;
+}
+function jailArgs(command, cwd, launcherScript, resolve = program) {
   const keep = Object.keys(command.env);
-  const args = [
+  return [
     "-n",
     `--preserve-env=${keep.join(",")}`,
-    "-u",
-    AGENT_USER,
-    "-H",
     "--",
-    program("bash"),
+    resolve("unshare"),
+    "--mount",
+    "--pid",
+    "--ipc",
+    "--fork",
+    "--kill-child",
+    "--propagation",
+    "private",
+    "--",
+    resolve("bash"),
     "-c",
-    launcher(agentEnv(agentPath(process.env.PATH ?? "", homedir()))),
-    "codeman-agent",
+    jailScript(resolve),
+    "codeman-jail",
+    launcherScript,
     keep.join(" "),
     cwd,
     command.file,
     ...command.args
   ];
+}
+async function runAsAgent(command, cwd, timeoutMs, log, stop) {
+  const args = jailArgs(
+    command,
+    cwd,
+    launcher(agentEnv(agentPath(process.env.PATH ?? "", homedir())))
+  );
   const child = spawn(program("sudo"), args, {
     env: { PATH: process.env.PATH ?? SAFE_PATH, ...command.env },
     stdio: ["ignore", "pipe", "pipe"]
@@ -30312,9 +30294,15 @@ async function runAsAgent(command, cwd, timeoutMs, log, stop) {
   for (const stream of [child.stdout, child.stderr]) {
     createInterface({ input: stream }).on("line", (line) => log.info(`\u2502 ${truncate(line, 4e3)}`));
   }
+  let stopper;
   const end = () => {
-    child.kill("SIGTERM");
-    setTimeout(killAgentProcesses, 1e4).unref();
+    if (stopper) return;
+    const ended3 = Date.now();
+    signalAgentProcesses("TERM");
+    stopper = setInterval(
+      () => signalAgentProcesses(Date.now() - ended3 < 1e4 ? "TERM" : "KILL"),
+      1e3
+    );
   };
   let timedOut = false;
   const timer = setTimeout(() => {
@@ -30336,6 +30324,7 @@ async function runAsAgent(command, cwd, timeoutMs, log, stop) {
     child.on("exit", resolve);
   });
   clearTimeout(timer);
+  clearInterval(stopper);
   stop?.removeEventListener("abort", onStop);
   return stopped === void 0 ? { exitCode, timedOut } : { exitCode, timedOut, stopped };
 }
@@ -32672,7 +32661,7 @@ async function agentJob(services, reached) {
   const minutes = positiveNumber(runtime2, "agent-minutes");
   const workspace = runtime2.workspace();
   runtime2.startGroup(`Install ${harness.name}`);
-  createAgentUser(runtime2);
+  createAgentUser();
   const executable = installForAgent(
     await harness.install(join7(workdir(runtime2), "harness")),
     harness.name

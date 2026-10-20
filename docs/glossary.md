@@ -317,7 +317,7 @@ The runs of the same routed stage that end unfinished, `partial` or out of time,
 
 ### Sandbox
 
-How the agent job isolates the agent: it runs as the `codeman-agent` user, without `sudo`, on a copy of the checkout, with a rebuilt environment. It protects the job's credentials, not the runner. See [agent sandbox](runs/agent.md#agent-sandbox).
+How the agent job isolates the agent: it runs as the `codeman-agent` user, without `sudo`, on a copy of the checkout, with a rebuilt environment, in a jail where the rest of the machine is read-only. It protects the job's credentials and the runner's files, not the network. See [agent sandbox](runs/agent.md#agent-sandbox).
 
 ### Seat
 

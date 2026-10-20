@@ -29,7 +29,7 @@ Tests sit next to the code they test, as `*.test.ts`. Most run everywhere. These
 
 | Test | Runs when | Skipped when |
 | --- | --- | --- |
-| [`src/sandbox.test.ts`](../../src/sandbox.test.ts), the [sandbox](../glossary.md#sandbox) | Its tests that run the agent: on Linux, with `CODEMAN_SANDBOX_TEST=1`. They create a system user, change the machine's permissions, and need passwordless `sudo`, like GitHub's Linux runners. CI sets the variable, and so does `npm run test:runner` ([running Actions locally](local-actions.md)). Its other tests run everywhere | On any other system, or without the variable |
+| [`src/sandbox.test.ts`](../../src/sandbox.test.ts), the [sandbox](../glossary.md#sandbox) | Its tests that run the agent: on Linux, with `CODEMAN_SANDBOX_TEST=1`. They create a system user, run the agent's [jail](../runs/agent.md#the-jail), and need passwordless `sudo` and the right to create namespaces, like GitHub's Linux runners. CI sets the variable, and so does `npm run test:runner` ([running Actions locally](local-actions.md)). Its other tests, the jail's arguments and setup among them, run everywhere | On any other system, or without the variable |
 | [`src/store/emulator.test.ts`](../../src/store/emulator.test.ts), the [store](../glossary.md#store) on Firestore's emulator | An emulator is running, or one is in Firebase's cache; see [Firestore's emulator](#firestores-emulator) | Neither is there, as on CI |
 | [`src/docs.test.ts`](../../src/docs.test.ts), the links | Always | Never |
 | [`src/webdocs.test.ts`](../../src/webdocs.test.ts), the format of `docs/web/` | Always | Never |

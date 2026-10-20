@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { lstatSync, readdirSync, readlinkSync } from "node:fs";
+import { lstatSync, readlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { createInterface } from "node:readline";
 import type { HarnessCommand } from "./harness/harness.ts";
@@ -17,22 +17,20 @@ const SAFE_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 /**
  * Where Codeman finds the programs it runs around the agent: on Ubuntu, only root writes here.
- * Never the job's PATH, whose directories the agent may write, such as /opt/pipx_bin and
+ * Never the job's PATH, whose directories every user may write, such as /opt/pipx_bin and
  * /usr/local/bin on GitHub's images; nor sudo's secure_path, which starts with /usr/local/bin.
  */
 export const TRUSTED_DIRS = ["/usr/bin", "/usr/sbin", "/bin", "/sbin"] as const;
 
-/** What `untrustedReason` and `pathProblems` read of the file system, so tests can give a fake one. */
+/** What `untrustedReason` reads of the file system, so tests can give a fake one. */
 export interface FileStats {
   lstat(path: string): { uid: number; mode: number; isSymbolicLink(): boolean } | undefined;
   readlink(path: string): string;
-  readdir(path: string): string[];
 }
 
 export const realFileStats: FileStats = {
   lstat: (path) => lstatSync(path, { throwIfNoEntry: false }),
   readlink: (path) => readlinkSync(path),
-  readdir: (path) => readdirSync(path),
 };
 
 type Stats = NonNullable<ReturnType<FileStats["lstat"]>>;
@@ -98,73 +96,6 @@ export function untrustedReason(path: string, fs: FileStats): string | undefined
   return missing && `${missing.path} does not exist`;
 }
 
-const writableByOthers = (stats: Stats) => !stats.isSymbolicLink() && (stats.mode & 0o002) !== 0;
-
-/**
- * Whether a user other than the owners, such as the agent, could change or create `path`: a
- * component on the way to it is writable by others, unless it is sticky and the next one exists;
- * or `path` is missing, and the directory it would be in is writable by others.
- */
-function openToOthers(path: string, fs: FileStats): boolean {
-  const { steps, missing, loop } = walk(path, fs);
-  if (loop) return true;
-  const parent = missing && fs.lstat(missing.parent);
-  if (parent && writableByOthers(parent)) return true;
-  return steps.some(
-    ({ stats }, index) =>
-      writableByOthers(stats) && !((stats.mode & 0o1000) !== 0 && index < steps.length - 1),
-  );
-}
-
-/**
- * The directories of `jobPath` in which a user other than their owners, such as the agent, could
- * add or change a program: the directory itself, or a file directly in it.
- */
-export function pathProblems(jobPath: string, fs: FileStats): string[] {
-  const entries = [...new Set(jobPath.split(":").filter((entry) => entry.startsWith("/")))];
-  return entries.filter((entry) => {
-    if (openToOthers(entry, fs)) return true;
-    let names: string[];
-    try {
-      names = fs.readdir(entry);
-    } catch {
-      return false;
-    }
-    return names.some((name) => openToOthers(`${entry}/${name}`, fs));
-  });
-}
-
-/**
- * The arguments of the `find` that takes write access away from other users on every file and
- * directory of the root file system, except directories with the sticky bit, such as `/tmp`.
- * `-xdev` stays on the root file system, so `/proc`, `/sys`, `/dev` and `/run` are not walked;
- * `find` follows no link, and `-type` leaves links out.
- */
-export function closeArgs(resolve: (name: string) => string = program): string[] {
-  return [
-    "/",
-    "-xdev",
-    "-perm",
-    "-0002",
-    "(",
-    "-type",
-    "f",
-    "-o",
-    "-type",
-    "d",
-    "!",
-    "-perm",
-    "-1000",
-    ")",
-    "-exec",
-    resolve("chmod"),
-    "o-w",
-    "--",
-    "{}",
-    "+",
-  ];
-}
-
 /**
  * The first `<dir>/<name>` of TRUSTED_DIRS that exists and that only root controls. Throws,
  * naming the program, when none does.
@@ -227,6 +158,10 @@ const REQUIRED_PROGRAMS = [
   "realpath",
   "bash",
   "sh",
+  "unshare",
+  "mount",
+  "findmnt",
+  "setpriv",
 ];
 
 /**
@@ -282,40 +217,26 @@ export function sudo(name: string, args: readonly string[], input?: string): str
   return checkedSudo(name, args, undefined, input);
 }
 
+/** The agent's login shell: `sshd` and `su` run no command for it. */
+const NOLOGIN = "/usr/sbin/nologin";
+
 /**
  * Creates the agent's user, and closes the runner's home to other users: it holds the job's
  * temporary files, the workspace and tool configuration. First checks that every program the
  * job needs is where only root can change it, so a runner that lacks one fails before the run
- * reaches its model. Then closes the runner's world-writable paths (see `closeWorldWritable`).
+ * reaches its model. The image's world-writable paths stay as they are: the agent runs in a
+ * jail where they are read-only (see `jailScript`).
  */
-export function createAgentUser(log: Log): void {
+export function createAgentUser(): void {
   for (const name of REQUIRED_PROGRAMS) program(name);
-  closeWorldWritable(log);
   if (spawnSync(program("id"), ["-u", AGENT_USER]).status !== 0) {
-    sudo("useradd", ["--create-home", "--shell", "/bin/bash", AGENT_USER]);
+    sudo("useradd", ["--create-home", "--shell", NOLOGIN, AGENT_USER]);
   }
+  sudo("usermod", ["--shell", NOLOGIN, AGENT_USER]);
   // Give the home back to the agent, in case a previous run's collection took it away.
   sudo("chown", [`${AGENT_USER}:${AGENT_USER}`, AGENT_HOME]);
   sudo("chmod", ["700", AGENT_HOME]);
   sudo("chmod", ["o-rwx", homedir()]);
-}
-
-/**
- * Takes write access away from other users across the root file system, as `closeArgs` says, so
- * the agent cannot plant a program that a later step runs as the runner's user: GitHub's images
- * leave /opt, /usr/share and /usr/local/bin writable by every user. Then fails if the agent could
- * still add or change a program in a directory of the job's PATH. Permanent on the machine.
- */
-function closeWorldWritable(log: Log): void {
-  const start = Date.now();
-  sudo("find", closeArgs());
-  log.info(`Closed the runner's world-writable paths in ${(Date.now() - start) / 1000} s.`);
-  const problems = pathProblems(process.env.PATH ?? "", realFileStats);
-  if (problems.length > 0) {
-    throw new Error(
-      `Codeman does not run the agent: ${AGENT_USER} could add or change programs in ${problems.join(", ")}, on the job's PATH, which later steps run as the runner's user.`,
-    );
-  }
 }
 
 /** Installs an executable that the agent can run but not change. */
@@ -346,9 +267,14 @@ export function writeAsAgent(file: string, content: string): void {
   sudoAs(AGENT_USER, "tee", [file], content);
 }
 
+/** Sends `signal` to every process of the agent, in the jail or not. */
+function signalAgentProcesses(signal: "TERM" | "KILL"): void {
+  spawnSync(program("sudo"), sudoArgs("pkill", [`-${signal}`, "-u", AGENT_USER]));
+}
+
 /** Stops every process the agent left behind, so nothing changes files while they are collected. */
 export function killAgentProcesses(): void {
-  spawnSync(program("sudo"), sudoArgs("pkill", ["-KILL", "-u", AGENT_USER]));
+  signalAgentProcesses("KILL");
 }
 
 /**
@@ -382,7 +308,7 @@ export function sealAgentSandbox(worktree: string): void {
   trySudo("loginctl", ["disable-linger", AGENT_USER]);
   // Kills the whole user slice, including a systemd user manager and its timers.
   trySudo("loginctl", ["terminate-user", AGENT_USER]);
-  trySudo("usermod", ["-L", "-s", "/usr/sbin/nologin", AGENT_USER]);
+  trySudo("usermod", ["-L", "-s", NOLOGIN, AGENT_USER]);
   // Kill, then wait briefly for the processes to be gone; a signalled process may still be dying.
   let alive = true;
   for (let attempt = 0; alive && attempt < 20; attempt++) {
@@ -431,8 +357,8 @@ export function agentEnv(path: string): Record<string, string> {
 }
 
 /**
- * Runs as the agent: drops every exported variable except the harness's (sudo's PAM session
- * adds the runner's /etc/environment, whose paths point into the runner's home), sets `env`,
+ * Runs as the agent, in the jail: drops every exported variable except the harness's (sudo's PAM
+ * session adds the runner's /etc/environment, whose paths point into the runner's home), sets `env`,
  * enters the directory and runs the command. Arguments: kept names, directory, command.
  * Secrets stay in the environment, never in argv. Values must not contain `'`.
  */
@@ -449,6 +375,75 @@ exec "$@"`;
 }
 
 /**
+ * The jail's setup, run by `bash` as root in new mount, PID and IPC namespaces (see `jailArgs`).
+ * It remounts every mount read-only, so the agent cannot change a file that runs outside the jail,
+ * such as a program in the image's world-writable /opt/pipx_bin or /usr/local/bin. /proc gets a
+ * new procfs, for the new PID namespace, and /tmp, /var/tmp and /dev/shm new tmpfs. Only the
+ * agent's home, which holds its work tree, stays writable. It fails closed on any error.
+ *
+ * Then it runs the launcher as the agent, with `no_new_privs` and no capability. Root's shell stays
+ * PID 1 of the namespace: it reaps orphans, and when the harness exits, the kernel kills every
+ * process left in the namespace. Arguments: the launcher, then the launcher's own.
+ */
+export function jailScript(resolve: (name: string) => string = program): string {
+  const mount = resolve("mount");
+  return `set -euo pipefail
+targets=$(${resolve("findmnt")} -rn -o TARGET)
+while IFS= read -r target; do
+  target=$(printf '%b' "$target")
+  case "$target" in /proc | /proc/*) continue ;; esac
+  ${mount} -o remount,bind,ro "$target"
+done <<< "$targets"
+${mount} -t proc -o nosuid,nodev,noexec proc /proc
+for dir in /tmp /var/tmp /dev/shm; do
+  ${mount} -t tmpfs -o mode=1777,nosuid,nodev tmpfs "$dir"
+done
+${mount} --bind ${AGENT_HOME} ${AGENT_HOME}
+${mount} -o remount,bind,rw,nosuid,nodev ${AGENT_HOME}
+launcher=$1; shift
+${resolve("setpriv")} --reuid=${AGENT_USER} --regid=${AGENT_USER} --init-groups --no-new-privs \
+  --inh-caps=-all --bounding-set=-all -- ${resolve("bash")} -c "$launcher" ${AGENT_USER} "$@"
+exit $?`;
+}
+
+/**
+ * The arguments of `sudo` that run `command` as the agent, in `cwd`, in the jail: new mount, PID
+ * and IPC namespaces, the network shared, so the agent reaches its model and the loopback gateway.
+ * `unshare` waits for the jail and ignores SIGTERM: stop the agent's processes instead.
+ */
+export function jailArgs(
+  command: HarnessCommand,
+  cwd: string,
+  launcherScript: string,
+  resolve: (name: string) => string = program,
+): string[] {
+  const keep = Object.keys(command.env);
+  return [
+    "-n",
+    `--preserve-env=${keep.join(",")}`,
+    "--",
+    resolve("unshare"),
+    "--mount",
+    "--pid",
+    "--ipc",
+    "--fork",
+    "--kill-child",
+    "--propagation",
+    "private",
+    "--",
+    resolve("bash"),
+    "-c",
+    jailScript(resolve),
+    "codeman-jail",
+    launcherScript,
+    keep.join(" "),
+    cwd,
+    command.file,
+    ...command.args,
+  ];
+}
+
+/**
  * Runs the harness as the agent, until it exits, its time is up, or `stop` is aborted, as when
  * its model can no longer be reached; `stopped` then holds the reason.
  */
@@ -459,23 +454,11 @@ export async function runAsAgent(
   log: Log,
   stop?: AbortSignal,
 ): Promise<{ exitCode: number | null; timedOut: boolean; stopped?: string }> {
-  const keep = Object.keys(command.env);
-  const args = [
-    "-n",
-    `--preserve-env=${keep.join(",")}`,
-    "-u",
-    AGENT_USER,
-    "-H",
-    "--",
-    program("bash"),
-    "-c",
-    launcher(agentEnv(agentPath(process.env.PATH ?? "", homedir()))),
-    "codeman-agent",
-    keep.join(" "),
+  const args = jailArgs(
+    command,
     cwd,
-    command.file,
-    ...command.args,
-  ];
+    launcher(agentEnv(agentPath(process.env.PATH ?? "", homedir()))),
+  );
   const child = spawn(program("sudo"), args, {
     env: { PATH: process.env.PATH ?? SAFE_PATH, ...command.env },
     stdio: ["ignore", "pipe", "pipe"],
@@ -486,9 +469,17 @@ export async function runAsAgent(
     createInterface({ input: stream }).on("line", (line) => log.info(`│ ${truncate(line, 4000)}`));
   }
 
+  // SIGTERM to the agent's processes, each second for 10 seconds, then SIGKILL, until the jail
+  // exits: unshare ignores SIGTERM, and the harness may not have started yet.
+  let stopper: ReturnType<typeof setInterval> | undefined;
   const end = () => {
-    child.kill("SIGTERM");
-    setTimeout(killAgentProcesses, 10_000).unref();
+    if (stopper) return;
+    const ended = Date.now();
+    signalAgentProcesses("TERM");
+    stopper = setInterval(
+      () => signalAgentProcesses(Date.now() - ended < 10_000 ? "TERM" : "KILL"),
+      1_000,
+    );
   };
   let timedOut = false;
   const timer = setTimeout(() => {
@@ -512,6 +503,7 @@ export async function runAsAgent(
     child.on("exit", resolve);
   });
   clearTimeout(timer);
+  clearInterval(stopper);
   stop?.removeEventListener("abort", onStop);
   return stopped === undefined ? { exitCode, timedOut } : { exitCode, timedOut, stopped };
 }

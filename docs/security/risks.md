@@ -80,7 +80,7 @@ The web [stage](../glossary.md#stage) brings third-party pages into the reposito
 
 Only Codeman's step runs the agent as the unprivileged `codeman-agent` user, in the [sandbox](../glossary.md#sandbox). Any other step in the `agent` job runs as the runner's user, which has `sudo`.
 
-The agent itself cannot run code as the runner's user, through Codeman's step or through the steps after it. Those include the post steps of `actions/checkout`, which run `git` from the job's `PATH`. Codeman runs its programs from root's directories, and closes the image's world-writable paths before the agent starts ([before the agent runs](../runs/agent.md#before-the-agent-runs)). This does not depend on which directories the image and the setup actions put on the `PATH`.
+The agent itself cannot run code as the runner's user, through Codeman's step or through the steps after it. Those include the post steps of `actions/checkout`, which run `git` from the job's `PATH`. Codeman runs its programs from root's directories ([before the agent runs](../runs/agent.md#before-the-agent-runs)), and the agent runs in a jail where every mount but its home and temporary directories is read-only ([the jail](../runs/agent.md#the-jail)). This does not depend on which directories the image and the setup actions put on the `PATH`.
 
 The job checks out the [task branch](../glossary.md#task-branch). So a step that runs repository code (`npm ci`, `make`, a test script) runs code the agent wrote. A setup action is such a step too: third-party code that runs as the runner's user, with the same reach.
 
@@ -103,7 +103,7 @@ Such a step can also change the job's outputs, among them a Serverless [gateway]
 - Pin each action to a full commit SHA.
 - Turn off an action's options that install the project's dependencies, which run repository code.
 - Leave installing dependencies and running scripts to the agent, inside the sandbox.
-- Run the `agent` job on a GitHub-hosted runner: Codeman changes the machine's permissions for good, and a new VM per job takes them away.
+- Run the `agent` job on a GitHub-hosted runner: a new VM per job drops the agent's user, its home and anything a step left behind.
 
 ## 4. The agent can send its task key out
 

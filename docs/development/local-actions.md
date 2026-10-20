@@ -29,6 +29,7 @@ You need Docker. The first run builds the image, in a few minutes.
 
 - The working tree is mounted read-only: nothing in the container changes your files.
 - The container has the network, for `npm ci`, and no Docker socket.
+- The container gets `--cap-add SYS_ADMIN --security-opt seccomp=unconfined --security-opt apparmor=unconfined`. The agent's [jail](../runs/agent.md#the-jail) runs `unshare` and `mount` as root, which Docker's default capabilities, seccomp profile and AppArmor profile deny in a container. GitHub's VM needs none of them: there, root has every capability.
 - Each run starts from the image again, so users and files a test creates do not last.
 
 > [!IMPORTANT]
@@ -45,6 +46,7 @@ You need Docker. The first run builds the image, in a few minutes.
 | `PATH` | x64's, plus each setup action's entries | x64's, plus setup-node's entry |
 | Software | Thousands of tools; git from a PPA; Docker, cron and `at` | Ubuntu's base, Node.js, git 2.43, `sudo`, `procps`, `unzip` |
 | Docker | A socket | None: the sandbox test's Docker check passes without testing anything |
+| Namespaces and mounts | Root has every capability | Granted by `scripts/runner.sh`'s flags; the kernel is Docker's, without AppArmor |
 | Architecture | x64; `ubuntu-24.04-arm` for arm64 | The host's; arm64 is not tested |
 
 A test that passes here can still fail on GitHub's runner, which has more tools and more open paths: CI stays the check before merging.

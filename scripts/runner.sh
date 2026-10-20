@@ -23,8 +23,11 @@ if [ -t 0 ] && [ -t 1 ]; then tty="--tty --interactive"; fi
 # its own, for Linux, and changes nothing on the host.
 # --init reaps orphans, as the VM's systemd does: without it, a killed agent process stays a zombie
 # that pgrep still lists, and the sandbox's seal refuses to collect.
+# The agent's jail needs root to create namespaces and mount, which Docker denies by default:
+# SYS_ADMIN, and no seccomp or AppArmor profile, which block unshare and mount. GitHub's VM needs none.
 # shellcheck disable=SC2086
 exec docker run --rm --init $tty \
+  --cap-add SYS_ADMIN --security-opt seccomp=unconfined --security-opt apparmor=unconfined \
   --volume "$root:/mnt/codeman:ro" \
   --env CODEMAN_SANDBOX_TEST=1 \
   "$image" \

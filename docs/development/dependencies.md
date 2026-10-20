@@ -36,6 +36,7 @@ Every dependency is audited before it is added (see `AGENTS.md`). This page reco
 | 2026-10-07 | The backend: Cloud Firestore, STS, IAM Credentials, the emulator | [Backend](../plans/2026-10-07-firestore-backend.md) | No npm package added |
 | 2026-10-13 | vLLM and its image, Hugging Face | [vLLM on pods](../plans/2026-10-13-vllm-on-pods.md) | vLLM's advisories each list a fix at or before 0.31.0; the rest accepted |
 | 2026-10-19 | Running Actions locally: act, `actions/runner`, `github/local-action`, a plain image | [Run GitHub Actions locally](../plans/2026-10-19-run-github-actions-locally.md#audit) | None adopted but the plain image. act 0.2.74, as installed, has CVE-2026-34041 and CVE-2026-34042, fixed in 0.2.86 |
+| 2026-10-19 | The agent's jail: ai-jail, bubblewrap, `util-linux` | [Jail the agent](../plans/2026-10-19-jail-the-agent-in-a-read-only-mount-namespace.md#audit) | Nothing added: `unshare`, `mount`, `findmnt` and `setpriv` come from Ubuntu's `util-linux` and `mount`, required packages already on the runner. ai-jail and bubblewrap not adopted |
 
 ## Where each dependency runs
 
@@ -44,7 +45,7 @@ flowchart TB
   subgraph Runner["The target repository's GitHub Actions runner"]
     A["Codeman: dist/index.js<br/>with @actions/core, @actions/github"]
     G1["The gateway in the agent job<br/>Serverless only, holds its key"]
-    subgraph Sandbox["The sandbox: user codeman-agent"]
+    subgraph Sandbox["The sandbox: user codeman-agent, in a read-only jail"]
       O["OpenCode 1.18.32<br/>npm package, integrity checked"]
     end
   end
@@ -149,7 +150,7 @@ Codeman calls these APIs with `fetch` or through the packages above. Their docum
 
 How Codeman contains it:
 
-1. It runs as the unprivileged `codeman-agent` user (see [agent sandbox](../runs/agent.md#agent-sandbox)).
+1. It runs as the unprivileged `codeman-agent` user, in a jail where only its home and temporary directories are writable (see [agent sandbox](../runs/agent.md#agent-sandbox)).
 2. Its configuration goes through `OPENCODE_CONFIG_CONTENT`, which overrides the repository's:
    - `autoupdate: false` and `share: "disabled"`;
    - only one provider: `openrouter`, or on self-hosted inference Codeman's gateway, as `codeman`;
@@ -290,7 +291,7 @@ Audited on 2026-10-19 for the [plan to run Actions locally](../plans/2026-10-19-
   - Node.js and npm come from `node:24.21.0-bookworm-slim`, the pod images' pinned digest.
   - `ca-certificates`, `git`, `sudo`, `procps` and `unzip` come from Ubuntu's archive at build time, not pinned: apt checks them against the archive's signed indexes.
 - **Transitive code:** the packages' dependencies, from Ubuntu. No npm package is added: the container runs `npm ci` from `package-lock.json`, with the repository's `.npmrc`.
-- **Permissions:** the container gets the working tree read-only, which it copies, and the network, for `npm ci`. It gets no Docker socket. It needs a Docker daemon on the developer's machine: Docker Engine is Apache-2.0, and Docker Desktop's subscription terms apply to the developer's organization.
+- **Permissions:** the container gets the working tree read-only, which it copies, and the network, for `npm ci`. It gets no Docker socket. It gets `SYS_ADMIN` and no seccomp or AppArmor profile, which the agent's jail needs to create namespaces and mount ([running Actions locally](local-actions.md#run-the-tests)). It needs a Docker daemon on the developer's machine: Docker Engine is Apache-2.0, and Docker Desktop's subscription terms apply to the developer's organization.
 
 ## Backend
 
