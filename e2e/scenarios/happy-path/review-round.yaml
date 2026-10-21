@@ -1,0 +1,78 @@
+# The MVP plan's bugs (docs/plans/2026-09-23-codeman-mvp.md, step 3):
+# - d37ebc2: the agent's report keeps its line breaks on the issue;
+# - 7ff267b: answering the decisions starts the implementation with no other trigger, since
+#   next-run runs after a run that only records answers;
+# - 2ca46fd: select lists the pull request's reviews, with its App token's pull-requests: read;
+# - the review on the merge ref's old workflow: a review only starts forward-review, which runs
+#   the default branch's workflow with workflow_dispatch.
+name: OpenRouter, a review that requests changes is applied to the pull request
+tags: [happy-path, openrouter, mvp]
+runner: simulator
+timeout: 20m
+world:
+  organizations:
+    - { name: acme, settings: { model: deepseek/deepseek-v4.1-flash, task-budget: 2 } }
+  repositories:
+    - { name: acme/app, fixture: node-small, maintainers: [alice] }
+agent:
+  i1:
+    plan:
+      - steps:
+          - bash: plan=$(sed -n 's/.*Create the plan at `\([^`]*\)`.*/\1/p' .codeman/task.md) && mkdir -p "$(dirname "$plan")" && printf '# Add a health route\n' > "$plan"
+          - output:
+              summary: Adds a health route.
+              decisions:
+                - { id: 1, title: Port, question: Which port?, options: [{ key: a, label: "8080" }, { key: b, label: "3000" }], recommendation: a }
+    route:
+      - steps:
+          - output:
+              summary: Code, then review.
+              route: [{ stage: code, brief: Add the route. }, { stage: review, brief: Check it. }]
+              skipped: [{ stage: web, reason: No docs. }, { stage: design, reason: Settled. }, { stage: test, reason: Too small. }]
+      - steps:
+          - output:
+              summary: Apply the review, then review again.
+              route: [{ stage: code, brief: Use a named export. }, { stage: review, brief: Check it. }]
+              skipped: [{ stage: web, reason: No docs. }, { stage: design, reason: Settled. }, { stage: test, reason: Too small. }]
+    code:
+      - steps:
+          - write: { path: src/health.ts, content: "export default true;\n" }
+          - output: { status: done, summary: "Adds the route.\nKeeps it to one line.", commitMessage: Add a health route }
+      - steps:
+          - edit: { path: src/health.ts, old: "export default true;", new: "export const ok = true;" }
+          - output: { status: done, summary: Uses a named export., commitMessage: Use a named export for the health route }
+    review:
+      - steps: [{ output: { status: done, summary: The route is right. } }]
+      - steps: [{ output: { status: done, summary: The export is named now. } }]
+actions:
+  - open-issue: { ref: i1, as: alice, title: Add a health route, labels: [codeman] }
+  - run: { event: issues.labeled }
+  - expect: { issue: i1, labels: [codeman:awaiting-decision], comments: [{ kind: decisions, contains: Which port? }] }
+  # 7ff267b: the comment's run records the answer, and its next-run starts the route, the code
+  # and the review, one run after the other, with no other trigger.
+  - comment: { issue: i1, as: alice, body: /codeman decide 1 a }
+  - run: { event: issue_comment.created, max-runs: 8 }
+  - expect:
+      issue: i1
+      labels: [codeman:done]
+      pull-request: { ready: true, files: [src/health.ts] }
+      # d37ebc2: the code stage's report, two lines, keeps its line break.
+      comments: [{ kind: run, contains: "Adds the route.\nKeeps it to one line." }]
+  # The review event's run only forwards it: forward-review starts the default branch's workflow,
+  # whose select reads the review (2ca46fd) and sends the task back to routing.
+  - review:
+      pull: i1
+      as: alice
+      state: request-changes
+      body: Use a named export.
+      comments: [{ path: src/health.ts, line: 1, body: "A named export, please." }]
+  - run: { event: pull_request_review.submitted, max-runs: 8 }
+  - expect:
+      issue: i1
+      labels: [codeman:done]
+      commits: { message: Use a named export for the health route, files: [src/health.ts] }
+      # The second round of the route and of the code stage ran: the review started them.
+      fakes:
+        llm:
+          turns: { where: { issue: i1, stage: route, round: 1 } }
+      violations: none

@@ -1,0 +1,67 @@
+name: Two tasks on one Serverless endpoint split its worker's time
+tags: [serverless]
+runner: simulator
+timeout: 15m
+world:
+  organizations:
+    - name: acme
+      settings:
+        task-budget: 2
+        provider: runpod-serverless
+        endpoint: qwensmall
+        model: Qwen/Qwen2.5-0.5B-Instruct
+        # Two tasks a run, so both plans run at once on the endpoint's one worker.
+        profiles:
+          - { name: pair, max-tasks: 2, provider: runpod-serverless, endpoint: qwensmall, model: Qwen/Qwen2.5-0.5B-Instruct }
+  repositories:
+    - { name: acme/app, fixture: node-small, maintainers: [alice] }
+  runpod:
+    endpoints:
+      # As docs/installation/runpod.md#serverless sets one up; its queue answers from the scripted
+      # model. Its workers are RTX 4090s (ADA_24), at the catalog's flex price of 1.1 USD an hour.
+      - id: qwensmall
+        type: QUEUE
+        workers: { min: 0, max: 1, idleTimeout: 60 }
+        gpu: { pools: [ADA_24] }
+        env:
+          MODEL_NAME: Qwen/Qwen2.5-0.5B-Instruct
+          MAX_MODEL_LEN: "32768"
+          ENABLE_AUTO_TOOL_CHOICE: "true"
+          TOOL_CALL_PARSER: hermes
+agent:
+  i1:
+    plan:
+      - steps:
+          - bash: plan=$(sed -n 's/.*Create the plan at `\([^`]*\)`.*/\1/p' .codeman/task.md) && mkdir -p "$(dirname "$plan")" && printf '# Add a health route\n' > "$plan"
+          - output:
+              summary: Adds a health route.
+              decisions:
+                - { id: 1, title: Port, question: Which port?, options: [{ key: a, label: "8080" }, { key: b, label: "3000" }], recommendation: a }
+  i2:
+    plan:
+      - steps:
+          - bash: plan=$(sed -n 's/.*Create the plan at `\([^`]*\)`.*/\1/p' .codeman/task.md) && mkdir -p "$(dirname "$plan")" && printf '# Add a version route\n' > "$plan"
+          - output:
+              summary: Adds a version route.
+              decisions:
+                - { id: 1, title: Source, question: Where does the version come from?, options: [{ key: a, label: package.json }, { key: b, label: git }], recommendation: a }
+actions:
+  - open-issue: { ref: i1, as: alice, title: Add a health route, labels: [codeman] }
+  - open-issue: { ref: i2, as: alice, title: Add a version route, labels: [codeman] }
+  # The last labeled issue's run picks both tasks: one batch of 2, each plan in its own jobs.
+  - run: { event: issues.labeled }
+  - expect: { issue: i1, labels: [codeman:awaiting-decision], comments: [{ kind: decisions, contains: Which port? }] }
+  - expect: { issue: i2, labels: [codeman:awaiting-decision], comments: [{ kind: decisions, contains: Where does the version come from? }] }
+  - expect:
+      store:
+        - collection: organizations/acme/runs
+          where: { provider: runpod-serverless, status: closed, endpoint: qwensmall, stage: plan }
+          count: 2
+        - { collection: pools/acme/endpoints/qwensmall/runs, count: 2 }
+      # Both runs used the worker at the same times: their costs are their shares, which add up
+      # to the worker's billed time (docs/inference/serverless.md, "Splitting shared worker time").
+      ledger: { split-on: qwensmall, runs: 2, cost-at-least: 0.001, cost-at-most: 1 }
+      fakes:
+        runpod:
+          jobs: { where: { endpoint: qwensmall, status: COMPLETED } }
+      violations: none

@@ -1,0 +1,80 @@
+name: Ollama pod for a plan, kept by close-key and released when the task waits for decisions
+tags: [pods, ollama]
+runner: simulator
+profiles: [ollama]
+timeout: 20m
+world:
+  organizations:
+    - name: acme
+      settings:
+        provider: runpod-pod
+        model: qwen2.5:0.5b
+        gpu: NVIDIA GeForce RTX 4090
+        task-budget: 2
+        ollama: { num-parallel: 2 }
+  repositories:
+    - { name: acme/app, fixture: node-small, maintainers: [alice] }
+agent:
+  i1:
+    plan:
+      - steps:
+          - bash: plan=$(sed -n 's/.*Create the plan at `\([^`]*\)`.*/\1/p' .codeman/task.md) && mkdir -p "$(dirname "$plan")" && printf '# Add a health route\n' > "$plan"
+          - output:
+              summary: Adds a health route.
+              decisions:
+                - { id: 1, title: Port, question: Which port?, options: [{ key: a, label: "8080" }, { key: b, label: "3000" }], recommendation: a }
+actions:
+  - open-issue: { ref: i1, as: alice, title: Add a health route, labels: [codeman] }
+  - parallel:
+      - - run: { event: issues.labeled }
+      # While the run goes: the pod serves the real fit, and close-key keeps it for the task.
+      - - wait: { until: { pods: [{ ref: p1, status: RUNNING }] }, timeout: 10m }
+        - wait:
+            timeout: 10m
+            until:
+              engine:
+                pod: p1
+                gateway:
+                  ready: true
+                  engine: ollama
+                  contextLength: 32768
+                  ollama: { OLLAMA_NUM_PARALLEL: "2" }
+                  fit: { source: search, parallel: 2, requestedParallel: 2, contextLength: 32768, modelContextLength: 32768 }
+                ollama: { models: [{ name: qwen2.5:0.5b, context_length: 32768 }] }
+        - wait:
+            timeout: 10m
+            until:
+              store:
+                - collection: pools/acme/pods
+                  where: { live: true, status: serving, leases: [{ kind: keep, holder: acme/app#1 }] }
+                  count: 1
+  # The task waits for a decision, so apply says it does not go on: release-pod ends the keep
+  # lease, the last one, and terminates the pod.
+  - expect:
+      issue: i1
+      labels: [codeman:awaiting-decision]
+      comments: [{ kind: decisions, contains: Which port? }]
+      pods:
+        - pod: p1
+          status: TERMINATED
+          where:
+            gpu: NVIDIA GeForce RTX 4090
+            cloud: SECURE
+            billing: stopped
+            env:
+              CODEMAN_MODEL: qwen2.5:0.5b
+              CODEMAN_ENGINE: ollama
+              CODEMAN_OLLAMA: '{"OLLAMA_NUM_PARALLEL":"2"}'
+              CODEMAN_GPU_MEMORY_GB: "24"
+              CODEMAN_ORGANIZATION: acme
+              CODEMAN_POOL: acme
+              CODEMAN_KEPT_IDLE_MINUTES: "15"
+              CODEMAN_RUN_IDLE_MINUTES: "30"
+      store:
+        - { collection: pools/acme/pods, where: { live: false, status: ended, leases: [] }, count: 1 }
+        - { collection: organizations/acme/events, where: { type: pod-created }, count: 1 }
+        - { collection: organizations/acme/events, where: { type: pod-terminated }, count: 1 }
+        - { collection: organizations/acme/runs, where: { provider: runpod-pod, status: closed, stage: plan }, count: 1 }
+      # The pod's time at the RTX 4090's Secure price, 0.69 USD an hour: a few minutes at most.
+      ledger: { cost-at-least: 0.0001, cost-at-most: 0.1, runs: 1 }
+      violations: none

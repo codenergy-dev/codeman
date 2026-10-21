@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-10-20T12:50:34-03:00
-updated_at: 2026-10-21T10:30:00-03:00
+updated_at: 2026-10-21T13:00:00-03:00
 commit: 21130fe
 ---
 
@@ -583,8 +583,8 @@ Run on 2026-10-21 on the plan's machine, `HEAD` `36a1b38`, with the real e2e bun
 Where the runtime differs from this plan:
 
 - The fake GitHub runs in Compose, so the runtime drives it over HTTP (`e2e/runtime/github.ts`). The simulator's `GitHubPort` calls and the OIDC registration may answer with a promise: `simulator.ts`, `actions.ts` and `github.ts` await them.
-- A `run` leaves the dispatches its run makes to the next `advance`. On GitHub they would run at once, before the scenario's next comment, so in `openrouter-to-done` both the dispatched run and the comment's run move the task, and two chains run, one after the other in the concurrency group.
-- Not done yet: `fault: { job, conclusion: cancelled }` and `apply: skip` (the executor cannot cancel a job), `world.openrouter.credits` (the fake has no control route for it), and the engine's `gateway` check reads `/health`, since `/admin/status` needs the pod's admin token.
+- A `run` leaves the dispatches its run makes to the next `advance`. On GitHub they would run at once, before the scenario's next comment, so in `openrouter-to-done` both the dispatched run and the comment's run move the task, and two chains run, one after the other in the concurrency group. Changed in step 5.1: a `run` runs its own chain.
+- Not done yet: `fault: { job, conclusion: cancelled }` and `apply: skip` (the executor cannot cancel a job), `world.openrouter.credits` (the fake has no control route for it), and the engine's `gateway` check reads `/health`, since `/admin/status` needs the pod's admin token. Done in step 5.1.
 
 Commit message: `Add the e2e runtime and workflow simulator`.
 
@@ -601,6 +601,40 @@ Each step's scenarios pass three times in a row. Where the fix of a listed bug i
 | 5.5 | `commands/decide-during-review`, `commands/max-runs-review-rounds`, `security/non-maintainer`, `security/workflow-staged`, `security/symlink-fifo-submodule`, `security/token-permissions` | The record-loop and max-runs regressions; commands only from maintainers; workflows staged; collection refusing what the sandbox did not hold; each template job within its token's permissions |
 
 Commit message per step, such as `Add the e2e happy-path scenarios`.
+
+#### 5.1 results
+
+Run on 2026-10-21 on the plan's machine (Docker VM 7.65 GiB), `HEAD` `734de35` with the uncommitted step, three passes in a row of `npm run test:e2e -- happy-path pods serverless`.
+
+| Scenario | Pass 1 | Pass 2 | Pass 3 |
+| --- | --- | --- | --- |
+| `happy-path/openrouter-plan-only` | 37 s | 35 s | 36 s |
+| `happy-path/openrouter-to-done` | 149 s | 137 s | 139 s |
+| `happy-path/review-round` (the MVP plan's bugs) | 248 s | 254 s | 255 s |
+| `pods/ollama-keep-and-release` (`known-bug`) | Reproduced, 61 s | 60 s | 60 s |
+| `pods/ollama-release-after-decisions` | 44 s | 46 s | 47 s |
+| `serverless/split-on-one-endpoint` | 39 s | 39 s | 40 s |
+
+Runtime changes this step needed:
+
+- `run` runs its own chain: the dispatches and the App's events that appear after it began, until none is left, within `max-runs` (10 by default). `advance` is for what follows users' actions.
+- The executor stops a cancelled or timed-out step inside its container (SIGINT, SIGTERM after 7.5 s, SIGKILL of its tree 2.5 s later), and keeps the container, so the job's `always()` steps run. Before, the whole container was killed. A step that runs after its job was cancelled or timed out has its own time, not what is left of the job's.
+- `fault: { job, conclusion: cancelled }` and `apply: skip` cancel the run as the job reaches its Codeman step, as a user's cancel would.
+- `world.openrouter.credits`, through the fake's new `PUT /_fake/openrouter/credits`.
+- `expect.engine.gateway` reads `/admin/status` with the admin token derived from the account's key and the pod's `CODEMAN_NONCE`, as the fake Runpod recorded its env.
+- The ledger check `split-on`; the fake Runpod's pods say whether they are still billed; a `known-bug` tag the runner reports apart; a scenario's ID selects it; failure reports hold the pool's documents.
+
+The MVP plan's bugs, in `happy-path/review-round`:
+
+| Bug | Fix | Reverts cleanly | Check |
+| --- | --- | --- | --- |
+| The agent's report lost its line breaks | `d37ebc2` | No: conflicts in `src/pull.ts`, `src/status.ts`, `src/text.ts` | The code stage's two-line summary is on its run comment |
+| `next-run` skipped after a record-only run | `7ff267b` | No: conflicts in `templates/codeman.yml` | Answering the decision runs route, code and review with no other trigger. Removing `always()` from today's `next-run` by hand still passes: it now needs only `select` and the task call, whose result is `success` when the call's inner jobs are skipped. `e2e/runtime/simulator/regression.test.ts` covers the template before the fix |
+| `select` needed `pull-requests: read` to list reviews | `2ca46fd` | No: conflicts in `templates/codeman.yml` | A review that requests changes is applied. Removing the permission by hand fails the scenario: `select` gets 403, "Resource not accessible by integration" |
+| A review ran the merge ref's old workflow | `forward-review`, by design | No single commit | The review's run is `forward-review` alone; the default branch's run then applies the review |
+
+> [!WARNING]
+> **Codeman bug, not fixed (2026-10-21).** A task whose stage ran on a pod cannot start its next stage until its batch expires, 30 minutes later. `exchange` in `src/board.ts` skips the repository's own ready tasks that an unexpired batch holds, its own `started` members included; [batches](../runs/batches.md#forming-batches) says only the other snapshots' tasks are held. So after a pod's plan with no decisions, the chain's next `select` logs "#1 Add a health route [ready]" and "Nothing to do", the kept pod is never joined, and `release-pod` never runs. `pods/ollama-keep-and-release` reproduces it, tagged `known-bug`; `pods/ollama-release-after-decisions` covers the pod's creation, fit, keep lease, release and cost on the path the bug does not reach.
 
 ### Phase 6: act smoke scenarios
 
