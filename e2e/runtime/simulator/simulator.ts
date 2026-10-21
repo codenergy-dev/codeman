@@ -136,7 +136,7 @@ export interface SimulatorOptions {
   /** A repository's variables, its organization's included. */
   vars?: (repository: string) => Record<string, string>;
   /** The fake OIDC issuer: its token URL as jobs reach it, and its registration. */
-  oidc?: { requestUrl: string; register(identity: RunIdentity): string };
+  oidc?: { requestUrl: string; register(identity: RunIdentity): string | Promise<string> };
   /** Codeman's action: the e2e bundle and the `action.yml` its input defaults come from. */
   bundle?: { entry?: string; actionYml?: string };
   /** The repository whose checkout `uses: ./<path>` and `uses: <it>@<ref>` run as the bundle. */
@@ -341,7 +341,7 @@ export class Simulator {
   readonly #workdir: string;
   readonly #queues = new Map<string, { running?: SimRun; pending?: SimRun }>();
   readonly #starting = new Set<Promise<unknown>>();
-  readonly #oidc = new Map<string, string>();
+  readonly #oidc = new Map<string, Promise<string>>();
   #actionInputs: Map<string, string | undefined> | undefined;
   #jobs = 0;
 
@@ -507,7 +507,7 @@ export class Simulator {
       throw new Error(`No ${request.workflow} in ${repository.fullName} at ${sha}.`);
     const workflow = loadWorkflow(text, request.workflow);
     const refName = ref.replace(/^refs\/(heads|tags)\//, "");
-    const record = request.runId
+    const record = await (request.runId
       ? this.#github.existingRun(request.runId)
       : this.#github.startRun({
           repository: repository.fullName,
@@ -518,7 +518,7 @@ export class Simulator {
           headSha: sha,
           ...(request.actor ? { actor: request.actor } : {}),
           ...(request.inputs ? { inputs: request.inputs } : {}),
-        });
+        }));
     const run = new SimRun(record.id, { ...request, workflows: source, sha, ref }, workflow);
     run.loaded.set(request.workflow, workflow);
     this.runs.push(run);
@@ -1096,7 +1096,7 @@ export class Simulator {
       Math.max(0, deadline - Date.now()),
     );
 
-    const record = this.#github.startJob(run.id, fullName);
+    const record = await this.#github.startJob(run.id, fullName);
     const hostRoot = join(this.#workdir, `run-${run.id}`, `${++this.#jobs}-${slug(fullName)}`);
     mkdirSync(hostRoot, { recursive: true });
     const session: JobSession = await this.#options.executor.start({
@@ -1124,7 +1124,7 @@ export class Simulator {
     }
     writeFileSync(toHost(eventPath), JSON.stringify(run.github.event ?? {}, null, 2));
 
-    const token = this.#github.jobToken(repository, restPermissions(permissions), run.id);
+    const token = await this.#github.jobToken(repository, restPermissions(permissions), run.id);
     const masks = new Set<string>([
       token,
       ...Object.values(instance.secrets).filter((value) => value.length > 0),
@@ -1182,7 +1182,7 @@ export class Simulator {
     };
     if (permissions["id-token"] === "write" && this.#options.oidc) {
       baseEnv.ACTIONS_ID_TOKEN_REQUEST_URL = this.#options.oidc.requestUrl;
-      baseEnv.ACTIONS_ID_TOKEN_REQUEST_TOKEN = this.#oidcToken(run, workflow.file);
+      baseEnv.ACTIONS_ID_TOKEN_REQUEST_TOKEN = await this.#oidcToken(run, workflow.file);
       masks.add(baseEnv.ACTIONS_ID_TOKEN_REQUEST_TOKEN);
     }
 
@@ -1420,12 +1420,13 @@ export class Simulator {
     return { result, outputs: jobOutputs };
   }
 
-  #oidcToken(run: SimRun, jobWorkflow: string): string {
+  /** One request token per run and job workflow: jobs that start at once share it. */
+  #oidcToken(run: SimRun, jobWorkflow: string): Promise<string> {
     const key = `${run.id}#${jobWorkflow}`;
     const known = this.#oidc.get(key);
     if (known) return known;
     const info = this.#github.repository(run.request.repository);
-    const token =
+    const token = Promise.resolve(
       this.#options.oidc?.register({
         repository: info.fullName,
         repositoryId: String(info.id),
@@ -1437,7 +1438,8 @@ export class Simulator {
         ref: String(run.github.ref),
         jobWorkflowFile: posix.basename(jobWorkflow),
         eventName: run.request.event,
-      }) ?? "";
+      }) ?? "",
+    );
     this.#oidc.set(key, token);
     return token;
   }

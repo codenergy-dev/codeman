@@ -22,6 +22,7 @@ npm run check   # lint, type check, test and build
 | `npm run test:runner` | `npm ci`, then `npm test` with the sandbox test, in a local stand-in for GitHub's runner; `npm run test:runner -- <command>` runs another command there. Needs Docker; see [running Actions locally](local-actions.md) |
 | `npm run build` | Bundle `src/index.ts` into `dist/index.js`, and the [gateway](../glossary.md#gateway), `src/gateway/main.ts`, into `dist/gateway.js` |
 | `npm run build:e2e` | The same bundles, into `e2e/.build/`, with the [e2e build's](#the-e2e-build) redirects |
+| `npm run test:e2e` | The [end-to-end suite](../plans/2026-10-20-end-to-end-test-suite.md): `npm run build:e2e`, its services with Docker Compose (kept running; `--down` stops them), then the scenarios one at a time; `-- <paths or tags>` selects some. A failure's report goes to `e2e/.out/<scenario>/`. Needs Docker |
 | `npm run check` | Lint, type check, test and build, in that order |
 
 ### The e2e build

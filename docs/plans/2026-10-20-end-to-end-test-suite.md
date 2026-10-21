@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-10-20T12:50:34-03:00
-updated_at: 2026-10-21T10:00:00-03:00
+updated_at: 2026-10-21T10:30:00-03:00
 commit: 21130fe
 ---
 
@@ -568,6 +568,23 @@ Commit message: `Add the e2e suite's images and Compose file`.
 | 4.4 | Assertions and reports: each `expect` kind; on failure, a timeline of events, job logs, the fakes' requests, store documents and engine status in `e2e/.out/<scenario>/` | A failing `expect` prints the timeline's last events and the report's path |
 
 `npm run test:e2e [-- <paths or tags>]` builds the e2e bundle, starts Compose and runs the scenarios. Done when `happy-path/openrouter-plan-only.yaml` passes.
+
+#### 4.3 and 4.4 results
+
+Run on 2026-10-21 on the plan's machine, `HEAD` `36a1b38`, with the real e2e bundle in the runner container, OpenCode from the npm cache in the jail, and the scripted model through the fake OpenRouter.
+
+| Done criterion | Result |
+| --- | --- |
+| `happy-path/openrouter-plan-only` passes | Pass, 34 s |
+| Two scenarios in a row share no document, pod or issue | Pass: each scenario checks it starts with none of them, nor a container, event, dispatch or model turn of the session; three scenarios in a row passed the check |
+| A failing `expect` prints the timeline's last events and the report's path | Pass, with a temporary scenario expecting `codeman:done` |
+| Also: `happy-path/openrouter-to-done` | Pass, 133 s |
+
+Where the runtime differs from this plan:
+
+- The fake GitHub runs in Compose, so the runtime drives it over HTTP (`e2e/runtime/github.ts`). The simulator's `GitHubPort` calls and the OIDC registration may answer with a promise: `simulator.ts`, `actions.ts` and `github.ts` await them.
+- A `run` leaves the dispatches its run makes to the next `advance`. On GitHub they would run at once, before the scenario's next comment, so in `openrouter-to-done` both the dispatched run and the comment's run move the task, and two chains run, one after the other in the concurrency group.
+- Not done yet: `fault: { job, conclusion: cancelled }` and `apply: skip` (the executor cannot cancel a job), `world.openrouter.credits` (the fake has no control route for it), and the engine's `gateway` check reads `/health`, since `/admin/status` needs the pod's admin token.
 
 Commit message: `Add the e2e runtime and workflow simulator`.
 

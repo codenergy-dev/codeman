@@ -55,6 +55,34 @@ export interface Dispatched {
   headSha: string;
 }
 
+export interface RunRecord {
+  id: number;
+  runNumber: number;
+  runAttempt: number;
+}
+
+export interface JobRecord {
+  id: number;
+  runtimeToken: string;
+  backendId: string;
+}
+
+export interface AppToken {
+  token: string;
+  installationId: number;
+  appSlug: string;
+}
+
+export interface UploadedArtifact {
+  id: number;
+  digest: string;
+  url: string;
+}
+
+/**
+ * Calls that reach the fake may answer with a promise, as a port over its HTTP control API does;
+ * the in-process port answers at once.
+ */
 export interface GitHubPort {
   /** The origins as the jobs reach them. */
   readonly urls: { server: string; api: string; graphql: string; results: string };
@@ -73,9 +101,9 @@ export interface GitHubPort {
     headSha: string;
     actor?: string;
     inputs?: Record<string, string>;
-  }): { id: number; runNumber: number; runAttempt: number };
+  }): RunRecord | Promise<RunRecord>;
   /** The run a dispatch made, which the simulator runs. */
-  existingRun(id: number): { id: number; runNumber: number; runAttempt: number };
+  existingRun(id: number): RunRecord | Promise<RunRecord>;
   updateRun(
     id: number,
     changes: {
@@ -84,16 +112,16 @@ export interface GitHubPort {
       concurrency?: string;
     },
   ): void;
-  startJob(runId: number, name: string): { id: number; runtimeToken: string; backendId: string };
+  startJob(runId: number, name: string): JobRecord | Promise<JobRecord>;
   finishJob(jobId: number, conclusion: string, log: string): void;
   /** A `GITHUB_TOKEN`, with GitHub's names (`pull_requests`). */
   jobToken(
     repository: string,
     permissions: Record<string, "read" | "write">,
     runId: number,
-  ): string;
+  ): string | Promise<string>;
   revokeToken(token: string): void;
-  appToken(request: AppTokenRequest): { token: string; installationId: number; appSlug: string };
+  appToken(request: AppTokenRequest): AppToken | Promise<AppToken>;
   checkout(request: CheckoutRequest): Promise<{ sha: string }>;
   uploadArtifact(
     runId: number,
@@ -101,9 +129,11 @@ export interface GitHubPort {
     name: string,
     files: Record<string, Buffer>,
     options: { retentionDays?: number; overwrite: boolean },
-  ): { id: number; digest: string; url: string };
+  ): UploadedArtifact | Promise<UploadedArtifact>;
   /** The run's artifacts by name, each as its files. */
-  artifacts(runId: number): Map<string, Map<string, Buffer>>;
+  artifacts(
+    runId: number,
+  ): Map<string, Map<string, Buffer>> | Promise<Map<string, Map<string, Buffer>>>;
   onDispatch(listener: (dispatch: Dispatched) => void): () => void;
 }
 

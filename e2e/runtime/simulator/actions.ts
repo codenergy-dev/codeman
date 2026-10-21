@@ -169,7 +169,7 @@ export const createAppToken: EmulatedAction = async (context) => {
       return entry;
     });
   }
-  const created = context.github.appToken({
+  const created = await context.github.appToken({
     clientId,
     privateKey,
     owner,
@@ -260,7 +260,7 @@ export const uploadArtifact: EmulatedAction = async (context) => {
     return {};
   }
   const retention = inputs["retention-days"] ? Number(inputs["retention-days"]) : undefined;
-  const uploaded = context.github.uploadArtifact(job.runId, job.backendId, name, files, {
+  const uploaded = await context.github.uploadArtifact(job.runId, job.backendId, name, files, {
     ...(retention !== undefined && Number.isFinite(retention) ? { retentionDays: retention } : {}),
     overwrite: truthyInput(inputs.overwrite, false),
   });
@@ -287,7 +287,7 @@ export const downloadArtifact: EmulatedAction = async (context) => {
   ]);
   const target = viewPath(context, inputs.path ?? "");
   const host = job.toHost(target);
-  const artifacts = context.github.artifacts(job.runId);
+  const artifacts = await context.github.artifacts(job.runId);
   const write = (dir: string, files: Map<string, Buffer>) => {
     for (const [path, data] of files) {
       const file = join(dir, ...path.split("/"));
