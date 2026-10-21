@@ -9,6 +9,7 @@ import { allowlistPlan, Launcher, type PodPlan } from "./launcher.ts";
 const TOKEN = "unit-launcher-token";
 const ran: { spec: LaunchSpec; plan: PodPlan; labels: Record<string, string> }[] = [];
 const stopped: string[] = [];
+const stopping: string[] = [];
 const launcher = new Launcher({
   token: TOKEN,
   plan: (spec) => allowlistPlan(spec, { model: "http://llm:8080", controlToken: "control" }),
@@ -19,6 +20,12 @@ const launcher = new Launcher({
   },
   stop: async (id) => {
     stopped.push(id);
+  },
+  stopping: async (id) => {
+    // Before the container goes, and its failure does not keep it.
+    assert.ok(!stopped.includes(id));
+    stopping.push(id);
+    throw new Error("The engine did not answer.");
   },
 });
 let base = "";
@@ -57,6 +64,7 @@ test("a pinned pod image runs as its local e2e image, with its model volume", as
   assert.deepEqual(launched?.labels, { "codeman-e2e.scenario": "unit", "codeman-e2e.pod": "pod1" });
 
   await httpLauncher(base, { token: TOKEN }).terminate("pod1");
+  assert.deepEqual(stopping, ["pod1"]);
   assert.deepEqual(stopped, ["pod1"]);
 });
 

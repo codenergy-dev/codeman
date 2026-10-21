@@ -148,6 +148,13 @@ export interface SimulatorOptions {
   /** The repository's default `GITHUB_TOKEN` permissions, for a workflow without `permissions`. */
   defaultPermissions?: Permissions;
   events?: SimulatorEvents;
+  /**
+   * Values that a job's masks leave out: a fake's stand-in for a secret a real service makes
+   * random, such as the Firestore emulator's admin token `owner`. GitHub's runner masks every
+   * secret a step registers, and skips each job output holding one, so a common word as a secret
+   * would hide every output with that word in it, as `select`'s `dispatches` holds `"owner"`.
+   */
+  unmasked?: readonly string[];
 }
 
 /** What starts a run. */
@@ -1583,7 +1590,7 @@ export class Simulator {
             },
             log,
             mask: (value) => {
-              if (value) context.masks.add(value);
+              if (value && !this.#options.unmasked?.includes(value)) context.masks.add(value);
             },
           });
           outputs = result.outputs ?? {};
@@ -1606,7 +1613,9 @@ export class Simulator {
     const result: CommandResult = await context.session.exec(command);
     // Masks apply to the whole output here, and the runner never echoes `::add-mask::`.
     const printed = readCommands(result.output);
-    for (const mask of printed.masks) context.masks.add(mask);
+    for (const mask of printed.masks) {
+      if (!this.#options.unmasked?.includes(mask)) context.masks.add(mask);
+    }
     for (const line of result.output.split("\n")) {
       if (line !== "" && !line.trim().startsWith("::add-mask::")) log(line);
     }

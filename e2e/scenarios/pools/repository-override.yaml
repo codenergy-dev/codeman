@@ -1,0 +1,86 @@
+# Settings precedence (docs/settings/reference.md, "Layers"; docs/installation/shared-settings.md;
+# docs/plans/2026-10-19-repository-override-of-organization-settings.md):
+# - a repository's .codeman/settings.yml overrides the organization's settings value by value;
+# - a repository variable CODEMAN_SETTINGS replaces them whole, so that repository's runs declare
+#   the organization's pool as the variable says, alone here: until another of the organization's
+#   repositories runs select, the other members batch with none of its repositories.
+name: A repository's file overrides the organization's settings, and its variable replaces them
+tags: [pools, settings, ollama, pods]
+runner: simulator
+profiles: [ollama]
+timeout: 25m
+world:
+  organizations:
+    - name: acme
+      settings: &settings
+        pool: [acme, globex]
+        task-budget: 1
+        profiles:
+          - { name: pair, tasks: 2, provider: runpod-pod, gpu: NVIDIA GeForce RTX 4090, model: qwen2.5:0.5b }
+    - { name: globex, settings: *settings }
+  repositories:
+    - { name: acme/app, fixture: node-small, maintainers: [alice] }
+    # Its repository variable replaces the organization's settings: no pool, no profiles.
+    - { name: acme/web, fixture: node-small, maintainers: [alice], settings: { model: deepseek/deepseek-v4.1-flash } }
+    - { name: globex/site, fixture: node-small, maintainers: [bob] }
+agent:
+  a1:
+    plan: &plan
+      - steps:
+          - bash: plan=$(sed -n 's/.*Create the plan at `\([^`]*\)`.*/\1/p' .codeman/task.md) && mkdir -p "$(dirname "$plan")" && printf '# A small change\n' > "$plan"
+          - output:
+              summary: Plans a small change.
+              decisions:
+                - { id: 1, title: Port, question: Which port?, options: [{ key: a, label: "8080" }, { key: b, label: "3000" }], recommendation: a }
+  w1: { plan: *plan }
+  b1: { plan: *plan }
+actions:
+  # acme/app's file overrides one value; the rest is the organization's.
+  - push: { as: alice, repo: acme/app, branch: main, message: Set the task budget, files: { .codeman/settings.yml: "task-budget: 3\n" } }
+  - open-issue: { ref: a1, repo: acme/app, as: alice, title: Add a health route, labels: [codeman] }
+  - run: { event: issues.labeled, repo: acme/app }
+  - expect:
+      issue: a1
+      comments: [{ kind: status, contains: "Waiting for 2 tasks ready for profile `pair`; 1 is, in 1 repository." }]
+      store:
+        - { doc: organizations/acme, fields: { pool: acme+globex } }
+        - { doc: pools/acme+globex/board/acme%2Fapp, fields: { tasks: [{ number: 1, stage: plan }] } }
+  # acme/web's variable: Codeman's default task budget, its model on OpenRouter, and no pool. Its
+  # run declares acme alone, for all of acme's repositories.
+  - open-issue: { ref: w1, repo: acme/web, as: alice, title: Add a version route, labels: [codeman] }
+  - run: { event: issues.labeled, repo: acme/web }
+  - expect:
+      issue: w1
+      labels: [codeman:awaiting-decision]
+      store:
+        - { doc: organizations/acme, fields: { pool: acme, members: [acme] } }
+        - { collection: organizations/acme/runs, where: { repository: acme/web, provider: openrouter, model: deepseek/deepseek-v4.1-flash, status: closed, limit: 2 }, count: 1 }
+  # globex's task finds acme declaring another pool: it is not batched with acme/app's ready task.
+  - open-issue: { ref: b1, repo: globex/site, as: bob, title: Add a status page, labels: [codeman] }
+  - run: { event: issues.labeled, repo: globex/site }
+  - expect:
+      issue: b1
+      no-labels: [codeman:awaiting-decision]
+      comments: [{ kind: status, contains: "Waiting for 2 tasks ready for profile `pair`; 1 is, in 1 repository." }]
+      store:
+        - { collection: pools/acme+globex/batches, count: 0 }
+  # A run of acme/app declares the pool again, and batches its task with globex's.
+  - parallel:
+      - - run: { event: workflow_dispatch, repo: acme/app }
+      - - wait:
+            timeout: 2m
+            until:
+              fakes:
+                github:
+                  dispatches: { where: { repository: globex/site, sender: "codeman[bot]" }, count: 1 }
+        - advance: { repo: globex/site, max-runs: 4, until: { issue: b1, labels: [codeman:awaiting-decision] } }
+  - expect: { issue: a1, labels: [codeman:awaiting-decision] }
+  - expect:
+      store:
+        - { doc: organizations/acme, fields: { pool: acme+globex, members: [acme, globex] } }
+        - { collection: pools/acme+globex/batches, where: { size: 2, formedBy: { repository: acme/app } }, count: 1 }
+        # Each task's limit is its task budget: acme/app's file's 3, globex's organization's 1.
+        - { collection: organizations/acme/runs, where: { repository: acme/app, provider: runpod-pod, status: closed, limit: 3 }, count: 1 }
+        - { collection: organizations/globex/runs, where: { repository: globex/site, provider: runpod-pod, status: closed, limit: 1 }, count: 1 }
+      pods: [{ count: 1 }]
+      violations: none

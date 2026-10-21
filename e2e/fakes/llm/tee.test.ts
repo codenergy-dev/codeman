@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { after, before, beforeEach, test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { contextCandidates, floorMessage } from "../../../src/gateway/fit.ts";
@@ -11,7 +14,15 @@ import { LlmFake } from "./llm.ts";
 import { ScriptedModel } from "./model.ts";
 import { scriptOf } from "./script.ts";
 import { accumulate, type Send, Session, sseEvents, taskFile } from "./session.ts";
-import { ENGINE_PROMPT, fromEnv, localScripts, remoteScripts, Tee, type TeeRecord } from "./tee.ts";
+import {
+  ENGINE_PROMPT,
+  fromEnv,
+  localScripts,
+  remoteScripts,
+  runners,
+  Tee,
+  type TeeRecord,
+} from "./tee.ts";
 
 const MODEL = "qwen2.5:0.5b";
 const DIGEST = "a8b0c51577010a279d933d14c2a8ab4b268079d44c5c8830c0a93900f1827c67";
@@ -439,4 +450,110 @@ test("the tee's environment names the engine and one source of scripts", async (
     fromEnv({ TEE_ENGINE: engineOrigin, TEE_MODEL: "http://llm:8080", TEE_VRAM_BYTES: "lots" }),
     /TEE_VRAM_BYTES must be a count/,
   );
+});
+
+test("the runners are the engine's llama-server processes, with their context and parallel requests", async () => {
+  const proc = mkdtempSync(join(tmpdir(), "codeman-e2e-proc-"));
+  try {
+    const process = (pid: number, args: string[]) => {
+      mkdirSync(join(proc, String(pid)));
+      writeFileSync(join(proc, String(pid), "cmdline"), `${args.join("\0")}\0`);
+    };
+    process(29, ["/usr/bin/ollama", "serve"]);
+    process(256, [
+      "/usr/lib/ollama/llama-server",
+      "--model",
+      "/root/.ollama/models/blobs/sha256-c5396e06",
+      "-c",
+      "131072",
+      "-np",
+      "4",
+      "--flash-attn",
+      "auto",
+    ]);
+    process(300, ["llama-server", "--ctx-size", "65536", "--parallel", "2"]);
+    mkdirSync(join(proc, "self"));
+    assert.deepEqual(
+      runners(proc).map(({ pid, context, parallel }) => ({ pid, context, parallel })),
+      [
+        { pid: 256, context: 131_072, parallel: 4 },
+        { pid: 300, context: 65_536, parallel: 2 },
+      ],
+    );
+    assert.equal(runners(proc)[0]?.args[0], "/usr/lib/ollama/llama-server");
+    assert.deepEqual(runners(join(proc, "missing")), []);
+
+    const local = new Tee({ engine: engineOrigin, script: localScripts(model), proc });
+    const origin = await local.inspection.listen();
+    try {
+      const listed = (await (await fetch(`${origin}/_fake/tee/runners`)).json()) as unknown[];
+      assert.equal(listed.length, 2);
+    } finally {
+      await local.inspection.close();
+    }
+  } finally {
+    rmSync(proc, { recursive: true, force: true });
+  }
+});
+
+test("the runners' slots are sampled while agents' requests are at the engine", async () => {
+  // A runner of 2 slots: at most 2 of the engine's requests process at once, the others wait.
+  const slotsServer = new FakeServer("llama-server");
+  slotsServer.route("GET", "/slots", () => {
+    const busy = Math.min(2, inFlight);
+    return json([0, 1].map((id) => ({ id, n_ctx: 32_768, is_processing: id < busy })));
+  });
+  let inFlight = 0;
+  const slotsOrigin = await slotsServer.listen();
+  const proc = mkdtempSync(join(tmpdir(), "codeman-e2e-proc-"));
+  mkdirSync(join(proc, "42"));
+  const port = new URL(slotsOrigin).port;
+  writeFileSync(
+    join(proc, "42", "cmdline"),
+    ["/usr/lib/ollama/llama-server", "--port", port, "--host", "127.0.0.1", "-np", "2", ""].join(
+      "\0",
+    ),
+  );
+  const engineServer = new FakeServer("engine");
+  engineServer.route("POST", "/v1/chat/completions", async () => {
+    inFlight++;
+    await sleep(300);
+    inFlight--;
+    return json({
+      choices: [{ index: 0, message: { role: "assistant", content: "OK" }, finish_reason: "stop" }],
+    });
+  });
+  const local = new Tee({
+    engine: await engineServer.listen(),
+    script: localScripts(model),
+    proc,
+    slotsIntervalMs: 20,
+  });
+  const origin = await local.server.listen();
+  try {
+    await Promise.all(
+      [1, 2, 3].map(() =>
+        post(origin, "/v1/chat/completions", {
+          ...new Session(taskFile(SCENARIO, "i1", "code")).request(),
+          stream: false,
+        }).then((response) => response.text()),
+      ),
+    );
+    const slots = (await (await fetch(`${origin}/_fake/tee/slots`)).json()) as {
+      slots: unknown[];
+      busiest: number;
+      samples: number;
+    };
+    assert.deepEqual(slots.slots, [
+      { id: 0, n_ctx: 32_768 },
+      { id: 1, n_ctx: 32_768 },
+    ]);
+    assert.equal(slots.busiest, 2);
+    assert.ok(slots.samples > 1);
+  } finally {
+    await local.server.close();
+    await engineServer.close();
+    await slotsServer.close();
+    rmSync(proc, { recursive: true, force: true });
+  }
 });

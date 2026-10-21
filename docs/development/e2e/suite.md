@@ -13,7 +13,7 @@ Codeman's bundles of the [e2e build](../guide.md#the-e2e-build) run the template
 - **Google:** the OIDC, STS and IAM Credentials path, with its signature, audience and [attribute condition](../../glossary.md#attribute-condition). Firestore's emulator runs Codeman's security rules.
 - **Pods:** the [gateway](../../glossary.md#gateway) as a process, in front of real Ollama 0.35.1 or vLLM 0.31.0 on the CPU, with the same tiny model on both.
 
-Each scenario is a YAML file under [`e2e/scenarios/`](../../../e2e/scenarios/happy-path/openrouter-plan-only.yaml). Two exist today, in `happy-path/`. The rest of the catalogue is phase 5 of the plan.
+Each scenario is a YAML file under [`e2e/scenarios/`](../../../e2e/scenarios/happy-path/openrouter-plan-only.yaml), by subject: `happy-path/`, `pods/`, `serverless/`, `parallel/` and `pools/` today. The catalogue is phase 5 of the [plan](../../plans/2026-10-20-end-to-end-test-suite.md#phase-5-the-scenario-catalogue).
 
 ## What it does not cover
 
@@ -39,6 +39,7 @@ The suite replaces some parts of the real path. What each replacement hides, no 
 | The tee, in each pod | The agent's chat to the engine | The engine reads a short fixed prompt, not the agent's: real prefill, real context use and parsing of the agent's tool calls go untested |
 | The tee's `/api/ps` and pull | Ollama's `size_vram`, and its registry pull | A real GPU's memory, and a pull from the registry |
 | The pod launcher | Runpod's machines, and Codeman's pinned pod images | The published images: the e2e images are built locally, with the e2e gateway |
+| The simulator's masks | GitHub's runner's, which hide each secret a step registers and skip each job output holding one | The fake Google's access token, `owner`, the one the Firestore emulator takes as an admin: Codeman masks it, but the simulator does not, since a real token is random and a common word would hide every output with it, such as `select`'s `dispatches`. A log that printed the token would not show it masked |
 
 ## Before you run it
 
@@ -76,6 +77,8 @@ A scenario's `profiles` field names the pods it needs. The runtime starts the pr
 | `ollama` and `vllm` | Both | 9.5 GiB |
 
 A vLLM pod peaks at about 5.5 GiB. Docker Desktop's default of 8 GB shows about 7.8 GB, which is short of what `vllm` requires.
+
+The largest `ollama` scenario, `parallel/four-tasks-one-pod`, peaks at about 5.6 GiB of containers: four agent jobs of about 0.75 GiB each, the pod at 2.1 GiB, the emulator at 0.3 GiB and the fakes. Five agent jobs and two pods, about 8.5 GiB, would not fit in 7.8 GB.
 
 > [!IMPORTANT]
 > For the `vllm` profile, set Docker Desktop's memory to 10 GB or more (Settings, Resources). Otherwise the runtime stops before it starts anything: "Docker has … of memory, and the vllm profile needs about …".
@@ -138,7 +141,7 @@ The report replaces the scenario's last one. A passing scenario leaves only `tim
 | `jobs/` | Each job's log, as `<order>-run<id>-<job>.log` |
 | `fakes/` | Each fake's lists, as `<fake>-<list>.json`: the requests it got, GitHub's events and dispatches, OpenRouter's keys, the model's turns |
 | `store.json` | The store's documents, by path: the organizations' runs and events, and their pools' pods, board, batches and Serverless endpoints' runs |
-| `engine.json` | Each pod's gateway status, engine status and last 300 log lines |
+| `engine.json` | Each live pod's gateway status, engine status, tee's view and last 300 log lines; a terminated pod's last status, read before its container was removed |
 | `violations.json` | What the fakes refused: tokens they did not give, model requests no script covers |
 
 To find the cause:

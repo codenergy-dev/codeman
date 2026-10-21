@@ -1,0 +1,53 @@
+# One repository's runs share the `codeman` concurrency group (templates/codeman.yml): one runs,
+# one waits, and a newer run replaces the waiting one, as on GitHub. Each run reads every task's
+# state, so the replaced run loses no task (docs/runs/runs-and-jobs.md).
+name: Two tasks of one repository, one run at a time, and a replaced pending run loses no task
+tags: [parallel, openrouter]
+runner: simulator
+timeout: 20m
+world:
+  organizations:
+    - { name: acme, settings: { model: deepseek/deepseek-v4.1-flash, task-budget: 2 } }
+  repositories:
+    - { name: acme/app, fixture: node-small, maintainers: [alice] }
+agent:
+  i1:
+    plan:
+      - steps:
+          - bash: plan=$(sed -n 's/.*Create the plan at `\([^`]*\)`.*/\1/p' .codeman/task.md) && mkdir -p "$(dirname "$plan")" && printf '# Add a health route\n' > "$plan"
+          - output:
+              summary: Adds a health route.
+              decisions:
+                - { id: 1, title: Port, question: Which port?, options: [{ key: a, label: "8080" }, { key: b, label: "3000" }], recommendation: a }
+  i2:
+    plan:
+      - steps:
+          - bash: plan=$(sed -n 's/.*Create the plan at `\([^`]*\)`.*/\1/p' .codeman/task.md) && mkdir -p "$(dirname "$plan")" && printf '# Add a version route\n' > "$plan"
+          - output:
+              summary: Adds a version route.
+              decisions:
+                - { id: 1, title: Source, question: Where does the version come from?, options: [{ key: a, label: package.json }, { key: b, label: git }], recommendation: a }
+actions:
+  # Three events of the codeman group, not run yet: i1's label, i2's label, and a command on i1.
+  - open-issue: { ref: i1, as: alice, title: Add a health route, labels: [codeman] }
+  - open-issue: { ref: i2, as: alice, title: Add a version route, labels: [codeman] }
+  - comment: { issue: i1, as: alice, body: /codeman set task-budget 3 }
+  # advance starts their three runs at once: i1's runs, i2's waits, and the command's replaces
+  # it. Then their chains, until both tasks wait for their decisions.
+  - advance:
+      max-runs: 10
+      until:
+        fakes:
+          github:
+            runs: { where: { event: issues, status: completed, conclusion: cancelled, concurrency: codeman }, count: 1 }
+        store:
+          - { collection: organizations/acme/runs, where: { provider: openrouter, status: closed, stage: plan }, count: 2 }
+  # No task was lost: each was planned once, and waits for its decision.
+  - expect: { issue: i1, labels: [codeman:awaiting-decision], comments: [{ kind: decisions, contains: Which port? }], ledger: { runs: 1 } }
+  - expect: { issue: i2, labels: [codeman:awaiting-decision], comments: [{ kind: decisions, contains: Where does the version come from? }], ledger: { runs: 1 } }
+  - expect:
+      fakes:
+        github:
+          # Only the replaced run was cancelled; no two runs of the group ran at once.
+          runs: { where: { conclusion: cancelled }, count: 1 }
+      violations: none

@@ -477,6 +477,20 @@ export class GitHubFake {
       );
     });
     control("GET", "/dispatches", (request) => poll(request, () => world.dispatches));
+    // The workflow runs, oldest first, as a scenario checks them: a pending run that a newer one
+    // replaced in its concurrency group ends cancelled.
+    control("GET", "/runs", () =>
+      [...world.runs.values()].map((run) => ({
+        id: run.id,
+        repository: run.repository.fullName,
+        workflow: run.workflowPath,
+        event: run.event,
+        status: run.status,
+        conclusion: run.conclusion,
+        concurrency: run.concurrency ?? null,
+        ...(run.inputs ? { inputs: run.inputs } : {}),
+      })),
+    );
     control("GET", "/violations", () => world.violations);
   }
 }

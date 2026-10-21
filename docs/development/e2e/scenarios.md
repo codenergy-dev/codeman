@@ -243,10 +243,10 @@ A fake's key with a mapping that has no `path` takes the second form, such as `r
 | `commits` | `{ branch, count, files, no-files, message }` | The branch, the task's by default, against the default branch: its commits, the paths it changes or not, a message's text |
 | `pull-request` | `none`, or `{ ready, state, files }` | The task's pull request: absent; or ready or a draft, `open` or `closed`, changing these paths |
 | `store` | `[{ doc, absent, fields }]` or `[{ collection, where, count }]` | A document exists or not, with these fields; or a collection's documents that match |
-| `ledger` | `{ cost-at-most, cost-at-least, runs, split-on }` | The issue's task's [ledger](../../glossary.md#ledger) runs, or every run: their summed `cost` in USD, and their count. `split-on` names a Serverless endpoint whose runs [split its worker's time](../../inference/serverless.md#splitting-shared-worker-time): they overlapped, each closed run costs its share, and the shares add up to the worker's billed time |
+| `ledger` | `{ cost-at-most, cost-at-least, runs, split-on, split-pod }` | The issue's task's [ledger](../../glossary.md#ledger) runs, or every run: their summed `cost` in USD, and their count. `split-on` names a Serverless endpoint whose runs [split its worker's time](../../inference/serverless.md#splitting-shared-worker-time): they overlapped, each closed run costs its share, and the shares add up to the worker's billed time. `split-pod` names a pod ref whose runs [split its time](../../inference/pods.md#splitting) ([below](#a-pods-split)) |
 | `fakes` | `{ <fake>: { <list>: { where, count } } }` | A fake's list has matching items |
 | `pods` | `[{ ref, pod, status, where, count }]` | The fake Runpod's pods. `ref` names the last that matches, for later checks; `pod` checks one named before |
-| `engine` | `{ pod, gateway, ollama, vllm }` | A pod's gateway `/admin/status`, with the admin token derived from the account's key and the pod's `CODEMAN_NONCE`; Ollama's `/api/ps`, through the tee; vLLM's first model of `/v1/models`, with its `metrics` ([below](#vllms-metrics)). `pod` is a ref; without it, the only live pod |
+| `engine` | `{ pod, gateway, ollama, vllm, tee }` | A pod's gateway `/admin/status`, with the admin token derived from the account's key and the pod's `CODEMAN_NONCE`; Ollama's `/api/ps`, through the tee; vLLM's first model of `/v1/models`, with its `metrics` ([below](#vllms-metrics)); what the tee saw ([below](#the-tees-view)). `pod` is a ref; without it, the only live pod. A terminated pod gives its last state, read just before its container was removed |
 | `violations` | `none` | No fake recorded a violation |
 
 Every scenario also ends with an implicit `violations: none`.
@@ -258,7 +258,7 @@ Every scenario also ends with an implicit `violations: none`.
 | Pattern | Written | Matches |
 | --- | --- | --- |
 | A scalar | `RUNNING`, `2`, `true`, `null` | An equal value; a number and its text are equal |
-| A range | `{ at-least: 1, at-most: 3 }` | A number within it |
+| A range | `{ at-least: 1, at-most: 3 }` | A number within it; a list whose length is within it, such as a pod's `seats` |
 | A mapping | `{ status: done }` | An object with at least these fields, each matching |
 | A list | `[a, b]` | A list of exactly these items, in order |
 
@@ -268,13 +268,47 @@ Every scenario also ends with an implicit `violations: none`.
 
 | Fake | Lists |
 | --- | --- |
-| `github` | `events`, `dispatches`, `violations`, `requests` |
+| `github` | `events`, `dispatches`, `runs`, `violations`, `requests` |
 | `openrouter` | `keys`, `generations`, `requests` |
 | `runpod` | `jobs`, `requests` |
 | `google`, `npm`, `huggingface` | `requests` |
 | `llm` | `turns`, `violations`, `requests` |
 
 What each list holds is in [the e2e fakes](fakes.md#control-routes).
+
+### The tee's view
+
+`engine.tee` holds what the pod's [tee](fakes.md#the-tee) saw at the engine:
+
+| Field | Value |
+| --- | --- |
+| `requests` | The chat requests it took, the agents' and the others, such as the gateway's probe |
+| `agent` | The agents' requests, for which the engine got the short prompt |
+| `overlap` | The most agents' requests the tee had at the engine at once: those the engine ran, and those it queued. OpenCode sends its title request beside its first turn, so it can reach twice the agents |
+| `runners` | The engine's runner processes, such as Ollama's `llama-server`, each with its `args`, `context` (`-c`) and `parallel` (`-np`) |
+| `slots` | The runners' slots, from llama-server's `/slots`, each with its `id` and `n_ctx`, its context |
+| `busiest` | The most slots that processed at once, sampled while agents' requests were at the engine: how many requests the engine ran together |
+
+```yaml
+- expect:
+    engine:
+      pod: p1
+      tee:
+        runners: [{ parallel: 4, context: 131072 }]
+        busiest: { at-least: 2, at-most: 4 }
+```
+
+A vLLM pod has no runner: its `runners` and `slots` are empty.
+
+### A pod's split
+
+`ledger.split-pod` holds when the closed ledger runs on the pod, of every organization of the scenario, [split its time](../../inference/pods.md#splitting):
+
+- there are at least two;
+- each costs less than the pod's time from its creation to the run's close, which a run alone on it would count;
+- their costs add up to no more than the pod's time until the last close, and to no less than its time from the last run's opening to the last close, when every run was on it.
+
+The pod's ref must be defined by an earlier action: put the check in an `expect` after the one whose `pods` check names it.
 
 ### vLLM's metrics
 

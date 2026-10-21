@@ -1,0 +1,105 @@
+# Four planning tasks on one Ollama pod, with the parallel-tasks profile of
+# docs/settings/profiles.md: tasks: 4, no ollama block, so the pod's OLLAMA_NUM_PARALLEL is the
+# profile's count (docs/settings/ollama.md, "Parallel requests"). Run it alone: four agent jobs
+# and the pod.
+name: Four tasks of a batch of 4 share one Ollama pod, one seat and one parallel request each
+tags: [parallel, ollama, pods]
+runner: simulator
+profiles: [ollama]
+timeout: 25m
+world:
+  organizations:
+    - name: acme
+      settings:
+        task-budget: 2
+        profiles:
+          - { name: parallel-tasks, tasks: 4, provider: runpod-pod, gpu: NVIDIA GeForce RTX 4090, model: qwen2.5:0.5b }
+  repositories:
+    - { name: acme/app, fixture: node-small, maintainers: [alice] }
+agent:
+  # The same plan for each task: a few turns, each a request to the engine, then a decision.
+  i1:
+    plan: &plan
+      - steps:
+          - bash: plan=$(sed -n 's/.*Create the plan at `\([^`]*\)`.*/\1/p' .codeman/task.md) && mkdir -p "$(dirname "$plan")" && printf '# A small change\n' > "$plan"
+          - read: package.json
+          - read: AGENTS.md
+          - bash: ls src
+          - output:
+              summary: Plans a small change.
+              decisions:
+                - { id: 1, title: Port, question: Which port?, options: [{ key: a, label: "8080" }, { key: b, label: "3000" }], recommendation: a }
+  i2: { plan: *plan }
+  i3: { plan: *plan }
+  i4: { plan: *plan }
+actions:
+  - open-issue: { ref: i1, as: alice, title: Add a health route, labels: [codeman] }
+  - open-issue: { ref: i2, as: alice, title: Add a version route, labels: [codeman] }
+  - open-issue: { ref: i3, as: alice, title: Add a ready route, labels: [codeman] }
+  - open-issue: { ref: i4, as: alice, title: Add a metrics route, labels: [codeman] }
+  - parallel:
+      # The last labeled issue's run takes all four: one batch of 4, each plan in its own jobs.
+      - - run: { event: issues.labeled }
+      # While the plans run: one pod, four seats, four parallel requests of 32768 tokens each.
+      - - wait: { until: { pods: [{ ref: p1, status: RUNNING }] }, timeout: 10m }
+        - wait:
+            timeout: 10m
+            until:
+              engine:
+                pod: p1
+                gateway:
+                  ready: true
+                  engine: ollama
+                  contextLength: 32768
+                  ollama: { OLLAMA_NUM_PARALLEL: "4" }
+                  fit: { source: search, parallel: 4, requestedParallel: 4, contextLength: 32768, modelContextLength: 32768 }
+                  # The four seats' runs.
+                  tasks: { at-least: 4, at-most: 4 }
+                # Ollama's context is per request: llama-server holds 4 × 32768 tokens.
+                ollama: { models: [{ name: qwen2.5:0.5b, context_length: 32768 }] }
+                tee:
+                  runners: [{ parallel: 4, context: 131072 }]
+
+  - expect: { issue: i1, labels: [codeman:awaiting-decision], comments: [{ kind: decisions, contains: Which port? }] }
+  - expect: { issue: i2, labels: [codeman:awaiting-decision] }
+  - expect: { issue: i3, labels: [codeman:awaiting-decision] }
+  - expect: { issue: i4, labels: [codeman:awaiting-decision] }
+  - expect:
+      pods:
+        - { count: 1 }
+        - pod: p1
+          status: TERMINATED
+          where:
+            billing: stopped
+            env: { CODEMAN_ENGINE: ollama, CODEMAN_OLLAMA: '{"OLLAMA_NUM_PARALLEL":"4"}', CODEMAN_GPU_MEMORY_GB: "24" }
+      store:
+        # One creator: one document, one pod-created event, three joins, four seats.
+        - collection: pools/acme/pods
+          where: { live: false, status: ended, capacity: 4, seats: { at-least: 4, at-most: 4 } }
+          count: 1
+        - { collection: pools/acme/pods, count: 1 }
+        - { collection: organizations/acme/events, where: { type: pod-created }, count: 1 }
+        - { collection: organizations/acme/events, where: { type: pod-joined }, count: 3 }
+        - { collection: organizations/acme/events, where: { type: pod-terminated }, count: 1 }
+        - { collection: pools/acme/batches, where: { size: 4, profile: parallel-tasks }, count: 1 }
+        - collection: organizations/acme/runs
+          where: { provider: runpod-pod, status: closed, stage: plan, profile: parallel-tasks }
+          count: 4
+      # The pod's tee, as it was when release-pod terminated the pod. Every agent's turn reached
+      # the engine: 4 agents of 8 requests each (the title, the task file, five steps, the final
+      # reply). OpenCode sends the title beside the first turn, so up to 8 were at the engine at
+      # once; llama-server ran up to its 4 slots of them together, one per seat, of 32768 tokens.
+      engine:
+        pod: p1
+        tee:
+          agent: 32
+          overlap: { at-least: 4, at-most: 8 }
+          runners: [{ parallel: 4, context: 131072 }]
+          slots: [{ n_ctx: 32768 }, { n_ctx: 32768 }, { n_ctx: 32768 }, { n_ctx: 32768 }]
+          busiest: { at-least: 2, at-most: 4 }
+      fakes:
+        runpod:
+          requests: { where: { method: POST, path: /v2/pods }, count: 1 }
+      # Each run's cost is its share of the pod's time, at the RTX 4090's Secure 0.69 USD an hour.
+      ledger: { runs: 4, split-pod: p1, cost-at-least: 0.0001, cost-at-most: 0.3 }
+      violations: none

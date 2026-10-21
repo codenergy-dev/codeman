@@ -4,10 +4,11 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { adminToken } from "../../src/inference/selfhosted.ts";
 import { Firestore } from "../../src/store/firestore.ts";
+import { EMULATOR_OWNER } from "../fakes/google/google.ts";
 import { Compose, network } from "./compose.ts";
 import { docker, dockerOk, imageExists, removeLabeled } from "./docker.ts";
 import { DockerExecutor, JOB_ROOT } from "./executor.ts";
-import { fakeList, vllmMetrics } from "./expect.ts";
+import { fakeList, teeStatus, vllmMetrics } from "./expect.ts";
 import { bundleEndpoints, FAKE_NAMES, FakeClient, type Fakes, INTERNAL } from "./fakes.ts";
 import { FaultingExecutor, type JobFault } from "./faults.ts";
 import { RemoteGitHub } from "./github.ts";
@@ -86,6 +87,8 @@ export class Session {
   readonly #secrets: Secrets;
   /** The scenario running now, which the launcher labels its pods with and logs to. */
   readonly #current: Current;
+  /** The engines of the pods whose containers were removed, as read just before. */
+  readonly #ended = new Map<string, EngineStatus>();
 
   private constructor(
     compose: Compose,
@@ -164,6 +167,8 @@ export class Session {
     };
     const github = new RemoteGitHub(fakes.github, { server: INTERNAL.github, caFile });
     const current: Current = { session: randomBytes(4).toString("hex"), scenario: "" };
+    // The launcher's hook needs the session, which needs the launcher.
+    let session: Session | undefined;
     const launcher = new Launcher({
       token: secrets.launcherToken,
       plan: (spec) =>
@@ -171,12 +176,14 @@ export class Session {
       labels: () => ({ [SESSION_LABEL]: current.session, [SCENARIO_LABEL]: current.scenario }),
       run: podRunner(JOBS_NETWORK),
       events: (event) => current.timeline?.add("pod", `${event.kind} ${event.id}: ${event.detail}`),
+      stopping: async (id) => session?.keepEngine(id),
     });
     await launcher.listen(
       secrets.launcherPort,
       process.env.CODEMAN_E2E_LAUNCHER_HOST ?? "127.0.0.1",
     );
-    return new Session(compose, fakes, github, launcher, secrets, current);
+    session = new Session(compose, fakes, github, launcher, secrets, current);
+    return session;
   }
 
   get id(): string {
@@ -207,6 +214,7 @@ export class Session {
     for (const name of FAKE_NAMES) await this.fakes[name].reset();
     this.github.forget();
     this.launcher.forget();
+    this.#ended.clear();
 
     let simulator: Simulator | undefined;
     let run: ScenarioRun | undefined;
@@ -263,6 +271,8 @@ export class Session {
         },
         bundle: { entry: join(BUILD, "index.js"), actionYml: join(ROOT, "action.yml") },
         workdir,
+        // The fake Google's access token, which Codeman masks: a real one is random.
+        unmasked: [EMULATOR_OWNER],
         events: {
           runQueued: (queued) =>
             timeline.add(
@@ -440,6 +450,10 @@ export class Session {
         }),
       };
     }
+    // Terminated pods: their last state, read before their container was removed.
+    for (const [id, status] of this.#ended) {
+      if (!(id in engine)) engine[id] = { removed: true, status };
+    }
     const violations = {
       github: await safely(() => this.github.violations()),
       llm: await safely(() => this.fakes.llm.json("GET", "/llm/violations")),
@@ -454,6 +468,19 @@ export class Session {
       engine,
       violations,
     };
+  }
+
+  /**
+   * Keeps a pod's engine as it is now, before the launcher removes its container, so checks
+   * can still read a terminated pod's last state, such as all its tee's requests.
+   */
+  async keepEngine(id: string): Promise<void> {
+    const status = await withTimeout(
+      this.#engine(id),
+      30_000,
+      () => new Error(`Pod ${id}'s engine did not answer.`),
+    );
+    this.#ended.set(id, status);
   }
 
   /** Firestore's emulator off the jobs network (`down`), or back on it. */
@@ -472,9 +499,13 @@ export class Session {
    * token Codeman derives from the account's key and the pod's nonce (its `CODEMAN_NONCE`, as the
    * fake Runpod recorded the pod's env), Ollama's `/api/ps`, vLLM's models and metrics.
    */
-  async #engine(id: string): Promise<{ gateway?: unknown; ollama?: unknown; vllm?: unknown }> {
+  async #engine(id: string): Promise<EngineStatus> {
     const container = this.launcher.pods.get(id);
-    if (!container) throw new Error(`The launcher started no pod ${id}.`);
+    if (!container) {
+      const ended = this.#ended.get(id);
+      if (ended) return ended;
+      throw new Error(`The launcher started no pod ${id}.`);
+    }
     const get = async (url: string, token?: string) => {
       // The token goes through the environment, so no command line holds it.
       const script = `fetch(${JSON.stringify(url)}, { headers: process.env.E2E_ADMIN ? { authorization: "Bearer " + process.env.E2E_ADMIN } : {} }).then((r) => r.text()).then((t) => process.stdout.write(t), (e) => { process.stderr.write(String(e)); process.exit(1); })`;
@@ -498,9 +529,16 @@ export class Session {
     const nonce = pods.find((pod) => pod.id === id)?.env?.CODEMAN_NONCE;
     if (!nonce) throw new Error(`The fake Runpod has no CODEMAN_NONCE for pod ${id}.`);
     const token = adminToken(PROVIDER_KEYS.CODEMAN_RUNPOD_API_KEY ?? "", nonce);
-    const status: { gateway?: unknown; ollama?: unknown; vllm?: unknown } = {
+    const status: EngineStatus = {
       gateway: parse(await get("http://127.0.0.1:8080/admin/status", token)),
     };
+    // The tee's inspection API, with the session's control token.
+    const records = parse(await get("http://127.0.0.1:9091/_fake/tee/requests", this.controlToken));
+    const runners = parse(await get("http://127.0.0.1:9091/_fake/tee/runners", this.controlToken));
+    const slots = parse(await get("http://127.0.0.1:9091/_fake/tee/slots", this.controlToken));
+    if (Array.isArray(records)) {
+      status.tee = teeStatus(records, Array.isArray(runners) ? runners : [], slots);
+    }
     const ps = parse(await get("http://127.0.0.1:11434/api/ps"));
     if (ps) status.ollama = ps;
     const models = parse(await get("http://127.0.0.1:8000/v1/models"));
@@ -517,6 +555,9 @@ export class Session {
     return this.#secrets.controlToken;
   }
 }
+
+/** A pod's engine, as checks read it. */
+type EngineStatus = { gateway?: unknown; ollama?: unknown; vllm?: unknown; tee?: unknown };
 
 /** Each job's log, by a file name in the order the jobs ended. */
 function jobLogs(simulator: Simulator | undefined): Record<string, string> {

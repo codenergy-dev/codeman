@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { MemoryStore } from "../../src/store/memory.ts";
-import { type CheckContext, check, matches, vllmMetrics } from "./expect.ts";
+import { type CheckContext, check, matches, teeStatus, vllmMetrics } from "./expect.ts";
 import type { Expectation } from "./scenario/schema.ts";
 
 /** The ledger's Serverless split check, on a store in memory: it reads no fake. */
@@ -116,4 +116,89 @@ test("vLLM's metrics keep each sample apart, and an info gauge gives its labels"
     },
   };
   assert.equal(matches(pattern, metrics), undefined);
+});
+
+test("the tee's status counts the agents' requests open at the engine at once", () => {
+  const agent = (start: number, end?: number) => ({
+    kind: "agent",
+    engine: end === undefined ? { start } : { start, end },
+  });
+  const status = teeStatus(
+    [
+      { kind: "passthrough", engine: { start: 0, end: 50 } },
+      agent(100, 200),
+      agent(150, 300),
+      agent(180, 250),
+      agent(260),
+      agent(400, 500),
+    ],
+    [{ pid: 1, parallel: 4 }],
+    { slots: [{ id: 0, n_ctx: 32_768 }], busiest: 1, samples: 9 },
+  );
+  assert.deepEqual(status, {
+    requests: 6,
+    agent: 5,
+    overlap: 3,
+    runners: [{ pid: 1, parallel: 4 }],
+    slots: [{ id: 0, n_ctx: 32_768 }],
+    busiest: 1,
+  });
+  assert.equal(teeStatus([agent(0, 10), agent(10, 20)], []).overlap, 1);
+});
+
+test("a range matches a list by its length", () => {
+  const four = { kind: "range" as const, atLeast: 4, atMost: 4 };
+  assert.equal(matches(four, ["a", "b", "c", "d"]), undefined);
+  assert.equal(matches(four, ["a"]), "1, below 4");
+});
+
+/** Two runs on pod `p`, created at 0 at 0.001 USD a second: A opened at 10 s, B at 20 s; both closed at 60 s. */
+async function podLedger(costs: { a: number; b: number }) {
+  const store = new MemoryStore();
+  const at = (seconds: number) => new Date(Date.UTC(2026, 9, 21) + seconds * 1000);
+  const run = (task: number, opened: number, cost: number) => ({
+    op: "set" as const,
+    path: `organizations/acme/runs/9001-1-${task}`,
+    fields: {
+      repository: "acme/app",
+      task,
+      workflowRun: "9001",
+      attempt: 1,
+      status: "closed",
+      provider: "runpod-pod",
+      pod: "p",
+      openedAt: at(opened),
+      closedAt: at(60),
+      cost,
+    },
+  });
+  await store.write([
+    { op: "set", path: "organizations/acme", fields: { pool: "acme" } },
+    {
+      op: "set",
+      path: "pools/acme/pods/n1",
+      fields: { pod: "p", pricePerSecond: 0.001, createdAt: at(0) },
+    },
+    run(1, 10, costs.a),
+    run(2, 20, costs.b),
+  ]);
+  const context = {
+    store,
+    issues: new Map([["i1", { repo: "acme/app", number: 1 }]]),
+    pods: new Map([["p1", "p"]]),
+  } as unknown as CheckContext;
+  const expectation = {
+    ledger: { splitPod: "p1", costAtMost: undefined, costAtLeast: undefined, runs: undefined },
+  } as unknown as Expectation;
+  return check(expectation, context);
+}
+
+test("the pod split holds when each run costs its share of the pod's time", async () => {
+  // 60 s of the pod, split: shares of 0.03 each.
+  assert.deepEqual(await podLedger({ a: 0.03, b: 0.03 }), []);
+  // A run that counts the pod's whole time did not share it.
+  assert.match((await podLedger({ a: 0.06, b: 0.01 }))[0] ?? "", /whole time/);
+  // Shares beyond the pod's time, or below the time when both ran.
+  assert.match((await podLedger({ a: 0.035, b: 0.035 }))[0] ?? "", /above the pod's time/);
+  assert.match((await podLedger({ a: 0.01, b: 0.01 }))[0] ?? "", /below the pod's time/);
 });

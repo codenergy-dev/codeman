@@ -42,6 +42,11 @@ export interface LauncherOptions {
   labels(): Record<string, string>;
   run?: PodRunner;
   stop?: PodStopper;
+  /**
+   * Called before a pod's container is removed, while it may still run, such as to keep its
+   * engine's last state for later checks. Its failure does not stop the removal.
+   */
+  stopping?(id: string): Promise<void>;
   /** Each launch and its outcome, for the timeline. */
   events?(event: { kind: "launch" | "refuse" | "terminate"; id: string; detail: string }): void;
 }
@@ -140,6 +145,7 @@ export class Launcher {
     if (request.method === "DELETE" && match?.[1]) {
       const id = match[1];
       if (!this.#pods.has(id)) return reply(response, 404, { failure: `No pod ${id}.` });
+      await this.#options.stopping?.(id).catch(() => undefined);
       await (this.#options.stop ?? stopPod)(id);
       this.#pods.delete(id);
       this.#options.events?.({ kind: "terminate", id, detail: "removed" });

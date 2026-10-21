@@ -459,3 +459,27 @@ ${step("true")}`,
     /\.github\/workflows\/main\.yml: jobs\.a\.if: \$\{\{ hashFiles\('x'\) != '' \}\}: the function hashFiles is not supported/,
   );
 });
+
+test("a value the options leave unmasked does not hide the outputs that hold it", {
+  skip,
+}, async () => {
+  // A step masks a word, as Codeman masks the fake Google's token `owner`, then outputs it.
+  const executor = new RecordingExecutor(async (command: Command) => {
+    if (command.kind !== "run") return undefined;
+    writeOutputs(command.env, { list: '[{"owner":"globex"}]' });
+    return { exitCode: 0, output: "::add-mask::owner\n" };
+  });
+  const files = {
+    ".github/workflows/main.yml": `on: workflow_dispatch
+jobs:
+  a:
+${step("masks")}    outputs:
+      list: \${{ steps.s.outputs.list }}
+`,
+  };
+  const masked = byName(await dispatch((await setup(files, executor)).simulator));
+  assert.deepEqual(masked.a?.outputs, {});
+  assert.match(masked.a?.log ?? "", /Skip output 'list' since it may contain secret/);
+  const { simulator } = await setup(files, executor, { unmasked: ["owner"] });
+  assert.deepEqual(byName(await dispatch(simulator)).a?.outputs, { list: '[{"owner":"globex"}]' });
+});

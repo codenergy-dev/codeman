@@ -469,6 +469,23 @@ test("runs, jobs and concurrency groups read as the templates' gh calls read the
     token,
   );
   assert.equal(after.body.total_count, 1);
+
+  // The control API lists them for the scenarios' checks, with their group and conclusion.
+  const listed = (await (
+    await fetch(`${origin}/_fake/github/runs`, { headers: { authorization: "Bearer control" } })
+  ).json()) as Record<string, unknown>[];
+  assert.deepEqual(
+    listed.map(({ event, status, conclusion, concurrency }) => ({
+      event,
+      status,
+      conclusion,
+      concurrency,
+    })),
+    [
+      { event: "schedule", status: "completed", conclusion: "success", concurrency: "codeman" },
+      { event: "workflow_dispatch", status: "pending", conclusion: null, concurrency: "codeman" },
+    ],
+  );
 });
 
 test("the control API builds a world over HTTP and needs its token", { skip }, async () => {

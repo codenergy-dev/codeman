@@ -29,7 +29,9 @@ export interface CheckContext {
    * A pod's engine: the gateway's `/admin/status`, Ollama's `/api/ps`, and vLLM's first model of
    * `/v1/models` with its `metrics` (`vllmMetrics`).
    */
-  engine?(podId: string): Promise<{ gateway?: unknown; ollama?: unknown; vllm?: unknown }>;
+  engine?(
+    podId: string,
+  ): Promise<{ gateway?: unknown; ollama?: unknown; vllm?: unknown; tee?: unknown }>;
 }
 
 export async function check(expectation: Expectation, context: CheckContext): Promise<string[]> {
@@ -164,6 +166,11 @@ export async function check(expectation: Expectation, context: CheckContext): Pr
     if (ledger.splitOn) {
       problems.push(...(await splitProblems(ledger.splitOn, owners, runs, context.store)));
     }
+    if (ledger.splitPod) {
+      const id = context.pods.get(ledger.splitPod);
+      if (!id) problems.push(`No pod ${ledger.splitPod}.`);
+      else problems.push(...(await podSplitProblems(id, owners, runs, context.store)));
+    }
   }
   for (const match of expectation.fakes ?? []) {
     problems.push(...(await fakeProblems(match, context.fakes)));
@@ -245,6 +252,79 @@ async function splitProblems(
     );
   }
   return problems;
+}
+
+/**
+ * Whether the runs on a pod split its time (docs/inference/pods.md, "Splitting"), from the
+ * ledger's closed runs on it and its registry document: at least two runs; each one's cost is
+ * below the pod's time from its creation to the run's close, the most a run alone would count;
+ * and their costs add up to no more than the pod's time until the last close, and to no less
+ * than its time from the last run's opening to the last close, when every run was on it.
+ */
+async function podSplitProblems(
+  pod: string,
+  owners: string[],
+  ledgerRuns: Record<string, unknown>[],
+  store: StoreReader,
+): Promise<string[]> {
+  const runs = ledgerRuns.filter((run) => run.pod === pod && run.status === "closed");
+  if (runs.length < 2) return [`Pod ${pod} has ${runs.length} closed runs; a split needs 2.`];
+  let record: Record<string, unknown> | undefined;
+  for (const owner of owners) {
+    const organization = await store.get(`organizations/${owner.toLowerCase()}`);
+    const pool = String(organization?.fields.pool ?? owner.toLowerCase());
+    const found = (await store.query(`pools/${pool}/pods`)).find(
+      (document) => document.fields.pod === pod,
+    );
+    if (found) record = found.fields as Record<string, unknown>;
+  }
+  if (!record) return [`No registry document holds pod ${pod}.`];
+  const price = Number(record.pricePerSecond);
+  const created = time(record.createdAt);
+  if (!Number.isFinite(price) || created === undefined) {
+    return [`Pod ${pod}'s document has no price or creation time.`];
+  }
+  const problems: string[] = [];
+  let shares = 0;
+  let lastOpen = Number.NEGATIVE_INFINITY;
+  let lastClose = Number.NEGATIVE_INFINITY;
+  for (const run of runs) {
+    const cost = Number(run.cost);
+    const opened = time(run.openedAt);
+    const closed = time(run.closedAt);
+    const name = `${String(run.workflowRun)}-${String(run.attempt)}-${String(run.task)}`;
+    if (!Number.isFinite(cost) || opened === undefined || closed === undefined) {
+      problems.push(`Run ${name} has no cost, opening or close.`);
+      continue;
+    }
+    shares += cost;
+    lastOpen = Math.max(lastOpen, opened);
+    lastClose = Math.max(lastClose, closed);
+    const alone = ((closed - created) / 1000) * price;
+    if (cost >= alone - 1e-9) {
+      problems.push(`Run ${name} costs ${cost}, the pod's whole time while it ran (${alone}).`);
+    }
+  }
+  if (problems.length > 0) return problems;
+  const most = ((lastClose - created) / 1000) * price;
+  const least = ((lastClose - lastOpen) / 1000) * price;
+  // Each cost is rounded, as the ledger keeps costs.
+  if (shares > most + 1e-5 * runs.length) {
+    problems.push(`The runs on pod ${pod} cost ${shares}, above the pod's time, ${most}.`);
+  }
+  if (shares < least - 1e-5 * runs.length) {
+    problems.push(
+      `The runs on pod ${pod} cost ${shares}, below the pod's time while all ran, ${least}.`,
+    );
+  }
+  return problems;
+}
+
+/** A stored time in milliseconds, from a date or its text. */
+function time(value: unknown): number | undefined {
+  const at =
+    value instanceof Date ? value.getTime() : typeof value === "string" ? Date.parse(value) : NaN;
+  return Number.isFinite(at) ? at : undefined;
 }
 
 /** Whether a ledger run is the endpoint document's: run IDs are `{workflow run}-{attempt}-{task}`. */
@@ -384,6 +464,7 @@ export async function fakeList(fakes: Fakes, fake: string, list: string): Promis
   const paths: Record<string, string> = {
     "github.events": "/github/events",
     "github.dispatches": "/github/dispatches",
+    "github.runs": "/github/runs",
     "github.violations": "/github/violations",
     "openrouter.keys": "/openrouter/keys",
     "openrouter.generations": "/openrouter/generations",
@@ -456,15 +537,74 @@ async function engineProblems(match: EngineMatch, context: CheckContext): Promis
     id = live[0]?.id;
   }
   if (!id) return [`No pod ${match.pod ?? ""}.`];
-  const status = await context.engine(id);
+  let status: Awaited<ReturnType<NonNullable<CheckContext["engine"]>>>;
+  try {
+    status = await context.engine(id);
+  } catch (error) {
+    return [`Pod ${match.pod ?? id}'s engine cannot be read: ${(error as Error).message}`];
+  }
   const problems: string[] = [];
-  for (const source of ["gateway", "ollama", "vllm"] as const) {
+  for (const source of ["gateway", "ollama", "vllm", "tee"] as const) {
     const fields = match[source];
     if (!fields) continue;
     const problem = matches({ kind: "object", fields }, status[source]);
     if (problem) problems.push(`The pod's ${source}: ${problem}`);
   }
   return problems;
+}
+
+/** What the tee saw at the engine, as `engine.tee` checks it. */
+export interface TeeStatus {
+  /** The chat requests it took, the agents' and the others, such as the gateway's probe. */
+  requests: number;
+  /** The agents' requests, for which the engine got the short prompt. */
+  agent: number;
+  /**
+   * The most agents' requests the tee had at the engine at once, from their start and end there:
+   * those the engine ran, and those it queued.
+   */
+  overlap: number;
+  /** The engine's runner processes, such as Ollama's `llama-server`, with `context` and `parallel`. */
+  runners: unknown[];
+  /** The runners' slots, each with its context (`n_ctx`): llama-server's `/slots`. */
+  slots: unknown[];
+  /** The most slots that processed at once, as the tee sampled them: what the engine ran together. */
+  busiest: number | undefined;
+}
+
+/**
+ * The tee's records (`GET /_fake/tee/requests`), runners (`GET /_fake/tee/runners`) and slots
+ * (`GET /_fake/tee/slots`) as the check reads them. A request still at the engine counts as open until now.
+ */
+export function teeStatus(
+  records: readonly { kind?: unknown; engine?: { start?: unknown; end?: unknown } }[],
+  runners: readonly unknown[],
+  slots?: { slots?: unknown; busiest?: unknown; samples?: unknown },
+): TeeStatus {
+  const agent = records.filter((record) => record.kind === "agent");
+  const edges: [number, number][] = [];
+  for (const record of agent) {
+    const start = Number(record.engine?.start);
+    if (!Number.isFinite(start)) continue;
+    const end = Number(record.engine?.end ?? Number.POSITIVE_INFINITY);
+    edges.push([start, 1], [Number.isNaN(end) ? Number.POSITIVE_INFINITY : end, -1]);
+  }
+  // At a tie, an end goes first: a request that ends as another starts did not overlap it.
+  edges.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  let open = 0;
+  let overlap = 0;
+  for (const [, step] of edges) {
+    open += step;
+    overlap = Math.max(overlap, open);
+  }
+  return {
+    requests: records.length,
+    agent: agent.length,
+    overlap,
+    runners: [...runners],
+    slots: Array.isArray(slots?.slots) ? slots.slots : [],
+    busiest: typeof slots?.busiest === "number" ? slots.busiest : undefined,
+  };
 }
 
 /** The labels every vLLM metric has (docs/web/vllm/vllm-v1-metrics-loggers-py-at-v0-31-0.md). */
@@ -520,7 +660,12 @@ export function matches(pattern: Pattern, value: unknown, at = ""): string | und
       return same ? undefined : `${where}${show(value)}, not ${show(pattern.value)}`;
     }
     case "range": {
-      const number = typeof value === "number" ? value : Number(value);
+      // A list matches by its length, such as a pod's seats.
+      const number = Array.isArray(value)
+        ? value.length
+        : typeof value === "number"
+          ? value
+          : Number(value);
       if (value === undefined || value === null || Number.isNaN(number)) {
         return `${where}${show(value)} is not a number`;
       }

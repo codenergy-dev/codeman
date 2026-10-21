@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { request as httpRequest, type IncomingMessage, type ServerResponse } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { type FakeRequest, FakeServer, HttpError, json, type Reply } from "../http.ts";
@@ -40,6 +40,10 @@ import { isScenarioName, scriptOf } from "./script.ts";
  *   engine started and ended it, its status, usage and error, so a scenario can count how many ran
  *   at once;
  * - `DELETE /requests`;
+ * - `GET /runners`: the engine's runner processes in the pod, such as Ollama's `llama-server`,
+ *   with their arguments, and the context (`-c`) and parallel requests (`-np`) they name;
+ * - `GET /slots`: the runners' slots (llama-server's `/slots`), each with its context, and the
+ *   most that processed at once, sampled while agents' requests were at the engine;
  * - `PUT /vram` `{ bytes }`: the virtual VRAM, or null to leave `/api/ps` as the engine says.
  */
 
@@ -67,7 +71,34 @@ export interface TeeSetup {
   vramBytes?: number | undefined;
   /** The engine's `max_tokens` for an agent's request: 8 by default. */
   maxTokens?: number;
+  /** Where the pod's processes are listed: `/proc` by default. */
+  proc?: string;
+  /** How often the runners' slots are sampled while agents' requests are at the engine. */
+  slotsIntervalMs?: number;
 }
+
+/** The runners' slots, as `GET /_fake/tee/slots` gives them. */
+export interface TeeSlots {
+  /** Each slot of the runners now, with its context (`n_ctx`). */
+  slots: { id: unknown; n_ctx: unknown }[];
+  /** The most slots processing at once in a sample, and how many samples were taken. */
+  busiest: number;
+  samples: number;
+}
+
+/** A runner process of the engine, as `GET /_fake/tee/runners` gives it. */
+export interface TeeRunner {
+  pid: number;
+  /** Its command line, the program first. */
+  args: string[];
+  /** Its `-c` (`--ctx-size`): the context of all its parallel requests together. */
+  context?: number;
+  /** Its `-np` (`--parallel`): the requests it serves at once. */
+  parallel?: number;
+}
+
+/** The programs that serve an engine's requests in a pod: Ollama 0.35.1's runner. */
+const RUNNERS = new Set(["llama-server"]);
 
 /** What the tee saw of one chat request. */
 export interface TeeRecord {
@@ -99,6 +130,11 @@ export class Tee {
   readonly #setup: TeeSetup;
   readonly #now: () => number;
   #next = 1;
+  /** Agents' requests at the engine now, which keep the slots' sampler going. */
+  #atEngine = 0;
+  #sampling: Promise<void> | undefined;
+  #busiest = 0;
+  #samples = 0;
 
   constructor(setup: TeeSetup, options: { now?: () => number } = {}) {
     this.#setup = setup;
@@ -128,6 +164,11 @@ export class Tee {
       this.records.length = 0;
       return { status: 204 };
     });
+    fake.control("GET", "/tee/runners", () => json(runners(this.#setup.proc ?? "/proc")));
+    fake.control("GET", "/tee/slots", async () => {
+      const slots = (await this.#slots()).map(({ id, n_ctx }) => ({ id, n_ctx }));
+      return json({ slots, busiest: this.#busiest, samples: this.#samples } satisfies TeeSlots);
+    });
     fake.control("PUT", "/tee/vram", (request) => {
       const { bytes } = (request.json() ?? {}) as { bytes?: unknown };
       if (bytes !== null && !(Number.isInteger(bytes) && (bytes as number) >= 0)) {
@@ -139,6 +180,8 @@ export class Tee {
     fake.onReset(() => {
       this.records.length = 0;
       this.vramBytes = this.#setup.vramBytes;
+      this.#busiest = 0;
+      this.#samples = 0;
     });
   }
 
@@ -183,6 +226,8 @@ export class Tee {
         : {}),
     };
     let answer: { status: number; contentType: string; text: string };
+    this.#atEngine++;
+    this.#sampling ??= this.#sample();
     try {
       const message = await call(`${this.#setup.engine}/v1/chat/completions`, {
         method: "POST",
@@ -194,7 +239,9 @@ export class Tee {
         contentType: header(message.headers["content-type"]) ?? "application/json",
         text: await text(message),
       };
+      this.#atEngine--;
     } catch (error) {
+      this.#atEngine--;
       record.engine.end = record.end = this.#now();
       record.engine.error = error instanceof Error ? error.message : String(error);
       if (abort.signal.aborted) return undefined;
@@ -215,6 +262,44 @@ export class Tee {
     await sendReply(response, await this.#setup.script(body, abort.signal));
     record.end = this.#now();
     return undefined;
+  }
+
+  /**
+   * Samples the runners' slots while agents' requests are at the engine, keeping the most that
+   * processed at once: the engine's own count of the requests it ran together.
+   */
+  async #sample(): Promise<void> {
+    try {
+      while (this.#atEngine > 0) {
+        const busy = (await this.#slots()).filter((slot) => slot.is_processing === true).length;
+        this.#samples++;
+        this.#busiest = Math.max(this.#busiest, busy);
+        await new Promise((done) => setTimeout(done, this.#setup.slotsIntervalMs ?? 100));
+      }
+    } finally {
+      this.#sampling = undefined;
+    }
+  }
+
+  /** The slots of each runner that listens on a port, from its `/slots`; none on a failure. */
+  async #slots(): Promise<{ id: unknown; n_ctx: unknown; is_processing?: unknown }[]> {
+    const slots: { id: unknown; n_ctx: unknown; is_processing?: unknown }[] = [];
+    for (const runner of runners(this.#setup.proc ?? "/proc")) {
+      const option = (name: string) => runner.args[runner.args.indexOf(name) + 1];
+      const port = runner.args.includes("--port") ? option("--port") : undefined;
+      if (!port) continue;
+      const host = runner.args.includes("--host") ? option("--host") : "127.0.0.1";
+      try {
+        const response = await fetch(`http://${host}:${port}/slots`, {
+          signal: AbortSignal.timeout(2000),
+        });
+        const body = (await response.json()) as unknown;
+        if (response.ok && Array.isArray(body)) slots.push(...body);
+      } catch {
+        // A runner that restarts, or still loads its model, has no slots to read.
+      }
+    }
+    return slots;
   }
 
   /** `/api/ps` with each model's `size_vram` taken from the virtual VRAM, in order. */
@@ -302,6 +387,44 @@ export class Tee {
       ]),
     };
   }
+}
+
+/**
+ * The engine's runner processes, from `proc`'s command lines: Ollama starts one `llama-server`
+ * for the loaded model, with the context and parallel requests the gateway's settings gave it.
+ */
+export function runners(proc: string): TeeRunner[] {
+  const found: TeeRunner[] = [];
+  let entries: string[];
+  try {
+    entries = readdirSync(proc);
+  } catch {
+    return found;
+  }
+  for (const entry of entries) {
+    if (!/^\d+$/.test(entry)) continue;
+    let args: string[];
+    try {
+      args = readFileSync(`${proc}/${entry}/cmdline`, "utf8").split("\0").filter(Boolean);
+    } catch {
+      continue;
+    }
+    if (!RUNNERS.has(args[0]?.split("/").at(-1) ?? "")) continue;
+    const option = (...names: string[]) => {
+      const index = args.findIndex((arg) => names.includes(arg));
+      const value = index < 0 ? undefined : Number(args[index + 1]);
+      return value !== undefined && Number.isSafeInteger(value) ? value : undefined;
+    };
+    const context = option("-c", "--ctx-size");
+    const parallel = option("-np", "--parallel");
+    found.push({
+      pid: Number(entry),
+      args,
+      ...(context !== undefined ? { context } : {}),
+      ...(parallel !== undefined ? { parallel } : {}),
+    });
+  }
+  return found.sort((a, b) => a.pid - b.pid);
 }
 
 /** The scripted model's server at `origin` as the replies' source. */

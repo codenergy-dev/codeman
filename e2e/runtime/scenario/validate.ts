@@ -931,7 +931,8 @@ function expectationOf(value: unknown, path: Path, context: Context): Expectatio
           ? "none"
           : pullMatchOf(fields["pull-request"], at("pull-request")),
     store: fields.store === undefined ? undefined : list(fields.store, at("store"), storeMatchOf),
-    ledger: fields.ledger === undefined ? undefined : ledgerOf(fields.ledger, at("ledger")),
+    ledger:
+      fields.ledger === undefined ? undefined : ledgerOf(fields.ledger, at("ledger"), context),
     fakes: fields.fakes === undefined ? undefined : fakeMatchesOf(fields.fakes, at("fakes")),
     pods:
       fields.pods === undefined
@@ -1021,10 +1022,16 @@ function storeMatchOf(value: unknown, path: Path): StoreMatch {
   };
 }
 
-function ledgerOf(value: unknown, path: Path): LedgerMatch {
-  const fields = record(value, path, ["cost-at-most", "cost-at-least", "runs", "split-on"]);
+function ledgerOf(value: unknown, path: Path, context: Context): LedgerMatch {
+  const fields = record(value, path, [
+    "cost-at-most",
+    "cost-at-least",
+    "runs",
+    "split-on",
+    "split-pod",
+  ]);
   if (Object.keys(fields).length === 0) {
-    fail(path, "expected cost-at-most, cost-at-least, runs or split-on");
+    fail(path, "expected cost-at-most, cost-at-least, runs, split-on or split-pod");
   }
   const split = fields["split-on"];
   if (split !== undefined && (typeof split !== "string" || !/^[A-Za-z0-9]{1,64}$/.test(split))) {
@@ -1032,6 +1039,10 @@ function ledgerOf(value: unknown, path: Path): LedgerMatch {
   }
   return {
     splitOn: split as string | undefined,
+    splitPod:
+      fields["split-pod"] === undefined
+        ? undefined
+        : podRef(fields["split-pod"], [...path, "split-pod"], context),
     costAtMost:
       fields["cost-at-most"] === undefined
         ? undefined
@@ -1094,7 +1105,7 @@ function podMatchOf(value: unknown, path: Path, context: Context): PodMatch {
 }
 
 function engineOf(value: unknown, path: Path, context: Context): EngineMatch {
-  const fields = record(value, path, ["pod", "gateway", "ollama", "vllm"]);
+  const fields = record(value, path, ["pod", "gateway", "ollama", "vllm", "tee"]);
   const source = (name: string) =>
     fields[name] === undefined ? undefined : patternFields(fields[name], [...path, name]);
   const engine: EngineMatch = {
@@ -1102,9 +1113,10 @@ function engineOf(value: unknown, path: Path, context: Context): EngineMatch {
     gateway: source("gateway"),
     ollama: source("ollama"),
     vllm: source("vllm"),
+    tee: source("tee"),
   };
-  if (!engine.gateway && !engine.ollama && !engine.vllm) {
-    fail(path, "expected gateway, ollama or vllm");
+  if (!engine.gateway && !engine.ollama && !engine.vllm && !engine.tee) {
+    fail(path, "expected gateway, ollama, vllm or tee");
   }
   return engine;
 }

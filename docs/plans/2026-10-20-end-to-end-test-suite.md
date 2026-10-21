@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-10-20T12:50:34-03:00
-updated_at: 2026-10-21T16:05:45-03:00
+updated_at: 2026-10-21T17:58:33-03:00
 commit: 21130fe
 ---
 
@@ -637,6 +637,52 @@ The MVP plan's bugs, in `happy-path/review-round`:
 > **Codeman bug, not fixed (2026-10-21).** A task whose stage ran on a pod cannot start its next stage until its batch expires, 30 minutes later. `exchange` in `src/board.ts` skips the repository's own ready tasks that an unexpired batch holds, its own `started` members included; [batches](../runs/batches.md#forming-batches) says only the other snapshots' tasks are held. So after a pod's plan with no decisions, the chain's next `select` logs "#1 Add a health route [ready]" and "Nothing to do", the kept pod is never joined, and `release-pod` never runs. `pods/ollama-keep-and-release` reproduces it, tagged `known-bug`; `pods/ollama-release-after-decisions` covers the pod's creation, fit, keep lease, release and cost on the path the bug does not reach.
 
 **Fixed on 2026-10-21** by the [plan to start the next stage of a pod task](2026-10-21-start-the-next-stage-of-a-pod-task.md): `pods/ollama-keep-and-release` lost its `known-bug` tag and passes three times in a row, each next stage joining the kept pod and `release-pod` terminating it.
+
+#### 5.2 results
+
+Run on 2026-10-21 on the plan's machine (Docker VM 7.65 GiB), `HEAD` `7693207` with the uncommitted step, three passes in a row of `npm run test:e2e -- parallel pools`.
+
+| Scenario | Pass 1 | Pass 2 | Pass 3 |
+| --- | --- | --- | --- |
+| `parallel/four-tasks-one-pod` | 143 s | 137 s | 138 s |
+| `parallel/two-batches-two-pods` (in place of `five-tasks-two-pods`) | 150 s | 167 s | 111 s |
+| `parallel/same-repository-twice` | 89 s | 89 s | 84 s |
+| `pools/two-organizations-batch` | 90 s | 66 s | 95 s |
+| `pools/reservation-expired` | 69 s | 72 s | 52 s |
+| `pools/repository-override` | 168 s | 126 s | 112 s |
+
+What they assert:
+
+- **`four-tasks-one-pod`**: one batch of 4 for the `tasks: 4` profile, one pod created by one task and joined by three, four seats. `OLLAMA_NUM_PARALLEL` 4 in the pod's env and the gateway's status, the fit's `parallel` 4 at 32768 tokens, Ollama's `/api/ps` `context_length` 32768, llama-server `-c 131072 -np 4` with four slots of `n_ctx` 32768. The tee saw 32 agent requests, 4 to 8 of them at the engine at once (OpenCode sends its title beside its first turn), and llama-server ran 2 to 4 of them together. Each run's cost is its share of the pod's time (`ledger.split-pod`).
+- **`two-batches-two-pods`**: scaled down (below). Two batches of 1 in one run, whose cap of 2 comes from another profile; the second task finds the first pod full and creates another: two pods, one creator and one seat each, `-np 1`.
+- **`same-repository-twice`**: three runs of the `codeman` group started at once: one runs, one waits, the newer replaces it, which ends `cancelled`. Both tasks are planned once each.
+- **`two-organizations-batch`**: two organizations declaring the same pool. globex's task waits alone on the board; acme's run forms the batch, reserves globex's task and dispatches globex's `codeman.yml` on `main` with the App's token; globex's run honors the reservation and joins the pod. One pod in `pools/acme+globex/pods` with both seats, a run in each organization's ledger, each costing its share.
+- **`reservation-expired`**: a batch seeded 31 minutes old (`age: 31m`) is neither honored nor dropped; its task waits on the board, then completes a new batch with acme's task.
+- **`repository-override`**: `.codeman/settings.yml` overrides the organization's `task-budget` alone (limit 3, the pool kept); a repository variable replaces the settings whole (Codeman's default limit 2, OpenRouter, no pool), and its run declares `acme` alone, so globex's task is not batched with acme's ready one until another acme run declares the pool again.
+
+Changes to the plan:
+
+- **`five-tasks-two-pods` does not fit in memory.** Five tasks on two pods at once need five agent jobs and two pods, about 8.5 GiB. A smaller pool case does not form two pods: with `tasks: 2` and 3 tasks, one batch of 2 forms and the third waits. `parallel/two-batches-two-pods` is the smallest case that forms two pods at once: 2 tasks, 2 pods of one parallel request.
+- **`parallel/vllm-two-seats` is not written.** The `vllm` profile needs 8 GiB, more than this VM has, and the runtime has no tag that skips a scenario, so a `vllm` scenario under `parallel/` would stop every run of the directory.
+
+Memory of `four-tasks-one-pod`, from `docker stats` every 6 to 7 seconds: peaks of 5.41, 5.72 and 5.61 GiB of containers across the three passes, with four agent jobs at 0.65 to 0.76 GiB each, the pod at 2.08 GiB, the emulator at 0.29 GiB and the fakes at about 0.33 GiB. About 2 GiB of the VM's 7.65 GiB stay free.
+
+Runtime and fake changes this step needed:
+
+- **The simulator's masks** (a fault of the fakes). The fake Google's access token is `owner`, the Firestore emulator's admin token. Codeman masks it, so the simulator, as GitHub's runner does, skipped every job output holding the word: `select`'s `dispatches`, whose entries have an `owner` key, was dropped, and no dispatch ran. A real token is random. The simulator now takes `unmasked` values, the session passes `owner` (`graph.test.ts`), and [what the seams hide](../development/e2e/suite.md#what-the-seams-hide) says so.
+- **The tee's inspection**: `GET /runners`, the engine's `llama-server` processes with `-c` and `-np`; `GET /slots`, llama-server's slots and the most that processed at once, sampled every 100 ms while agents' requests are at the engine (`tee.test.ts`). The tee alone cannot tell queued requests from running ones.
+- **Checks**: `engine.tee` (`teeStatus`), `ledger.split-pod`, a range matching a list by its length, and the fake GitHub's `runs` list (`expect.test.ts`, `github.test.ts`).
+- **A terminated pod's engine**: the launcher's `stopping` hook reads it before removing the container, so a check after the pod ended reads its last state; an engine that cannot be read is a problem, not an exception (`launcher.test.ts`).
+
+No Codeman bug was found.
+
+Bugs these scenarios cover:
+
+| Bug | Fix | Reverts cleanly | Check |
+| --- | --- | --- | --- |
+| `gh workflow run` without a ref needs `metadata: read` | `e26a8c9` | The template's two lines do; its docs conflict | With it reverted, in a scratch worktree, `two-organizations-batch`, `repository-override` and `reservation-expired` fail: the `Wake globex/site` job logs "unable to determine default branch for globex/site: GraphQL: Resource not accessible by integration (repository.defaultBranchRef)", and no dispatch is made |
+| A repository's `CODEMAN_SETTINGS` dropped the organization's pool and budget | None: [documented](2026-10-19-repository-override-of-organization-settings.md), no code change | – | `repository-override` asserts the documented behavior |
+| A pod task's next stage waited for its batch to expire | `50404b7` | – | Not reached by these scenarios, whose tasks stop at their decisions; `pods/ollama-keep-and-release` covers it (5.1) |
 
 ### Phase 6: act smoke scenarios
 

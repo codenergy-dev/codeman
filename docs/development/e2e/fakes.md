@@ -64,7 +64,7 @@ Each fake's own routes are under `/_fake/<fake>/`.
 
 | Fake | Routes |
 | --- | --- |
-| `github` | `POST users`, `orgs`, `repos`, `apps`, `installations`, `tokens`; `PUT repos/{owner}/{repo}/collaborators/{login}`; `POST act`, a user's action; `runs`, `jobs` and `artifacts`, for the simulator; `GET events`, `dispatches`, `violations`, `repos/{owner}/{repo}/issues` |
+| `github` | `POST users`, `orgs`, `repos`, `apps`, `installations`, `tokens`; `PUT repos/{owner}/{repo}/collaborators/{login}`; `POST act`, a user's action; `runs`, `jobs` and `artifacts`, for the simulator; `GET events`, `dispatches`, `runs` (each with its event, status, conclusion and concurrency group), `violations`, `repos/{owner}/{repo}/issues` |
 | `google` | `PUT setup`, the provider, service accounts and condition; `POST runs`, a run's OIDC request token; `PUT faults` |
 | `openrouter` | `GET keys`, with each key's shown `usage` and real spend; `PUT keys/{hash}/usage`; `PUT credits`, the account's credits until the next reset; `PUT lags`; `POST settle`; `PUT prices`; `PUT completions`; `GET generations`, each billed request |
 | `runpod` | `GET pods`, terminated ones included, with each one's env, `cost` and `billing` (`running`, or `stopped` once it exited or was terminated); `POST pods/{id}/{action}`; `PUT setup`; `GET` and `PATCH catalog`; `PUT endpoints/{id}` and its `workers`; `GET jobs`, the Serverless jobs; `GET endpoints/{id}/cost`; `PUT faults`, `{ podStart, lowBalance, holdQueues }`. The setup's shapes refuse unknown keys |
@@ -117,8 +117,10 @@ So the engine's concurrency, the context split between seats and the engine's se
 
 Its inspection API, under `/_fake/tee/` on port 9091 and on the engine's port:
 
-- `GET /requests`: each chat request, what the model took it for, and when the engine started and ended it, so a scenario can count how many ran at once;
+- `GET /requests`: each chat request, what the model took it for, and when the engine started and ended it, so a scenario can count how many were at the engine at once;
 - `DELETE /requests`;
+- `GET /runners`: the engine's runner processes in the pod, from `/proc`: Ollama's `llama-server`, with its arguments, its context (`-c`, all its parallel requests together) and its parallel requests (`-np`);
+- `GET /slots`: the runners' slots, from llama-server's `/slots`, each with its context; and `busiest`, the most slots that processed at once. The tee samples them every 100 ms while agents' requests are at the engine, since Ollama queues requests beyond its slots, which the tee cannot tell from running ones;
 - `PUT /vram` `{ bytes }`: the virtual VRAM, or `null` to pass `/api/ps` unchanged.
 
 ## The pod launcher
@@ -128,4 +130,4 @@ No container gets the Docker socket. When the fake Runpod creates a pod, it call
 1. The launcher maps the pod's image to a local e2e image, by the allowlist of [`e2e/infra/pod-images.ts`](../../../e2e/infra/pod-images.ts): Codeman's [pinned pod images](../../glossary.md#pinned-pod-image), by digest. Any other image is refused.
 2. It runs the container with `docker run --init` on the jobs network, with the pod's environment and its model's volume, read-only.
 3. The fake Runpod's proxy forwards `/pods/{id}/{port}` to the container.
-4. A terminated pod's container is removed. Every container of a scenario goes when the scenario ends.
+4. A terminated pod's container is removed, after the runtime reads its engine's state, which the `engine` check then gives for that pod ([checks](scenarios.md#checks)). Every container of a scenario goes when the scenario ends.

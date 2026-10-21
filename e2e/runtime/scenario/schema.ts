@@ -481,11 +481,17 @@ export interface LedgerMatch {
    * shares add up to the worker's billed time, not to the runs' own estimates.
    */
   splitOn: string | undefined;
+  /**
+   * A pod's ref: the runs on it split its time, as docs/inference/pods.md says: each closed run
+   * costs less than the pod's time while it ran, and their shares add up to the pod's time
+   * while they ran, from the last one's start to the last close at most.
+   */
+  splitPod: string | undefined;
 }
 
 /** The lists each fake's state has, from its control API. */
 export const FAKE_LISTS: Readonly<Record<FakeName, readonly string[]>> = {
-  github: ["events", "dispatches", "violations", "requests"],
+  github: ["events", "dispatches", "runs", "violations", "requests"],
   openrouter: ["keys", "generations", "requests"],
   runpod: ["jobs", "requests"],
   google: ["requests"],
@@ -528,10 +534,16 @@ export interface EngineMatch {
    * sample (`vllmMetrics` in expect.ts).
    */
   vllm: Record<string, Pattern> | undefined;
+  /**
+   * What the pod's tee saw (`teeStatus` in expect.ts): `requests`, `agent`, `overlap`, the most
+   * agents' requests at the engine at once, and `runners`, the engine's processes.
+   */
+  tee: Record<string, Pattern> | undefined;
 }
 
 /**
- * What a value must be: equal to a scalar; within a range (`{ at-least, at-most }`); an object
+ * What a value must be: equal to a scalar; within a range (`{ at-least, at-most }`), a list by
+ * its length; an object
  * holding at least these fields; or a list of exactly these items, in order.
  */
 export type Pattern =

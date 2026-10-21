@@ -1,0 +1,80 @@
+# A reservation lasts 30 minutes (docs/runs/batches.md, "Reservations"): after that, the batch's
+# tasks still reserved return to the board, and the batch runs smaller. The batch is seeded as
+# formed 31 minutes ago (decision 5 of docs/plans/2026-10-20-end-to-end-test-suite.md), with
+# globex's task still reserved, as when its dispatch was refused.
+name: A reservation older than 30 minutes is not honored, and its task returns to the board
+tags: [pools, ollama, pods]
+runner: simulator
+profiles: [ollama]
+timeout: 20m
+world:
+  organizations:
+    - name: acme
+      settings: &settings
+        pool: [acme, globex]
+        task-budget: 2
+        profiles:
+          - { name: pair, tasks: 2, provider: runpod-pod, gpu: NVIDIA GeForce RTX 4090, model: qwen2.5:0.5b }
+    - { name: globex, settings: *settings }
+  repositories:
+    - { name: acme/app, fixture: node-small, maintainers: [alice] }
+    - { name: globex/site, fixture: node-small, maintainers: [bob] }
+agent:
+  a1:
+    plan:
+      - steps:
+          - bash: plan=$(sed -n 's/.*Create the plan at `\([^`]*\)`.*/\1/p' .codeman/task.md) && mkdir -p "$(dirname "$plan")" && printf '# A small change\n' > "$plan"
+          - output:
+              summary: Plans a small change.
+              decisions:
+                - { id: 1, title: Port, question: Which port?, options: [{ key: a, label: "8080" }, { key: b, label: "3000" }], recommendation: a }
+actions:
+  # acme's run of 31 minutes ago formed a batch of 2: its own task, and globex's #1 reserved.
+  - seed:
+      doc: pools/acme+globex/batches/8001-1-0
+      age: 31m
+      data:
+        key: e2e-pair
+        profile: pair
+        size: 2
+        formedBy: { repository: acme/app, workflowRun: "8001", attempt: 1 }
+        formedAt: now
+        expiresAt: now+30m
+        members:
+          - { repository: acme/app, number: 9, status: started }
+          - { repository: globex/site, number: 1, status: reserved }
+  - open-issue: { ref: b1, repo: globex/site, as: bob, title: Add a status page, labels: [codeman] }
+  # globex's run does not honor the expired reservation: it neither starts nor drops the task,
+  # which waits for a batch of 2 again.
+  - run: { event: issues.labeled, repo: globex/site }
+  - expect:
+      issue: b1
+      labels: [codeman]
+      no-labels: [codeman:awaiting-decision]
+      comments: [{ kind: status, contains: "Waiting for 2 tasks ready for profile `pair`; 1 is, in 1 repository." }]
+      store:
+        - doc: pools/acme+globex/batches/8001-1-0
+          fields: { members: [{ repository: acme/app, number: 9, status: started }, { repository: globex/site, number: 1, status: reserved }] }
+        - { doc: pools/acme+globex/board/globex%2Fsite, fields: { tasks: [{ number: 1, stage: plan }] } }
+        - { collection: organizations/globex/runs, count: 0 }
+      pods: [{ count: 0 }]
+  # Back on the board, the task completes a new batch with acme's: the expired batch holds it no
+  # more, while an unexpired one would.
+  - open-issue: { ref: a1, repo: acme/app, as: alice, title: Add a health route, labels: [codeman] }
+  - run: { event: issues.labeled, repo: acme/app }
+  - expect:
+      issue: a1
+      labels: [codeman:awaiting-decision]
+      store:
+        - collection: pools/acme+globex/batches
+          where:
+            size: 2
+            profile: pair
+            formedBy: { repository: acme/app }
+            members: [{ repository: globex/site, number: 1, status: reserved }, { repository: acme/app, number: 1, status: started }]
+          count: 1
+        - { collection: pools/acme+globex/batches, count: 2 }
+      fakes:
+        github:
+          dispatches: { where: { repository: globex/site, sender: "codeman[bot]" }, count: 1 }
+      violations: none

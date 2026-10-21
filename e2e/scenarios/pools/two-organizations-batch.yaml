@@ -1,0 +1,96 @@
+# Two organizations of a pool share one Runpod account and one pod (docs/installation/pool.md,
+# docs/runs/batches.md). globex's task waits alone on the board; acme's run forms the batch of 2,
+# starts its own task, reserves globex's and wakes globex's repository with a dispatch, whose
+# token reads the target's default branch with metadata: read (e26a8c9: without it, gh workflow
+# run gets "Resource not accessible by integration (repository.defaultBranchRef)"). globex's run
+# honors the reservation, and its task joins the batch's pod.
+name: Two organizations of a pool batch their tasks on one pod, through a dispatch
+tags: [pools, ollama, pods]
+runner: simulator
+profiles: [ollama]
+timeout: 25m
+world:
+  organizations:
+    - name: acme
+      settings: &settings
+        pool: [acme, globex]
+        task-budget: 2
+        profiles:
+          - { name: pair, tasks: 2, provider: runpod-pod, gpu: NVIDIA GeForce RTX 4090, model: qwen2.5:0.5b }
+    - { name: globex, settings: *settings }
+  repositories:
+    - { name: acme/app, fixture: node-small, maintainers: [alice] }
+    - { name: globex/site, fixture: node-small, maintainers: [bob] }
+agent:
+  a1:
+    plan: &plan
+      - steps:
+          - bash: plan=$(sed -n 's/.*Create the plan at `\([^`]*\)`.*/\1/p' .codeman/task.md) && mkdir -p "$(dirname "$plan")" && printf '# A small change\n' > "$plan"
+          - output:
+              summary: Plans a small change.
+              decisions:
+                - { id: 1, title: Port, question: Which port?, options: [{ key: a, label: "8080" }, { key: b, label: "3000" }], recommendation: a }
+  b1: { plan: *plan }
+actions:
+  # globex's task alone: no batch of 2, so it waits on the pool's board.
+  - open-issue: { ref: b1, repo: globex/site, as: bob, title: Add a status page, labels: [codeman] }
+  - run: { event: issues.labeled, repo: globex/site }
+  - expect:
+      issue: b1
+      labels: [codeman]
+      no-labels: [codeman:awaiting-decision]
+      comments: [{ kind: status, contains: "Waiting for 2 tasks ready for profile `pair`; 1 is, in 1 repository." }]
+      store:
+        - { doc: organizations/globex, fields: { pool: acme+globex, members: [acme, globex] } }
+        - { doc: pools/acme+globex/board/globex%2Fsite, fields: { repository: globex/site, tasks: [{ number: 1, stage: plan }] } }
+  - open-issue: { ref: a1, repo: acme/app, as: alice, title: Add a health route, labels: [codeman] }
+  - parallel:
+      # acme's run forms the batch with globex's task and dispatches globex's workflow.
+      - - run: { event: issues.labeled, repo: acme/app }
+      # On GitHub, the dispatched run starts at once: it honors the reservation, and joins the pod.
+      - - wait:
+            timeout: 2m
+            until:
+              fakes:
+                github:
+                  dispatches: { where: { repository: globex/site, workflow: .github/workflows/codeman.yml, ref: main, sender: "codeman[bot]" }, count: 1 }
+        - advance: { repo: globex/site, max-runs: 4, until: { issue: b1, labels: [codeman:awaiting-decision] } }
+  - expect: { issue: a1, labels: [codeman:awaiting-decision], comments: [{ kind: decisions, contains: Which port? }] }
+  - expect: { issue: b1, labels: [codeman:awaiting-decision], comments: [{ kind: decisions, contains: Which port? }] }
+  - expect:
+      pods:
+        - { count: 1 }
+        - ref: p1
+          status: TERMINATED
+          where: { billing: stopped, env: { CODEMAN_POOL: acme+globex, CODEMAN_ORGANIZATION: acme, CODEMAN_OLLAMA: '{"OLLAMA_NUM_PARALLEL":"2"}' } }
+      store:
+        - { doc: organizations/acme, fields: { pool: acme+globex, members: [acme, globex] } }
+        # The batch acme's run formed: its task started, globex's reserved, then started by
+        # globex's run, which honored the reservation.
+        - collection: pools/acme+globex/batches
+          where:
+            size: 2
+            profile: pair
+            formedBy: { repository: acme/app }
+            members: [{ repository: globex/site, number: 1, status: started }, { repository: acme/app, number: 1, status: started }]
+          count: 1
+        - { collection: pools/acme+globex/batches, count: 1 }
+        # One pod in the pool's registry, created by acme's task and joined by globex's.
+        - { collection: pools/acme+globex/pods, where: { organization: acme, capacity: 2, claimedBy: acme/app#1, seats: [acme/app#1, globex/site#1] }, count: 1 }
+        - { collection: pools/acme+globex/pods, count: 1 }
+        - { collection: organizations/acme/events, where: { type: pod-created }, count: 1 }
+        - { collection: organizations/globex/events, where: { type: pod-joined }, count: 1 }
+        # Each organization's ledger has its own run on the shared pod.
+        - { collection: organizations/acme/runs, where: { repository: acme/app, provider: runpod-pod, status: closed, stage: plan }, count: 1 }
+        - { collection: organizations/globex/runs, where: { repository: globex/site, provider: runpod-pod, status: closed, stage: plan }, count: 1 }
+      fakes:
+        github:
+          # The App's one dispatch, from acme's dispatch job, with the batch; the others are
+          # next-run's, with the job's GITHUB_TOKEN.
+          dispatches: { where: { sender: "codeman[bot]" }, count: 1 }
+        runpod:
+          requests: { where: { method: POST, path: /v2/pods }, count: 1 }
+      ledger: { runs: 2 }
+      violations: none
+  # Each run's cost is its share of the pod's time.
+  - expect: { ledger: { split-pod: p1 } }
