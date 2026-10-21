@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-10-20T12:50:34-03:00
-updated_at: 2026-10-20T19:00:00-03:00
+updated_at: 2026-10-20T19:30:00-03:00
 commit: 21130fe
 ---
 
@@ -253,25 +253,27 @@ name: OpenRouter, from a labeled issue to done
 tags: [happy-path, openrouter]
 runner: simulator            # or act
 world:
-  organization: { owner: acme, settings: "task-budget: 2" }
-  repositories:
-    - { name: acme/app, fixture: node-small, maintainers: [alice] }
+  organizations: [{ name: acme, settings: { model: deepseek/deepseek-v4.1-flash, task-budget: 2 } }]
+  repositories: [{ name: acme/app, fixture: node-small, maintainers: [alice] }]
 agent:
   i1:
-    plan: [{ steps: [{ output: { decisions: [{ question: Which port?, options: ["8080", "3000"] }] } }] }]
-    route: [{ steps: [{ output: { route: [code, review] } }] }]
-    code: [{ steps: [{ write: { path: src/health.ts, content: "export const ok = true;\n" } }, { output: { summary: Adds the route } }], usage: { prompt: 1200, completion: 300 } }]
-    review: [{ steps: [{ output: { verdict: done } }] }]
+    plan:
+      - steps:
+          - bash: plan=$(sed -n 's/.*Create the plan at `\([^`]*\)`.*/\1/p' .codeman/task.md) && mkdir -p "$(dirname "$plan")" && printf '# Add a health route\n' > "$plan"
+          - output: { summary: Adds a health route., decisions: [{ id: 1, title: Port, question: Which port?, options: [{ key: a, label: "8080" }, { key: b, label: "3000" }], recommendation: a }] }
+    route: [{ steps: [{ output: { summary: Code, then review., route: [{ stage: code, brief: Add the route. }, { stage: review, brief: Check it. }], skipped: [{ stage: web, reason: No docs. }, { stage: design, reason: Settled. }, { stage: test, reason: Too small. }] } }] }]
+    code: [{ usage: { prompt: 1200, completion: 300 }, steps: [{ write: { path: src/health.ts, content: "export const ok = true;\n" } }, { output: { status: done, summary: Adds the route., commitMessage: Add a health route } }] }]
+    review: [{ steps: [{ output: { status: done, summary: The route is right. } }] }]
 actions:
-  - open-issue: { ref: i1, as: alice, repo: acme/app, title: Add a health route, labels: [codeman] }
-  - run: { repo: acme/app, event: issues.labeled }
-  - expect: { issue: i1, labels: [codeman:awaiting-decision], comment: { kind: decisions, contains: Which port? } }
-  - comment: { issue: i1, as: alice, body: /codeman decide 1a }
-  - advance: { repo: acme/app, until: { issue: i1, label: codeman:done }, max-runs: 6 }
-  - expect: { issue: i1, pull-request: { ready: true, files: [src/health.ts] }, ledger: { cost-at-most: 2 } }
+  - open-issue: { ref: i1, as: alice, title: Add a health route, labels: [codeman] }
+  - run: { event: issues.labeled }
+  - expect: { issue: i1, labels: [codeman:awaiting-decision], comments: [{ kind: decisions, contains: Which port? }] }
+  - comment: { issue: i1, as: alice, body: /codeman decide 1 a }
+  - advance: { until: { issue: i1, labels: [codeman:done] }, max-runs: 6 }
+  - expect: { issue: i1, pull-request: { ready: true, files: [src/health.ts] }, ledger: { cost-at-most: 2 }, violations: none }
 ```
 
-The output fields above are illustrative: step 4.1 takes them from Codeman's [agent output](../runs/agent.md#agent-output).
+The outputs are Codeman's [agent output](../runs/agent.md#agent-output). The planning agent writes its plan at a path that holds the day's date, so the script reads it from the task file. This example is `e2e/scenarios/happy-path/openrouter-to-done.yaml`; the schema of every action is in `e2e/runtime/scenario/schema.ts`.
 
 ## Steps
 

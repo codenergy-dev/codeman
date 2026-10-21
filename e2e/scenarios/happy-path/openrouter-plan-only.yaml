@@ -1,0 +1,30 @@
+name: OpenRouter, a labeled issue gets its plan and decisions
+tags: [happy-path, openrouter]
+runner: simulator
+world:
+  organizations:
+    - name: acme
+      settings: { model: deepseek/deepseek-v4.1-flash, task-budget: 2 }
+  repositories:
+    - { name: acme/app, fixture: node-small, maintainers: [alice] }
+agent:
+  i1:
+    plan:
+      - steps:
+          # The plan's path holds the day's date: the agent reads it from its task file.
+          - bash: plan=$(sed -n 's/.*Create the plan at `\([^`]*\)`.*/\1/p' .codeman/task.md) && mkdir -p "$(dirname "$plan")" && printf '# Add a health route\n' > "$plan"
+          - output:
+              summary: Adds a health route.
+              decisions:
+                - id: 1
+                  title: Port
+                  question: Which port?
+                  options: [{ key: a, label: "8080" }, { key: b, label: "3000" }]
+                  recommendation: a
+actions:
+  - open-issue: { ref: i1, as: alice, title: Add a health route, labels: [codeman] }
+  - run: { event: issues.labeled }
+  - expect:
+      issue: i1
+      labels: [codeman:awaiting-decision]
+      comments: [{ kind: decisions, contains: Which port? }]

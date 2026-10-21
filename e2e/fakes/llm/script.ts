@@ -92,6 +92,11 @@ export function isScenarioName(name: string): boolean {
   return NAME.test(name);
 }
 
+/** Whether a scenario's ref may name an issue: it goes in the marker. */
+export function isIssueRef(ref: string): boolean {
+  return REF.test(ref);
+}
+
 /** A script from the control API's or a file's JSON; a 400 that names the bad field otherwise. */
 export function scriptOf(value: unknown): Script {
   const script: Script = {};
