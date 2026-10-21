@@ -47,7 +47,11 @@ test("literals, and GitHub's loose equality and truthiness", () => {
     [true, 1, true],
     [true, "1", true],
     ["true", true, false],
-    ["0x10", 16, true],
+    // A string is cast by JSON's number syntax only.
+    ["0x10", 16, false],
+    ["+1", 1, false],
+    [" 1.5e1 ", 15, true],
+    [".5", 0.5, false],
     ["a", 0, false],
     [Number.NaN, Number.NaN, false],
     [[], [], false],

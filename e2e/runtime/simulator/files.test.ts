@@ -1,9 +1,18 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import { hasGit } from "../../fakes/github/git.ts";
 import { ProcessExecutor } from "./executor.ts";
-import { FileCommandError, parseKeyValues, readCommands } from "./files.ts";
+import {
+  FileCommandError,
+  parseKeyValues,
+  readCommands,
+  readStepFiles,
+  stepFiles,
+} from "./files.ts";
 import { byName, dispatch, setup } from "./testing.ts";
 
 const skip = !hasGit()
@@ -14,7 +23,7 @@ const skip = !hasGit()
 
 test("key-value files take NAME=value lines and heredocs, and refuse anything else", () => {
   assert.deepEqual(
-    [...parseKeyValues("a=1\nb=x=y\n\nc<<EOF\nline 1\r\nline 2\nEOF\nd=\n", "GITHUB_OUTPUT")],
+    [...parseKeyValues("a=1\nb=x=y\n\nc<<EOF\nline 1\r\nline 2\nEOF\nd=\n")],
     [
       ["a", "1"],
       ["b", "x=y"],
@@ -22,31 +31,77 @@ test("key-value files take NAME=value lines and heredocs, and refuse anything el
       ["d", ""],
     ],
   );
-  assert.throws(() => parseKeyValues("novalue\n", "GITHUB_OUTPUT"), FileCommandError);
-  assert.throws(() => parseKeyValues("=1\n", "GITHUB_OUTPUT"), FileCommandError);
-  assert.throws(
-    () => parseKeyValues("a<<EOF\nnever closed\n", "GITHUB_ENV"),
-    /Matching delimiter not found/,
-  );
+  // As the runner's parser, which checks the line rather than the name.
+  assert.deepEqual([...parseKeyValues("=1\n")], [["", "1"]]);
+  assert.throws(() => parseKeyValues("novalue\n"), FileCommandError);
+  assert.throws(() => parseKeyValues("a<<\n"), /delimiter must not be empty/);
+  assert.throws(() => parseKeyValues("a<<EOF\nnever closed\n"), /Matching delimiter not found/);
 });
 
-test("printed commands: masks, deprecated outputs, stop-commands, and set-env and add-path refused", () => {
+test("a malformed file keeps the pairs before its error and fails the step; NODE_OPTIONS is only left out", () => {
+  const dir = mkdtempSync(join(tmpdir(), "codeman-files-"));
+  try {
+    const files = stepFiles(dir, "/job/_temp/_runner_file_commands");
+    writeFileSync(files.host.output, "first=1\nbroken\nlater=2\n");
+    writeFileSync(files.host.env, "node_options=--require /tmp/x.js\nKEPT=yes\n");
+    writeFileSync(files.host.path, "/a\n\n/b \n");
+    const found = readStepFiles(files.host);
+    assert.deepEqual([...found.outputs], [["first", "1"]]);
+    assert.deepEqual([...found.env], [["KEPT", "yes"]]);
+    assert.deepEqual(found.paths, ["/a", "/b "]);
+    assert.equal(found.failed, true);
+    assert.deepEqual(found.errors, [
+      "Unable to process file command 'output' successfully.",
+      "Invalid format 'broken'",
+      "Can't store NODE_OPTIONS output parameter using '$GITHUB_ENV' command.",
+    ]);
+    writeFileSync(files.host.output, "");
+    assert.equal(
+      readStepFiles(files.host).failed,
+      false,
+      "a blocked name alone does not fail the step",
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("printed commands are parsed and refused as the runner does", () => {
   const found = readCommands(
     [
       "::add-mask::hidden",
-      "::set-output name=x::a%0Ab",
-      "  ::set-env name=EVIL::1",
-      "::stop-commands::pause",
+      "::add-mask::two%0Alines",
+      "::add-mask::   ",
+      "::set-output name=x::a%0Ab%0a ",
+      "::set-output::nameless",
+      "  ::SET-ENV name=EVIL::1",
+      "::not-a-command::ignored",
+      "::stop-commands::",
+      "::stop-commands::error",
+      "::stop-commands::pause-1234",
       "::add-path::/evil",
-      "::pause::",
+      "::PAUSE-1234::",
       "::add-path::/evil",
       "::error file=a.ts::broke",
     ].join("\n"),
   );
-  assert.deepEqual(found.masks, ["hidden"]);
-  assert.deepEqual([...found.outputs], [["x", "a\nb"]]);
-  assert.deepEqual(found.refused, ["set-env", "add-path"]);
+  assert.deepEqual(found.masks, ["hidden", "two\nlines", "two", "lines"]);
+  assert.deepEqual(found.warnings, [
+    "Can't add secret mask for empty string in ##[add-mask] command.",
+  ]);
+  // Data keeps trailing spaces, and only upper-case escapes are decoded.
+  assert.deepEqual([...found.outputs], [["x", "a\nb%0a "]]);
+  assert.deepEqual(found.refused, [
+    "set-output",
+    "set-env",
+    "stop-commands",
+    "stop-commands",
+    "add-path",
+  ]);
   assert.ok(found.errors.includes("broke"));
+  assert.ok(found.errors.includes("Required field 'name' is missing in ##[set-output] command."));
+  assert.ok(found.errors.some((line) => line.startsWith("The `set-env` command is disabled.")));
+  assert.ok(found.errors.some((line) => line.startsWith("You cannot use a endToken")));
 });
 
 test("GITHUB_OUTPUT, GITHUB_ENV, GITHUB_PATH and GITHUB_STEP_SUMMARY reach the next steps as on GitHub", {
@@ -109,14 +164,27 @@ jobs:
         run: |
           echo "::set-env name=EVIL::1"
           echo "::add-path::/evil"
+      - id: blocked
+        run: |
+          echo "NODE_OPTIONS=--require /tmp/evil.js" >> "$GITHUB_ENV"
+          echo "::stop-commands::e2e-pause-token"
+          echo "::set-env name=EVIL::2"
+          echo "::e2e-pause-token::"
       - id: after
-        run: echo "seen=[$EVIL][$PATH]" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "seen=[$EVIL][$PATH]" >> "$GITHUB_OUTPUT"
+          echo "node=[$NODE_OPTIONS]" >> "$GITHUB_OUTPUT"
 `,
     },
     new ProcessExecutor(),
   );
   const a = byName(await dispatch(simulator)).a;
   assert.equal(a?.steps[1]?.outcome, "failure");
+  // NODE_OPTIONS in GITHUB_ENV is left out without failing the step, and a command between
+  // stop-commands and its token is not processed.
+  assert.equal(a?.steps[2]?.outcome, "success", a?.log);
+  assert.match(a?.log ?? "", /Can't store NODE_OPTIONS output parameter/);
+  assert.equal(a?.steps[3]?.outputs.node, "[]");
   assert.match(a?.log ?? "", /The `set-env` command is disabled/);
   assert.match(a?.outputs.seen ?? "", /^\[\]\[/);
   assert.ok(!a?.outputs.seen?.includes("/evil"));

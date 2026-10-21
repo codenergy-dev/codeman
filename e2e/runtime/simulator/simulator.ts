@@ -21,7 +21,7 @@ import {
   toText,
   truthy,
 } from "./expressions.ts";
-import { FileCommandError, readCommands, readStepFiles, stepFiles } from "./files.ts";
+import { readCommands, readStepFiles, stepFiles } from "./files.ts";
 import { ActionFailure, type Dispatched, type GitHubPort } from "./github.ts";
 import {
   type JobSpec,
@@ -1327,7 +1327,12 @@ export class Simulator {
           for (const [key, value] of executed.env) {
             if (!/^(GITHUB|RUNNER)_/.test(key)) env[key] = value;
           }
-          paths.unshift(...executed.paths.reverse());
+          // As the runner's PrependPath: the latest entry first, each entry once.
+          for (const entry of executed.paths) {
+            const known = paths.indexOf(entry);
+            if (known >= 0) paths.splice(known, 1);
+            paths.unshift(entry);
+          }
           log("##[endgroup]");
         }
       } catch (caught) {
@@ -1599,15 +1604,11 @@ export class Simulator {
       if (line !== "" && !line.trim().startsWith("::add-mask::")) log(line);
     }
     for (const message of printed.errors) log(`##[error]${message}`);
-    let outcome: JobResultName = "success";
-    let fromFiles: ReturnType<typeof readStepFiles> | undefined;
-    try {
-      fromFiles = readStepFiles(files.host);
-    } catch (error) {
-      if (!(error instanceof FileCommandError)) throw error;
-      log(`##[error]${error.message}`);
-      outcome = "failure";
-    }
+    for (const message of printed.warnings) log(`##[warning]${message}`);
+    // The runner reads the files after the process, whatever its exit code.
+    const fromFiles = readStepFiles(files.host);
+    for (const message of fromFiles.errors) log(`##[error]${message}`);
+    let outcome: JobResultName = fromFiles.failed ? "failure" : "success";
     if (printed.refused.length > 0) outcome = "failure";
     if (result.timedOut) {
       log(`##[error]The action '${context.info.name}' has timed out.`);
@@ -1620,13 +1621,13 @@ export class Simulator {
     }
     outputs = {
       ...Object.fromEntries(printed.outputs),
-      ...Object.fromEntries(fromFiles?.outputs ?? []),
+      ...Object.fromEntries(fromFiles.outputs),
     };
     return {
       outcome,
       outputs,
-      env: fromFiles?.env ?? new Map(),
-      paths: fromFiles?.paths ?? [],
+      env: fromFiles.env,
+      paths: fromFiles.paths,
     };
   }
 

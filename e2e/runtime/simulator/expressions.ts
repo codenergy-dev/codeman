@@ -397,7 +397,10 @@ function property(value: unknown, name: string): unknown {
   return key === undefined ? undefined : object[key];
 }
 
-/** GitHub's truthiness: false, 0, -0, NaN, '' and null are false. */
+/**
+ * GitHub's truthiness: false, 0, -0, '' and null are false. No expression of the subset yields
+ * NaN, which GitHub's list leaves out; it is false here, as in JavaScript.
+ */
 export function truthy(value: unknown): boolean {
   const v = plain(value);
   if (v === null || v === false) return false;
@@ -406,6 +409,10 @@ export function truthy(value: unknown): boolean {
   return true;
 }
 
+/**
+ * GitHub's cast to a number: null 0, booleans 1 and 0, a string by JSON's number syntax (empty is
+ * 0, anything else NaN), arrays and objects NaN (docs/web/github/evaluate-expressions-in-workflows-and-actions.md, "Operators").
+ */
 function toNumber(value: unknown): number {
   const v = plain(value);
   if (v === null) return 0;
@@ -414,12 +421,7 @@ function toNumber(value: unknown): number {
   if (typeof v === "string") {
     const text = v.trim();
     if (text === "") return 0;
-    if (/^[+-]?0x[0-9a-f]+$/i.test(text)) {
-      const sign = text.startsWith("-") ? -1 : 1;
-      return sign * Number.parseInt(text.replace(/^[+-]?0x/i, ""), 16);
-    }
-    if (/^[+-]?(\d+(\.\d*)?|\.\d+)(e[+-]?\d+)?$/i.test(text)) return Number(text);
-    return Number.NaN;
+    return /^-?(0|[1-9]\d*)(\.\d+)?([eE][+-]?\d+)?$/.test(text) ? Number(text) : Number.NaN;
   }
   return Number.NaN;
 }
