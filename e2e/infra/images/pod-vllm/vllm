@@ -1,0 +1,21 @@
+#!/bin/bash
+# The e2e pod's `vllm`, first on the PATH: `vllm serve`, which the gateway runs with
+# `--port 8000` (src/gateway/vllm.ts, vllmServeArguments), listens on E2E_ENGINE_PORT instead,
+# behind the tee on 8000. The other arguments, `--enforce-eager` among them, come from the pod's
+# vLLM settings unchanged. On a CPU, the K/V cache's size comes from VLLM_CPU_KVCACHE_SPACE, in
+# GiB, 1 unless the pod's environment sets it; the threads, as spike 0.1 ran them, unless set.
+# Then the real vLLM runs.
+set -eu
+export VLLM_CPU_KVCACHE_SPACE="${VLLM_CPU_KVCACHE_SPACE:-1}"
+export VLLM_CPU_OMP_THREADS_BIND="${VLLM_CPU_OMP_THREADS_BIND:-nobind}"
+export OMP_NUM_THREADS="${OMP_NUM_THREADS:-4}"
+
+args=()
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --port) args+=(--port "${E2E_ENGINE_PORT:-8001}"); shift 2 ;;
+    --port=*) args+=("--port=${E2E_ENGINE_PORT:-8001}"); shift ;;
+    *) args+=("$1"); shift ;;
+  esac
+done
+exec /opt/venv/bin/vllm "${args[@]}"

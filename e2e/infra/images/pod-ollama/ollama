@@ -1,0 +1,7 @@
+#!/bin/sh
+# The e2e pod's `ollama`, first on the PATH: `ollama serve`, which the gateway runs with
+# OLLAMA_HOST=127.0.0.1:11434, listens on E2E_ENGINE_PORT instead, behind the tee on 11434.
+# Every other command reaches the engine there too. Then the real Ollama runs.
+set -eu
+export OLLAMA_HOST="127.0.0.1:${E2E_ENGINE_PORT:-11435}"
+exec /usr/bin/ollama "$@"

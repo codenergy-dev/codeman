@@ -1,8 +1,9 @@
 # The e2e suite's infrastructure (docs/plans/2026-10-20-end-to-end-test-suite.md, steps 3.2-3.3):
 # the fakes, Firestore's emulator and the session's test CA by default; the models' seeds in the
-# `ollama` and `vllm` profiles; the job image in the `images` profile, built but never started.
+# `ollama` and `vllm` profiles; the job and pod images in the `images` profile, built but never
+# started.
 #
-#   docker compose -f e2e/infra/compose.yaml --profile images build    # the job image
+#   docker compose -f e2e/infra/compose.yaml --profile images build    # the job and pod images
 #   docker compose -f e2e/infra/compose.yaml up --wait                 # the default profile
 #   docker compose -f e2e/infra/compose.yaml --profile ollama up --wait
 #   docker compose -f e2e/infra/compose.yaml down                      # keeps the named volumes
@@ -221,10 +222,38 @@ services:
     mem_limit: 1g
     memswap_limit: 1g
 
-  # The pods: pod-ollama and pod-vllm (step 3.2, after the tee). Not Compose services: the host-side
-  # orchestrator starts each one on the fake Runpod's request (decision 2), with `docker run` on the
-  # jobs network, the `ca` volume, and the `ollama` or `hf` volume read-only. Their images go here,
-  # in the `images` profile, as the job image does.
+  # The pod images (e2e/infra/images/pod-ollama/, pod-vllm/), which stand in for Codeman's pinned
+  # ones (e2e/infra/pod-images.ts). Never started here: the host-side orchestrator runs each pod the
+  # fake Runpod creates (decision 2), with `docker run --init` on the jobs network, the pod's env,
+  # the tee's variables, and the `ollama` volume on /root/.ollama/models or the `hf` volume on
+  # /root/.cache/huggingface, read-only. Both build from dist/, as the production images do.
+  pod-ollama-base:
+    profiles: [images]
+    image: codeman-pod-ollama:local
+    build:
+      context: ../../dist
+      dockerfile: ../docker/pod/Dockerfile
+      target: ollama
+  pod-ollama:
+    profiles: [images]
+    image: codeman-e2e-pod-ollama:local
+    build:
+      context: images
+      dockerfile: pod-ollama/Dockerfile
+      additional_contexts:
+        base: service:pod-ollama-base
+        # The fakes image, which the fakes' services build.
+        fakes: service:llm
+  pod-vllm:
+    profiles: [images]
+    image: codeman-e2e-pod-vllm:local
+    platform: linux/amd64
+    build:
+      context: images
+      dockerfile: pod-vllm/Dockerfile
+      additional_contexts:
+        dist: ../../dist
+        fakes: service:llm
 
   # The job image (e2e/infra/images/runner/): the local runner image, built here as runner-base,
   # with gh and the session CA's trust. Never started: the runtime runs each job with it, on the

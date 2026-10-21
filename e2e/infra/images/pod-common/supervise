@@ -1,0 +1,38 @@
+#!/bin/bash
+# The entry point of the e2e pod images (pod-ollama, pod-vllm): the tee on the engine's port, in
+# front of the real engine moved one port up by the image's wrapper, and Codeman's gateway,
+# dist/gateway.js, unchanged. The gateway starts and restarts the engine itself, as on a real pod,
+# so the engine's exits during the fit are not failures: this script watches the gateway and the
+# tee, and stops both, with the first one's status, when either one exits.
+#
+# The image sets E2E_TEE_PORT and E2E_ENGINE_PORT. The tee takes TEE_MODEL or TEE_SCRIPTS, and
+# optionally TEE_VRAM_BYTES, TEE_MAX_TOKENS, TEE_CONTROL_PORT (9091) and FAKE_CONTROL_TOKEN
+# (e2e/fakes/llm/tee.ts); TEE_HOST, 0.0.0.0 by default, is where the tee listens, so the runtime
+# can read the engine's own routes through it. Without TEE_VRAM_BYTES, the virtual VRAM is the
+# GPU's memory the pod was created with, CODEMAN_GPU_MEMORY_GB in GiB, as the gateway's fit reads
+# it (src/gateway/fit.ts).
+set -u
+
+if [ -z "${TEE_VRAM_BYTES:-}" ] && [ -n "${CODEMAN_GPU_MEMORY_GB:-}" ]; then
+  TEE_VRAM_BYTES=$(node -e 'process.stdout.write(String(Math.floor(Number(process.argv[1]) * 2 ** 30)))' "$CODEMAN_GPU_MEMORY_GB")
+  export TEE_VRAM_BYTES
+fi
+
+PORT=$E2E_TEE_PORT HOST=${TEE_HOST:-0.0.0.0} TEE_ENGINE=http://127.0.0.1:$E2E_ENGINE_PORT \
+  node /opt/codeman-e2e/e2e/fakes/main.ts tee &
+tee=$!
+node /opt/codeman/gateway.js &
+gateway=$!
+
+stop() { kill -TERM "$tee" "$gateway" 2>/dev/null; }
+trap stop TERM INT
+wait -n "$tee" "$gateway"
+status=$?
+if kill -0 "$gateway" 2>/dev/null; then first=tee; else first=gateway; fi
+stop
+wait
+echo "[e2e] The $first exited with $status: the pod stops." >&2
+# The gateway exits 0 when it terminates the pod, so the container stops as a real pod does; the
+# tee never ends on its own, so a pod whose tee ended fails.
+if [ "$first" = tee ] && [ "$status" -eq 0 ]; then status=1; fi
+exit "$status"
