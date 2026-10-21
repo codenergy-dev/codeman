@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-10-20T12:50:34-03:00
-updated_at: 2026-10-20T19:30:00-03:00
+updated_at: 2026-10-21T10:00:00-03:00
 commit: 21130fe
 ---
 
@@ -180,7 +180,7 @@ Answered by the responsible person on 2026-10-20: every recommendation below was
 
    **Recommendation: a).** **Answer: a).** `AGENTS.md` requires the responsible person's request to refresh a page.
 
-### Answered after spike 0.2
+### Answered after the spikes
 
 Answered by the responsible person on 2026-10-20.
 
@@ -190,6 +190,12 @@ Answered by the responsible person on 2026-10-20.
     - c) Defer phase 6 until a newer act.
 
     **Answer: a).** Failure scenarios run on the simulator only. Step 6.1 takes the spike's hardening.
+
+11. **The gateway's call that terminates its own pod** (`src/gateway/main.ts`) reaches `api.runpod.io` directly, so on the e2e's internal network the fake Runpod never sees it.
+    - a) The gateway takes the same e2e-only redirect, and the pod images run `e2e/.build/gateway.js`. `dist/gateway.js` gains a dead branch only, but its bytes change, so the published pod images differ from `dist/` until their next publish.
+    - b) Keep `dist/gateway.js` unchanged; the host launcher tells the fake Runpod when a pod's container exits.
+
+    **Answer: a).** The fake then sees the real call, with its pod ID and key, which matters for cost bugs. This replaces step 1.1's note that `dist/gateway.js` stays unchanged.
 
 ## Design
 
