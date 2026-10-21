@@ -38,6 +38,8 @@ The [end-to-end suite](../plans/2026-10-20-end-to-end-test-suite.md) runs the bu
 | `npm` | `https://registry.npmjs.org`, where OpenCode is downloaded; its pinned integrity is still checked |
 | `googleSts`, `googleIamCredentials`, `firestore` | Google's STS, IAM Credentials and Firestore |
 
+The e2e pod images run the gateway's e2e bundle, `e2e/.build/gateway.js`, so a pod that terminates itself reaches the fake Runpod through `runpod` ([decision 11](../plans/2026-10-20-end-to-end-test-suite.md#answered-after-the-spikes)). Like `e2e/.build/index.js`, it refuses to start without `CODEMAN_E2E_ENDPOINTS`; the images set it to the fake Runpod's origin on the suite's network.
+
 > [!IMPORTANT]
 > The published `dist/` never redirects: `npm run build` sets `__CODEMAN_E2E__` to `false`, so esbuild drops the code that reads the variable, and the build fails if `dist/` names `CODEMAN_E2E`.
 

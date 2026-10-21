@@ -226,7 +226,9 @@ services:
   # ones (e2e/infra/pod-images.ts). Never started here: the host-side orchestrator runs each pod the
   # fake Runpod creates (decision 2), with `docker run --init` on the jobs network, the pod's env,
   # the tee's variables, and the `ollama` volume on /root/.ollama/models or the `hf` volume on
-  # /root/.cache/huggingface, read-only. Both build from dist/, as the production images do.
+  # /root/.cache/huggingface, read-only. Both run the gateway's e2e bundle (decision 11): run
+  # `npm run build:e2e` before building them. pod-ollama-base is the production target, from dist/.
+  # The images set CODEMAN_E2E_ENDPOINTS to the fake Runpod's origin below; a launcher may replace it.
   pod-ollama-base:
     profiles: [images]
     image: codeman-pod-ollama:local
@@ -244,6 +246,7 @@ services:
         base: service:pod-ollama-base
         # The fakes image, which the fakes' services build.
         fakes: service:llm
+        e2e-build: ../.build
   pod-vllm:
     profiles: [images]
     image: codeman-e2e-pod-vllm:local
@@ -252,7 +255,7 @@ services:
       context: images
       dockerfile: pod-vllm/Dockerfile
       additional_contexts:
-        dist: ../../dist
+        e2e-build: ../.build
         fakes: service:llm
 
   # The job image (e2e/infra/images/runner/): the local runner image, built here as runner-base,

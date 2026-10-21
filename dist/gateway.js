@@ -4,6 +4,9 @@ const require = createRequire(import.meta.url);
 // src/gateway/main.ts
 import { spawn } from "node:child_process";
 
+// src/e2e.ts
+var E2E = false ? redirects(process.env) : void 0;
+
 // src/inference/engine.ts
 function openAiUsage(body, cachedApart = false) {
   if (typeof body !== "object" || body === null) return void 0;
@@ -1975,7 +1978,8 @@ async function main() {
   const terminate = async (reason) => {
     log(`Terminating the pod: ${reason}.`);
     if (settings.podId && settings.podKey) {
-      await new Runpod(settings.podKey).pods.terminate(settings.podId).catch((error2) => {
+      const runpod = E2E ? E2E.gpu(new Runpod(settings.podKey, E2E.fetch)) : new Runpod(settings.podKey);
+      await runpod.pods.terminate(settings.podId).catch((error2) => {
         log(`Could not terminate the pod: ${error2 instanceof Error ? error2.message : error2}`);
       });
     }

@@ -1,4 +1,5 @@
 import { type ChildProcess, spawn } from "node:child_process";
+import { E2E } from "../e2e.ts";
 import type { InferenceEngine } from "../inference/engine.ts";
 import { OLLAMA_URL, ollama } from "../inference/ollama.ts";
 import { Runpod } from "../inference/runpod.ts";
@@ -43,7 +44,11 @@ async function main(): Promise<void> {
   const terminate = async (reason: string): Promise<never> => {
     log(`Terminating the pod: ${reason}.`);
     if (settings.podId && settings.podKey) {
-      await new Runpod(settings.podKey).pods.terminate(settings.podId).catch((error: unknown) => {
+      // The e2e build's pods reach the fake Runpod (src/e2e.ts); the published build, Runpod.
+      const runpod = E2E
+        ? E2E.gpu(new Runpod(settings.podKey, E2E.fetch))
+        : new Runpod(settings.podKey);
+      await runpod.pods.terminate(settings.podId).catch((error: unknown) => {
         log(`Could not terminate the pod: ${error instanceof Error ? error.message : error}`);
       });
     }

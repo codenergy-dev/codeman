@@ -29,8 +29,10 @@ const names = (file: string) => readFileSync(`${out}/${file}`, "utf8").includes(
 if (!e2e && (names("index.js") || names("gateway.js"))) {
   throw new Error(`dist/ holds the e2e build's redirects: it names ${variable}.`);
 }
-if (e2e && !names("index.js")) {
-  throw new Error(
-    `e2e/.build/index.js lacks the e2e build's redirects: it never names ${variable}.`,
-  );
+for (const file of e2e ? ["index.js", "gateway.js"] : []) {
+  if (!names(file)) {
+    throw new Error(
+      `e2e/.build/${file} lacks the e2e build's redirects: it never names ${variable}.`,
+    );
+  }
 }
