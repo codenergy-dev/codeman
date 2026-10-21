@@ -5,7 +5,9 @@ import { POD_IMAGES } from "../../src/inference/images.ts";
  * host-side orchestrator (decision 2 of docs/plans/2026-10-20-end-to-end-test-suite.md): the fake
  * Runpod passes it the image a pod was created with, and it runs the local image this allowlist
  * maps it to, or refuses. Codeman asks Runpod for `POD_IMAGES` (src/inference/images.ts) by
- * digest; e2e/infra/compose.yaml's `images` profile builds the local images, from dist/.
+ * digest; e2e/infra/compose.yaml's `images` profile builds the local images: the Ollama one on the
+ * production target built from dist/, both with the gateway's e2e bundle, e2e/.build/gateway.js
+ * (decision 11).
  */
 export const LOCAL_POD_IMAGES: Readonly<Record<string, string>> = {
   ollama: "codeman-e2e-pod-ollama:local",

@@ -148,6 +148,7 @@ export interface Fakes {
   openrouter: FakeClient;
   runpod: FakeClient;
   npm: FakeClient;
+  huggingface: FakeClient;
   /** The emulator's origin from the host, such as `http://127.0.0.1:41234`. */
   firestore: string;
 }
@@ -159,6 +160,7 @@ export const FAKE_NAMES: readonly FakeName[] = [
   "google",
   "llm",
   "npm",
+  "huggingface",
 ];
 
 /** The services' origins as jobs and pods reach them on the jobs network (compose.yaml). */
@@ -169,12 +171,13 @@ export const INTERNAL = {
   openrouter: "http://openrouter:8080",
   runpod: "http://runpod:8080",
   npm: "http://npm:8080",
+  huggingface: "http://huggingface:8080",
   firestore: "http://firestore:8080",
 } as const;
 
 /**
  * `CODEMAN_E2E_ENDPOINTS` for the e2e bundle (src/e2e.ts): every service it redirects, on the
- * jobs network. Hugging Face has no fake: a job that reaches it fails, as the network is internal.
+ * jobs network.
  */
 export function bundleEndpoints(internal: typeof INTERNAL = INTERNAL): Record<string, string> {
   return {
@@ -183,6 +186,7 @@ export function bundleEndpoints(internal: typeof INTERNAL = INTERNAL): Record<st
     runpodServerless: internal.runpod,
     runpodPods: `${internal.runpod}/pods/{id}/{port}`,
     npm: internal.npm,
+    huggingFace: internal.huggingface,
     googleSts: internal.google,
     googleIamCredentials: internal.google,
     firestore: internal.firestore,

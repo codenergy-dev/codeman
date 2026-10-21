@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { relative } from "node:path";
 import { memoryProblem } from "./compose.ts";
 import { dockerMemory } from "./docker.ts";
-import { selectScenarios } from "./scenario/filter.ts";
+import { runnerProblem, selectScenarios } from "./scenario/filter.ts";
 import { loadScenarios, SCENARIOS_ROOT } from "./scenario/load.ts";
 import type { Profile, Scenario } from "./scenario/schema.ts";
 import { ROOT, type ScenarioResult, Session } from "./session.ts";
@@ -37,8 +37,9 @@ log(
   `${scenarios.length} scenario${scenarios.length === 1 ? "" : "s"}: ${scenarios.map((one) => one.id).join(", ")}.`,
 );
 
-// Decision 7: a profile Docker's memory cannot hold is refused before anything starts.
-const problem = memoryProblem(profiles, await dockerMemory());
+// A runner the runtime does not have, and (decision 7) a profile Docker's memory cannot hold, are
+// refused before anything starts.
+const problem = runnerProblem(scenarios) ?? memoryProblem(profiles, await dockerMemory());
 if (problem) {
   console.error(`[e2e] ${problem}`);
   process.exit(1);

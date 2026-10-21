@@ -6,7 +6,7 @@ This page is for whoever adds a scenario to the [end-to-end suite](suite.md): th
 
 - **Where:** a `.yaml` file under `e2e/scenarios/<subject>/`. Its ID is its path there without `.yaml`, such as `happy-path/openrouter-plan-only`.
 - **YAML:** version 1.2 with the core schema. Custom tags, merge keys (`<<`) and duplicate keys are errors, and aliases may expand at most 100 times.
-- **Keys** are kebab-case, such as `max-runs`. Any unknown key is an error.
+- **Keys** are kebab-case, such as `max-runs`. Any unknown key is an error, in the fakes' own shapes too (`runpod.catalog`, `runpod.endpoints`) and in the agent's script.
 - **Errors** name the file, the line and the field, such as `actions[3].expect.labels: missing.`
 - **Check it:** `npm test` loads every scenario, so a new one is checked before any Docker run.
 
@@ -64,7 +64,7 @@ actions:
 | --- | --- | --- | --- |
 | `name` | Yes | What the scenario shows, in one line | |
 | `tags` | No | Words that select it on the command line: lowercase letters, digits and `-`. `known-bug` marks a scenario that reproduces a bug of Codeman not fixed yet ([known bugs](suite.md#known-bugs)) | None |
-| `runner` | No | `simulator` or `act` | `simulator` |
+| `runner` | No | `simulator` or `act`. The runtime refuses `act` until [phase 6](suite.md#under-act) | `simulator` |
 | `profiles` | No | The Compose profiles it needs: `ollama`, `vllm` ([memory](suite.md#profiles-and-memory)) | None |
 | `timeout` | No | The whole scenario's time limit | `15m` |
 | `world` | Yes | The users, organizations and repositories; see [the world](#the-world) | |
@@ -109,8 +109,8 @@ A repository whose owner is no organization of the world belongs to a user accou
 | `users` | Logins with no role, such as a stranger who comments | None |
 | `app.slug` | The App's slug | `codeman` |
 | `app.installations` | `[{ owner, repositories, permissions }]`: `repositories` is `all` or names; `permissions` is `{ name: read \| write \| admin }` | One per owner, on all its repositories, with Codeman's permissions |
-| `runpod.catalog` | GPU types, in the fake Runpod's shape ([`catalog.ts`](../../../e2e/fakes/runpod/catalog.ts)) | The fake's catalog |
-| `runpod.endpoints` | [Serverless endpoints](../../glossary.md#serverless-endpoint), in the fake's shape ([`serverless.ts`](../../../e2e/fakes/runpod/serverless.ts)) | None |
+| `runpod.catalog` | GPU types, in the fake Runpod's shape ([`catalog.ts`](../../../e2e/fakes/runpod/catalog.ts)), with its camelCase keys, such as `maxCount` | The fake's catalog |
+| `runpod.endpoints` | [Serverless endpoints](../../glossary.md#serverless-endpoint), in the fake's shape ([`serverless.ts`](../../../e2e/fakes/runpod/serverless.ts)), such as `workers: { min, max, idleTimeout }` | None |
 | `openrouter.prices` | `{ prompt, completion }`, USD per token | The fake's |
 | `openrouter.lags` | `{ usage, analytics }`: a duration, or `hold` until settled | None |
 | `openrouter.credits` | The account's credits, in USD | 100 |
@@ -211,8 +211,8 @@ In `seed`'s `data`, `now`, `now-45m` and `now+1h` are times relative to when it 
 
 | Key | Value | Effect |
 | --- | --- | --- |
-| `github`, `openrouter`, `runpod`, `google`, `llm`, `npm` | `{ path, method, status, body, delay, drop, times }`, `path` required | An HTTP fault on the fake's routes that `path` matches, such as `/v1/token`. One of `status`, `delay` or `drop` is required. `times` limits it |
-| `runpod` | `{ pod-start, hold-queues }` | `pod-start: never` makes a pod that never serves, `fail` one that fails to start. `hold-queues` holds the Serverless queues: `true` or endpoint IDs |
+| `github`, `openrouter`, `runpod`, `google`, `llm`, `npm`, `huggingface` | `{ path, method, status, body, delay, drop, times }`, `path` required | An HTTP fault on the fake's routes that `path` matches, such as `/v1/token`. One of `status`, `delay` or `drop` is required. `times` limits it |
+| `runpod` | `{ pod-start, low-balance, hold-queues }` | `pod-start: never` makes a pod that never serves, `fail` one that fails to start. `low-balance: true` makes each valid pod creation answer 402, as Runpod does for an account short of credit. `hold-queues` holds the Serverless queues: `true` or endpoint IDs |
 | `google` | `{ refuse-repositories, disabled-accounts, expiry }` | Refuses those repositories' tokens or those service accounts, or shortens the tokens' expiry |
 | `openrouter` | `{ lags: { usage, analytics } }` | Changes the lags from now on |
 | `pod` | `{ pod, action }` | The pod a ref names: `restart`, `exit` or `fail` |
@@ -246,7 +246,7 @@ A fake's key with a mapping that has no `path` takes the second form, such as `r
 | `ledger` | `{ cost-at-most, cost-at-least, runs, split-on }` | The issue's task's [ledger](../../glossary.md#ledger) runs, or every run: their summed `cost` in USD, and their count. `split-on` names a Serverless endpoint whose runs [split its worker's time](../../inference/serverless.md#splitting-shared-worker-time): they overlapped, each closed run costs its share, and the shares add up to the worker's billed time |
 | `fakes` | `{ <fake>: { <list>: { where, count } } }` | A fake's list has matching items |
 | `pods` | `[{ ref, pod, status, where, count }]` | The fake Runpod's pods. `ref` names the last that matches, for later checks; `pod` checks one named before |
-| `engine` | `{ pod, gateway, ollama, vllm }` | A pod's gateway `/admin/status`, with the admin token derived from the account's key and the pod's `CODEMAN_NONCE`; Ollama's `/api/ps`, through the tee; vLLM's `/v1/models` with its `metrics`. `pod` is a ref; without it, the only live pod |
+| `engine` | `{ pod, gateway, ollama, vllm }` | A pod's gateway `/admin/status`, with the admin token derived from the account's key and the pod's `CODEMAN_NONCE`; Ollama's `/api/ps`, through the tee; vLLM's first model of `/v1/models`, with its `metrics` ([below](#vllms-metrics)). `pod` is a ref; without it, the only live pod |
 | `violations` | `none` | No fake recorded a violation |
 
 Every scenario also ends with an implicit `violations: none`.
@@ -271,11 +271,29 @@ Every scenario also ends with an implicit `violations: none`.
 | `github` | `events`, `dispatches`, `violations`, `requests` |
 | `openrouter` | `keys`, `generations`, `requests` |
 | `runpod` | `jobs`, `requests` |
-| `google`, `npm` | `requests` |
+| `google`, `npm`, `huggingface` | `requests` |
 | `llm` | `turns`, `violations`, `requests` |
 
 What each list holds is in [the e2e fakes](fakes.md#control-routes).
 
+### vLLM's metrics
+
+`engine.vllm.metrics` holds vLLM's `/metrics`, one key per sample of a `vllm:` metric ([metrics](../../web/vllm/vllm-v1-metrics-loggers-py-at-v0-31-0.md)):
+
+- The key is the metric's name, with its labels other than `model_name` and `engine` in braces. Quote it in YAML.
+- An info gauge, such as `vllm:cache_config_info`, gives its labels instead of its value, 1.
+
+```yaml
+- expect:
+    engine:
+      vllm:
+        max_model_len: 8192
+        metrics:
+          "vllm:num_requests_running": 2
+          'vllm:num_requests_waiting_by_reason{reason="capacity"}': 1
+          "vllm:cache_config_info": { kv_cache_size_tokens: 87296 }
+```
+
 ## Not available yet
 
-The schema accepts `runner: act`, but such a scenario runs on the simulator until [phase 6](suite.md#under-act).
+The schema accepts `runner: act`, but the runtime refuses such a scenario until [phase 6](suite.md#under-act): `npm run test:e2e` stops before it starts anything, and names the scenarios.

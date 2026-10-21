@@ -93,6 +93,28 @@ test("Codeman's client creates, finds, reaches and terminates a pod on the fake"
   assert.ok([...hours.values()].reduce((sum, amount) => sum + amount, 0) > 0);
 });
 
+test("Codeman's client reports the fake's capacity and balance refusals", async () => {
+  const pods = client.pods;
+  assert.ok(pods);
+  const spec = {
+    name: "codeman-acme-refused",
+    image: "ghcr.io/codenergy-dev/codeman-pod@sha256:1234",
+    env: {},
+    port: 8000,
+    gpuType: "NVIDIA RTX A6000",
+    diskGb: 40,
+  };
+  runpod.faults({ lowBalance: true });
+  try {
+    await assert.rejects(
+      pods.create(spec),
+      /^Error: Runpod POST \/pods failed with 402: Payment Required — Insufficient balance\.$/,
+    );
+  } finally {
+    runpod.faults({});
+  }
+});
+
 test("Codeman's queue runs a Serverless job on the fake's endpoint", async () => {
   const serverless = client.serverless;
   assert.ok(serverless);

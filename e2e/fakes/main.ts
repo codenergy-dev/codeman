@@ -15,6 +15,7 @@ import type { FakeModule } from "./http.ts";
 const FAKES: Record<string, () => Promise<FakeModule>> = {
   github: () => import("./github/github.ts"),
   google: () => import("./google/google.ts"),
+  huggingface: () => import("./huggingface/huggingface.ts"),
   llm: () => import("./llm/llm.ts"),
   npm: () => import("./npm/npm.ts"),
   openrouter: () => import("./openrouter/openrouter.ts"),

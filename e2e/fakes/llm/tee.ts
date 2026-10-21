@@ -11,9 +11,11 @@ import { isScenarioName, scriptOf } from "./script.ts";
 
 /**
  * The tee of an e2e pod image: it takes the engine's port (Ollama's 11434, vLLM's 8000), in
- * front of the real engine moved one port up, so the shipped `dist/gateway.js` runs unchanged on
- * a CPU with the scripted model's replies (decision 3 and spike 0.1 of
- * docs/plans/2026-10-20-end-to-end-test-suite.md).
+ * front of the real engine moved one port up, so Codeman's gateway runs on a CPU with the
+ * scripted model's replies (decision 3 and spike 0.1 of
+ * docs/plans/2026-10-20-end-to-end-test-suite.md). The gateway is its e2e bundle,
+ * `e2e/.build/gateway.js`: the code of `dist/gateway.js`, with the e2e build's redirects
+ * (decision 11).
  *
  * - **Chat from the agent** (`POST /v1/chat/completions` whose user messages hold Codeman's
  *   harness prompt): the engine gets a short fixed prompt instead, with `temperature: 0`,

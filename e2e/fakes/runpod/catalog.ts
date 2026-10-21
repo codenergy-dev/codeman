@@ -1,4 +1,4 @@
-import { HttpError } from "../http.ts";
+import { HttpError, unknownFields } from "../http.ts";
 
 /**
  * The fake's GPU catalog: `GET /v2/catalog/gpus[/{id}]`, as docs/web/runpod/list-gpu-types.md
@@ -167,7 +167,25 @@ export function gpuJson(gpu: CatalogGpu, query: CatalogQuery): Record<string, un
 
 /** A catalog entry from the control API's JSON, over `base` when it patches one. */
 export function catalogGpuOf(value: unknown, base?: CatalogGpu): CatalogGpu {
-  const gpu = { ...(base ?? {}), ...(typeof value === "object" && value !== null ? value : {}) };
+  const given = (typeof value === "object" && value !== null ? value : {}) as Record<
+    string,
+    unknown
+  >;
+  const unknown =
+    unknownFields(given, "", GPU_FIELDS) ??
+    unknownFields(given.price, "price.", ["secure", "community", "serverless"]) ??
+    unknownFields(given.maxCount, "maxCount.", ["secure", "community"]) ??
+    (Array.isArray(given.cudaVersions)
+      ? given.cudaVersions
+          .map((cuda, index) =>
+            unknownFields(cuda, `cudaVersions[${index}].`, ["version", "available"]),
+          )
+          .find((field) => field !== undefined)
+      : undefined);
+  if (unknown) {
+    throw new HttpError(400, { message: `A GPU type has no field ${unknown}; ${GPU_SHAPE}.` });
+  }
+  const gpu = { ...(base ?? {}), ...given };
   const fields = gpu as Record<string, unknown>;
   const price = (fields.price ?? {}) as Record<string, unknown>;
   const merged: CatalogGpu = {
@@ -198,22 +216,34 @@ export function catalogGpuOf(value: unknown, base?: CatalogGpu): CatalogGpu {
       (cuda) => !/^\d+\.\d+$/.test(String(cuda?.version)) || typeof cuda.available !== "boolean",
     )
   ) {
-    throw new HttpError(400, {
-      message:
-        "A GPU type has id, and may have name, pool, manufacturer, memory, secure, community, price {secure, community, serverless}, maxCount, availability (NONE, LOW, MEDIUM, HIGH) and cudaVersions [{version, available}].",
-    });
+    throw new HttpError(400, { message: `${GPU_SHAPE[0]?.toUpperCase()}${GPU_SHAPE.slice(1)}.` });
   }
   return merged;
 }
 
+const GPU_FIELDS = [
+  "id",
+  "name",
+  "pool",
+  "manufacturer",
+  "memory",
+  "secure",
+  "community",
+  "price",
+  "maxCount",
+  "availability",
+  "cudaVersions",
+];
+const GPU_SHAPE =
+  "a GPU type has id, and may have name, pool, manufacturer, memory, secure, community, price {secure, community, serverless}, maxCount {secure, community}, availability (NONE, LOW, MEDIUM, HIGH) and cudaVersions [{version, available}]";
+
 /** Runpod's RFC 9457 error: `title`, `status`, `detail`, and `errors` for validation. */
 export function problem(status: number, detail: string, errors?: string[]): HttpError {
-  return new HttpError(status, {
-    title: TITLES[status] ?? "Error",
+  return new HttpError(
     status,
-    detail,
-    ...(errors ? { errors } : {}),
-  });
+    { title: TITLES[status] ?? "Error", status, detail, ...(errors ? { errors } : {}) },
+    { "content-type": "application/problem+json" },
+  );
 }
 
 const TITLES: Record<number, string> = {
@@ -223,5 +253,6 @@ const TITLES: Record<number, string> = {
   403: "Forbidden",
   404: "Not Found",
   409: "Conflict",
+  413: "Content Too Large",
   422: "Unprocessable Entity",
 };

@@ -198,6 +198,38 @@ test("creation fails on capacity, contract and faults, as Runpod answers", async
   assert.equal(launcher.launched.length, 1);
 });
 
+test("no capacity is a 400 and a low balance a 402, as problems (docs/web/runpod/)", async () => {
+  await call("PATCH", "/_fake/runpod/catalog/NVIDIA%20RTX%20A6000", { availability: "NONE" });
+  const full = await fetch(`${origin}/v2/pods`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${KEY}`, "content-type": "application/json" },
+    body: JSON.stringify(POD),
+  });
+  assert.equal(full.status, 400);
+  assert.equal(full.headers.get("content-type"), "application/problem+json");
+  const problem = (await full.json()) as { title: string; status: number; detail: unknown };
+  assert.equal(problem.title, "Bad Request");
+  assert.equal(problem.status, 400);
+  assert.equal(typeof problem.detail, "string");
+
+  await call("PATCH", "/_fake/runpod/catalog/NVIDIA%20RTX%20A6000", { availability: "HIGH" });
+  assert.equal((await call("PUT", "/_fake/runpod/faults", { lowBalance: true })).status, 204);
+  const poor = await call("POST", "/v2/pods", POD);
+  assert.equal(poor.status, 402);
+  assert.deepEqual(poor.body, {
+    title: "Payment Required",
+    status: 402,
+    detail: "Insufficient balance.",
+  });
+  // The contract comes first: a body that breaks it is a 422 whatever the balance.
+  assert.equal((await call("POST", "/v2/pods", { ...POD, ports: ["8000"] })).status, 422);
+  assert.equal(launcher.launched.length, 0);
+  assert.equal((await call("PUT", "/_fake/runpod/faults", { lowBalance: "yes" })).status, 400);
+  assert.equal((await call("PUT", "/_fake/runpod/faults", { balance: "low" })).status, 400);
+  await call("PUT", "/_fake/runpod/faults", {});
+  assert.equal((await call("POST", "/v2/pods", POD)).status, 201);
+});
+
 test("a pod may never start, fail to start, or restart its container", async () => {
   await call("PUT", "/_fake/runpod/faults", { podStart: "never" });
   const stuck = (await call("POST", "/v2/pods", POD)).body;

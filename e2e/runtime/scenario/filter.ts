@@ -42,3 +42,17 @@ function pathOf(arg: string, options: { cwd: string; root: string }): string {
 function within(file: string, path: string): boolean {
   return file === path || file.startsWith(path.endsWith(sep) ? path : `${path}${sep}`);
 }
+
+/** The runners the runtime has today: act's driver comes with phase 6 of the suite's plan. */
+const AVAILABLE_RUNNERS: readonly Scenario["runner"][] = ["simulator"];
+
+/**
+ * Why the runtime refuses these scenarios, or undefined: a scenario whose runner it does not
+ * have would otherwise run on another, and pass for what it does not test.
+ */
+export function runnerProblem(scenarios: readonly Scenario[]): string | undefined {
+  const refused = scenarios.filter((scenario) => !AVAILABLE_RUNNERS.includes(scenario.runner));
+  if (refused.length === 0) return undefined;
+  const names = refused.map((scenario) => `${scenario.id} (runner: ${scenario.runner})`);
+  return `The runtime has no act driver yet (phase 6 of docs/plans/2026-10-20-end-to-end-test-suite.md), so it runs no scenario with \`runner: act\`: ${names.join(", ")}. Leave them out of the selection, or remove their \`runner\` to run them on the simulator.`;
+}

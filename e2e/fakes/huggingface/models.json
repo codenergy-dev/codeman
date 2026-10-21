@@ -1,0 +1,55 @@
+{
+  "Qwen/Qwen2.5-0.5B-Instruct": {
+    "sha": "7ae557604adf67be50417f59c2c2f167def9a775",
+    "siblings": [
+      {
+        "rfilename": ".gitattributes",
+        "size": 1519,
+        "blobId": "a6344aac8c09253b3b630fb776ae94478aa0275b"
+      },
+      {
+        "rfilename": "LICENSE",
+        "size": 11343,
+        "blobId": "6634c8cc3133b3848ec74b9f275acaaa1ea618ab"
+      },
+      {
+        "rfilename": "config.json",
+        "size": 659,
+        "blobId": "0dbb161213629a23f0fc00ef286e6b1e366d180f"
+      },
+      {
+        "rfilename": "generation_config.json",
+        "size": 242,
+        "blobId": "dfc11073787daf1b0f9c0f1499487ab5f4c93738"
+      },
+      {
+        "rfilename": "merges.txt",
+        "size": 1671839,
+        "blobId": "20024bfe7c83998e9aeaf98a0cd6a2ce6306c2f0"
+      },
+      {
+        "rfilename": "model.safetensors",
+        "size": 988097824,
+        "lfs": {
+          "sha256": "fdf756fa7fcbe7404d5c60e26bff1a0c8b8aa1f72ced49e7dd0210fe288fb7fe",
+          "size": 988097824
+        }
+      },
+      {
+        "rfilename": "tokenizer.json",
+        "size": 7031645,
+        "blobId": "443909a61d429dff23010e5bddd28ff530edda00"
+      },
+      {
+        "rfilename": "tokenizer_config.json",
+        "size": 7305,
+        "blobId": "07bfe0640cb5a0037f9322287fbfc682806cf672"
+      },
+      {
+        "rfilename": "vocab.json",
+        "size": 2776833,
+        "blobId": "4783fe10ac3adce15ac8f358ef5462739852c569"
+      }
+    ]
+  }
+}

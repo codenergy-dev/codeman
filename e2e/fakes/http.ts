@@ -54,16 +54,33 @@ export type Handler = (
   response: ServerResponse,
 ) => Reply | undefined | Promise<Reply | undefined>;
 
-/** Thrown by a handler to answer with `status` and `body`. */
+/** Thrown by a handler to answer with `status`, `body` and `headers`. */
 export class HttpError extends Error {
   readonly status: number;
   readonly body: unknown;
+  readonly headers: Record<string, string>;
 
-  constructor(status: number, body: unknown) {
+  constructor(status: number, body: unknown, headers: Record<string, string> = {}) {
     super(`HTTP ${status}`);
     this.status = status;
     this.body = body;
+    this.headers = headers;
   }
+}
+
+/**
+ * The first of an object's keys not in `allowed`, after `prefix`, such as `workers.idle-timeout`:
+ * a fake's setup refuses fields it does not know rather than ignore them. Undefined for none, or
+ * when `value` is not an object.
+ */
+export function unknownFields(
+  value: unknown,
+  prefix: string,
+  allowed: readonly string[],
+): string | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const name = Object.keys(value).find((key) => !allowed.includes(key));
+  return name === undefined ? undefined : `${prefix}${name}`;
 }
 
 /** A JSON answer. */
@@ -299,7 +316,7 @@ export class FakeServer {
       if (reply) send(response, reply);
     } catch (error) {
       if (!(error instanceof HttpError)) throw error;
-      send(response, json(error.body, error.status));
+      send(response, json(error.body, error.status, error.headers));
     }
   }
 

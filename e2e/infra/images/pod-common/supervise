@@ -1,7 +1,8 @@
 #!/bin/bash
 # The entry point of the e2e pod images (pod-ollama, pod-vllm): the tee on the engine's port, in
-# front of the real engine moved one port up by the image's wrapper, and Codeman's gateway,
-# dist/gateway.js, unchanged. The gateway starts and restarts the engine itself, as on a real pod,
+# front of the real engine moved one port up by the image's wrapper, and Codeman's gateway, its
+# e2e bundle e2e/.build/gateway.js (decision 11): the code of dist/gateway.js, with the e2e build's
+# redirects. The gateway starts and restarts the engine itself, as on a real pod,
 # so the engine's exits during the fit are not failures: this script watches the gateway and the
 # tee, and stops both, with the first one's status, when either one exits.
 #

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { MemoryStore } from "../../src/store/memory.ts";
-import { type CheckContext, check } from "./expect.ts";
+import { type CheckContext, check, matches, vllmMetrics } from "./expect.ts";
 import type { Expectation } from "./scenario/schema.ts";
 
 /** The ledger's Serverless split check, on a store in memory: it reads no fake. */
@@ -82,4 +82,38 @@ test("runs that did not overlap fail the split check", async () => {
 test("a closed run whose cost is not its share fails", async () => {
   const problems = await ledger({ a: 0.45, b: 0.45 }, 300_000, 0.6);
   assert.deepEqual(problems, ["Run 9001-1-1 costs 0.6, not its share 0.45."]);
+});
+
+test("vLLM's metrics keep each sample apart, and an info gauge gives its labels", () => {
+  const model = 'model_name="Qwen/Qwen2.5-0.5B-Instruct",engine="0"';
+  const metrics = vllmMetrics(
+    [
+      "# HELP vllm:num_requests_running Number of requests in model execution batches.",
+      "# TYPE vllm:num_requests_running gauge",
+      `vllm:num_requests_running{${model}} 2.0`,
+      `vllm:num_requests_waiting{${model}} 1.0`,
+      `vllm:num_requests_waiting_by_reason{${model},reason="capacity"} 1.0`,
+      `vllm:num_requests_waiting_by_reason{${model},reason="deferred"} 0.0`,
+      `vllm:cache_config_info{block_size="128",engine="0",kv_cache_size_tokens="87296"} 1.0`,
+      'python_gc_objects_collected_total{generation="0"} 1.0',
+    ].join("\n"),
+  );
+  assert.deepEqual(metrics, {
+    "vllm:num_requests_running": 2,
+    "vllm:num_requests_waiting": 1,
+    'vllm:num_requests_waiting_by_reason{reason="capacity"}': 1,
+    'vllm:num_requests_waiting_by_reason{reason="deferred"}': 0,
+    "vllm:cache_config_info": { block_size: "128", kv_cache_size_tokens: "87296" },
+  });
+  const pattern = {
+    kind: "object" as const,
+    fields: {
+      "vllm:num_requests_running": { kind: "equals" as const, value: 2 },
+      "vllm:cache_config_info": {
+        kind: "object" as const,
+        fields: { kv_cache_size_tokens: { kind: "equals" as const, value: 87296 } },
+      },
+    },
+  };
+  assert.equal(matches(pattern, metrics), undefined);
 });

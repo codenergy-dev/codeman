@@ -74,6 +74,8 @@ export interface RunpodSetup {
 export interface RunpodFaults {
   /** `never`: pods stay `STARTING`, the launcher not asked; `fail`: they turn `ERROR`. */
   podStart?: "never" | "fail";
+  /** The account's balance is too low: a valid pod creation answers 402, as Runpod's does. */
+  lowBalance?: boolean;
   /** Endpoints whose jobs no worker takes (`true` for all): they wait `IN_QUEUE`. */
   holdQueues?: boolean | string[];
 }
@@ -327,6 +329,10 @@ export class RunpodFake {
     const body = request.json();
     const errors = createErrors(body);
     if (errors.length > 0) throw problem(422, "validation failed", errors);
+    // An account's refusal, the same for every candidate (docs/web/runpod/create-a-pod.md).
+    if (this.#faults.lowBalance) {
+      throw problem(402, "Insufficient balance.");
+    }
     const create = body as CreatePod;
     if (!create.gpu)
       throw problem(400, "exactly one of gpu or cpu is required; the fake has GPU pods only");
@@ -758,13 +764,16 @@ function faultsOf(value: unknown): RunpodFaults {
   >;
   const hold = faults.holdQueues;
   if (
+    Object.keys(faults).some((name) => !["podStart", "lowBalance", "holdQueues"].includes(name)) ||
     (faults.podStart !== undefined && faults.podStart !== "never" && faults.podStart !== "fail") ||
+    (faults.lowBalance !== undefined && typeof faults.lowBalance !== "boolean") ||
     (hold !== undefined &&
       typeof hold !== "boolean" &&
       !(Array.isArray(hold) && hold.every((id) => typeof id === "string")))
   ) {
     throw new HttpError(400, {
-      message: "Faults may have podStart (never or fail) and holdQueues (true or endpoint IDs).",
+      message:
+        "Faults may have podStart (never or fail), lowBalance (a boolean) and holdQueues (true or endpoint IDs).",
     });
   }
   return faults as RunpodFaults;

@@ -4,7 +4,7 @@ This page is for whoever changes Codeman and wants to see a [task](../../glossar
 
 ## What it covers
 
-Codeman's bundles of the [e2e build](../guide.md#the-e2e-build) run the templates' jobs, one container per job, against local fakes of GitHub, OpenRouter, Runpod and Google. The bugs it is for showed only on real repositories; the [plan](../../plans/2026-10-20-end-to-end-test-suite.md#context) lists them.
+Codeman's bundles of the [e2e build](../guide.md#the-e2e-build) run the templates' jobs, one container per job, against local fakes of GitHub, OpenRouter, Runpod, Google and Hugging Face's Hub. The bugs it is for showed only on real repositories; the [plan](../../plans/2026-10-20-end-to-end-test-suite.md#context) lists them.
 
 - **The workflows:** the job order, `if:` rules, matrices and the reusable workflow, read from `templates/codeman.yml` and `codeman-task.yml`. Real outputs and artifacts cross the jobs.
 - **The jobs:** in the local runner image, plus `gh`, with the agent's [jail](../../runs/agent.md#the-jail).
@@ -32,8 +32,8 @@ The suite replaces some parts of the real path. What each replacement hides, no 
 
 | Seam | Replaces | Hides |
 | --- | --- | --- |
-| The [e2e build's](../guide.md#the-e2e-build) redirects | The hosts of OpenRouter, Runpod, Google's STS, IAM Credentials and Firestore, and npm, by the fakes' origins | The real services' TLS, DNS and behavior: the fakes follow `docs/web/`, which does not prove the services agree. The published `dist/` differs from the e2e bundle in its wiring |
-| No Hugging Face fake | `huggingFace` stays unset | A job that reaches Hugging Face fails: the jobs' network has no internet |
+| The [e2e build's](../guide.md#the-e2e-build) redirects | The hosts of OpenRouter, Runpod, Google's STS, IAM Credentials and Firestore, Hugging Face's Hub, and npm, by the fakes' origins | The real services' TLS, DNS and behavior: the fakes follow `docs/web/`, which does not prove the services agree. The published `dist/` differs from the e2e bundle in its wiring |
+| The fake Hub | Hugging Face's model information, from the `vllm` profile's model volume | Other models, and private, gated or disabled ones: the fake serves only what the volume holds, as public |
 | The fake GitHub | GitHub's API, under `/api/v3` and `/api/graphql` as on GitHub Enterprise Server | github.com's own behavior where it differs from the fake |
 | The simulator's emulated actions | `actions/checkout`, `create-github-app-token`, `upload-artifact` and `download-artifact` | The actions' own code, and GitHub's runner. An input the emulation lacks stops the run |
 | The tee, in each pod | The agent's chat to the engine | The engine reads a short fixed prompt, not the agent's: real prefill, real context use and parsing of the agent's tool calls go untested |
@@ -159,7 +159,7 @@ A scenario tagged `known-bug` reproduces a bug of Codeman that is not fixed yet.
 ## Under act
 
 > [!NOTE]
-> This section is completed in phase 6 of the [plan](../../plans/2026-10-20-end-to-end-test-suite.md#phase-6-act-smoke-scenarios). The act driver does not exist yet: every scenario runs on the simulator, `runner: act` included.
+> This section is completed in phase 6 of the [plan](../../plans/2026-10-20-end-to-end-test-suite.md#phase-6-act-smoke-scenarios). The act driver does not exist yet: the runtime refuses a scenario with `runner: act` before it starts anything, and names it.
 
 In phase 6, act 0.2.89 runs two smoke scenarios on the real templates, on success paths only. Its audit and limits are in [dependencies](../dependencies.md#act).
 
@@ -186,7 +186,7 @@ flowchart LR
   github -.->|dispatches, read by run and advance| runtime
 ```
 
-1. `npm run test:e2e` ([`e2e/runtime/main.ts`](../../../e2e/runtime/main.ts)) loads and validates the scenarios, checks Docker's memory, and runs `npm run build:e2e`.
+1. `npm run test:e2e` ([`e2e/runtime/main.ts`](../../../e2e/runtime/main.ts)) loads and validates the scenarios, refuses those whose runner it lacks, checks Docker's memory, and runs `npm run build:e2e`.
 2. The session ([`session.ts`](../../../e2e/runtime/session.ts)) builds the images, runs `docker compose up --wait` with the profiles, and opens the pod launcher.
 3. For each scenario, it builds the world on the fakes: users, repositories with the templates, the App, the Google side and the agent's script.
 4. The scenario's actions run in order ([`run.ts`](../../../e2e/runtime/run.ts)). A `run` or an `advance` hands an event to the workflow simulator, which runs each job in its own container on the internal jobs network. A cancelled or timed-out step's processes get SIGINT, then SIGTERM after 7.5 seconds, then SIGKILL 2.5 seconds later, as GitHub's runner sends them; the container stays, so the job's `always()` steps run.

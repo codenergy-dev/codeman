@@ -161,6 +161,19 @@ services:
     depends_on:
       seed-npm: { condition: service_completed_successfully }
 
+  # Hugging Face's Hub, for open-key's check of a vLLM pod's model (e2e/fakes/huggingface/): the
+  # models of the `hf` volume, which seed-hf fills in the `vllm` profile, read-only. Without that
+  # profile the volume is empty, and the fake has no model: a vLLM scenario needs the profile.
+  huggingface:
+    <<: *fake
+    command: [node, e2e/fakes/main.ts, huggingface]
+    environment:
+      <<: *fake-environment
+      FAKE_HUGGINGFACE_CACHE: /e2e/hf/hub
+    volumes: [hf:/e2e/hf:ro]
+    depends_on:
+      seed-hf: { condition: service_completed_successfully, required: false }
+
   # In the default profile, unlike the models: every agent job downloads OpenCode, whatever its
   # provider. fill.ts keeps a tarball that matches its pinned integrity, so a filled volume makes no
   # request. Its platform is this machine's, as the job image's is.

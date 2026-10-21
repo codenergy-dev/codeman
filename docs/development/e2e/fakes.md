@@ -14,9 +14,12 @@ The Compose file, [`e2e/infra/compose.yaml`](../../../e2e/infra/compose.yaml), r
 | `runpod` | Runpod's REST API, the pods' proxy, and the Serverless queues | `http://runpod:8080`; a pod at `/pods/{id}/{port}` |
 | `llm` | The scripted model, behind OpenRouter, the Serverless queues and the tee | `http://llm:8080` |
 | `npm` | The npm registry, for OpenCode's tarballs only | `http://npm:8080` |
+| `huggingface` | Hugging Face's Hub, for the model information only | `http://huggingface:8080` |
 | `firestore` | Firestore, as Google's emulator with Codeman's rules | `http://firestore:8080` |
 
-- **Hugging Face** has no fake.
+- **The fake Hub** serves `GET /api/models/{namespace}/{name}`, the one route Codeman calls before it creates a vLLM pod ([`huggingface.ts`](../../../e2e/fakes/huggingface/huggingface.ts)). Its models come from the `codeman-e2e-hf` volume, mounted read-only, in [the client's cache layout](../../web/hugging-face/understand-caching.md): each file's size and hash from its blob. Without the `vllm` profile the volume is empty, and every model answers 401, as the Hub does for a missing one. Its unit tests use `models.json`, the pinned model as the seeded volume gives it.
+- **The fake Runpod's errors** are Runpod's problems, `application/problem+json`: 400 for a GPU without capacity, 402 under the `low-balance` fault, 422 for a body outside the contract ([create a pod](../../web/runpod/create-a-pod.md#errors)).
+- **The fake GitHub's permissions** follow [GitHub's table](../../web/github/permissions-required-for-github-apps.md): one pull request reads with Contents or Pull requests, an issue with Issues alone. Where the table lists Issues and Pull requests as alternatives, as for an issue's labels and comments, the fake takes Pull requests only on a pull request.
 - **The fake GitHub** serves HTTPS under a `*.localhost` name, which `@actions/artifact` requires. A test CA signs its certificate, made once and kept in a volume while valid. Node, git and `gh` in the job image trust it.
 - **The fake Google's** token is `owner`, which the emulator takes as an admin, past the rules. A job that skips the token path is refused.
 - **The npm cache** is filled once by `seed-npm`, which checks each tarball against OpenCode's pinned integrity. Codeman checks it again on download.
@@ -64,7 +67,7 @@ Each fake's own routes are under `/_fake/<fake>/`.
 | `github` | `POST users`, `orgs`, `repos`, `apps`, `installations`, `tokens`; `PUT repos/{owner}/{repo}/collaborators/{login}`; `POST act`, a user's action; `runs`, `jobs` and `artifacts`, for the simulator; `GET events`, `dispatches`, `violations`, `repos/{owner}/{repo}/issues` |
 | `google` | `PUT setup`, the provider, service accounts and condition; `POST runs`, a run's OIDC request token; `PUT faults` |
 | `openrouter` | `GET keys`, with each key's shown `usage` and real spend; `PUT keys/{hash}/usage`; `PUT credits`, the account's credits until the next reset; `PUT lags`; `POST settle`; `PUT prices`; `PUT completions`; `GET generations`, each billed request |
-| `runpod` | `GET pods`, terminated ones included, with each one's env, `cost` and `billing` (`running`, or `stopped` once it exited or was terminated); `POST pods/{id}/{action}`; `PUT setup`; `GET` and `PATCH catalog`; `PUT endpoints/{id}` and its `workers`; `GET jobs`, the Serverless jobs; `GET endpoints/{id}/cost`; `PUT faults` |
+| `runpod` | `GET pods`, terminated ones included, with each one's env, `cost` and `billing` (`running`, or `stopped` once it exited or was terminated); `POST pods/{id}/{action}`; `PUT setup`; `GET` and `PATCH catalog`; `PUT endpoints/{id}` and its `workers`; `GET jobs`, the Serverless jobs; `GET endpoints/{id}/cost`; `PUT faults`, `{ podStart, lowBalance, holdQueues }`. The setup's shapes refuse unknown keys |
 | `llm` | `PUT scripts/{scenario}`, `GET scripts`, `DELETE scripts/{scenario}`; `GET turns`, each request and what it was taken for; `GET violations`, the requests no script covered |
 
 The `fakes` check of a scenario reads these lists ([checks](scenarios.md#the-fakes-lists)).

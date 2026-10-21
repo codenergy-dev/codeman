@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { selectScenarios } from "./filter.ts";
+import { runnerProblem, selectScenarios } from "./filter.ts";
 import { loadScenarios } from "./load.ts";
 
 /** Three scenarios under a scratch root: two in `pods/`, one in `budgets/`. */
@@ -52,4 +52,14 @@ test("an argument that matches no scenario is an error", () => {
     () => selectScenarios(scenarios, ["pods/missing.yaml"], { cwd: root, root }),
     /pods\/missing\.yaml/,
   );
+});
+
+test("a scenario with runner: act is refused, by name, until the act driver exists", () => {
+  const { scenarios } = suite();
+  assert.equal(runnerProblem(scenarios), undefined);
+  const act = { ...scenarios[1], runner: "act" } as (typeof scenarios)[number];
+  const problem = runnerProblem([scenarios[0] as (typeof scenarios)[number], act]);
+  assert.match(problem ?? "", /no act driver yet/);
+  assert.match(problem ?? "", /pods\/keep \(runner: act\)/);
+  assert.doesNotMatch(problem ?? "", /budgets\/monthly/);
 });

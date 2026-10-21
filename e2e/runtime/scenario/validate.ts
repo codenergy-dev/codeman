@@ -734,10 +734,17 @@ function faultOf(value: unknown, path: Path, context: Context): Fault {
   switch (target) {
     case "runpod":
       if (own) {
-        const fields = record(body, at, ["pod-start", "hold-queues"]);
-        const runpod: { podStart?: "never" | "fail"; holdQueues?: boolean | string[] } = {};
+        const fields = record(body, at, ["pod-start", "low-balance", "hold-queues"]);
+        const runpod: {
+          podStart?: "never" | "fail";
+          lowBalance?: boolean;
+          holdQueues?: boolean | string[];
+        } = {};
         if (fields["pod-start"] !== undefined) {
           runpod.podStart = choice(fields["pod-start"], [...at, "pod-start"], ["never", "fail"]);
+        }
+        if (fields["low-balance"] !== undefined) {
+          runpod.lowBalance = boolean(fields["low-balance"], [...at, "low-balance"]);
         }
         const hold = fields["hold-queues"];
         if (hold !== undefined) {
@@ -745,7 +752,7 @@ function faultOf(value: unknown, path: Path, context: Context): Fault {
             typeof hold === "boolean" ? hold : list(hold, [...at, "hold-queues"], text);
         }
         if (Object.keys(runpod).length === 0) {
-          fail(at, "expected pod-start or hold-queues, or an HTTP fault's path");
+          fail(at, "expected pod-start, low-balance or hold-queues, or an HTTP fault's path");
         }
         return { kind, target, runpod };
       }

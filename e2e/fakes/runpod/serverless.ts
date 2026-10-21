@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { type FakeRequest, type FakeServer, HttpError, json } from "../http.ts";
+import { type FakeRequest, type FakeServer, HttpError, json, unknownFields } from "../http.ts";
 import type { Span } from "./billing.ts";
 import { problem } from "./catalog.ts";
 
@@ -383,7 +383,18 @@ export function endpointOf(value: unknown): EndpointSetup {
     unknown
   >;
   const object = (field: unknown) =>
-    field === undefined || (typeof field === "object" && field !== null);
+    field === undefined || (typeof field === "object" && field !== null && !Array.isArray(field));
+  const unknown =
+    unknownFields(setup, "", ENDPOINT_FIELDS) ??
+    (object(setup.workers)
+      ? unknownFields(setup.workers, "workers.", WORKERS_FIELDS)
+      : undefined) ??
+    (object(setup.gpu) ? unknownFields(setup.gpu, "gpu.", GPU_FIELDS) : undefined);
+  if (unknown) {
+    throw new HttpError(400, {
+      message: `An endpoint has no field ${unknown}; it has id, and may have name, type, workers {min, max, idleTimeout}, gpu {pools, excludedTypes, count}, env, flashboot and pricePerHour.`,
+    });
+  }
   const env = setup.env as Record<string, unknown> | undefined;
   if (
     typeof setup.id !== "string" ||
@@ -401,6 +412,19 @@ export function endpointOf(value: unknown): EndpointSetup {
   }
   return setup as unknown as EndpointSetup;
 }
+
+const ENDPOINT_FIELDS = [
+  "id",
+  "name",
+  "type",
+  "workers",
+  "gpu",
+  "env",
+  "flashboot",
+  "pricePerHour",
+];
+const WORKERS_FIELDS = ["min", "max", "idleTimeout"];
+const GPU_FIELDS = ["pools", "excludedTypes", "count"];
 
 /** Worker counts from the control API's JSON. */
 export function workersOf(value: unknown): Partial<Workers> {

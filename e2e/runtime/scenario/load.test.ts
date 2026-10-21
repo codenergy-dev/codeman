@@ -397,3 +397,83 @@ test("names that the world or the store do not have fail", () => {
     /An endpoint has id/,
   );
 });
+
+test("an unknown key fails wherever the shape is fixed, the fakes' own shapes included", () => {
+  const endpoint = (workers: string) => `${WORLD}  runpod:
+    endpoints:
+      - { id: e1, workers: ${workers}, gpu: { pools: [AMPERE_48] } }
+actions:
+  - run: { event: schedule }
+`;
+  parse(endpoint("{ min: 0, max: 1, idleTimeout: 5 }"));
+  rejects(
+    endpoint("{ min: 0, idle-timeout: 5 }"),
+    "world.runpod.endpoints[0]",
+    /no field workers\.idle-timeout/,
+  );
+  rejects(
+    `${WORLD}  runpod:
+    endpoints: [{ id: e1, gpu: { pool: AMPERE_48 } }]
+actions:
+  - run: { event: schedule }
+`,
+    "world.runpod.endpoints[0]",
+    /no field gpu\.pool;/,
+  );
+  rejects(
+    `${WORLD}  runpod:
+    catalog: [{ id: NVIDIA RTX A6000, memory: 48, price: { secure: 1, spot: 0.5 } }]
+actions:
+  - run: { event: schedule }
+`,
+    "world.runpod.catalog[0]",
+    /no field price\.spot/,
+  );
+  rejects(
+    `${WORLD}  runpod:
+    catalog: [{ id: NVIDIA RTX A6000, cudaVersions: [{ version: "12.8", availible: true }] }]
+actions:
+  - run: { event: schedule }
+`,
+    "world.runpod.catalog[0]",
+    /no field cudaVersions\[0\]\.availible/,
+  );
+  rejects(
+    `${WORLD}agent:
+  i1:
+    code: [{ steps: [{ write: { path: a.ts, content: x, mode: "755" } }] }]
+actions:
+  - open-issue: { ref: i1, as: alice, title: T }
+`,
+    "agent.i1.code[0].steps[0].write.mode",
+    /absent: expected path, content/,
+  );
+  rejects(
+    `${WORLD}agent:
+  i1:
+    code: [{ usage: { prompt: 1, completion: 1, reasoning: 1 }, steps: [] }]
+actions:
+  - open-issue: { ref: i1, as: alice, title: T }
+`,
+    "agent.i1.code[0].usage.reasoning",
+    /absent/,
+  );
+});
+
+test("a fault makes the fake Runpod's pod creation answer 402", () => {
+  const scenario = parse(`${WORLD}actions:
+  - fault: { runpod: { low-balance: true } }
+`);
+  assert.deepEqual(scenario.actions[0], {
+    kind: "fault",
+    target: "runpod",
+    runpod: { lowBalance: true },
+  });
+  rejects(
+    `${WORLD}actions:
+  - fault: { runpod: { balance: low } }
+`,
+    "actions[0].fault.runpod.balance",
+    /unknown field/,
+  );
+});

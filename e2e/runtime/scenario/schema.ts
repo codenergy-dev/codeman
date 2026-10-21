@@ -316,7 +316,15 @@ export interface Parallel {
   branches: Action[][];
 }
 
-export const FAKES = ["github", "openrouter", "runpod", "google", "llm", "npm"] as const;
+export const FAKES = [
+  "github",
+  "openrouter",
+  "runpod",
+  "google",
+  "llm",
+  "npm",
+  "huggingface",
+] as const;
 export type FakeName = (typeof FAKES)[number];
 
 /** The template's jobs (templates/codeman.yml and codeman-task.yml). */
@@ -337,11 +345,15 @@ export type JobName = (typeof JOBS)[number];
 export type Fault =
   /** The shared fault of e2e/fakes/http.ts on a fake's route. */
   | { kind: "fault"; target: "http"; fake: FakeName; http: HttpFault }
-  /** `podStart: never` is a pod that never serves. */
+  /** `podStart: never` is a pod that never serves; `lowBalance` makes pod creation answer 402. */
   | {
       kind: "fault";
       target: "runpod";
-      runpod: { podStart?: "never" | "fail"; holdQueues?: boolean | string[] };
+      runpod: {
+        podStart?: "never" | "fail";
+        lowBalance?: boolean;
+        holdQueues?: boolean | string[];
+      };
     }
   | {
       kind: "fault";
@@ -479,6 +491,7 @@ export const FAKE_LISTS: Readonly<Record<FakeName, readonly string[]>> = {
   google: ["requests"],
   llm: ["turns", "violations", "requests"],
   npm: ["requests"],
+  huggingface: ["requests"],
 };
 
 export interface FakeMatch {
@@ -499,12 +512,21 @@ export interface PodMatch {
   count: Pattern | undefined;
 }
 
-/** A pod's engine: the gateway's `/admin/status`, Ollama's `/api/ps`, vLLM's models and metrics. */
+/**
+ * A pod's engine, read inside its container (expect.ts, session.ts): each field holds at least
+ * these fields.
+ */
 export interface EngineMatch {
-  /** The pod's ref; the only pod when undefined. */
+  /** The pod's ref; the only live pod when undefined. */
   pod: string | undefined;
+  /** The gateway's `/admin/status`, with the pod's admin token. */
   gateway: Record<string, Pattern> | undefined;
+  /** Ollama's `/api/ps`, through the tee. */
   ollama: Record<string, Pattern> | undefined;
+  /**
+   * vLLM's first model of `/v1/models`, such as `max_model_len`, and `metrics`, its `/metrics` by
+   * sample (`vllmMetrics` in expect.ts).
+   */
   vllm: Record<string, Pattern> | undefined;
 }
 

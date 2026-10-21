@@ -84,6 +84,60 @@ test("a call outside a token's permissions answers 403 as GitHub does", { skip }
   assert.equal(fake.violations.length, 0);
 });
 
+test("reads follow GitHub's table: an issue needs issues, a pull request either", {
+  skip,
+}, async () => {
+  const contents = await appToken({ contents: "write" });
+  const pullsOnly = await appToken({ pull_requests: "write" });
+  await fake.act({ action: "open-issue", as: "alice", repository: "acme/app", title: "Docs" });
+  const branch = "codeman/docs";
+  const main = await call("GET", "/api/v3/repos/acme/app/git/ref/heads/main", contents);
+  assert.equal(main.status, 200);
+  const created = await call("POST", "/api/v3/repos/acme/app/git/refs", contents, {
+    ref: `refs/heads/${branch}`,
+    sha: main.body.object.sha,
+  });
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+  const blob = await call("POST", "/api/v3/repos/acme/app/git/blobs", contents, {
+    content: "docs\n",
+  });
+  const tree = await call("POST", "/api/v3/repos/acme/app/git/trees", contents, {
+    base_tree: main.body.object.sha,
+    tree: [{ path: "DOCS.md", mode: "100644", type: "blob", sha: blob.body.sha }],
+  });
+  const commit = await call("POST", "/api/v3/repos/acme/app/git/commits", contents, {
+    message: "Add docs",
+    tree: tree.body.sha,
+    parents: [main.body.object.sha],
+  });
+  await call("PATCH", `/api/v3/repos/acme/app/git/refs/heads/${branch}`, contents, {
+    sha: commit.body.sha,
+  });
+  const pull = await call("POST", "/api/v3/repos/acme/app/pulls", pullsOnly, {
+    title: "Add docs",
+    head: branch,
+    base: "main",
+  });
+  assert.equal(pull.status, 201, JSON.stringify(pull.body));
+  const number = pull.body.number;
+  // GET a pull request: Contents or Pull requests, at read.
+  assert.equal((await call("GET", `/api/v3/repos/acme/app/pulls/${number}`, contents)).status, 200);
+  assert.equal(
+    (await call("GET", `/api/v3/repos/acme/app/pulls/${number}`, pullsOnly)).status,
+    200,
+  );
+  // Listing pull requests and reading an issue have no alternative.
+  assert.equal((await call("GET", "/api/v3/repos/acme/app/pulls", contents)).status, 403);
+  const issue = await call("GET", `/api/v3/repos/acme/app/issues/${number}`, pullsOnly);
+  assert.equal(issue.status, 403);
+  assert.equal(issue.headers.get("x-accepted-github-permissions"), "issues=read");
+  // An issue's labels take Pull requests on a pull request.
+  assert.equal(
+    (await call("GET", `/api/v3/repos/acme/app/issues/${number}/labels`, pullsOnly)).status,
+    200,
+  );
+});
+
 test("an installation token cannot ask for more than the installation has", { skip }, async () => {
   const jwt = appJwt(setup.codeman.clientId, setup.privateKey);
   const id = setup.installation.id;

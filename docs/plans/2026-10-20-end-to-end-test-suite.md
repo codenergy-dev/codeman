@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-10-20T12:50:34-03:00
-updated_at: 2026-10-21T15:54:58-03:00
+updated_at: 2026-10-21T16:05:45-03:00
 commit: 21130fe
 ---
 
@@ -205,7 +205,7 @@ Answered by the responsible person on 2026-10-20.
 | --- | --- |
 | `e2e/infra/compose.yaml` | The network, services, profiles (`ollama`, `vllm`), volumes and health checks |
 | `e2e/infra/images/` | `runner/` (the local runner image, plus `gh` and the test CA), `pod-ollama/`, `pod-vllm/`, `emulator/`, `fakes/` |
-| `e2e/fakes/` | `github/`, `openrouter/`, `runpod/`, `google/` (OIDC, STS, IAM Credentials), `llm/` (the scripted model and the tee), `npm/` (decision 4), each with its own tests |
+| `e2e/fakes/` | `github/`, `openrouter/`, `runpod/`, `google/` (OIDC, STS, IAM Credentials), `llm/` (the scripted model and the tee), `npm/` (decision 4), `huggingface/` (the model check of `open-key` for vLLM, added on 2026-10-21: without it, every vLLM scenario fails on the internal network), each with its own tests |
 | `e2e/runtime/` | The scenario loader and schema, the workflow simulator, the act driver, the orchestrator, assertions and reports |
 | `e2e/scenarios/` | YAML files by subject: `happy-path/`, `pods/`, `serverless/`, `parallel/`, `pools/`, `budgets/`, `failures/`, `commands/`, `security/` |
 | `e2e/fixtures/` | Synthetic target repositories as file trees; the runtime makes bare repositories of them |

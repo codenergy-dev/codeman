@@ -2,7 +2,7 @@
 title: Create a pod
 url: https://docs.runpod.io/api-reference-v2/pods/create-a-pod
 created_at: 2026-10-03T22:43:31-03:00
-updated_at: 2026-10-13T20:50:08-03:00
+updated_at: 2026-10-21T11:22:04-03:00
 tool: docs/web/tools/runpod.md
 ---
 
@@ -42,4 +42,21 @@ The call places one specific GPU type: it does not search for capacity or fall b
 
 ## Response
 
-`201` with the pod, as in [Get a pod](get-a-pod.md). Provisioning is asynchronous: the pod starts in `PROVISIONING`, goes through `STARTING` and reaches `RUNNING` once its container is healthy; poll the pod rather than assume it runs. A body above 102,400 bytes is refused with `413`. The pod's `cudaVersion` is the CUDA version its host reports, or null when unknown (schema `Pod`).
+`201` with the pod, as in [Get a pod](get-a-pod.md). Provisioning is asynchronous: the pod starts in `PROVISIONING`, goes through `STARTING` and reaches `RUNNING` once its container is healthy; poll the pod rather than assume it runs. The pod's `cudaVersion` is the CUDA version its host reports, or null when unknown (schema `Pod`).
+
+## Errors
+
+Every error is `application/problem+json` (schema `ErrorResponse`): `title`, `status` and `detail` (required), and `errors`, a list of request-validation failures. Which ones to retry ("Deploying under region and GPU constraints", in the operation's description):
+
+| Status | Meaning | What the caller does |
+| --- | --- | --- |
+| `400` | The body matches the contract but is refused: it breaks a cross-field rule, or this GPU type and data center could not be placed (no capacity) | Try the next candidate |
+| `402` | Insufficient balance | Stop: no candidate will succeed |
+| `403` | The account cannot use the requested pool | Skip this candidate |
+| `413` | The body, or the request built from it and its template, is above 102,400 bytes; sent before authentication | Shorten the environment or the command |
+| `422` | The body does not match the contract; `errors` lists each violation | Fix the request; never retry |
+| `429` | Rate limited | Wait for `Retry-After`, in whole seconds, then resume |
+| `5xx` | A transient upstream failure | Retry the same candidate, with backoff |
+
+- No capacity has no code of its own: it is a `400` whose only sign is a human-readable `detail`. A rule violation fails alike on every candidate, so when every candidate answers `400`, the last `detail` is more likely a problem with the request than no capacity.
+- Capacity can change between a catalog read and the create call: a GPU type the catalog showed as available may still answer `400`.

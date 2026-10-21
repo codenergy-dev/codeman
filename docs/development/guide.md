@@ -35,7 +35,7 @@ The [end-to-end suite](e2e/suite.md) runs the bundles of `npm run build:e2e`, wh
 | `runpod` | `https://api.runpod.io`, Runpod's REST API |
 | `runpodPods` | A pod's URL, `https://{id}-{port}.proxy.runpod.net`; this value is a URL with `{id}` and `{port}` |
 | `runpodServerless` | `https://api.runpod.ai`: the Serverless queues, and the origin the `endpoint` setting accepts |
-| `huggingFace` | `https://huggingface.co` |
+| `huggingFace` | `https://huggingface.co`: the model's information, checked before a vLLM pod |
 | `npm` | `https://registry.npmjs.org`, where OpenCode is downloaded; its pinned integrity is still checked |
 | `googleSts`, `googleIamCredentials`, `firestore` | Google's STS, IAM Credentials and Firestore |
 

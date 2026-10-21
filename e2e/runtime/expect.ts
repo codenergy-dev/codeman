@@ -25,7 +25,10 @@ export interface CheckContext {
   issues: ReadonlyMap<string, { repo: string; number: number }>;
   /** Pod refs, with the fake Runpod's pod ID; `ref` checks add to it. */
   pods: Map<string, string>;
-  /** A pod's engine: the gateway's health, Ollama's `/api/ps`, vLLM's models and metrics. */
+  /**
+   * A pod's engine: the gateway's `/admin/status`, Ollama's `/api/ps`, and vLLM's first model of
+   * `/v1/models` with its `metrics` (`vllmMetrics`).
+   */
   engine?(podId: string): Promise<{ gateway?: unknown; ollama?: unknown; vllm?: unknown }>;
 }
 
@@ -462,6 +465,40 @@ async function engineProblems(match: EngineMatch, context: CheckContext): Promis
     if (problem) problems.push(`The pod's ${source}: ${problem}`);
   }
   return problems;
+}
+
+/** The labels every vLLM metric has (docs/web/vllm/vllm-v1-metrics-loggers-py-at-v0-31-0.md). */
+const VLLM_LABELS = new Set(["model_name", "engine"]);
+
+/**
+ * vLLM's `/metrics`, by sample: the `vllm:` metrics under their name, with their labels other
+ * than `model_name` and `engine` in braces, such as
+ * `vllm:num_requests_waiting_by_reason{reason="capacity"}`, so samples of one metric stay apart.
+ * An info gauge, such as `vllm:cache_config_info`, permanently 1, gives its labels instead.
+ */
+export function vllmMetrics(text: string): Record<string, number | Record<string, string>> {
+  const metrics: Record<string, number | Record<string, string>> = {};
+  for (const line of text.split("\n")) {
+    const found = /^(vllm:[A-Za-z0-9_:]+)(?:\{(.*)\})? (\S+)(?: \d+)?$/.exec(line.trim());
+    if (!found?.[1] || found[3] === undefined) continue;
+    const labels: Record<string, string> = {};
+    for (const label of (found[2] ?? "").matchAll(
+      /([A-Za-z_][A-Za-z0-9_]*)="((?:[^"\\]|\\.)*)"/g,
+    )) {
+      const [, name = "", value = ""] = label;
+      if (!VLLM_LABELS.has(name))
+        labels[name] = value.replace(/\\(.)/g, (_, c) => (c === "n" ? "\n" : c));
+    }
+    if (found[1].endsWith("_info")) {
+      metrics[found[1]] = labels;
+      continue;
+    }
+    const extra = Object.entries(labels)
+      .map(([name, value]) => `${name}="${value}"`)
+      .join(",");
+    metrics[extra ? `${found[1]}{${extra}}` : found[1]] = Number(found[3]);
+  }
+  return metrics;
 }
 
 /** Why `value` does not match `pattern`; undefined when it does. */

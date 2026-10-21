@@ -7,13 +7,14 @@ import { Firestore } from "../../src/store/firestore.ts";
 import { Compose, network } from "./compose.ts";
 import { docker, dockerOk, imageExists, removeLabeled } from "./docker.ts";
 import { DockerExecutor, JOB_ROOT } from "./executor.ts";
-import { fakeList } from "./expect.ts";
+import { fakeList, vllmMetrics } from "./expect.ts";
 import { bundleEndpoints, FAKE_NAMES, FakeClient, type Fakes, INTERNAL } from "./fakes.ts";
 import { FaultingExecutor, type JobFault } from "./faults.ts";
 import { RemoteGitHub } from "./github.ts";
 import { allowlistPlan, Launcher, podRunner } from "./launcher.ts";
 import { type ReportData, Timeline, writePass, writeReport } from "./report.ts";
 import { ScenarioFailure, ScenarioRun } from "./run.ts";
+import { runnerProblem } from "./scenario/filter.ts";
 import type { Profile, Scenario } from "./scenario/schema.ts";
 import { Simulator } from "./simulator/simulator.ts";
 import { buildWorld, OIDC_REQUEST_URL, PROVIDER_KEYS } from "./world.ts";
@@ -158,6 +159,7 @@ export class Session {
       openrouter: await client("openrouter", 8080),
       runpod: await client("runpod", 8080),
       npm: await client("npm", 8080),
+      huggingface: await client("huggingface", 8080),
       firestore: `http://${await compose.port("firestore", 8080)}`,
     };
     const github = new RemoteGitHub(fakes.github, { server: INTERNAL.github, caFile });
@@ -189,6 +191,8 @@ export class Session {
 
   async runScenario(scenario: Scenario): Promise<ScenarioResult> {
     const started = Date.now();
+    const refused = runnerProblem([scenario]);
+    if (refused) return { scenario, passed: false, durationMs: 0, message: refused };
     const slug = scenario.id.replace(/[^A-Za-z0-9._-]+/g, "-");
     const timeline = new Timeline();
     this.#current.scenario = slug;
@@ -379,6 +383,7 @@ export class Session {
       google: ["requests"],
       llm: ["turns", "violations", "requests"],
       npm: ["requests"],
+      huggingface: ["requests"],
     };
     for (const [fake, names] of Object.entries(lists)) {
       fakes[fake] = {};
@@ -500,11 +505,7 @@ export class Session {
     if (ps) status.ollama = ps;
     const models = parse(await get("http://127.0.0.1:8000/v1/models"));
     if (models) {
-      const metrics: Record<string, number> = {};
-      for (const line of (await get("http://127.0.0.1:8000/metrics"))?.split("\n") ?? []) {
-        const found = /^(vllm:[A-Za-z_:]+)(?:\{[^}]*\})? ([0-9.eE+-]+)$/.exec(line);
-        if (found?.[1] && found[2]) metrics[found[1]] = Number(found[2]);
-      }
+      const metrics = vllmMetrics((await get("http://127.0.0.1:8000/metrics")) ?? "");
       const first = (models as { data?: Record<string, unknown>[] }).data?.[0] ?? {};
       status.vllm = { ...first, metrics };
     }

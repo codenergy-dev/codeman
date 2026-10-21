@@ -111,7 +111,10 @@ export function triggers(caller: Caller): boolean {
 const read = (permission: string | string[]): Need => ({ permission, level: "read" });
 const write = (permission: string | string[]): Need => ({ permission, level: "write" });
 
-/** An issue's endpoints take `issues`; a pull request's also take `pull_requests`. */
+/**
+ * An issue's labels, comments and update take `issues`; a pull request's also take
+ * `pull_requests`. GitHub lists both permissions for these endpoints, as alternatives.
+ */
 function issueNeed(level: "read" | "write") {
   return (call: Call): Need => {
     const number = Number(call.request.params.number);
@@ -587,7 +590,8 @@ export function registerRest(apiRoutes: Api): void {
     );
     return json(issueJson(world, repository, issue), 201);
   });
-  repo("GET", "/issues/{number}", issueNeed("read"), ({ request, repository }) =>
+  // Issues alone, a pull request's too: GitHub lists no other permission for this read.
+  repo("GET", "/issues/{number}", read("issues"), ({ request, repository }) =>
     json(issueJson(world, repository, world.issue(repository, Number(request.params.number)))),
   );
   repo("PATCH", "/issues/{number}", issueNeed("write"), ({ request, repository, caller }) => {
@@ -787,7 +791,8 @@ export function registerRest(apiRoutes: Api): void {
     if (!issue.pull) throw notFound();
     return issue;
   };
-  repo("GET", "/pulls/{number}", read("pull_requests"), async (call) =>
+  // Either permission reads one pull request; listing them takes pull_requests.
+  repo("GET", "/pulls/{number}", read(["pull_requests", "contents"]), async (call) =>
     json(await pullJson(world, call.repository, pullOf(call))),
   );
   repo("PATCH", "/pulls/{number}", write("pull_requests"), async (call) => {

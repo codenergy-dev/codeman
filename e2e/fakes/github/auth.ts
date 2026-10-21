@@ -25,12 +25,9 @@ export const DOCS = "https://docs.github.com/rest";
 
 /** A GitHub error answer, with headers when GitHub sends some, such as the permissions needed. */
 export class GitHubError extends HttpError {
-  readonly headers: Record<string, string>;
-
   constructor(status: number, message: string, extra: Record<string, unknown> = {}, headers = {}) {
-    super(status, { message, ...extra, documentation_url: DOCS, status: String(status) });
+    super(status, { message, ...extra, documentation_url: DOCS, status: String(status) }, headers);
     this.message = message;
-    this.headers = headers;
   }
 }
 

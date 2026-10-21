@@ -58,6 +58,7 @@ before(async () => {
     openrouter: await listen("openrouter", new OpenRouterFake({ managementKey: "m" }).server),
     runpod: await listen("runpod", new RunpodFake().server),
     npm: await listen("npm", new FakeServer("npm")),
+    huggingface: await listen("huggingface", new FakeServer("huggingface")),
     firestore: "http://127.0.0.1:1",
   };
   github = new RemoteGitHub(fakes.github, { server: fakes.github.origin });

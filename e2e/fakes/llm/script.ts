@@ -155,7 +155,8 @@ function turnsOf(
     const at = `${path}[${index}]`;
     const [kind, body] = stepKind(step, at);
     if (kind === "delay") {
-      const ms = typeof body === "object" && body !== null ? (body as { ms?: unknown }).ms : body;
+      const ms =
+        typeof body === "object" && body !== null ? record(body, `${at}.delay`, ["ms"]).ms : body;
       if (typeof ms !== "number" || !(ms >= 0)) fail(`${at}.delay`, "milliseconds, or { ms }");
       delayMs += ms;
       return;
@@ -188,7 +189,7 @@ function stepKind(step: unknown, path: string): [string, unknown] {
 function actionOf(kind: string, body: unknown, path: string): Action {
   switch (kind) {
     case "write": {
-      const fields = record(body, path);
+      const fields = record(body, path, ["path", "content"]);
       return {
         kind,
         path: string(fields.path, `${path}.path`),
@@ -196,7 +197,7 @@ function actionOf(kind: string, body: unknown, path: string): Action {
       };
     }
     case "edit": {
-      const fields = record(body, path);
+      const fields = record(body, path, ["path", "old", "new", "all"]);
       if (fields.all !== undefined && typeof fields.all !== "boolean") {
         fail(`${path}.all`, "a boolean");
       }
@@ -210,7 +211,7 @@ function actionOf(kind: string, body: unknown, path: string): Action {
     }
     case "bash": {
       if (typeof body === "string") return { kind, command: string(body, path) };
-      const fields = record(body, path);
+      const fields = record(body, path, ["command", "timeout", "workdir"]);
       return {
         kind,
         command: string(fields.command, `${path}.command`),
@@ -224,7 +225,7 @@ function actionOf(kind: string, body: unknown, path: string): Action {
     }
     case "read": {
       if (typeof body === "string") return { kind, path: string(body, path) };
-      const fields = record(body, path);
+      const fields = record(body, path, ["path", "offset", "limit"]);
       return {
         kind,
         path: string(fields.path, `${path}.path`),
@@ -249,7 +250,7 @@ function actionOf(kind: string, body: unknown, path: string): Action {
 }
 
 function usageOf(value: unknown, path: string): Usage {
-  const fields = record(value, path);
+  const fields = record(value, path, ["prompt", "completion", "cached"]);
   const count = (name: string) => {
     const item = fields[name];
     if (!Number.isInteger(item) || (item as number) < 0) fail(`${path}.${name}`, "a token count");
@@ -266,8 +267,15 @@ function entries(value: unknown, path: string): [string, unknown][] {
   return Object.entries(record(value, path));
 }
 
-function record(value: unknown, path: string): Record<string, unknown> {
+/** An object; with `allowed`, a key outside it is an error. */
+function record(
+  value: unknown,
+  path: string,
+  allowed?: readonly string[],
+): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) fail(path, "an object");
+  const unknown = allowed && Object.keys(value).find((name) => !allowed.includes(name));
+  if (unknown !== undefined) fail(`${path}.${unknown}`, `absent: expected ${allowed?.join(", ")}`);
   return value as Record<string, unknown>;
 }
 
