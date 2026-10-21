@@ -195,6 +195,43 @@ test("two selects at once reserve each task once", async () => {
   assert.equal(one.batches.length + two.batches.length, 1);
 });
 
+test("a task its repository started is formed again by the next run, but never twice by one run", async () => {
+  const store = new MemoryStore();
+  const single: Offer = { tasks: 1, profile: "single", key: "k1", pod: true };
+  const first = await run(store, "a/x", own([1], [single]), at(0), { runId: "100" });
+  assert.deepEqual(
+    first.formed.map((task) => [task.number, task.batch]),
+    [[1, "100-1-0"]],
+  );
+  // Its stage ran on the pod; the next run, within the batch's 30 minutes, starts its next stage.
+  const next = await run(store, "a/x", own([1], [single]), at(5), { runId: "101" });
+  assert.deepEqual(
+    next.formed.map((task) => [task.number, task.batch]),
+    [[1, "101-1-0"]],
+  );
+  const old = await readBatch(store, pool.id, "100-1-0");
+  assert.deepEqual(
+    old?.members.map((member) => member.status),
+    ["started"],
+    "the old batch keeps its member",
+  );
+
+  // Tasks honored from another repository's batch are not formed into a second one.
+  await run(store, "a/x", own([2, 3]), at(6), { places: 0 });
+  await run(store, "b/y", own([7, 8]), at(7), { runId: "200" });
+  const honored = await run(store, "a/x", own([2, 3, 4], [four, single]), at(9), {
+    runId: "102",
+  });
+  assert.deepEqual(
+    honored.honored.map((task) => task.number),
+    [2, 3],
+  );
+  assert.deepEqual(
+    honored.formed.map((task) => task.number),
+    [4],
+  );
+});
+
 test("an organization batches only with members that declare the same pool", async () => {
   const store = new MemoryStore();
   const both = { id: "a+b", members: ["a", "b"] };

@@ -215,7 +215,8 @@ export function exchange(
         batch.members = members;
       }
 
-      // Tasks that unexpired batches hold, and how many each repository has reserved.
+      // Tasks that unexpired batches hold, left out of the other snapshots' candidates, and how
+      // many each repository has reserved.
       const held = new Set<string>();
       const reserved = new Map<string, number>();
       for (const batch of batches) {
@@ -231,8 +232,11 @@ export function exchange(
       const sinceOf = (number: number) =>
         previous?.tasks.find((task) => task.number === number)?.since ?? now;
       const candidates: BatchCandidate[] = [];
+      // The repository's own ready tasks, except those this run honors: a task an earlier run of
+      // the repository started, whose batch has not expired, starts its next stage now. One run
+      // of a repository is active at a time, so that earlier run has ended.
       for (const [rank, task] of input.own.entries()) {
-        if (held.has(`${repository}#${task.number}`)) continue;
+        if (honored.some((one) => one.number === task.number)) continue;
         candidates.push({
           repository,
           number: task.number,

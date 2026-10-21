@@ -52,7 +52,7 @@ The tasks the run starts, and those no pod serves, are left out.
 
 After honoring its reservations (below), a `select` forms every batch that the board of the members that agree completes, whether its own tasks are in it or not:
 
-1. **Candidates.** Its own ready tasks, read from GitHub this run, and the other snapshots' tasks that no unexpired batch holds.
+1. **Candidates.** Its own ready tasks, read from GitHub this run, except those it just honored; and the other snapshots' tasks that no unexpired batch holds. A task that an earlier run of the repository started is a candidate again for its next stage, even while that batch has not expired: one run of a repository is active at a time, so the earlier run has ended.
 2. **Priority.** Oldest `since` first, then by repository, then by each repository's own order (planning before stages).
 3. **Forming.** In that order, the first task that some offer completes takes the largest such count n, with the first n tasks offering the same count and settings key; then the next. A count on OpenRouter or Serverless is completed only by the forming repository's own tasks.
 4. **Limits.**

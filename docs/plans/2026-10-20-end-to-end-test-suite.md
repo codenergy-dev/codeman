@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-10-20T12:50:34-03:00
-updated_at: 2026-10-21T13:00:00-03:00
+updated_at: 2026-10-21T15:54:58-03:00
 commit: 21130fe
 ---
 
@@ -635,6 +635,8 @@ The MVP plan's bugs, in `happy-path/review-round`:
 
 > [!WARNING]
 > **Codeman bug, not fixed (2026-10-21).** A task whose stage ran on a pod cannot start its next stage until its batch expires, 30 minutes later. `exchange` in `src/board.ts` skips the repository's own ready tasks that an unexpired batch holds, its own `started` members included; [batches](../runs/batches.md#forming-batches) says only the other snapshots' tasks are held. So after a pod's plan with no decisions, the chain's next `select` logs "#1 Add a health route [ready]" and "Nothing to do", the kept pod is never joined, and `release-pod` never runs. `pods/ollama-keep-and-release` reproduces it, tagged `known-bug`; `pods/ollama-release-after-decisions` covers the pod's creation, fit, keep lease, release and cost on the path the bug does not reach.
+
+**Fixed on 2026-10-21** by the [plan to start the next stage of a pod task](2026-10-21-start-the-next-stage-of-a-pod-task.md): `pods/ollama-keep-and-release` lost its `known-bug` tag and passes three times in a row, each next stage joining the kept pod and `release-pod` terminating it.
 
 ### Phase 6: act smoke scenarios
 

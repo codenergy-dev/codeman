@@ -22971,7 +22971,7 @@ function exchange(store, input) {
       const sinceOf = (number3) => previous?.tasks.find((task) => task.number === number3)?.since ?? now;
       const candidates = [];
       for (const [rank, task] of input.own.entries()) {
-        if (held.has(`${repository}#${task.number}`)) continue;
+        if (honored.some((one) => one.number === task.number)) continue;
         candidates.push({
           repository,
           number: task.number,
