@@ -9,8 +9,8 @@ const TAG = /^[a-z0-9][a-z0-9-]*$/;
  * The scenarios `npm run test:e2e -- <paths or tags>` runs: those under any path given, or with
  * any tag given; all of them when nothing is given. A bare word, such as `pods`, is a tag and a
  * path under `e2e/scenarios/`. Any other argument is a path, from the working directory or else
- * from `e2e/scenarios/`. An argument that matches no scenario is an error, so a typo fails
- * instead of running nothing.
+ * from `e2e/scenarios/`; a scenario's ID, such as `pods/keep`, names its file. An argument that
+ * matches no scenario is an error, so a typo fails instead of running nothing.
  */
 export function selectScenarios(
   scenarios: readonly Scenario[],
@@ -34,6 +34,7 @@ export function selectScenarios(
 function pathOf(arg: string, options: { cwd: string; root: string }): string {
   const underRoot = resolve(options.root, arg);
   if (TAG.test(arg)) return underRoot;
+  if (!existsSync(underRoot) && existsSync(`${underRoot}.yaml`)) return `${underRoot}.yaml`;
   const fromCwd = resolve(options.cwd, arg);
   return existsSync(fromCwd) || !existsSync(underRoot) ? fromCwd : underRoot;
 }

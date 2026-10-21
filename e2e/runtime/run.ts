@@ -179,7 +179,7 @@ export class ScenarioRun {
         return;
       }
       case "run":
-        return this.#run(action.repo, action.event, action.inputs);
+        return this.#run(action.repo, action.event, action.inputs, action.maxRuns);
       case "advance":
         return this.#advance(action.repo, action.until, action.maxRuns);
       case "parallel": {
@@ -193,15 +193,11 @@ export class ScenarioRun {
       case "fault":
         return this.#fault(action);
       case "apply":
-        if (action.mode === "skip") {
-          throw new ScenarioFailure(
-            "apply: skip cancels the apply job, which the runtime's executor cannot do yet.",
-          );
-        }
+        // skip: the run is cancelled as apply reaches Codeman's step, so the work is not applied.
         this.context.jobFaults.push({
           job: "apply",
           issue: action.issue ? this.#issue(action.issue).number : undefined,
-          conclusion: "failure",
+          conclusion: action.mode === "skip" ? "cancelled" : "failure",
           times: undefined,
         });
         return;
@@ -314,9 +310,21 @@ export class ScenarioRun {
     return pull.number;
   }
 
-  /** One run for an event, awaited; dispatches it makes wait for an `advance`. */
-  async #run(repository: string, event: string, inputs: Record<string, string>): Promise<void> {
+  /**
+   * One run for an event, awaited, then the chain it starts: on GitHub a run's `next-run` and
+   * `dispatch`, and what Codeman's App does on the issues, start their runs at once, before any
+   * user acts again. So the dispatches and the App's events since the run began run too, until
+   * none is left, within `maxRuns`. Users' events wait for an `advance`.
+   */
+  async #run(
+    repository: string,
+    event: string,
+    inputs: Record<string, string>,
+    maxRuns: number,
+  ): Promise<void> {
     const { simulator, github, timeline } = this.context;
+    await this.#observe();
+    const since = this.#sequence;
     let runs: SimRun[];
     if (event === "schedule") runs = await simulator.schedule(repository);
     else if (event === "workflow_dispatch") {
@@ -357,11 +365,64 @@ export class ScenarioRun {
       });
     }
     await this.#settle(runs);
+    const users = new Set(this.context.scenario.world.users.map((login) => login.toLowerCase()));
+    const caused = (item: Pending) =>
+      (this.#seen.get(item.key) ?? 0) > since &&
+      (item.kind === "dispatch" || !users.has(sender(item.event).toLowerCase()));
+    let counted = 0;
+    for (;;) {
+      const pending = (await this.#pending(repository)).filter(caused);
+      if (pending.length === 0) {
+        if (counted > 0) timeline.add("run", `its chain ended after ${counted} more runs`);
+        return;
+      }
+      if (counted >= maxRuns) {
+        throw new ScenarioFailure(
+          `run: ${event}'s chain on ${repository} still runs after ${counted} more runs (max-runs ${maxRuns}).`,
+        );
+      }
+      const results = await this.#settle(await this.#start(repository, pending));
+      counted += results.filter((result) => result.conclusion !== "skipped").length;
+    }
+  }
+
+  /** Starts the runs of pending events and dispatches, moving the cursors past them. */
+  async #start(repository: string, pending: Pending[]): Promise<SimRun[]> {
+    const { simulator, github, timeline } = this.context;
+    const runs: SimRun[] = [];
+    for (const item of pending) {
+      if (item.kind === "event") {
+        const event = item.event;
+        this.#eventCursor.set(
+          key(repository),
+          Math.max(this.#eventCursor.get(key(repository)) ?? 0, event.id),
+        );
+        runs.push(
+          ...(await simulator.trigger({
+            name: event.name,
+            repository,
+            payload: event.payload,
+            triggers: event.triggers,
+          })),
+        );
+      } else {
+        this.#dispatchCursor.set(
+          key(repository),
+          Math.max(this.#dispatchCursor.get(key(repository)) ?? 0, item.dispatch.id),
+        );
+        timeline.add(
+          "dispatch",
+          `${item.dispatch.workflow} by ${item.dispatch.sender}, run ${item.dispatch.runId}`,
+        );
+        runs.push(await simulator.dispatched(await github.dispatched(item.dispatch)));
+      }
+    }
+    return runs;
   }
 
   /** Runs the repository's events and dispatches not run yet, until `until` holds. */
   async #advance(repository: string, until: Expectation, maxRuns: number): Promise<void> {
-    const { simulator, github, timeline } = this.context;
+    const { timeline } = this.context;
     let counted = 0;
     for (;;) {
       const problems = await check(until, this.checkContext());
@@ -380,42 +441,13 @@ export class ScenarioRun {
           `advance: nothing left to run on ${repository} after ${counted} runs, and ${describe(until)} does not hold:\n${problems.map((one) => `- ${one}`).join("\n")}`,
         );
       }
-      const runs: SimRun[] = [];
-      for (const item of pending) {
-        if (item.kind === "event") {
-          const event = item.event;
-          this.#eventCursor.set(key(repository), event.id);
-          runs.push(
-            ...(await simulator.trigger({
-              name: event.name,
-              repository,
-              payload: event.payload,
-              triggers: event.triggers,
-            })),
-          );
-        } else {
-          this.#dispatchCursor.set(key(repository), item.dispatch.id);
-          timeline.add(
-            "dispatch",
-            `${item.dispatch.workflow} by ${item.dispatch.sender}, run ${item.dispatch.runId}`,
-          );
-          runs.push(await simulator.dispatched(await github.dispatched(item.dispatch)));
-        }
-      }
-      const results = await this.#settle(runs);
+      const results = await this.#settle(await this.#start(repository, pending));
       counted += results.filter((result) => result.conclusion !== "skipped").length;
     }
   }
 
   /** Events that start workflows and dispatches, after the cursors, oldest first. */
-  async #pending(
-    repository: string,
-  ): Promise<
-    (
-      | { kind: "event"; event: GitHubEvent; at: string }
-      | { kind: "dispatch"; dispatch: DispatchRecord; at: string }
-    )[]
-  > {
+  async #pending(repository: string): Promise<Pending[]> {
     const { github } = this.context;
     await this.#observe();
     const events = (
@@ -496,11 +528,6 @@ export class ScenarioRun {
         return;
       }
       case "job":
-        if (fault.conclusion === "cancelled") {
-          throw new ScenarioFailure(
-            "fault: a job cancelled instead of run is beyond the runtime's executor yet; use failure.",
-          );
-        }
         this.context.jobFaults.push({
           job: fault.job,
           issue: fault.issue ? this.#issue(fault.issue).number : undefined,
@@ -535,6 +562,15 @@ export class ScenarioRun {
     );
     return found?.maintainers[0] ?? this.context.scenario.world.users[0] ?? "github-actions[bot]";
   }
+}
+
+/** An event or a dispatch not run yet, with its key in `#seen`. */
+type Pending =
+  | { kind: "event"; event: GitHubEvent; at: string; key: string }
+  | { kind: "dispatch"; dispatch: DispatchRecord; at: string; key: string };
+
+function sender(event: GitHubEvent): string {
+  return String((event.payload.sender as { login?: unknown } | undefined)?.login ?? "");
 }
 
 function key(repository: string): string {

@@ -158,6 +158,9 @@ export async function check(expectation: Expectation, context: CheckContext): Pr
       const problem = matches(ledger.runs, runs.length);
       if (problem) problems.push(`The ledger's runs: ${problem}.`);
     }
+    if (ledger.splitOn) {
+      problems.push(...(await splitProblems(ledger.splitOn, owners, runs, context.store)));
+    }
   }
   for (const match of expectation.fakes ?? []) {
     problems.push(...(await fakeProblems(match, context.fakes)));
@@ -168,6 +171,84 @@ export async function check(expectation: Expectation, context: CheckContext): Pr
   if (expectation.engine) problems.push(...(await engineProblems(expectation.engine, context)));
   if (expectation.violations === "none") problems.push(...(await violations(context)));
   return problems;
+}
+
+/**
+ * Whether the runs on a Serverless endpoint split its worker's time, recomputed from what
+ * `close-key` wrote under the endpoint (docs/backend/data-layout.md, "Serverless endpoint runs"):
+ * at least two runs whose billed times overlap; each closed ledger run's `cost` is its share;
+ * no share is above its own estimate; and the shares add up to the union of the billed times at
+ * the worker's price, which is less than the estimates' sum.
+ */
+async function splitProblems(
+  endpoint: string,
+  owners: string[],
+  ledgerRuns: Record<string, unknown>[],
+  store: StoreReader,
+): Promise<string[]> {
+  const problems: string[] = [];
+  const documents: Record<string, unknown>[] = [];
+  for (const owner of owners) {
+    const organization = await store.get(`organizations/${owner.toLowerCase()}`);
+    const pool = String(organization?.fields.pool ?? owner.toLowerCase());
+    for (const document of await store.query(`pools/${pool}/endpoints/${endpoint}/runs`)) {
+      documents.push(document.fields as Record<string, unknown>);
+    }
+  }
+  if (documents.length < 2) {
+    return [`Endpoint ${endpoint} has ${documents.length} runs in the ledger; a split needs 2.`];
+  }
+  const spans: [number, number][] = [];
+  let shares = 0;
+  let estimates = 0;
+  let price = 0;
+  for (const document of documents) {
+    const busy = JSON.parse(String(document.busy ?? "[]")) as [number, number][];
+    spans.push(...busy);
+    const share = Number(document.share);
+    const estimate = Number(document.estimate);
+    price = Number(document.pricePerSecond);
+    shares += share;
+    estimates += estimate;
+    if (share > estimate + 1e-6) {
+      problems.push(
+        `Run ${String(document.run)}'s share ${share} is above its estimate ${estimate}.`,
+      );
+    }
+    const run = ledgerRuns.find((one) => one.endpoint === endpoint && sameRun(one, document));
+    if (!run) problems.push(`The ledger has no closed run for ${String(document.run)}.`);
+    else if (Math.abs(Number(run.cost) - share) > 1e-6) {
+      problems.push(
+        `Run ${String(document.run)} costs ${String(run.cost)}, not its share ${share}.`,
+      );
+    }
+  }
+  spans.sort((a, b) => a[0] - b[0]);
+  let union = 0;
+  let end = Number.NEGATIVE_INFINITY;
+  for (const [from, to] of spans) {
+    if (to <= end) continue;
+    union += to - Math.max(from, end);
+    end = to;
+  }
+  const billed = (union / 1000) * price;
+  // Each share is rounded, as the ledger keeps costs.
+  if (Math.abs(shares - billed) > 1e-5 * documents.length) {
+    problems.push(`The shares add up to ${shares}, not the worker's billed time, ${billed}.`);
+  }
+  if (estimates - billed < 1e-6) {
+    problems.push(
+      `The runs on endpoint ${endpoint} did not overlap: their estimates add up to ${estimates}.`,
+    );
+  }
+  return problems;
+}
+
+/** Whether a ledger run is the endpoint document's: run IDs are `{workflow run}-{attempt}-{task}`. */
+function sameRun(run: Record<string, unknown>, document: Record<string, unknown>): boolean {
+  return (
+    String(document.run) === `${String(run.workflowRun)}-${String(run.attempt)}-${String(run.task)}`
+  );
 }
 
 /** What the fakes refused: tokens the fake GitHub did not give, requests no script covered. */

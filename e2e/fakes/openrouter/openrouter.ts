@@ -106,6 +106,8 @@ export class OpenRouterFake {
   #fallback: Completions = fixedText();
   #lags: Lags = { usageMs: 0, analyticsMs: 0 };
   #prices: Prices = DEFAULT_PRICES;
+  /** The account's credits a scenario set, until the next reset; the setup's otherwise. */
+  #creditsSet: number | undefined;
 
   constructor(setup: OpenRouterSetup, options: { now?: () => number } = {}) {
     this.#setup = setup;
@@ -160,6 +162,14 @@ export class OpenRouterFake {
     server.control("POST", "/openrouter/settle", (request) => {
       const { hash } = (request.body.length > 0 ? request.json() : {}) as { hash?: unknown };
       this.settle(typeof hash === "string" ? hash : undefined);
+      return { status: 204 };
+    });
+    server.control("PUT", "/openrouter/credits", (request) => {
+      const { credits } = (request.json() ?? {}) as { credits?: unknown };
+      if (typeof credits !== "number" || !(credits >= 0)) {
+        throw new HttpError(400, { message: "The body is { credits }, in USD." });
+      }
+      this.credits(credits);
       return { status: 204 };
     });
     server.control("PUT", "/openrouter/prices", (request) => {
@@ -229,6 +239,11 @@ export class OpenRouterFake {
     }
   }
 
+  /** Sets the account's credits, in USD, until the next reset. */
+  credits(credits: number): void {
+    this.#creditsSet = credits;
+  }
+
   prices(prices: Prices): void {
     this.#prices = prices;
   }
@@ -251,10 +266,11 @@ export class OpenRouterFake {
     this.#fallback = this.#setup.completions ?? fixedText();
     this.#lags = { usageMs: 0, analyticsMs: 0, ...this.#setup.lags };
     this.#prices = this.#setup.prices ?? DEFAULT_PRICES;
+    this.#creditsSet = undefined;
   }
 
   #credits(): number {
-    return this.#setup.credits ?? 100;
+    return this.#creditsSet ?? this.#setup.credits ?? 100;
   }
 
   /** What the key's usage shows now. */

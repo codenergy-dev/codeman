@@ -108,6 +108,7 @@ test("a created pod's env reaches the launcher unchanged, with its image, GPU an
 test("a terminated pod stops billing, and leaves the API but not its billing", async () => {
   const { body: pod } = await call("POST", "/v2/pods", POD);
   await until(pod.id, "RUNNING");
+  assert.equal((await call("GET", "/_fake/runpod/pods")).body[0].billing, "running");
   now += 3600_000;
   const terminated = await call("DELETE", `/v2/pods/${pod.id}`);
   assert.equal(terminated.status, 204);
@@ -124,6 +125,7 @@ test("a terminated pod stops billing, and leaves the API but not its billing", a
   assert.ok(Math.abs(billing.body.records[0].totalAmount - 0.49) < 1e-9);
   const [listed] = (await call("GET", "/_fake/runpod/pods")).body;
   assert.equal(listed.status, "TERMINATED");
+  assert.equal(listed.billing, "stopped");
   assert.ok(Math.abs(listed.cost - 0.49) < 1e-9);
 
   const hours = await call(

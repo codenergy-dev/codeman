@@ -199,9 +199,7 @@ async function setUpProviders(world: World, fakes: Fakes): Promise<void> {
   });
   const openrouter = world.openrouter;
   if (openrouter?.credits !== undefined) {
-    throw new Error(
-      "world.openrouter.credits: the fake OpenRouter's control API cannot set credits yet.",
-    );
+    await fakes.openrouter.json("PUT", "/openrouter/credits", { credits: openrouter.credits });
   }
   if (openrouter?.prices)
     await fakes.openrouter.json("PUT", "/openrouter/prices", openrouter.prices);

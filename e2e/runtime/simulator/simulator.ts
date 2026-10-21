@@ -171,6 +171,9 @@ export interface RunRequest {
   workflows?: WorkflowSource;
 }
 
+/** A job's and a step's time when they set none, as on GitHub. */
+const DEFAULT_MINUTES = 360;
+
 const DEFAULT_PERMISSIONS: Permissions = { contents: "read", packages: "read" };
 const STATUS_TEXT = {
   success: "success",
@@ -1080,14 +1083,15 @@ export class Simulator {
 
     const timeoutMinutes = Number(
       job.timeoutMinutes === undefined
-        ? 360
+        ? DEFAULT_MINUTES
         : evaluateValue(
             job.timeoutMinutes,
             legContexts,
             scope(file, `jobs.${job.id}.timeout-minutes`, "job.name"),
           ),
     );
-    const deadline = Date.now() + (Number.isFinite(timeoutMinutes) ? timeoutMinutes : 360) * 60_000;
+    const deadline =
+      Date.now() + (Number.isFinite(timeoutMinutes) ? timeoutMinutes : DEFAULT_MINUTES) * 60_000;
     const timer = setTimeout(
       () => {
         timedOut = true;
@@ -1307,7 +1311,9 @@ export class Simulator {
             workspace,
             temp,
             signal: stepSignal,
-            deadline,
+            // A step that runs after its job was cancelled or timed out, by its if:, has its own
+            // time only, as on GitHub.
+            deadline: cancelled ? undefined : deadline,
             log,
             masks,
             posts,
@@ -1458,7 +1464,8 @@ export class Simulator {
     workspace: { view: string; host: string };
     temp: string;
     signal: AbortSignal;
-    deadline: number;
+    /** When the job's time ends; undefined for a step that runs after its job was cancelled. */
+    deadline: number | undefined;
     log: (line: string) => void;
     masks: Set<string>;
     posts: { name: string; run: () => Promise<void> }[];
@@ -1486,15 +1493,13 @@ export class Simulator {
       step.timeoutMinutes === undefined
         ? undefined
         : Number(evaluateValue(step.timeoutMinutes, contexts, at("timeout-minutes")));
-    const timeoutMs = Math.max(
-      0,
-      Math.min(
-        context.deadline - Date.now(),
-        stepMinutes !== undefined && Number.isFinite(stepMinutes)
-          ? stepMinutes * 60_000
-          : Number.POSITIVE_INFINITY,
-      ),
+    const limit = Math.min(
+      context.deadline === undefined ? Number.POSITIVE_INFINITY : context.deadline - Date.now(),
+      stepMinutes !== undefined && Number.isFinite(stepMinutes)
+        ? stepMinutes * 60_000
+        : Number.POSITIVE_INFINITY,
     );
+    const timeoutMs = Math.max(0, Number.isFinite(limit) ? limit : DEFAULT_MINUTES * 60_000);
     const base = {
       env,
       path: [...context.paths],

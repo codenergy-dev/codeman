@@ -159,6 +159,8 @@ export class RunpodFake {
       cudaVersion: pod.spec.cudaVersion,
       pricePerHour: pod.perHour,
       cost: cost(pod.spans, 0, Number.POSITIVE_INFINITY, now),
+      // Whether a span is still billed: `stopped` once the pod exited or was terminated.
+      billing: pod.spans.some((span) => span.end === undefined) ? "running" : "stopped",
       createdAt: new Date(pod.createdAt).toISOString(),
       terminatedAt:
         pod.terminatedAt === undefined ? null : new Date(pod.terminatedAt).toISOString(),

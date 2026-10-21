@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { MemoryStore } from "../../src/store/memory.ts";
@@ -17,7 +18,7 @@ import { Timeline } from "./report.ts";
 import { ScenarioFailure, ScenarioRun } from "./run.ts";
 import { parseScenario, SCENARIOS_ROOT } from "./scenario/load.ts";
 import type { Scenario } from "./scenario/schema.ts";
-import { RecordingExecutor } from "./simulator/executor.ts";
+import { type Handler, RecordingExecutor } from "./simulator/executor.ts";
 import { writeOutputs } from "./simulator/files.ts";
 import { Simulator } from "./simulator/simulator.ts";
 import { buildWorld, CODEMAN } from "./world.ts";
@@ -103,7 +104,7 @@ function scenario(text = SCENARIO): Scenario {
 }
 
 /** A world on the reset fakes, a simulator whose select picks nothing, and the run. */
-async function start(text?: string) {
+async function start(text?: string, handler?: Handler) {
   for (const client of [
     fakes.github,
     fakes.google,
@@ -117,22 +118,28 @@ async function start(text?: string) {
   github.forget();
   const chosen = scenario(text);
   const world = await buildWorld(chosen, github, fakes);
-  const recording = new RecordingExecutor((command) => {
-    if (command.kind === "action") {
-      writeOutputs(command.env, {
-        action: "none",
-        tasks: "[]",
-        dispatches: "[]",
-      });
-    }
-    return undefined;
-  });
+  const recording = new RecordingExecutor(
+    handler ??
+      ((command) => {
+        if (command.kind === "action") {
+          writeOutputs(command.env, {
+            action: "none",
+            tasks: "[]",
+            dispatches: "[]",
+          });
+        }
+        return undefined;
+      }),
+  );
   const jobFaults: JobFault[] = [];
   const timeline = new Timeline();
   const store = new MemoryStore();
-  const simulator = new Simulator({
+  let simulator: Simulator | undefined;
+  simulator = new Simulator({
     github,
-    executor: new FaultingExecutor(recording, jobFaults, "/home/runner/work"),
+    executor: new FaultingExecutor(recording, jobFaults, "/home/runner/work", (runId) =>
+      simulator?.runs.find((one) => one.id === runId)?.cancel(),
+    ),
     secrets: (repository) => world.secrets(repository),
     vars: (repository) => world.vars(repository),
     oidc: {
@@ -257,4 +264,128 @@ test("a job fault fails the job without running it", { skip }, async () => {
   await run.runAll(run.context.scenario.actions);
   assert.equal(run.results[0]?.conclusion, "failure");
   assert.equal(recording.of("Select tasks").length, 0);
+});
+
+/**
+ * Codeman's steps as a record-only run answers them: the first select picks task 1 to record,
+ * apply moves it, and `next-run` dispatches the workflow once, whose select then picks nothing.
+ */
+function chain(): Handler {
+  let selects = 0;
+  let dispatched = false;
+  return async (command, job) => {
+    const temp = command.env.RUNNER_TEMP ?? "";
+    if (command.kind === "run" && job.name === "Next run" && !dispatched) {
+      dispatched = true;
+      await fakes.github.request(
+        "POST",
+        "/api/v3/repos/acme/app/actions/workflows/codeman.yml/dispatches",
+        { headers: { authorization: `Bearer ${command.env.GH_TOKEN}` }, body: { ref: "main" } },
+      );
+      return undefined;
+    }
+    if (command.kind !== "action") return undefined;
+    if (command.inputs.step === "select" && ++selects === 1) {
+      mkdirSync(join(temp, "codeman", "task"), { recursive: true });
+      writeFileSync(join(temp, "codeman", "task", "1.json"), "{}\n");
+      const task = {
+        task: "1",
+        action: "record",
+        "needs-agent": "false",
+        stage: "",
+        "base-sha": "a".repeat(40),
+        "task-budget": "2",
+        "monthly-budget": "20",
+        "organization-monthly-budget": "",
+        inference: "{}",
+        "ledger-run": "",
+      };
+      writeOutputs(command.env, {
+        action: "record",
+        tasks: JSON.stringify([task]),
+        dispatches: "[]",
+      });
+    } else if (command.inputs.step === "select") {
+      writeOutputs(command.env, { action: "none", tasks: "[]", dispatches: "[]" });
+    } else if (command.inputs.step === "apply") {
+      mkdirSync(join(temp, "codeman", "chain"), { recursive: true });
+      writeFileSync(join(temp, "codeman", "chain", "1"), "");
+      writeOutputs(command.env, { chain: "true", continues: "false" });
+    }
+    return undefined;
+  };
+}
+
+const CHAIN = (actions: string) =>
+  SCENARIO.replace(
+    /actions:\n[\s\S]*$/,
+    `actions:\n  - open-issue: { ref: i1, as: alice, title: Add a route, labels: [codeman] }\n${actions}`,
+  );
+
+test("a run runs the chain its next-run dispatches at once, but not users' later events", {
+  skip,
+}, async () => {
+  const { run, recording } = await start(
+    CHAIN(`  - run: { event: issues.labeled }
+  - comment: { issue: i1, as: alice, body: /codeman decide 1 a }
+`),
+    chain(),
+  );
+  await run.runAll(run.context.scenario.actions);
+  // The labeled event's run, then the dispatched one; the comment waits for an advance.
+  assert.deepEqual(
+    run.results.map((result) => [result.event, result.conclusion]),
+    [
+      ["issues", "success"],
+      ["workflow_dispatch", "success"],
+    ],
+  );
+  assert.equal(recording.of("Select tasks").filter((one) => one.kind === "action").length, 2);
+});
+
+test("a run whose chain goes on past its max-runs fails", { skip }, async () => {
+  const { run } = await start(CHAIN("  - run: { event: issues.labeled, max-runs: 0 }\n"), chain());
+  await assert.rejects(
+    run.runAll(run.context.scenario.actions),
+    /chain on acme\/app still runs after 0 more runs \(max-runs 0\)/,
+  );
+});
+
+test("apply: skip cancels the run as apply reaches Codeman's step; always() jobs still run", {
+  skip,
+}, async () => {
+  const { run, recording } = await start(
+    CHAIN(`  - apply: { mode: skip }
+  - run: { event: issues.labeled, max-runs: 0 }
+`),
+    chain(),
+  );
+  await assert.rejects(run.runAll(run.context.scenario.actions), /still runs after 0/);
+  const [first] = run.results;
+  assert.equal(first?.conclusion, "cancelled");
+  const jobs = Object.fromEntries((first?.jobs ?? []).map((job) => [job.name, job]));
+  assert.equal(jobs["#1 / Apply"]?.result, "cancelled", jobs["#1 / Apply"]?.log);
+  // apply's Codeman step never ran; next-run, whose if: has always(), ran and dispatched.
+  assert.equal(recording.of("#1 / Apply").filter((one) => one.kind === "action").length, 0);
+  const applySteps = jobs["#1 / Apply"]?.steps.map((step) => step.outcome);
+  assert.ok(applySteps?.includes("cancelled"), JSON.stringify(applySteps));
+  assert.equal(jobs["Next run"]?.result, "success", jobs["Next run"]?.log);
+});
+
+test("a cancelled job fault cancels its run before the job's Codeman step", { skip }, async () => {
+  const { run, recording } = await start(
+    CHAIN(`  - fault: { job: { name: select, conclusion: cancelled, times: 1 } }
+  - run: { event: issues.labeled }
+`),
+    chain(),
+  );
+  await run.runAll(run.context.scenario.actions);
+  assert.equal(run.results.length, 1);
+  assert.equal(run.results[0]?.conclusion, "cancelled");
+  const select = run.results[0]?.jobs.find((job) => job.name === "Select tasks");
+  assert.equal(select?.result, "cancelled");
+  // Its first step ran; Codeman's did not; next-run, whose if: needs select's success, did not.
+  assert.ok(recording.of("Select tasks").some((one) => one.kind === "run"));
+  assert.equal(recording.of("Select tasks").filter((one) => one.kind === "action").length, 0);
+  assert.equal(recording.of("Next run").length, 0);
 });

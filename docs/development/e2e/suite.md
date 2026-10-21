@@ -94,13 +94,13 @@ A vLLM pod takes 5 to 6 minutes to serve on a CPU. Scenarios run one at a time.
 2. Run more: name tags, directories or files, or nothing for every scenario.
 3. Stop the services with your last run's `--down`, or `docker compose -f e2e/infra/compose.yaml --profile ollama --profile vllm down`. The named volumes stay, with the models.
 
-The command exits 1 when a scenario fails or is not run, and 2 on an unknown option. Ctrl-C makes the scenario running now the last.
+The command exits 1 when a scenario fails or is not run, or when a [known bug's](#known-bugs) scenario passes, and 2 on an unknown option. Ctrl-C makes the scenario running now the last.
 
 | Argument | Selects |
 | --- | --- |
 | None | Every scenario |
 | A bare word, such as `happy-path` | The scenarios with that tag, and those under `e2e/scenarios/<word>/` |
-| A path | That file or directory, from the working directory, else from `e2e/scenarios/` |
+| A path | That file or directory, from the working directory, else from `e2e/scenarios/`; or a scenario's ID, its path there without `.yaml` |
 | `--down` | Stops the services after the run |
 | `--no-build` | Starts Compose without rebuilding; builds only the missing images |
 
@@ -137,8 +137,8 @@ The report replaces the scenario's last one. A passing scenario leaves only `tim
 | `timeline.txt`, `timeline.json` | Every event, oldest first, with seconds since the start: `action`, `event`, `run`, `job`, `dispatch`, `pod`, `expect` |
 | `jobs/` | Each job's log, as `<order>-run<id>-<job>.log` |
 | `fakes/` | Each fake's lists, as `<fake>-<list>.json`: the requests it got, GitHub's events and dispatches, OpenRouter's keys, the model's turns |
-| `store.json` | The store's documents, by path |
-| `engine.json` | Each pod's gateway health, engine status and last 300 log lines |
+| `store.json` | The store's documents, by path: the organizations' runs and events, and their pools' pods, board, batches and Serverless endpoints' runs |
+| `engine.json` | Each pod's gateway status, engine status and last 300 log lines |
 | `violations.json` | What the fakes refused: tokens they did not give, model requests no script covers |
 
 To find the cause:
@@ -148,6 +148,13 @@ To find the cause:
 3. Read that job's log in `jobs/`. Codeman's own messages say why it stopped.
 4. Check `violations.json`. A violation fails the scenario at its end, even when every `expect` held.
 5. For a request a fake answered badly, read `fakes/<fake>-requests.json`.
+
+### Known bugs
+
+A scenario tagged `known-bug` reproduces a bug of Codeman that is not fixed yet. Its file's first comment says what the bug is.
+
+- It runs like any other, and is reported apart, at the summary's end: `reproduced` when it fails, as expected.
+- Its failure does not fail the run. Its pass does, as `PASSES`: the bug looks fixed, so remove the tag.
 
 ## Under act
 
@@ -176,13 +183,13 @@ flowchart LR
   runtime -->|docker run| pod["Pod: gateway, tee, engine"]
   runpod -->|proxy| pod
   pod --> llm
-  github -.->|dispatches, read by advance| runtime
+  github -.->|dispatches, read by run and advance| runtime
 ```
 
 1. `npm run test:e2e` ([`e2e/runtime/main.ts`](../../../e2e/runtime/main.ts)) loads and validates the scenarios, checks Docker's memory, and runs `npm run build:e2e`.
 2. The session ([`session.ts`](../../../e2e/runtime/session.ts)) builds the images, runs `docker compose up --wait` with the profiles, and opens the pod launcher.
 3. For each scenario, it builds the world on the fakes: users, repositories with the templates, the App, the Google side and the agent's script.
-4. The scenario's actions run in order ([`run.ts`](../../../e2e/runtime/run.ts)). A `run` or an `advance` hands an event to the workflow simulator, which runs each job in its own container on the internal jobs network.
+4. The scenario's actions run in order ([`run.ts`](../../../e2e/runtime/run.ts)). A `run` or an `advance` hands an event to the workflow simulator, which runs each job in its own container on the internal jobs network. A cancelled or timed-out step's processes get SIGINT, then SIGTERM after 7.5 seconds, then SIGKILL 2.5 seconds later, as GitHub's runner sends them; the container stays, so the job's `always()` steps run.
 5. A pod the fake Runpod creates goes to the launcher, which runs the local image its allowlist maps the pinned image to.
 6. `expect`, `wait` and `advance` read the fakes and the store ([`expect.ts`](../../../e2e/runtime/expect.ts)). At the end, any violation fails the scenario, and a failure writes the report ([`report.ts`](../../../e2e/runtime/report.ts)).
 

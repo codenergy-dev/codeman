@@ -195,3 +195,33 @@ jobs:
   assert.ok(!a?.log.includes("s3cr3t-value"));
   assert.match(a?.log ?? "", /printed \*\*\* and \*\*\*/);
 });
+
+test("a timed-out job's always() steps run with their own time, as on GitHub", {
+  skip,
+}, async () => {
+  const { simulator } = await setup(
+    {
+      ".github/workflows/main.yml": `on: workflow_dispatch
+jobs:
+  a:
+    runs-on: ubuntu-latest
+    timeout-minutes: 0.02
+    steps:
+      - run: exec sleep 30
+      - if: always()
+        run: sleep 2 && echo cleaned up
+      - run: echo never
+`,
+    },
+    new ProcessExecutor(),
+  );
+  const a = byName(await dispatch(simulator)).a;
+  assert.equal(a?.result, "failure");
+  assert.deepEqual(
+    a?.steps.slice(1).map((step) => step.outcome),
+    ["success", "skipped"],
+    a?.log,
+  );
+  assert.match(a?.log ?? "", /cleaned up/);
+  assert.match(a?.log ?? "", /exceeded the maximum execution time of 0.02 minutes/);
+});

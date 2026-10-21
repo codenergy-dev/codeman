@@ -40,6 +40,7 @@ import {
   type PullRequestMatch,
   RelativeTime,
   type Repository,
+  RUN_CHAIN_RUNS,
   RUNNERS,
   type RunpodWorld,
   type Scenario,
@@ -624,7 +625,7 @@ function actionOf(value: unknown, path: Path, context: Context): Action {
       };
     }
     case "run": {
-      const fields = record(body, at, ["repo", "event", "inputs"]);
+      const fields = record(body, at, ["repo", "event", "inputs", "max-runs"]);
       required(fields, at, ["event"]);
       const event = choice(fields.event, [...at, "event"], EVENTS);
       const inputs: Record<string, string> = {};
@@ -640,7 +641,16 @@ function actionOf(value: unknown, path: Path, context: Context): Action {
           inputs[name] = scalarText(item, where);
         }
       }
-      return { kind, repo: repoOf(fields.repo, [...at, "repo"], context), event, inputs };
+      return {
+        kind,
+        repo: repoOf(fields.repo, [...at, "repo"], context),
+        event,
+        inputs,
+        maxRuns:
+          fields["max-runs"] === undefined
+            ? RUN_CHAIN_RUNS
+            : integer(fields["max-runs"], [...at, "max-runs"], 0),
+      };
     }
     case "advance": {
       const fields = record(body, at, ["repo", "until", "max-runs"]);
@@ -1005,9 +1015,16 @@ function storeMatchOf(value: unknown, path: Path): StoreMatch {
 }
 
 function ledgerOf(value: unknown, path: Path): LedgerMatch {
-  const fields = record(value, path, ["cost-at-most", "cost-at-least", "runs"]);
-  if (Object.keys(fields).length === 0) fail(path, "expected cost-at-most, cost-at-least or runs");
+  const fields = record(value, path, ["cost-at-most", "cost-at-least", "runs", "split-on"]);
+  if (Object.keys(fields).length === 0) {
+    fail(path, "expected cost-at-most, cost-at-least, runs or split-on");
+  }
+  const split = fields["split-on"];
+  if (split !== undefined && (typeof split !== "string" || !/^[A-Za-z0-9]{1,64}$/.test(split))) {
+    fail([...path, "split-on"], "expected a Serverless endpoint's ID");
+  }
   return {
+    splitOn: split as string | undefined,
     costAtMost:
       fields["cost-at-most"] === undefined
         ? undefined

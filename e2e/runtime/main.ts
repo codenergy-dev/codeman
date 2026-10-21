@@ -4,7 +4,7 @@ import { memoryProblem } from "./compose.ts";
 import { dockerMemory } from "./docker.ts";
 import { selectScenarios } from "./scenario/filter.ts";
 import { loadScenarios, SCENARIOS_ROOT } from "./scenario/load.ts";
-import type { Profile } from "./scenario/schema.ts";
+import type { Profile, Scenario } from "./scenario/schema.ts";
 import { ROOT, type ScenarioResult, Session } from "./session.ts";
 
 /**
@@ -12,6 +12,10 @@ import { ROOT, type ScenarioResult, Session } from "./session.ts";
  * the suite's services with Compose (or reuses them), runs the selected scenarios one at a time,
  * and prints a summary. `--down` stops the services afterwards; `--no-build` keeps the images
  * Compose has. Exits 1 when a scenario fails.
+ *
+ * A scenario tagged `known-bug` reproduces a bug of Codeman not fixed yet: it is expected to
+ * fail, and its result is reported apart. Its failure does not fail the suite; its pass does, so
+ * the tag goes once the bug is fixed.
  */
 
 const args = process.argv.slice(2);
@@ -61,7 +65,14 @@ try {
     const result = await session.runScenario(scenario);
     results.push(result);
     const seconds = (result.durationMs / 1000).toFixed(1);
-    if (result.passed) log(`PASS ${scenario.id} (${seconds}s)`);
+    if (knownBug(scenario)) {
+      log(
+        result.passed
+          ? `PASS ${scenario.id} (${seconds}s), but it is tagged known-bug: is the bug fixed? Remove the tag.`
+          : `KNOWN BUG ${scenario.id} (${seconds}s): fails as expected.`,
+      );
+      if (!result.passed) console.log(result.message?.replace(/^/gm, "  "));
+    } else if (result.passed) log(`PASS ${scenario.id} (${seconds}s)`);
     else {
       log(`FAIL ${scenario.id} (${seconds}s)`);
       console.log(result.message?.replace(/^/gm, "  "));
@@ -71,16 +82,25 @@ try {
   await session.close({ down: flags.has("--down") });
 }
 
-const failed = results.filter((result) => !result.passed);
+const known = results.filter((result) => knownBug(result.scenario));
+const counted = results.filter((result) => !knownBug(result.scenario));
+const failed = counted.filter((result) => !result.passed);
+// A known bug's scenario that passes fails the suite: its tag is out of date.
+const fixed = known.filter((result) => result.passed);
+const line = (result: ScenarioResult, status: string) =>
+  `  ${status.padEnd(9)} ${(result.durationMs / 1000).toFixed(1).padStart(7)}s  ${result.scenario.id}  (${relative(process.cwd(), result.scenario.file)})`;
 console.log("");
 console.log("Summary:");
-for (const result of results) {
-  const where = relative(process.cwd(), result.scenario.file);
-  console.log(
-    `  ${result.passed ? "pass" : "FAIL"}  ${(result.durationMs / 1000).toFixed(1).padStart(7)}s  ${result.scenario.id}  (${where})`,
-  );
+for (const result of counted) console.log(line(result, result.passed ? "pass" : "FAIL"));
+if (known.length > 0) {
+  console.log("Known bugs of Codeman (tagged known-bug):");
+  for (const result of known) console.log(line(result, result.passed ? "PASSES" : "reproduced"));
 }
 console.log(
-  `${results.length - failed.length} passed, ${failed.length} failed${results.length < scenarios.length ? `, ${scenarios.length - results.length} not run` : ""}.`,
+  `${counted.length - failed.length} passed, ${failed.length} failed${known.length > 0 ? `; ${known.length - fixed.length} known bugs reproduced, ${fixed.length} no longer fail` : ""}${results.length < scenarios.length ? `, ${scenarios.length - results.length} not run` : ""}.`,
 );
-process.exit(failed.length > 0 || results.length < scenarios.length ? 1 : 0);
+process.exit(failed.length > 0 || fixed.length > 0 || results.length < scenarios.length ? 1 : 0);
+
+function knownBug(scenario: Scenario): boolean {
+  return scenario.tags.includes("known-bug");
+}

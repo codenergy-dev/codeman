@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { posix } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { docker, dockerOk, envArgs, imagePath } from "./docker.ts";
 import type {
   Command,
@@ -100,14 +101,13 @@ export class DockerExecutor implements JobExecutor {
       throw new Error(`The job's container could not trust the session's CA: ${trusted.stderr}`);
     }
     let stopped = false;
+    let steps = 0;
     return {
       root: JOB_ROOT,
       exec: (command) =>
         stopped
           ? Promise.resolve({ exitCode: 125, output: "The job's container was stopped.\n" })
-          : this.#exec(name, path, command, () => {
-              stopped = true;
-            }),
+          : this.#exec(name, path, command, ++steps),
       stop: async () => {
         stopped = true;
         await docker(["rm", "-f", name]);
@@ -115,7 +115,11 @@ export class DockerExecutor implements JobExecutor {
     };
   }
 
-  #exec(container: string, imagePathValue: string, command: Command, kill: () => void) {
+  #exec(container: string, imagePathValue: string, command: Command, step: number) {
+    // A step that would start after its job was cancelled does not run, as on GitHub.
+    if (command.signal.aborted) {
+      return Promise.resolve<CommandResult>({ exitCode: 1, output: "" });
+    }
     const env: Record<string, string> = { ...this.#options.env, ...command.env };
     // gh takes its token from GH_ENTERPRISE_TOKEN for a host other than github.com.
     if (env.GH_TOKEN !== undefined && env.GH_ENTERPRISE_TOKEN === undefined) {
@@ -126,6 +130,7 @@ export class DockerExecutor implements JobExecutor {
     delete env.HOME;
     const passed = envArgs(env);
     const argv = command.kind === "run" ? command.argv : actionArgv(env.GITHUB_ACTION_PATH);
+    const pidFile = `/tmp/codeman-e2e-step-${step}.pid`;
     const args = [
       "exec",
       "--workdir",
@@ -136,44 +141,140 @@ export class DockerExecutor implements JobExecutor {
       "HOME=/home/runner",
       ...passed.args,
       container,
-      ...argv,
+      ...stepArgv(pidFile, argv),
     ];
     return new Promise<CommandResult>((resolve) => {
       const chunks: Buffer[] = [];
       let timedOut = false;
-      let killed = false;
-      // Stopping the CLI leaves the process in the container: the job's container goes instead.
+      let stopping: Promise<unknown> | undefined;
+      let closed = false;
+      // Stopping the CLI leaves the process in the container: the step's processes are signalled
+      // inside it, as GitHub's runner signals them, and the container stays for the steps after.
       const stop = () => {
-        if (killed) return;
-        killed = true;
-        kill();
-        void docker(["kill", container]);
+        if (stopping) return;
+        stopping = stopStep(
+          (signal) => signalStep(container, pidFile, signal),
+          () => closed,
+        );
+        void stopping.then(async () => {
+          // A process the step left holding the CLI's output would keep it open.
+          await sleep(CLI_GRACE_MS);
+          if (!closed) child.kill("SIGKILL");
+        });
       };
       const child = spawn("docker", args, {
         env: { ...process.env, ...passed.env },
         stdio: ["ignore", "pipe", "pipe"],
       });
-      const timer = setTimeout(() => {
-        timedOut = true;
-        stop();
-      }, command.timeoutMs);
+      const timer =
+        command.timeoutMs < MAX_TIMER_MS
+          ? setTimeout(() => {
+              timedOut = true;
+              stop();
+            }, command.timeoutMs)
+          : undefined;
       command.signal.addEventListener("abort", stop, { once: true });
       child.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
       child.stderr.on("data", (chunk: Buffer) => chunks.push(chunk));
       const done = (exitCode: number, extra = "") => {
+        if (closed) return;
+        closed = true;
         clearTimeout(timer);
         command.signal.removeEventListener("abort", stop);
-        resolve({
+        const result: CommandResult = {
           exitCode,
           output: Buffer.concat(chunks).toString("utf8") + extra,
           ...(timedOut ? { timedOut } : {}),
-        });
+        };
+        // A stopped step ends once what it left running was killed too.
+        if (stopping) void stopping.then(() => resolve(result));
+        else resolve(result);
       };
       child.on("error", (error) => done(127, `${error.message}\n`));
       child.on("close", (code) => done(code ?? 1));
     });
   }
 }
+
+/** The longest delay `setTimeout` keeps; a longer one would fire at once. */
+const MAX_TIMER_MS = 2 ** 31 - 1;
+/** How long the CLI may stay open once the step's processes were killed. */
+const CLI_GRACE_MS = 5_000;
+
+/**
+ * A step's argv, recording its process ID in `pidFile` first, so it can be signalled. bash, not
+ * sh: dash drops the variables whose names are not a shell's, such as `INPUT_TEMPLATE-VERSION`.
+ */
+export function stepArgv(pidFile: string, argv: string[]): string[] {
+  return ["bash", "-c", 'echo $$ > "$0" && exec "$@"', pidFile, ...argv];
+}
+
+/**
+ * Signals a step's processes inside its container, as root: `INT` and `TERM` to its first
+ * process, `KILL` to every process that was under it at any signal, so what a process left
+ * running when it died goes too.
+ */
+const SIGNAL_SCRIPT = [
+  'root=$(cat "$1" 2>/dev/null) || exit 0',
+  "level=$root",
+  'while [ -n "$level" ]; do',
+  '  echo "$level" >> "$1.tree"',
+  '  next=""',
+  '  for pid in $level; do next="$next $(ps -o pid= --ppid "$pid")"; done',
+  "  level=$(echo $next)",
+  "done",
+  'if [ "$2" = KILL ]; then kill -KILL $(cat "$1.tree") 2>/dev/null; else kill -"$2" "$root" 2>/dev/null; fi',
+  "exit 0",
+].join("\n");
+
+async function signalStep(container: string, pidFile: string, signal: StopSignal) {
+  await docker(
+    [
+      "exec",
+      "--user",
+      "root",
+      container,
+      "sh",
+      "-c",
+      SIGNAL_SCRIPT,
+      "codeman-e2e-stop",
+      pidFile,
+      signal,
+    ],
+    { timeoutMs: 20_000 },
+  );
+}
+
+export type StopSignal = "INT" | "TERM" | "KILL";
+
+/**
+ * How GitHub's runner stops a cancelled or timed-out step's process: SIGINT, then SIGTERM after
+ * 7.5 seconds, then, 2.5 seconds later, SIGKILL to its whole tree. It ends early once `ended`
+ * says the process is gone.
+ */
+export async function stopStep(
+  signal: (signal: StopSignal) => Promise<void>,
+  ended: () => boolean,
+  wait: (ms: number) => Promise<void> = sleep,
+): Promise<StopSignal[]> {
+  const sent: StopSignal[] = [];
+  const pause = async (ms: number) => {
+    for (let left = ms; left > 0 && !ended(); left -= POLL_MS) await wait(Math.min(POLL_MS, left));
+  };
+  for (const [next, after] of [
+    ["INT", 7_500],
+    ["TERM", 2_500],
+    ["KILL", 0],
+  ] as const) {
+    if (ended() && next !== "KILL") continue;
+    await signal(next);
+    sent.push(next);
+    await pause(after);
+  }
+  return sent;
+}
+
+const POLL_MS = 250;
 
 /**
  * Codeman's action: its bundle copied into the job's checkout of Codeman (`GITHUB_ACTION_PATH`),

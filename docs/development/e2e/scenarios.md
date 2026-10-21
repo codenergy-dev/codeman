@@ -52,7 +52,7 @@ actions:
 
 1. The world has one organization, with its `CODEMAN_SETTINGS`, and one repository made from the `node-small` fixture.
 2. `open-issue` opens the issue and names it `i1`. Its `codeman` label records an `issues.labeled` event.
-3. `run` starts Codeman's workflow for that event, and waits for its jobs.
+3. `run` starts Codeman's workflow for that event, and waits for its jobs and the runs they start.
 4. The planning agent's one round writes the plan, then its [agent output](../../runs/agent.md#agent-output).
 5. `expect` checks the issue's state label and its decisions comment.
 
@@ -63,7 +63,7 @@ actions:
 | Field | Required | Value | Default |
 | --- | --- | --- | --- |
 | `name` | Yes | What the scenario shows, in one line | |
-| `tags` | No | Words that select it on the command line: lowercase letters, digits and `-` | None |
+| `tags` | No | Words that select it on the command line: lowercase letters, digits and `-`. `known-bug` marks a scenario that reproduces a bug of Codeman not fixed yet ([known bugs](suite.md#known-bugs)) | None |
 | `runner` | No | `simulator` or `act` | `simulator` |
 | `profiles` | No | The Compose profiles it needs: `ollama`, `vllm` ([memory](suite.md#profiles-and-memory)) | None |
 | `timeout` | No | The whole scenario's time limit | `15m` |
@@ -113,7 +113,7 @@ A repository whose owner is no organization of the world belongs to a user accou
 | `runpod.endpoints` | [Serverless endpoints](../../glossary.md#serverless-endpoint), in the fake's shape ([`serverless.ts`](../../../e2e/fakes/runpod/serverless.ts)) | None |
 | `openrouter.prices` | `{ prompt, completion }`, USD per token | The fake's |
 | `openrouter.lags` | `{ usage, analytics }`: a duration, or `hold` until settled | None |
-| `openrouter.credits` | Not available yet | |
+| `openrouter.credits` | The account's credits, in USD | 100 |
 
 ### What the runtime adds
 
@@ -186,14 +186,14 @@ Each one runs on the fake GitHub as the user `as:` names, and records the events
 
 | Action | Fields | Does |
 | --- | --- | --- |
-| `run` | `event` required; `repo`, `inputs` | Runs Codeman's workflow for the repository's last such event, and waits for its jobs |
+| `run` | `event` required; `repo`, `inputs`, `max-runs` | Runs Codeman's workflow for the repository's last such event, then the chain it starts, until none is left |
 | `advance` | `until`, `max-runs` required; `repo` | Runs the events and dispatches not run yet, oldest first, until `until` holds |
 | `parallel` | Two or more lists of actions | Runs the lists at once |
 
 - **Events:** `issues.labeled`, `issues.unlabeled`, `issues.closed`, `issues.reopened`, `issue_comment.created`, `pull_request_review.submitted`, `schedule` and `workflow_dispatch`.
 - **`inputs`** are only for `workflow_dispatch`: the [manual run's inputs](../../glossary.md#manual-runs-inputs) `model`, `task-budget`, `monthly-budget`, `max-runs` and `batch`.
-- **`max-runs`** counts runs that were not skipped. `advance` fails when it is reached, or when nothing is left to run.
-- **Dispatches** a `run` makes wait for the next `advance`. On GitHub they would start at once.
+- **`max-runs`** counts runs that were not skipped. `advance` fails when it is reached, or when nothing is left to run. `run`'s, 10 by default, counts the runs its chain starts, beyond its first.
+- **A `run`'s chain:** on GitHub, `next-run`'s and `dispatch`'s dispatches, and the events Codeman's App causes, start their runs at once. So `run` runs them too, those that appeared since it began, until none is left. Users' events, such as a comment made after the `run`, wait for an `advance`.
 - **`parallel`:** each list sees the refs defined before it. After it, every list's new refs are defined.
 
 ### Settings and the store
@@ -216,7 +216,7 @@ In `seed`'s `data`, `now`, `now-45m` and `now+1h` are times relative to when it 
 | `google` | `{ refuse-repositories, disabled-accounts, expiry }` | Refuses those repositories' tokens or those service accounts, or shortens the tokens' expiry |
 | `openrouter` | `{ lags: { usage, analytics } }` | Changes the lags from now on |
 | `pod` | `{ pod, action }` | The pod a ref names: `restart`, `exit` or `fail` |
-| `job` | `{ name, issue, conclusion, times }`, `name` required | The template's job fails instead of running, for one task or all. `conclusion` is `failure` |
+| `job` | `{ name, issue, conclusion, times }`, `name` required | The template's job, for one task or all. `failure`, the default: it fails instead of running. `cancelled`: the run is cancelled, as a user would, when the job reaches its Codeman step (its first step, for `next-run`, `dispatch` and `forward-review`); that step does not run, and the job's and the run's `always()` steps and jobs do |
 | `firestore` | `down` or `up` | Takes the emulator off the jobs' network, or back |
 | `clear` | A list of fakes, or `all` | Clears their faults |
 
@@ -226,7 +226,7 @@ A fake's key with a mapping that has no `path` takes the second form, such as `r
 
 | Action | Fields | Does |
 | --- | --- | --- |
-| `apply` | `fail`, or `{ mode, issue }` | Fails the `apply` job, for one task or all, so the agent's work is not applied |
+| `apply` | `fail` or `skip`, or `{ mode, issue }` | So the agent's work is not applied, for one task or all: `fail` fails the `apply` job, `skip` cancels the run as `apply` reaches its Codeman step |
 | `wait` | `until`, `timeout` required | Polls until `until` holds, or fails after `timeout` |
 | `expect` | [Checks](#checks) | Polls for 15 seconds until every check holds, to absorb a fake's lag |
 
@@ -243,10 +243,10 @@ A fake's key with a mapping that has no `path` takes the second form, such as `r
 | `commits` | `{ branch, count, files, no-files, message }` | The branch, the task's by default, against the default branch: its commits, the paths it changes or not, a message's text |
 | `pull-request` | `none`, or `{ ready, state, files }` | The task's pull request: absent; or ready or a draft, `open` or `closed`, changing these paths |
 | `store` | `[{ doc, absent, fields }]` or `[{ collection, where, count }]` | A document exists or not, with these fields; or a collection's documents that match |
-| `ledger` | `{ cost-at-most, cost-at-least, runs }` | The issue's task's [ledger](../../glossary.md#ledger) runs, or every run: their summed `cost` in USD, and their count |
+| `ledger` | `{ cost-at-most, cost-at-least, runs, split-on }` | The issue's task's [ledger](../../glossary.md#ledger) runs, or every run: their summed `cost` in USD, and their count. `split-on` names a Serverless endpoint whose runs [split its worker's time](../../inference/serverless.md#splitting-shared-worker-time): they overlapped, each closed run costs its share, and the shares add up to the worker's billed time |
 | `fakes` | `{ <fake>: { <list>: { where, count } } }` | A fake's list has matching items |
 | `pods` | `[{ ref, pod, status, where, count }]` | The fake Runpod's pods. `ref` names the last that matches, for later checks; `pod` checks one named before |
-| `engine` | `{ pod, gateway, ollama, vllm }` | A pod's gateway `/health`, Ollama's `/api/ps`, vLLM's `/v1/models` with its `metrics`. `pod` is a ref; without it, the only live pod |
+| `engine` | `{ pod, gateway, ollama, vllm }` | A pod's gateway `/admin/status`, with the admin token derived from the account's key and the pod's `CODEMAN_NONCE`; Ollama's `/api/ps`, through the tee; vLLM's `/v1/models` with its `metrics`. `pod` is a ref; without it, the only live pod |
 | `violations` | `none` | No fake recorded a violation |
 
 Every scenario also ends with an implicit `violations: none`.
@@ -278,12 +278,4 @@ What each list holds is in [the e2e fakes](fakes.md#control-routes).
 
 ## Not available yet
 
-The schema accepts these, but the runtime does not run them yet. A scenario that uses one fails, saying so, except `runner: act`.
-
-| Field | Status |
-| --- | --- |
-| `runner: act` | Runs on the simulator, until [phase 6](suite.md#under-act) |
-| `fault: { job: { conclusion: cancelled } }` | Fails: the executor cannot cancel a job |
-| `apply: skip` | Fails, for the same reason |
-| `world.openrouter.credits` | Fails: the fake OpenRouter has no control route for it |
-| `engine: { gateway }` | Reads the gateway's `/health`, not `/admin/status`, which needs the pod's admin token |
+The schema accepts `runner: act`, but such a scenario runs on the simulator until [phase 6](suite.md#under-act).

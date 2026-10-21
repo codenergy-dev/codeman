@@ -277,3 +277,23 @@ test("faults come from the shared module", async () => {
   assert.equal((await chat(key)).status, 503);
   assert.equal((await chat(key)).status, 200);
 });
+
+test("the control API sets the account's credits until a reset, and spent credits answer 402", async () => {
+  const { key, data } = await createKey({ limit: 10 });
+  assert.equal(
+    (await call("/_fake/openrouter/credits", { method: "PUT", body: { credits: "a lot" } })).status,
+    400,
+  );
+  const set = await call("/_fake/openrouter/credits", { method: "PUT", body: { credits: 0.5 } });
+  assert.equal(set.status, 204);
+  const credits = await call("/api/v1/credits", { token: MANAGEMENT });
+  assert.equal(credits.body.data.total_credits, 0.5);
+  await call(`/_fake/openrouter/keys/${data.hash}/usage`, { method: "PUT", body: { usage: 0.5 } });
+  const spent = await chat(key);
+  assert.equal(spent.status, 402);
+  assert.equal(spent.body.error.metadata.limit_source, "openrouter_credits");
+
+  fake.server.reset();
+  const after = await call("/api/v1/credits", { token: MANAGEMENT });
+  assert.equal(after.body.data.total_credits, 100);
+});

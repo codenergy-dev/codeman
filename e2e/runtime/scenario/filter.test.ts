@@ -37,6 +37,7 @@ test("scenarios are chosen by path or by tag, in the suite's order", () => {
   assert.deepEqual(ids(["ollama"]), ["budgets/monthly", "pods/keep"]);
   assert.deepEqual(ids(["vllm", "budgets"]), ["budgets/monthly", "pods/vllm-seats"]);
   assert.deepEqual(ids(["pods/keep.yaml"]), ["pods/keep"]);
+  assert.deepEqual(ids(["pods/keep"]), ["pods/keep"]);
   assert.deepEqual(ids([join(root, "budgets")], tmpdir()), ["budgets/monthly"]);
   assert.deepEqual(ids(["./pods/keep.yaml"], join(root, "..")), ["pods/keep"]);
 });

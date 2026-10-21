@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { adminToken } from "../../src/inference/selfhosted.ts";
 import { Firestore } from "../../src/store/firestore.ts";
 import { Compose, network } from "./compose.ts";
 import { docker, dockerOk, imageExists, removeLabeled } from "./docker.ts";
@@ -15,7 +16,7 @@ import { type ReportData, Timeline, writePass, writeReport } from "./report.ts";
 import { ScenarioFailure, ScenarioRun } from "./run.ts";
 import type { Profile, Scenario } from "./scenario/schema.ts";
 import { Simulator } from "./simulator/simulator.ts";
-import { buildWorld, OIDC_REQUEST_URL } from "./world.ts";
+import { buildWorld, OIDC_REQUEST_URL, PROVIDER_KEYS } from "./world.ts";
 
 /**
  * One `npm run test:e2e`: Compose up with the profiles the scenarios need, the fakes' clients,
@@ -239,6 +240,11 @@ export class Session {
         }),
         jobFaults,
         JOB_ROOT,
+        (runId) => {
+          const found = simulator?.runs.find((one) => one.id === runId);
+          timeline.add("run", `the scenario cancels run ${runId}`);
+          found?.cancel();
+        },
       );
       simulator = new Simulator({
         github: this.github,
@@ -397,6 +403,20 @@ export class Session {
         }
         const organization = await safely(() => store.get(`organizations/${owner}`));
         if (organization) documents[`organizations/${owner}`] = organization;
+        // The pool's documents: its pod registry, board, batches and Serverless endpoints' runs.
+        const declared =
+          organization && "fields" in organization ? organization.fields.pool : undefined;
+        const pool = typeof declared === "string" ? declared : owner;
+        const endpoints = (scenario.world.runpod?.endpoints ?? []).map(
+          (endpoint) => `endpoints/${endpoint.id}/runs`,
+        );
+        for (const collection of ["pods", "board", "batches", ...endpoints]) {
+          const path = `pools/${pool}/${collection}`;
+          const found = await safely(() => store.query(path));
+          if (Array.isArray(found))
+            for (const document of found) documents[document.path] = document.fields;
+          else documents[path] = found;
+        }
       }
       for (const collection of ["contexts"]) {
         const found = await safely(() => store.query(collection));
@@ -442,13 +462,21 @@ export class Session {
     if (!down && !connected) await network(container, JOBS_NETWORK, true, ["firestore"]);
   }
 
-  /** A pod's engine, read inside its container: the gateway's health, Ollama's, vLLM's. */
+  /**
+   * A pod's engine, read inside its container: the gateway's `/admin/status`, with the admin
+   * token Codeman derives from the account's key and the pod's nonce (its `CODEMAN_NONCE`, as the
+   * fake Runpod recorded the pod's env), Ollama's `/api/ps`, vLLM's models and metrics.
+   */
   async #engine(id: string): Promise<{ gateway?: unknown; ollama?: unknown; vllm?: unknown }> {
     const container = this.launcher.pods.get(id);
     if (!container) throw new Error(`The launcher started no pod ${id}.`);
-    const get = async (url: string) => {
-      const script = `fetch(${JSON.stringify(url)}).then((r) => r.text()).then((t) => process.stdout.write(t), (e) => { process.stderr.write(String(e)); process.exit(1); })`;
-      const result = await docker(["exec", container, "node", "-e", script], { timeoutMs: 20_000 });
+    const get = async (url: string, token?: string) => {
+      // The token goes through the environment, so no command line holds it.
+      const script = `fetch(${JSON.stringify(url)}, { headers: process.env.E2E_ADMIN ? { authorization: "Bearer " + process.env.E2E_ADMIN } : {} }).then((r) => r.text()).then((t) => process.stdout.write(t), (e) => { process.stderr.write(String(e)); process.exit(1); })`;
+      const result = await docker(
+        ["exec", ...(token ? ["-e", "E2E_ADMIN"] : []), container, "node", "-e", script],
+        { timeoutMs: 20_000, ...(token ? { env: { E2E_ADMIN: token } } : {}) },
+      );
       return result.exitCode === 0 ? result.stdout : undefined;
     };
     const parse = (text: string | undefined) => {
@@ -458,8 +486,15 @@ export class Session {
         return undefined;
       }
     };
+    const pods = await this.fakes.runpod.json<{ id: string; env?: Record<string, string> }[]>(
+      "GET",
+      "/runpod/pods",
+    );
+    const nonce = pods.find((pod) => pod.id === id)?.env?.CODEMAN_NONCE;
+    if (!nonce) throw new Error(`The fake Runpod has no CODEMAN_NONCE for pod ${id}.`);
+    const token = adminToken(PROVIDER_KEYS.CODEMAN_RUNPOD_API_KEY ?? "", nonce);
     const status: { gateway?: unknown; ollama?: unknown; vllm?: unknown } = {
-      gateway: parse(await get("http://127.0.0.1:8080/health")),
+      gateway: parse(await get("http://127.0.0.1:8080/admin/status", token)),
     };
     const ps = parse(await get("http://127.0.0.1:11434/api/ps"));
     if (ps) status.ollama = ps;

@@ -289,7 +289,15 @@ export interface RunWorkflow {
   /** The last such event on the repository; `schedule` and `workflow_dispatch` make their own. */
   event: WorkflowEvent;
   inputs: Record<string, string>;
+  /**
+   * The runs its chain may start, beyond the first: the dispatches and the App's events since it
+   * began, which GitHub runs at once (`RUN_CHAIN_RUNS` by default).
+   */
+  maxRuns: number;
 }
+
+/** How many runs a `run`'s chain may start by default. */
+export const RUN_CHAIN_RUNS = 10;
 
 export interface Advance {
   kind: "advance";
@@ -455,6 +463,12 @@ export interface LedgerMatch {
   costAtMost: number | undefined;
   costAtLeast: number | undefined;
   runs: Pattern | undefined;
+  /**
+   * A Serverless endpoint's ID: the runs that used its worker split its time, as
+   * docs/inference/serverless.md says: they overlapped, each closed run counts its share, and the
+   * shares add up to the worker's billed time, not to the runs' own estimates.
+   */
+  splitOn: string | undefined;
 }
 
 /** The lists each fake's state has, from its control API. */

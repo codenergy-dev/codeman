@@ -49,6 +49,7 @@ test("a scenario names its world, defaults and actions", () => {
     repo: "acme/app",
     event: "issues.labeled",
     inputs: {},
+    maxRuns: 10,
   });
 });
 
@@ -244,7 +245,7 @@ actions:
   - set-variable: { repo: acme/app, name: CODEMAN_COMMIT_SHA, value: def456 }
   - set-variable: { repo: acme/site, value: null }
   - seed: { doc: pools/acme/pods/n1, age: 45m, data: { status: serving, leases: [{ kind: keep, until: now+15m }], createdAt: now } }
-  - run: { repo: acme/app, event: workflow_dispatch, inputs: { task-budget: 3, model: m } }
+  - run: { repo: acme/app, event: workflow_dispatch, inputs: { task-budget: 3, model: m }, max-runs: 2 }
   - advance: { repo: acme/app, until: { issue: i1, labels: [codeman:done] }, max-runs: 6 }
   - parallel:
       - - open-issue: { ref: i2, as: alice, repo: acme/site, title: Other }
@@ -330,6 +331,7 @@ test("every action kind parses", () => {
     repo: "acme/app",
     event: "workflow_dispatch",
     inputs: { "task-budget": "3", model: "m" },
+    maxRuns: 2,
   });
   assert.deepEqual(
     byKind("fault").map((fault) => fault.kind === "fault" && fault.target),
