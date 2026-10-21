@@ -83,6 +83,9 @@ New to Codeman? Read the [README](../README.md), then follow [Installation](inst
 | [Platforms](development/platforms.md) | Add a platform or runtime behind Codeman's interfaces |
 | [Dependencies](development/dependencies.md) | See what Codeman depends on, why, and the audits |
 | [Running Actions locally](development/local-actions.md) | Run the tests that need GitHub's runner, on your machine |
+| [The end-to-end suite](development/e2e/suite.md) | Run a task from a labeled issue to its end against local fakes, and read a failure |
+| [Writing e2e scenarios](development/e2e/scenarios.md) | Write a scenario: its world, the agent's script, actions and checks |
+| [The e2e fakes](development/e2e/fakes.md) | Know what each fake stands for, its control API, the scripted model and the tee |
 
 Two directories stay in the repository and are not published on the site:
 

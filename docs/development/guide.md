@@ -18,16 +18,16 @@ npm run check   # lint, type check, test and build
 | `npm run lint` | Biome lint and format check |
 | `npm run format` | Apply Biome fixes and formatting |
 | `npm run typecheck` | `tsc`, no output |
-| `npm test` | `node:test` on `src/**/*.test.ts`, and on `e2e/**/*.test.ts`, the e2e suite's fakes, which need no Docker; see [tests](#tests) |
+| `npm test` | `node:test` on `src/**/*.test.ts`, and on `e2e/**/*.test.ts`, the e2e suite's fakes, runtime and scenario files, which need no Docker; see [tests](#tests) |
 | `npm run test:runner` | `npm ci`, then `npm test` with the sandbox test, in a local stand-in for GitHub's runner; `npm run test:runner -- <command>` runs another command there. Needs Docker; see [running Actions locally](local-actions.md) |
 | `npm run build` | Bundle `src/index.ts` into `dist/index.js`, and the [gateway](../glossary.md#gateway), `src/gateway/main.ts`, into `dist/gateway.js` |
 | `npm run build:e2e` | The same bundles, into `e2e/.build/`, with the [e2e build's](#the-e2e-build) redirects |
-| `npm run test:e2e` | The [end-to-end suite](../plans/2026-10-20-end-to-end-test-suite.md): `npm run build:e2e`, its services with Docker Compose (kept running; `--down` stops them), then the scenarios one at a time; `-- <paths or tags>` selects some. A failure's report goes to `e2e/.out/<scenario>/`. Needs Docker |
+| `npm run test:e2e` | The [end-to-end suite](e2e/suite.md): `npm run build:e2e`, its services with Docker Compose (kept running; `--down` stops them), then the scenarios one at a time; `-- <paths or tags>` selects some. A failure's report goes to `e2e/.out/<scenario>/`. Needs Docker |
 | `npm run check` | Lint, type check, test and build, in that order |
 
 ### The e2e build
 
-The [end-to-end suite](../plans/2026-10-20-end-to-end-test-suite.md) runs the bundles of `npm run build:e2e`, which reach its fakes instead of the real services. [`src/e2e.ts`](../../src/e2e.ts) reads `CODEMAN_E2E_ENDPOINTS`, a JSON object of the fakes by key; each value is an origin, such as `http://fake:8080`, and the requests keep their paths.
+The [end-to-end suite](e2e/suite.md) runs the bundles of `npm run build:e2e`, which reach its fakes instead of the real services. [`src/e2e.ts`](../../src/e2e.ts) reads `CODEMAN_E2E_ENDPOINTS`, a JSON object of the fakes by key; each value is an origin, such as `http://fake:8080`, and the requests keep their paths.
 
 | Key | Replaces |
 | --- | --- |
@@ -53,6 +53,7 @@ Tests sit next to the code they test, as `*.test.ts`. Most run everywhere. These
 | [`src/sandbox.test.ts`](../../src/sandbox.test.ts), the [sandbox](../glossary.md#sandbox) | Its tests that run the agent: on Linux, with `CODEMAN_SANDBOX_TEST=1`. They create a system user, run the agent's [jail](../runs/agent.md#the-jail), and need passwordless `sudo` and the right to create namespaces, like GitHub's Linux runners. CI sets the variable, and so does `npm run test:runner` ([running Actions locally](local-actions.md)). Its other tests, the jail's arguments and setup among them, run everywhere | On any other system, or without the variable |
 | [`src/store/emulator.test.ts`](../../src/store/emulator.test.ts), the [store](../glossary.md#store) on Firestore's emulator | An emulator is running, or one is in Firebase's cache; see [Firestore's emulator](#firestores-emulator) | Neither is there, as on CI |
 | [`e2e/fakes/google/emulator.test.ts`](../../e2e/fakes/google/emulator.test.ts), the fake Google's token on Firestore's emulator, past the security rules | The emulator is in Firebase's cache, with Java | It is not, as on CI |
+| `e2e/scenarios/`, the [end-to-end suite](e2e/suite.md) | Only with `npm run test:e2e`, which needs Docker, the downloads and the memory of [before you run it](e2e/suite.md#before-you-run-it) | Always by `npm test` and CI, which only check that each scenario parses |
 | [`src/docs.test.ts`](../../src/docs.test.ts), the links | Always | Never |
 | [`src/webdocs.test.ts`](../../src/webdocs.test.ts), the format of `docs/web/` | Always | Never |
 
@@ -166,6 +167,7 @@ The gateway has its own entry point, [`src/gateway/main.ts`](../../src/gateway/m
 | `firebase/firestore.rules` | The backend's security rules, which deny every client. [Installation](../installation/setup.md#4-set-up-the-backend) publishes them |
 | `docker/pod/` | Codeman's pod images, one target per engine; see [pod images](#pod-images) |
 | `docker/runner/`, `scripts/runner.sh` | A local stand-in for GitHub's `ubuntu-latest` runner, and the script that runs a command in it; see [running Actions locally](local-actions.md) |
+| `e2e/` | The [end-to-end suite](e2e/suite.md): its fakes, runtime, infrastructure, fixtures and scenarios. `e2e/.build/` and `e2e/.out/` are ignored |
 | `docs/web/` | The documentation of the third-party services Codeman uses |
 
 - **`dist/` is committed**, because GitHub runs actions straight from the repository. CI fails when it does not match the source, so run `npm run build` before committing.
