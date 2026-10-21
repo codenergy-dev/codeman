@@ -1,10 +1,5 @@
-# Known bug (2026-10-21): a task whose stage ran on a pod cannot start its next stage for 30
-# minutes. select's batch exchange (src/board.ts, exchange) skips the repository's own ready tasks
-# that an unexpired batch holds, its own `started` members included, though docs/runs/batches.md
-# holds only other repositories' tasks. So the chain after the plan says "Nothing to do", the kept
-# pod is never joined, and release-pod never runs. Remove `known-bug` once it is fixed.
 name: Ollama pod, kept between stages and released at the end
-tags: [pods, ollama, known-bug]
+tags: [pods, ollama]
 runner: simulator
 profiles: [ollama]
 timeout: 25m
