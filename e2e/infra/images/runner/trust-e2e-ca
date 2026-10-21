@@ -1,0 +1,11 @@
+#!/bin/sh
+# Adds the e2e session's test CA, when one is mounted, to the system store that git and gh read,
+# then runs the job's command. With no command, it only adds the CA. See the image's Dockerfile.
+set -eu
+
+ca=/etc/codeman-e2e/ca.crt
+if [ -s "$ca" ]; then
+  sudo -n install -m 0644 "$ca" /usr/local/share/ca-certificates/codeman-e2e.crt
+  sudo -n update-ca-certificates >/dev/null 2>&1
+fi
+if [ "$#" -gt 0 ]; then exec "$@"; fi

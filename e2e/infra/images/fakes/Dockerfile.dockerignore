@@ -1,0 +1,10 @@
+# The fakes image's build context is the repository's root: only what the fakes load goes in.
+# All of src/ but its tests, rather than the files the fakes import today, so a new import needs
+# no change here.
+*
+!package.json
+!src/
+!e2e/fakes/
+!e2e/infra/certificates.ts
+**/*.test.ts
+src/testing/
