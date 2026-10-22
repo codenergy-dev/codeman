@@ -198,6 +198,9 @@ The run's cost starts with the pod, since Runpod bills the image and model pulls
 
 A gateway that reports its start failed, such as for a model that does not fit the GPU, fails the run at once, with its reason. The tasks that waited for the pod fail with it rather than create another.
 
+- The creator's `open-key` ends the pod's document with the reason, then terminates the pod.
+- A task that joined the pod reads the reason from the gateway, or, once the pod is gone, from the document ([plan to fail the tasks waiting for a failed pod](../plans/2026-10-22-fail-the-tasks-waiting-for-a-failed-pod.md)).
+
 #### Starting
 
 In the pod, the gateway starts the engine with the pod's settings, finds the largest context that fits the GPU, and reports that [fit](../glossary.md#fit) in its status. How it fits is in [context and the GPU](../settings/pod-engines.md#context-and-the-gpu), and in [Ollama's memory](../settings/ollama.md#memory) and [vLLM's](../settings/vllm.md#memory).

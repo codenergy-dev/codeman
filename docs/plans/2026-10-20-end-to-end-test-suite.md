@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-10-20T12:50:34-03:00
-updated_at: 2026-10-22T13:05:00-03:00
+updated_at: 2026-10-22T18:20:00-03:00
 commit: 21130fe
 ---
 
@@ -717,6 +717,8 @@ Runtime and fake changes this step needed:
 >
 > Suggested fix, not applied: when `#attach` of a joined pod fails because the pod no longer exists, read its registry document, and throw a `PodStartFailure` when it ended with a failed start; `#create` would record the gateway's message in that document (`registry.end`'s reason). Or `#create` would leave a pod that failed to start to its gateway, which terminates itself 2 minutes later, while other tasks hold leases on it.
 
+**Fixed on 2026-10-22** by the [plan to fail the tasks waiting for a failed pod](2026-10-22-fail-the-tasks-waiting-for-a-failed-pod.md), the first suggestion: `pods/start-failure-two-tasks` lost its `known-bug` tag and passes three times in a row, both tasks failing with the gateway's reason and one pod created.
+
 #### 5.3 results
 
 Run on 2026-10-22 on the plan's machine (Docker VM 9.7 GiB), `HEAD` `1de88e7` with the uncommitted step, three passes in a row of `npm run test:e2e -- budgets`.
@@ -751,6 +753,8 @@ Bugs these scenarios cover:
 > **Codeman bug, not fixed (2026-10-22).** A run whose budget is spent gets 503, which OpenCode retries, instead of the documented 402 ([the budget cut-off](../inference/self-hosted.md#the-budget-cut-off)). `Gateway.handle` (`src/gateway/gateway.ts`) answers 402 only between the request that finds the budget spent and the next tick, at most 15 seconds; then `expireRuns` stops the run, and `handle` answers its requests `503` `run_stopped`, as `#forward` does for the one in flight when the run stops. The AI SDK in OpenCode takes 503 as retryable (`"isRetryable":true` in the agent's log). In `shared-pod-402`, the stopped run's agent sent 11 more requests over 150 seconds, all 503, through its fix pass too; the pod waited for the run's close all that time, and its untracked time, US$ 0.30, was as large as the run's limit. No request got 402. `budgets/spent-run-gets-402` reproduces it, tagged `known-bug`: one task on a pod at US$ 36 an hour, whose agent's 12 requests after its run stopped all got 503.
 >
 > Suggested fix, not applied: answer a run stopped for its budget with 402 `budget_exceeded`, in `handle` and in `#forward`'s abort, and keep 503 `run_stopped` for a run stopped for its silence, or answer 402 for both, since neither should be retried.
+
+**Fixed on 2026-10-22** by the [plan to answer a spent run with 402](2026-10-22-answer-a-spent-run-with-402.md): `budgets/spent-run-gets-402` lost its `known-bug` tag and passes three times in a row, its stopped run's requests getting `402`, which OpenCode does not retry; `budgets/shared-pod-402` passes too.
 
 Memory: these scenarios peaked at 3.5 GiB of containers, in `shared-pod-402` (the Ollama pod at 1.5 GiB and two agent jobs); `monthly-race` ran up to 8 job containers at once, its eight `open-key` jobs, and four agent jobs.
 

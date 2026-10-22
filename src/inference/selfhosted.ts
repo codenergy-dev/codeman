@@ -51,6 +51,11 @@ export const KEPT_IDLE_MINUTES = 15;
 export const RUN_IDLE_MINUTES = 30;
 /** How often a task waiting for another to create the pod of its settings looks again. */
 export const CLAIM_POLL_MS = 10_000;
+/**
+ * The start of the registry's reason for a pod whose gateway reported its start failed, before
+ * the failure's message: the tasks that joined the pod read it there once the pod is gone.
+ */
+const START_FAILED = "its start failed: ";
 /** Claims a task makes before it gives up: its waits for a creation lease, and pods it could not join. */
 const CLAIMS = Math.ceil(CREATE_LEASE_MS / CLAIM_POLL_MS) + 10;
 /** Container disk of a pod, in GB: the model and Ollama's image; the least a vLLM pod gets. */
@@ -775,6 +780,9 @@ export class PodInference implements InferenceProvider {
         }
         // Another pod of the same settings would fail the same way (choice 12).
         if (error instanceof PodStartFailure) throw error;
+        // Its creator read the failure first, and terminated it.
+        const failed = startFailure(left.pod);
+        if (failed) throw failed;
       }
     }
     throw new Error(
@@ -826,7 +834,13 @@ export class PodInference implements InferenceProvider {
     try {
       return await this.#attach(registered, run, token, holder, 1, true, log);
     } catch (error) {
-      await this.#registry.end(record.nonce, `it did not serve ${this.#settings.model}`);
+      // The tasks that joined the pod and find it gone read why there (choice 12).
+      await this.#registry.end(
+        record.nonce,
+        error instanceof PodStartFailure
+          ? `${START_FAILED}${error.message}`
+          : `it did not serve ${this.#settings.model}`,
+      );
       this.#events.push(
         await terminatePod(this.#host, pod.id, undefined, {
           reason: `it did not serve ${this.#settings.model}; it cost about ${usd(podCost(pod.createdAt, this.#now(), listed))}`,
@@ -1189,6 +1203,13 @@ export class PodInference implements InferenceProvider {
     const { fetch: fetchFn = fetch, accountKey } = this.#options;
     return callGateway(fetchFn, accountKey, target, method, path, body);
   }
+}
+
+/** The failed start a pod ended with, for the tasks that joined it to fail with. */
+function startFailure(pod: RegisteredPod | undefined): PodStartFailure | undefined {
+  const reason = pod?.status === "ended" ? pod.reason : undefined;
+  if (!reason?.startsWith(START_FAILED)) return undefined;
+  return new PodStartFailure(reason.slice(START_FAILED.length));
 }
 
 /** The vLLM settings of pod settings, for messages: `` `max-num-seqs=4` ``. */

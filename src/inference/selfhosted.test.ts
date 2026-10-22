@@ -957,6 +957,50 @@ test("a model that does not fit fails the run with the gateway's reason, and no 
   assert.equal(joining.gpu.created.length, 1);
 });
 
+test("a task that waits for a pod whose start fails fails with it, after its creator terminated it", async () => {
+  const reason = "`qwen3-coder:30b` does not fit the GPU.";
+  const message = `Pod pod1 did not serve qwen3-coder:30b: ${reason}`;
+  const { gpu, gateways, registry, open, setWait } = setup({ real: true, image: SHARED_IMAGE });
+  gateways.state("pod1").ready = false;
+  let joining: Promise<unknown> | undefined;
+  let joinerWaits = () => {};
+  const joinerWaiting = new Promise<void>((resolve) => {
+    joinerWaits = resolve;
+  });
+  let creatorFailed = () => {};
+  const creatorDone = new Promise<void>((resolve) => {
+    creatorFailed = resolve;
+  });
+  let waits = 0;
+  setWait(async () => {
+    waits++;
+    if (waits === 1) {
+      // Task 7 created pod 1 and waits for it; task 8 joins it and waits too.
+      joining = open("8", "300", { parallel: 4 }).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      await Promise.race([joinerWaiting, joining]);
+      gateways.state("pod1").failure = reason;
+    } else if (waits === 2) {
+      joinerWaits();
+      // Task 8 polls again only once task 7 read the failure and terminated the pod.
+      await creatorDone;
+    }
+  });
+  await assert.rejects(
+    open("7", "300", { parallel: 4 }),
+    (error: Error) => error.message === message,
+  );
+  assert.deepEqual(gpu.terminated, ["pod1"]);
+  creatorFailed();
+  const failure = await joining;
+  assert.ok(failure instanceof Error, "task 8 fails too");
+  assert.equal(failure.message, message);
+  assert.equal(gpu.created.length, 1, "no other pod");
+  assert.deepEqual(await registry.live(), []);
+});
+
 /** vLLM pods: an image of their own, a fake Hugging Face, and the test model. */
 function vllmSetup(
   models: Record<string, number | Error> = { "unsloth/Qwen3.8-27B-NVFP4": 23.4e9 },

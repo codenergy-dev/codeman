@@ -59,6 +59,8 @@ export interface RegisteredPod {
   capacity: number | undefined;
   /** The batch of the task that created it, whose tasks it waits for. */
   batch: string | undefined;
+  /** Why it ended, once it did. */
+  reason: string | undefined;
 }
 
 /** The settings a pod serves, as its document shows them; `settings` is their hash. */
@@ -223,6 +225,7 @@ export class PodRegistry {
           account: description.account,
           capacity: description.capacity,
           batch: description.batch,
+          reason: undefined,
         };
         tx.write({
           op: "create",
@@ -427,5 +430,6 @@ export function registered(document: StoredDocument): RegisteredPod {
         ? capacity
         : undefined,
     batch: text(fields.batch),
+    reason: text(fields.reason),
   };
 }

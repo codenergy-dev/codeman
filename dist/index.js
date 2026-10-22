@@ -23285,7 +23285,8 @@ var PodRegistry = class {
           seats: [holder],
           account: description.account,
           capacity: description.capacity,
-          batch: description.batch
+          batch: description.batch,
+          reason: void 0
         };
         tx.write({
           op: "create",
@@ -23451,7 +23452,8 @@ function registered(document) {
     ),
     account: text(fields.account),
     capacity: typeof capacity === "number" && Number.isInteger(capacity) && capacity > 0 ? capacity : void 0,
-    batch: text(fields.batch)
+    batch: text(fields.batch),
+    reason: text(fields.reason)
   };
 }
 
@@ -23460,6 +23462,7 @@ var START_MINUTES = 25;
 var KEPT_IDLE_MINUTES = 15;
 var RUN_IDLE_MINUTES = 30;
 var CLAIM_POLL_MS = 1e4;
+var START_FAILED = "its start failed: ";
 var CLAIMS = Math.ceil(CREATE_LEASE_MS / CLAIM_POLL_MS) + 10;
 var DISK_GB = 80;
 var VLLM_BASE_DISK_GB = 40;
@@ -23914,6 +23917,8 @@ var PodInference = class {
           );
         }
         if (error3 instanceof PodStartFailure) throw error3;
+        const failed2 = startFailure(left.pod);
+        if (failed2) throw failed2;
       }
     }
     throw new Error(
@@ -23958,7 +23963,10 @@ var PodInference = class {
     try {
       return await this.#attach(registered2, run2, token, holder, 1, true, log);
     } catch (error3) {
-      await this.#registry.end(record.nonce, `it did not serve ${this.#settings.model}`);
+      await this.#registry.end(
+        record.nonce,
+        error3 instanceof PodStartFailure ? `${START_FAILED}${error3.message}` : `it did not serve ${this.#settings.model}`
+      );
       this.#events.push(
         await terminatePod(this.#host, pod.id, void 0, {
           reason: `it did not serve ${this.#settings.model}; it cost about ${usd(podCost(pod.createdAt, this.#now(), listed))}`,
@@ -24276,6 +24284,11 @@ var PodInference = class {
     return callGateway(fetchFn, accountKey, target, method, path, body);
   }
 };
+function startFailure(pod) {
+  const reason = pod?.status === "ended" ? pod.reason : void 0;
+  if (!reason?.startsWith(START_FAILED)) return void 0;
+  return new PodStartFailure(reason.slice(START_FAILED.length));
+}
 function quotedValues(settings) {
   return vllmValues(settings).map((value) => `\`${value}\``).join(", ");
 }
