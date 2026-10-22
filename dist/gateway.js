@@ -884,7 +884,20 @@ function matches(token, hash) {
   const expected = Buffer.from(hash, "hex");
   return given.length === expected.length && timingSafeEqual(given, expected);
 }
+var SPENT = {
+  status: 402,
+  code: "budget_exceeded",
+  message: "This run's budget is spent."
+};
+function otherStop(message) {
+  return { status: 503, code: "run_stopped", message };
+}
 var RunStopped = class extends Error {
+  stop;
+  constructor(stop2) {
+    super(stop2.message);
+    this.stop = stop2;
+  }
 };
 var GATEWAY_VERSION = 2;
 var Gateway = class {
@@ -964,19 +977,21 @@ var Gateway = class {
         const minutes = Math.round(limit / 6e4);
         this.#stop(
           run,
-          `No worker of the endpoint started or ran for ${minutes} minutes while a request waited, as when it has no GPU.`
+          otherStop(
+            `No worker of the endpoint started or ran for ${minutes} minutes while a request waited, as when it has no GPU.`
+          )
         );
       }
     }
   }
-  /** Stops serving a run: its waiting requests fail with `reason`, and so do new ones. */
-  #stop(run, reason) {
+  /** Stops serving a run: its waiting requests get `stop`'s answer, and so do new ones. */
+  #stop(run, stop2) {
     if (!run.active) return;
     this.#end(run, this.#now());
-    run.stopped = reason;
-    this.#log(reason);
-    for (const abort of run.open) abort.abort(new RunStopped(reason));
-    this.#options.onStop?.(reason);
+    run.stopped = stop2;
+    this.#log(stop2.message);
+    for (const abort of run.open) abort.abort(new RunStopped(stop2));
+    this.#options.onStop?.(stop2.message);
   }
   #end(run, now) {
     run.active = false;
@@ -1056,9 +1071,9 @@ var Gateway = class {
   expireRuns(runIdleMs) {
     const now = this.#now();
     for (const run of this.#runs.filter((one) => one.active)) {
-      if (!this.#withinBudget(run)) this.#stop(run, "This run's budget is spent.");
+      if (!this.#withinBudget(run)) this.#stop(run, SPENT);
       else if (now - run.lastActivity >= runIdleMs) {
-        this.#stop(run, "This run made no request for too long.");
+        this.#stop(run, otherStop("This run made no request for too long."));
       }
     }
   }
@@ -1151,12 +1166,10 @@ var Gateway = class {
     if (!ROUTES.has(route)) return send(response, 404, error("Not found."));
     const token = bearer(request);
     const run = this.#runs.findLast((one) => matches(token, one.tokenSha256));
-    if (run?.stopped) return send(response, 503, error(run.stopped, "run_stopped"));
+    if (run?.stopped) return answer(response, run.stopped);
     if (!run?.active) return send(response, 401, error("Invalid token."));
     this.lastActivity = run.lastActivity = this.#now();
-    if (!this.#withinBudget(run)) {
-      return send(response, 402, error("This run's budget is spent.", "budget_exceeded"));
-    }
+    if (!this.#withinBudget(run)) return answer(response, SPENT);
     if (!this.ready) return send(response, 503, error("The model is not loaded yet."));
     await this.#forward(run, request, response, path);
   }
@@ -1277,15 +1290,15 @@ var Gateway = class {
     } catch (failure) {
       record.end ??= this.#now();
       const reason = abort.signal.reason;
-      const stopped = reason instanceof RunStopped ? reason : void 0;
-      if (abort.signal.aborted && !stopped) return;
-      if (!stopped) {
+      const stop2 = reason instanceof RunStopped ? reason.stop : void 0;
+      if (abort.signal.aborted && !stop2) return;
+      if (!stop2) {
         this.#log(
           `The engine failed: ${failure instanceof Error ? failure.message : String(failure)}`
         );
       }
-      const body2 = stopped ? error(stopped.message, "run_stopped") : error("The engine did not answer.");
-      if (!response.headersSent) send(response, stopped ? 503 : 502, body2);
+      const body2 = stop2 ? error(stop2.message, stop2.code) : error("The engine did not answer.");
+      if (!response.headersSent) send(response, stop2 ? stop2.status : 502, body2);
       else response.end(`data: ${JSON.stringify(body2)}
 
 `);
@@ -1339,6 +1352,9 @@ var SSE_HEADERS = {
 };
 function error(message, code) {
   return { error: { message: `Codeman gateway: ${message}`, ...code ? { code } : {} } };
+}
+function answer(response, stop2) {
+  send(response, stop2.status, error(stop2.message, stop2.code));
 }
 function send(response, status, body) {
   response.writeHead(status, { "Content-Type": "application/json" });

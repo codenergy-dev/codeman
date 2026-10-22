@@ -89,7 +89,13 @@ The gateway stops serving a run, with `402`, once the run's cost reaches its lim
 | Pod | Its share of the pod's time since it started, at the pod's price: each second is split evenly among the runs on the pod. Alone, it is the whole time, so its deadline is known in advance |
 | Serverless | The estimated time a worker was billed for the run ([Serverless](serverless.md)) |
 
-A pod's gateway then stops the run within 15 seconds. Its requests fail, and it takes no more of the pod's time, whether or not other runs go on ([pods](pods.md)).
+A pod's gateway then stops the run within 15 seconds. It takes no more of the pod's time, whether or not other runs go on ([pods](pods.md)).
+
+| A run's requests | Answer |
+| --- | --- |
+| Once its budget is spent, before and after its stop, the one in flight included | `402` `budget_exceeded`, which agents do not retry |
+| Once the gateway stopped it for 30 minutes without a request, or for no worker ([Serverless](serverless.md#when-a-run-has-no-worker-or-no-report)) | `503` `run_stopped` |
+| Once its key job ended it, or its task's next run replaced it | `401`: its token is revoked |
 
 #### The admin token
 

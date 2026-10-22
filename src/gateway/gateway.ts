@@ -103,8 +103,34 @@ export interface GatewayOptions {
   log?: (message: string) => void;
 }
 
+/** How the gateway answers the requests of a run it stopped, from its stop on. */
+interface Stop {
+  status: number;
+  code: string;
+  message: string;
+}
+
+/** A spent run's answer: 402, which agents do not retry (docs/inference/self-hosted.md). */
+const SPENT: Stop = {
+  status: 402,
+  code: "budget_exceeded",
+  message: "This run's budget is spent.",
+};
+
+/** A run stopped for another reason: its silence, or no worker. */
+function otherStop(message: string): Stop {
+  return { status: 503, code: "run_stopped", message };
+}
+
 /** Why the gateway stopped a run, as the reason its open requests are aborted with. */
-class RunStopped extends Error {}
+class RunStopped extends Error {
+  readonly stop: Stop;
+
+  constructor(stop: Stop) {
+    super(stop.message);
+    this.stop = stop;
+  }
+}
 
 /** A run as the gateway keeps it; ended runs stay, for the pod's split. */
 interface Run extends RunSettings {
@@ -113,7 +139,7 @@ interface Run extends RunSettings {
   active: boolean;
   /** When it ended or was stopped. */
   end?: number | undefined;
-  stopped?: string | undefined;
+  stopped?: Stop | undefined;
   /** Whether its key job ended it (`endRun`), or a later run of its task replaced it. */
   closed?: boolean | undefined;
   records: RequestRecord[];
@@ -231,21 +257,23 @@ export class Gateway {
         const minutes = Math.round(limit / 60_000);
         this.#stop(
           run,
-          `No worker of the endpoint started or ran for ${minutes} minutes while a request ` +
-            "waited, as when it has no GPU.",
+          otherStop(
+            `No worker of the endpoint started or ran for ${minutes} minutes while a request ` +
+              "waited, as when it has no GPU.",
+          ),
         );
       }
     }
   }
 
-  /** Stops serving a run: its waiting requests fail with `reason`, and so do new ones. */
-  #stop(run: Run, reason: string): void {
+  /** Stops serving a run: its waiting requests get `stop`'s answer, and so do new ones. */
+  #stop(run: Run, stop: Stop): void {
     if (!run.active) return;
     this.#end(run, this.#now());
-    run.stopped = reason;
-    this.#log(reason);
-    for (const abort of run.open) abort.abort(new RunStopped(reason));
-    this.#options.onStop?.(reason);
+    run.stopped = stop;
+    this.#log(stop.message);
+    for (const abort of run.open) abort.abort(new RunStopped(stop));
+    this.#options.onStop?.(stop.message);
   }
 
   #end(run: Run, now: number): void {
@@ -338,9 +366,9 @@ export class Gateway {
   expireRuns(runIdleMs: number): void {
     const now = this.#now();
     for (const run of this.#runs.filter((one) => one.active)) {
-      if (!this.#withinBudget(run)) this.#stop(run, "This run's budget is spent.");
+      if (!this.#withinBudget(run)) this.#stop(run, SPENT);
       else if (now - run.lastActivity >= runIdleMs) {
-        this.#stop(run, "This run made no request for too long.");
+        this.#stop(run, otherStop("This run made no request for too long."));
       }
     }
   }
@@ -443,12 +471,10 @@ export class Gateway {
     // Each token opens only its own run, the last one it was given to.
     const token = bearer(request);
     const run = this.#runs.findLast((one) => matches(token, one.tokenSha256));
-    if (run?.stopped) return send(response, 503, error(run.stopped, "run_stopped"));
+    if (run?.stopped) return answer(response, run.stopped);
     if (!run?.active) return send(response, 401, error("Invalid token."));
     this.lastActivity = run.lastActivity = this.#now();
-    if (!this.#withinBudget(run)) {
-      return send(response, 402, error("This run's budget is spent.", "budget_exceeded"));
-    }
+    if (!this.#withinBudget(run)) return answer(response, SPENT);
     if (!this.ready) return send(response, 503, error("The model is not loaded yet."));
     await this.#forward(run, request, response, path);
   }
@@ -582,17 +608,15 @@ export class Gateway {
     } catch (failure) {
       record.end ??= this.#now();
       const reason: unknown = abort.signal.reason;
-      const stopped = reason instanceof RunStopped ? reason : undefined;
-      if (abort.signal.aborted && !stopped) return;
-      if (!stopped) {
+      const stop = reason instanceof RunStopped ? reason.stop : undefined;
+      if (abort.signal.aborted && !stop) return;
+      if (!stop) {
         this.#log(
           `The engine failed: ${failure instanceof Error ? failure.message : String(failure)}`,
         );
       }
-      const body = stopped
-        ? error(stopped.message, "run_stopped")
-        : error("The engine did not answer.");
-      if (!response.headersSent) send(response, stopped ? 503 : 502, body);
+      const body = stop ? error(stop.message, stop.code) : error("The engine did not answer.");
+      if (!response.headersSent) send(response, stop ? stop.status : 502, body);
       else response.end(`data: ${JSON.stringify(body)}\n\n`);
     } finally {
       run.open.delete(abort);
@@ -662,6 +686,11 @@ const SSE_HEADERS = {
 
 function error(message: string, code?: string): { error: { message: string; code?: string } } {
   return { error: { message: `Codeman gateway: ${message}`, ...(code ? { code } : {}) } };
+}
+
+/** Answers a request of a stopped or spent run. */
+function answer(response: ServerResponse, stop: Stop): void {
+  send(response, stop.status, error(stop.message, stop.code));
 }
 
 function send(response: ServerResponse, status: number, body: unknown): void {

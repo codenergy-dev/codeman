@@ -22099,7 +22099,20 @@ function matches(token, hash) {
   const expected = Buffer.from(hash, "hex");
   return given.length === expected.length && timingSafeEqual(given, expected);
 }
+var SPENT = {
+  status: 402,
+  code: "budget_exceeded",
+  message: "This run's budget is spent."
+};
+function otherStop(message) {
+  return { status: 503, code: "run_stopped", message };
+}
 var RunStopped = class extends Error {
+  stop;
+  constructor(stop) {
+    super(stop.message);
+    this.stop = stop;
+  }
 };
 var GATEWAY_VERSION = 2;
 var Gateway = class {
@@ -22179,19 +22192,21 @@ var Gateway = class {
         const minutes = Math.round(limit / 6e4);
         this.#stop(
           run2,
-          `No worker of the endpoint started or ran for ${minutes} minutes while a request waited, as when it has no GPU.`
+          otherStop(
+            `No worker of the endpoint started or ran for ${minutes} minutes while a request waited, as when it has no GPU.`
+          )
         );
       }
     }
   }
-  /** Stops serving a run: its waiting requests fail with `reason`, and so do new ones. */
-  #stop(run2, reason) {
+  /** Stops serving a run: its waiting requests get `stop`'s answer, and so do new ones. */
+  #stop(run2, stop) {
     if (!run2.active) return;
     this.#end(run2, this.#now());
-    run2.stopped = reason;
-    this.#log(reason);
-    for (const abort of run2.open) abort.abort(new RunStopped(reason));
-    this.#options.onStop?.(reason);
+    run2.stopped = stop;
+    this.#log(stop.message);
+    for (const abort of run2.open) abort.abort(new RunStopped(stop));
+    this.#options.onStop?.(stop.message);
   }
   #end(run2, now) {
     run2.active = false;
@@ -22271,9 +22286,9 @@ var Gateway = class {
   expireRuns(runIdleMs) {
     const now = this.#now();
     for (const run2 of this.#runs.filter((one) => one.active)) {
-      if (!this.#withinBudget(run2)) this.#stop(run2, "This run's budget is spent.");
+      if (!this.#withinBudget(run2)) this.#stop(run2, SPENT);
       else if (now - run2.lastActivity >= runIdleMs) {
-        this.#stop(run2, "This run made no request for too long.");
+        this.#stop(run2, otherStop("This run made no request for too long."));
       }
     }
   }
@@ -22366,12 +22381,10 @@ var Gateway = class {
     if (!ROUTES.has(route)) return send(response, 404, error("Not found."));
     const token = bearer(request2);
     const run2 = this.#runs.findLast((one) => matches(token, one.tokenSha256));
-    if (run2?.stopped) return send(response, 503, error(run2.stopped, "run_stopped"));
+    if (run2?.stopped) return answer(response, run2.stopped);
     if (!run2?.active) return send(response, 401, error("Invalid token."));
     this.lastActivity = run2.lastActivity = this.#now();
-    if (!this.#withinBudget(run2)) {
-      return send(response, 402, error("This run's budget is spent.", "budget_exceeded"));
-    }
+    if (!this.#withinBudget(run2)) return answer(response, SPENT);
     if (!this.ready) return send(response, 503, error("The model is not loaded yet."));
     await this.#forward(run2, request2, response, path);
   }
@@ -22492,15 +22505,15 @@ var Gateway = class {
     } catch (failure) {
       record.end ??= this.#now();
       const reason = abort.signal.reason;
-      const stopped = reason instanceof RunStopped ? reason : void 0;
-      if (abort.signal.aborted && !stopped) return;
-      if (!stopped) {
+      const stop = reason instanceof RunStopped ? reason.stop : void 0;
+      if (abort.signal.aborted && !stop) return;
+      if (!stop) {
         this.#log(
           `The engine failed: ${failure instanceof Error ? failure.message : String(failure)}`
         );
       }
-      const body2 = stopped ? error(stopped.message, "run_stopped") : error("The engine did not answer.");
-      if (!response.headersSent) send(response, stopped ? 503 : 502, body2);
+      const body2 = stop ? error(stop.message, stop.code) : error("The engine did not answer.");
+      if (!response.headersSent) send(response, stop ? stop.status : 502, body2);
       else response.end(`data: ${JSON.stringify(body2)}
 
 `);
@@ -22554,6 +22567,9 @@ var SSE_HEADERS = {
 };
 function error(message, code) {
   return { error: { message: `Codeman gateway: ${message}`, ...code ? { code } : {} } };
+}
+function answer(response, stop) {
+  send(response, stop.status, error(stop.message, stop.code));
 }
 function send(response, status2, body) {
   response.writeHead(status2, { "Content-Type": "application/json" });
@@ -32090,14 +32106,14 @@ function writeAnswers(plan, record) {
   if (answered.length === 0) return plan;
   const lines = answered.flatMap((decision) => {
     const head = `- Decision ${decision.id} (${oneLineTitle(decision.title)}):`;
-    const answer = decision.answer;
-    if (answer?.text !== void 0) {
-      const quoted = answer.text.split("\n").map((line) => `  > ${line.replace(/<!--/g, "&lt;!--")}`);
-      return [`${head} answered by ${answer.by}:`, "", ...quoted, ""];
+    const answer2 = decision.answer;
+    if (answer2?.text !== void 0) {
+      const quoted = answer2.text.split("\n").map((line) => `  > ${line.replace(/<!--/g, "&lt;!--")}`);
+      return [`${head} answered by ${answer2.by}:`, "", ...quoted, ""];
     }
-    const option = decision.options.find((candidate) => candidate.key === answer?.option);
+    const option = decision.options.find((candidate) => candidate.key === answer2?.option);
     return [
-      `${head} (${answer?.option}) ${oneLineTitle(option?.label ?? "")}, chosen by ${answer?.by}.`
+      `${head} (${answer2?.option}) ${oneLineTitle(option?.label ?? "")}, chosen by ${answer2?.by}.`
     ];
   });
   const block2 = [ANSWERS_START, ...lines, ANSWERS_END].join("\n");
@@ -32276,8 +32292,8 @@ function planPrompt(task, conventions) {
   const settled = task.settled.flatMap((decision) => {
     if (!decision.answer) return [];
     const option = decision.options.find((candidate) => candidate.key === decision.answer?.option);
-    const answer = decision.answer.text ?? option?.label ?? "";
-    return [quote(`DECISION ${decision.id}: ${decision.title.replace(/\s+/g, " ")}`, answer)];
+    const answer2 = decision.answer.text ?? option?.label ?? "";
+    return [quote(`DECISION ${decision.id}: ${decision.title.replace(/\s+/g, " ")}`, answer2)];
   });
   const revision = task.replan.length === 0 && settled.length === 0 ? "" : `
 ## Revision
@@ -33124,9 +33140,9 @@ function decisionLines(t, decision, md) {
   return lines;
 }
 function answeredLine(t, decision, md) {
-  const answer = decision.answer;
-  const option = decision.options.find((candidate) => candidate.key === answer?.option);
-  const text = answer?.text !== void 0 ? t.answeredBy(answer.by, inlineText(answer.text, md)) : `**${option?.key})** ${safeInline(option?.label ?? "", md)} _(${t.chosenBy(answer?.by ?? "")})_`;
+  const answer2 = decision.answer;
+  const option = decision.options.find((candidate) => candidate.key === answer2?.option);
+  const text = answer2?.text !== void 0 ? t.answeredBy(answer2.by, inlineText(answer2.text, md)) : `**${option?.key})** ${safeInline(option?.label ?? "", md)} _(${t.chosenBy(answer2?.by ?? "")})_`;
   return [`**${decision.id}. ${safeInline(decision.title, md)}**: ${text}`, ""];
 }
 function renderRefused(t, record) {

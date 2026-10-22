@@ -440,7 +440,7 @@ test("a run's budget is its share; a spent run stops alone while the others go o
   assert.equal((await call(url, "a")).status, 402);
   instance.expireRuns(30 * 60_000);
   assert.deepEqual(instance.status().active, ["8"]);
-  assert.equal((await call(url, "a")).status, 503);
+  assert.equal((await call(url, "a")).status, 402, "still spent once stopped");
   assert.equal((await call(url, "b")).status, 200);
   assert.ok(Math.abs((instance.usage(sha256("a"))?.cost ?? 0) - 0.01) < 1e-12);
 });
@@ -477,6 +477,40 @@ test("a lone spent run stops and takes no more of the pod; the pod waits for its
   assert.equal(expiry(instance, policy, now), undefined);
   now += 1;
   assert.match(expiry(instance, policy, now) ?? "", /no run came/);
+});
+
+test("a run stopped for its budget answers 402, which agents do not retry; one stopped for its silence 503", async () => {
+  const upstream = await engine(() => ({ delayMs: 200, chunks: [JSON.stringify(completion)] }));
+  let now = 1_000_000;
+  const { instance, url } = await gateway({ upstream: upstream.url, now: () => now });
+  const spent = (answer: { status: number; json: () => Promise<unknown> }) => ({
+    status: answer.status,
+    code: answer.json().then((body) => (body as { error: { code?: string } }).error.code),
+  });
+  // US$ 0.01 lasts 100 seconds shared; run b goes on and then goes silent.
+  instance.startRun(taskRun("a", "7", now, 0.01));
+  instance.startRun(taskRun("b", "8", now));
+  const inFlight = call(url, "a");
+  while (!instance.usage(sha256("a"))?.requests) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  now += 100_000;
+  instance.expireRuns(30 * 60_000);
+  assert.deepEqual(instance.status().active, ["8"]);
+  const aborted = spent(await inFlight);
+  assert.equal(aborted.status, 402, "the request in flight when the run stopped");
+  assert.equal(await aborted.code, "budget_exceeded");
+  const refused = spent(await call(url, "a"));
+  assert.equal(refused.status, 402, "a request after the stop");
+  assert.equal(await refused.code, "budget_exceeded");
+  instance.endRun({ tokenSha256: sha256("a") });
+  assert.equal((await call(url, "a")).status, 402, "and after its close");
+
+  now += 30 * 60_000;
+  instance.expireRuns(30 * 60_000);
+  const silent = spent(await call(url, "b"));
+  assert.equal(silent.status, 503);
+  assert.equal(await silent.code, "run_stopped");
 });
 
 test("a pod whose stopped runs no key job ends terminates after its kept-idle time", async () => {
