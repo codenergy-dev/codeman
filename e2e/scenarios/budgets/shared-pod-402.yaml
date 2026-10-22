@@ -10,8 +10,8 @@
 # The pod's price is raised to US$ 7.20 an hour, 0.002 a second, so a run's US$ 0.30 is spent in
 # minutes: both runs count the pod's start at half each; i1 then counts the whole pod alone.
 #
-# The stopped run's requests get 503, which OpenCode retries, rather than the documented 402:
-# budgets/spent-run-gets-402 reproduces that known bug. This scenario does not depend on it.
+# The stopped run's requests get 402, which OpenCode does not retry: budgets/spent-run-gets-402
+# checks it. This scenario does not depend on it.
 name: A run that spends its budget on a shared pod is stopped, and the pod waits for its close
 tags: [budgets, pods, ollama]
 runner: simulator

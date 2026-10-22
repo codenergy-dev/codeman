@@ -1,17 +1,12 @@
-# Known bug of Codeman, not fixed (found on 2026-10-22, step 5.3 of the e2e plan): a run whose
-# budget is spent gets 503, which OpenCode retries, instead of the documented 402
-# (docs/inference/self-hosted.md, "The budget cut-off"). The gateway (src/gateway/gateway.ts)
-# answers 402 only between the request that finds the budget spent and its next tick, at most 15
-# seconds; then `expireRuns` stops the run, and `handle` answers its requests 503 `run_stopped`,
-# as `#forward` does for the one in flight. The AI SDK in OpenCode takes 503 as retryable, so the
-# agent retries a spent run for minutes, through its fix pass too, while the pod waits for the
-# run's close: in budgets/shared-pod-402, 11 requests got 503 over 150 seconds, and the pod's
-# untracked time was as large as the run's limit.
+# A run whose budget is spent gets 402, which OpenCode does not retry, from its pod's gateway
+# (docs/inference/self-hosted.md, "The budget cut-off"), also once the gateway stopped it. Before
+# the fix (docs/plans/2026-10-22-answer-a-spent-run-with-402.md), the stopped run got 503
+# `run_stopped`, and the agent retried it for minutes while the pod waited for the run's close.
 #
 # One task on a pod at US$ 36 an hour, 0.01 a second: its US$ 0.30 is spent within a minute of the
 # pod's creation, while its agent's turns go on every 10 seconds.
 name: A run whose budget is spent gets 402 from its pod's gateway, not a retryable 503
-tags: [budgets, pods, ollama, known-bug]
+tags: [budgets, pods, ollama]
 runner: simulator
 profiles: [ollama]
 timeout: 20m
