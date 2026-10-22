@@ -1,0 +1,84 @@
+# The task budget covers the whole task (docs/budget/budget.md, "Outcomes of open-key"): a plan
+# that spends all but a few cents of it leaves less than the US$ 0.10 a run needs, so the next run
+# is refused with task-budget-spent and the task is blocked, with the documented message
+# (docs/tasks/lifecycle.md, "Blocked, and how to go on"). A maintainer raises the budget with
+# `/codeman set task-budget`, then `/codeman continue` resumes the task where it stopped.
+name: A spent task budget blocks the task, and set task-budget with continue resumes it
+tags: [budgets, openrouter]
+runner: simulator
+timeout: 20m
+world:
+  organizations:
+    - { name: acme, settings: { model: deepseek/deepseek-v4.1-flash, task-budget: 0.5 } }
+  repositories:
+    - { name: acme/app, fixture: node-small, maintainers: [alice] }
+agent:
+  i1:
+    plan:
+      - steps:
+          - bash: plan=$(sed -n 's/.*Create the plan at `\([^`]*\)`.*/\1/p' .codeman/task.md) && mkdir -p "$(dirname "$plan")" && printf '# Add a health route\n' > "$plan"
+          # 430,000 prompt tokens at the fake's US$ 0.000001 a token: US$ 0.43, and a cent or two
+          # for the other turns, within the key's limit of US$ 0.50.
+          - usage: { prompt: 430000, completion: 0 }
+          - output:
+              summary: Adds a health route.
+              decisions:
+                - { id: 1, title: Port, question: Which port?, options: [{ key: a, label: "8080" }, { key: b, label: "3000" }], recommendation: a }
+    route:
+      - steps:
+          - output:
+              summary: Code, then review.
+              route: [{ stage: code, brief: Add the route. }, { stage: review, brief: Check it. }]
+              skipped: [{ stage: web, reason: No docs. }, { stage: design, reason: Settled. }, { stage: test, reason: Too small. }]
+    code:
+      - steps:
+          - write: { path: src/health.ts, content: "export const ok = true;\n" }
+          - output: { status: done, summary: Adds the route., commitMessage: Add a health route }
+    review:
+      - steps: [{ output: { status: done, summary: The route is right. } }]
+actions:
+  - open-issue: { ref: i1, as: alice, title: Add a health route, labels: [codeman] }
+  - run: { event: issues.labeled }
+  - expect:
+      issue: i1
+      labels: [codeman:awaiting-decision]
+      ledger: { runs: 1, cost-at-least: 0.41, cost-at-most: 0.5 }
+  # The decision's run would route the task, but less than US$ 0.10 is left of US$ 0.50.
+  - comment: { issue: i1, as: alice, body: /codeman decide 1 a }
+  - advance: { until: { issue: i1, labels: [codeman:blocked] }, max-runs: 3 }
+  - expect:
+      issue: i1
+      no-labels: [codeman:awaiting-decision, codeman:ready]
+      comments:
+        - kind: status
+          contains:
+            - of its US$ 0.50 budget, and a run needs at least US$ 0.10.
+            - A maintainer can raise it with `/codeman set task-budget <usd>`, then comment `/codeman continue`.
+        - kind: run
+          contains: of its US$ 0.50 budget, and a run needs at least US$ 0.10.
+      store:
+        # Refused before any key: nothing reserved, no key made.
+        - collection: organizations/acme/runs
+          where: { stage: route, status: refused, refusal: task-budget-spent }
+          count: 1
+      fakes:
+        openrouter:
+          keys: { count: 1 }
+      ledger: { runs: 2, cost-at-most: 0.5 }
+  # The budget raised, the task goes on from routing to done, each run within what is left.
+  - comment: { issue: i1, as: alice, body: /codeman set task-budget 2 }
+  - comment: { issue: i1, as: alice, body: /codeman continue }
+  - advance: { until: { issue: i1, labels: [codeman:done] }, max-runs: 8 }
+  - expect:
+      issue: i1
+      pull-request: { ready: true, files: [src/health.ts] }
+      store:
+        - collection: organizations/acme/runs
+          where: { stage: route, status: closed, limit: { at-least: 1.5, at-most: 1.59 } }
+          count: 1
+        - { collection: organizations/acme/runs, where: { status: closed }, count: 4 }
+      fakes:
+        openrouter:
+          keys: { count: 4 }
+      ledger: { cost-at-least: 0.41, cost-at-most: 2 }
+      violations: none

@@ -1,0 +1,78 @@
+# Known bug of Codeman, not fixed (found on 2026-10-22, step 5.3 of the e2e plan): a run whose
+# budget is spent gets 503, which OpenCode retries, instead of the documented 402
+# (docs/inference/self-hosted.md, "The budget cut-off"). The gateway (src/gateway/gateway.ts)
+# answers 402 only between the request that finds the budget spent and its next tick, at most 15
+# seconds; then `expireRuns` stops the run, and `handle` answers its requests 503 `run_stopped`,
+# as `#forward` does for the one in flight. The AI SDK in OpenCode takes 503 as retryable, so the
+# agent retries a spent run for minutes, through its fix pass too, while the pod waits for the
+# run's close: in budgets/shared-pod-402, 11 requests got 503 over 150 seconds, and the pod's
+# untracked time was as large as the run's limit.
+#
+# One task on a pod at US$ 36 an hour, 0.01 a second: its US$ 0.30 is spent within a minute of the
+# pod's creation, while its agent's turns go on every 10 seconds.
+name: A run whose budget is spent gets 402 from its pod's gateway, not a retryable 503
+tags: [budgets, pods, ollama, known-bug]
+runner: simulator
+profiles: [ollama]
+timeout: 20m
+world:
+  organizations:
+    - name: acme
+      settings:
+        task-budget: 0.3
+        provider: runpod-pod
+        model: qwen2.5:0.5b
+        gpu: NVIDIA GeForce RTX 4090
+  repositories:
+    - { name: acme/app, fixture: node-small, maintainers: [alice] }
+  runpod:
+    catalog:
+      - id: NVIDIA GeForce RTX 4090
+        name: RTX 4090
+        pool: ADA_24
+        manufacturer: NVIDIA
+        memory: 24
+        secure: true
+        community: true
+        price: { secure: 36, community: 18, serverless: 1.1 }
+        maxCount: { secure: 8, community: 4 }
+        availability: HIGH
+        cudaVersions: [{ version: "12.8", available: true }, { version: "13.0", available: true }]
+agent:
+  i1:
+    plan:
+      - steps:
+          - bash: ls
+          - delay: 10000
+          - bash: ls src
+          - delay: 10000
+          - read: package.json
+          - delay: 10000
+          - bash: ls
+          - delay: 10000
+          - read: AGENTS.md
+          - delay: 10000
+          - bash: ls src
+          - delay: 10000
+          - read: package.json
+          - delay: 10000
+          - bash: ls
+          - output: { summary: Not reached., decisions: [] }
+actions:
+  - open-issue: { ref: i1, as: alice, title: Add a health route, labels: [codeman] }
+  - run: { event: issues.labeled }
+  - expect:
+      issue: i1
+      no-labels: [codeman:awaiting-decision, codeman:ready]
+      store:
+        - { collection: organizations/acme/runs, where: { stage: plan, status: closed, requests: { at-least: 1 } }, count: 1 }
+      # The agent's requests through the pod's proxy: refused with 402 once its run is spent, and
+      # never with 503, which it would retry.
+      fakes:
+        runpod:
+          requests: { where: { method: POST, status: 402 }, count: { at-least: 1 } }
+  - expect:
+      fakes:
+        runpod:
+          requests: { where: { method: POST, status: 503 }, count: 0 }
+      violations: none

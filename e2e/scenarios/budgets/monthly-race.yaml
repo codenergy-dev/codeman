@@ -1,0 +1,78 @@
+# Eight tasks of one run open at once and race for the repository's month (docs/budget/budget.md,
+# "Reservations"): each open-key reserves its run's limit, US$ 1.00, in one store transaction that
+# reads the month's runs, so tasks that open together see each other's reservations, or run their
+# transaction again. A month of US$ 4.50 holds four limits: four open, the other four are refused
+# with over-budget and go back to new, and the reservations never pass the budget. Only the four
+# opened run an agent, which keeps the scenario within the VM's memory. Once those four close, the
+# month counts their costs, cents, in place of their limits: next-run's run picks the four refused
+# tasks again, and they fit.
+name: Eight tasks race for the month's budget, and their reservations never pass it
+tags: [budgets, openrouter]
+runner: simulator
+timeout: 20m
+world:
+  organizations:
+    - name: acme
+      settings:
+        model: deepseek/deepseek-v4.1-flash
+        task-budget: 1
+        monthly-budget: 4.5
+        profiles:
+          - { name: race, max-tasks: 8, model: deepseek/deepseek-v4.1-flash }
+  repositories:
+    - { name: acme/app, fixture: node-small, maintainers: [alice] }
+agent:
+  i1:
+    plan: &plan
+      - steps:
+          - bash: plan=$(sed -n 's/.*Create the plan at `\([^`]*\)`.*/\1/p' .codeman/task.md) && mkdir -p "$(dirname "$plan")" && printf '# A small change\n' > "$plan"
+          - output:
+              summary: Plans a small change.
+              decisions:
+                - { id: 1, title: Port, question: Which port?, options: [{ key: a, label: "8080" }, { key: b, label: "3000" }], recommendation: a }
+  i2: { plan: *plan }
+  i3: { plan: *plan }
+  i4: { plan: *plan }
+  i5: { plan: *plan }
+  i6: { plan: *plan }
+  i7: { plan: *plan }
+  i8: { plan: *plan }
+actions:
+  - open-issue: { ref: i1, as: alice, title: Add a health route, labels: [codeman] }
+  - open-issue: { ref: i2, as: alice, title: Add a version route, labels: [codeman] }
+  - open-issue: { ref: i3, as: alice, title: Add a ready route, labels: [codeman] }
+  - open-issue: { ref: i4, as: alice, title: Add a metrics route, labels: [codeman] }
+  - open-issue: { ref: i5, as: alice, title: Add a status route, labels: [codeman] }
+  - open-issue: { ref: i6, as: alice, title: Add a ping route, labels: [codeman] }
+  - open-issue: { ref: i7, as: alice, title: Add an info route, labels: [codeman] }
+  - open-issue: { ref: i8, as: alice, title: Add a time route, labels: [codeman] }
+  # The last labeled issue's run takes all eight, each in its own jobs, opening at once; its
+  # next-run starts another run for the four refused.
+  - run: { event: issues.labeled }
+  - expect:
+      store:
+        # Twelve runs picked. In the first workflow run, four reserved US$ 1.00 each, US$ 4.00 of
+        # US$ 4.50, and four were refused, reserving nothing. In the second, the four refused ones
+        # reserved theirs, against a month of four closed runs' cents.
+        - { collection: organizations/acme/runs, where: { stage: plan }, count: 12 }
+        - collection: organizations/acme/runs
+          where: { stage: plan, status: refused, refusal: over-budget }
+          count: 4
+        - { collection: organizations/acme/runs, where: { stage: plan, status: closed, limit: 1 }, count: 8 }
+        - { collection: organizations/acme/events, where: { type: key-opened }, count: 8 }
+        - { collection: organizations/acme/events, where: { type: key-refused }, count: 4 }
+      fakes:
+        # Only the opened runs made a key.
+        openrouter:
+          keys: { count: 8 }
+      # What the eight closed runs cost, far below their limits.
+      ledger: { runs: 12, cost-at-most: 0.5 }
+      violations: none
+  - expect: { issue: i1, labels: [codeman:awaiting-decision] }
+  - expect: { issue: i2, labels: [codeman:awaiting-decision] }
+  - expect: { issue: i3, labels: [codeman:awaiting-decision] }
+  - expect: { issue: i4, labels: [codeman:awaiting-decision] }
+  - expect: { issue: i5, labels: [codeman:awaiting-decision] }
+  - expect: { issue: i6, labels: [codeman:awaiting-decision] }
+  - expect: { issue: i7, labels: [codeman:awaiting-decision] }
+  - expect: { issue: i8, labels: [codeman:awaiting-decision] }

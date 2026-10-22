@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-10-20T12:50:34-03:00
-updated_at: 2026-10-21T17:58:33-03:00
+updated_at: 2026-10-22T13:05:00-03:00
 commit: 21130fe
 ---
 
@@ -663,7 +663,7 @@ What they assert:
 Changes to the plan:
 
 - **`five-tasks-two-pods` does not fit in memory.** Five tasks on two pods at once need five agent jobs and two pods, about 8.5 GiB. A smaller pool case does not form two pods: with `tasks: 2` and 3 tasks, one batch of 2 forms and the third waits. `parallel/two-batches-two-pods` is the smallest case that forms two pods at once: 2 tasks, 2 pods of one parallel request.
-- **`parallel/vllm-two-seats` is not written.** The `vllm` profile needs 8 GiB, more than this VM has, and the runtime has no tag that skips a scenario, so a `vllm` scenario under `parallel/` would stop every run of the directory.
+- **`parallel/vllm-two-seats` is not written.** The `vllm` profile needs 8 GiB, more than this VM has, and the runtime has no tag that skips a scenario, so a `vllm` scenario under `parallel/` would stop every run of the directory. Written in [5.2 vLLM results](#52-vllm-results), on a VM of 9.7 GiB; the runtime now refuses only the scenarios that do not fit, by name.
 
 Memory of `four-tasks-one-pod`, from `docker stats` every 6 to 7 seconds: peaks of 5.41, 5.72 and 5.61 GiB of containers across the three passes, with four agent jobs at 0.65 to 0.76 GiB each, the pod at 2.08 GiB, the emulator at 0.29 GiB and the fakes at about 0.33 GiB. About 2 GiB of the VM's 7.65 GiB stay free.
 
@@ -683,6 +683,78 @@ Bugs these scenarios cover:
 | `gh workflow run` without a ref needs `metadata: read` | `e26a8c9` | The template's two lines do; its docs conflict | With it reverted, in a scratch worktree, `two-organizations-batch`, `repository-override` and `reservation-expired` fail: the `Wake globex/site` job logs "unable to determine default branch for globex/site: GraphQL: Resource not accessible by integration (repository.defaultBranchRef)", and no dispatch is made |
 | A repository's `CODEMAN_SETTINGS` dropped the organization's pool and budget | None: [documented](2026-10-19-repository-override-of-organization-settings.md), no code change | – | `repository-override` asserts the documented behavior |
 | A pod task's next stage waited for its batch to expire | `50404b7` | – | Not reached by these scenarios, whose tasks stop at their decisions; `pods/ollama-keep-and-release` covers it (5.1) |
+
+#### 5.2 vLLM results
+
+Run on 2026-10-22 on the plan's machine, with Docker Desktop's VM raised to 9.7 GiB, `HEAD` `1de88e7` with the uncommitted step. Pass 1 ran the scenario alone, pass 2 within `npm run test:e2e -- parallel`, pass 3 alone again.
+
+| Scenario | Pass 1 | Pass 2 | Pass 3 |
+| --- | --- | --- | --- |
+| `parallel/vllm-two-seats` | 352 s | 364 s | 359 s |
+
+`npm run test:e2e -- parallel` runs the four scenarios of the directory, the `ollama` and `vllm` ones together: four passed, in 119 s, 69 s, 105 s and 364 s. On a smaller VM it stops before it starts anything, naming the scenario and what it needs: "Docker has 7.7 GiB of memory, too little for a scenario: parallel/vllm-two-seats needs about 8.0 GiB, with the vllm profile. Raise Docker Desktop's memory (Settings, Resources) to 10 GB or more, or select scenarios without it."
+
+What it asserts:
+
+- **The fit**, from the gateway's `/admin/status`: `contextLength` 8192, `vllm` `{ max-num-seqs: "2", tool-call-parser: hermes, max-model-len: "8192", enforce-eager: "true" }` (`max-num-seqs` derived from the profile's `tasks: 2`), `fit` with `source: settings`, `loads: 1`, `concurrency` 10.65625, `cacheTokens` 87296 and `toolCallParser: hermes`, and both tasks' seats.
+- **vLLM's own view**: `/v1/models` `max_model_len` 8192; `/metrics` `cache_config_info` with `kv_cache_size_tokens` 87296, `kv_cache_max_concurrency` 10.65625, `kv_cache_memory_bytes` 1073741824 and `block_size` 128, the values of spike 0.1.
+- **The probe**: the tee passed one request through unchanged, the gateway's tool-call probe, which the `fit`'s `toolCallParser` says hermes parsed.
+- **Concurrency**: the tee saw 14 agents' requests, with requests of both issues at the engine at once (`issues: 2`), and vLLM's `vllm:num_requests_running`, sampled while they were there, never above 2 (`busiest` 1 to 2).
+- **The pod**: one pod, created by one task and joined by the other, two seats, terminated and no longer billed; each run's cost is its share of the pod's time (`ledger.split-pod`); one request to the fake Hub, from the creating task's `open-key`.
+
+Memory, from `docker stats` every 5 seconds: peaks of 6.32, 7.03 and 6.45 GiB of containers across the three passes, the pod at 4.52 to 5.16 GiB, two agent jobs at about 0.65 GiB each, the emulator at about 0.3 GiB and the fakes at about 0.4 GiB. About 2.7 GiB of the VM's 9.7 GiB stay free.
+
+Runtime and fake changes this step needed:
+
+- **A vLLM pod's shared memory** (a fault of the runtime). Its container had Docker's 64 MiB of `/dev/shm`, and vLLM's CPU engine stopped at its start: "RuntimeError: Insufficient space in /dev/shm for shared-memory allocation: 160 MiB required, 64 MiB free." Spike 0.1 had run it with `--shm-size=1g`, and a Runpod pod has more than Docker's default. The launcher now gives vLLM pods 1 GiB (`launcher.test.ts`).
+- **The tee's view of vLLM**: it samples vLLM's `/metrics` gauges `vllm:num_requests_running` and `vllm:num_requests_waiting` while agents' requests are at the engine, as it samples llama-server's slots (`tee.test.ts`). The final `/metrics` reads 0 running, after the agents.
+- **Checks**: `engine.tee.issues`, the most issues whose agents' requests met at the engine, since OpenCode's title request makes one agent's `overlap` 2; and `engine.tee.waiting` (`expect.test.ts`).
+- **The memory refusal** counts each scenario's profiles, not every selected scenario's together, since scenarios run one at a time, and names each scenario it refuses (`report.test.ts`). The suite's page has the message.
+- **A short script**: OpenCode compacts its conversation once the replies' usage nears the context, about 6000 of 8192 tokens, with its own prompt at about 4500. A compaction's request is no step of the script, so the first draft, with six steps, failed as unscripted. The scenario's plan has three steps; [writing scenarios](../development/e2e/scenarios.md#the-agents-script) says so.
+
+> [!WARNING]
+> **Codeman bug, not fixed (2026-10-22).** A task that waits for a pod another task of its batch creates does not fail with the pod's failed start: it creates another pod of the same settings, which fails the same way. [Pods](../inference/pods.md#creating) says "The tasks that waited for the pod fail with it rather than create another", and choice 12 of the [fit plan](2026-10-13-fit-ollama-to-the-gpu.md) keeps a failing gateway answering for 2 minutes so they can read why. But the creator's `open-key` (`#create` in `src/inference/selfhosted.ts`) ends the pod's registry document and terminates the pod as soon as it reads the failure. The joiner's next poll, up to 10 seconds later, finds the pod gone ("Could not join pod …: Pod … no longer exists."), which is not a `PodStartFailure`, so `#claim` claims again and creates a pod. Seen first in this step's vLLM run with 64 MiB of shared memory: two pods were created and failed, 80 seconds apart. `pods/start-failure-two-tasks` reproduces it, tagged `known-bug`: qwen2.5:0.5b does not fit a GPU of 1 GB, and a 2-second delay on the first `open-key`'s listing of pods makes the other task the creator, so the joiner polls before the failure and next after the termination; it creates a second pod each time (4 runs of 4). Without the delay, the two poll within milliseconds of each other, and either order happens (2 runs of 4).
+>
+> Suggested fix, not applied: when `#attach` of a joined pod fails because the pod no longer exists, read its registry document, and throw a `PodStartFailure` when it ended with a failed start; `#create` would record the gateway's message in that document (`registry.end`'s reason). Or `#create` would leave a pod that failed to start to its gateway, which terminates itself 2 minutes later, while other tasks hold leases on it.
+
+#### 5.3 results
+
+Run on 2026-10-22 on the plan's machine (Docker VM 9.7 GiB), `HEAD` `1de88e7` with the uncommitted step, three passes in a row of `npm run test:e2e -- budgets`.
+
+| Scenario | Pass 1 | Pass 2 | Pass 3 |
+| --- | --- | --- | --- |
+| `budgets/task-budget-then-continue` | 171 s | 169 s | 167 s |
+| `budgets/monthly-race` | 158 s | 152 s | 141 s |
+| `budgets/shared-pod-402` | 353 s | 265 s | 348 s |
+| `budgets/openrouter-cost-lag` | 139 s | 138 s | 139 s |
+| `budgets/routing-quiet` | 196 s | 194 s | 201 s |
+| `budgets/spent-run-gets-402` (`known-bug`) | Reproduced, 217 s | 208 s | 217 s |
+
+What they assert:
+
+- **`task-budget-then-continue`**: a plan that spends US$ 0.45 of a US$ 0.50 budget leaves less than the US$ 0.10 a run needs. The decision's routing run is refused, `task-budget-spent`, with no key: the task is `codeman:blocked`, its panel and run comment say "The task has spent US$ … of its US$ 0.50 budget, and a run needs at least US$ 0.10. A maintainer can raise it with `/codeman set task-budget <usd>`, then comment `/codeman continue`." After both commands, routing opens with what is left of US$ 2, a limit of US$ 1.53, and the task goes on to `codeman:done`.
+- **`monthly-race`**: eight tasks of one run open at once against a month of US$ 4.50 and a task budget of US$ 1. Four reserve US$ 1.00 and run; four are refused, `over-budget`, and make no key. So the reservations never pass the month. Once the four close, the month counts their cents, and next-run's run opens the four others. 12 ledger runs: 8 closed with a limit of 1, 4 refused; 8 `key-opened` and 4 `key-refused` events; 8 keys.
+- **`shared-pod-402`**: two tasks share a pod at US$ 7.20 an hour. The short plan closes; the long one goes on alone until its share reaches its US$ 0.30 limit, and the gateway stops it. The pod waits for its close: `close-key`'s `/admin/end` reads the gateway's figures, so the run's ledger document has its `requests` and `inputTokens`, and costs US$ 0.31, its limit and one tick. Then `close-key` terminates the pod. The pod's document counts US$ 0.36 for its runs; the time from the stop to the close is its untracked time. The scenario does not check `ledger.split-pod`, whose lower bound assumes that each second of the pod went to a run.
+- **`openrouter-cost-lag`**: with OpenRouter's usage and analytics held, the plan run's `close-key` records a cost of 0 while its key spent about US$ 0.08. Then the lags end, the settings move the task to a Serverless endpoint, and routing's key jobs refresh the plan run's cost from its key. Code and review run on the endpoint too.
+- **`routing-quiet`**: after the plan and the answers' run, the month's budget refuses routing three times, and the organization's month once: the panel says why each time, the task stays `codeman:ready`, and no run comment is added. With room, routing, code and review run: five run comments in all (plan, answers, route, code, review).
+
+Bugs these scenarios cover:
+
+| Bug | Fix | Reverts cleanly | Check |
+| --- | --- | --- | --- |
+| A spent shared pod terminated itself before `close-key`'s `/admin/end` | `ca7f3e8` | `src/` does; its docs and `dist/` conflict | With the `src/` part reverted, in a scratch worktree, `shared-pod-402` fails: the spent run's `close-key` warns "Could not read the run's usage from its pod: The pod's gateway answered /admin/end with 502.", and the run costs US$ 0.63, more than twice its US$ 0.30 limit, with no `requests` or tokens |
+| OpenRouter's cost read as 0 (analytics lag), never refreshed by later pod runs | `c26cd15` | `src/` does; its docs and `dist/` conflict | With the `src/` part reverted, `openrouter-cost-lag` fails: the plan run's cost stays 0 after the Serverless runs, and the task's ledger counts US$ 0.04, the Serverless runs alone |
+| A routing run refused by budget posted a noisy comment | `50a5a14` | `src/` does; a plan's text conflicts | With the `src/` part, the one line of `quiet`, reverted, `routing-quiet` fails at the first refusal: 3 run comments, not 2 |
+| A task's budget covers the whole task; reservations from the ledger | The [task budget](2026-09-28-task-budget.md) and [ledger budgets](2026-10-07-budgets-from-the-ledger.md) plans, features of many commits | – | `task-budget-then-continue` and `monthly-race` assert the documented behavior |
+
+> [!WARNING]
+> **Codeman bug, not fixed (2026-10-22).** A run whose budget is spent gets 503, which OpenCode retries, instead of the documented 402 ([the budget cut-off](../inference/self-hosted.md#the-budget-cut-off)). `Gateway.handle` (`src/gateway/gateway.ts`) answers 402 only between the request that finds the budget spent and the next tick, at most 15 seconds; then `expireRuns` stops the run, and `handle` answers its requests `503` `run_stopped`, as `#forward` does for the one in flight when the run stops. The AI SDK in OpenCode takes 503 as retryable (`"isRetryable":true` in the agent's log). In `shared-pod-402`, the stopped run's agent sent 11 more requests over 150 seconds, all 503, through its fix pass too; the pod waited for the run's close all that time, and its untracked time, US$ 0.30, was as large as the run's limit. No request got 402. `budgets/spent-run-gets-402` reproduces it, tagged `known-bug`: one task on a pod at US$ 36 an hour, whose agent's 12 requests after its run stopped all got 503.
+>
+> Suggested fix, not applied: answer a run stopped for its budget with 402 `budget_exceeded`, in `handle` and in `#forward`'s abort, and keep 503 `run_stopped` for a run stopped for its silence, or answer 402 for both, since neither should be retried.
+
+Memory: these scenarios peaked at 3.5 GiB of containers, in `shared-pod-402` (the Ollama pod at 1.5 GiB and two agent jobs); `monthly-race` ran up to 8 job containers at once, its eight `open-key` jobs, and four agent jobs.
+
+Runtime and fake changes this step needed: none. The scenarios raise a GPU type's price with `world.runpod.catalog`, so a pod run spends its limit within minutes.
 
 ### Phase 6: act smoke scenarios
 

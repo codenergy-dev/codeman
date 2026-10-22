@@ -1,0 +1,60 @@
+# Known bug of Codeman, not fixed (found on 2026-10-22, step 5.2 of the e2e plan): a task that
+# waits for a pod another task of its batch creates does not fail with the pod's failed start; it
+# creates another pod of the same settings, which fails the same way. docs/inference/pods.md
+# ("Creating") says the tasks that waited for the pod fail with it rather than create another,
+# and choice 12 of docs/plans/2026-10-13-fit-ollama-to-the-gpu.md keeps a failing gateway answering
+# for 2 minutes so they can read why. But the creator's open-key (`#create` in
+# src/inference/selfhosted.ts) ends the pod's registry document and terminates the pod as soon as
+# it reads the failure. A joiner that polls after that finds the pod gone ("Pod … no longer
+# exists"), which is not a PodStartFailure, so `#claim` claims again and creates a pod.
+#
+# Here qwen2.5:0.5b does not fit a GPU of 1 GB with two parallel requests of 32768 tokens. A 2-second
+# delay on the first open-key's listing of pods makes the other the creator, and this one join the
+# pod before its gateway reports the failure: its next poll, 10 seconds later, comes after the
+# creator terminated the pod. Without the delay the two poll within milliseconds of each other,
+# and either order happens.
+name: Two tasks whose pod fails to start both fail, and no other pod is created
+tags: [pods, ollama, failures, known-bug]
+runner: simulator
+profiles: [ollama]
+timeout: 15m
+world:
+  organizations:
+    - name: acme
+      settings:
+        task-budget: 2
+        profiles:
+          - { name: pair, tasks: 2, provider: runpod-pod, gpu: NVIDIA GeForce RTX 4090, model: qwen2.5:0.5b }
+  repositories:
+    - { name: acme/app, fixture: node-small, maintainers: [alice] }
+  runpod:
+    catalog:
+      - id: NVIDIA GeForce RTX 4090
+        name: RTX 4090
+        pool: ADA_24
+        manufacturer: NVIDIA
+        memory: 1
+        secure: true
+        community: true
+        price: { secure: 0.69, community: 0.34, serverless: 1.1 }
+        maxCount: { secure: 8, community: 4 }
+        availability: HIGH
+        cudaVersions: [{ version: "12.8", available: true }, { version: "13.0", available: true }]
+actions:
+  - open-issue: { ref: i1, as: alice, title: Add a health route, labels: [codeman] }
+  - open-issue: { ref: i2, as: alice, title: Add a version route, labels: [codeman] }
+  # The first open-key to list the pods waits 2 seconds more, so the other claims the creation
+  # lease and this one joins the pod once it is registered.
+  - fault: { runpod: { path: /v2/pods, method: GET, delay: 2s, times: 1 } }
+  - run: { event: issues.labeled }
+  - expect: { issue: i1, labels: [codeman:blocked], comments: [{ kind: run, contains: Codeman could not give this run access to its model }] }
+  - expect: { issue: i2, labels: [codeman:blocked], comments: [{ kind: run, contains: Codeman could not give this run access to its model }] }
+  - expect:
+      pods: [{ count: 1 }]
+      fakes:
+        runpod:
+          requests: { where: { method: POST, path: /v2/pods }, count: 1 }
+      store:
+        - { collection: organizations/acme/events, where: { type: pod-created }, count: 1 }
+        - { collection: organizations/acme/runs, where: { status: failed }, count: 2 }
+      violations: none
