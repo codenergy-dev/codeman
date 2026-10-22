@@ -1,12 +1,9 @@
-# Known bug of Codeman, not fixed (found on 2026-10-22, step 5.2 of the e2e plan): a task that
-# waits for a pod another task of its batch creates does not fail with the pod's failed start; it
-# creates another pod of the same settings, which fails the same way. docs/inference/pods.md
-# ("Creating") says the tasks that waited for the pod fail with it rather than create another,
-# and choice 12 of docs/plans/2026-10-13-fit-ollama-to-the-gpu.md keeps a failing gateway answering
-# for 2 minutes so they can read why. But the creator's open-key (`#create` in
-# src/inference/selfhosted.ts) ends the pod's registry document and terminates the pod as soon as
-# it reads the failure. A joiner that polls after that finds the pod gone ("Pod … no longer
-# exists"), which is not a PodStartFailure, so `#claim` claims again and creates a pod.
+# Two tasks of a batch wait for one pod whose start fails: both fail with the gateway's reason,
+# and no other pod is created (docs/inference/pods.md, "Creating"). The creator's open-key ends the
+# pod's registry document with the reason and terminates the pod; a joiner that polls after that
+# finds the pod gone and reads the reason from the document. Before the fix
+# (docs/plans/2026-10-22-fail-the-tasks-waiting-for-a-failed-pod.md), that joiner created another
+# pod of the same settings, which failed the same way.
 #
 # Here qwen2.5:0.5b does not fit a GPU of 1 GB with two parallel requests of 32768 tokens. A 2-second
 # delay on the first open-key's listing of pods makes the other the creator, and this one join the
@@ -14,7 +11,7 @@
 # creator terminated the pod. Without the delay the two poll within milliseconds of each other,
 # and either order happens.
 name: Two tasks whose pod fails to start both fail, and no other pod is created
-tags: [pods, ollama, failures, known-bug]
+tags: [pods, ollama, failures]
 runner: simulator
 profiles: [ollama]
 timeout: 15m
