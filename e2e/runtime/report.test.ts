@@ -80,13 +80,20 @@ test("patterns: scalars, ranges, objects with some fields, and lists in order", 
   assert.match(matches(list, ["x", "y"]) ?? "", /2 items, not 1/);
 });
 
-test("the vllm profile is refused on a VM with too little memory, the default is not", () => {
+test("a vllm scenario is refused on a VM with too little memory, by name, the others are not", () => {
   const gib = 2 ** 30;
-  assert.equal(memoryProblem([], 7.65 * gib), undefined);
-  assert.equal(memoryProblem(["ollama"], 7.65 * gib), undefined);
-  assert.match(
-    memoryProblem(["vllm"], 7.65 * gib) ?? "",
-    /Docker has 7\.7 GiB.*vllm profile needs about 8\.0 GiB/,
+  const plain = { id: "happy-path/openrouter-plan-only", profiles: [] };
+  const ollama = { id: "parallel/four-tasks-one-pod", profiles: ["ollama" as const] };
+  const vllm = { id: "parallel/vllm-two-seats", profiles: ["vllm" as const] };
+  assert.equal(memoryProblem([plain, ollama], 7.65 * gib), undefined);
+  assert.equal(
+    memoryProblem([plain, ollama, vllm], 7.65 * gib),
+    "Docker has 7.7 GiB of memory, too little for a scenario: parallel/vllm-two-seats needs about 8.0 GiB, with the vllm profile. Raise Docker Desktop's memory (Settings, Resources) to 10 GB or more, or select scenarios without it.",
   );
-  assert.equal(memoryProblem(["vllm"], 10 * gib), undefined);
+  // One scenario at a time: an Ollama and a vLLM scenario fit where each fits alone.
+  assert.equal(memoryProblem([ollama, vllm], 9.7 * gib), undefined);
+  assert.match(
+    memoryProblem([vllm, { ...vllm, id: "budgets/x" }], 3 * gib) ?? "",
+    /too little for 2 scenarios: parallel\/vllm-two-seats needs about 8\.0 GiB.*; budgets\/x needs/,
+  );
 });

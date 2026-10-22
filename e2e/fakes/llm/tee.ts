@@ -43,7 +43,8 @@ import { isScenarioName, scriptOf } from "./script.ts";
  * - `GET /runners`: the engine's runner processes in the pod, such as Ollama's `llama-server`,
  *   with their arguments, and the context (`-c`) and parallel requests (`-np`) they name;
  * - `GET /slots`: the runners' slots (llama-server's `/slots`), each with its context, and the
- *   most that processed at once, sampled while agents' requests were at the engine;
+ *   most that processed at once, sampled while agents' requests were at the engine; for vLLM,
+ *   which has no runner, the most requests its `/metrics` said were running, and waiting;
  * - `PUT /vram` `{ bytes }`: the virtual VRAM, or null to leave `/api/ps` as the engine says.
  */
 
@@ -75,14 +76,24 @@ export interface TeeSetup {
   proc?: string;
   /** How often the runners' slots are sampled while agents' requests are at the engine. */
   slotsIntervalMs?: number;
+  /**
+   * Whether the engine is vLLM, whose `/metrics` gauges `vllm:num_requests_running` and
+   * `vllm:num_requests_waiting` are sampled in place of slots.
+   */
+  vllm?: boolean;
 }
 
 /** The runners' slots, as `GET /_fake/tee/slots` gives them. */
 export interface TeeSlots {
   /** Each slot of the runners now, with its context (`n_ctx`). */
   slots: { id: unknown; n_ctx: unknown }[];
-  /** The most slots processing at once in a sample, and how many samples were taken. */
+  /**
+   * The most slots processing at once in a sample (for vLLM, its running requests), and how many
+   * samples were taken.
+   */
   busiest: number;
+  /** The most requests vLLM said were waiting in a sample; 0 for Ollama, whose queue is hidden. */
+  waiting: number;
   samples: number;
 }
 
@@ -134,6 +145,7 @@ export class Tee {
   #atEngine = 0;
   #sampling: Promise<void> | undefined;
   #busiest = 0;
+  #waiting = 0;
   #samples = 0;
 
   constructor(setup: TeeSetup, options: { now?: () => number } = {}) {
@@ -167,7 +179,12 @@ export class Tee {
     fake.control("GET", "/tee/runners", () => json(runners(this.#setup.proc ?? "/proc")));
     fake.control("GET", "/tee/slots", async () => {
       const slots = (await this.#slots()).map(({ id, n_ctx }) => ({ id, n_ctx }));
-      return json({ slots, busiest: this.#busiest, samples: this.#samples } satisfies TeeSlots);
+      return json({
+        slots,
+        busiest: this.#busiest,
+        waiting: this.#waiting,
+        samples: this.#samples,
+      } satisfies TeeSlots);
     });
     fake.control("PUT", "/tee/vram", (request) => {
       const { bytes } = (request.json() ?? {}) as { bytes?: unknown };
@@ -181,6 +198,7 @@ export class Tee {
       this.records.length = 0;
       this.vramBytes = this.#setup.vramBytes;
       this.#busiest = 0;
+      this.#waiting = 0;
       this.#samples = 0;
     });
   }
@@ -265,19 +283,42 @@ export class Tee {
   }
 
   /**
-   * Samples the runners' slots while agents' requests are at the engine, keeping the most that
-   * processed at once: the engine's own count of the requests it ran together.
+   * Samples the runners' slots, or vLLM's gauges, while agents' requests are at the engine,
+   * keeping the most that processed at once: the engine's own count of the requests it ran
+   * together.
    */
   async #sample(): Promise<void> {
     try {
       while (this.#atEngine > 0) {
-        const busy = (await this.#slots()).filter((slot) => slot.is_processing === true).length;
+        const busy = this.#setup.vllm
+          ? await this.#gauges()
+          : {
+              running: (await this.#slots()).filter((slot) => slot.is_processing === true).length,
+              waiting: 0,
+            };
         this.#samples++;
-        this.#busiest = Math.max(this.#busiest, busy);
+        this.#busiest = Math.max(this.#busiest, busy.running);
+        this.#waiting = Math.max(this.#waiting, busy.waiting);
         await new Promise((done) => setTimeout(done, this.#setup.slotsIntervalMs ?? 100));
       }
     } finally {
       this.#sampling = undefined;
+    }
+  }
+
+  /**
+   * vLLM's requests running and waiting now, from its `/metrics`
+   * (docs/web/vllm/vllm-v1-metrics-loggers-py-at-v0-31-0.md); none on a failure.
+   */
+  async #gauges(): Promise<{ running: number; waiting: number }> {
+    try {
+      const message = await call(`${this.#setup.engine}/metrics`, {
+        method: "GET",
+        signal: AbortSignal.timeout(2000),
+      });
+      return vllmGauges(await text(message));
+    } catch {
+      return { running: 0, waiting: 0 };
     }
   }
 
@@ -427,6 +468,20 @@ export function runners(proc: string): TeeRunner[] {
   return found.sort((a, b) => a.pid - b.pid);
 }
 
+/**
+ * `vllm:num_requests_running` and `vllm:num_requests_waiting` in vLLM's Prometheus text, summed
+ * over their engines; `vllm:num_requests_waiting_by_reason` is another metric, not counted.
+ */
+export function vllmGauges(metrics: string): { running: number; waiting: number } {
+  const gauges = { running: 0, waiting: 0 };
+  for (const line of metrics.split("\n")) {
+    const found = /^vllm:num_requests_(running|waiting)(?:\{[^}]*\})? (\S+)/.exec(line.trim());
+    const value = Number(found?.[2]);
+    if (found && Number.isFinite(value)) gauges[found[1] as "running" | "waiting"] += value;
+  }
+  return gauges;
+}
+
 /** The scripted model's server at `origin` as the replies' source. */
 export function remoteScripts(origin: string): ScriptSource {
   return async (request, signal) => {
@@ -532,7 +587,8 @@ function header(value: string | string[] | undefined): string | undefined {
  *   file of scripts by scenario, played in this process;
  * - `TEE_VRAM_BYTES`: the virtual VRAM for Ollama's `/api/ps`; without it, `/api/ps` passes;
  * - `TEE_MAX_TOKENS`: the engine's `max_tokens` for an agent's request, 8 by default;
- * - `TEE_CONTROL_PORT`: the inspection API's own port, 9091 by default, on `HOST`.
+ * - `TEE_CONTROL_PORT`: the inspection API's own port, 9091 by default, on `HOST`;
+ * - `CODEMAN_IMAGE_ENGINE`: the pod image's engine; `vllm` samples vLLM's gauges, not slots.
  */
 export async function fromEnv(env: NodeJS.ProcessEnv): Promise<FakeServer> {
   const origin = (name: string, value: string | undefined) => {
@@ -571,6 +627,7 @@ export async function fromEnv(env: NodeJS.ProcessEnv): Promise<FakeServer> {
     script,
     vramBytes: count("TEE_VRAM_BYTES", env.TEE_VRAM_BYTES),
     maxTokens: count("TEE_MAX_TOKENS", env.TEE_MAX_TOKENS, 8) as number,
+    vllm: env.CODEMAN_IMAGE_ENGINE === "vllm",
   });
   const inspection = await tee.inspection.listen({
     host: env.HOST ?? "0.0.0.0",

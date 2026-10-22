@@ -59,6 +59,7 @@ test("a pinned pod image runs as its local e2e image, with its model volume", as
   assert.equal(launched?.plan.image, "codeman-e2e-pod-ollama:local");
   assert.ok(launched?.plan.volumes.includes("codeman-e2e-ollama:/root/.ollama/models:ro"));
   assert.equal(launched?.plan.env.TEE_MODEL, "http://llm:8080");
+  assert.equal(launched?.plan.shm, undefined);
   // The pod's own environment goes as the create request sent it, apart from the plan's.
   assert.equal(launched?.spec.env.CODEMAN_MODEL, "qwen2.5:0.5b");
   assert.deepEqual(launched?.labels, { "codeman-e2e.scenario": "unit", "codeman-e2e.pod": "pod1" });
@@ -106,4 +107,14 @@ test("a pod ID that is not a plain name is refused", async () => {
   );
   assert.ok(isFailure(result));
   assert.match(result.failure, /400/);
+});
+
+test("a vLLM pod gets its model's cache and 1 GiB of shared memory, which vLLM's CPU engine needs", async () => {
+  const plan = await allowlistPlan(spec(POD_IMAGES.vllm as string, "pod9"), {
+    model: "http://llm:8080",
+    controlToken: "control",
+  });
+  assert.equal(plan.image, "codeman-e2e-pod-vllm:local");
+  assert.ok(plan.volumes.includes("codeman-e2e-hf:/root/.cache/huggingface:ro"));
+  assert.equal(plan.shm, "1g");
 });

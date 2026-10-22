@@ -564,12 +564,23 @@ export interface TeeStatus {
    * those the engine ran, and those it queued.
    */
   overlap: number;
+  /**
+   * The most issues whose agents' requests the tee had at the engine at once: how many tasks'
+   * agents met there. Only the turns the scripted model tells the issue of count, not the first
+   * turn nor the title.
+   */
+  issues: number;
   /** The engine's runner processes, such as Ollama's `llama-server`, with `context` and `parallel`. */
   runners: unknown[];
   /** The runners' slots, each with its context (`n_ctx`): llama-server's `/slots`. */
   slots: unknown[];
-  /** The most slots that processed at once, as the tee sampled them: what the engine ran together. */
+  /**
+   * The most slots that processed at once, or for vLLM the most requests its `/metrics` said were
+   * running, as the tee sampled them: what the engine ran together.
+   */
   busiest: number | undefined;
+  /** The most requests vLLM's `/metrics` said were waiting, as the tee sampled them. */
+  waiting: number | undefined;
 }
 
 /**
@@ -577,33 +588,48 @@ export interface TeeStatus {
  * (`GET /_fake/tee/slots`) as the check reads them. A request still at the engine counts as open until now.
  */
 export function teeStatus(
-  records: readonly { kind?: unknown; engine?: { start?: unknown; end?: unknown } }[],
+  records: readonly {
+    kind?: unknown;
+    identified?: { issue?: unknown };
+    engine?: { start?: unknown; end?: unknown };
+  }[],
   runners: readonly unknown[],
-  slots?: { slots?: unknown; busiest?: unknown; samples?: unknown },
+  slots?: { slots?: unknown; busiest?: unknown; waiting?: unknown; samples?: unknown },
 ): TeeStatus {
   const agent = records.filter((record) => record.kind === "agent");
-  const edges: [number, number][] = [];
+  const edges: [number, number, string | undefined][] = [];
   for (const record of agent) {
     const start = Number(record.engine?.start);
     if (!Number.isFinite(start)) continue;
     const end = Number(record.engine?.end ?? Number.POSITIVE_INFINITY);
-    edges.push([start, 1], [Number.isNaN(end) ? Number.POSITIVE_INFINITY : end, -1]);
+    const issue = record.identified?.issue;
+    const of = typeof issue === "string" ? issue : undefined;
+    edges.push([start, 1, of], [Number.isNaN(end) ? Number.POSITIVE_INFINITY : end, -1, of]);
   }
   // At a tie, an end goes first: a request that ends as another starts did not overlap it.
   edges.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
   let open = 0;
   let overlap = 0;
-  for (const [, step] of edges) {
+  const atEngine = new Map<string, number>();
+  let issues = 0;
+  for (const [, step, issue] of edges) {
     open += step;
     overlap = Math.max(overlap, open);
+    if (issue === undefined) continue;
+    const left = (atEngine.get(issue) ?? 0) + step;
+    if (left > 0) atEngine.set(issue, left);
+    else atEngine.delete(issue);
+    issues = Math.max(issues, atEngine.size);
   }
   return {
     requests: records.length,
     agent: agent.length,
     overlap,
+    issues,
     runners: [...runners],
     slots: Array.isArray(slots?.slots) ? slots.slots : [],
     busiest: typeof slots?.busiest === "number" ? slots.busiest : undefined,
+    waiting: typeof slots?.waiting === "number" ? slots.waiting : undefined,
   };
 }
 

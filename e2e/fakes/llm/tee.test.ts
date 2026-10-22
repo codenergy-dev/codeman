@@ -22,6 +22,7 @@ import {
   runners,
   Tee,
   type TeeRecord,
+  vllmGauges,
 } from "./tee.ts";
 
 const MODEL = "qwen2.5:0.5b";
@@ -556,4 +557,63 @@ test("the runners' slots are sampled while agents' requests are at the engine", 
     await slotsServer.close();
     rmSync(proc, { recursive: true, force: true });
   }
+});
+
+test("vLLM's running and waiting requests are sampled from its metrics while agents' requests are at the engine", async () => {
+  // vLLM with max-num-seqs 2: at most 2 requests run, the others wait.
+  let inFlight = 0;
+  const engineServer = new FakeServer("vllm");
+  engineServer.route("GET", "/metrics", () => ({
+    status: 200,
+    headers: { "content-type": "text/plain" },
+    body: [
+      "# TYPE vllm:num_requests_running gauge",
+      `vllm:num_requests_running{engine="0",model_name="m"} ${Math.min(2, inFlight)}.0`,
+      `vllm:num_requests_waiting{engine="0",model_name="m"} ${Math.max(0, inFlight - 2)}.0`,
+      `vllm:num_requests_waiting_by_reason{engine="0",model_name="m",reason="capacity"} 9.0`,
+      "",
+    ].join("\n"),
+  }));
+  engineServer.route("POST", "/v1/chat/completions", async () => {
+    inFlight++;
+    await sleep(300);
+    inFlight--;
+    return json({
+      choices: [{ index: 0, message: { role: "assistant", content: "OK" }, finish_reason: "stop" }],
+    });
+  });
+  const local = new Tee({
+    engine: await engineServer.listen(),
+    script: localScripts(model),
+    vllm: true,
+    slotsIntervalMs: 20,
+  });
+  const origin = await local.server.listen();
+  try {
+    await Promise.all(
+      [1, 2, 3].map(() =>
+        post(origin, "/v1/chat/completions", {
+          ...new Session(taskFile(SCENARIO, "i1", "code")).request(),
+          stream: false,
+        }).then((response) => response.text()),
+      ),
+    );
+    const slots = (await (await fetch(`${origin}/_fake/tee/slots`)).json()) as {
+      slots: unknown[];
+      busiest: number;
+      waiting: number;
+      samples: number;
+    };
+    assert.deepEqual(slots.slots, []);
+    assert.equal(slots.busiest, 2);
+    assert.equal(slots.waiting, 1);
+    assert.ok(slots.samples > 1);
+  } finally {
+    await local.server.close();
+    await engineServer.close();
+  }
+  assert.deepEqual(vllmGauges("vllm:num_requests_running 1.0\nvllm:num_requests_waiting 0\n"), {
+    running: 1,
+    waiting: 0,
+  });
 });

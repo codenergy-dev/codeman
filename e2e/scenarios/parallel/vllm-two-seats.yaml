@@ -1,0 +1,139 @@
+# Two planning tasks on one vLLM pod, with a profile of tasks: 2, so the pod's max-num-seqs is the
+# profile's count (docs/settings/pod-engines.md, "Parallel requests"). The context is set, as
+# spike 0.1 of the e2e plan ran vLLM on a CPU: max-model-len 8192, enforce-eager, the hermes
+# parser, and the e2e image's VLLM_CPU_KVCACHE_SPACE of 1 GiB, whose cache holds 87296 tokens:
+# 10.65625 requests of 8192. A vLLM pod takes about 5 minutes to serve on a CPU, and peaks at about
+# 5.5 GiB: the vllm profile needs 8 GiB of Docker memory.
+name: Two tasks share one vLLM pod, two parallel requests of 8192 tokens
+tags: [parallel, vllm, pods]
+runner: simulator
+profiles: [vllm]
+timeout: 30m
+world:
+  organizations:
+    - name: acme
+      settings:
+        task-budget: 2
+        profiles:
+          - name: two-seats
+            tasks: 2
+            provider: runpod-pod
+            engine: vllm
+            gpu: NVIDIA GeForce RTX 4090
+            model: Qwen/Qwen2.5-0.5B-Instruct
+            vllm:
+              tool-call-parser: hermes
+              max-model-len: 8192
+              enforce-eager: true
+  repositories:
+    - { name: acme/app, fixture: node-small, maintainers: [alice] }
+agent:
+  # The same plan for both tasks: a few turns, each a request to the engine, then a decision. Few,
+  # since OpenCode compacts its conversation once it nears the context of 8192 tokens, about 6000:
+  # OpenCode's own prompt is about 4500, and the replies' usage counts the requests' size.
+  i1:
+    plan: &plan
+      - steps:
+          - bash: plan=$(sed -n 's/.*Create the plan at `\([^`]*\)`.*/\1/p' .codeman/task.md) && mkdir -p "$(dirname "$plan")" && printf '# A small change\n' > "$plan"
+          - read: package.json
+          - bash: ls src
+          - output:
+              summary: Plans a small change.
+              decisions:
+                - { id: 1, title: Port, question: Which port?, options: [{ key: a, label: "8080" }, { key: b, label: "3000" }], recommendation: a }
+  i2: { plan: *plan }
+actions:
+  - open-issue: { ref: i1, as: alice, title: Add a health route, labels: [codeman] }
+  - open-issue: { ref: i2, as: alice, title: Add a version route, labels: [codeman] }
+  - parallel:
+      # The last labeled issue's run takes both: one batch of 2, each plan in its own jobs.
+      - - run: { event: issues.labeled }
+      # While the plans run: one pod, two seats, vLLM's fit as the settings give it.
+      - - wait: { until: { pods: [{ ref: p1, status: RUNNING }] }, timeout: 10m }
+        - wait:
+            timeout: 15m
+            until:
+              engine:
+                pod: p1
+                gateway:
+                  ready: true
+                  engine: vllm
+                  contextLength: 8192
+                  vllm: { max-num-seqs: "2", tool-call-parser: hermes, max-model-len: "8192", enforce-eager: "true" }
+                  # The cache's 87296 tokens hold 10.65625 requests of 8192, at least the 2 asked;
+                  # the probe got a tool call parsed by hermes.
+                  fit:
+                    engine: vllm
+                    source: settings
+                    contextLength: 8192
+                    requestedParallel: 2
+                    parallel: 2
+                    concurrency: 10.65625
+                    cacheTokens: 87296
+                    loads: 1
+                    toolCallParser: hermes
+                  tasks: { at-least: 2, at-most: 2 }
+                vllm:
+                  id: Qwen/Qwen2.5-0.5B-Instruct
+                  max_model_len: 8192
+                  metrics:
+                    "vllm:cache_config_info":
+                      kv_cache_size_tokens: "87296"
+                      kv_cache_max_concurrency: "10.65625"
+                      kv_cache_memory_bytes: "1073741824"
+                      block_size: "128"
+                tee:
+                  runners: []
+
+  - expect: { issue: i1, labels: [codeman:awaiting-decision], comments: [{ kind: decisions, contains: Which port? }] }
+  - expect: { issue: i2, labels: [codeman:awaiting-decision], comments: [{ kind: decisions, contains: Which port? }] }
+  - expect:
+      pods:
+        - { count: 1 }
+        - pod: p1
+          status: TERMINATED
+          where:
+            billing: stopped
+            env:
+              CODEMAN_ENGINE: vllm
+              CODEMAN_MODEL: Qwen/Qwen2.5-0.5B-Instruct
+      store:
+        # One creator: one document, one pod-created event, one join, two seats.
+        - collection: pools/acme/pods
+          where: { live: false, status: ended, capacity: 2, seats: { at-least: 2, at-most: 2 } }
+          count: 1
+        - { collection: pools/acme/pods, count: 1 }
+        - { collection: organizations/acme/events, where: { type: pod-created }, count: 1 }
+        - { collection: organizations/acme/events, where: { type: pod-joined }, count: 1 }
+        - { collection: organizations/acme/events, where: { type: pod-terminated }, count: 1 }
+        - { collection: pools/acme/batches, where: { size: 2, profile: two-seats }, count: 1 }
+        - collection: organizations/acme/runs
+          where: { provider: runpod-pod, status: closed, stage: plan, profile: two-seats }
+          count: 2
+      # The pod's tee, as it was when release-pod terminated the pod. Every agent's turn reached
+      # the engine: 2 agents of 7 requests each (the title, the task file, four steps, the final
+      # reply). Both agents' turns met at the engine, and vLLM ran at most its max-num-seqs of
+      # them, 2, at once. The probe passed through unchanged, once.
+      engine:
+        pod: p1
+        tee:
+          agent: 14
+          requests: 15
+          overlap: { at-least: 2, at-most: 4 }
+          issues: 2
+          runners: []
+          slots: []
+          busiest: { at-least: 1, at-most: 2 }
+        vllm:
+          max_model_len: 8192
+          metrics:
+            "vllm:num_requests_running": 0
+      fakes:
+        runpod:
+          requests: { where: { method: POST, path: /v2/pods }, count: 1 }
+        # open-key's check of the model, by the task that created the pod.
+        huggingface:
+          requests: { where: { method: GET, path: /api/models/Qwen/Qwen2.5-0.5B-Instruct }, count: 1 }
+      # Each run's cost is its share of the pod's time, at the RTX 4090's Secure 0.69 USD an hour.
+      ledger: { runs: 2, split-pod: p1, cost-at-least: 0.0001, cost-at-most: 0.3 }
+      violations: none

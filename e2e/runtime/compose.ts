@@ -22,12 +22,28 @@ export const MEMORY: Readonly<Record<"base" | Profile, number>> = {
   vllm: 5.5 * GIB,
 };
 
-/** Why Docker's memory cannot hold the profiles; undefined when it can. */
-export function memoryProblem(profiles: readonly Profile[], total: number): string | undefined {
-  const needed = MEMORY.base + profiles.reduce((sum, profile) => sum + MEMORY[profile], 0);
-  if (total >= needed) return undefined;
+/** What Docker's VM needs, in bytes, for a scenario with these profiles. */
+export function memoryNeeded(profiles: readonly Profile[]): number {
+  return MEMORY.base + profiles.reduce((sum, profile) => sum + MEMORY[profile], 0);
+}
+
+/**
+ * Why Docker's memory cannot hold the scenarios, naming each one it cannot hold and what it needs;
+ * undefined when it holds them all. Scenarios run one at a time, so each needs its own profiles'
+ * memory, not every selected scenario's together.
+ */
+export function memoryProblem(
+  scenarios: readonly { id: string; profiles: readonly Profile[] }[],
+  total: number,
+): string | undefined {
+  const short = scenarios.filter((scenario) => memoryNeeded(scenario.profiles) > total);
+  if (short.length === 0) return undefined;
   const gib = (bytes: number) => `${(bytes / GIB).toFixed(1)} GiB`;
-  return `Docker has ${gib(total)} of memory, and the ${profiles.join(" and ") || "default"} profile${profiles.length > 1 ? "s need" : " needs"} about ${gib(needed)}: raise Docker Desktop's memory (Settings, Resources) to 10 GB or more, or run scenarios without ${profiles.join(", ")}.`;
+  const each = short.map(
+    (scenario) =>
+      `${scenario.id} needs about ${gib(memoryNeeded(scenario.profiles))}, with the ${scenario.profiles.join(" and ")} profile${scenario.profiles.length > 1 ? "s" : ""}`,
+  );
+  return `Docker has ${gib(total)} of memory, too little for ${short.length === 1 ? "a scenario" : `${short.length} scenarios`}: ${each.join("; ")}. Raise Docker Desktop's memory (Settings, Resources) to 10 GB or more, or select scenarios without ${short.length === 1 ? "it" : "them"}.`;
 }
 
 export class Compose {
@@ -41,7 +57,11 @@ export class Compose {
 
   /** `docker compose up --wait`, built from the sources, with the profiles. */
   async up(profiles: readonly Profile[], options: { build?: boolean } = {}): Promise<void> {
-    const problem = memoryProblem(profiles, await dockerMemory());
+    // Each profile alone: a session runs one scenario, and so one profile's pods, at a time.
+    const problem = memoryProblem(
+      profiles.map((profile) => ({ id: `The ${profile} profile`, profiles: [profile] })),
+      await dockerMemory(),
+    );
     if (problem) throw new Error(problem);
     await this.#run([
       ...profiles.flatMap((profile) => ["--profile", profile]),

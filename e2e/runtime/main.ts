@@ -37,9 +37,9 @@ log(
   `${scenarios.length} scenario${scenarios.length === 1 ? "" : "s"}: ${scenarios.map((one) => one.id).join(", ")}.`,
 );
 
-// A runner the runtime does not have, and (decision 7) a profile Docker's memory cannot hold, are
-// refused before anything starts.
-const problem = runnerProblem(scenarios) ?? memoryProblem(profiles, await dockerMemory());
+// A runner the runtime does not have, and (decision 7) a scenario whose profiles Docker's memory
+// cannot hold, are refused before anything starts, naming the scenarios.
+const problem = runnerProblem(scenarios) ?? memoryProblem(scenarios, await dockerMemory());
 if (problem) {
   console.error(`[e2e] ${problem}`);
   process.exit(1);

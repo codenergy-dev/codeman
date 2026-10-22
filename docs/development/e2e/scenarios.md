@@ -163,6 +163,9 @@ agent:
 > [!NOTE]
 > `delay` takes a number of milliseconds, not a duration such as `2s`.
 
+> [!NOTE]
+> A reply's usage counts the request's size unless `usage` sets it, and OpenCode compacts its conversation once that nears the run's context. On a pod with a small context, such as `parallel/vllm-two-seats`'s 8192 tokens, its own prompt takes about 4,500: keep the rounds to a few steps. A compaction's request matches no step, so it fails the scenario as unscripted.
+
 A request that no round covers gets an error and a violation, which fails the scenario. How the model tells the scenario, issue, stage and round apart is in [the scripted model](fakes.md#the-scripted-model).
 
 ## Actions
@@ -285,9 +288,11 @@ What each list holds is in [the e2e fakes](fakes.md#control-routes).
 | `requests` | The chat requests it took, the agents' and the others, such as the gateway's probe |
 | `agent` | The agents' requests, for which the engine got the short prompt |
 | `overlap` | The most agents' requests the tee had at the engine at once: those the engine ran, and those it queued. OpenCode sends its title request beside its first turn, so it can reach twice the agents |
+| `issues` | The most issues whose agents' requests the tee had at the engine at once: how many tasks' agents met there. Only the turns the scripted model tells the issue of count, not an agent's first turn nor its title |
 | `runners` | The engine's runner processes, such as Ollama's `llama-server`, each with its `args`, `context` (`-c`) and `parallel` (`-np`) |
 | `slots` | The runners' slots, from llama-server's `/slots`, each with its `id` and `n_ctx`, its context |
-| `busiest` | The most slots that processed at once, sampled while agents' requests were at the engine: how many requests the engine ran together |
+| `busiest` | The most slots that processed at once, sampled while agents' requests were at the engine: how many requests the engine ran together. For vLLM, the most requests its `/metrics` gave as running (`vllm:num_requests_running`) |
+| `waiting` | For vLLM, the most requests its `/metrics` gave as waiting (`vllm:num_requests_waiting`) in the same samples; 0 for Ollama, whose queue the tee cannot see |
 
 ```yaml
 - expect:
@@ -298,7 +303,7 @@ What each list holds is in [the e2e fakes](fakes.md#control-routes).
         busiest: { at-least: 2, at-most: 4 }
 ```
 
-A vLLM pod has no runner: its `runners` and `slots` are empty.
+A vLLM pod has no runner: its `runners` and `slots` are empty, and `busiest` and `waiting` come from its gauges, as in [`parallel/vllm-two-seats.yaml`](../../../e2e/scenarios/parallel/vllm-two-seats.yaml).
 
 ### A pod's split
 

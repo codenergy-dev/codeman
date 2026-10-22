@@ -23,6 +23,8 @@ export interface PodPlan {
   volumes: string[];
   /** Variables the e2e image needs beyond the pod's own, such as the tee's. */
   env: Record<string, string>;
+  /** The container's shared memory, as `docker run --shm-size` takes it, such as `1g`. */
+  shm?: string;
 }
 
 /** Runs a pod's container; returns its name. The default runs `docker run`. */
@@ -172,6 +174,7 @@ export function podRunner(network: string): PodRunner {
         "--network",
         network,
         ...plan.volumes.flatMap((volume) => ["--volume", volume]),
+        ...(plan.shm ? ["--shm-size", plan.shm] : []),
         ...passed.args,
         plan.image,
       ],
@@ -191,6 +194,10 @@ async function stopPod(id: string): Promise<void> {
  * The plan for a pod's image, from the allowlist of e2e/infra/pod-images.ts: the local image,
  * its model volume, read-only, and the tee's way to the scripted model. Fails, saying so, while
  * the allowlist's file is missing.
+ *
+ * A vLLM pod gets 1 GiB of shared memory, as spike 0.1 of the e2e plan ran vLLM: its CPU engine
+ * allocates 160 MiB there at its start, and Docker's default of 64 MiB fails it ("Insufficient
+ * space in /dev/shm"). A Runpod pod's /dev/shm is not Docker's default.
  */
 export async function allowlistPlan(
   spec: LaunchSpec,
@@ -212,6 +219,7 @@ export async function allowlistPlan(
     image,
     volumes,
     env: { TEE_MODEL: tee.model, FAKE_CONTROL_TOKEN: tee.controlToken },
+    ...(/vllm/.test(image) ? { shm: "1g" } : {}),
   };
 }
 

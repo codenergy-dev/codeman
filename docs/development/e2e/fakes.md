@@ -120,7 +120,7 @@ Its inspection API, under `/_fake/tee/` on port 9091 and on the engine's port:
 - `GET /requests`: each chat request, what the model took it for, and when the engine started and ended it, so a scenario can count how many were at the engine at once;
 - `DELETE /requests`;
 - `GET /runners`: the engine's runner processes in the pod, from `/proc`: Ollama's `llama-server`, with its arguments, its context (`-c`, all its parallel requests together) and its parallel requests (`-np`);
-- `GET /slots`: the runners' slots, from llama-server's `/slots`, each with its context; and `busiest`, the most slots that processed at once. The tee samples them every 100 ms while agents' requests are at the engine, since Ollama queues requests beyond its slots, which the tee cannot tell from running ones;
+- `GET /slots`: the runners' slots, from llama-server's `/slots`, each with its context; and `busiest`, the most slots that processed at once. The tee samples them every 100 ms while agents' requests are at the engine, since Ollama queues requests beyond its slots, which the tee cannot tell from running ones. In a vLLM pod (`CODEMAN_IMAGE_ENGINE=vllm`), it samples vLLM's `/metrics` instead: `busiest` is the most requests `vllm:num_requests_running` gave, and `waiting` the most `vllm:num_requests_waiting` gave;
 - `PUT /vram` `{ bytes }`: the virtual VRAM, or `null` to pass `/api/ps` unchanged.
 
 ## The pod launcher
@@ -128,6 +128,6 @@ Its inspection API, under `/_fake/tee/` on port 9091 and on the engine's port:
 No container gets the Docker socket. When the fake Runpod creates a pod, it calls the runtime's launcher, on the host, behind a token of the session ([`launcher.ts`](../../../e2e/runtime/launcher.ts)).
 
 1. The launcher maps the pod's image to a local e2e image, by the allowlist of [`e2e/infra/pod-images.ts`](../../../e2e/infra/pod-images.ts): Codeman's [pinned pod images](../../glossary.md#pinned-pod-image), by digest. Any other image is refused.
-2. It runs the container with `docker run --init` on the jobs network, with the pod's environment and its model's volume, read-only.
+2. It runs the container with `docker run --init` on the jobs network, with the pod's environment and its model's volume, read-only. A vLLM pod also gets 1 GiB of `/dev/shm`, as a Runpod pod has more than Docker's default of 64 MiB: vLLM's CPU engine allocates 160 MiB there at its start, and fails without it.
 3. The fake Runpod's proxy forwards `/pods/{id}/{port}` to the container.
 4. A terminated pod's container is removed, after the runtime reads its engine's state, which the `engine` check then gives for that pod ([checks](scenarios.md#checks)). Every container of a scenario goes when the scenario ends.

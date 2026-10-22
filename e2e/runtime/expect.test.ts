@@ -118,32 +118,38 @@ test("vLLM's metrics keep each sample apart, and an info gauge gives its labels"
   assert.equal(matches(pattern, metrics), undefined);
 });
 
-test("the tee's status counts the agents' requests open at the engine at once", () => {
-  const agent = (start: number, end?: number) => ({
+test("the tee's status counts the agents' requests, and their issues, open at the engine at once", () => {
+  const agent = (start: number, end?: number, issue?: string) => ({
     kind: "agent",
+    ...(issue ? { identified: { kind: "turn", issue } } : {}),
     engine: end === undefined ? { start } : { start, end },
   });
   const status = teeStatus(
     [
       { kind: "passthrough", engine: { start: 0, end: 50 } },
-      agent(100, 200),
-      agent(150, 300),
-      agent(180, 250),
+      agent(100, 200, "i1"),
+      agent(150, 300, "i1"),
+      agent(180, 250, "i2"),
       agent(260),
-      agent(400, 500),
+      agent(400, 500, "i2"),
     ],
     [{ pid: 1, parallel: 4 }],
-    { slots: [{ id: 0, n_ctx: 32_768 }], busiest: 1, samples: 9 },
+    { slots: [{ id: 0, n_ctx: 32_768 }], busiest: 1, waiting: 2, samples: 9 },
   );
   assert.deepEqual(status, {
     requests: 6,
     agent: 5,
     overlap: 3,
+    issues: 2,
     runners: [{ pid: 1, parallel: 4 }],
     slots: [{ id: 0, n_ctx: 32_768 }],
     busiest: 1,
+    waiting: 2,
   });
   assert.equal(teeStatus([agent(0, 10), agent(10, 20)], []).overlap, 1);
+  // Two requests of one issue are one agent; one that ends as another starts did not meet it.
+  assert.equal(teeStatus([agent(0, 10, "i1"), agent(5, 20, "i1")], []).issues, 1);
+  assert.equal(teeStatus([agent(0, 10, "i1"), agent(10, 20, "i2")], []).issues, 1);
 });
 
 test("a range matches a list by its length", () => {

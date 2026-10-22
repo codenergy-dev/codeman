@@ -13,7 +13,7 @@ Codeman's bundles of the [e2e build](../guide.md#the-e2e-build) run the template
 - **Google:** the OIDC, STS and IAM Credentials path, with its signature, audience and [attribute condition](../../glossary.md#attribute-condition). Firestore's emulator runs Codeman's security rules.
 - **Pods:** the [gateway](../../glossary.md#gateway) as a process, in front of real Ollama 0.35.1 or vLLM 0.31.0 on the CPU, with the same tiny model on both.
 
-Each scenario is a YAML file under [`e2e/scenarios/`](../../../e2e/scenarios/happy-path/openrouter-plan-only.yaml), by subject: `happy-path/`, `pods/`, `serverless/`, `parallel/` and `pools/` today. The catalogue is phase 5 of the [plan](../../plans/2026-10-20-end-to-end-test-suite.md#phase-5-the-scenario-catalogue).
+Each scenario is a YAML file under [`e2e/scenarios/`](../../../e2e/scenarios/happy-path/openrouter-plan-only.yaml), by subject: `happy-path/`, `pods/`, `serverless/`, `parallel/`, `pools/` and `budgets/` today. The catalogue is phase 5 of the [plan](../../plans/2026-10-20-end-to-end-test-suite.md#phase-5-the-scenario-catalogue).
 
 ## What it does not cover
 
@@ -67,21 +67,20 @@ Each input is pinned and audited in [dependencies](../dependencies.md#the-end-to
 
 ### Profiles and memory
 
-A scenario's `profiles` field names the pods it needs. The runtime starts the profiles that the selected scenarios name, and refuses to start when Docker's memory is short.
+A scenario's `profiles` field names the pods it needs. The runtime starts the profiles that the selected scenarios name. Scenarios run one at a time, so each scenario needs its own profiles' memory: the runtime refuses to start when Docker's memory is short of any selected scenario's, and names each such scenario.
 
-| Profiles | Starts | Docker memory the runtime requires |
+| A scenario's profiles | Starts | Docker memory the runtime requires |
 | --- | --- | --- |
 | None, the default | The fakes, Firestore's emulator, and jobs | 2.5 GiB |
 | `ollama` | Also Ollama's model seed, and Ollama pods | 4 GiB |
 | `vllm` | Also vLLM's model seed, and a vLLM pod | 8 GiB |
-| `ollama` and `vllm` | Both | 9.5 GiB |
 
-A vLLM pod peaks at about 5.5 GiB. Docker Desktop's default of 8 GB shows about 7.8 GB, which is short of what `vllm` requires.
+A vLLM pod peaks at about 5.5 GiB. Docker Desktop's default of 8 GB shows about 7.8 GB, which is short of what `vllm` requires. The only `vllm` scenario, `parallel/vllm-two-seats`, peaked at 6.3 to 7.0 GiB of containers on a VM of 9.7 GiB: the pod at 4.5 to 5.2 GiB, two agent jobs at about 0.65 GiB each, the emulator and the fakes.
 
 The largest `ollama` scenario, `parallel/four-tasks-one-pod`, peaks at about 5.6 GiB of containers: four agent jobs of about 0.75 GiB each, the pod at 2.1 GiB, the emulator at 0.3 GiB and the fakes. Five agent jobs and two pods, about 8.5 GiB, would not fit in 7.8 GB.
 
 > [!IMPORTANT]
-> For the `vllm` profile, set Docker Desktop's memory to 10 GB or more (Settings, Resources). Otherwise the runtime stops before it starts anything: "Docker has … of memory, and the vllm profile needs about …".
+> For the `vllm` profile, set Docker Desktop's memory to 10 GB or more (Settings, Resources). Otherwise a run that selects a vLLM scenario, such as `npm run test:e2e -- parallel`, stops before it starts anything: "Docker has 7.7 GiB of memory, too little for a scenario: parallel/vllm-two-seats needs about 8.0 GiB, with the vllm profile. …". Select the other scenarios by name or tag to run them.
 
 A vLLM pod takes 5 to 6 minutes to serve on a CPU. Scenarios run one at a time.
 
