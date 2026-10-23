@@ -167,6 +167,23 @@ test("contains matches a text that holds each of its texts", () => {
   assert.equal(matches(both, 3), "3 is not a text");
 });
 
+test("not matches what its pattern does not", () => {
+  const scopes = {
+    kind: "list" as const,
+    items: [
+      { kind: "equals" as const, value: "contents=read" },
+      { kind: "equals" as const, value: "metadata=read" },
+    ],
+  };
+  const other = { kind: "not" as const, pattern: scopes };
+  assert.equal(matches(other, ["contents=write", "metadata=read"]), undefined);
+  assert.equal(matches(other, ["contents=read"]), undefined);
+  assert.equal(
+    matches(other, ["contents=read", "metadata=read"], "scopes"),
+    'scopes: ["contents=read","metadata=read"] matches what it must not',
+  );
+});
+
 /** Two runs on pod `p`, created at 0 at 0.001 USD a second: A opened at 10 s, B at 20 s; both closed at 60 s. */
 async function podLedger(costs: { a: number; b: number }) {
   const store = new MemoryStore();

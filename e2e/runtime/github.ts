@@ -214,6 +214,8 @@ export class RemoteGitHub implements GitHubPort {
     const { token } = await this.client.json<{ token: string }>("POST", "/github/tokens", {
       repository,
       permissions: { contents: "read", actions: "read", issues: "read", pull_requests: "read" },
+      // So a scenario tells the runtime's own reads from the jobs' tokens.
+      job: "e2e/runtime",
     });
     this.#tokens.set(key, { value: token, at: Date.now() });
     return token;
@@ -317,11 +319,13 @@ export class RemoteGitHub implements GitHubPort {
     repository: string,
     permissions: Record<string, "read" | "write">,
     runId: number,
+    job?: string,
   ): Promise<string> {
     const { token } = await this.client.json<{ token: string }>("POST", "/github/tokens", {
       repository,
       permissions,
       runId,
+      ...(job ? { job } : {}),
     });
     return token;
   }
@@ -381,8 +385,13 @@ export class RemoteGitHub implements GitHubPort {
         `Failed to create token for "${request.owner}": ${failureText(created.json, created.status)}`,
       );
     }
+    const token = String((created.json as { token: string }).token);
+    // The fake records which template job asked for it, for the scenarios' token checks.
+    if (request.job) {
+      await this.client.control("PATCH", "/github/tokens", { body: { token, job: request.job } });
+    }
     return {
-      token: String((created.json as { token: string }).token),
+      token,
       installationId: installation.id,
       appSlug: installation.app_slug,
     };

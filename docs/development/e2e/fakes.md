@@ -64,7 +64,7 @@ Each fake's own routes are under `/_fake/<fake>/`.
 
 | Fake | Routes |
 | --- | --- |
-| `github` | `POST users`, `orgs`, `repos` (with `files` and their `submodules`, gitlinks by path), `apps`, `installations`, `tokens`; `PUT repos/{owner}/{repo}/collaborators/{login}`; `POST act`, a user's action; `runs`, `jobs` and `artifacts`, for the simulator; `GET events`, `dispatches`, `runs` (each with its event, status, conclusion and concurrency group), `violations`, `repos/{owner}/{repo}/issues` |
+| `github` | `POST users`, `orgs`, `repos` (with `files` and their `submodules`, gitlinks by path), `apps`, `installations`, `tokens` (with the `job` that asks); `GET` and `PATCH tokens`; `PUT repos/{owner}/{repo}/collaborators/{login}`; `POST act`, a user's action; `runs`, `jobs` and `artifacts`, for the simulator; `GET events`, `dispatches`, `runs` (each with its event, status, conclusion and concurrency group), `violations`, `repos/{owner}/{repo}/issues` |
 | `google` | `PUT setup`, the provider, service accounts and condition; `POST runs`, a run's OIDC request token; `PUT faults` |
 | `openrouter` | `GET keys`, with each key's shown `usage` and real spend; `PUT keys/{hash}/usage`; `PUT credits`, the account's credits until the next reset; `PUT lags`; `POST settle`; `PUT prices`; `PUT completions`; `GET generations`, each billed request |
 | `runpod` | `GET pods`, terminated ones included, with each one's env, `cost` and `billing` (`running`, or `stopped` once it exited or was terminated); `POST pods/{id}/{action}`; `PUT setup`; `GET` and `PATCH catalog`; `PUT endpoints/{id}` and its `workers`; `GET jobs`, the Serverless jobs; `GET endpoints/{id}/cost`; `PUT faults`, `{ podStart, lowBalance, holdQueues, podAgeMs }`, where `podAgeMs` dates the pods created from then on, and their billing, that far back. The setup's shapes refuse unknown keys |
@@ -73,6 +73,8 @@ Each fake's own routes are under `/_fake/<fake>/`.
 The `fakes` check of a scenario reads these lists ([checks](scenarios.md#the-fakes-lists)).
 
 - **GitHub's events** carry the payload a job gets at `GITHUB_EVENT_PATH`.
+- **GitHub's tokens** (`GET tokens`) are every token it gave, never their values: `kind` (`installation` or `job`), `job`, the template's job that asked for it as `<workflow file>/<job id>` (such as `codeman.yml/select`, or `e2e/runtime` for the runtime's own reads), `run`, `repositories`, `scopes` (its permissions as sorted `name=level`), `revoked` and `expiresAt`. The simulator names the job when it makes a job's `GITHUB_TOKEN`, and after its emulated `create-github-app-token` gets an App token (`PATCH tokens`, `{ token, job }`).
+- **GitHub's requests** note their caller as `token`: the same `kind`, `job`, `run` and `scopes`; `app` with the App's slug for an App's JWT; or `anonymous`. With each request's `status`, a scenario checks that no job got a 403.
 - **Its violations** are calls with a token it did not give, or beyond a token's permissions.
 - **OpenRouter's lags:** a key's usage and analytics show a request only after their lag, as OpenRouter's do. The key's limit applies to what it really spent.
 

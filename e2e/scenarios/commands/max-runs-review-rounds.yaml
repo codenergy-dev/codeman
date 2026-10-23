@@ -1,0 +1,86 @@
+# max-runs bounds both counters the same way (docs/plans/2026-10-19-align-the-max-runs-counters.md,
+# docs/tasks/stages.md, "Runs in a row and review rounds"), with `max-runs: 2`:
+#
+# - the code stage blocks the task at its 2nd unfinished run in a row;
+# - review blocks it at its 2nd `changes` in a row (503e9fc): before, at the 3rd;
+# - `/codeman continue` after review blocked gives review a fresh count (6c07f05): its next
+#   `changes` routes again instead of blocking.
+name: max-runs blocks a stage at its Nth unfinished run and review at its Nth round
+tags: [commands, openrouter, max-runs]
+runner: simulator
+timeout: 25m
+world:
+  organizations:
+    - { name: acme, settings: { model: deepseek/deepseek-v4.1-flash, task-budget: 4, max-runs: 2 } }
+  repositories:
+    - { name: acme/app, fixture: node-small, maintainers: [alice] }
+agent:
+  i1:
+    plan:
+      - steps:
+          - bash: plan=$(sed -n 's/.*Create the plan at `\([^`]*\)`.*/\1/p' .codeman/task.md) && mkdir -p "$(dirname "$plan")" && printf '# Add a health route\n' > "$plan"
+          - output: { summary: Adds a health route., decisions: [] }
+    route:
+      - &route
+        steps:
+          - output:
+              summary: Code, then review.
+              route: [{ stage: code, brief: Add the route. }, { stage: review, brief: Check it. }]
+              skipped: [{ stage: web, reason: No docs. }, { stage: design, reason: Settled. }, { stage: test, reason: Too small. }]
+      - *route
+      - *route
+    code:
+      - steps:
+          - write: { path: src/health.ts, content: "export const ok = 1;\n" }
+          - output: { status: partial, summary: Started the route., commitMessage: Start the health route }
+      - steps:
+          - write: { path: src/health.ts, content: "export const ok = 2;\n" }
+          - output: { status: partial, summary: Still on the route., commitMessage: Continue the health route }
+      - steps:
+          - write: { path: src/health.ts, content: "export const ok = 3;\n" }
+          - output: { status: done, summary: Adds the route., commitMessage: Add a health route }
+      - steps:
+          - write: { path: src/health.ts, content: "export const ok = 4;\n" }
+          - output: { status: done, summary: Fixes the route., commitMessage: Fix the health route }
+      - steps:
+          - write: { path: src/health.ts, content: "export const ok = true;\n" }
+          - output: { status: done, summary: Fixes the route again., commitMessage: Fix the health route again }
+    review:
+      - steps: [{ output: { status: changes, summary: Not yet., reason: The value is wrong. } }]
+      - steps: [{ output: { status: changes, summary: Still not., reason: The value is still wrong. } }]
+      # After `/codeman continue`: round 1 of a fresh count, so the task routes again.
+      - steps: [{ output: { status: changes, summary: Almost., reason: Use a boolean. } }]
+      - steps: [{ output: { status: done, summary: The route is right. } }]
+actions:
+  - open-issue: { ref: i1, as: alice, title: Add a health route, labels: [codeman] }
+  # Plan, route, then two unfinished code runs: the 2nd blocks.
+  - run: { event: issues.labeled }
+  - expect:
+      issue: i1
+      labels: [codeman:blocked]
+      comments:
+        - { kind: run, contains: "The code stage has run 2 times in a row without finishing (`max-runs` is 2)." }
+  # Code finishes, review asks for changes (round 1), routing, code, review asks again (round 2):
+  # the 2nd round blocks.
+  - comment: { issue: i1, as: alice, body: /codeman continue Go on. }
+  - run: { event: issue_comment.created, max-runs: 8 }
+  - expect:
+      issue: i1
+      labels: [codeman:blocked]
+      comments:
+        - { kind: run, contains: "Review asked for changes 2 times in a row (`max-runs` is 2). Comment `/codeman continue <guidance>` to allow 2 more rounds." }
+      fakes:
+        llm:
+          turns: { where: { issue: i1, stage: review, round: 2 }, count: 0 }
+  # Review runs again with a fresh count: its `changes` routes, and the task reaches done.
+  - comment: { issue: i1, as: alice, body: /codeman continue Go on. }
+  - run: { event: issue_comment.created, max-runs: 8 }
+  - expect:
+      issue: i1
+      labels: [codeman:done]
+      pull-request: { ready: true, files: [src/health.ts] }
+      commits: { message: Fix the health route again }
+      fakes:
+        llm:
+          turns: { where: { issue: i1, stage: route, round: 2 } }
+      violations: none

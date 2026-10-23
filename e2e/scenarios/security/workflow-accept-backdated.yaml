@@ -1,0 +1,101 @@
+# Known bug, not fixed: a staged workflow changed after `/codeman accept-workflows`, by a commit
+# dated before the comment, is moved as if the maintainer had read it. docs/runs/changes.md says
+# "If a staged file changed after the comment, nothing moves." apply finds what the maintainer saw
+# with `commitAt(branch, comment.createdAt)` (src/platform/github/platform.ts), GitHub's
+# `GET /commits?until=`, which compares commit dates: whoever makes a commit chooses its date, so
+# a push made after the comment with an earlier date counts as seen. In whole seconds too, so a
+# commit in the comment's second counts as seen on the fake, whose `until` takes git's.
+# This scenario pushes the change 2 seconds after the comment, dated an hour back, and expects the
+# refusal security/workflow-staged gets for a commit dated now.
+#
+# Workflows the agent writes never run before a maintainer reads them (docs/runs/changes.md,
+# "On-demand workflows"; docs/plans/2026-09-28-review-before-accepting-workflows.md). The
+# repository's .codemanignore lets the agent write `.github/workflows/`, as that page says:
+#
+# - the agent's new workflow is committed under `.codeman/workflows/`, where it does not run, and
+#   its deletion of Codeman's own workflow is dropped, left to a maintainer;
+# - review passes, and the task waits in codeman:awaiting-workflow with a draft pull request;
+# - an accept followed by a change to the staged file moves nothing;
+# - an accept of unchanged files moves them into `.github/workflows/`, with the token that may
+#   write workflows (the fake GitHub refuses a workflow file from any other), and the task is done.
+name: A staged workflow changed after the accept, by a backdated commit, is not moved
+tags: [security, openrouter, workflows, known-bug]
+runner: simulator
+timeout: 20m
+world:
+  organizations:
+    - { name: acme, settings: { model: deepseek/deepseek-v4.1-flash, task-budget: 2 } }
+  repositories:
+    - { name: acme/app, fixture: node-small, maintainers: [alice] }
+agent:
+  i1:
+    plan:
+      - steps:
+          - bash: plan=$(sed -n 's/.*Create the plan at `\([^`]*\)`.*/\1/p' .codeman/task.md) && mkdir -p "$(dirname "$plan")" && printf '# Add CI\n' > "$plan"
+          - output: { summary: Adds a CI workflow., decisions: [] }
+    route:
+      - steps:
+          - output:
+              summary: Code, then review.
+              route: [{ stage: code, brief: Add the workflow. }, { stage: review, brief: Check it. }]
+              skipped: [{ stage: web, reason: No docs. }, { stage: design, reason: Settled. }, { stage: test, reason: Too small. }]
+    code:
+      - steps:
+          - write:
+              path: .github/workflows/ci.yml
+              content: "name: CI\non: push\npermissions: {}\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo test\n"
+          - bash: rm .github/workflows/codeman-task.yml
+          - output: { status: done, summary: Adds a CI workflow., commitMessage: Add a CI workflow }
+    review:
+      - steps: [{ output: { status: done, summary: The workflow is safe. } }]
+actions:
+  - push:
+      repo: acme/app
+      branch: main
+      as: alice
+      message: Let the agent write workflows
+      files:
+        .codemanignore: "/.github/**\n!/.github/workflows/\n!/.github/workflows/**\nopencode.json\nopencode.jsonc\n/.opencode/**\nAGENTS.md\nCLAUDE.md\n/.claude/**\n/.agents/**\n"
+  - open-issue: { ref: i1, as: alice, title: Add CI, labels: [codeman] }
+  - run: { event: issues.labeled }
+  - expect:
+      issue: i1
+      labels: [codeman:awaiting-workflow]
+      comments:
+        - kind: run
+          contains:
+            - Code stage
+            - "Dropped the change to .github/workflows/codeman-task.yml: deleting a workflow is left to a maintainer."
+        - { kind: run, contains: "Review passed. The task waits for the staged workflows to be accepted" }
+        - { kind: status, contains: [Workflows to review, ci.yml] }
+      commits:
+        files: [.codeman/workflows/ci.yml]
+        no-files: [.github/workflows/ci.yml, .github/workflows/codeman-task.yml]
+      pull-request: { ready: false }
+  # The staged file changes after the accept: nothing moves.
+  - comment: { issue: i1, as: alice, body: /codeman accept-workflows }
+  - wait: { for: 2s }
+  - push:
+      task: i1
+      as: alice
+      age: 1h
+      message: Change the staged workflow
+      files:
+        .codeman/workflows/ci.yml: "name: CI\non: push\npermissions: {}\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo changed\n"
+  - advance: { until: { issue: i1, comments: [{ kind: run, contains: The staged workflows changed after they were accepted. }] }, max-runs: 3 }
+  - expect:
+      issue: i1
+      labels: [codeman:awaiting-workflow]
+      commits: { no-files: [.github/workflows/ci.yml] }
+  # Accepted again, unchanged since: they move, and the task is done.
+  - comment: { issue: i1, as: alice, body: /codeman accept-workflows }
+  - advance: { until: { issue: i1, labels: [codeman:done] }, max-runs: 3 }
+  - expect:
+      issue: i1
+      commits:
+        files: [.github/workflows/ci.yml]
+        no-files: [.codeman/workflows/ci.yml, .github/workflows/codeman-task.yml]
+        message: Accept workflows for #1
+      pull-request: { ready: true }
+      comments: [{ kind: run, contains: "alice accepted .github/workflows/ci.yml" }]
+      violations: none

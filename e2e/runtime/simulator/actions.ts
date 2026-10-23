@@ -42,6 +42,8 @@ export interface ActionContext {
     token: string;
     /** The job's `backendId`, which its artifacts record. */
     backendId: string;
+    /** The template's job, as `<workflow file>/<job id>`, such as `codeman.yml/select`. */
+    key: string;
     workspace: Place;
     /** A path as the job sees it, on the host; throws outside the job's directory. */
     toHost(view: string): string;
@@ -175,6 +177,7 @@ export const createAppToken: EmulatedAction = async (context) => {
     owner,
     repositories,
     permissions,
+    job: job.key,
   });
   context.mask(created.token);
   const skipRevoke = truthyInput(inputs["skip-token-revoke"], false);

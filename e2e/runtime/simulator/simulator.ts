@@ -1135,7 +1135,13 @@ export class Simulator {
     }
     writeFileSync(toHost(eventPath), JSON.stringify(run.github.event ?? {}, null, 2));
 
-    const token = await this.#github.jobToken(repository, restPermissions(permissions), run.id);
+    const key = `${posix.basename(file)}/${job.id}`;
+    const token = await this.#github.jobToken(
+      repository,
+      restPermissions(permissions),
+      run.id,
+      key,
+    );
     const masks = new Set<string>([
       token,
       ...Object.values(instance.secrets).filter((value) => value.length > 0),
@@ -1333,6 +1339,7 @@ export class Simulator {
               ref: String(run.github.ref),
               token,
               backendId: record.backendId,
+              key,
             },
           });
           outcome = executed.outcome;

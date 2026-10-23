@@ -39,6 +39,8 @@ export interface FakeRequest {
   readonly raw: IncomingMessage;
   /** The body as JSON; a 400 when it is not. */
   json(): unknown;
+  /** Adds fields to the request's entry in the log, such as the caller a fake identified. */
+  note(fields: Record<string, unknown>): void;
 }
 
 export interface Reply {
@@ -118,6 +120,8 @@ export interface LoggedRequest {
   status: number;
   /** When it arrived, in milliseconds since the epoch. */
   at: number;
+  /** What the fake's route noted about it, such as the fake GitHub's `token`. */
+  [note: string]: unknown;
 }
 
 export interface ListenOptions {
@@ -309,6 +313,9 @@ export class FakeServer {
         } catch {
           throw new HttpError(400, { message: "The body is not JSON." });
         }
+      },
+      note: (fields) => {
+        if (entry) Object.assign(entry, fields);
       },
     };
     try {

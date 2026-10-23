@@ -315,6 +315,7 @@ test("every action kind parses", () => {
     message: "Move it",
     base: undefined,
     force: false,
+    ageMs: 0,
   });
   assert.deepEqual(
     byKind("set-variable").map((action) => action.kind === "set-variable" && action.value),
@@ -508,4 +509,27 @@ ${runpod}actions:
     "world.runpod.tee.meet.issues",
     /at least 2/,
   );
+});
+
+test("not takes a pattern, and the fake GitHub's tokens are a list", () => {
+  const scenario = parse(
+    `${WORLD}actions:\n  - expect:\n      fakes:\n        github:\n          tokens: { where: { job: codeman.yml/select, scopes: { not: [metadata=read] } }, count: 0 }\n`,
+  );
+  const expectation = scenario.actions[0];
+  assert.ok(expectation?.kind === "expect");
+  assert.deepEqual(expectation.fakes?.[0]?.where?.scopes, {
+    kind: "not",
+    pattern: { kind: "list", items: [{ kind: "equals", value: "metadata=read" }] },
+  });
+});
+
+test("wait takes a plain duration, or a condition with its timeout", () => {
+  const scenario = parse(`${WORLD}actions:\n  - wait: { for: 2s }\n`);
+  assert.deepEqual(scenario.actions[0], { kind: "wait", until: undefined, timeoutMs: 2000 });
+  rejects(
+    `${WORLD}actions:\n  - wait: { for: 2s, timeout: 5s }\n`,
+    "actions[0].wait",
+    /either for/,
+  );
+  rejects(`${WORLD}actions:\n  - wait: { timeout: 5s }\n`, "actions[0].wait.until", /missing/);
 });

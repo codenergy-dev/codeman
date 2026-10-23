@@ -26,6 +26,7 @@ import {
   reviewJson,
   runJson,
   type Token,
+  tokenJson,
   World,
 } from "./world.ts";
 import { readZip } from "./zip.ts";
@@ -62,6 +63,8 @@ export type ActAction =
       message?: string;
       base?: string;
       force?: boolean;
+      /** The commit's date, ISO 8601: a commit's author and committer choose it. */
+      date?: string;
     };
 
 /** A user's action, as the scenario's `as:` names the user. */
@@ -138,8 +141,13 @@ export class GitHubFake {
   }
 
   /** A `GITHUB_TOKEN` for one repository, with a job's `permissions` (and `metadata: read`). */
-  jobToken(repository: string, permissions: Permissions, runId?: number): Token {
-    return this.world.jobToken({ repository, permissions, ...(runId ? { runId } : {}) });
+  jobToken(repository: string, permissions: Permissions, runId?: number, job?: string): Token {
+    return this.world.jobToken({
+      repository,
+      permissions,
+      ...(runId ? { runId } : {}),
+      ...(job ? { job } : {}),
+    });
   }
 
   /** A user acts on a repository, if the user's role allows it; returns the events it caused. */
@@ -386,12 +394,25 @@ export class GitHubFake {
         repository: string(value, "repository"),
         permissions: permissionsOf(value.permissions),
         ...(typeof value.runId === "number" ? { runId: value.runId } : {}),
+        ...(typeof value.job === "string" ? { job: value.job } : {}),
       });
       return {
         token: token.value,
         expiresAt: world.iso(token.expiresAt),
         permissions: token.permissions,
       };
+    });
+    // Every token given, App and job tokens alike, with its permissions and the job that asked.
+    control("GET", "/tokens", () =>
+      [...world.tokens.values()].map((token) => tokenJson(world, token)),
+    );
+    // The job an App token was made for, as the simulator's create-github-app-token knows it.
+    control("PATCH", "/tokens", (request) => {
+      const value = body(request);
+      const token = world.tokens.get(string(value, "token"));
+      if (!token) throw new HttpError(404, { message: "No such token." });
+      token.job = string(value, "job");
+      return undefined;
     });
     control("POST", "/act", async (request) => this.act(body(request) as unknown as Act));
     control("POST", "/runs", (request) => {

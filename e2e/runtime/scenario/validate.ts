@@ -606,6 +606,7 @@ function actionOf(value: unknown, path: Path, context: Context): Action {
         "message",
         "base",
         "force",
+        "age",
       ]);
       required(fields, at, ["as", "files"]);
       exclusive(fields, at, ["branch", "task"], true);
@@ -634,6 +635,7 @@ function actionOf(value: unknown, path: Path, context: Context): Action {
           fields.message === undefined ? undefined : text(fields.message, [...at, "message"]),
         base: fields.base === undefined ? undefined : text(fields.base, [...at, "base"]),
         force: fields.force === undefined ? false : boolean(fields.force, [...at, "force"]),
+        ageMs: fields.age === undefined ? 0 : duration(fields.age, [...at, "age"]),
       };
     }
     case "set-variable": {
@@ -730,7 +732,14 @@ function actionOf(value: unknown, path: Path, context: Context): Action {
       };
     }
     case "wait": {
-      const fields = record(body, at, ["until", "timeout"]);
+      const fields = record(body, at, ["until", "timeout", "for"]);
+      // A plain pause, such as a second between two users' actions that GitHub times apart.
+      if (fields.for !== undefined) {
+        if (fields.until !== undefined || fields.timeout !== undefined) {
+          fail(at, "takes either for, or until and timeout");
+        }
+        return { kind, until: undefined, timeoutMs: duration(fields.for, [...at, "for"]) };
+      }
       required(fields, at, ["until", "timeout"]);
       return {
         kind,
@@ -1199,6 +1208,9 @@ function patternOf(value: unknown, path: Path): Pattern {
       : [text(given, [...path, "contains"])];
     if (texts.length === 0) fail([...path, "contains"], "expected a text or a list of texts");
     return { kind: "contains", texts };
+  }
+  if (names.length === 1 && names[0] === "not") {
+    return { kind: "not", pattern: patternOf(fields.not, [...path, "not"]) };
   }
   return { kind: "object", fields: patternFields(fields, path) };
 }

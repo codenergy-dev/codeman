@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-10-20T12:50:34-03:00
-updated_at: 2026-10-23T09:00:00-03:00
+updated_at: 2026-10-23T15:00:00-03:00
 commit: 21130fe
 ---
 
@@ -834,6 +834,57 @@ Runtime and fake changes this step needed (each with its tests):
 - **The tee's `meet`** and **`engine.tee.held`**, above.
 
 Memory: `fit-vllm-explicit` runs one vLLM pod with no agent; the others need at most one Ollama pod or none.
+
+#### 5.5 results
+
+Run on 2026-10-23 on the plan's machine (Docker VM 9.7 GiB), with the uncommitted step: pass 1 at `HEAD` `18ecea4`, passes 2 and 3 at `b365a96`. Each pass is `npm run test:e2e -- commands security`.
+
+| Scenario | Pass 1 | Pass 2 | Pass 3 |
+| --- | --- | --- | --- |
+| `commands/decide-during-review` | 271 s | 267 s | 266 s |
+| `commands/max-runs-review-rounds` | 447 s | 451 s | 445 s |
+| `security/non-maintainer` | 195 s | 196 s | 199 s |
+| `security/workflow-staged` | 161 s | 160 s | 162 s |
+| `security/token-permissions` (`ollama` profile) | 390 s | 390 s | 397 s |
+| `security/workflow-accept-backdated` (`known-bug`) | Reproduced, 152 s | Reproduced, 150 s | Reproduced, 152 s |
+
+What they assert:
+
+- **`decide-during-review`**: review asks a decision on an open draft pull request. While the task is `codeman:awaiting-decision`, a review that requests changes starts no run beyond `forward-review`'s and the default branch's `select`: no run comment is added. A `/codeman fix` gets a record run whose comment says "`fix` counts only once every decision is answered, so it was not applied." Once the decision is answered, routing runs again and the code stage reads the review's text under its requests (its file exists only if `grep` finds it), to `codeman:done`.
+- **`max-runs-review-rounds`**: with `max-runs: 2`, the code stage blocks at its 2nd unfinished run ("has run 2 times in a row without finishing (`max-runs` is 2)"); after `/codeman continue`, review blocks at its 2nd `changes` ("Review asked for changes 2 times in a row (`max-runs` is 2). … to allow 2 more rounds."), with no 3rd round; after another `continue`, review's `changes` routes again, and the task reaches `codeman:done`.
+- **`non-maintainer`**: on a private repository, a `read` collaborator's `decide`, `set`, `approve` and text record nothing, and the agent's task file holds the maintainer's text but not the reader's; a `triage` collaborator's own labeled issue is no task, with the status comment "Not a task". On a public repository, a stranger's issue labeled by a maintainer is no task either, and a stranger's `/codeman approve` starts a run that succeeds and changes nothing. No model turn for either refused issue.
+- **`workflow-staged`**: with a `.codemanignore` that allows `.github/workflows/`, the agent's new workflow is committed as `.codeman/workflows/ci.yml`, and its deletion of `codeman-task.yml` is dropped, "left to a maintainer". Review passes; the task waits in `codeman:awaiting-workflow` with a draft. An accept followed 2 seconds later by a change to the staged file moves nothing ("The staged workflows changed after they were accepted."). An accept of unchanged files moves it to `.github/workflows/ci.yml` with the workflows token, removes the staged copy, and marks the pull request ready.
+- **`token-permissions`**: an OpenRouter task through a decision and a review round, and a pod task through `release-pod`. No GitHub request answers 403, no violation, and every token is a template job's or the runtime's own. For each job, a token with exactly the declared scopes exists, and none with others (`{ not: [...] }`): the `GITHUB_TOKEN`s of `forward-review`, `select`, `next-run`, `open-key`, `agent`, `close-key`, `apply` and `release-pod`, and the App tokens of `select` and `apply`, as [secrets](../security/secrets.md#permissions-each-job-requests) lists them. An installation without pull requests refuses `select`'s App token with 422, and the run fails before it marks anything. `dispatch`'s token is left to `pools/two-organizations-batch`, and `apply`'s workflows token to `workflow-staged`.
+
+Not written:
+
+- **`security/symlink-fifo-submodule`**, **`security/set-env-in-agent-output`**, and a scenario of the agent trying to leave its jail. Left to the responsible person: the sandbox's own tests (`CODEMAN_SANDBOX_TEST=1`) cover the jail on the runner image. `failures/clones-inside-tree` already covers the FIFO, the submodule, a nested repository and a link out of the tree.
+
+Bugs these scenarios cover, and the reverted-fix checks, each in a scratch `git worktree` with this step's changes, removed after:
+
+| Bug | Fix | Reverts cleanly | Check |
+| --- | --- | --- | --- |
+| A review during `awaiting-decision` made every run a `record` run, chained without end | `fed8e3a` | One-line equivalent: `pendingWork`'s `sources.some((source) => source.commentId > 0)` back to `sources.length > 0` | `decide-during-review` fails: "run: pull_request_review.submitted's chain on acme/app still runs after 3 more runs (max-runs 3)." |
+| A `fix` or `continue` during `awaiting-decision` was dropped silently | `1cea2c1` | One-line equivalent: the `awaits-decisions` error removed from `applyCommands` | `decide-during-review` fails: the record run's comment lacks "`fix` counts only once every decision is answered" |
+| `continue` did not reset the review rounds | `6c07f05` | One-line equivalent: `requested` back to a `fix` request only | `max-runs-review-rounds` fails: after the 2nd `continue`, review's `changes` blocks the task again, with no 3rd route |
+| Review blocked at the round after `max-runs` | `503e9fc` | One-line equivalent: `reached(rounds)` back to `rounds > maxRuns` | `max-runs-review-rounds` fails: no block at the 2nd round, and review runs a 3rd round |
+| A job's token with more than it declares | – | `permission-actions: write` added to `apply`'s App token in `templates/codeman-task.yml` | `token-permissions` fails: no `apply` App token with exactly `contents=write, issues=write, pull_requests=write` |
+| A job's token with less than it needs (as `2ca46fd`) | – | `permission-pull-requests: read` removed from `select`'s App token | `token-permissions` fails: `select` gets 403 "Resource not accessible by integration", and the task stops in `codeman:reviewing` |
+| Commands, labels and issues of non-maintainers; workflows staged | The [security model](2026-09-30-security-model.md) and [review before accepting workflows](2026-09-28-review-before-accepting-workflows.md) plans, features of several commits | – | `non-maintainer` and `workflow-staged` assert the documented behavior |
+
+> [!WARNING]
+> **Codeman bug, not fixed (2026-10-23).** A staged workflow changed after `/codeman accept-workflows` is moved anyway when the commit that changed it is dated before the comment. [On-demand workflows](../runs/changes.md#accepting) says "If a staged file changed after the comment, nothing moves." `acceptWorkflows` (`src/steps/apply.ts`) finds what the maintainer saw with `commitAt(branch, accept.createdAt)` (`src/platform/github/platform.ts`), GitHub's `GET /repos/{owner}/{repo}/commits?until=`, which filters by commit date ([commits](../web/github/rest-api-endpoints-for-commits.md)). Whoever makes a commit chooses its date, and dates count in whole seconds. `security/workflow-accept-backdated` reproduces it, tagged `known-bug`: 2 seconds after the accept comment, a push dated an hour back changes `.codeman/workflows/ci.yml`; the run moves it to `.github/workflows/` ("Workflows accepted") instead of refusing. On the fake, whose `until` is git's and includes the comment's second, a push in the same second as the comment is moved too; GitHub's boundary in that second was not checked. Only someone who can push to the task branch can do this, and that person can already push workflows and read Codeman's secrets ([who can read them](../security/overview.md#who-can-read-codemans-secrets)). So it breaks the documented check, not a trust boundary.
+>
+> Suggested fix, not applied: do not rely on commit dates. Record the staged files' blob SHAs in the task's record when review passes, or when the status comment lists them, and move only files whose blob still matches; or take the branch's head when the accept is read, and refuse any later head. Document the outcome in `docs/runs/changes.md`.
+
+Runtime and fake changes this step needed (each with its tests):
+
+- **The fake GitHub's `tokens` list** and **each request's caller**: every token with its `kind`, the template `job` that asked for it (`<workflow file>/<job id>`), `run` and `scopes`, never its value; each logged request notes the same as `token` (`github.test.ts`). The simulator names the job when it makes a `GITHUB_TOKEN`, and after its emulated `create-github-app-token`; the runtime's own read tokens are `e2e/runtime`. A generic `note` on the fakes' requests carries it (`http.ts`).
+- **The `{ not }` pattern**, for "no token of this job has other scopes" (`expect.test.ts`, `load.test.ts`).
+- **`wait: { for }`**, a plain pause: GitHub's times count in seconds, so a push in the accept comment's second looks read (`load.test.ts`).
+- **`push`'s `age`**, a commit dated in the past, as git lets a committer date it (`github.test.ts`).
+
+Memory: `token-permissions` runs one Ollama pod and one agent job at a time; the others need no pod.
 
 ### Phase 6: act smoke scenarios
 

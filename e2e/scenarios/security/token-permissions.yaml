@@ -1,0 +1,209 @@
+# Each template job stays within its token's permissions (docs/security/secrets.md, "Permissions
+# each job requests"). The fake GitHub enforces every token's permissions as GitHub does, and
+# lists each token it gave with the template job that asked for it.
+#
+# - An OpenRouter task from its issue to done, through a decision and a review that requests
+#   changes (forward-review, select, next-run, and the task's open-key, agent, close-key and apply),
+#   and a pod task to done (also release-pod): no request answers 403, and no violation.
+# - Each job's token holds exactly what the template declares and the page lists: the jobs'
+#   GITHUB_TOKENs, with the `metadata: read` GitHub adds, and the App tokens of select and apply.
+# - A job that asks for more than it may have fails: globex's installation lacks pull requests, so
+#   select's App token, which asks for `pull-requests: read`, is refused, and its run fails before
+#   it marks anything.
+#
+# Not here: dispatch's token, which only a pool of organizations asks for
+# (pools/two-organizations-batch), and apply's workflows token (security/workflow-staged).
+name: Each template job's token holds only what the template declares, and suffices
+tags: [security, openrouter, ollama, permissions]
+runner: simulator
+profiles: [ollama]
+timeout: 30m
+world:
+  organizations:
+    - { name: acme, settings: { model: deepseek/deepseek-v4.1-flash, task-budget: 2 } }
+    - { name: globex, settings: { model: deepseek/deepseek-v4.1-flash, task-budget: 2 } }
+  repositories:
+    - { name: acme/app, fixture: node-small, maintainers: [alice] }
+    - name: acme/gpu
+      fixture: node-small
+      maintainers: [alice]
+      settings: { provider: runpod-pod, model: qwen2.5:0.5b, gpu: NVIDIA GeForce RTX 4090, task-budget: 2 }
+    - { name: globex/site, fixture: node-small, maintainers: [gina] }
+  app:
+    installations:
+      - { owner: acme, repositories: all }
+      - owner: globex
+        repositories: all
+        permissions: { contents: write, issues: write, actions: write, workflows: write, metadata: read }
+agent:
+  i1:
+    plan:
+      - steps:
+          - bash: plan=$(sed -n 's/.*Create the plan at `\([^`]*\)`.*/\1/p' .codeman/task.md) && mkdir -p "$(dirname "$plan")" && printf '# Add a health route\n' > "$plan"
+          - output:
+              summary: Adds a health route.
+              decisions:
+                - { id: 1, title: Port, question: Which port?, options: [{ key: a, label: "8080" }, { key: b, label: "3000" }], recommendation: a }
+    route:
+      - &route
+        steps:
+          - output:
+              summary: Code, then review.
+              route: [{ stage: code, brief: Add the route. }, { stage: review, brief: Check it. }]
+              skipped: [{ stage: web, reason: No docs. }, { stage: design, reason: Settled. }, { stage: test, reason: Too small. }]
+      - *route
+    code:
+      - steps:
+          - write: { path: src/health.ts, content: "export default true;\n" }
+          - output: { status: done, summary: Adds the route., commitMessage: Add a health route }
+      - steps:
+          - write: { path: src/health.ts, content: "export const ok = true;\n" }
+          - output: { status: done, summary: Uses a named export., commitMessage: Use a named export }
+    review:
+      - steps: [{ output: { status: done, summary: The route is right. } }]
+      - steps: [{ output: { status: done, summary: The export is named now. } }]
+  i2:
+    plan:
+      - steps:
+          - bash: plan=$(sed -n 's/.*Create the plan at `\([^`]*\)`.*/\1/p' .codeman/task.md) && mkdir -p "$(dirname "$plan")" && printf '# Add a status route\n' > "$plan"
+          - output: { summary: Adds a status route., decisions: [] }
+    route: [*route]
+    code:
+      - steps:
+          - write: { path: src/status.ts, content: "export const up = true;\n" }
+          - output: { status: done, summary: Adds the route., commitMessage: Add a status route }
+    review:
+      - steps: [{ output: { status: done, summary: The route is right. } }]
+actions:
+  # OpenRouter, to done, then a review that requests changes, to done again.
+  - open-issue: { ref: i1, repo: acme/app, as: alice, title: Add a health route, labels: [codeman] }
+  - run: { repo: acme/app, event: issues.labeled }
+  - expect: { issue: i1, labels: [codeman:awaiting-decision] }
+  - comment: { issue: i1, as: alice, body: /codeman decide 1 a }
+  - run: { repo: acme/app, event: issue_comment.created, max-runs: 8 }
+  - expect: { issue: i1, labels: [codeman:done] }
+  - review: { pull: i1, as: alice, state: request-changes, body: Use a named export. }
+  - run: { repo: acme/app, event: pull_request_review.submitted, max-runs: 8 }
+  - expect: { issue: i1, labels: [codeman:done], commits: { message: Use a named export } }
+  # A pod, to done: the pod is created, kept, then released.
+  - open-issue: { ref: i2, repo: acme/gpu, as: alice, title: Add a status route, labels: [codeman] }
+  - run: { repo: acme/gpu, event: issues.labeled, max-runs: 8 }
+  - expect:
+      issue: i2
+      labels: [codeman:done]
+      pods: [{ status: TERMINATED, count: 1 }]
+  # No request was refused, and every token is a template job's, or the runtime's own reads.
+  - expect:
+      fakes:
+        github:
+          requests: { where: { status: 403 }, count: 0 }
+      violations: none
+  - expect:
+      fakes:
+        github:
+          tokens: { where: { job: null }, count: 0 }
+  # codeman.yml/forward-review, its GITHUB_TOKEN: actions=write, metadata=read.
+  - expect:
+      fakes:
+        github:
+          tokens: { where: { job: codeman.yml/forward-review, kind: job, scopes: [actions=write, metadata=read] }, count: { at-least: 1 } }
+  - expect:
+      fakes:
+        github:
+          tokens: { where: { job: codeman.yml/forward-review, kind: job, scopes: { not: [actions=write, metadata=read] } }, count: 0 }
+  # codeman.yml/select, its GITHUB_TOKEN: metadata=read.
+  - expect:
+      fakes:
+        github:
+          tokens: { where: { job: codeman.yml/select, kind: job, scopes: [metadata=read] }, count: { at-least: 1 } }
+  - expect:
+      fakes:
+        github:
+          tokens: { where: { job: codeman.yml/select, kind: job, scopes: { not: [metadata=read] } }, count: 0 }
+  # codeman.yml/select, its App token: actions=read, contents=read, issues=write, metadata=read, pull_requests=read.
+  - expect:
+      fakes:
+        github:
+          tokens: { where: { job: codeman.yml/select, kind: installation, scopes: [actions=read, contents=read, issues=write, metadata=read, pull_requests=read] }, count: { at-least: 1 } }
+  - expect:
+      fakes:
+        github:
+          tokens: { where: { job: codeman.yml/select, kind: installation, scopes: { not: [actions=read, contents=read, issues=write, metadata=read, pull_requests=read] } }, count: 0 }
+  # codeman.yml/next-run, its GITHUB_TOKEN: actions=write, metadata=read.
+  - expect:
+      fakes:
+        github:
+          tokens: { where: { job: codeman.yml/next-run, kind: job, scopes: [actions=write, metadata=read] }, count: { at-least: 1 } }
+  - expect:
+      fakes:
+        github:
+          tokens: { where: { job: codeman.yml/next-run, kind: job, scopes: { not: [actions=write, metadata=read] } }, count: 0 }
+  # codeman-task.yml/open-key, its GITHUB_TOKEN: metadata=read.
+  - expect:
+      fakes:
+        github:
+          tokens: { where: { job: codeman-task.yml/open-key, kind: job, scopes: [metadata=read] }, count: { at-least: 1 } }
+  - expect:
+      fakes:
+        github:
+          tokens: { where: { job: codeman-task.yml/open-key, kind: job, scopes: { not: [metadata=read] } }, count: 0 }
+  # codeman-task.yml/agent, its GITHUB_TOKEN: actions=read, contents=read, metadata=read.
+  - expect:
+      fakes:
+        github:
+          tokens: { where: { job: codeman-task.yml/agent, kind: job, scopes: [actions=read, contents=read, metadata=read] }, count: { at-least: 1 } }
+  - expect:
+      fakes:
+        github:
+          tokens: { where: { job: codeman-task.yml/agent, kind: job, scopes: { not: [actions=read, contents=read, metadata=read] } }, count: 0 }
+  # codeman-task.yml/close-key, its GITHUB_TOKEN: metadata=read.
+  - expect:
+      fakes:
+        github:
+          tokens: { where: { job: codeman-task.yml/close-key, kind: job, scopes: [metadata=read] }, count: { at-least: 1 } }
+  - expect:
+      fakes:
+        github:
+          tokens: { where: { job: codeman-task.yml/close-key, kind: job, scopes: { not: [metadata=read] } }, count: 0 }
+  # codeman-task.yml/apply, its GITHUB_TOKEN: metadata=read.
+  - expect:
+      fakes:
+        github:
+          tokens: { where: { job: codeman-task.yml/apply, kind: job, scopes: [metadata=read] }, count: { at-least: 1 } }
+  - expect:
+      fakes:
+        github:
+          tokens: { where: { job: codeman-task.yml/apply, kind: job, scopes: { not: [metadata=read] } }, count: 0 }
+  # codeman-task.yml/apply, its App token: contents=write, issues=write, pull_requests=write.
+  - expect:
+      fakes:
+        github:
+          tokens: { where: { job: codeman-task.yml/apply, kind: installation, scopes: [contents=write, issues=write, pull_requests=write] }, count: { at-least: 1 } }
+  - expect:
+      fakes:
+        github:
+          tokens: { where: { job: codeman-task.yml/apply, kind: installation, scopes: { not: [contents=write, issues=write, pull_requests=write] } }, count: 0 }
+  # codeman-task.yml/release-pod, its GITHUB_TOKEN: metadata=read.
+  - expect:
+      fakes:
+        github:
+          tokens: { where: { job: codeman-task.yml/release-pod, kind: job, scopes: [metadata=read] }, count: { at-least: 1 } }
+  - expect:
+      fakes:
+        github:
+          tokens: { where: { job: codeman-task.yml/release-pod, kind: job, scopes: { not: [metadata=read] } }, count: 0 }
+  # globex's installation lacks pull requests: select asks for `pull-requests: read`, and fails.
+  - open-issue: { ref: i3, repo: globex/site, as: gina, title: Add a page, labels: [codeman] }
+  - run: { repo: globex/site, event: issues.labeled, max-runs: 2 }
+  - expect:
+      issue: i3
+      no-labels: [codeman:planning, codeman:blocked]
+      fakes:
+        github:
+          runs: { where: { repository: globex/site, conclusion: failure }, count: 1 }
+  - expect:
+      fakes:
+        github:
+          requests:
+            where: { path: { contains: /access_tokens }, status: 422, body: { contains: pull_requests } }
+            count: 1

@@ -520,3 +520,92 @@ test("the control API builds a world over HTTP and needs its token", { skip }, a
   );
   assert.equal((await control("POST", "/repos", { owner: "dave" })).status, 400);
 });
+
+test("each token, and each request's caller, are listed with their job and permissions", {
+  skip,
+}, async () => {
+  const control = { authorization: "Bearer control", "content-type": "application/json" };
+  const app = await appToken({ issues: "write", contents: "read" });
+  const labeled = await fetch(`${origin}/_fake/github/tokens`, {
+    method: "PATCH",
+    headers: control,
+    body: JSON.stringify({ token: app, job: "codeman.yml/select" }),
+  });
+  assert.equal(labeled.status, 204);
+  const job = fake.jobToken(
+    "acme/app",
+    { pull_requests: "read" },
+    7,
+    "codeman-task.yml/agent",
+  ).value;
+  assert.equal((await call("GET", "/api/v3/repos/acme/app/pulls", app)).status, 403);
+  assert.equal((await call("GET", "/api/v3/repos/acme/app/pulls", job)).status, 200);
+
+  const tokens = (await (
+    await fetch(`${origin}/_fake/github/tokens`, { headers: control })
+  ).json()) as Record<string, unknown>[];
+  assert.deepEqual(
+    tokens.map(({ kind, job, run, scopes }) => ({ kind, job, run, scopes })),
+    [
+      {
+        kind: "installation",
+        job: "codeman.yml/select",
+        run: null,
+        scopes: ["contents=read", "issues=write"],
+      },
+      {
+        kind: "job",
+        job: "codeman-task.yml/agent",
+        run: 7,
+        scopes: ["metadata=read", "pull_requests=read"],
+      },
+    ],
+  );
+  assert.ok(!JSON.stringify(tokens).includes(app), "a token's value is never listed");
+  const pulls = fake.server.requests.filter((request) => request.path.endsWith("/pulls"));
+  assert.deepEqual(
+    pulls.map((request) => [request.status, request.token]),
+    [
+      [
+        403,
+        {
+          kind: "installation",
+          job: "codeman.yml/select",
+          run: null,
+          scopes: ["contents=read", "issues=write"],
+        },
+      ],
+      [
+        200,
+        {
+          kind: "job",
+          job: "codeman-task.yml/agent",
+          run: 7,
+          scopes: ["metadata=read", "pull_requests=read"],
+        },
+      ],
+    ],
+  );
+});
+
+test("a push may date its commit in the past, as git lets a committer", { skip }, async () => {
+  const token = await appToken({ contents: "read" });
+  const hourAgo = new Date(Date.now() - 3_600_000).toISOString().replace(/\.\d+Z$/, "Z");
+  const pushed = await fake.act({
+    action: "push",
+    as: "alice",
+    repository: "acme/app",
+    branch: "main",
+    files: { "a.txt": "a\n" },
+    date: hourAgo,
+  });
+  const halfHourAgo = new Date(Date.now() - 1_800_000).toISOString().replace(/\.\d+Z$/, "Z");
+  const listed = await call(
+    "GET",
+    `/api/v3/repos/acme/app/commits?sha=main&until=${halfHourAgo}&per_page=1`,
+    token,
+  );
+  assert.equal(listed.status, 200);
+  assert.equal(listed.body[0]?.sha, pushed.result);
+  assert.equal(listed.body[0]?.commit.committer.date, hourAgo);
+});

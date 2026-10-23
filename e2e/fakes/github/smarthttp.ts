@@ -4,7 +4,7 @@ import type { FakeRequest, FakeServer } from "../http.ts";
 import { GitHubError, grants } from "./auth.ts";
 import { httpBackend, ZERO_SHA } from "./git.ts";
 import { answer, triggers } from "./rest.ts";
-import type { Caller, Repository, World } from "./world.ts";
+import { type Caller, callerJson, type Repository, type World } from "./world.ts";
 
 /**
  * Clones, fetches and pushes over HTTP(S) at `/{owner}/{repo}` and `/{owner}/{repo}.git`, as
@@ -28,6 +28,7 @@ export function registerSmartHttp(server: FakeServer, world: World): void {
         let caller: Caller;
         try {
           caller = world.identify(request.headers.authorization, request.method, request.path);
+          request.note({ token: callerJson(world, caller) });
         } catch (error) {
           if (error instanceof GitHubError && error.status === 401)
             return challenge("Invalid username or token.");

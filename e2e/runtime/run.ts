@@ -153,6 +153,7 @@ export class ScenarioRun {
           ...(action.message !== undefined ? { message: action.message } : {}),
           ...(action.base !== undefined ? { base: action.base } : {}),
           force: action.force,
+          ...(action.ageMs > 0 ? { date: new Date(Date.now() - action.ageMs).toISOString() } : {}),
         });
       }
       case "set-variable": {
@@ -202,6 +203,10 @@ export class ScenarioRun {
         });
         return;
       case "wait":
+        if (!action.until) {
+          await new Promise((resolve) => setTimeout(resolve, action.timeoutMs));
+          return;
+        }
         return this.#poll(
           action.until,
           action.timeoutMs,
@@ -621,7 +626,9 @@ export function summary(action: Action): string {
     case "apply":
       return `apply ${action.mode}`;
     case "wait":
-      return `wait until ${describe(action.until)}`;
+      return action.until
+        ? `wait until ${describe(action.until)}`
+        : `wait for ${action.timeoutMs / 1000}s`;
     case "expect":
       return `expect ${describe(action)}`;
   }

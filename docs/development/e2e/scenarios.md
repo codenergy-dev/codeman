@@ -189,7 +189,7 @@ Each one runs on the fake GitHub as the user `as:` names, and records the events
 | `label`, `unlabel` | `issue` or `pull`, `as`, `label` | Adds or removes a label |
 | `close`, `reopen` | `issue` or `pull`, `as` | Closes or reopens it |
 | `review` | `pull`, `as`, `state` required; `body`, `comments` | Reviews the task's pull request: `approve`, `request-changes` or `comment`, with `comments` as `[{ path, line, body }]` |
-| `push` | `as`, `files` required; `branch` with `repo`, or `task`; `message`, `base`, `force` | Commits `files` (`{ path: content }`, `null` deletes) to a branch, or to the [task branch](../../glossary.md#task-branch) of the ref `task` names |
+| `push` | `as`, `files` required; `branch` with `repo`, or `task`; `message`, `base`, `force`, `age` | Commits `files` (`{ path: content }`, `null` deletes) to a branch, or to the [task branch](../../glossary.md#task-branch) of the ref `task` names. `age`, a duration, dates the commit that far back, as git lets whoever commits date it |
 
 ### Workflow runs
 
@@ -236,7 +236,7 @@ A fake's key with a mapping that has no `path` takes the second form, such as `r
 | Action | Fields | Does |
 | --- | --- | --- |
 | `apply` | `fail` or `skip`, or `{ mode, issue }` | So the agent's work is not applied, for one task or all: `fail` fails the `apply` job, `skip` cancels the run as `apply` reaches its Codeman step |
-| `wait` | `until`, `timeout` required | Polls until `until` holds, or fails after `timeout` |
+| `wait` | `until` and `timeout`, or `for` | Polls until `until` holds, or fails after `timeout`. `for` only pauses, such as a second between two users' actions, since GitHub's times count in seconds |
 | `expect` | [Checks](#checks) | Polls for 15 seconds until every check holds, to absorb a fake's lag |
 
 ## Checks
@@ -271,14 +271,27 @@ Every scenario also ends with an implicit `violations: none`.
 | A text's parts | `{ contains: text }`, or a list of texts | A text that holds each, such as a pod's end `reason` |
 | A mapping | `{ status: done }` | An object with at least these fields, each matching |
 | A list | `[a, b]` | A list of exactly these items, in order |
+| Its opposite | `{ not: <pattern> }` | Anything the pattern does not match, such as a token's `scopes` other than a job's |
 
 `count` takes a whole number or a range. Without it, one match is enough.
+
+> [!NOTE]
+> A mapping whose only key is `contains` or `not` is that pattern, not a field of that name.
+
+`not` with a `count` of 0 checks every item: no token of `select` has scopes other than these.
+
+```yaml
+- expect:
+    fakes:
+      github:
+        tokens: { where: { job: codeman.yml/select, kind: installation, scopes: { not: [actions=read, contents=read, issues=write, metadata=read, pull_requests=read] } }, count: 0 }
+```
 
 ### The fakes' lists
 
 | Fake | Lists |
 | --- | --- |
-| `github` | `events`, `dispatches`, `runs`, `violations`, `requests` |
+| `github` | `events`, `dispatches`, `runs`, `violations`, `requests`, `tokens` |
 | `openrouter` | `keys`, `generations`, `requests` |
 | `runpod` | `jobs`, `requests` |
 | `google`, `npm`, `huggingface` | `requests` |

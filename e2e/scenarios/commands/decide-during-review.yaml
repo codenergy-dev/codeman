@@ -1,0 +1,89 @@
+# Commands around decisions (docs/plans/2026-10-19-commands-around-decisions-and-review-rounds.md,
+# docs/tasks/commands.md): review asks the maintainers a decision on an open pull request, and
+# while the task is codeman:awaiting-decision a maintainer
+#
+# - reviews the pull request, requesting changes: the review starts no run (fed8e3a). Before the
+#   fix, a record run never handled reviews, so each run found the same review, made a record
+#   run, and chained to the next: the review's run never ended;
+# - comments `/codeman fix`: the record run reports it as not applied (1cea2c1).
+#
+# Once the decision is answered, the review counts: routing runs again, and the code stage gets
+# the review's text under its requests.
+name: A review posted while decisions are pending waits for them, then counts
+tags: [commands, openrouter]
+runner: simulator
+timeout: 20m
+world:
+  organizations:
+    - { name: acme, settings: { model: deepseek/deepseek-v4.1-flash, task-budget: 3 } }
+  repositories:
+    - { name: acme/app, fixture: node-small, maintainers: [alice] }
+agent:
+  i1:
+    plan:
+      - steps:
+          - bash: plan=$(sed -n 's/.*Create the plan at `\([^`]*\)`.*/\1/p' .codeman/task.md) && mkdir -p "$(dirname "$plan")" && printf '# Add a health route\n' > "$plan"
+          - output: { summary: Adds a health route., decisions: [] }
+    route:
+      - steps:
+          - output:
+              summary: Code, then review.
+              route: [{ stage: code, brief: Add the route. }, { stage: review, brief: Check it. }]
+              skipped: [{ stage: web, reason: No docs. }, { stage: design, reason: Settled. }, { stage: test, reason: Too small. }]
+      - steps:
+          - output:
+              summary: Apply the review.
+              route: [{ stage: code, brief: Use a named export. }, { stage: review, brief: Check it. }]
+              skipped: [{ stage: web, reason: No docs. }, { stage: design, reason: Settled. }, { stage: test, reason: Too small. }]
+    code:
+      - steps:
+          - write: { path: src/health.ts, content: "export default true;\n" }
+          - output: { status: done, summary: Adds the route., commitMessage: Add a health route }
+      # The file exists only if the task file holds the review's text under its requests.
+      - steps:
+          - bash: grep -q "Use a named export." .codeman/task.md && printf 'export const ok = true;\n' > src/health-named.ts
+          - output: { status: done, summary: Uses a named export., commitMessage: Use a named export for the health route }
+    review:
+      - steps:
+          - output:
+              status: decisions
+              summary: The route works; its path is open.
+              decisions:
+                - { id: 1, title: Path, question: Which path?, options: [{ key: a, label: /health }, { key: b, label: /status }], recommendation: a }
+      - steps: [{ output: { status: done, summary: The export is named now. } }]
+actions:
+  - open-issue: { ref: i1, as: alice, title: Add a health route, labels: [codeman] }
+  - run: { event: issues.labeled }
+  - expect:
+      issue: i1
+      labels: [codeman:awaiting-decision]
+      comments: [{ kind: decisions, contains: Which path? }, { kind: run, count: 4 }]
+      pull-request: { ready: false }
+  # fed8e3a: the review's run forwards it, and the default branch's run starts nothing.
+  - review: { pull: i1, as: alice, state: request-changes, body: Use a named export. }
+  - run: { event: pull_request_review.submitted, max-runs: 3 }
+  - expect:
+      issue: i1
+      labels: [codeman:awaiting-decision]
+      comments: [{ kind: run, count: 4 }]
+  # 1cea2c1: a fix during awaiting-decision is reported, not applied.
+  - comment: { issue: i1, as: alice, body: /codeman fix Rename it. }
+  - run: { event: issue_comment.created, max-runs: 3 }
+  - expect:
+      issue: i1
+      labels: [codeman:awaiting-decision]
+      comments:
+        - { kind: run, count: 5 }
+        - { kind: run, contains: "`fix` counts only once every decision is answered, so it was not applied." }
+  # The answer makes the task ready; the review then counts: routing, code and review run again.
+  - comment: { issue: i1, as: alice, body: /codeman decide 1 a }
+  - run: { event: issue_comment.created, max-runs: 8 }
+  - expect:
+      issue: i1
+      labels: [codeman:done]
+      pull-request: { ready: true }
+      commits: { files: [src/health.ts, src/health-named.ts], message: Use a named export for the health route }
+      fakes:
+        llm:
+          turns: { where: { issue: i1, stage: route, round: 1 } }
+      violations: none

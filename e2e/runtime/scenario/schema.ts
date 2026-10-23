@@ -247,6 +247,8 @@ export interface Push extends UserAction {
   message: string | undefined;
   base: string | undefined;
   force: boolean;
+  /** How far back the commit is dated, as git lets whoever commits date it; 0 for now. */
+  ageMs: number;
 }
 
 export interface SetVariable {
@@ -419,7 +421,8 @@ export interface Apply {
 
 export interface Wait {
   kind: "wait";
-  until: Expectation;
+  /** What to poll for; without it, the wait lasts `timeoutMs` (`wait: { for: 2s }`). */
+  until: Expectation | undefined;
   timeoutMs: number;
 }
 
@@ -510,7 +513,7 @@ export interface LedgerMatch {
 
 /** The lists each fake's state has, from its control API. */
 export const FAKE_LISTS: Readonly<Record<FakeName, readonly string[]>> = {
-  github: ["events", "dispatches", "runs", "violations", "requests"],
+  github: ["events", "dispatches", "runs", "violations", "requests", "tokens"],
   openrouter: ["keys", "generations", "requests"],
   runpod: ["jobs", "requests"],
   google: ["requests"],
@@ -562,8 +565,8 @@ export interface EngineMatch {
 
 /**
  * What a value must be: equal to a scalar; within a range (`{ at-least, at-most }`), a list by
- * its length; an object
- * holding at least these fields; or a list of exactly these items, in order.
+ * its length; an object holding at least these fields; a list of exactly these items, in order;
+ * or, with `{ not }`, anything its pattern does not match.
  */
 export type Pattern =
   | { kind: "equals"; value: string | number | boolean | null }
@@ -571,4 +574,5 @@ export type Pattern =
   /** A text that holds each of these texts. */
   | { kind: "contains"; texts: string[] }
   | { kind: "object"; fields: Record<string, Pattern> }
-  | { kind: "list"; items: Pattern[] };
+  | { kind: "list"; items: Pattern[] }
+  | { kind: "not"; pattern: Pattern };

@@ -183,6 +183,8 @@ export interface Token {
   revoked: boolean;
   installation?: Installation;
   runId?: number;
+  /** The template's job that asked for it, as `<workflow file>/<job id>`, when the runtime said. */
+  job?: string;
 }
 
 export type RunStatus = "queued" | "pending" | "waiting" | "in_progress" | "completed";
@@ -730,7 +732,12 @@ export class World {
   }
 
   /** A `GITHUB_TOKEN` for a job: one repository, the job's permissions, and `metadata: read`. */
-  jobToken(options: { repository: string; permissions: Permissions; runId?: number }): Token {
+  jobToken(options: {
+    repository: string;
+    permissions: Permissions;
+    runId?: number;
+    job?: string;
+  }): Token {
     const repository = this.repository(options.repository);
     return this.#token({
       kind: "job",
@@ -739,6 +746,7 @@ export class World {
       repositories: new Set([repository.fullName.toLowerCase()]),
       permissions: { ...options.permissions, metadata: "read" },
       ...(options.runId !== undefined ? { runId: options.runId } : {}),
+      ...(options.job !== undefined ? { job: options.job } : {}),
     });
   }
 
@@ -1229,6 +1237,8 @@ export class World {
       base?: string;
       /** Moves the branch even when the new commit does not descend from its head. */
       force?: boolean;
+      /** The commit's author and committer date, which git lets whoever commits choose; now by default. */
+      date?: string;
     },
     triggers = true,
   ): Promise<string> {
@@ -1249,7 +1259,7 @@ export class World {
         ...(content === null ? { sha: null } : { content: Buffer.from(content) }),
       })),
     );
-    const who = { name: actor.login, email: noreply(actor), date: this.iso() };
+    const who = { name: actor.login, email: noreply(actor), date: options.date ?? this.iso() };
     const sha = await repository.git.commitTree({
       tree,
       parents: parent ? [parent] : [],
@@ -1911,4 +1921,39 @@ export function artifactJson(world: World, artifact: Artifact): Record<string, u
       head_sha: artifact.run.headSha,
     },
   };
+}
+
+/** A token's permissions as `name=level`, sorted, so a scenario can match them exactly. */
+export function scopesOf(permissions: Permissions): string[] {
+  return Object.entries(permissions)
+    .map(([name, level]) => `${name}=${level}`)
+    .sort();
+}
+
+/**
+ * A token as the fake's `tokens` list and each logged request give it: who it is for, the job that
+ * asked for it, and its permissions; never its value.
+ */
+export function tokenJson(world: World, token: Token): Record<string, unknown> {
+  return {
+    kind: token.kind,
+    actor: token.actor.login,
+    owner: token.owner,
+    repositories: token.repositories === "all" ? "all" : [...token.repositories].sort(),
+    scopes: scopesOf(token.permissions),
+    job: token.job ?? null,
+    run: token.runId ?? null,
+    revoked: token.revoked,
+    expiresAt: world.iso(token.expiresAt),
+  };
+}
+
+/** The caller of a request, as its entry in the fake's log notes it. */
+export function callerJson(world: World, caller: Caller): Record<string, unknown> {
+  if (caller.kind === "token") {
+    const { kind, scopes, job, run } = tokenJson(world, caller.token);
+    return { kind, scopes, job, run };
+  }
+  if (caller.kind === "app") return { kind: "app", app: caller.app.slug };
+  return { kind: "anonymous" };
 }

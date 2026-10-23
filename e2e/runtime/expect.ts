@@ -466,6 +466,7 @@ export async function fakeList(fakes: Fakes, fake: string, list: string): Promis
     "github.dispatches": "/github/dispatches",
     "github.runs": "/github/runs",
     "github.violations": "/github/violations",
+    "github.tokens": "/github/tokens",
     "openrouter.keys": "/openrouter/keys",
     "openrouter.generations": "/openrouter/generations",
     "runpod.jobs": "/runpod/jobs",
@@ -737,6 +738,10 @@ export function matches(pattern: Pattern, value: unknown, at = ""): string | und
       }
       return undefined;
     }
+    case "not":
+      return matches(pattern.pattern, value, at) === undefined
+        ? `${where}${show(value)} matches what it must not`
+        : undefined;
   }
 }
 

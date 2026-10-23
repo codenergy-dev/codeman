@@ -41,6 +41,8 @@ export interface AppTokenRequest {
   repositories: string[];
   /** By GitHub's names (`pull_requests`); empty is the installation's. */
   permissions: Record<string, string>;
+  /** The template's job that asks, as `<workflow file>/<job id>`, which the fake records. */
+  job?: string;
 }
 
 export interface Dispatched {
@@ -114,11 +116,12 @@ export interface GitHubPort {
   ): void;
   startJob(runId: number, name: string): JobRecord | Promise<JobRecord>;
   finishJob(jobId: number, conclusion: string, log: string): void;
-  /** A `GITHUB_TOKEN`, with GitHub's names (`pull_requests`). */
+  /** A `GITHUB_TOKEN`, with GitHub's names (`pull_requests`), for the job `job` names. */
   jobToken(
     repository: string,
     permissions: Record<string, "read" | "write">,
     runId: number,
+    job?: string,
   ): string | Promise<string>;
   revokeToken(token: string): void;
   appToken(request: AppTokenRequest): AppToken | Promise<AppToken>;
@@ -216,8 +219,8 @@ export function fakeGitHub(
     finishJob(jobId, conclusion, log) {
       fake.finishJob(jobId, { conclusion, log });
     },
-    jobToken(repository, permissions, runId) {
-      return fake.jobToken(repository, permissions, runId).value;
+    jobToken(repository, permissions, runId, job) {
+      return fake.jobToken(repository, permissions, runId, job).value;
     },
     revokeToken(token) {
       const found = world.tokens.get(token);
@@ -254,6 +257,7 @@ export function fakeGitHub(
           repositories: request.repositories,
           permissions: request.permissions as Record<string, "read" | "write">,
         });
+        if (request.job) token.job = request.job;
         return { token: token.value, installationId: installation.id, appSlug: app.slug };
       } catch (error) {
         throw new ActionFailure((error as Error).message);

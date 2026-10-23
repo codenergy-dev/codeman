@@ -2,7 +2,7 @@ import type { FakeServer } from "../http.ts";
 import { json } from "../http.ts";
 import { GitHubError, grants } from "./auth.ts";
 import { answer } from "./rest.ts";
-import type { Caller, Issue, Repository, World } from "./world.ts";
+import { type Caller, callerJson, type Issue, type Repository, type World } from "./world.ts";
 
 /**
  * GitHub's GraphQL endpoint at `/api/graphql`, for the two operations Codeman's side sends:
@@ -24,6 +24,7 @@ export function registerGraphql(server: FakeServer, world: World): void {
   server.route("POST", GRAPHQL, (request) =>
     answer(async () => {
       const caller = world.identify(request.headers.authorization, "POST", request.path);
+      request.note({ token: callerJson(world, caller) });
       if (caller.kind !== "token") {
         throw new GitHubError(401, "This endpoint requires you to be authenticated.");
       }

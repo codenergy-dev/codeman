@@ -14,6 +14,7 @@ import {
   accountJson,
   api,
   type Caller,
+  callerJson,
   commentJson,
   type Issue,
   issueJson,
@@ -67,6 +68,7 @@ export class Api {
       answer(async () => {
         this.world.adopt(request.origin);
         const caller = this.world.identify(request.headers.authorization, method, request.path);
+        request.note({ token: callerJson(this.world, caller) });
         return handler(request, caller, response);
       }),
     );
