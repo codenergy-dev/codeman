@@ -1,17 +1,13 @@
-# Known bug, not fixed: apply fails on a task branch a maintainer moved during the run, and the
-# task is left with no word of it.
-#
-# A maintainer pushes to the task branch while the code stage's agent works. apply commits the
-# agent's work on the branch's head as select saw it, through the Git Data API, and updates the
-# branch without force (src/platform/github/platform.ts, `commit`): GitHub refuses with 422 "Update
-# is not a fast forward", and the maintainer's commit is kept. But apply lets the error out: the
-# job fails with "Update is not a fast forward", no run comment is posted, the panel still says the
-# code stage works, the label stays `codeman:coding`, and since apply uploaded no chain artifact,
-# next-run starts no run. The agent's paid work is lost, and nothing tells the maintainers so.
-# What it should do is not documented; this scenario expects the run to say how it ended in a run
-# comment, as every other failure of a routed stage does (docs/tasks/comments.md, "Run comments").
-name: apply does not overwrite a task branch a maintainer moved during the run, and says so
-tags: [failures, openrouter, known-bug]
+# A maintainer pushes to the task branch while the code stage's agent works, and changes the file
+# the agent writes. apply commits on the head select saw and never forces the branch, so GitHub
+# refuses the update (422 "Update is not a fast forward") and the maintainer's commit is kept.
+# apply then compares what the new commit changed with the run's paths: they share
+# src/health.ts, so it commits nothing and blocks the task, naming the path in the run comment
+# (docs/runs/changes.md, "When the branch moved during the run"; docs/tasks/lifecycle.md,
+# "Blocked, and how to go on"). `/codeman continue` runs the code stage again from the maintainer's
+# commit, which finishes the task.
+name: apply keeps a maintainer's commit on the task branch, and blocks on the paths both changed
+tags: [failures, openrouter]
 runner: simulator
 timeout: 20m
 world:
@@ -37,7 +33,9 @@ agent:
           - write: { path: src/health.ts, content: "export const ok = true;\n" }
           - delay: 20000
           - output: { status: done, summary: Adds the route., commitMessage: Add a health route }
+      # After the continue, from the maintainer's commit.
       - steps:
+          - bash: grep -q 'ok = false' src/health.ts
           - write: { path: src/health.ts, content: "export const ok = true;\n" }
           - output: { status: done, summary: Adds the route again., commitMessage: Add a health route }
     review:
@@ -49,14 +47,27 @@ actions:
       - - wait:
             timeout: 10m
             until: { fakes: { llm: { turns: { where: { stage: code, kind: step }, count: { at-least: 1 } } } } }
-        - push: { task: i1, as: alice, files: { src/maintainer.ts: "export const mine = 1;\n" }, message: A maintainer's commit }
-  # The maintainer's commit is kept: apply did not force the branch.
+        - push: { task: i1, as: alice, files: { src/health.ts: "export const ok = false;\n" }, message: A maintainer's commit }
+  # The maintainer's commit is kept, and is the branch's last: the plan's, then theirs.
   - expect:
       issue: i1
-      commits: { message: A maintainer's commit, files: [src/maintainer.ts] }
+      labels: [codeman:blocked]
+      comments:
+        - kind: run
+          contains:
+            - "Code stage: blocked"
+            - The task branch moved during the run.
+            - "The new commits change paths this run changed too: src/health.ts."
+            - Comment `/codeman continue <guidance>` to try again.
+      commits: { message: A maintainer's commit, count: 2, files: [src/health.ts] }
       store:
         - { collection: organizations/acme/runs, where: { status: closed, stage: code }, count: 1 }
-  # Fails today: apply failed with "Update is not a fast forward", and posted nothing.
+  - comment: { issue: i1, as: alice, body: /codeman continue }
+  - advance: { until: { issue: i1, labels: [codeman:done] }, max-runs: 4 }
   - expect:
       issue: i1
-      comments: [{ kind: run, contains: Code stage }]
+      commits: { message: Add a health route }
+      pull-request: { ready: true, files: [src/health.ts] }
+      store:
+        - { collection: organizations/acme/runs, where: { status: closed, stage: code }, count: 2 }
+      violations: none

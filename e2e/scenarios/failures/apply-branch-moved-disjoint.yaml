@@ -1,0 +1,53 @@
+# A maintainer pushes to the task branch while the code stage's agent works, on a file the agent
+# does not change. GitHub refuses apply's update of the branch (422 "Update is not a fast
+# forward"), so the maintainer's commit is kept; the new commit changes none of the run's paths,
+# so apply commits the agent's changes again on the branch's new head, and the task goes on
+# (docs/runs/changes.md, "When the branch moved during the run"). The pull request has both.
+name: apply commits the agent's work on a maintainer's commit that changed other paths
+tags: [failures, openrouter]
+runner: simulator
+timeout: 20m
+world:
+  organizations:
+    - { name: acme, settings: { model: deepseek/deepseek-v4.1-flash, task-budget: 2 } }
+  repositories:
+    - { name: acme/app, fixture: node-small, maintainers: [alice] }
+agent:
+  i1:
+    plan:
+      - steps:
+          - bash: plan=$(sed -n 's/.*Create the plan at `\([^`]*\)`.*/\1/p' .codeman/task.md) && mkdir -p "$(dirname "$plan")" && printf '# Add a health route\n' > "$plan"
+          - output: { summary: Adds a health route., decisions: [] }
+    route:
+      - steps:
+          - output:
+              summary: Code, then review.
+              route: [{ stage: code, brief: Add the route. }, { stage: review, brief: Check it. }]
+              skipped: [{ stage: web, reason: No docs. }, { stage: design, reason: Settled. }, { stage: test, reason: Too small. }]
+    code:
+      # The maintainer pushes while this round works: it waits 20 seconds before its output.
+      - steps:
+          - write: { path: src/health.ts, content: "export const ok = true;\n" }
+          - delay: 20000
+          - output: { status: done, summary: Adds the route., commitMessage: Add a health route }
+    review:
+      - steps: [{ output: { status: done, summary: The route is right. } }]
+actions:
+  - open-issue: { ref: i1, as: alice, title: Add a health route, labels: [codeman] }
+  - parallel:
+      - - run: { event: issues.labeled }
+      - - wait:
+            timeout: 10m
+            until: { fakes: { llm: { turns: { where: { stage: code, kind: step }, count: { at-least: 1 } } } } }
+        - push: { task: i1, as: alice, files: { src/maintainer.ts: "export const mine = 1;\n" }, message: A maintainer's commit }
+  - advance: { until: { issue: i1, labels: [codeman:done] }, max-runs: 3 }
+  # Both commits are on the branch: the maintainer's, and the agent's on top of it.
+  - expect:
+      issue: i1
+      comments: [{ kind: run, contains: "Code stage: done" }]
+      commits: { message: A maintainer's commit, files: [src/health.ts, src/maintainer.ts] }
+      pull-request: { ready: true, files: [src/health.ts, src/maintainer.ts] }
+      store:
+        - { collection: organizations/acme/runs, where: { status: closed, stage: code }, count: 1 }
+      violations: none
+  - expect: { issue: i1, commits: { message: Add a health route } }

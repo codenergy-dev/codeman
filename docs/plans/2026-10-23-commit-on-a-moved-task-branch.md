@@ -1,7 +1,7 @@
 ---
-status: in progress
+status: completed
 created_at: 2026-10-23T09:38:00-03:00
-updated_at: 2026-10-23T09:43:00-03:00
+updated_at: 2026-10-23T15:12:00-03:00
 commit: 18ecea4
 ---
 
@@ -54,7 +54,9 @@ When someone pushes to the task branch while a routed stage's agent works, `appl
    - **Done on 2026-10-23.** `docs/tasks/comments.md` lists no kinds of run comment and says nothing of the commit, so it is unchanged. `npm run check` passes: 891 tests, 5 skipped.
 4. **The e2e scenarios.** `failures/apply-branch-moved` loses its `known-bug` tag and expects the block with the paths named, then `continue`; `failures/apply-branch-moved-disjoint` expects the commit on the new head. Done when `node --test "e2e/runtime/scenario/*.test.ts"` validates them, and later when each passes three times in a row (Docker is busy with step 5.5 now).
    - **Validated on 2026-10-23**; the runs wait for Docker. The disjoint scenario's maintainer adds `src/maintainer.ts`; the other's changes `src/health.ts`, which the agent writes too, and its second code round checks that it starts from the maintainer's version.
+   - **Done on 2026-10-23**, on `42c13f1`. `apply-branch-moved-disjoint` passed in 176.9 s, 178.4 s and 178.4 s, `apply-branch-moved` in 214.3 s, 216.1 s and 235.6 s; both Apply logs show GitHub's 422 "Update is not a fast forward", and the disjoint one "committing on its head". `happy-path/openrouter-to-done` (174.6 s) and `security/workflow-staged` (179.0 s, 181.6 s, 163.0 s) pass too.
 5. **The e2e plan.** Its 5.4 results say the bug is fixed, linking here. Then this plan is `completed`.
+   - **Done on 2026-10-23.**
 
 ## Out of scope
 
