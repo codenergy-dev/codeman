@@ -457,10 +457,11 @@ What Codeman does with what older versions left: tasks, pod images and records. 
 | A record without a route | `cac11b5` (2026-10-02), routing | Tasks from before routing go on in the fixed order |
 | A route without review | `1ff96ea` (2026-10-02), review always runs | Records from before review always ran may hold a route without it, which still ends with review |
 | An empty route | `1ff96ea` (2026-10-02) | From when the router could block the task: `/codeman continue <guidance>` routes it again |
+| A record without the staged workflows' blobs | 2026-10-23, [accept only the listed workflows](../plans/2026-10-23-accept-only-the-listed-workflows.md) | The first `/codeman accept-workflows` moves nothing and lists them; the next one moves them if unchanged since ([accepting](../runs/changes.md#accepting)) |
 
 #### What to do
 
-Nothing, except `/codeman continue <guidance>` for a task with an empty route ([routing](../tasks/stages.md#routing)).
+Nothing, except `/codeman continue <guidance>` for a task with an empty route ([routing](../tasks/stages.md#routing)), and a second `/codeman accept-workflows` for a task whose record has no staged workflows' blobs.
 
 #### How to verify
 

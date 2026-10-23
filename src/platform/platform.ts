@@ -82,8 +82,6 @@ export interface Platform {
   defaultBranch(): Promise<string>;
   /** The commit a branch points to, or undefined if the branch does not exist. */
   branchSha(branch: string): Promise<string | undefined>;
-  /** The commit a branch pointed to at `time`: its newest commit up to then. */
-  commitAt(branch: string, time: string): Promise<string | undefined>;
   /** A text file at a branch or commit, or undefined if it is missing. */
   readFile(ref: string, path: string): Promise<string | undefined>;
   /** Regular files under `prefix` in a branch or commit. */

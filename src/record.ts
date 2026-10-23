@@ -105,6 +105,11 @@ export interface TaskRecord {
    * for the panel to list old ones without reading every file again.
    */
   webPages?: Record<string, WebPage> | undefined;
+  /**
+   * The staged workflows the status comment last listed, by path under `.codeman/workflows/`,
+   * with each file's blob SHA: the versions an accept may move. Records from before it lack it.
+   */
+  staged?: Record<string, string> | undefined;
   /** Workflows a maintainer accepted since the last stage run, for the next one to know. */
   accepted?: { by: string; workflows: string[] } | undefined;
   /**

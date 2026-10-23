@@ -29926,15 +29926,6 @@ var GitHubPlatform = class {
       throw error3;
     }
   }
-  async commitAt(branch, time) {
-    const { data } = await this.#octokit.rest.repos.listCommits({
-      ...this.#scope,
-      sha: branch,
-      until: time,
-      per_page: 1
-    });
-    return data[0]?.sha;
-  }
   async readFile(ref, path) {
     try {
       const { data } = await this.#octokit.rest.repos.getContent({ ...this.#scope, path, ref });
@@ -31468,7 +31459,8 @@ Tests: ${test ?? "(no report)"}`,
   acceptResumes: (stage) => `The ${STAGES2[stage]} stage goes on.`,
   nothingStaged: "There are no staged workflows to accept.",
   stagedChanged: "The staged workflows changed after they were accepted.",
-  stagedChangedDetail: (by, paths) => `Changed after ${by}'s comment: ${paths}. Read them again, then comment \`/codeman accept-workflows\` again.`,
+  stagedChangedDetail: (paths) => `Changed since Codeman listed them: ${paths}. Read them again, then comment \`/codeman accept-workflows\` again.`,
+  stagedUnrecorded: "Codeman has no record of the staged workflows it listed, as this task's record is from an older version, so it cannot tell whether they changed. It lists them now: read them again, then comment `/codeman accept-workflows` again.",
   allAnswered: "All decisions are answered. Codeman implements the plan in its next run.",
   stillPending: (count3) => `${count3} decision(s) still need an answer.`,
   commandProblem: (problem2) => {
@@ -31734,7 +31726,8 @@ Testes: ${test ?? "(sem relat\xF3rio)"}`,
   acceptResumes: (stage) => `A ${OF_STAGE(stage)} continua.`,
   nothingStaged: "N\xE3o h\xE1 workflows guardados para aceitar.",
   stagedChanged: "Os workflows guardados mudaram depois de terem sido aceitos.",
-  stagedChangedDetail: (by, paths) => `Mudaram depois do coment\xE1rio de ${by}: ${paths}. Leia-os de novo e comente \`/codeman accept-workflows\` outra vez.`,
+  stagedChangedDetail: (paths) => `Mudaram desde que o Codeman os listou: ${paths}. Leia-os de novo e comente \`/codeman accept-workflows\` outra vez.`,
+  stagedUnrecorded: "O Codeman n\xE3o tem registro dos workflows guardados que listou, pois o registro desta tarefa \xE9 de uma vers\xE3o anterior, ent\xE3o n\xE3o sabe se mudaram. Ele os lista agora: leia-os de novo e comente `/codeman accept-workflows` outra vez.",
   allAnswered: "Todas as decis\xF5es foram respondidas. O Codeman implementa o plano na pr\xF3xima rodada.",
   stillPending: (count3) => `${count3} decis\xE3o(\xF5es) ainda precisam de resposta.`,
   commandProblem: (problem2) => {
@@ -33928,9 +33921,8 @@ The paths Codeman's agent may not change. Review them before merging.`,
       if (!committed.ok) return moved(committed.reason);
       head = committed.head;
     }
-    const staged = [...(await io.repo.filesUnder(head, STAGED_WORKFLOWS_DIR)).keys()].map(
-      (path) => workflowPath(path, io.conventions.workflows)
-    );
+    const files = await io.repo.filesUnder(head, STAGED_WORKFLOWS_DIR);
+    const staged = [...files.keys()].map((path) => workflowPath(path, io.conventions.workflows));
     const next = afterReview(t, record2, staged);
     const pullRequest = await openPullRequest(
       io,
@@ -33946,7 +33938,8 @@ The paths Codeman's agent may not change. Review them before merging.`,
       record: done,
       message: next.message,
       report,
-      errors: warnings
+      errors: warnings,
+      staged: files
     });
   }
 }
@@ -34115,12 +34108,12 @@ async function acceptWorkflows(task, io) {
   });
   const head = await io.repo.branchSha(task.branch);
   const staged = head ? await io.repo.filesUnder(head, STAGED_WORKFLOWS_DIR) : /* @__PURE__ */ new Map();
-  if (staged.size === 0) return done(t.nothingStaged);
-  const before = await io.repo.commitAt(task.branch, accept.createdAt);
-  const seen = before ? await io.repo.filesUnder(before, STAGED_WORKFLOWS_DIR) : /* @__PURE__ */ new Map();
-  const changed = [...staged].filter(([path, file]) => seen.get(path)?.sha !== file.sha).map(([path]) => workflowPath(path, io.conventions.workflows));
-  if (changed.length > 0 || !head) {
-    return done(t.stagedChanged, [t.stagedChangedDetail(accept.author, changed.join(", "))]);
+  if (!head || staged.size === 0) return done(t.nothingStaged);
+  const listed = task.record.staged;
+  if (!listed) return done(t.stagedUnrecorded);
+  const changed = [.../* @__PURE__ */ new Set([...staged.keys(), ...Object.keys(listed)])].filter((path) => staged.get(path)?.sha !== listed[path]).sort().map((path) => workflowPath(path, io.conventions.workflows));
+  if (changed.length > 0) {
+    return done(t.stagedChanged, [t.stagedChangedDetail(changed.join(", "))]);
   }
   const moved = [...staged.keys()].map((path) => workflowPath(path, io.conventions.workflows));
   await io.workflowsPlatform().commit({
@@ -34370,9 +34363,16 @@ async function finish(io, task, state, view) {
   const t = say(task, record);
   const problems = task.action === "record" ? [] : task.problems;
   const errors = [...problems.map((error3) => commandError(t, error3)), ...view.errors ?? []];
-  const staged = task.action === "implement" || task.action === "accept" ? [
-    ...(await io.repo.filesUnder(task.branch, STAGED_WORKFLOWS_DIR).catch(() => /* @__PURE__ */ new Map())).keys()
-  ].map((path) => workflowPath(path, io.conventions.workflows)) : [];
+  const stagedFiles = view.staged ?? (task.action === "implement" || task.action === "accept" ? await io.repo.filesUnder(task.branch, STAGED_WORKFLOWS_DIR).catch(() => void 0) : void 0);
+  if (record && stagedFiles) {
+    record = {
+      ...record,
+      staged: Object.fromEntries([...stagedFiles].map(([path, file]) => [path, file.sha]))
+    };
+  }
+  const staged = [...stagedFiles?.keys() ?? []].map(
+    (path) => workflowPath(path, io.conventions.workflows)
+  );
   const spent = {
     run: cost.run,
     task: cost.task ?? record?.spent,

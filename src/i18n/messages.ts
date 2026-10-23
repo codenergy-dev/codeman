@@ -223,7 +223,8 @@ export interface Messages {
   acceptResumes(stage: RoutedStage): string;
   nothingStaged: string;
   stagedChanged: string;
-  stagedChangedDetail(by: string, paths: string): string;
+  stagedChangedDetail(paths: string): string;
+  stagedUnrecorded: string;
 
   // Answers.
   allAnswered: string;

@@ -16,7 +16,7 @@ Codeman keeps one [status comment](../glossary.md#status-comment) per task up to
 
 ### The task record
 
-A hidden block in the status comment stores the [task record](../glossary.md#task-record): branch, plan path, decisions, answers, last handled comment and review, pull request, runs in a row, and spend. It is gzip-compressed and in base64url, because the comment holds at most 65,536 characters.
+A hidden block in the status comment stores the [task record](../glossary.md#task-record): branch, plan path, decisions, answers, last handled comment and review, pull request, runs in a row, spend, and the blob SHA of each staged workflow it listed ([accepting](../runs/changes.md#accepting)). It is gzip-compressed and in base64url, because the comment holds at most 65,536 characters.
 
 > [!IMPORTANT]
 > Codeman reads that block only from comments written by its own GitHub App, because anyone can post a comment containing it.

@@ -102,7 +102,7 @@ sequenceDiagram
   Ap->>B: review passes, the task waits, the pull request stays a draft
   M->>B: reads the staged files
   M->>R: comments accept-workflows
-  R->>B: moves them to .github/workflows/, if unchanged since the comment
+  R->>B: moves them to .github/workflows/, if unchanged since Codeman listed them
   B->>B: the push runs the workflow
   R->>R: its runs finished, the waiting stage resumes with the results
 ```
@@ -110,15 +110,23 @@ sequenceDiagram
 ### Staging
 
 - When the agent writes or changes a file under `.github/workflows/`, at any depth, and `.codemanignore` allows it, `apply` commits it to `.codeman/workflows/` on the task branch instead, where it does not run.
-- The status comment lists these files.
+- The status comment lists these files. Each run that lists them records each file's blob SHA in the [task record](../glossary.md#task-record): the versions an accept may move.
 - Deleting a workflow is left to a maintainer.
 
 ### Accepting
 
 1. After reading the staged files in the pull request or on the branch, a maintainer comments `/codeman accept-workflows`.
 2. The next run moves them into `.github/workflows/` with a token that may write workflows, which `apply` requests only for this.
-3. If a staged file changed after the comment, nothing moves. The maintainer must read them again and comment again.
+3. If a staged file changed since Codeman listed it, nothing moves, and the run says "The staged workflows changed after they were accepted." The maintainer must read them again and comment again: the refusal's run lists them as they are now.
 4. Codeman records the accepted comment, and the commit names who accepted.
+
+Codeman compares the staged files' blobs on the branch with the ones it recorded, never commit dates, which the committer chooses:
+
+| On the branch at the accept | Result |
+| --- | --- |
+| Every staged file has its recorded blob | They move, whichever commit holds them and whatever its date |
+| A file's blob differs, a staged file was not listed, or a listed one is gone | Nothing moves, and the run names the files |
+| A record from before Codeman kept the blobs | Nothing moves, and the run asks to read them again and comment again |
 
 Accepting workflows of a blocked task resumes the stage that blocked, with a new run count. The stage's agent is told which workflows were accepted, and by whom.
 
@@ -146,7 +154,7 @@ After that accept:
 
 - a stage that waited for their runs waits for them, then goes on with their results, and the stages after it run again;
 - if no stage waited, the task is done and the pull request becomes ready for review;
-- the accept moves only files that did not change since review read them.
+- the accept moves only files that did not change since review read them: review's pass lists, and records, the staged files of the commit it read.
 
 ### Results
 

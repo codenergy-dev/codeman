@@ -8,6 +8,8 @@ This page lists the documents Codeman keeps in its [backend](../glossary.md#back
 - One project can serve several organizations and pools.
 - Owners, repositories and pools are lowercase, as GitHub compares them.
 
+The [task record](../glossary.md#task-record) is not in the backend: it lives in the status comment on GitHub ([comments](../tasks/comments.md#the-task-record)).
+
 ## Overview
 
 ```text

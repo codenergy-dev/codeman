@@ -347,16 +347,6 @@ export class GitHubPlatform implements Platform {
     }
   }
 
-  async commitAt(branch: string, time: string): Promise<string | undefined> {
-    const { data } = await this.#octokit.rest.repos.listCommits({
-      ...this.#scope,
-      sha: branch,
-      until: time,
-      per_page: 1,
-    });
-    return data[0]?.sha;
-  }
-
   async readFile(ref: string, path: string): Promise<string | undefined> {
     try {
       const { data } = await this.#octokit.rest.repos.getContent({ ...this.#scope, path, ref });

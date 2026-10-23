@@ -268,17 +268,6 @@ export class FakePlatform implements Platform {
     return this.branches.get(branch);
   }
 
-  async commitAt(branch: string, time: string): Promise<string | undefined> {
-    let sha = this.branches.get(branch);
-    while (sha) {
-      const commit = this.commits.get(sha);
-      if (!commit) return undefined;
-      if (commit.time <= time) return sha;
-      sha = commit.parent;
-    }
-    return undefined;
-  }
-
   async readFile(ref: string, path: string): Promise<string | undefined> {
     const file = this.#commit(ref)?.files.get(path);
     return file ? this.blobs.get(file.sha)?.toString("utf8") : undefined;

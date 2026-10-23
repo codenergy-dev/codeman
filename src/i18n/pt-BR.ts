@@ -287,8 +287,10 @@ export const ptBR: Messages = {
   acceptResumes: (stage) => `A ${OF_STAGE(stage)} continua.`,
   nothingStaged: "Não há workflows guardados para aceitar.",
   stagedChanged: "Os workflows guardados mudaram depois de terem sido aceitos.",
-  stagedChangedDetail: (by, paths) =>
-    `Mudaram depois do comentário de ${by}: ${paths}. Leia-os de novo e comente \`/codeman accept-workflows\` outra vez.`,
+  stagedChangedDetail: (paths) =>
+    `Mudaram desde que o Codeman os listou: ${paths}. Leia-os de novo e comente \`/codeman accept-workflows\` outra vez.`,
+  stagedUnrecorded:
+    "O Codeman não tem registro dos workflows guardados que listou, pois o registro desta tarefa é de uma versão anterior, então não sabe se mudaram. Ele os lista agora: leia-os de novo e comente `/codeman accept-workflows` outra vez.",
 
   allAnswered:
     "Todas as decisões foram respondidas. O Codeman implementa o plano na próxima rodada.",

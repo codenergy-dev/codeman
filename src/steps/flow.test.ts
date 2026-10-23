@@ -786,6 +786,107 @@ test("a branch that moves again while apply commits on its new head blocks the t
   assert.match(comment, /The task branch moved again while Codeman committed this run's changes/);
 });
 
+/** A task whose review passed with a CI file staged, which waits for the accept. */
+async function stagedTask(): Promise<{ platform: FakePlatform; issue: number; branch: string }> {
+  const { platform, issue, branch } = await codingTask();
+  codeResult();
+  await applyStep(platform);
+  const runtime = await selectStep(platform);
+  assert.deepEqual([runtime.outputs.action, runtime.outputs.stage], ["implement", "review"]);
+  agentResult({}, { status: "done", summary: "The CI file is safe." });
+  await applyStep(platform);
+  assert.deepEqual(stateLabels(platform, issue), ["codeman:awaiting-workflow"]);
+  return { platform, issue, branch };
+}
+
+/** The run that handles a maintainer's accept-workflows, which is already posted. */
+async function acceptStep(platform: FakePlatform, issue: number): Promise<string> {
+  const runtime = await selectStep(platform);
+  assert.equal(runtime.outputs.action, "accept");
+  await applyStep(platform, false);
+  return platform.botComments(issue).at(-1) ?? "";
+}
+
+test("accept-workflows moves the staged files whose blobs are the ones review listed", async () => {
+  const { platform, issue, branch } = await stagedTask();
+  const listed = platform.commits.get(platform.branches.get(branch) ?? "")?.files;
+  assert.deepEqual(record(platform, issue)?.staged, {
+    ".codeman/workflows/build.yml": listed?.get(".codeman/workflows/build.yml")?.sha,
+  });
+
+  platform.say(issue, "alice", "/codeman accept-workflows");
+  const comment = await acceptStep(platform, issue);
+  assert.match(comment, /alice accepted \.ci\/workflows\/build\.yml/);
+  assert.equal(platform.file(branch, ".ci/workflows/build.yml"), "on: push\n");
+  assert.equal(platform.file(branch, ".codeman/workflows/build.yml"), undefined);
+  assert.deepEqual(stateLabels(platform, issue), ["codeman:done"]);
+  assert.deepEqual(record(platform, issue)?.staged, {}, "nothing left staged");
+});
+
+test("accept-workflows refuses a staged file changed after the accept, even by a backdated commit", async () => {
+  const { platform, issue, branch } = await stagedTask();
+  platform.say(issue, "alice", "/codeman accept-workflows");
+  const theirs = await push(platform, branch, {
+    ".codeman/workflows/build.yml": "on: pull_request\n",
+    ".codeman/workflows/extra.yml": "on: push\n",
+  });
+  // Dated before the comment, as whoever makes a commit may date it.
+  const commit = platform.commits.get(theirs);
+  assert.ok(commit);
+  commit.time = "2026-10-01T00:00:00.000Z";
+
+  const comment = await acceptStep(platform, issue);
+  assert.match(comment, /The staged workflows changed after they were accepted\./);
+  assert.match(
+    comment,
+    /Changed since Codeman listed them: \.ci\/workflows\/build\.yml, \.ci\/workflows\/extra\.yml\./,
+  );
+  assert.equal(platform.branches.get(branch), theirs, "nothing moved");
+  assert.equal(platform.file(branch, ".ci/workflows/build.yml"), undefined);
+  assert.deepEqual(stateLabels(platform, issue), ["codeman:awaiting-workflow"]);
+
+  // The refusal listed them as they are now: read again, they move.
+  platform.say(issue, "alice", "/codeman accept-workflows");
+  await acceptStep(platform, issue);
+  assert.equal(platform.file(branch, ".ci/workflows/build.yml"), "on: pull_request\n");
+  assert.equal(platform.file(branch, ".ci/workflows/extra.yml"), "on: push\n");
+  assert.deepEqual(stateLabels(platform, issue), ["codeman:done"]);
+});
+
+test("accept-workflows moves the listed content, whichever commit holds it and whenever it is dated", async () => {
+  const { platform, issue, branch } = await stagedTask();
+  // Changed before the comment, and changed back after it.
+  await push(platform, branch, { ".codeman/workflows/build.yml": "on: pull_request\n" });
+  platform.say(issue, "alice", "/codeman accept-workflows");
+  await push(platform, branch, { ".codeman/workflows/build.yml": "on: push\n" });
+
+  const comment = await acceptStep(platform, issue);
+  assert.match(comment, /alice accepted \.ci\/workflows\/build\.yml/);
+  assert.equal(platform.file(branch, ".ci/workflows/build.yml"), "on: push\n");
+  assert.deepEqual(stateLabels(platform, issue), ["codeman:done"]);
+});
+
+test("accept-workflows refuses with a record from before the listed blobs, then moves them", async () => {
+  const { platform, issue, branch } = await stagedTask();
+  const panel = platform.comments.get(issue)?.find((comment) => isStatusComment(comment.body));
+  const before = record(platform, issue);
+  assert.ok(panel && before);
+  const { staged: _, ...older } = before;
+  panel.body = panel.body.replace(/<!-- codeman:status [A-Za-z0-9_-]* -->/, encodeStatus(older));
+
+  platform.say(issue, "alice", "/codeman accept-workflows");
+  const comment = await acceptStep(platform, issue);
+  assert.match(comment, /Codeman has no record of the staged workflows it listed/);
+  assert.equal(platform.file(branch, ".ci/workflows/build.yml"), undefined);
+  assert.deepEqual(stateLabels(platform, issue), ["codeman:awaiting-workflow"]);
+  assert.ok(record(platform, issue)?.staged?.[".codeman/workflows/build.yml"], "listed now");
+
+  platform.say(issue, "alice", "/codeman accept-workflows");
+  await acceptStep(platform, issue);
+  assert.equal(platform.file(branch, ".ci/workflows/build.yml"), "on: push\n");
+  assert.deepEqual(stateLabels(platform, issue), ["codeman:done"]);
+});
+
 test("an issue a maintainer did not open is left alone", async () => {
   const platform = new FakePlatform({ ".codeman/settings.yml": "model: a/b\n" });
   platform.maintainers.add("alice");

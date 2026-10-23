@@ -279,8 +279,10 @@ export const en: Messages = {
   acceptResumes: (stage) => `The ${STAGES[stage]} stage goes on.`,
   nothingStaged: "There are no staged workflows to accept.",
   stagedChanged: "The staged workflows changed after they were accepted.",
-  stagedChangedDetail: (by, paths) =>
-    `Changed after ${by}'s comment: ${paths}. Read them again, then comment \`/codeman accept-workflows\` again.`,
+  stagedChangedDetail: (paths) =>
+    `Changed since Codeman listed them: ${paths}. Read them again, then comment \`/codeman accept-workflows\` again.`,
+  stagedUnrecorded:
+    "Codeman has no record of the staged workflows it listed, as this task's record is from an older version, so it cannot tell whether they changed. It lists them now: read them again, then comment `/codeman accept-workflows` again.",
 
   allAnswered: "All decisions are answered. Codeman implements the plan in its next run.",
   stillPending: (count) => `${count} decision(s) still need an answer.`,

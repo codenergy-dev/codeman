@@ -21,7 +21,7 @@ import {
 } from "../output.ts";
 import type { Conventions } from "../platform/conventions.ts";
 import type { Platform } from "../platform/platform.ts";
-import type { FileChange } from "../platform/types.ts";
+import type { FileChange, TreeFile } from "../platform/types.ts";
 import {
   type CheckedChanges,
   checkChanges,
@@ -595,9 +595,9 @@ async function applyStage(task: TaskContext, io: Io): Promise<void> {
       if (!committed.ok) return moved(committed.reason);
       head = committed.head;
     }
-    const staged = [...(await io.repo.filesUnder(head, STAGED_WORKFLOWS_DIR)).keys()].map((path) =>
-      workflowPath(path, io.conventions.workflows),
-    );
+    // Listed, and recorded, as review read them.
+    const files = await io.repo.filesUnder(head, STAGED_WORKFLOWS_DIR);
+    const staged = [...files.keys()].map((path) => workflowPath(path, io.conventions.workflows));
     const next = afterReview(t, record, staged);
     const pullRequest = await openPullRequest(
       io,
@@ -614,6 +614,7 @@ async function applyStage(task: TaskContext, io: Io): Promise<void> {
       message: next.message,
       report,
       errors: warnings,
+      staged: files,
     });
   }
 }
@@ -824,8 +825,8 @@ async function updateFooter(repo: Platform, number: number, footer: string): Pro
 
 /**
  * Moves the staged workflows into the workflow directory on the task branch, with a token that
- * may write workflows, if they are what the maintainer saw: the staged files must not have
- * changed since the comment that accepted them.
+ * may write workflows, if they are what Codeman listed for the maintainer to read: each staged
+ * file's blob must be the one the record keeps, and no listed file may be gone.
  */
 async function acceptWorkflows(task: TaskContext, io: Io): Promise<void> {
   const accept = task.accept;
@@ -842,14 +843,16 @@ async function acceptWorkflows(task: TaskContext, io: Io): Promise<void> {
 
   const head = await io.repo.branchSha(task.branch);
   const staged = head ? await io.repo.filesUnder(head, STAGED_WORKFLOWS_DIR) : new Map();
-  if (staged.size === 0) return done(t.nothingStaged);
-  const before = await io.repo.commitAt(task.branch, accept.createdAt);
-  const seen = before ? await io.repo.filesUnder(before, STAGED_WORKFLOWS_DIR) : new Map();
-  const changed = [...staged]
-    .filter(([path, file]) => seen.get(path)?.sha !== file.sha)
-    .map(([path]) => workflowPath(path, io.conventions.workflows));
-  if (changed.length > 0 || !head) {
-    return done(t.stagedChanged, [t.stagedChangedDetail(accept.author, changed.join(", "))]);
+  if (!head || staged.size === 0) return done(t.nothingStaged);
+  // The versions the status comment listed, by blob: commit dates are the committer's to choose.
+  const listed = task.record.staged;
+  if (!listed) return done(t.stagedUnrecorded);
+  const changed = [...new Set([...staged.keys(), ...Object.keys(listed)])]
+    .filter((path) => staged.get(path)?.sha !== listed[path])
+    .sort()
+    .map((path) => workflowPath(path, io.conventions.workflows));
+  if (changed.length > 0) {
+    return done(t.stagedChanged, [t.stagedChangedDetail(changed.join(", "))]);
   }
 
   const moved = [...staged.keys()].map((path) => workflowPath(path, io.conventions.workflows));
@@ -1164,6 +1167,8 @@ async function finish(
     retry?: boolean;
     /** This run already wrote the pull request's description. */
     pullRequestWritten?: boolean;
+    /** The staged workflows to list, as this run read them; else as they are on the branch. */
+    staged?: ReadonlyMap<string, TreeFile>;
   },
 ): Promise<void> {
   io.runtime.output("continues", String(goesOn(state)));
@@ -1202,15 +1207,22 @@ async function finish(
   const t = say(task, record);
   const problems = task.action === "record" ? [] : task.problems;
   const errors = [...problems.map((error) => commandError(t, error)), ...(view.errors ?? [])];
-  // Workflows the agent wrote that wait for a maintainer, as they are on the branch now.
-  const staged =
-    task.action === "implement" || task.action === "accept"
-      ? [
-          ...(
-            await io.repo.filesUnder(task.branch, STAGED_WORKFLOWS_DIR).catch(() => new Map())
-          ).keys(),
-        ].map((path) => workflowPath(path, io.conventions.workflows))
-      : [];
+  // Workflows the agent wrote that wait for a maintainer, as they are on the branch now. The
+  // record keeps each listed file's blob: an accept moves only those versions.
+  const stagedFiles =
+    view.staged ??
+    (task.action === "implement" || task.action === "accept"
+      ? await io.repo.filesUnder(task.branch, STAGED_WORKFLOWS_DIR).catch(() => undefined)
+      : undefined);
+  if (record && stagedFiles) {
+    record = {
+      ...record,
+      staged: Object.fromEntries([...stagedFiles].map(([path, file]) => [path, file.sha])),
+    };
+  }
+  const staged = [...(stagedFiles?.keys() ?? [])].map((path) =>
+    workflowPath(path, io.conventions.workflows),
+  );
   const spent = {
     run: cost.run,
     task: cost.task ?? record?.spent,
