@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-10-20T12:50:34-03:00
-updated_at: 2026-10-23T17:00:00-03:00
+updated_at: 2026-10-23T20:30:00-03:00
 commit: 21130fe
 ---
 
@@ -196,6 +196,12 @@ Answered by the responsible person on 2026-10-20.
     - b) Keep `dist/gateway.js` unchanged; the host launcher tells the fake Runpod when a pod's container exits.
 
     **Answer: a).** The fake then sees the real call, with its pod ID and key, which matters for cost bugs. This replaces step 1.1's note that `dist/gateway.js` stays unchanged.
+
+12. **The act smoke, after phase 6 met an act bug.** act 0.2.89 hands a skipped job's outputs on as unevaluated `${{ }}` text, so in the run that records a decision's answer `close-key` fails and act stops the whole run; `happy-path/openrouter-to-done` cannot run under act.
+    - a) Accept: the act smoke is `pods/ollama-keep-and-release` and `security/set-env-in-agent-output`, which covers the OpenRouter path to `codeman:done` without a decision; scenarios with decisions stay on the simulator.
+    - b) Work around act by patching the templates for act only.
+
+    **Answer: a),** on 2026-10-23. b) would test something other than the real templates. act's limits are in [the suite's docs](../development/e2e/suite.md). The two act source pages extended in phase 6, at the same commit, are kept as refreshed at the responsible person's request.
 
 ## Design
 
