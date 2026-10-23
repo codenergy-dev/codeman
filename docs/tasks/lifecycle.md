@@ -41,7 +41,7 @@ stateDiagram-v2
   workflow --> stage: awaited runs finished, or continue
   workflow --> done: workflows accepted after review
   stage --> done: review passes
-  stage --> blocked: blocked, invalid result, max-runs
+  stage --> blocked: blocked, invalid result, max-runs, branch moved
   blocked --> stage: continue, or workflows accepted
   blocked --> routing: fix, or continue before the first route
   done --> routing: fix
@@ -100,6 +100,7 @@ How to go on from `codeman:blocked` depends on why the task blocked.
 | A routed stage reported `blocked` | `/codeman continue <guidance>`, or `/codeman replan <what to change>` when the request needs a revised plan |
 | A routed stage wrote no result or an invalid one | `/codeman continue <guidance>` |
 | A routed stage ran `max-runs` times in a row unfinished | `/codeman continue <guidance>` |
+| Someone pushed to the task branch during a routed stage's run, and its changes could not go on top: the new commits change the same paths, which the run comment names ([when the branch moved](../runs/changes.md#when-the-branch-moved-during-the-run)) | `/codeman continue <guidance>`: the stage runs again from the new commits |
 | Review asked for changes `max-runs` times in a row | `/codeman continue <guidance>` |
 | Planning failed, and the task already had a plan | `/codeman replan <what to change>` |
 | The task was never planned: its first plan failed, or no settings serve planning | Remove the `codeman:blocked` label. No command moves a task that has no plan. |

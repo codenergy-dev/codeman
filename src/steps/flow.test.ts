@@ -27,12 +27,16 @@ async function selectStep(platform: FakePlatform): Promise<FakeRuntime> {
   return runtime;
 }
 
-/** Writes what the agent job uploads: the changed files, the manifest and the output. */
-function agentResult(files: Record<string, string>, output: unknown): void {
+/**
+ * Writes what the agent job uploads: the changed files, the manifest and the output. A null text
+ * deletes the file.
+ */
+function agentResult(files: Record<string, string | null>, output: unknown): void {
   const dir = join(workdir, "result");
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
   const changes: Change[] = Object.entries(files).map(([path, text]) => {
+    if (text === null) return { path, status: "deleted" };
     const file = join(dir, "tree", path);
     mkdirSync(dirname(file), { recursive: true });
     writeFileSync(file, text);
@@ -658,6 +662,128 @@ test("the web stage commits only valid pages under docs/web/, and the panel list
     platform.botComments(issue).at(-1) ?? "",
     /docs\/web\/acme\/acme-api\.md: only the web stage changes docs\/web\//,
   );
+});
+
+/** A maintainer's commit on `branch`, pushed outside Codeman. */
+async function push(
+  platform: FakePlatform,
+  branch: string,
+  files: Record<string, string>,
+): Promise<string> {
+  // The prototype's, so a test that wraps the platform's `commit` can push from inside it.
+  return FakePlatform.prototype.commit.call(platform, {
+    branch,
+    baseSha: platform.branches.get(branch) ?? "",
+    createBranch: false,
+    changes: Object.entries(files).map(([path, text]) => ({ path, content: Buffer.from(text) })),
+    message: "A maintainer's commit",
+  });
+}
+
+/**
+ * A task in the code stage, on a repository whose `.codemanignore` lets the agent write CI files,
+ * which apply stages; `src/old.ts` is on its branch. Returns the code run's select.
+ */
+async function codingTask(): Promise<{
+  platform: FakePlatform;
+  issue: number;
+  branch: string;
+}> {
+  const platform = new FakePlatform({
+    ".codeman/settings.yml": "model: a/b\n",
+    ".codemanignore": "AGENTS.md\n",
+    "src/old.ts": "export const old = 1;\n",
+  });
+  const { issue, branch } = await plannedTask(platform);
+  await routeStep(platform, ["code", "review"]);
+  const runtime = await selectStep(platform);
+  assert.deepEqual([runtime.outputs.action, runtime.outputs.stage], ["implement", "code"]);
+  return { platform, issue, branch };
+}
+
+/** The code stage's result: a new file, a deletion and a CI file. */
+function codeResult(): void {
+  agentResult(
+    {
+      "src/limit.ts": "export const limit = 10;\n",
+      "src/old.ts": null,
+      ".ci/workflows/build.yml": "on: push\n",
+    },
+    { status: "done", summary: "Added the limiter.", commitMessage: "Add a limiter" },
+  );
+}
+
+test("a branch moved during the run on other paths gets the agent's changes on its new head", async () => {
+  const { platform, issue, branch } = await codingTask();
+  const theirs = await push(platform, branch, { "src/mine.ts": "export const mine = 1;\n" });
+  codeResult();
+  const runtime = await applyStep(platform);
+
+  assert.deepEqual(stateLabels(platform, issue), ["codeman:reviewing"]);
+  assert.equal(runtime.outputs.chain, "true");
+  const head = platform.commits.get(platform.branches.get(branch) ?? "");
+  assert.equal(head?.parent, theirs, "a new commit on the maintainer's");
+  assert.equal(head?.message, "Add a limiter");
+  assert.equal(platform.file(branch, "src/mine.ts"), "export const mine = 1;\n");
+  assert.equal(platform.file(branch, "src/limit.ts"), "export const limit = 10;\n");
+  assert.equal(platform.file(branch, "src/old.ts"), undefined, "the deletion");
+  assert.equal(platform.file(branch, ".codeman/workflows/build.yml"), "on: push\n", "staged");
+  assert.match(platform.botComments(issue).at(-1) ?? "", /### Codeman · Code stage: done/);
+});
+
+test("a branch moved during the run on the agent's paths blocks the task, and names them", async () => {
+  const { platform, issue, branch } = await codingTask();
+  const theirs = await push(platform, branch, {
+    "src/limit.ts": "export const limit = 5;\n",
+    "src/old.ts": "export const old = 2;\n",
+    // The workflow the agent staged, where the accept would move it.
+    ".ci/workflows/build.yml": "on: pull_request\n",
+    "NOTES.md": "Notes.\n",
+  });
+  codeResult();
+  const runtime = await applyStep(platform);
+
+  assert.deepEqual(stateLabels(platform, issue), ["codeman:blocked"]);
+  assert.equal(platform.branches.get(branch), theirs, "the maintainer's commit is kept");
+  assert.equal(platform.file(branch, "src/limit.ts"), "export const limit = 5;\n");
+  assert.equal(platform.file(branch, ".codeman/workflows/build.yml"), undefined);
+  const comment = platform.botComments(issue).at(-1) ?? "";
+  assert.match(comment, /### Codeman · Code stage: blocked/);
+  assert.match(comment, /The task branch moved during the run/);
+  assert.match(
+    comment,
+    /The new commits change paths this run changed too: \.ci\/workflows\/build\.yml, src\/limit\.ts, src\/old\.ts\./,
+  );
+  assert.ok(!comment.includes("NOTES.md"), "only the paths in conflict");
+  assert.match(comment, /Comment `\/codeman continue <guidance>` to try again\./);
+  assert.equal(runtime.outputs.continues, "false");
+
+  // Continue runs the stage again, from the maintainer's commit.
+  platform.say(issue, "alice", "/codeman continue Keep their limit.");
+  const again = await selectStep(platform);
+  assert.deepEqual([again.outputs.action, again.outputs.stage], ["implement", "code"]);
+  assert.equal(readTask(again).baseSha, theirs);
+});
+
+test("a branch that moves again while apply commits on its new head blocks the task", async () => {
+  const { platform, issue, branch } = await codingTask();
+  // Each of Codeman's commits finds a new maintainer's commit on the branch.
+  let pushes = 0;
+  platform.commit = async (options) => {
+    pushes += 1;
+    await push(platform, branch, { [`src/mine-${pushes}.ts`]: "export const mine = 1;\n" });
+    return FakePlatform.prototype.commit.call(platform, options);
+  };
+  codeResult();
+  await applyStep(platform);
+
+  assert.equal(pushes, 2, "one retry");
+  assert.deepEqual(stateLabels(platform, issue), ["codeman:blocked"]);
+  assert.equal(platform.file(branch, "src/limit.ts"), undefined);
+  assert.equal(platform.file(branch, "src/mine-2.ts"), "export const mine = 1;\n");
+  const comment = platform.botComments(issue).at(-1) ?? "";
+  assert.match(comment, /### Codeman · Code stage: blocked/);
+  assert.match(comment, /The task branch moved again while Codeman committed this run's changes/);
 });
 
 test("an issue a maintainer did not open is left alone", async () => {

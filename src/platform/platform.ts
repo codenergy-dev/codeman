@@ -89,6 +89,11 @@ export interface Platform {
   /** Regular files under `prefix` in a branch or commit. */
   filesUnder(ref: string, prefix: string): Promise<Map<string, TreeFile>>;
   /**
+   * The paths that differ from commit `base` to commit `head`, both paths of a rename included.
+   * Undefined if `head` does not descend from `base`, or if the platform cannot list them all.
+   */
+  changedPaths(base: string, head: string): Promise<string[] | undefined>;
+  /**
    * Commits every change at once, without running git on files the agent produced, and returns
    * the new commit. Fails, changing nothing, if the branch moved since `baseSha`.
    */

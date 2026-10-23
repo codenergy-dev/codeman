@@ -38,6 +38,21 @@ flowchart TD
 
 Review's changes are all discarded. The web stage's pages are also checked for their format ([third-party documentation](#third-party-documentation)).
 
+### When the branch moved during the run
+
+`apply` commits on the task branch's head as the run's `select` saw it, and never forces the branch. When someone pushed to it during the run, their commits are kept, and `apply` compares the paths they changed with the run's own:
+
+| The new commits | What `apply` does |
+| --- | --- |
+| Change none of the run's paths | Commits the run's changes on the new head, and the task goes on as usual |
+| Change some of them | Commits nothing, blocks the task, and names those paths in the run comment |
+| Cannot be compared: the branch was rewritten, or GitHub lists too many files (300) | Commits nothing, and blocks the task |
+| Are followed by another push while `apply` commits on them | Commits nothing, and blocks the task: it tries once |
+
+- The run's paths are the files it writes and deletes, and each staged workflow's `.codeman/workflows/` path and the `.github/workflows/` path the accept would overwrite.
+- When the task blocks, the run's changes are not kept. `/codeman continue <guidance>` runs the stage again from the new commits.
+- The same holds for the `.codemanignore` that review proposes.
+
 ### Protected paths
 
 `.codemanignore` at the repository's root lists the paths the agent may not change, in `.gitignore` syntax.

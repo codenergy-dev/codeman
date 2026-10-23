@@ -246,6 +246,14 @@ export const en: Messages = {
   agentReports: (reason) => `The agent reports: ${reason}`,
   missingWorkflows: (paths) =>
     `The agent waits for workflows that are not on the branch: ${paths}.`,
+  branchMoved:
+    "The task branch moved during the run. Codeman kept the new commits and committed none of this run's changes; the stage's next run starts from the new commits.",
+  branchMovedReason: (reason) =>
+    reason.kind === "conflict"
+      ? `The new commits change paths this run changed too: ${reason.paths.join(", ")}.`
+      : reason.kind === "moved-again"
+        ? "The task branch moved again while Codeman committed this run's changes on the new commits."
+        : "Codeman could not compare the new commits with this run's changes: the branch was rewritten, or they change too many files.",
   awaitingWorkflows: (stage, paths, reason) =>
     `The ${STAGES[stage]} stage needs ${paths} to run: ${reason} Codeman goes on when their runs on the task branch finish. \`/codeman continue <guidance>\` goes on without them.`,
   deferredWorkflows: (stage, paths, reason, next) =>

@@ -290,6 +290,19 @@ export class FakePlatform implements Platform {
     return new Map([...commit.files].filter(([path]) => path.startsWith(prefix)));
   }
 
+  async changedPaths(base: string, head: string): Promise<string[] | undefined> {
+    const from = this.commits.get(base);
+    let sha: string | undefined = head;
+    while (sha !== undefined && sha !== base) sha = this.commits.get(sha)?.parent;
+    const to = this.commits.get(head);
+    if (!from || !to || sha !== base) return undefined;
+    const paths = new Set([...from.files.keys(), ...to.files.keys()]);
+    return [...paths].filter((path) => {
+      const [a, b] = [from.files.get(path), to.files.get(path)];
+      return a?.sha !== b?.sha || a?.mode !== b?.mode;
+    });
+  }
+
   async commit(options: {
     branch: string;
     baseSha: string;

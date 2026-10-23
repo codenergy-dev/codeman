@@ -46,6 +46,7 @@ flowchart LR
 - **Comments kept as written.** The task record lives in a hidden HTML comment inside the [status comment](../glossary.md#status-comment). So the platform must keep Markdown as written, HTML comments included, up to its `commentLimit`.
 - **A comment limit of at least 65,536 characters.** The agent's output limits are set for it.
 - **Atomic, guarded commits.** `commit` writes all changes at once, without running git on the agent's files, and fails without writing if the branch moved since the base commit.
+- **Complete lists of changed paths.** `changedPaths` lists every path that differs between two commits, both paths of a rename included. When the head does not descend from the base, or the platform cannot list every path, it returns nothing: `apply` then [blocks the task](../runs/changes.md#when-the-branch-moved-during-the-run) rather than commit over a change it did not see.
 - **Safe Markdown.** The dialect matches every mention and reference the platform renders. This is a security boundary: a reference it misses lets the agent notify or link anyone.
 - **Unambiguous key names.** OpenRouter keys are named `codeman/<owner>/<repo>/<issue>/<run>`. An owner of several segments, such as a group path, must not make one repository's name a prefix of another's.
 - **Unambiguous pod owners.** [Pods](../glossary.md#pod) carry the owner in `CODEMAN_ORGANIZATION`, and their pool's ID in `CODEMAN_POOL`, which decides which [pool](../glossary.md#pool-of-organizations) a pod belongs to. Both are compared whole, ignoring case.

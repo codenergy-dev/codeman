@@ -16,6 +16,9 @@ import type {
 
 export type Octokit = ReturnType<typeof github.getOctokit>;
 
+/** The most files GitHub's compare lists: a comparison that reaches it may have more. */
+const COMPARE_FILES = 300;
+
 /** The GitHub client for a token, with the server and API of the workflow's repository. */
 export function octokit(token: string): Octokit {
   return github.getOctokit(token);
@@ -382,6 +385,21 @@ export class GitHubPlatform implements Platform {
       }
     }
     return files;
+  }
+
+  async changedPaths(base: string, head: string): Promise<string[] | undefined> {
+    // The files come with the first page of commits, whatever its size.
+    const { data } = await this.#octokit.rest.repos.compareCommitsWithBasehead({
+      ...this.#scope,
+      basehead: `${base}...${head}`,
+      per_page: 1,
+    });
+    if (data.status !== "ahead" && data.status !== "identical") return undefined;
+    const files = data.files ?? [];
+    if (files.length >= COMPARE_FILES) return undefined;
+    return files.flatMap((file) =>
+      file.previous_filename ? [file.filename, file.previous_filename] : [file.filename],
+    );
   }
 
   /**

@@ -16,6 +16,15 @@ export type RunOutcome =
   | "out-of-time"
   | "failed";
 
+/** Why the agent's changes were not committed on a task branch that moved during the run. */
+export type BranchMoved =
+  /** The new commits change some of the paths the run changed. */
+  | { kind: "conflict"; paths: string[] }
+  /** The branch moved again while apply committed on its new head. */
+  | { kind: "moved-again" }
+  /** The branch was rewritten, or the platform could not list what the new commits change. */
+  | { kind: "not-compared" };
+
 /**
  * Every fixed text Codeman writes on issues and pull requests. Each catalog implements all of
  * them, so the type checker finds a missing one. Texts are trusted Markdown: they may hold
@@ -181,6 +190,10 @@ export interface Messages {
   stageNeedsMaintainer(stage: RoutedStage): string;
   agentReports(reason: string): string;
   missingWorkflows(paths: string): string;
+  /** The task branch moved during the run, and nothing of the run was committed. */
+  branchMoved: string;
+  /** Why, with paths that come from the repository: the caller makes them inert. */
+  branchMovedReason(reason: BranchMoved): string;
   awaitingWorkflows(stage: RoutedStage, paths: string, reason: string): string;
   /** A stage needs the runs of workflows that are still staged, so the task goes on meanwhile. */
   deferredWorkflows(

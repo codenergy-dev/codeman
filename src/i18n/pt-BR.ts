@@ -254,6 +254,14 @@ export const ptBR: Messages = {
   stageNeedsMaintainer: (stage) => `A ${OF_STAGE(stage)} precisa de um mantenedor.`,
   agentReports: (reason) => `O agente relata: ${reason}`,
   missingWorkflows: (paths) => `O agente aguarda workflows que não estão na branch: ${paths}.`,
+  branchMoved:
+    "A branch da tarefa mudou durante a rodada. O Codeman manteve os novos commits e não commitou nenhuma mudança desta rodada; a próxima rodada da etapa parte dos novos commits.",
+  branchMovedReason: (reason) =>
+    reason.kind === "conflict"
+      ? `Os novos commits mudam caminhos que esta rodada também mudou: ${reason.paths.join(", ")}.`
+      : reason.kind === "moved-again"
+        ? "A branch da tarefa mudou de novo enquanto o Codeman commitava as mudanças desta rodada sobre os novos commits."
+        : "O Codeman não conseguiu comparar os novos commits com as mudanças desta rodada: a branch foi reescrita, ou eles mudam arquivos demais.",
   awaitingWorkflows: (stage, paths, reason) =>
     `A ${OF_STAGE(stage)} precisa que ${paths} rode: ${reason} O Codeman continua quando essas execuções terminarem na branch da tarefa. \`/codeman continue <orientação>\` continua sem elas.`,
   deferredWorkflows: (stage, paths, reason, next) =>

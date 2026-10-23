@@ -2,7 +2,13 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { join } from "node:path";
 import { MIN_RUN_BUDGET, runLimit } from "../budget.ts";
 import type { Change } from "../collect.ts";
-import { type Messages, messages, type RunOutcome, taskLanguage } from "../i18n/index.ts";
+import {
+  type BranchMoved,
+  type Messages,
+  messages,
+  type RunOutcome,
+  taskLanguage,
+} from "../i18n/index.ts";
 import { addPod } from "../inference/spend.ts";
 import {
   type Cut,
@@ -383,9 +389,23 @@ async function applyStage(task: TaskContext, io: Io): Promise<void> {
       path: stagedPath(change.path, io.conventions.workflows),
     })),
   ];
+  // A staged workflow also stands for the file the accept overwrites.
+  const paths = [
+    ...changes.map((change) => change.path),
+    ...checked.value.staged.map((change) => change.path),
+  ];
+  /** The branch moved during the run, and nothing of it could be committed. */
+  const moved = (reason: BranchMoved): Promise<void> =>
+    finish(io, task, "blocked", {
+      outcome: "blocked",
+      record,
+      message: `${t.branchMoved} ${retryHint(t, task)}`,
+      report: output.ok ? output.value.summary : undefined,
+      errors: [t.branchMovedReason(reason), ...warnings],
+    });
   let head = task.baseSha;
   if (changes.length > 0) {
-    head = await io.repo.commit({
+    const committed = await commitOnBranch(io, {
       branch: task.branch,
       baseSha: head,
       createBranch: !task.branchExists,
@@ -393,7 +413,10 @@ async function applyStage(task: TaskContext, io: Io): Promise<void> {
       message:
         (output.ok ? output.value.commitMessage : undefined) ??
         `${STAGE_NAMES[stage]} for #${task.number}`,
+      paths,
     });
+    if (!committed.ok) return moved(committed.reason);
+    head = committed.head;
   }
 
   if (!output.ok) {
@@ -556,7 +579,7 @@ async function applyStage(task: TaskContext, io: Io): Promise<void> {
    */
   async function reviewPassed(record: TaskRecord, report: string): Promise<void> {
     if (task.ignore === null && (await io.repo.readFile(task.branch, IGNORE_FILE)) === undefined) {
-      head = await io.repo.commit({
+      const committed = await commitOnBranch(io, {
         branch: task.branch,
         baseSha: head,
         createBranch: false,
@@ -567,7 +590,10 @@ async function applyStage(task: TaskContext, io: Io): Promise<void> {
           },
         ],
         message: `Add ${IGNORE_FILE}\n\nThe paths Codeman's agent may not change. Review them before merging.`,
+        paths: [IGNORE_FILE],
       });
+      if (!committed.ok) return moved(committed.reason);
+      head = committed.head;
     }
     const staged = [...(await io.repo.filesUnder(head, STAGED_WORKFLOWS_DIR)).keys()].map((path) =>
       workflowPath(path, io.conventions.workflows),
@@ -590,6 +616,44 @@ async function applyStage(task: TaskContext, io: Io): Promise<void> {
       errors: warnings,
     });
   }
+}
+
+/**
+ * Commits a run's changes on the task branch. When the branch moved since `baseSha`, as when a
+ * maintainer pushed during the run, commits them on its new head instead, if the new commits
+ * change none of `paths`. Once: a branch that moves again is left as it is.
+ */
+async function commitOnBranch(
+  io: Io,
+  options: Parameters<Platform["commit"]>[0] & { paths: readonly string[] },
+): Promise<{ ok: true; head: string } | { ok: false; reason: BranchMoved }> {
+  const { paths, ...commit } = options;
+  try {
+    return { ok: true, head: await io.repo.commit(commit) };
+  } catch (error) {
+    if (commit.createBranch) throw error;
+    const head = await movedTo(io, commit.branch, commit.baseSha, error);
+    const changed = await io.repo.changedPaths(commit.baseSha, head);
+    if (changed === undefined) return { ok: false, reason: { kind: "not-compared" } };
+    const ours = new Set(paths);
+    const conflicts = [...new Set(changed.filter((path) => ours.has(path)))].sort();
+    if (conflicts.length > 0) return { ok: false, reason: { kind: "conflict", paths: conflicts } };
+    io.runtime.info(`${commit.branch} moved during the run; committing on its head ${head}.`);
+    try {
+      return { ok: true, head: await io.repo.commit({ ...commit, baseSha: head }) };
+    } catch (again) {
+      await movedTo(io, commit.branch, head, again);
+      return { ok: false, reason: { kind: "moved-again" } };
+    }
+  }
+}
+
+/** The branch's head, after a commit on `baseSha` failed because it moved; else the error. */
+async function movedTo(io: Io, branch: string, baseSha: string, error: unknown): Promise<string> {
+  const head = await io.repo.branchSha(branch);
+  if (head === undefined || head === baseSha) throw error;
+  io.runtime.warning(`${branch} moved during the run: ${oneLine(String(error))}`);
+  return head;
 }
 
 /**

@@ -113,7 +113,7 @@ test("without pull_requests: read, listing reviews fails as it did on GitHub", {
   });
 });
 
-test("apply's platform commits through the Git Data API, and a moved branch refuses it", {
+test("apply's platform commits through the Git Data API, a moved branch refuses it, and compare lists the new paths", {
   skip,
 }, async () => {
   const apply = platform(APPLY);
@@ -159,6 +159,12 @@ test("apply's platform commits through the Git Data API, and a moved branch refu
     }),
     (error: { status?: number }) => error.status === 422,
   );
+  // What the maintainer's push changed, which apply compares with its own paths.
+  const moved = await apply.branchSha("codeman/1");
+  assert.ok(moved);
+  assert.deepEqual(await apply.changedPaths(second, moved), ["NOTE.md"]);
+  assert.deepEqual(await apply.changedPaths(first, moved), ["NOTE.md", "src/health.ts"]);
+  assert.equal(await apply.changedPaths(moved, second), undefined, "not a descendant");
   const pushes = fake.events.filter((event) => event.name === "push");
   assert.deepEqual(
     pushes.map((event) => (event.payload.sender as { login: string }).login),

@@ -29687,6 +29687,7 @@ function stateOf(labels) {
 }
 
 // src/platform/github/platform.ts
+var COMPARE_FILES = 300;
 function octokit(token) {
   return getOctokit(token);
 }
@@ -29961,6 +29962,19 @@ var GitHubPlatform = class {
       }
     }
     return files;
+  }
+  async changedPaths(base, head) {
+    const { data } = await this.#octokit.rest.repos.compareCommitsWithBasehead({
+      ...this.#scope,
+      basehead: `${base}...${head}`,
+      per_page: 1
+    });
+    if (data.status !== "ahead" && data.status !== "identical") return void 0;
+    const files = data.files ?? [];
+    if (files.length >= COMPARE_FILES) return void 0;
+    return files.flatMap(
+      (file) => file.previous_filename ? [file.filename, file.previous_filename] : [file.filename]
+    );
   }
   /**
    * Through the Git Data API, so GitHub signs the commit as the App. `updateRef` without `force`
@@ -31436,6 +31450,8 @@ Tests: ${test ?? "(no report)"}`,
   stageNeedsMaintainer: (stage) => `The ${STAGES2[stage]} stage needs a maintainer.`,
   agentReports: (reason) => `The agent reports: ${reason}`,
   missingWorkflows: (paths) => `The agent waits for workflows that are not on the branch: ${paths}.`,
+  branchMoved: "The task branch moved during the run. Codeman kept the new commits and committed none of this run's changes; the stage's next run starts from the new commits.",
+  branchMovedReason: (reason) => reason.kind === "conflict" ? `The new commits change paths this run changed too: ${reason.paths.join(", ")}.` : reason.kind === "moved-again" ? "The task branch moved again while Codeman committed this run's changes on the new commits." : "Codeman could not compare the new commits with this run's changes: the branch was rewritten, or they change too many files.",
   awaitingWorkflows: (stage, paths, reason) => `The ${STAGES2[stage]} stage needs ${paths} to run: ${reason} Codeman goes on when their runs on the task branch finish. \`/codeman continue <guidance>\` goes on without them.`,
   deferredWorkflows: (stage, paths, reason, next) => `The ${STAGES2[stage]} stage needs ${paths} to run: ${reason} The workflows are staged and wait for a maintainer, so the task goes on ${next ? `to the ${STAGES2[next]} stage meanwhile, up to the end of its route` : "to the end of its route meanwhile"}. Once they are accepted and their runs finish, the ${STAGES2[stage]} stage goes on with their results.`,
   acceptAfterReview: (paths) => `Review passed. The task waits for the staged workflows to be accepted: ${paths}. Read them, with review's report on the pull request, and comment \`/codeman accept-workflows\`. The pull request stays a draft until then, since merged now they would never run.`,
@@ -31700,6 +31716,8 @@ Testes: ${test ?? "(sem relat\xF3rio)"}`,
   stageNeedsMaintainer: (stage) => `A ${OF_STAGE(stage)} precisa de um mantenedor.`,
   agentReports: (reason) => `O agente relata: ${reason}`,
   missingWorkflows: (paths) => `O agente aguarda workflows que n\xE3o est\xE3o na branch: ${paths}.`,
+  branchMoved: "A branch da tarefa mudou durante a rodada. O Codeman manteve os novos commits e n\xE3o commitou nenhuma mudan\xE7a desta rodada; a pr\xF3xima rodada da etapa parte dos novos commits.",
+  branchMovedReason: (reason) => reason.kind === "conflict" ? `Os novos commits mudam caminhos que esta rodada tamb\xE9m mudou: ${reason.paths.join(", ")}.` : reason.kind === "moved-again" ? "A branch da tarefa mudou de novo enquanto o Codeman commitava as mudan\xE7as desta rodada sobre os novos commits." : "O Codeman n\xE3o conseguiu comparar os novos commits com as mudan\xE7as desta rodada: a branch foi reescrita, ou eles mudam arquivos demais.",
   awaitingWorkflows: (stage, paths, reason) => `A ${OF_STAGE(stage)} precisa que ${paths} rode: ${reason} O Codeman continua quando essas execu\xE7\xF5es terminarem na branch da tarefa. \`/codeman continue <orienta\xE7\xE3o>\` continua sem elas.`,
   deferredWorkflows: (stage, paths, reason, next) => `A ${OF_STAGE(stage)} precisa que ${paths} rode: ${reason} Os workflows est\xE3o guardados e aguardam um mantenedor, ent\xE3o a tarefa segue ${next ? `para a ${OF_STAGE(next)} enquanto isso, at\xE9 o fim da sua rota` : "at\xE9 o fim da sua rota enquanto isso"}. Quando forem aceitos e as execu\xE7\xF5es terminarem, a ${OF_STAGE(stage)} continua com os resultados.`,
   acceptAfterReview: (paths) => `A revis\xE3o passou. A tarefa aguarda que os workflows guardados sejam aceitos: ${paths}. Leia-os, junto com o relat\xF3rio da revis\xE3o no pull request, e comente \`/codeman accept-workflows\`. O pull request continua em rascunho at\xE9 l\xE1, porque, mergeados agora, eles nunca rodariam.`,
@@ -33735,15 +33753,29 @@ async function applyStage(task, io) {
       path: stagedPath(change.path, io.conventions.workflows)
     }))
   ];
+  const paths = [
+    ...changes.map((change) => change.path),
+    ...checked2.value.staged.map((change) => change.path)
+  ];
+  const moved = (reason2) => finish(io, task, "blocked", {
+    outcome: "blocked",
+    record,
+    message: `${t.branchMoved} ${retryHint(t, task)}`,
+    report: output.ok ? output.value.summary : void 0,
+    errors: [t.branchMovedReason(reason2), ...warnings]
+  });
   let head = task.baseSha;
   if (changes.length > 0) {
-    head = await io.repo.commit({
+    const committed = await commitOnBranch(io, {
       branch: task.branch,
       baseSha: head,
       createBranch: !task.branchExists,
       changes,
-      message: (output.ok ? output.value.commitMessage : void 0) ?? `${STAGE_NAMES[stage]} for #${task.number}`
+      message: (output.ok ? output.value.commitMessage : void 0) ?? `${STAGE_NAMES[stage]} for #${task.number}`,
+      paths
     });
+    if (!committed.ok) return moved(committed.reason);
+    head = committed.head;
   }
   if (!output.ok) {
     if (manifest.timedOut) {
@@ -33878,7 +33910,7 @@ ${summary2}`, 4e3) }
   }
   async function reviewPassed(record2, report) {
     if (task.ignore === null && await io.repo.readFile(task.branch, IGNORE_FILE) === void 0) {
-      head = await io.repo.commit({
+      const committed = await commitOnBranch(io, {
         branch: task.branch,
         baseSha: head,
         createBranch: false,
@@ -33890,8 +33922,11 @@ ${summary2}`, 4e3) }
         ],
         message: `Add ${IGNORE_FILE}
 
-The paths Codeman's agent may not change. Review them before merging.`
+The paths Codeman's agent may not change. Review them before merging.`,
+        paths: [IGNORE_FILE]
       });
+      if (!committed.ok) return moved(committed.reason);
+      head = committed.head;
     }
     const staged = [...(await io.repo.filesUnder(head, STAGED_WORKFLOWS_DIR)).keys()].map(
       (path) => workflowPath(path, io.conventions.workflows)
@@ -33914,6 +33949,33 @@ The paths Codeman's agent may not change. Review them before merging.`
       errors: warnings
     });
   }
+}
+async function commitOnBranch(io, options) {
+  const { paths, ...commit } = options;
+  try {
+    return { ok: true, head: await io.repo.commit(commit) };
+  } catch (error3) {
+    if (commit.createBranch) throw error3;
+    const head = await movedTo(io, commit.branch, commit.baseSha, error3);
+    const changed = await io.repo.changedPaths(commit.baseSha, head);
+    if (changed === void 0) return { ok: false, reason: { kind: "not-compared" } };
+    const ours = new Set(paths);
+    const conflicts = [...new Set(changed.filter((path) => ours.has(path)))].sort();
+    if (conflicts.length > 0) return { ok: false, reason: { kind: "conflict", paths: conflicts } };
+    io.runtime.info(`${commit.branch} moved during the run; committing on its head ${head}.`);
+    try {
+      return { ok: true, head: await io.repo.commit({ ...commit, baseSha: head }) };
+    } catch (again) {
+      await movedTo(io, commit.branch, head, again);
+      return { ok: false, reason: { kind: "moved-again" } };
+    }
+  }
+}
+async function movedTo(io, branch, baseSha, error3) {
+  const head = await io.repo.branchSha(branch);
+  if (head === void 0 || head === baseSha) throw error3;
+  io.runtime.warning(`${branch} moved during the run: ${oneLine(String(error3))}`);
+  return head;
 }
 async function applyRoute(task, io) {
   if (!task.record) return blocked(io, task, "The task has no record of its plan.");
