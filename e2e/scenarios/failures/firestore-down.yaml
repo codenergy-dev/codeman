@@ -1,0 +1,75 @@
+# Codeman's store unavailable (docs/installation/backend-maintenance.md, "When jobs cannot reach
+# the backend"): the Firestore emulator is taken off the jobs' network.
+#
+# 1. Down before a run: `select` tries the store 4 times, then fails before it marks any task. The
+#    issue keeps no state label and gets no comment, the ledger has nothing, and next-run, which
+#    needs a successful `select`, starts no other run.
+# 2. Back up: the next run plans the task.
+# 3. Down while the agent of the decisions' routing run works: `close-key` ends the run's access
+#    first, disabling its OpenRouter key, then fails writing the ledger, where the run stays
+#    `open`; apply, which needs no store, still applies the run.
+name: An unavailable store fails select before it marks a task, and close-key after it ends the key
+tags: [failures, openrouter, store]
+runner: simulator
+timeout: 20m
+world:
+  organizations:
+    - { name: acme, settings: { model: deepseek/deepseek-v4.1-flash, task-budget: 2 } }
+  repositories:
+    - { name: acme/app, fixture: node-small, maintainers: [alice] }
+agent:
+  i1:
+    plan:
+      - steps:
+          - bash: plan=$(sed -n 's/.*Create the plan at `\([^`]*\)`.*/\1/p' .codeman/task.md) && mkdir -p "$(dirname "$plan")" && printf '# Add a health route\n' > "$plan"
+          - output:
+              summary: Adds a health route.
+              decisions:
+                - { id: 1, title: Port, question: Which port?, options: [{ key: a, label: "8080" }, { key: b, label: "3000" }], recommendation: a }
+    route:
+      # The store goes down while this round works: it waits 15 seconds before its output.
+      - steps:
+          - delay: 15000
+          - output:
+              summary: Code, then review.
+              route: [{ stage: code, brief: Add the route. }, { stage: review, brief: Check it. }]
+              skipped: [{ stage: web, reason: No docs. }, { stage: design, reason: Settled. }, { stage: test, reason: Too small. }]
+actions:
+  - open-issue: { ref: i1, as: alice, title: Add a health route, labels: [codeman] }
+  - fault: { firestore: down }
+  - run: { event: issues.labeled }
+  - expect:
+      issue: i1
+      labels: [codeman]
+      no-labels: [codeman:planning, codeman:blocked]
+      comments: [{ kind: any, count: 0 }]
+      store:
+        - { collection: organizations/acme/runs, count: 0 }
+      fakes:
+        openrouter:
+          keys: { count: 0 }
+        github:
+          dispatches: { count: 0 }
+          runs: { where: { conclusion: failure }, count: 1 }
+  - fault: { firestore: up }
+  - run: { event: workflow_dispatch }
+  - expect: { issue: i1, labels: [codeman:awaiting-decision], comments: [{ kind: decisions, contains: Which port? }] }
+  - comment: { issue: i1, as: alice, body: /codeman decide 1 a }
+  - parallel:
+      - - advance: { until: { issue: i1, labels: [codeman:coding] }, max-runs: 4 }
+      - - wait:
+            timeout: 10m
+            until: { fakes: { llm: { turns: { where: { stage: route, kind: step }, count: { at-least: 1 } } } } }
+        - fault: { firestore: down }
+  - expect:
+      issue: i1
+      comments: [{ kind: run, contains: Next stages chosen }]
+      store:
+        # The routing run's spend never reached the ledger: it stays open, with its reservation.
+        - { collection: organizations/acme/runs, where: { status: open, stage: route }, count: 1 }
+        - { collection: organizations/acme/runs, where: { status: closed, stage: plan }, count: 1 }
+      fakes:
+        # close-key ended the run's access before it failed on the store.
+        openrouter:
+          keys: { where: { disabled: true }, count: 2 }
+  - fault: { firestore: up }

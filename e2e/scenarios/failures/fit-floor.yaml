@@ -1,0 +1,78 @@
+# A model that does not fit the GPU even at the floor of context: the gateway's fit
+# (docs/settings/pod-engines.md, "Context and the GPU") gives up with its floor message, which
+# names the floor and how to fix the settings, and reports the start failed. open-key reads the
+# failure at once, ends the pod's registry document with the message and terminates the pod
+# (docs/inference/pods.md, "Creating"); the run fails at a cost of 0 and the task is blocked.
+#
+# The tee's virtual VRAM is the pod's GPU memory, 1 GB here: qwen2.5:0.5b with two parallel
+# requests of 32768 tokens (its own context, below the floor of 64000) needs about 1.5 GB.
+name: A model too large for the GPU's memory at the floor fails the pod's start with the floor message
+tags: [failures, pods, ollama]
+runner: simulator
+profiles: [ollama]
+world:
+  organizations:
+    - name: acme
+      settings:
+        provider: runpod-pod
+        model: qwen2.5:0.5b
+        gpu: NVIDIA GeForce RTX 4090
+        task-budget: 2
+        ollama: { num-parallel: 2 }
+  repositories:
+    - { name: acme/app, fixture: node-small, maintainers: [alice] }
+  runpod:
+    catalog:
+      - id: NVIDIA GeForce RTX 4090
+        name: RTX 4090
+        pool: ADA_24
+        manufacturer: NVIDIA
+        memory: 1
+        secure: true
+        community: true
+        price: { secure: 0.69, community: 0.34, serverless: 1.1 }
+        maxCount: { secure: 8, community: 4 }
+        availability: HIGH
+        cudaVersions: [{ version: "12.8", available: true }, { version: "13.0", available: true }]
+actions:
+  - open-issue: { ref: i1, as: alice, title: Add a health route, labels: [codeman] }
+  - run: { event: issues.labeled }
+  - expect:
+      issue: i1
+      labels: [codeman:blocked]
+      comments:
+        - kind: run
+          contains:
+            - Codeman could not give this run access to its model (an OpenRouter key, or a GPU). See the run log.
+            - Remove the `codeman:blocked` label to try again.
+      pods:
+        - { count: 1 }
+        - ref: p1
+          status: TERMINATED
+          where: { billing: stopped, env: { CODEMAN_GPU_MEMORY_GB: "1" } }
+      store:
+        - collection: pools/acme/pods
+          where:
+            live: false
+            status: ended
+            reason:
+              contains:
+                - "its start failed: Pod "
+                - "`qwen2.5:0.5b` does not fit the GPU with 2 parallel requests and a context of 32768 tokens, the least Codeman gives an agent"
+                - "set a smaller `num-parallel`, set `kv-cache-type: q8_0` in the `ollama` settings, or use a GPU with more memory."
+          count: 1
+        - collection: organizations/acme/runs
+          where: { status: failed, cost: 0, stage: plan, provider: runpod-pod }
+          count: 1
+        - { collection: organizations/acme/events, where: { type: key-failed }, count: 1 }
+      # The gateway's own status, as it was when open-key terminated the pod.
+      engine:
+        pod: p1
+        gateway:
+          ready: false
+          failure: { contains: "does not fit the GPU with 2 parallel requests and a context of 32768 tokens, the least Codeman gives an agent" }
+      ledger: { runs: 1, cost-at-most: 0 }
+      fakes:
+        llm:
+          turns: { count: 0 }
+      violations: none

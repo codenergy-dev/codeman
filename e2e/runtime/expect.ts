@@ -570,6 +570,8 @@ export interface TeeStatus {
    * turn nor the title.
    */
   issues: number;
+  /** The agents' requests the tee held before the engine for a meet (`world.runpod.tee.meet`). */
+  held: number;
   /** The engine's runner processes, such as Ollama's `llama-server`, with `context` and `parallel`. */
   runners: unknown[];
   /** The runners' slots, each with its context (`n_ctx`): llama-server's `/slots`. */
@@ -591,6 +593,7 @@ export function teeStatus(
   records: readonly {
     kind?: unknown;
     identified?: { issue?: unknown };
+    heldMs?: unknown;
     engine?: { start?: unknown; end?: unknown };
   }[],
   runners: readonly unknown[],
@@ -626,6 +629,7 @@ export function teeStatus(
     agent: agent.length,
     overlap,
     issues,
+    held: agent.filter((record) => typeof record.heldMs === "number" && record.heldMs > 0).length,
     runners: [...runners],
     slots: Array.isArray(slots?.slots) ? slots.slots : [],
     busiest: typeof slots?.busiest === "number" ? slots.busiest : undefined,
@@ -702,6 +706,11 @@ export function matches(pattern: Pattern, value: unknown, at = ""): string | und
         return `${where}${number}, above ${pattern.atMost}`;
       }
       return undefined;
+    }
+    case "contains": {
+      if (typeof value !== "string") return `${where}${show(value)} is not a text`;
+      const missing = pattern.texts.find((text) => !value.includes(text));
+      return missing === undefined ? undefined : `${where}${show(value)} lacks ${show(missing)}`;
     }
     case "object": {
       if (typeof value !== "object" || value === null || Array.isArray(value)) {

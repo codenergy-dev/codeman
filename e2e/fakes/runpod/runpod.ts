@@ -78,6 +78,11 @@ export interface RunpodFaults {
   lowBalance?: boolean;
   /** Endpoints whose jobs no worker takes (`true` for all): they wait `IN_QUEUE`. */
   holdQueues?: boolean | string[];
+  /**
+   * Pods created from now on were created this many milliseconds ago, as Runpod reports and bills
+   * them: a seeded past for the timers that count from a pod's creation (decision 5 of the e2e plan).
+   */
+  podAgeMs?: number;
 }
 
 const POD_ACTIONS: Record<PodStatus, string[]> = {
@@ -368,7 +373,7 @@ export class RunpodFake {
       .sort(compareCuda)
       .at(-1);
     const price = cloud === "SECURE" ? gpu.price.secure : gpu.price.community;
-    const now = this.#now();
+    const now = this.#now() - (this.#faults.podAgeMs ?? 0);
     const ports = create.ports ?? [];
     const pod: PodRecord = {
       spec: {
@@ -764,7 +769,11 @@ function faultsOf(value: unknown): RunpodFaults {
   >;
   const hold = faults.holdQueues;
   if (
-    Object.keys(faults).some((name) => !["podStart", "lowBalance", "holdQueues"].includes(name)) ||
+    Object.keys(faults).some(
+      (name) => !["podStart", "lowBalance", "holdQueues", "podAgeMs"].includes(name),
+    ) ||
+    (faults.podAgeMs !== undefined &&
+      !(Number.isSafeInteger(faults.podAgeMs) && (faults.podAgeMs as number) >= 0)) ||
     (faults.podStart !== undefined && faults.podStart !== "never" && faults.podStart !== "fail") ||
     (faults.lowBalance !== undefined && typeof faults.lowBalance !== "boolean") ||
     (hold !== undefined &&
@@ -773,7 +782,7 @@ function faultsOf(value: unknown): RunpodFaults {
   ) {
     throw new HttpError(400, {
       message:
-        "Faults may have podStart (never or fail), lowBalance (a boolean) and holdQueues (true or endpoint IDs).",
+        "Faults may have podStart (never or fail), lowBalance (a boolean), holdQueues (true or endpoint IDs) and podAgeMs (milliseconds).",
     });
   }
   return faults as RunpodFaults;

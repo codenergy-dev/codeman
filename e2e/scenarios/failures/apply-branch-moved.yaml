@@ -1,0 +1,62 @@
+# Known bug, not fixed: apply fails on a task branch a maintainer moved during the run, and the
+# task is left with no word of it.
+#
+# A maintainer pushes to the task branch while the code stage's agent works. apply commits the
+# agent's work on the branch's head as select saw it, through the Git Data API, and updates the
+# branch without force (src/platform/github/platform.ts, `commit`): GitHub refuses with 422 "Update
+# is not a fast forward", and the maintainer's commit is kept. But apply lets the error out: the
+# job fails with "Update is not a fast forward", no run comment is posted, the panel still says the
+# code stage works, the label stays `codeman:coding`, and since apply uploaded no chain artifact,
+# next-run starts no run. The agent's paid work is lost, and nothing tells the maintainers so.
+# What it should do is not documented; this scenario expects the run to say how it ended in a run
+# comment, as every other failure of a routed stage does (docs/tasks/comments.md, "Run comments").
+name: apply does not overwrite a task branch a maintainer moved during the run, and says so
+tags: [failures, openrouter, known-bug]
+runner: simulator
+timeout: 20m
+world:
+  organizations:
+    - { name: acme, settings: { model: deepseek/deepseek-v4.1-flash, task-budget: 2 } }
+  repositories:
+    - { name: acme/app, fixture: node-small, maintainers: [alice] }
+agent:
+  i1:
+    plan:
+      - steps:
+          - bash: plan=$(sed -n 's/.*Create the plan at `\([^`]*\)`.*/\1/p' .codeman/task.md) && mkdir -p "$(dirname "$plan")" && printf '# Add a health route\n' > "$plan"
+          - output: { summary: Adds a health route., decisions: [] }
+    route:
+      - steps:
+          - output:
+              summary: Code, then review.
+              route: [{ stage: code, brief: Add the route. }, { stage: review, brief: Check it. }]
+              skipped: [{ stage: web, reason: No docs. }, { stage: design, reason: Settled. }, { stage: test, reason: Too small. }]
+    code:
+      # The maintainer pushes while this round works: it waits 20 seconds before its output.
+      - steps:
+          - write: { path: src/health.ts, content: "export const ok = true;\n" }
+          - delay: 20000
+          - output: { status: done, summary: Adds the route., commitMessage: Add a health route }
+      - steps:
+          - write: { path: src/health.ts, content: "export const ok = true;\n" }
+          - output: { status: done, summary: Adds the route again., commitMessage: Add a health route }
+    review:
+      - steps: [{ output: { status: done, summary: The route is right. } }]
+actions:
+  - open-issue: { ref: i1, as: alice, title: Add a health route, labels: [codeman] }
+  - parallel:
+      - - run: { event: issues.labeled }
+      - - wait:
+            timeout: 10m
+            until: { fakes: { llm: { turns: { where: { stage: code, kind: step }, count: { at-least: 1 } } } } }
+        - push: { task: i1, as: alice, files: { src/maintainer.ts: "export const mine = 1;\n" }, message: A maintainer's commit }
+  # The maintainer's commit is kept: apply did not force the branch.
+  - expect:
+      issue: i1
+      commits: { message: A maintainer's commit, files: [src/maintainer.ts] }
+      store:
+        - { collection: organizations/acme/runs, where: { status: closed, stage: code }, count: 1 }
+  # Fails today: apply failed with "Update is not a fast forward", and posted nothing.
+  - expect:
+      issue: i1
+      comments: [{ kind: run, contains: Code stage }]

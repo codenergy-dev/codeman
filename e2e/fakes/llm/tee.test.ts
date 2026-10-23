@@ -441,6 +441,62 @@ test("the scripted model's server can be the replies' source, an exit included",
   assert.ok(llm.model.turns.every((turn) => turn.via === "openai"));
 });
 
+test("with meet, the agents' turns wait for another issue's, and go to the engine together", async () => {
+  const meeting = new ScriptedModel();
+  const round = [{ steps: [{ bash: "ls" }, { output: { status: "done", summary: "Lists." } }] }];
+  meeting.load(SCENARIO, scriptOf({ i1: { code: round }, i2: { code: round } }));
+  const meet = new Tee({
+    engine: engineOrigin,
+    script: localScripts(meeting),
+    meet: { issues: 2, timeoutMs: 5_000 },
+  });
+  const origin = await meet.server.listen();
+  closers.push(() => meet.server.close());
+  const send: Send = async (request) => {
+    const response = await post(origin, "/v1/chat/completions", request);
+    return accumulate(sseEvents(await response.text()));
+  };
+  engine.delayMs = 50;
+  const first = new Session(taskFile(SCENARIO, "i1", "code"));
+  const second = new Session(taskFile(SCENARIO, "i2", "code"));
+  // The task file's read is no turn of an issue: it is not held.
+  await first.step(send);
+  await second.step(send);
+  // i1's first turn waits until i2's arrives, 300 ms later; both then reach the engine at once.
+  const held = first.step(send);
+  await sleep(300);
+  await Promise.all([held, second.step(send)]);
+  const turns = meet.records.filter((record) => record.identified?.kind === "turn");
+  assert.equal(turns.length, 2);
+  const [one, two] = turns;
+  assert.ok((one?.heldMs ?? 0) >= 250, `i1's turn was held: ${one?.heldMs} ms`);
+  assert.ok(Math.abs((one?.engine.start ?? 0) - (two?.engine.start ?? 0)) < 50);
+  assert.ok((one?.engine.start ?? 0) < (two?.engine.end ?? 0));
+  // After the meet, nothing is held: i1's next turn goes on alone.
+  const started = Date.now();
+  await first.step(send);
+  assert.ok(Date.now() - started < 1_000, "no turn is held after the meet");
+  assert.equal(meet.records.at(-1)?.heldMs, undefined);
+});
+
+test("with meet, a turn no other issue meets goes on after its timeout", async () => {
+  const lone = new Tee({
+    engine: engineOrigin,
+    script: localScripts(model),
+    meet: { issues: 2, timeoutMs: 200 },
+  });
+  const origin = await lone.server.listen();
+  closers.push(() => lone.server.close());
+  const send: Send = async (request) => {
+    const response = await post(origin, "/v1/chat/completions", request);
+    return accumulate(sseEvents(await response.text()));
+  };
+  const session = new Session(taskFile(SCENARIO, "i1", "code"));
+  await session.step(send);
+  assert.equal((await session.step(send)).calls[0]?.function.name, "write");
+  assert.ok((lone.records.at(-1)?.heldMs ?? 0) >= 150);
+});
+
 test("the tee's environment names the engine and one source of scripts", async () => {
   await assert.rejects(fromEnv({ TEE_ENGINE: engineOrigin }), /one of TEE_MODEL/);
   await assert.rejects(
@@ -450,6 +506,10 @@ test("the tee's environment names the engine and one source of scripts", async (
   await assert.rejects(
     fromEnv({ TEE_ENGINE: engineOrigin, TEE_MODEL: "http://llm:8080", TEE_VRAM_BYTES: "lots" }),
     /TEE_VRAM_BYTES must be a count/,
+  );
+  await assert.rejects(
+    fromEnv({ TEE_ENGINE: engineOrigin, TEE_MODEL: "http://llm:8080", TEE_MEET_ISSUES: "two" }),
+    /TEE_MEET_ISSUES must be a count/,
   );
 });
 

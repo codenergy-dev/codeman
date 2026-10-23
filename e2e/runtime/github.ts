@@ -132,6 +132,7 @@ export class RemoteGitHub implements GitHubPort {
     private: boolean;
     drafts: boolean;
     files: Record<string, string>;
+    submodules?: Record<string, string>;
     collaborators: Record<string, Role>;
   }): Promise<RepositoryInfo> {
     const json = await this.client.json<Record<string, unknown>>("POST", "/github/repos", options);

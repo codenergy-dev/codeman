@@ -46,6 +46,7 @@ import {
   type Scenario,
   type StoreMatch,
   type Target,
+  type TeeWorld,
   type World,
 } from "./schema.ts";
 
@@ -219,6 +220,8 @@ function worldOf(value: unknown, path: Path, options: ValidateOptions): World {
       "settings",
       "variables",
       "secrets",
+      "submodules",
+      "agent-minutes",
     ]);
     required(repo, at, ["name", "fixture"]);
     const name = text(repo.name, [...at, "name"]);
@@ -246,6 +249,11 @@ function worldOf(value: unknown, path: Path, options: ValidateOptions): World {
         repo.settings === undefined ? undefined : settingsOf(repo.settings, [...at, "settings"]),
       variables: variablesOf(repo.variables, [...at, "variables"]),
       secrets: repo.secrets === undefined ? undefined : secretsOf(repo.secrets, [...at, "secrets"]),
+      submodules: submodulesOf(repo.submodules, [...at, "submodules"]),
+      agentMinutes:
+        repo["agent-minutes"] === undefined
+          ? undefined
+          : positiveWhole(repo["agent-minutes"], [...at, "agent-minutes"]),
     } satisfies Repository;
   });
   if (repositories.length === 0) {
@@ -369,8 +377,9 @@ function installationOf(value: unknown, path: Path, world: World): Installation 
 }
 
 function runpodOf(value: unknown, path: Path): RunpodWorld {
-  const fields = record(value, path, ["catalog", "endpoints"]);
+  const fields = record(value, path, ["catalog", "endpoints", "tee"]);
   return {
+    tee: fields.tee === undefined ? undefined : teeOf(fields.tee, [...path, "tee"]),
     catalog:
       fields.catalog === undefined
         ? undefined
@@ -384,6 +393,45 @@ function runpodOf(value: unknown, path: Path): RunpodWorld {
       [...path, "endpoints"],
       (item, at): EndpointSetup => fakeShape(at, () => endpointOf(item)),
     ),
+  };
+}
+
+/** `{ path: sha }`: each a path in the repository and a full commit SHA. */
+function submodulesOf(value: unknown, path: Path): Record<string, string> {
+  const submodules: Record<string, string> = {};
+  for (const [file, sha] of entries(value ?? {}, path)) {
+    if (!/^[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/.test(file) || file.split("/").includes("..")) {
+      fail([...path, file], "expected a relative path");
+    }
+    const commit = text(sha, [...path, file]);
+    if (!/^[0-9a-f]{40}$/.test(commit)) fail([...path, file], "expected a full commit SHA");
+    submodules[file] = commit;
+  }
+  return submodules;
+}
+
+/** A whole number of at least 1. */
+function positiveWhole(value: unknown, path: Path): number {
+  if (!Number.isInteger(value) || (value as number) < 1) fail(path, "a whole number of at least 1");
+  return value as number;
+}
+
+/** `meet: { issues, timeout }`: at least 2 issues; 2 minutes by default. */
+function teeOf(value: unknown, path: Path): TeeWorld {
+  const fields = record(value, path, ["meet"]);
+  if (fields.meet === undefined) return { meet: undefined };
+  const at = [...path, "meet"];
+  const meet = record(fields.meet, at, ["issues", "timeout"]);
+  required(meet, at, ["issues"]);
+  const issues = meet.issues;
+  if (!Number.isInteger(issues) || (issues as number) < 2) {
+    fail([...at, "issues"], "a whole number of at least 2");
+  }
+  return {
+    meet: {
+      issues: issues as number,
+      timeoutMs: meet.timeout === undefined ? 120_000 : duration(meet.timeout, [...at, "timeout"]),
+    },
   };
 }
 
@@ -734,12 +782,16 @@ function faultOf(value: unknown, path: Path, context: Context): Fault {
   switch (target) {
     case "runpod":
       if (own) {
-        const fields = record(body, at, ["pod-start", "low-balance", "hold-queues"]);
+        const fields = record(body, at, ["pod-start", "low-balance", "hold-queues", "pod-age"]);
         const runpod: {
           podStart?: "never" | "fail";
           lowBalance?: boolean;
           holdQueues?: boolean | string[];
+          podAgeMs?: number;
         } = {};
+        if (fields["pod-age"] !== undefined) {
+          runpod.podAgeMs = duration(fields["pod-age"], [...at, "pod-age"]);
+        }
         if (fields["pod-start"] !== undefined) {
           runpod.podStart = choice(fields["pod-start"], [...at, "pod-start"], ["never", "fail"]);
         }
@@ -752,7 +804,10 @@ function faultOf(value: unknown, path: Path, context: Context): Fault {
             typeof hold === "boolean" ? hold : list(hold, [...at, "hold-queues"], text);
         }
         if (Object.keys(runpod).length === 0) {
-          fail(at, "expected pod-start, low-balance or hold-queues, or an HTTP fault's path");
+          fail(
+            at,
+            "expected pod-start, low-balance, hold-queues or pod-age, or an HTTP fault's path",
+          );
         }
         return { kind, target, runpod };
       }
@@ -1121,7 +1176,10 @@ function engineOf(value: unknown, path: Path, context: Context): EngineMatch {
   return engine;
 }
 
-/** A value's pattern: a scalar, `{ at-least, at-most }`, a mapping of fields, or a list. */
+/**
+ * A value's pattern: a scalar, `{ at-least, at-most }`, `{ contains }` (a text or texts), a
+ * mapping of fields, or a list.
+ */
 function patternOf(value: unknown, path: Path): Pattern {
   if (value === null || ["string", "number", "boolean"].includes(typeof value)) {
     return { kind: "equals", value: value as string | number | boolean | null };
@@ -1133,6 +1191,14 @@ function patternOf(value: unknown, path: Path): Pattern {
   const names = Object.keys(fields);
   if (names.length > 0 && names.every((name) => name === "at-least" || name === "at-most")) {
     return rangeOf(fields, path);
+  }
+  if (names.length === 1 && names[0] === "contains") {
+    const given = fields.contains;
+    const texts = Array.isArray(given)
+      ? given.map((item, index) => text(item, [...path, "contains", index]))
+      : [text(given, [...path, "contains"])];
+    if (texts.length === 0) fail([...path, "contains"], "expected a text or a list of texts");
+    return { kind: "contains", texts };
   }
   return { kind: "object", fields: patternFields(fields, path) };
 }

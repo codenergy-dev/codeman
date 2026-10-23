@@ -1,0 +1,69 @@
+# next-run starts another run only when the run has a `codeman-chain-` artifact, which only an
+# apply that succeeded uploads (docs/runs/runs-and-jobs.md, "What each job does" and "The next
+# run"). Here the plan's agent runs, its key closes and its cost is recorded, but apply fails: the
+# run has no chain artifact, so next-run, which runs whatever the task's jobs did, lists the run's
+# artifacts, logs "No task moved", and starts no run. The task keeps `codeman:planning`, with no
+# run comment. A later run picks it up and plans it again.
+name: next-run starts no run when apply failed and left no chain artifact
+tags: [failures, openrouter]
+runner: simulator
+world:
+  organizations:
+    - { name: acme, settings: { model: deepseek/deepseek-v4.1-flash, task-budget: 2 } }
+  repositories:
+    - { name: acme/app, fixture: node-small, maintainers: [alice] }
+agent:
+  i1:
+    plan:
+      - &plan
+        steps:
+          - bash: plan=$(sed -n 's/.*Create the plan at `\([^`]*\)`.*/\1/p' .codeman/task.md) && mkdir -p "$(dirname "$plan")" && printf '# Add a health route\n' > "$plan"
+          - output: { summary: Adds a health route., decisions: [] }
+      - *plan
+    route:
+      - steps:
+          - output:
+              summary: Code, then review.
+              route: [{ stage: code, brief: Add the route. }, { stage: review, brief: Check it. }]
+              skipped: [{ stage: web, reason: No docs. }, { stage: design, reason: Settled. }, { stage: test, reason: Too small. }]
+    code:
+      - steps:
+          - write: { path: src/health.ts, content: "export const ok = true;\n" }
+          - output: { status: done, summary: Adds the route., commitMessage: Add a health route }
+    review:
+      - steps: [{ output: { status: done, summary: The route is right. } }]
+actions:
+  - open-issue: { ref: i1, as: alice, title: Add a health route, labels: [codeman] }
+  - fault: { job: { name: apply, times: 1 } }
+  - run: { event: issues.labeled }
+  - expect:
+      issue: i1
+      labels: [codeman:planning]
+      comments: [{ kind: run, count: 0 }]
+      store:
+        # The agent ran, and close-key recorded its spend.
+        - { collection: organizations/acme/runs, where: { status: closed, stage: plan }, count: 1 }
+      fakes:
+        github:
+          # next-run listed the run's artifacts, found no chain, and dispatched nothing.
+          requests:
+            where:
+              method: GET
+              path: { contains: [/api/v3/repos/acme/app/actions/runs/, /artifacts] }
+              headers: { user-agent: { contains: GitHub CLI } }
+            count: 1
+          dispatches: { count: 0 }
+          runs: { where: { event: workflow_dispatch }, count: 0 }
+  # A later run, here a manual one, picks the task up: it plans it again, and each run that moved
+  # it starts the next, to the end.
+  - run: { event: workflow_dispatch }
+  - expect:
+      issue: i1
+      labels: [codeman:done]
+      comments: [{ kind: run, contains: "Plan: written" }, { kind: run, contains: Next stages chosen }]
+      store:
+        - { collection: organizations/acme/runs, where: { status: closed, stage: plan }, count: 2 }
+      fakes:
+        github:
+          dispatches: { count: { at-least: 3 } }
+      violations: none

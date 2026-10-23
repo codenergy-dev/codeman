@@ -27,6 +27,12 @@ world:
               enforce-eager: true
   repositories:
     - { name: acme/app, fixture: node-small, maintainers: [alice] }
+  # The two agents start seconds apart, each once its open-key sees the pod serve, and each turn
+  # takes about a second at the engine: the tee holds the first turns until both issues' wait,
+  # then sends them to vLLM together, so they are certain to meet there.
+  runpod:
+    tee:
+      meet: { issues: 2, timeout: 3m }
 agent:
   # The same plan for both tasks: a few turns, each a request to the engine, then a decision. Few,
   # since OpenCode compacts its conversation once it nears the context of 8192 tokens, about 6000:
@@ -121,6 +127,8 @@ actions:
           requests: 15
           overlap: { at-least: 2, at-most: 4 }
           issues: 2
+          # The first agent's first turn waited for the other's (world.runpod.tee.meet).
+          held: { at-least: 1, at-most: 2 }
           runners: []
           slots: []
           busiest: { at-least: 1, at-most: 2 }

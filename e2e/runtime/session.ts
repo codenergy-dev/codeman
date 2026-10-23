@@ -12,7 +12,7 @@ import { fakeList, teeStatus, vllmMetrics } from "./expect.ts";
 import { bundleEndpoints, FAKE_NAMES, FakeClient, type Fakes, INTERNAL } from "./fakes.ts";
 import { FaultingExecutor, type JobFault } from "./faults.ts";
 import { RemoteGitHub } from "./github.ts";
-import { allowlistPlan, Launcher, podRunner } from "./launcher.ts";
+import { allowlistPlan, Launcher, podRunner, teeEnv } from "./launcher.ts";
 import { type ReportData, Timeline, writePass, writeReport } from "./report.ts";
 import { ScenarioFailure, ScenarioRun } from "./run.ts";
 import { runnerProblem } from "./scenario/filter.ts";
@@ -77,6 +77,8 @@ interface Current {
   session: string;
   scenario: string;
   timeline?: Timeline | undefined;
+  /** The tee's variables for the scenario's pods (`world.runpod.tee`). */
+  teeEnv?: Record<string, string>;
 }
 
 export class Session {
@@ -172,7 +174,11 @@ export class Session {
     const launcher = new Launcher({
       token: secrets.launcherToken,
       plan: (spec) =>
-        allowlistPlan(spec, { model: INTERNAL.llm, controlToken: secrets.controlToken }),
+        allowlistPlan(spec, {
+          model: INTERNAL.llm,
+          controlToken: secrets.controlToken,
+          env: current.teeEnv ?? {},
+        }),
       labels: () => ({ [SESSION_LABEL]: current.session, [SCENARIO_LABEL]: current.scenario }),
       run: podRunner(JOBS_NETWORK),
       events: (event) => current.timeline?.add("pod", `${event.kind} ${event.id}: ${event.detail}`),
@@ -204,6 +210,7 @@ export class Session {
     const timeline = new Timeline();
     this.#current.scenario = slug;
     this.#current.timeline = timeline;
+    this.#current.teeEnv = teeEnv(scenario.world.runpod?.tee);
     const dir = join(OUT, ...scenario.id.split("/"));
     const workdir = join(dir, "work");
     rmSync(dir, { recursive: true, force: true });

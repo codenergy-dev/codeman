@@ -3,6 +3,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from "node:net";
 import type { LaunchSpec } from "../fakes/runpod/launcher.ts";
 import { docker, dockerOk, envArgs, removeLabeled } from "./docker.ts";
+import type { TeeWorld } from "./scenario/schema.ts";
 
 /**
  * The host side of the fake Runpod's pods (decision 2 of the e2e plan): a small HTTP API, behind
@@ -192,7 +193,8 @@ async function stopPod(id: string): Promise<void> {
 
 /**
  * The plan for a pod's image, from the allowlist of e2e/infra/pod-images.ts: the local image,
- * its model volume, read-only, and the tee's way to the scripted model. Fails, saying so, while
+ * its model volume, read-only, the tee's way to the scripted model, and the scenario's tee options
+ * (`teeEnv`). Fails, saying so, while
  * the allowlist's file is missing.
  *
  * A vLLM pod gets 1 GiB of shared memory, as spike 0.1 of the e2e plan ran vLLM: its CPU engine
@@ -201,7 +203,7 @@ async function stopPod(id: string): Promise<void> {
  */
 export async function allowlistPlan(
   spec: LaunchSpec,
-  tee: { model: string; controlToken: string },
+  tee: { model: string; controlToken: string; env?: Record<string, string> },
 ): Promise<PodPlan> {
   let localPodImage: (image: string) => string;
   try {
@@ -218,7 +220,7 @@ export async function allowlistPlan(
   return {
     image,
     volumes,
-    env: { TEE_MODEL: tee.model, FAKE_CONTROL_TOKEN: tee.controlToken },
+    env: { ...tee.env, TEE_MODEL: tee.model, FAKE_CONTROL_TOKEN: tee.controlToken },
     ...(/vllm/.test(image) ? { shm: "1g" } : {}),
   };
 }
@@ -246,4 +248,13 @@ function reply(response: ServerResponse, status: number, body?: unknown): void {
     return;
   }
   response.writeHead(status, { "content-type": "application/json" }).end(JSON.stringify(body));
+}
+
+/** The tee's variables for a scenario's `world.runpod.tee` (e2e/fakes/llm/tee.ts, `fromEnv`). */
+export function teeEnv(tee: TeeWorld | undefined): Record<string, string> {
+  if (!tee?.meet) return {};
+  return {
+    TEE_MEET_ISSUES: String(tee.meet.issues),
+    TEE_MEET_TIMEOUT_MS: String(tee.meet.timeoutMs),
+  };
 }

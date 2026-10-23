@@ -99,6 +99,8 @@ actions:
 | `settings` | Both | `CODEMAN_SETTINGS`, as a mapping or as the [settings file's](../../settings/reference.md) text. A repository's replaces the organization's whole | Unset |
 | `variables` | Both | Other variables, `{ NAME: value }`, not `GITHUB_*` nor `CODEMAN_SETTINGS` | None |
 | `secrets` | Both | The provider secrets given: `openrouter`, `runpod`, `runpod-serverless` | A repository's organization's, else all three |
+| `submodules` | Repository | `{ path: sha }`: gitlinks of its first commit, as `git submodule add` records them, such as `{ vendor/lib: "<40 hex>" }`. The commit need not exist; the checkout leaves the path empty | None |
+| `agent-minutes` | Repository | The `agent-minutes` of its copy of `codeman-task.yml`, a whole number, as a repository may lower it ([time limit](../../runs/agent.md#time-limit)) | The template's 50 |
 
 A repository whose owner is no organization of the world belongs to a user account.
 
@@ -111,6 +113,7 @@ A repository whose owner is no organization of the world belongs to a user accou
 | `app.installations` | `[{ owner, repositories, permissions }]`: `repositories` is `all` or names; `permissions` is `{ name: read \| write \| admin }` | One per owner, on all its repositories, with Codeman's permissions |
 | `runpod.catalog` | GPU types, in the fake Runpod's shape ([`catalog.ts`](../../../e2e/fakes/runpod/catalog.ts)), with its camelCase keys, such as `maxCount` | The fake's catalog |
 | `runpod.endpoints` | [Serverless endpoints](../../glossary.md#serverless-endpoint), in the fake's shape ([`serverless.ts`](../../../e2e/fakes/runpod/serverless.ts)), such as `workers: { min, max, idleTimeout }` | None |
+| `runpod.tee.meet` | `{ issues, timeout }`: the tee of each pod holds the agents' turns until turns of `issues` issues, at least 2, wait together, each for at most `timeout`, 2 minutes by default ([the tee](fakes.md#the-tee)) | No holding |
 | `openrouter.prices` | `{ prompt, completion }`, USD per token | The fake's |
 | `openrouter.lags` | `{ usage, analytics }`: a duration, or `hold` until settled | None |
 | `openrouter.credits` | The account's credits, in USD | 100 |
@@ -164,6 +167,9 @@ agent:
 > `delay` takes a number of milliseconds, not a duration such as `2s`.
 
 > [!NOTE]
+> `delay` waits in the scripted model, after the engine's reply: it keeps the agent's turn away from the engine, not at it. To make two tasks' agents meet at a pod's engine, which start seconds apart, use `world.runpod.tee.meet`, as `parallel/vllm-two-seats` does.
+
+> [!NOTE]
 > A reply's usage counts the request's size unless `usage` sets it, and OpenCode compacts its conversation once that nears the run's context. On a pod with a small context, such as `parallel/vllm-two-seats`'s 8192 tokens, its own prompt takes about 4,500: keep the rounds to a few steps. A compaction's request matches no step, so it fails the scenario as unscripted.
 
 A request that no round covers gets an error and a violation, which fails the scenario. How the model tells the scenario, issue, stage and round apart is in [the scripted model](fakes.md#the-scripted-model).
@@ -215,7 +221,7 @@ In `seed`'s `data`, `now`, `now-45m` and `now+1h` are times relative to when it 
 | Key | Value | Effect |
 | --- | --- | --- |
 | `github`, `openrouter`, `runpod`, `google`, `llm`, `npm`, `huggingface` | `{ path, method, status, body, delay, drop, times }`, `path` required | An HTTP fault on the fake's routes that `path` matches, such as `/v1/token`. One of `status`, `delay` or `drop` is required. `times` limits it |
-| `runpod` | `{ pod-start, low-balance, hold-queues }` | `pod-start: never` makes a pod that never serves, `fail` one that fails to start. `low-balance: true` makes each valid pod creation answer 402, as Runpod does for an account short of credit. `hold-queues` holds the Serverless queues: `true` or endpoint IDs |
+| `runpod` | `{ pod-start, low-balance, hold-queues, pod-age }` | `pod-start: never` makes a pod that never serves, `fail` one that fails to start. `low-balance: true` makes each valid pod creation answer 402, as Runpod does for an account short of credit. `hold-queues` holds the Serverless queues: `true` or endpoint IDs. `pod-age`, a duration, dates the pods created from then on that far back, as Runpod reports and bills them: the seeded past of the timers that count from a pod's creation, such as `open-key`'s 25 minutes |
 | `google` | `{ refuse-repositories, disabled-accounts, expiry }` | Refuses those repositories' tokens or those service accounts, or shortens the tokens' expiry |
 | `openrouter` | `{ lags: { usage, analytics } }` | Changes the lags from now on |
 | `pod` | `{ pod, action }` | The pod a ref names: `restart`, `exit` or `fail` |
@@ -262,6 +268,7 @@ Every scenario also ends with an implicit `violations: none`.
 | --- | --- | --- |
 | A scalar | `RUNNING`, `2`, `true`, `null` | An equal value; a number and its text are equal |
 | A range | `{ at-least: 1, at-most: 3 }` | A number within it; a list whose length is within it, such as a pod's `seats` |
+| A text's parts | `{ contains: text }`, or a list of texts | A text that holds each, such as a pod's end `reason` |
 | A mapping | `{ status: done }` | An object with at least these fields, each matching |
 | A list | `[a, b]` | A list of exactly these items, in order |
 
@@ -289,6 +296,7 @@ What each list holds is in [the e2e fakes](fakes.md#control-routes).
 | `agent` | The agents' requests, for which the engine got the short prompt |
 | `overlap` | The most agents' requests the tee had at the engine at once: those the engine ran, and those it queued. OpenCode sends its title request beside its first turn, so it can reach twice the agents |
 | `issues` | The most issues whose agents' requests the tee had at the engine at once: how many tasks' agents met there. Only the turns the scripted model tells the issue of count, not an agent's first turn nor its title |
+| `held` | The agents' requests the tee held before the engine for `world.runpod.tee.meet` |
 | `runners` | The engine's runner processes, such as Ollama's `llama-server`, each with its `args`, `context` (`-c`) and `parallel` (`-np`) |
 | `slots` | The runners' slots, from llama-server's `/slots`, each with its `id` and `n_ctx`, its context |
 | `busiest` | The most slots that processed at once, sampled while agents' requests were at the engine: how many requests the engine ran together. For vLLM, the most requests its `/metrics` gave as running (`vllm:num_requests_running`) |

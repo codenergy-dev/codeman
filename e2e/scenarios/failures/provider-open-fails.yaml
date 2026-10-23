@@ -1,0 +1,67 @@
+# The provider fails to open the run: OpenRouter answers 500 to every key creation. open-key
+# fails, its ledger run is `failed` at a cost of 0 with a `key-failed` event, and apply blocks the
+# task with the run comment that says Codeman could not give the run access to its model
+# (docs/budget/budget.md, "Outcomes of open-key"). No key exists, so nothing was spent, and next-run
+# starts no other run: the run moved nothing (docs/runs/runs-and-jobs.md, "The next run"). The task
+# was never planned, so removing `codeman:blocked` is how to go on (docs/tasks/lifecycle.md,
+# "Blocked, and how to go on"); once OpenRouter opens keys again, a manual run plans it.
+name: The provider fails to open the run, which fails at a cost of 0 and blocks the task
+tags: [failures, openrouter]
+runner: simulator
+world:
+  organizations:
+    - { name: acme, settings: { model: deepseek/deepseek-v4.1-flash, task-budget: 2 } }
+  repositories:
+    - { name: acme/app, fixture: node-small, maintainers: [alice] }
+agent:
+  i1:
+    plan:
+      - steps:
+          - bash: plan=$(sed -n 's/.*Create the plan at `\([^`]*\)`.*/\1/p' .codeman/task.md) && mkdir -p "$(dirname "$plan")" && printf '# Add a health route\n' > "$plan"
+          - output:
+              summary: Adds a health route.
+              decisions:
+                - { id: 1, title: Port, question: Which port?, options: [{ key: a, label: "8080" }, { key: b, label: "3000" }], recommendation: a }
+actions:
+  - fault: { openrouter: { path: /api/v1/keys, method: POST, status: 500 } }
+  - open-issue: { ref: i1, as: alice, title: Add a health route, labels: [codeman] }
+  - run: { event: issues.labeled }
+  - expect:
+      issue: i1
+      labels: [codeman:blocked]
+      no-labels: [codeman:planning]
+      comments:
+        - kind: run
+          contains:
+            - Codeman could not give this run access to its model (an OpenRouter key, or a GPU). See the run log.
+            - Remove the `codeman:blocked` label to try again.
+      pull-request: none
+      ledger: { runs: 1, cost-at-most: 0 }
+      store:
+        - collection: organizations/acme/runs
+          where: { status: failed, cost: 0, stage: plan, provider: openrouter }
+          count: 1
+        - { collection: organizations/acme/events, where: { type: key-failed }, count: 1 }
+        - { collection: organizations/acme/events, where: { type: key-opened }, count: 0 }
+      fakes:
+        openrouter:
+          keys: { count: 0 }
+          requests: { where: { method: POST, path: /api/v1/keys }, count: { at-least: 1 } }
+        # The run moved nothing, so next-run dispatched no other run.
+        github:
+          dispatches: { count: 0 }
+        llm:
+          turns: { count: 0 }
+  # How to go on: remove the label, then the next run plans the task.
+  - fault: { clear: [openrouter] }
+  - unlabel: { issue: i1, as: alice, label: codeman:blocked }
+  - run: { event: workflow_dispatch }
+  - expect:
+      issue: i1
+      labels: [codeman:awaiting-decision]
+      comments: [{ kind: decisions, contains: Which port? }]
+      ledger: { runs: 2 }
+      store:
+        - { collection: organizations/acme/runs, where: { status: failed, cost: 0 }, count: 1 }
+        - { collection: organizations/acme/runs, where: { status: closed, stage: plan }, count: 1 }
+      violations: none

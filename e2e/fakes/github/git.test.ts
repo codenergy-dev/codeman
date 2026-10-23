@@ -289,3 +289,28 @@ test("a fixture directory becomes a repository whose first commit is the same ea
   const compare = await call("GET", "/api/v3/repos/acme/one/compare/main...main", token);
   assert.equal(compare.body.status, "identical");
 });
+
+test("a repository's submodules are gitlinks of its first commit", {
+  skip,
+}, async () => {
+  const sha = "1".repeat(40);
+  const repository = await fake.addRepository({
+    owner: "acme",
+    name: "linked",
+    files: { "README.md": "# Linked\n" },
+    submodules: { "vendor/lib": sha },
+  });
+  const entries = await repository.git.listTree("refs/heads/main", true);
+  assert.deepEqual(
+    entries.map((entry) => `${entry.mode} ${entry.type} ${entry.sha} ${entry.path}`),
+    [
+      `100644 blob ${entries[0]?.sha} README.md`,
+      "040000 tree " + entries[1]?.sha + " vendor",
+      `160000 commit ${sha} vendor/lib`,
+    ],
+  );
+  await assert.rejects(
+    fake.addRepository({ owner: "acme", name: "bad", files: {}, submodules: { lib: "main" } }),
+    /full SHA/,
+  );
+});

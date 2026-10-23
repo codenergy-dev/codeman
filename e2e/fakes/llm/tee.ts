@@ -46,6 +46,10 @@ import { isScenarioName, scriptOf } from "./script.ts";
  *   most that processed at once, sampled while agents' requests were at the engine; for vLLM,
  *   which has no runner, the most requests its `/metrics` said were running, and waiting;
  * - `PUT /vram` `{ bytes }`: the virtual VRAM, or null to leave `/api/ps` as the engine says.
+ *
+ * With `meet`, the agents' turns wait before the engine until turns of that many issues wait
+ * together, or each one's timeout passes; the first meet releases them at once, and ends the
+ * holding. So a scenario's agents, which start seconds apart, are certain to meet at the engine.
  */
 
 /** Where the scripted replies come from: the scripted model's server, or one in this process. */
@@ -81,6 +85,12 @@ export interface TeeSetup {
    * `vllm:num_requests_waiting` are sampled in place of slots.
    */
   vllm?: boolean;
+  /**
+   * Holds the agents' turns (the requests the scripted model tells the issue of) before the
+   * engine until turns of `issues` issues are held together, then sends them to the engine at
+   * once; a turn held `timeoutMs` goes on alone. Holding ends with the first meet.
+   */
+  meet?: { issues: number; timeoutMs: number } | undefined;
 }
 
 /** The runners' slots, as `GET /_fake/tee/slots` gives them. */
@@ -123,6 +133,8 @@ export interface TeeRecord {
   end?: number;
   /** What the scripted model takes the request for, as far as its content tells. */
   identified?: Record<string, unknown>;
+  /** How long the request was held before the engine, waiting for other issues' (`meet`). */
+  heldMs?: number;
   engine: {
     start: number;
     end?: number;
@@ -147,6 +159,9 @@ export class Tee {
   #busiest = 0;
   #waiting = 0;
   #samples = 0;
+  /** The agents' turns held before the engine, by issue, until a meet (`TeeSetup.meet`). */
+  readonly #held: { issue: string; release: () => void }[] = [];
+  #met = false;
 
   constructor(setup: TeeSetup, options: { now?: () => number } = {}) {
     this.#setup = setup;
@@ -200,6 +215,8 @@ export class Tee {
       this.#busiest = 0;
       this.#waiting = 0;
       this.#samples = 0;
+      this.#met = false;
+      for (const held of this.#held.splice(0)) held.release();
     });
   }
 
@@ -243,6 +260,16 @@ export class Tee {
         ? { tools: [PING_TOOL], tool_choice: "auto" }
         : {}),
     };
+    if (found.kind === "turn") {
+      const held = this.#now();
+      await this.#meet(found.issue, abort.signal);
+      if (abort.signal.aborted) {
+        record.end = this.#now();
+        return undefined;
+      }
+      if (this.#now() > held) record.heldMs = this.#now() - held;
+      record.engine.start = this.#now();
+    }
     let answer: { status: number; contentType: string; text: string };
     this.#atEngine++;
     this.#sampling ??= this.#sample();
@@ -280,6 +307,34 @@ export class Tee {
     await sendReply(response, await this.#setup.script(body, abort.signal));
     record.end = this.#now();
     return undefined;
+  }
+
+  /**
+   * Holds an agent's turn of `issue` until turns of `meet.issues` issues are held, which it then
+   * releases together, or until `meet.timeoutMs` passes; at once without `meet` or after a meet.
+   */
+  #meet(issue: string, signal: AbortSignal): Promise<void> {
+    const meet = this.#setup.meet;
+    if (!meet || this.#met) return Promise.resolve();
+    return new Promise((resolve) => {
+      const entry = {
+        issue,
+        release: () => {
+          clearTimeout(timer);
+          signal.removeEventListener("abort", entry.release);
+          const at = this.#held.indexOf(entry);
+          if (at >= 0) this.#held.splice(at, 1);
+          resolve();
+        },
+      };
+      const timer = setTimeout(entry.release, meet.timeoutMs);
+      signal.addEventListener("abort", entry.release, { once: true });
+      this.#held.push(entry);
+      if (new Set(this.#held.map((one) => one.issue)).size >= meet.issues) {
+        this.#met = true;
+        for (const held of [...this.#held]) held.release();
+      }
+    });
   }
 
   /**
@@ -588,7 +643,9 @@ function header(value: string | string[] | undefined): string | undefined {
  * - `TEE_VRAM_BYTES`: the virtual VRAM for Ollama's `/api/ps`; without it, `/api/ps` passes;
  * - `TEE_MAX_TOKENS`: the engine's `max_tokens` for an agent's request, 8 by default;
  * - `TEE_CONTROL_PORT`: the inspection API's own port, 9091 by default, on `HOST`;
- * - `CODEMAN_IMAGE_ENGINE`: the pod image's engine; `vllm` samples vLLM's gauges, not slots.
+ * - `CODEMAN_IMAGE_ENGINE`: the pod image's engine; `vllm` samples vLLM's gauges, not slots;
+ * - `TEE_MEET_ISSUES`: hold the agents' turns until that many issues' meet (`TeeSetup.meet`),
+ *   each for at most `TEE_MEET_TIMEOUT_MS`, 120000 by default.
  */
 export async function fromEnv(env: NodeJS.ProcessEnv): Promise<FakeServer> {
   const origin = (name: string, value: string | undefined) => {
@@ -622,8 +679,16 @@ export async function fromEnv(env: NodeJS.ProcessEnv): Promise<FakeServer> {
     }
     script = localScripts(model);
   }
+  const meetIssues = count("TEE_MEET_ISSUES", env.TEE_MEET_ISSUES);
   const tee = new Tee({
     engine: origin("TEE_ENGINE", env.TEE_ENGINE),
+    meet:
+      meetIssues === undefined || meetIssues < 2
+        ? undefined
+        : {
+            issues: meetIssues,
+            timeoutMs: count("TEE_MEET_TIMEOUT_MS", env.TEE_MEET_TIMEOUT_MS, 120_000) as number,
+          },
     script,
     vramBytes: count("TEE_VRAM_BYTES", env.TEE_VRAM_BYTES),
     maxTokens: count("TEE_MAX_TOKENS", env.TEE_MAX_TOKENS, 8) as number,

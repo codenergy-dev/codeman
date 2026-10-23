@@ -1,0 +1,70 @@
+# vLLM's explicit message (docs/settings/vllm.md, "When it fails"): with an explicit
+# `max-model-len`, the pod serves it only when vLLM's K/V cache holds `max-num-seqs` requests of
+# it. The e2e vLLM image's cache of 1 GiB holds 87296 tokens: 2.66 requests of 32768, fewer than
+# the 4 asked. So the gateway reports the start failed with the message, before its probe; open-key
+# ends the pod's registry document with it and terminates the pod; the run fails at a cost of 0,
+# and the task is blocked. vLLM serves after about 2 minutes on a CPU: the vllm profile needs
+# 8 GiB of Docker memory.
+name: vLLM's cache too small for max-num-seqs requests of an explicit max-model-len fails the start
+tags: [failures, pods, vllm]
+runner: simulator
+profiles: [vllm]
+timeout: 25m
+world:
+  organizations:
+    - name: acme
+      settings:
+        provider: runpod-pod
+        engine: vllm
+        model: Qwen/Qwen2.5-0.5B-Instruct
+        gpu: NVIDIA GeForce RTX 4090
+        task-budget: 2
+        vllm:
+          tool-call-parser: hermes
+          max-model-len: 32768
+          max-num-seqs: 4
+          enforce-eager: true
+  repositories:
+    - { name: acme/app, fixture: node-small, maintainers: [alice] }
+actions:
+  - open-issue: { ref: i1, as: alice, title: Add a health route, labels: [codeman] }
+  - run: { event: issues.labeled }
+  - expect:
+      issue: i1
+      labels: [codeman:blocked]
+      comments:
+        - kind: run
+          contains:
+            - Codeman could not give this run access to its model (an OpenRouter key, or a GPU). See the run log.
+            - Remove the `codeman:blocked` label to try again.
+      pods:
+        - { count: 1 }
+        - { ref: p1, status: TERMINATED, where: { billing: stopped, env: { CODEMAN_ENGINE: vllm } } }
+      store:
+        - collection: pools/acme/pods
+          where:
+            live: false
+            status: ended
+            reason:
+              contains:
+                - "its start failed: Pod "
+                - "`Qwen/Qwen2.5-0.5B-Instruct` does not fit the GPU with 4 parallel requests and a context of 32768 tokens: vLLM's K/V cache holds 2.66 of them (87296 tokens)."
+                - Lower `max-model-len` or `max-num-seqs` in the `vllm` settings
+          count: 1
+        - collection: organizations/acme/runs
+          where: { status: failed, cost: 0, stage: plan, provider: runpod-pod }
+          count: 1
+      engine:
+        pod: p1
+        gateway:
+          ready: false
+          failure: { contains: does not fit the GPU with 4 parallel requests and a context of 32768 tokens }
+        vllm:
+          max_model_len: 32768
+          metrics:
+            "vllm:cache_config_info": { kv_cache_size_tokens: "87296", kv_cache_max_concurrency: "2.6640625" }
+        # The probe did not run: the fit failed first.
+        tee:
+          requests: 0
+      ledger: { runs: 1, cost-at-most: 0 }
+      violations: none

@@ -1,0 +1,63 @@
+# The agent runs out of its time: the repository's copy of codeman-task.yml gives it one minute
+# (`agent-minutes`, which a repository may lower), and the code stage's agent writes a file, then
+# hangs on the model's reply. Codeman stops the harness, seals the sandbox and collects the work so
+# far; apply commits it to the task branch with the stage's own message, and the task stays in the
+# code stage, with the run comment "The agent ran out of time. Its work so far is committed."
+# (docs/runs/agent.md, "Time limit"; the keep-unfinished-work-collectable plan). The run opened
+# its key, so it moved the task: next-run starts the next code run, which finishes from the
+# committed work, and review passes.
+name: An agent out of time has its work so far committed, and the next run finishes the stage
+tags: [failures, openrouter]
+runner: simulator
+timeout: 20m
+world:
+  organizations:
+    - { name: acme, settings: { model: deepseek/deepseek-v4.1-flash, task-budget: 2 } }
+  repositories:
+    - { name: acme/app, fixture: node-small, maintainers: [alice], agent-minutes: 1 }
+agent:
+  i1:
+    plan:
+      - steps:
+          - bash: plan=$(sed -n 's/.*Create the plan at `\([^`]*\)`.*/\1/p' .codeman/task.md) && mkdir -p "$(dirname "$plan")" && printf '# Add a health route\n' > "$plan"
+          - output: { summary: Adds a health route., decisions: [] }
+    route:
+      - steps:
+          - output:
+              summary: Code, then review.
+              route: [{ stage: code, brief: Add the route. }, { stage: review, brief: Check it. }]
+              skipped: [{ stage: web, reason: No docs. }, { stage: design, reason: Settled. }, { stage: test, reason: Too small. }]
+    code:
+      # Out of time: the reply after the write never ends.
+      - steps:
+          - write: { path: src/health.ts, content: "export const ok = true;\n" }
+          - hang
+      # The next run finds the file on the branch, and adds the test.
+      - steps:
+          - bash: test -f src/health.ts
+          - write: { path: src/health.test.ts, content: "import './health.ts';\n" }
+          - output: { status: done, summary: Adds the route and its test., commitMessage: Add the health route's test }
+    review:
+      - steps: [{ output: { status: done, summary: The route is right. } }]
+actions:
+  - open-issue: { ref: i1, as: alice, title: Add a health route, labels: [codeman] }
+  - run: { event: issues.labeled }
+  - expect:
+      issue: i1
+      labels: [codeman:done]
+      comments:
+        - kind: run
+          contains: [Code stage, out of time, The agent ran out of time. Its work so far is committed.]
+        - kind: run
+          contains: Adds the route and its test.
+      # The unfinished run's commit, with the stage's message, then the next run's.
+      commits: { count: { at-least: 3 }, files: [src/health.ts, src/health.test.ts] }
+      pull-request: { ready: true, files: [src/health.ts, src/health.test.ts] }
+      store:
+        - collection: organizations/acme/runs
+          where: { status: closed, stage: code }
+          count: 2
+        - { collection: organizations/acme/runs, where: { status: closed }, count: 5 }
+      violations: none
+  - expect: { issue: i1, commits: { message: "Code for #1" } }
+  - expect: { issue: i1, commits: { message: Add the health route's test } }

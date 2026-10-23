@@ -448,6 +448,8 @@ export class World {
     defaultBranch?: string;
     fixture?: string;
     files?: Record<string, string | Buffer>;
+    /** Submodules of the first commit, with `files`: each path's commit, as a gitlink. */
+    submodules?: Record<string, string>;
     source?: string;
     collaborators?: Record<string, Role>;
     drafts?: boolean;
@@ -484,15 +486,26 @@ export class World {
         tree = await git.text(["write-tree"], { env });
         rmSync(index, { force: true });
       } else if (options.files) {
-        tree = await git.buildTree(
-          undefined,
-          Object.entries(options.files).map(([file, content]) => ({
+        for (const [file, sha] of Object.entries(options.submodules ?? {})) {
+          if (!/^[0-9a-f]{40}$/.test(sha)) {
+            throw new GitHubError(422, `Submodule ${file}'s commit must be a full SHA.`);
+          }
+        }
+        tree = await git.buildTree(undefined, [
+          ...Object.entries(options.files).map(([file, content]) => ({
             path: file,
             mode: "100644",
             type: "blob" as const,
             content: Buffer.from(content),
           })),
-        );
+          // A gitlink, as `git submodule add` records it; the commit need not exist here.
+          ...Object.entries(options.submodules ?? {}).map(([file, sha]) => ({
+            path: file,
+            mode: "160000",
+            type: "commit" as const,
+            sha,
+          })),
+        ]);
       }
       if (tree) {
         const sha = await git.commitTree({

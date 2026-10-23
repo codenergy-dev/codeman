@@ -141,6 +141,7 @@ test("the tee's status counts the agents' requests, and their issues, open at th
     agent: 5,
     overlap: 3,
     issues: 2,
+    held: 0,
     runners: [{ pid: 1, parallel: 4 }],
     slots: [{ id: 0, n_ctx: 32_768 }],
     busiest: 1,
@@ -150,12 +151,20 @@ test("the tee's status counts the agents' requests, and their issues, open at th
   // Two requests of one issue are one agent; one that ends as another starts did not meet it.
   assert.equal(teeStatus([agent(0, 10, "i1"), agent(5, 20, "i1")], []).issues, 1);
   assert.equal(teeStatus([agent(0, 10, "i1"), agent(10, 20, "i2")], []).issues, 1);
+  assert.equal(teeStatus([{ ...agent(0, 10, "i1"), heldMs: 300 }, agent(0, 10, "i2")], []).held, 1);
 });
 
 test("a range matches a list by its length", () => {
   const four = { kind: "range" as const, atLeast: 4, atMost: 4 };
   assert.equal(matches(four, ["a", "b", "c", "d"]), undefined);
   assert.equal(matches(four, ["a"]), "1, below 4");
+});
+
+test("contains matches a text that holds each of its texts", () => {
+  const both = { kind: "contains" as const, texts: ["does not fit", "the least"] };
+  assert.equal(matches(both, "it does not fit, with the least context"), undefined);
+  assert.equal(matches(both, "it does not fit"), '"it does not fit" lacks "the least"');
+  assert.equal(matches(both, 3), "3 is not a text");
 });
 
 /** Two runs on pod `p`, created at 0 at 0.001 USD a second: A opened at 10 s, B at 20 s; both closed at 60 s. */

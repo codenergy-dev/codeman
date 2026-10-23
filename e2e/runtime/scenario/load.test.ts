@@ -477,3 +477,35 @@ test("a fault makes the fake Runpod's pod creation answer 402", () => {
     /unknown field/,
   );
 });
+
+test("a repository's submodules, agent-minutes and the pods' tee are checked", () => {
+  const world = (repository: string, runpod = "") => `name: A case
+world:
+  repositories:
+    - { name: acme/app, fixture: node-small, maintainers: [alice]${repository} }
+${runpod}actions:
+  - open-issue: { ref: i1, as: alice, title: Add a route }
+`;
+  const scenario = parse(
+    world(
+      `, agent-minutes: 1, submodules: { vendor/lib: "${"a".repeat(40)}" }`,
+      "  runpod:\n    tee: { meet: { issues: 2, timeout: 90s } }\n",
+    ),
+  );
+  const repository = scenario.world.repositories[0];
+  assert.equal(repository?.agentMinutes, 1);
+  assert.deepEqual(repository?.submodules, { "vendor/lib": "a".repeat(40) });
+  assert.deepEqual(scenario.world.runpod?.tee, { meet: { issues: 2, timeoutMs: 90_000 } });
+  assert.equal(parse(world("")).world.repositories[0]?.agentMinutes, undefined);
+  rejects(world(", agent-minutes: 0.5"), "world.repositories[0].agent-minutes", /whole number/);
+  rejects(
+    world(", submodules: { vendor/lib: main }"),
+    "world.repositories[0].submodules.vendor/lib",
+    /full commit SHA/,
+  );
+  rejects(
+    world("", "  runpod:\n    tee: { meet: { issues: 1 } }\n"),
+    "world.runpod.tee.meet.issues",
+    /at least 2/,
+  );
+});

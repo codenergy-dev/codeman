@@ -307,6 +307,10 @@ export class GitHubFake {
       }
       const files =
         value.files === undefined ? undefined : (object(value.files) as Record<string, string>);
+      const submodules =
+        value.submodules === undefined
+          ? undefined
+          : (object(value.submodules) as Record<string, string>);
       const repository = await world.addRepository({
         owner: string(value, "owner"),
         name: string(value, "name"),
@@ -315,6 +319,7 @@ export class GitHubFake {
         ...(typeof value.fixture === "string" ? { fixture: value.fixture } : {}),
         ...(typeof value.source === "string" ? { source: value.source } : {}),
         ...(files ? { files } : {}),
+        ...(submodules ? { submodules } : {}),
         ...(typeof value.drafts === "boolean" ? { drafts: value.drafts } : {}),
         collaborators,
       });

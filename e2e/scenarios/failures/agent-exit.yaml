@@ -1,0 +1,63 @@
+# The agent exits non-zero: the code stage's agent writes a file, then the model's connection drops
+# mid-reply on every try, and OpenCode gives up with an error, exit code 1. The fix pass, which
+# runs since the output is missing and time is left, drops the same way. The agent job collects the
+# work so far and uploads it, then fails (docs/runs/runs-and-jobs.md, "What each job does"); apply
+# commits the file, and, with no output, blocks the task with the problem and the agent's exit code
+# (docs/tasks/lifecycle.md, "Blocked, and how to go on": a routed stage that wrote no result).
+# `/codeman continue` runs the stage again, which finishes from the committed work.
+name: An agent that exits non-zero has its work committed, blocks the task, and continue resumes it
+tags: [failures, openrouter]
+runner: simulator
+timeout: 20m
+world:
+  organizations:
+    - { name: acme, settings: { model: deepseek/deepseek-v4.1-flash, task-budget: 2 } }
+  repositories:
+    - { name: acme/app, fixture: node-small, maintainers: [alice] }
+agent:
+  i1:
+    plan:
+      - steps:
+          - bash: plan=$(sed -n 's/.*Create the plan at `\([^`]*\)`.*/\1/p' .codeman/task.md) && mkdir -p "$(dirname "$plan")" && printf '# Add a health route\n' > "$plan"
+          - output: { summary: Adds a health route., decisions: [] }
+    route:
+      - steps:
+          - output:
+              summary: Code, then review.
+              route: [{ stage: code, brief: Add the route. }, { stage: review, brief: Check it. }]
+              skipped: [{ stage: web, reason: No docs. }, { stage: design, reason: Settled. }, { stage: test, reason: Too small. }]
+    code:
+      - steps:
+          - write: { path: src/health.ts, content: "export const ok = true;\n" }
+          - exit
+        # With no output and time left, the agent job resumes the session once: it drops too, so
+        # the fix fails and the first outcome stays.
+        fix: [exit]
+      - steps:
+          - bash: test -f src/health.ts
+          - output: { status: done, summary: Keeps the committed route., commitMessage: Add a health route }
+    review:
+      - steps: [{ output: { status: done, summary: The route is right. } }]
+actions:
+  - open-issue: { ref: i1, as: alice, title: Add a health route, labels: [codeman] }
+  - run: { event: issues.labeled }
+  - expect:
+      issue: i1
+      labels: [codeman:blocked]
+      comments:
+        - kind: run
+          contains:
+            - Code stage
+            - The agent did not write output.json. The agent exited with code
+            - Comment `/codeman continue <guidance>` to try again.
+      commits: { message: "Code for #1", files: [src/health.ts] }
+      store:
+        - { collection: organizations/acme/runs, where: { status: closed, stage: code }, count: 1 }
+  - comment: { issue: i1, as: alice, body: /codeman continue }
+  - advance: { until: { issue: i1, labels: [codeman:done] }, max-runs: 4 }
+  - expect:
+      issue: i1
+      pull-request: { ready: true, files: [src/health.ts] }
+      store:
+        - { collection: organizations/acme/runs, where: { status: closed, stage: code }, count: 2 }
+      violations: none

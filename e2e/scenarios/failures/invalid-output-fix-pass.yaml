@@ -1,0 +1,58 @@
+# An invalid output, then the fix pass, then blocked (docs/runs/agent.md, "The fix pass"). The
+# code stage's agent writes a file and an output.json that is not JSON. The agent job checks it as
+# apply will, while the sandbox is live, and resumes the agent's session once with the problem:
+# OpenCode's next request is Codeman's fix prompt. The fix writes an output whose status the code
+# stage does not take. apply validates it again, commits the stage's file anyway (no work is lost),
+# and blocks the task with "Codeman could not use the agent's result." and the problem
+# (docs/tasks/lifecycle.md, "Blocked, and how to go on").
+name: An invalid output gets one fix pass; still invalid, the work is committed and the task blocked
+tags: [failures, openrouter]
+runner: simulator
+world:
+  organizations:
+    - { name: acme, settings: { model: deepseek/deepseek-v4.1-flash, task-budget: 2 } }
+  repositories:
+    - { name: acme/app, fixture: node-small, maintainers: [alice] }
+agent:
+  i1:
+    plan:
+      - steps:
+          - bash: plan=$(sed -n 's/.*Create the plan at `\([^`]*\)`.*/\1/p' .codeman/task.md) && mkdir -p "$(dirname "$plan")" && printf '# Add a health route\n' > "$plan"
+          - output: { summary: Adds a health route., decisions: [] }
+    route:
+      - steps:
+          - output:
+              summary: Code, then review.
+              route: [{ stage: code, brief: Add the route. }, { stage: review, brief: Check it. }]
+              skipped: [{ stage: web, reason: No docs. }, { stage: design, reason: Settled. }, { stage: test, reason: Too small. }]
+    code:
+      - steps:
+          - write: { path: src/health.ts, content: "export const ok = true;\n" }
+          - raw: "Done: the route is added."
+        fix:
+          # The fix pass sees the problem in Codeman's prompt, and writes a status code does not take.
+          - bash: test -f src/health.ts
+          - raw: '{"status": "finished", "summary": "Adds the route.", "commitMessage": "Add a health route"}'
+actions:
+  - open-issue: { ref: i1, as: alice, title: Add a health route, labels: [codeman] }
+  - run: { event: issues.labeled }
+  - expect:
+      issue: i1
+      labels: [codeman:blocked]
+      comments:
+        - kind: run
+          contains:
+            - Code stage
+            - Codeman could not use the agent's result.
+            - status must be one of
+            - Comment `/codeman continue <guidance>` to try again.
+      commits: { message: "Code for #1", files: [src/health.ts] }
+      store:
+        - { collection: organizations/acme/runs, where: { status: closed, stage: code }, count: 1 }
+      fakes:
+        llm:
+          # The fix pass ran once, in the code stage, with Codeman's fix prompt.
+          turns:
+            where: { stage: code, phase: fix, kind: step }
+            count: 2
+      violations: none

@@ -1,0 +1,76 @@
+# GitHub answers with errors, through the fake GitHub's faults. Codeman's GitHub client does not
+# retry, so the job that gets the error fails; each run reads every task's state from GitHub, so
+# a failed run loses no state, and a later run picks the task up (docs/runs/runs-and-jobs.md, "One
+# run at a time").
+#
+# 1. A 503 on the issues' listing: `select` fails before it marks any task, and next-run, which
+#    needs a successful `select`, starts no other run.
+# 2. A rate limit (GitHub's 403 "API rate limit exceeded") on the creation of the task branch:
+#    apply cannot commit the plan, and fails. The task keeps `codeman:planning`, the run moved
+#    nothing that next-run can see, and no run comment is posted.
+# 3. The next manual run plans the task again, from the start.
+name: GitHub errors fail the job that gets them, and a later run picks the task up
+tags: [failures, openrouter, github]
+runner: simulator
+timeout: 20m
+world:
+  organizations:
+    - { name: acme, settings: { model: deepseek/deepseek-v4.1-flash, task-budget: 2 } }
+  repositories:
+    - { name: acme/app, fixture: node-small, maintainers: [alice] }
+agent:
+  i1:
+    plan:
+      - &plan
+        steps:
+          - bash: plan=$(sed -n 's/.*Create the plan at `\([^`]*\)`.*/\1/p' .codeman/task.md) && mkdir -p "$(dirname "$plan")" && printf '# Add a health route\n' > "$plan"
+          - output:
+              summary: Adds a health route.
+              decisions:
+                - { id: 1, title: Port, question: Which port?, options: [{ key: a, label: "8080" }, { key: b, label: "3000" }], recommendation: a }
+      - *plan
+actions:
+  - open-issue: { ref: i1, as: alice, title: Add a health route, labels: [codeman] }
+  - fault: { github: { path: /api/v3/repos/acme/app/issues, method: GET, status: 503, body: { message: Service Unavailable } } }
+  - run: { event: issues.labeled }
+  - expect:
+      issue: i1
+      labels: [codeman]
+      no-labels: [codeman:planning]
+      comments: [{ kind: any, count: 0 }]
+      store:
+        - { collection: organizations/acme/runs, count: 0 }
+      fakes:
+        github:
+          dispatches: { count: 0 }
+          runs: { where: { conclusion: failure }, count: 1 }
+        llm:
+          turns: { count: 0 }
+  - fault: { clear: [github] }
+  - fault:
+      github:
+        path: /api/v3/repos/acme/app/git/refs
+        method: POST
+        status: 403
+        body: { message: API rate limit exceeded for installation ID 1., documentation_url: "https://docs.github.com/rest/overview/resources-in-the-rest-api#rate-limiting" }
+        times: 1
+  - run: { event: workflow_dispatch }
+  - expect:
+      issue: i1
+      labels: [codeman:planning]
+      no-labels: [codeman:awaiting-decision]
+      comments: [{ kind: run, count: 0 }]
+      store:
+        - { collection: organizations/acme/runs, where: { status: closed, stage: plan }, count: 1 }
+      fakes:
+        github:
+          dispatches: { count: 0 }
+          runs: { where: { conclusion: failure }, count: 2 }
+  - run: { event: workflow_dispatch }
+  - expect:
+      issue: i1
+      labels: [codeman:awaiting-decision]
+      comments: [{ kind: decisions, contains: Which port? }, { kind: run, count: 1 }]
+      store:
+        - { collection: organizations/acme/runs, where: { status: closed, stage: plan }, count: 2 }
+      violations: none

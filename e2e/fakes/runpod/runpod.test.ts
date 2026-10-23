@@ -230,6 +230,15 @@ test("no capacity is a 400 and a low balance a 402, as problems (docs/web/runpod
   assert.equal((await call("POST", "/v2/pods", POD)).status, 201);
 });
 
+test("a seeded pod age dates the pods created then, and bills them from then", async () => {
+  await call("PUT", "/_fake/runpod/faults", { podStart: "never", podAgeMs: 24 * 60_000 });
+  const old = (await call("POST", "/v2/pods", POD)).body;
+  assert.equal(old.createdAt, new Date(START - 24 * 60_000).toISOString().replace(".000", ""));
+  const [listed] = (await call("GET", "/_fake/runpod/pods")).body;
+  assert.ok(listed.cost > 0, "billed from its seeded creation");
+  assert.equal((await call("PUT", "/_fake/runpod/faults", { podAgeMs: -1 })).status, 400);
+});
+
 test("a pod may never start, fail to start, or restart its container", async () => {
   await call("PUT", "/_fake/runpod/faults", { podStart: "never" });
   const stuck = (await call("POST", "/v2/pods", POD)).body;

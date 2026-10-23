@@ -64,10 +64,10 @@ Each fake's own routes are under `/_fake/<fake>/`.
 
 | Fake | Routes |
 | --- | --- |
-| `github` | `POST users`, `orgs`, `repos`, `apps`, `installations`, `tokens`; `PUT repos/{owner}/{repo}/collaborators/{login}`; `POST act`, a user's action; `runs`, `jobs` and `artifacts`, for the simulator; `GET events`, `dispatches`, `runs` (each with its event, status, conclusion and concurrency group), `violations`, `repos/{owner}/{repo}/issues` |
+| `github` | `POST users`, `orgs`, `repos` (with `files` and their `submodules`, gitlinks by path), `apps`, `installations`, `tokens`; `PUT repos/{owner}/{repo}/collaborators/{login}`; `POST act`, a user's action; `runs`, `jobs` and `artifacts`, for the simulator; `GET events`, `dispatches`, `runs` (each with its event, status, conclusion and concurrency group), `violations`, `repos/{owner}/{repo}/issues` |
 | `google` | `PUT setup`, the provider, service accounts and condition; `POST runs`, a run's OIDC request token; `PUT faults` |
 | `openrouter` | `GET keys`, with each key's shown `usage` and real spend; `PUT keys/{hash}/usage`; `PUT credits`, the account's credits until the next reset; `PUT lags`; `POST settle`; `PUT prices`; `PUT completions`; `GET generations`, each billed request |
-| `runpod` | `GET pods`, terminated ones included, with each one's env, `cost` and `billing` (`running`, or `stopped` once it exited or was terminated); `POST pods/{id}/{action}`; `PUT setup`; `GET` and `PATCH catalog`; `PUT endpoints/{id}` and its `workers`; `GET jobs`, the Serverless jobs; `GET endpoints/{id}/cost`; `PUT faults`, `{ podStart, lowBalance, holdQueues }`. The setup's shapes refuse unknown keys |
+| `runpod` | `GET pods`, terminated ones included, with each one's env, `cost` and `billing` (`running`, or `stopped` once it exited or was terminated); `POST pods/{id}/{action}`; `PUT setup`; `GET` and `PATCH catalog`; `PUT endpoints/{id}` and its `workers`; `GET jobs`, the Serverless jobs; `GET endpoints/{id}/cost`; `PUT faults`, `{ podStart, lowBalance, holdQueues, podAgeMs }`, where `podAgeMs` dates the pods created from then on, and their billing, that far back. The setup's shapes refuse unknown keys |
 | `llm` | `PUT scripts/{scenario}`, `GET scripts`, `DELETE scripts/{scenario}`; `GET turns`, each request and what it was taken for; `GET violations`, the requests no script covered |
 
 The `fakes` check of a scenario reads these lists ([checks](scenarios.md#the-fakes-lists)).
@@ -110,6 +110,8 @@ Each e2e pod image runs the tee on the engine's port: 11434 for Ollama, 8000 for
 | Ollama's `POST /api/pull` | Answers from the engine's `/api/tags`, without a registry |
 | Any other route | Passes it unchanged |
 
+With `TEE_MEET_ISSUES` (the scenario's `world.runpod.tee.meet`, which the launcher passes), the tee holds each agent's turn, one whose issue the scripted model tells, before the engine, until turns of that many issues are held; it then sends them to the engine at once, and holds nothing more. A turn held `TEE_MEET_TIMEOUT_MS` (2 minutes by default) goes on alone. Agents start seconds apart, each once its `open-key` sees the pod serve, and a turn takes about a second at the engine, so without it two tasks' agents may never meet there. Each record has `heldMs`, and the engine's start is when the hold ended.
+
 So the engine's concurrency, the context split between seats and the engine's settings are real, and the [fit](../../glossary.md#fit) searches on Ollama's real sizes. A real prompt on a CPU would take minutes, and one past vLLM's 8,192 tokens would be refused ([spike 0.1](../../plans/2026-10-20-end-to-end-test-suite.md#01-results)).
 
 > [!NOTE]
@@ -128,6 +130,6 @@ Its inspection API, under `/_fake/tee/` on port 9091 and on the engine's port:
 No container gets the Docker socket. When the fake Runpod creates a pod, it calls the runtime's launcher, on the host, behind a token of the session ([`launcher.ts`](../../../e2e/runtime/launcher.ts)).
 
 1. The launcher maps the pod's image to a local e2e image, by the allowlist of [`e2e/infra/pod-images.ts`](../../../e2e/infra/pod-images.ts): Codeman's [pinned pod images](../../glossary.md#pinned-pod-image), by digest. Any other image is refused.
-2. It runs the container with `docker run --init` on the jobs network, with the pod's environment and its model's volume, read-only. A vLLM pod also gets 1 GiB of `/dev/shm`, as a Runpod pod has more than Docker's default of 64 MiB: vLLM's CPU engine allocates 160 MiB there at its start, and fails without it.
+2. It runs the container with `docker run --init` on the jobs network, with the pod's environment, the tee's options of the scenario (`world.runpod.tee`), and its model's volume, read-only. A vLLM pod also gets 1 GiB of `/dev/shm`, as a Runpod pod has more than Docker's default of 64 MiB: vLLM's CPU engine allocates 160 MiB there at its start, and fails without it.
 3. The fake Runpod's proxy forwards `/pods/{id}/{port}` to the container.
 4. A terminated pod's container is removed, after the runtime reads its engine's state, which the `engine` check then gives for that pod ([checks](scenarios.md#checks)). Every container of a scenario goes when the scenario ends.

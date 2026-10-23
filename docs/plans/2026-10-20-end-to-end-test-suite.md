@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-10-20T12:50:34-03:00
-updated_at: 2026-10-22T18:20:00-03:00
+updated_at: 2026-10-23T09:00:00-03:00
 commit: 21130fe
 ---
 
@@ -759,6 +759,81 @@ Bugs these scenarios cover:
 Memory: these scenarios peaked at 3.5 GiB of containers, in `shared-pod-402` (the Ollama pod at 1.5 GiB and two agent jobs); `monthly-race` ran up to 8 job containers at once, its eight `open-key` jobs, and four agent jobs.
 
 Runtime and fake changes this step needed: none. The scenarios raise a GPU type's price with `world.runpod.catalog`, so a pod run spends its limit within minutes.
+
+#### 5.2 vLLM, made deterministic
+
+`parallel/vllm-two-seats` failed once in four runs: "The pod's tee: issues: 1, not 2". The two agents start seconds apart, each once its `open-key` sees the pod serve, and each turn takes about a second at vLLM, so their requests did not always meet at the engine. A scripted `delay` would not help: it waits in the scripted model, after the engine's reply. The tee now has a `meet` option (`world.runpod.tee.meet`, `TEE_MEET_ISSUES` in the pod): it holds the agents' turns before the engine until turns of 2 issues wait together, sends them at once, and holds nothing more; a turn held 3 minutes goes on alone (`tee.test.ts`, `launcher.test.ts`). The check is unchanged, and `engine.tee.held` shows the hold happened.
+
+Run on 2026-10-22 on the plan's machine (Docker VM 9.7 GiB), three passes in a row of the scenario alone: 364 s, 368 s, 358 s.
+
+#### 5.4 results
+
+Run on 2026-10-22 and 23 on the plan's machine (Docker VM 9.7 GiB), `HEAD` `d20fd18` with the uncommitted step, three passes in a row of `npm run test:e2e -- failures`, which also selects `pods/start-failure-two-tasks` by its tag.
+
+| Scenario | Pass 1 | Pass 2 | Pass 3 |
+| --- | --- | --- | --- |
+| `failures/provider-open-fails` | 49 s | 49 s | 49 s |
+| `failures/pod-never-serves` | 72 s | 72 s | 72 s |
+| `failures/fit-floor` (Ollama) | 23 s | 22 s | 22 s |
+| `failures/fit-vllm-explicit` (`vllm` profile) | 95 s | 94 s | 94 s |
+| `failures/agent-timeout` | 232 s | 234 s | 231 s |
+| `failures/agent-exit` | 322 s | 321 s | 311 s |
+| `failures/invalid-output-fix-pass` | 119 s | 115 s | 112 s |
+| `failures/clones-inside-tree` | 145 s | 145 s | 145 s |
+| `failures/apply-branch-moved` (`known-bug`) | Reproduced, 140 s | 139 s | 138 s |
+| `failures/missing-secret` | 12 s | 13 s | 12 s |
+| `failures/firestore-down` | 125 s | 125 s | 123 s |
+| `failures/github-5xx` | 77 s | 75 s | 78 s |
+| `failures/next-run-without-chain` | 180 s | 171 s | 172 s |
+| `pods/start-failure-two-tasks` | 28 s | 25 s | 28 s |
+
+What they assert, beyond each failure's label, run comment and ledger entry:
+
+- **`provider-open-fails`**: OpenRouter answers 500 to key creation. The run is `failed` at a cost of 0 with a `key-failed` event, no key exists, the model gets no request, and next-run dispatches nothing. Removing `codeman:blocked`, then a manual run, plans the task.
+- **`pod-never-serves`**: decision 5's seeding, on the provider's side: the fake Runpod's new `pod-age` fault dates the pods it creates 24 minutes back, and `pod-start: never` keeps the pod `STARTING`. `open-key` waits the last minute of the 25 from the creation Runpod reports, with the real clock, then ends the pod's document ("it did not serve qwen2.5:0.5b"), terminates it ("it cost about US$ 0.29"), and fails the run at a cost of 0.
+- **`fit-floor`**: a GPU of 1 GB, the tee's virtual VRAM. The pod's document ends with "its start failed: " and the floor message, which the gateway's status gives as its `failure`; one pod, terminated.
+- **`fit-vllm-explicit`**: `max-model-len: 32768` and `max-num-seqs: 4` on the e2e image's cache of 87296 tokens, which holds 2.66 such requests: vLLM's explicit message, before the probe (the tee saw no request). Cheap enough: about 95 s.
+- **`agent-timeout`**: the repository's copy of `codeman-task.yml` has `agent-minutes: 1` (the new `agent-minutes` of a repository). The code stage's agent writes a file and hangs; its work is committed as "Code for #1", the comment says "The agent ran out of time. Its work so far is committed.", the task stays in the code stage, and next-run's run finishes it from the branch, to `codeman:done`.
+- **`agent-exit`**: the model's connection drops on every try, and OpenCode exits with code 1; the fix pass, which runs since the output is missing, drops too. The file is committed, the task is blocked with "The agent did not write output.json. The agent exited with code 1.", and `/codeman continue` finishes the stage.
+- **`invalid-output-fix-pass`**: an output that is not JSON, one fix pass (two scripted turns in the fix phase), a status the code stage does not take: "Codeman could not use the agent's result.", the stage's file committed.
+- **`clones-inside-tree`**: in the code stage's tree, a nested repository, a submodule (a gitlink of the fixture, the new `submodules` of a repository) whose repository has a clean filter that asks the fake npm for `/submodule-entered-<uid>`, a FIFO in a tracked path, a link to `/etc/shadow`, and a process left to write later. The run comment drops the three first as not regular files, the one regular file is committed, and the task reaches `codeman:done`. The filter never ran as root; it ran as the agent, from OpenCode's own git, which shows the probe is live.
+- **`missing-secret`**: no OpenRouter secret: `refused`, `missing-credentials`, the reason naming `CODEMAN_OPENROUTER_MANAGEMENT_KEY` in the run comment; no key request.
+- **`firestore-down`**: down before a run, `select` fails after its 4 attempts: no label, no comment, no ledger, no next run. Back up, a manual run plans. Down during the decisions' routing run: `close-key` disables the key, then fails ("Could not write to Codeman's ledger after 4 attempts: fetch failed"); the run stays `open` in the ledger, and apply still applies it.
+- **`github-5xx`**: a 503 on the issues' listing fails `select` before it marks anything; a rate limit (403 "API rate limit exceeded") on the task branch's creation fails apply, which posts nothing and leaves `codeman:planning`; the next manual run plans the task again, at the cost of a second plan run. Codeman's GitHub client does not retry, which nothing in `docs/` says.
+- **`next-run-without-chain`**: apply fails once (`fault: job`); next-run lists the run's artifacts with `gh`, finds no `codeman-chain-` artifact, and dispatches nothing; a manual run plans the task again and chains to `codeman:done`.
+
+Changes to the plan:
+
+- The catalogue's `fit-floor` is two scenarios: `fit-floor` (Ollama) and `fit-vllm-explicit` (the `vllm` profile).
+- `failures/` also covers what 5.5's `security/symlink-fifo-submodule` names, in `clones-inside-tree`, as this step was asked to; 5.5 can keep that scenario for the work tree's own symlink, which collection refuses.
+
+> [!WARNING]
+> **Codeman bug, not fixed (2026-10-22).** apply fails on a task branch a maintainer moved during the run, and the task is left with no word of it. apply commits on the head `select` saw and updates the branch without force (`commit` in `src/platform/github/platform.ts`), so GitHub refuses with 422 "Update is not a fast forward" and the maintainer's commit is kept, as it should be. But the error escapes `apply` (`src/steps/apply.ts`): the job fails with "Update is not a fast forward", no run comment is posted, the panel still says "Writing the code", the label stays `codeman:coding`, and with no chain artifact next-run starts no run. The agent's paid run is lost, and nothing tells the maintainers why the task stopped. No page of `docs/` says what should happen. `failures/apply-branch-moved` reproduces it, tagged `known-bug`: it expects a run comment for the code stage.
+>
+> Suggested fix, not applied: in `apply`, catch a refused `updateRef` of the task branch. Commit the same changes again on the branch's new head (the Data API's tree is built from `base_tree` plus the changed paths, so this keeps the maintainer's commit) when the maintainer's commit touched none of the agent's paths; otherwise block the task with a run comment that names the paths and says the branch moved during the run, with `/codeman continue` as the way on. Document the outcome in `docs/tasks/lifecycle.md`.
+
+Smaller findings, not tagged:
+
+- `open-key`'s timeout says how long it waited, not the 25 minutes: "Pod … was not ready within 1 minutes." for a pod created 24 minutes before (`waitUntilReady` in `src/inference/gpu.ts`). A real creator waits the whole 25 minutes, but a task that joins a starting pod late would read a small figure too, and "1 minutes" is ungrammatical.
+- A GitHub error fails the job that gets it, with no retry: a rate limit in apply costs the run, which the next run repeats. Not documented.
+
+Bugs these scenarios cover, and the reverted-fix checks, each in a scratch `git worktree` with this step's changes, removed after:
+
+| Bug | Fix | Reverts cleanly | Check |
+| --- | --- | --- | --- |
+| The collecting `git status` entered submodules, whose configuration the agent controls | `227486f` | No: conflicts in `src/collect.ts`, `src/collect.test.ts`, `docs/runs/agent.md`, `dist/` | One-line equivalent: `--ignore-submodules=all` removed from `statusArgs`. `clones-inside-tree` fails: the fake npm got `/submodule-entered-0`, the submodule's filter run as root |
+| A FIFO in a tracked path blocked `cp`; collection followed links out of the sandbox | `8fc2156` | No: conflicts in `src/collect.ts`, `src/sandbox.ts`, their tests, `dist/` | One-line equivalent: `parseFindTypes` takes every path that is not a link for a file. `clones-inside-tree` (its timeout lowered to 8 minutes in the worktree) runs out of time: the code stage's agent job never ends, from 87 s on |
+| A nested repository in the tree made `cp` fail, so no manifest was written and the run was lost | `74f173b` | No: conflicts in `src/collect.ts`, `src/sandbox.test.ts`, `docs/runs/agent.md`, `dist/` | No one-line equivalent: `8fc2156`'s classification also lists a directory as `other` and never copies it, and the per-path copy keeps the manifest. `clones-inside-tree` asserts the documented outcome |
+| The output length limits and the fix pass | The [plan](2026-10-01-output-length-limits.md), a feature of several commits | – | `invalid-output-fix-pass` asserts the documented behavior |
+
+Runtime and fake changes this step needed (each with its tests):
+
+- **A repository's `agent-minutes`**, written into its copy of `codeman-task.yml` (`world.test.ts`), and its **`submodules`**, gitlinks of the fake GitHub's first commit (`git.test.ts`).
+- **The fake Runpod's `pod-age` fault** (`podAgeMs`), for the timers counted from a pod's creation (`runpod.test.ts`).
+- **The `{ contains }` pattern**, a text holding each given text, for messages in store fields and the gateway's status (`expect.test.ts`).
+- **The tee's `meet`** and **`engine.tee.held`**, above.
+
+Memory: `fit-vllm-explicit` runs one vLLM pod with no agent; the others need at most one Ollama pod or none.
 
 ### Phase 6: act smoke scenarios
 

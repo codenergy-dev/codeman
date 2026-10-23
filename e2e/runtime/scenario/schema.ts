@@ -82,6 +82,10 @@ export interface Repository {
   /** The repository's `CODEMAN_SETTINGS`, which replaces the organization's whole. */
   settings: string | undefined;
   variables: Record<string, string>;
+  /** Submodules of its first commit: each path's commit SHA, as a gitlink. */
+  submodules: Record<string, string>;
+  /** The `agent-minutes` of its copy of `codeman-task.yml`; undefined: the template's. */
+  agentMinutes: number | undefined;
   /** Undefined: the organization's, or every provider's for a user account. */
   secrets: ProviderSecret[] | undefined;
 }
@@ -114,6 +118,17 @@ export interface Installation {
 export interface RunpodWorld {
   catalog: CatalogGpu[] | undefined;
   endpoints: EndpointSetup[];
+  /** The tee of each pod the scenario's tasks create (e2e/fakes/llm/tee.ts). */
+  tee: TeeWorld | undefined;
+}
+
+/** The tee's options in a scenario's pods. */
+export interface TeeWorld {
+  /**
+   * Holds the agents' turns before the engine until turns of `issues` issues wait together, each
+   * for at most `timeoutMs`; the first meet ends the holding (`TeeSetup.meet`).
+   */
+  meet: { issues: number; timeoutMs: number } | undefined;
 }
 
 /** The fake OpenRouter's setup; a lag of null holds until settled. */
@@ -345,7 +360,10 @@ export type JobName = (typeof JOBS)[number];
 export type Fault =
   /** The shared fault of e2e/fakes/http.ts on a fake's route. */
   | { kind: "fault"; target: "http"; fake: FakeName; http: HttpFault }
-  /** `podStart: never` is a pod that never serves; `lowBalance` makes pod creation answer 402. */
+  /**
+   * `podStart: never` is a pod that never serves; `lowBalance` makes pod creation answer 402;
+   * `podAgeMs` dates the pods created from then on that far back.
+   */
   | {
       kind: "fault";
       target: "runpod";
@@ -353,6 +371,7 @@ export type Fault =
         podStart?: "never" | "fail";
         lowBalance?: boolean;
         holdQueues?: boolean | string[];
+        podAgeMs?: number;
       };
     }
   | {
@@ -549,5 +568,7 @@ export interface EngineMatch {
 export type Pattern =
   | { kind: "equals"; value: string | number | boolean | null }
   | { kind: "range"; atLeast: number | undefined; atMost: number | undefined }
+  /** A text that holds each of these texts. */
+  | { kind: "contains"; texts: string[] }
   | { kind: "object"; fields: Record<string, Pattern> }
   | { kind: "list"; items: Pattern[] };

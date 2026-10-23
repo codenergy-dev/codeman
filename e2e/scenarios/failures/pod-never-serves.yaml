@@ -1,0 +1,59 @@
+# A pod that never serves its model: open-key waits up to 25 minutes from the pod's creation, then
+# ends the pod's registry document and terminates the pod, and the run fails (docs/inference/pods.md,
+# "Creating"). The 25 minutes count from the creation time Runpod reports, so the fake Runpod,
+# seeded as decision 5 of the e2e plan says (no clock seam), dates the pods it creates 24 minutes
+# back: open-key waits the last minute, with the real clock. The pod stays STARTING, as one whose
+# image pull or start never ends.
+#
+# The run is `failed` at a cost of 0 (docs/budget/budget.md, "Outcomes of open-key"); the pod's
+# 25 minutes of billing are the pod's, in its pod-terminated event. The task was never planned:
+# it is blocked, and removing the label is how to go on.
+name: A pod that never serves fails its run after 25 minutes from its creation, and is terminated
+tags: [failures, pods]
+runner: simulator
+world:
+  organizations:
+    - name: acme
+      settings:
+        provider: runpod-pod
+        model: qwen2.5:0.5b
+        gpu: NVIDIA GeForce RTX 4090
+        task-budget: 2
+  repositories:
+    - { name: acme/app, fixture: node-small, maintainers: [alice] }
+actions:
+  - fault: { runpod: { pod-start: never, pod-age: 24m } }
+  - open-issue: { ref: i1, as: alice, title: Add a health route, labels: [codeman] }
+  - run: { event: issues.labeled }
+  - expect:
+      issue: i1
+      labels: [codeman:blocked]
+      comments:
+        - kind: run
+          contains:
+            - Codeman could not give this run access to its model (an OpenRouter key, or a GPU). See the run log.
+            - Remove the `codeman:blocked` label to try again.
+      pods:
+        - { count: 1 }
+        - ref: p1
+          status: TERMINATED
+          where: { billing: stopped, launches: 0, env: { CODEMAN_MODEL: qwen2.5:0.5b } }
+      ledger: { runs: 1, cost-at-most: 0 }
+      store:
+        - collection: organizations/acme/runs
+          where: { status: failed, cost: 0, stage: plan, provider: runpod-pod }
+          count: 1
+        - { collection: organizations/acme/events, where: { type: key-failed }, count: 1 }
+        - { collection: organizations/acme/events, where: { type: pod-created }, count: 1 }
+        - { collection: organizations/acme/events, where: { type: pod-terminated }, count: 1 }
+        - collection: pools/acme/pods
+          where: { live: false, status: ended, reason: "it did not serve qwen2.5:0.5b" }
+          count: 1
+      fakes:
+        runpod:
+          requests: { where: { method: POST, path: /v2/pods }, count: 1 }
+        github:
+          dispatches: { count: 0 }
+        llm:
+          turns: { count: 0 }
+      violations: none
