@@ -36,6 +36,7 @@ The suite replaces some parts of the real path. What each replacement hides, no 
 | The fake Hub | Hugging Face's model information, from the `vllm` profile's model volume | Other models, and private, gated or disabled ones: the fake serves only what the volume holds, as public |
 | The fake GitHub | GitHub's API, under `/api/v3` and `/api/graphql` as on GitHub Enterprise Server | github.com's own behavior where it differs from the fake |
 | The simulator's emulated actions | `actions/checkout`, `create-github-app-token`, `upload-artifact` and `download-artifact` | The actions' own code, and GitHub's runner. An input the emulation lacks stops the run |
+| act, for the scenarios [under act](#under-act) | GitHub's runner, with the actions' own code | What [act's limits](#acts-limits) list |
 | The tee, in each pod | The agent's chat to the engine | The engine reads a short fixed prompt, not the agent's: real prefill, real context use and parsing of the agent's tool calls go untested |
 | The tee's `/api/ps` and pull | Ollama's `size_vram`, and its registry pull | A real GPU's memory, and a pull from the registry |
 | The pod launcher | Runpod's machines, and Codeman's pinned pod images | The published images: the e2e images are built locally, with the e2e gateway |
@@ -160,13 +161,67 @@ A scenario tagged `known-bug` reproduces a bug of Codeman that is not fixed yet.
 
 ## Under act
 
-> [!NOTE]
-> This section is completed in phase 6 of the [plan](../../plans/2026-10-20-end-to-end-test-suite.md#phase-6-act-smoke-scenarios). The act driver does not exist yet: the runtime refuses a scenario with `runner: act` before it starts anything, and names it.
-
-In phase 6, act 0.2.89 runs two smoke scenarios on the real templates, on success paths only. Its audit and limits are in [dependencies](../dependencies.md#act).
+act 0.2.89 runs the smoke scenarios on Codeman's real templates, on success paths only: `pods/ollama-keep-and-release.act` and `security/set-env-in-agent-output.act`. They are the act variants of files that name both runners ([writing scenarios](scenarios.md#under-act)). act's audit is in [dependencies](../dependencies.md#act).
 
 > [!WARNING]
 > When no `GITHUB_TOKEN` secret is given, act injects the developer's real GitHub token into the jobs, from `gh auth token`. It also clones an action missing from its cache with that secret as the password, from github.com by default. The driver always passes a fake token, and its own env, secret and variable files, from an empty directory, in offline mode, with every pinned action checked in its cache before act starts.
+
+### Run them
+
+1. Install act 0.2.89 ([dependencies](../dependencies.md#act)). The runtime takes the first `act` on the `PATH`, or `CODEMAN_E2E_ACT`, and refuses another version.
+2. Fill act's action cache, once:
+
+   ```sh
+   node e2e/runtime/act/fill-cache.ts
+   ```
+
+   It clones the four actions the templates pin into `e2e/.out/act/actions/`, from github.com, anonymously: git runs with no user or system configuration, so no credential helper, and no prompt. `--from actions/checkout=<dir>` takes a local clone instead. Each clone is checked out at its pinned commit, and its `origin` is the fake GitHub's, as act requires of a cached action.
+3. Run them:
+
+   ```sh
+   npm run test:e2e -- act
+   ```
+
+   The tag `act` selects every act scenario. On the plan's machine, `pods/ollama-keep-and-release.act` takes about 5.5 minutes and `security/set-env-in-agent-output.act` about 5, against 2.5 for the simulator's `security/set-env-in-agent-output`: act starts a container per job and copies the workspace and each action into it.
+
+The runtime refuses, before it starts anything, a scenario under act that faults a job or `apply`, and stops a run when act's cache lacks a pinned action, naming the command above. It also stops when a Docker volume `act-toolcache` exists that it did not make: act mounts that volume on `/opt/hostedtoolcache` in every job, where it would hide the job image's Node. Remove it with `docker volume rm act-toolcache` if nothing of yours needs it.
+
+### How the driver runs act
+
+Each event, schedule and dispatch is one `act <event> --eventpath <payload>` invocation ([`e2e/runtime/act/`](../../../e2e/runtime/act/runner.ts)), on the repository's workflow files at the run's commit. The fake GitHub's dispatches, from `next-run` or `gh workflow run`, become the next `act workflow_dispatch`, with their inputs.
+
+| What | How |
+| --- | --- |
+| The token | `-s GITHUB_TOKEN=<the fake's token for the run>`, always. act's process gets a `PATH` with no `gh`, and a home, configuration, cache and temporary directory in `e2e/.out/act/`, with nothing of the runtime's environment |
+| The files | `--env-file`, `--secret-file` and `--var-file`, JSON read as YAML, and the event, written outside the working directory, which act copies into every job. The working directory is a new temporary directory with `.github/workflows/` only; the driver refuses any other entry, such as `.env`, `.secrets`, `.vars`, `.input` or `.actrc` |
+| The run | `GITHUB_RUN_ID`, `GITHUB_RUN_ATTEMPT` and `GITHUB_RUN_NUMBER` of the fake's run, and `GITHUB_REPOSITORY`, `GITHUB_REF` and `SHA_REF`, act's name for `github.sha` |
+| GitHub | `--env` `GITHUB_SERVER_URL`, `GITHUB_API_URL` and `GITHUB_GRAPHQL_URL`, on `https://github-e2e.localhost` at its fixed address; the driver refuses any other host, and never passes `--github-instance`. `GH_HOST`, and `GH_ENTERPRISE_TOKEN` in the env file |
+| Artifacts | The fake GitHub's artifact API: `ACTIONS_RESULTS_URL` and the run's runtime token. act's own artifact server never starts (no `--artifact-server-path`), its cache server neither (`--no-cache-server`), and both addresses are `127.0.0.1` |
+| OIDC | `ACTIONS_ID_TOKEN_REQUEST_URL`, and a request token per invocation, with the run's claims |
+| Actions | `--action-cache-path e2e/.out/act/actions/ --action-offline-mode`, every pin checked first; `--no-skip-checkout`, so `actions/checkout` runs against the fake |
+| Codeman's action | The e2e bundle, `action.yml` and the files beside it are Codeman's repository on the fake GitHub, at `CODEMAN_COMMIT_SHA`: the templates' own checkout then `uses: ./.codeman/action` run it. `--local-repository` would not apply: it replaces `uses: <owner>/<repo>@<ref>` actions, and the templates check Codeman out instead |
+| The jobs | `-P ubuntu-latest=codeman-e2e-runner:local --pull=false --rm`, the jobs network, `--container-daemon-socket -`, and `--container-options` with `--init`, `SYS_ADMIN`, seccomp and AppArmor unconfined, the CA's volume, 3 GiB and the scenario's labels |
+| The CA | act replaces the image's entry point, which installs the CA: `GIT_SSL_CAINFO` for git and `SSL_CERT_DIR` for `gh`; Node has `NODE_EXTRA_CA_CERTS` from the image |
+| `RUNNER_TEMP` | `/tmp`, which `${{ runner.temp }}` is under act whatever `RUNNER_TEMP` says, so the templates' artifact paths and Codeman's agree |
+| One at a time | Invocations queue, so per repository too: act ignores `concurrency`. Before each, the driver makes a new `act-toolcache` volume, labeled as its own |
+| act's notices | `ACT_DISABLE_VERSION_CHECK=1`, or act asks `api.nektosact.com` at each start |
+
+### act's limits
+
+Where act differs from GitHub in a way a scenario cannot avoid. Each is from act's source at 0.2.89, in `docs/web/nektos/`.
+
+| act | On the templates | So |
+| --- | --- | --- |
+| A failed job inside a reusable workflow stops the whole run | `next-run` and every `always()` job after a failed task never start | Failure scenarios run on the simulator only |
+| A skipped job's outputs are their unevaluated text, such as `${{ steps.codeman.outputs.handle }}` ([expression.go](../../web/nektos/act-pkg-runner-expression-go-at-4f41128.md)) | A run that skips `open-key`, such as the one that records a decision's answer, runs `close-key` with that text as the handle; it fails, which stops the run | No scenario with decisions to answer runs under act: `happy-path/openrouter-to-done` stays on the simulator |
+| It evaluates a job's `strategy.matrix` before its `if:` ([runner.go](../../web/nektos/act-pkg-runner-runner-go-at-4f41128.md)) | A run whose `select` is skipped, or picks nothing, leaves `tasks` unset: act stops with exit code 1, "Error while evaluating matrix", as it plans the `task` job | A run in which no job ran counts as skipped, as on GitHub; one where `select` ran then fails. The timeline keeps act's error |
+| It ignores `permissions` | Every job of a run gets the one `GITHUB_TOKEN`, with the union of the jobs' permissions (`actions: write`, `contents: read`), and `GH_ENTERPRISE_TOKEN` in every step | `security/token-permissions` runs on the simulator only |
+| No OIDC of its own | One request token per invocation: a called workflow's jobs have the caller's `job_workflow_ref` | The fake's attribute condition reads `workflow_ref`, the same on both |
+| It ignores `concurrency` and `timeout-minutes` | The `codeman` group never queues or replaces a run | The driver runs one invocation at a time |
+| `${{ runner.temp }}` is `/tmp`, whatever `RUNNER_TEMP` says | The job's temporary files are in `/tmp`, not under the runner's work directory | The jail mounts a new `/tmp` for the agent, so it still sees none of them; the sandbox's own tests were not run under act |
+| The workspace is the working directory's host path | Not `/home/runner/work/<repo>/<repo>` | – |
+| `act-toolcache` is shared by the jobs of a run, and world-writable | What a job writes in `/opt/hostedtoolcache` reaches the run's later jobs; on GitHub each job has its own machine | A new volume per invocation keeps runs apart |
+| Skipped jobs are logged at the debug level only | The report's `jobs/` holds the jobs that ran, and `act.log` per run with act's command and its own lines | – |
 
 ## How it works
 
@@ -188,10 +243,10 @@ flowchart LR
   github -.->|dispatches, read by run and advance| runtime
 ```
 
-1. `npm run test:e2e` ([`e2e/runtime/main.ts`](../../../e2e/runtime/main.ts)) loads and validates the scenarios, refuses those whose runner it lacks, checks Docker's memory, and runs `npm run build:e2e`.
+1. `npm run test:e2e` ([`e2e/runtime/main.ts`](../../../e2e/runtime/main.ts)) loads and validates the scenarios, refuses an act scenario that faults a job, checks Docker's memory, and runs `npm run build:e2e`.
 2. The session ([`session.ts`](../../../e2e/runtime/session.ts)) builds the images, runs `docker compose up --wait` with the profiles, and opens the pod launcher.
 3. For each scenario, it builds the world on the fakes: users, repositories with the templates, the App, the Google side and the agent's script.
-4. The scenario's actions run in order ([`run.ts`](../../../e2e/runtime/run.ts)). A `run` or an `advance` hands an event to the workflow simulator, which runs each job in its own container on the internal jobs network. A cancelled or timed-out step's processes get SIGINT, then SIGTERM after 7.5 seconds, then SIGKILL 2.5 seconds later, as GitHub's runner sends them; the container stays, so the job's `always()` steps run.
+4. The scenario's actions run in order ([`run.ts`](../../../e2e/runtime/run.ts)). A `run` or an `advance` hands an event to the workflow simulator, or to act's driver ([under act](#under-act)), which runs each job in its own container on the internal jobs network. A cancelled or timed-out step's processes get SIGINT, then SIGTERM after 7.5 seconds, then SIGKILL 2.5 seconds later, as GitHub's runner sends them; the container stays, so the job's `always()` steps run.
 5. A pod the fake Runpod creates goes to the launcher, which runs the local image its allowlist maps the pinned image to.
 6. `expect`, `wait` and `advance` read the fakes and the store ([`expect.ts`](../../../e2e/runtime/expect.ts)). At the end, any violation fails the scenario, and a failure writes the report ([`report.ts`](../../../e2e/runtime/report.ts)).
 

@@ -17,8 +17,13 @@ export interface Scenario {
   id: string;
   name: string;
   tags: string[];
-  /** `simulator` by default. */
+  /**
+   * The runner it runs on. A file may name several (`runner: [simulator, act]`): the loader makes
+   * one scenario of each, the first with the file's ID, each other with `.<runner>` after it.
+   */
   runner: Runner;
+  /** The file's runners, in its order: `[simulator]` by default. */
+  runners: Runner[];
   /** The Compose profiles it needs, beyond the services every scenario has. */
   profiles: Profile[];
   /** The whole scenario's time limit: 15 minutes by default. */

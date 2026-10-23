@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { resolve, sep } from "node:path";
-import type { Scenario } from "./schema.ts";
+import type { Action, Scenario } from "./schema.ts";
 
 /** A bare word: a tag, or a directory or file directly under `e2e/scenarios/`. */
 const TAG = /^[a-z0-9][a-z0-9-]*$/;
@@ -23,7 +23,10 @@ export function selectScenarios(
     const path = pathOf(arg, options);
     const tag = TAG.test(arg);
     const matches = scenarios.filter(
-      (scenario) => (tag && scenario.tags.includes(arg)) || within(resolve(scenario.file), path),
+      (scenario) =>
+        (tag && scenario.tags.includes(arg)) ||
+        scenario.id === arg ||
+        within(resolve(scenario.file), path),
     );
     if (matches.length === 0) throw new Error(`No scenario has the tag or is under ${arg}.`);
     for (const scenario of matches) chosen.add(scenario);
@@ -43,16 +46,25 @@ function within(file: string, path: string): boolean {
   return file === path || file.startsWith(path.endsWith(sep) ? path : `${path}${sep}`);
 }
 
-/** The runners the runtime has today: act's driver comes with phase 6 of the suite's plan. */
-const AVAILABLE_RUNNERS: readonly Scenario["runner"][] = ["simulator"];
-
 /**
- * Why the runtime refuses these scenarios, or undefined: a scenario whose runner it does not
- * have would otherwise run on another, and pass for what it does not test.
+ * Why the runtime refuses these scenarios, or undefined. act runs success paths only (decision 10
+ * of docs/plans/2026-10-20-end-to-end-test-suite.md): a failed job inside a reusable workflow
+ * stops act's whole run, and act's jobs cannot be faulted as the simulator's are. So a scenario
+ * with `runner: act` may not fault a job, nor make `apply` skip or fail.
  */
 export function runnerProblem(scenarios: readonly Scenario[]): string | undefined {
-  const refused = scenarios.filter((scenario) => !AVAILABLE_RUNNERS.includes(scenario.runner));
+  const refused = scenarios.filter(
+    (scenario) => scenario.runner === "act" && hasJobFault(scenario.actions),
+  );
   if (refused.length === 0) return undefined;
-  const names = refused.map((scenario) => `${scenario.id} (runner: ${scenario.runner})`);
-  return `The runtime has no act driver yet (phase 6 of docs/plans/2026-10-20-end-to-end-test-suite.md), so it runs no scenario with \`runner: act\`: ${names.join(", ")}. Leave them out of the selection, or remove their \`runner\` to run them on the simulator.`;
+  return `act runs success paths only, so a scenario with \`runner: act\` may not fault a job or apply: ${refused.map((scenario) => scenario.id).join(", ")}. Run it on the simulator.`;
+}
+
+function hasJobFault(actions: readonly Action[]): boolean {
+  return actions.some(
+    (action) =>
+      action.kind === "apply" ||
+      (action.kind === "fault" && action.target === "job") ||
+      (action.kind === "parallel" && action.branches.some((branch) => hasJobFault(branch))),
+  );
 }

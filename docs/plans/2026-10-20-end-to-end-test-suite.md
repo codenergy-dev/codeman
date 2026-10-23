@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-10-20T12:50:34-03:00
-updated_at: 2026-10-23T15:00:00-03:00
+updated_at: 2026-10-23T17:00:00-03:00
 commit: 21130fe
 ---
 
@@ -918,6 +918,49 @@ Done when the driver's tests show it refuses to start without the fake token and
 Done when the three pass three times in a row.
 
 Commit message: `Run the e2e smoke scenarios under act`.
+
+#### 6 results
+
+Run on 2026-10-23 on the plan's machine (Docker VM 9.7 GiB), act 0.2.89, `HEAD` `30c0b95` with the uncommitted step: three passes in a row of `npm run test:e2e -- act security/set-env-in-agent-output`.
+
+| Scenario | Pass 1 | Pass 2 | Pass 3 |
+| --- | --- | --- | --- |
+| `pods/ollama-keep-and-release.act` | 329 s | 332 s | 338 s |
+| `security/set-env-in-agent-output.act` | 310 s | 310 s | 294 s |
+| `security/set-env-in-agent-output` (simulator) | 149 s | 149 s | 140 s |
+| `happy-path/openrouter-to-done.act` | Blocked by act, below | – | – |
+
+The driver (step 6.1), in `e2e/runtime/act/` ([under act](../development/e2e/suite.md#under-act) has every flag and why):
+
+- **One invocation per run.** Each event, schedule and dispatch the fake GitHub records is one `act <event> --eventpath <payload>`, on the repository's workflow files at the run's commit, written into a new temporary directory that holds `.github/workflows/` only. The invocations queue, so per repository too. The scenarios' actions drive it as they drive the simulator: `run.ts` takes either through one `WorkflowRunner` interface.
+- **The run's identity, from the fake.** Each invocation is a run on the fake GitHub: its `GITHUB_RUN_ID`, `_ATTEMPT` and `_NUMBER`, a `GITHUB_TOKEN` with the union of the jobs' permissions (act ignores `permissions`), a runtime token for the fake's artifact API, and an OIDC request token with the run's claims. The tokens go in the env file, never on the command line, but for `-s GITHUB_TOKEN=<fake>`, which act requires.
+- **Refusals.** `actCommand` refuses to build a command without the fake token, without any of the env, secret, variable and event files, with one of them in the working directory, with anything but `.github/workflows/` there (such as `.env`, `.secrets`, `.vars`, `.input`, `.actrc`), with a GitHub URL that is not the fake's `*.localhost` host, with a token in `--env`, or with the Docker socket in the jobs' options (`driver.test.ts`). The runner refuses another act than 0.2.89, an action cache that lacks a pin, and an `act-toolcache` volume it did not make (`runner.test.ts`).
+- **No token the fake did not give.** `runner.test.ts` runs the runner against the fake GitHub in process, with act replaced by a function that reads its files and calls the fake with each token, as `gh` and an action would: both are the fake's, a new one per invocation, and the fake records no violation, while a token it never gave is one. The scenarios end with `violations: none`, so the real invocations' requests had no other token either.
+- **act's process inherits nothing.** Its environment is a `PATH` with no `gh`, a home, configuration, cache and temporary directory in `e2e/.out/act/`, `DOCKER_HOST`, and `ACT_DISABLE_VERSION_CHECK=1`: act otherwise asks `api.nektosact.com` for notices at each start ([notices.go](../web/nektos/act-cmd-notices-go-at-4f41128.md)).
+- **How act gets Codeman's action: the e2e build checked out from the fake GitHub.** For a scenario under act, the world puts `action.yml`, the e2e bundle as `dist/index.js` and the files it reads beside it into Codeman's repository on the fake, so the commit `CODEMAN_COMMIT_SHA` names holds them. The templates' own `actions/checkout` of `codenergy-dev/codeman` (with `--no-skip-checkout`) and `uses: ./.codeman/action` then run it, as on GitHub; act reads a local action from the job's container ([step_action_local.go](../web/nektos/act-pkg-runner-step-action-local-go-at-4f41128.md)). `--local-repository` would not apply: it replaces `uses: <owner>/<repo>@<ref>` actions and reusable workflows, and the templates check Codeman out instead of naming it in `uses:`.
+- **The action cache.** Filled once on 2026-10-23 with `node e2e/runtime/act/fill-cache.ts`: the four actions the templates pin, cloned from github.com anonymously (git with no user or system configuration, so no credential helper, and no prompt), checked out at their pinned commits, with the fake GitHub as `origin`, which act requires of a cached clone ([git.go](../web/nektos/act-pkg-common-git-git-go-at-4f41128.md), `CloneIfRequired`). `--from <owner>/<repo>=<dir>` takes a local clone instead.
+- **The tool cache.** act mounts the named volume `act-toolcache` on `/opt/hostedtoolcache` in every job. The driver makes a new one before each invocation, labeled as its own, which Docker fills from the job image's Node. The volume spike 0.2 left (2026-10-19, Node 24.21.0 of the local runner image, 139 MB) was removed by hand once, after reading it.
+
+Where act differs from GitHub, met on the real templates ([act's limits](../development/e2e/suite.md#acts-limits) has the whole list):
+
+1. **A skipped job's outputs are their unevaluated text** ([expression.go](../web/nektos/act-pkg-runner-expression-go-at-4f41128.md): `needs.<job>.outputs` reads the job's declared outputs, which act interpolates only for a job that ran). This blocks `happy-path/openrouter-to-done` under act: the run that records the decision's answer skips `open-key`, so `close-key`'s `if:` reads its `handle` as `${{ steps.codeman.outputs.handle }}`, which is not empty, and `close-key` runs with that text: "OpenRouter PATCH /keys/%2524%257B%257B%2520steps.codeman.outputs.handle%2520%257D%257D failed with 404." Its failure stops the run (spike 0.2, 1c), so `next-run` never starts and the chain ends with the task in `codeman:ready`. No scenario with a decision to answer can run under act, and none can avoid that run: `openrouter-to-done` stays on the simulator. `security/set-env-in-agent-output` covers the OpenRouter path under act instead, from the label to `codeman:done` with no decision.
+2. **act evaluates a job's matrix before its `if:`** ([runner.go](../web/nektos/act-pkg-runner-runner-go-at-4f41128.md), `NewPlanExecutor`). Every run whose `select` is skipped, as for the label events Codeman's App makes, or picks nothing, leaves `tasks` unset; act exits with 1 ("Error while evaluating matrix: Invalid JSON") as it plans the `task` job. The runtime counts a run in which no job ran as skipped, as GitHub does, and a run where `select` ran then as failed; the timeline keeps act's error. Such runs do nothing on GitHub either, so the scenarios are not affected.
+3. **One `GITHUB_TOKEN` per run**, with `actions: write` and `contents: read`, and `GH_ENTERPRISE_TOKEN` in every step: `security/token-permissions` stays on the simulator.
+4. **One OIDC request token per run**: the called workflow's jobs have the caller's `job_workflow_ref`. The fake's attribute condition reads `workflow_ref`, which is the same on both.
+5. **The workspace** is the temporary directory's host path, and `${{ runner.temp }}` is `/tmp`. The jail mounts a new `/tmp` for the agent; the sandbox's own tests were not run under act.
+6. **Time.** A stage takes about 75 to 80 seconds under act, against about 35 on the simulator (`set-env-in-agent-output`, four stages: about 300 s against 145 s): act creates a container per job and copies the workspace and each action into it.
+
+`security/set-env-in-agent-output` (step 6.2): the plan's and the code's agents print `::set-env name=ACTIONS_RESULTS_URL::http://npm:8080/set-env-seen/` and `::add-path::` on their stdout and stderr, write them to the stdout and stderr of every process they can open, and put them in their summaries and the commit message. On both runners the task reaches `codeman:done`, no step fails (the simulator fails a step that prints either command, as GitHub's runner does), and the fake npm never sees `/set-env-seen`, which the agent job's next step, `upload-artifact`, would call had the variable reached it (act's `set-env`, when allowed, changes the job's later steps, [command.go](../web/nektos/act-pkg-runner-command-go-at-4f41128.md)). A check in a scratch copy with Codeman's `│ ` prefix of the agent's lines removed (`src/sandbox.ts`) still passed: OpenCode's JSON events escape what the agent prints, and the agent could not write to OpenCode's own stdout. So the scenario shows that no command gets through, not that the prefix alone stops one.
+
+Runtime changes this step needed (each with its tests):
+
+- **A file may name both runners**, `runner: [simulator, act]`: it makes one scenario per runner, the act one with `.act` after its ID and the tag `act` (`filter.test.ts`). The runtime refuses, before it starts anything, a scenario under act that faults a job or `apply`, since act runs success paths only.
+- **The world** puts Codeman's action files into Codeman's repository on the fake, for a scenario under act.
+- **A failed run's message** names the act driver, not the simulator, for a scenario under act.
+
+No fake changed, and no Codeman bug was found.
+
+Not done: the sandbox's tests under act, and a check that the set-env probe catches a variable a runner honors (act honors one only with `ACTIONS_ALLOW_UNSECURE_COMMANDS=true`, and only from a line the runner reads).
 
 ### Phase 7: docs
 

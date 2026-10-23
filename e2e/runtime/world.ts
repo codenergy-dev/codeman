@@ -61,6 +61,13 @@ export async function buildWorld(
   scenario: Scenario,
   github: RemoteGitHub,
   fakes: Fakes,
+  options: {
+    /**
+     * More files of Codeman's repository, such as the e2e bundle as `dist/index.js`, which act
+     * checks out and runs as `uses: ./.codeman/action`; the simulator runs the bundle itself.
+     */
+    codemanFiles?: Record<string, string>;
+  } = {},
 ): Promise<BuiltWorld> {
   const world = scenario.world;
   const project = `e2e-${randomBytes(6).toString("hex")}`;
@@ -82,7 +89,10 @@ export async function buildWorld(
     name: CODEMAN.name,
     private: false,
     drafts: true,
-    files: { "README.md": "Codeman, as the e2e suite's fake GitHub holds it.\n" },
+    files: {
+      "README.md": "Codeman, as the e2e suite's fake GitHub holds it.\n",
+      ...options.codemanFiles,
+    },
     collaborators: {},
   });
   const codemanSha = await github.resolve(codeman.fullName, codeman.defaultBranch);

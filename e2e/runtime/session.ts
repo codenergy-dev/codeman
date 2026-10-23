@@ -1,10 +1,13 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { adminToken } from "../../src/inference/selfhosted.ts";
 import { Firestore } from "../../src/store/firestore.ts";
 import { EMULATOR_OWNER } from "../fakes/google/google.ts";
+import type { RunIdentity } from "../fakes/google/oidc.ts";
+import { ActRunner, removeToolCache } from "./act/runner.ts";
 import { Compose, network } from "./compose.ts";
 import { docker, dockerOk, imageExists, removeLabeled } from "./docker.ts";
 import { DockerExecutor, JOB_ROOT } from "./executor.ts";
@@ -14,10 +17,10 @@ import { FaultingExecutor, type JobFault } from "./faults.ts";
 import { RemoteGitHub } from "./github.ts";
 import { allowlistPlan, Launcher, podRunner, teeEnv } from "./launcher.ts";
 import { type ReportData, Timeline, writePass, writeReport } from "./report.ts";
-import { ScenarioFailure, ScenarioRun } from "./run.ts";
+import { ScenarioFailure, ScenarioRun, type WorkflowRunner } from "./run.ts";
 import { runnerProblem } from "./scenario/filter.ts";
 import type { Profile, Scenario } from "./scenario/schema.ts";
-import { Simulator } from "./simulator/simulator.ts";
+import { type JobResult, type RunResult, type SimRun, Simulator } from "./simulator/simulator.ts";
 import { buildWorld, OIDC_REQUEST_URL, PROVIDER_KEYS } from "./world.ts";
 
 /**
@@ -199,6 +202,7 @@ export class Session {
   async close(options: { down?: boolean } = {}): Promise<void> {
     await this.launcher.close();
     await removeLabeled(`${SESSION_LABEL}=${this.id}`);
+    await removeToolCache();
     if (options.down) await this.compose.down();
   }
 
@@ -223,11 +227,16 @@ export class Session {
     this.launcher.forget();
     this.#ended.clear();
 
-    let simulator: Simulator | undefined;
+    let simulator: WorkflowRunner | undefined;
     let run: ScenarioRun | undefined;
     let store: Firestore | undefined;
     try {
-      const world = await buildWorld(scenario, this.github, this.fakes);
+      const world = await buildWorld(
+        scenario,
+        this.github,
+        this.fakes,
+        scenario.runner === "act" ? { codemanFiles: codemanAction() } : {},
+      );
       timeline.add(
         "world",
         `Firestore project ${world.project}; Codeman at ${world.codemanSha.slice(0, 7)}`,
@@ -239,62 +248,84 @@ export class Session {
       });
       await this.#fresh(scenario, store);
       const jobFaults: JobFault[] = [];
-      const executor = new FaultingExecutor(
-        new DockerExecutor({
+      const events = {
+        runQueued: (queued: SimRun) =>
+          timeline.add(
+            "run",
+            `queued ${queued.id} ${queued.request.event} (${queued.request.workflow})`,
+          ),
+        runCompleted: (result: RunResult) =>
+          timeline.add(
+            "run",
+            `completed ${result.id} ${result.event}: ${result.conclusion}${result.error ? ` (${result.error})` : ""}`,
+          ),
+        jobCompleted: (job: JobResult) =>
+          timeline.add("job", `${job.name}: ${job.result}${job.error ? ` (${job.error})` : ""}`),
+      };
+      const jobEnv = {
+        CODEMAN_E2E_ENDPOINTS: JSON.stringify(bundleEndpoints()),
+        GH_HOST: new URL(INTERNAL.github).host,
+      };
+      const labels = { [SESSION_LABEL]: this.id, [SCENARIO_LABEL]: slug };
+      const oidc = {
+        requestUrl: OIDC_REQUEST_URL,
+        register: async (identity: RunIdentity) =>
+          (await this.fakes.google.json<{ token: string }>("POST", "/google/runs", identity)).token,
+      };
+      if (scenario.runner === "act") {
+        simulator = new ActRunner({
+          github: this.github,
+          oidc,
+          secrets: (repository) => world.secrets(repository),
+          vars: (repository) => world.vars(repository),
+          act: await actBinary(),
           image: RUNNER_IMAGE,
           network: JOBS_NETWORK,
           caVolume: "codeman-e2e-ca",
-          bundle: {
-            dir: BUILD,
-            rules: join(ROOT, "AGENTS.md"),
-            tools: join(ROOT, "docs", "web", "tools"),
-          },
-          env: {
-            CODEMAN_E2E_ENDPOINTS: JSON.stringify(bundleEndpoints()),
-            GH_HOST: new URL(INTERNAL.github).host,
-          },
-          labels: { [SESSION_LABEL]: this.id, [SCENARIO_LABEL]: slug },
+          env: jobEnv,
+          labels,
           memory: "3g",
-          started: (job, container) => timeline.add("job", `start ${job.name} in ${container}`),
-        }),
-        jobFaults,
-        JOB_ROOT,
-        (runId) => {
-          const found = simulator?.runs.find((one) => one.id === runId);
-          timeline.add("run", `the scenario cancels run ${runId}`);
-          found?.cancel();
-        },
-      );
-      simulator = new Simulator({
-        github: this.github,
-        executor,
-        secrets: (repository) => world.secrets(repository),
-        vars: (repository) => world.vars(repository),
-        oidc: {
-          requestUrl: OIDC_REQUEST_URL,
-          register: async (identity) =>
-            (await this.fakes.google.json<{ token: string }>("POST", "/google/runs", identity))
-              .token,
-        },
-        bundle: { entry: join(BUILD, "index.js"), actionYml: join(ROOT, "action.yml") },
-        workdir,
-        // The fake Google's access token, which Codeman masks: a real one is random.
-        unmasked: [EMULATOR_OWNER],
-        events: {
-          runQueued: (queued) =>
-            timeline.add(
-              "run",
-              `queued ${queued.id} ${queued.request.event} (${queued.request.workflow})`,
-            ),
-          runCompleted: (result) =>
-            timeline.add(
-              "run",
-              `completed ${result.id} ${result.event}: ${result.conclusion}${result.error ? ` (${result.error})` : ""}`,
-            ),
-          jobCompleted: (job) =>
-            timeline.add("job", `${job.name}: ${job.result}${job.error ? ` (${job.error})` : ""}`),
-        },
-      });
+          workdir: join(tmpdir(), `codeman-e2e-act-${this.id}`),
+          dockerHost: await dockerHost(),
+          events,
+        });
+      } else {
+        const executor = new FaultingExecutor(
+          new DockerExecutor({
+            image: RUNNER_IMAGE,
+            network: JOBS_NETWORK,
+            caVolume: "codeman-e2e-ca",
+            bundle: {
+              dir: BUILD,
+              rules: join(ROOT, "AGENTS.md"),
+              tools: join(ROOT, "docs", "web", "tools"),
+            },
+            env: jobEnv,
+            labels,
+            memory: "3g",
+            started: (job, container) => timeline.add("job", `start ${job.name} in ${container}`),
+          }),
+          jobFaults,
+          JOB_ROOT,
+          (runId) => {
+            const found = simulator?.runs.find((one) => one.id === runId);
+            timeline.add("run", `the scenario cancels run ${runId}`);
+            found?.cancel();
+          },
+        );
+        simulator = new Simulator({
+          github: this.github,
+          executor,
+          secrets: (repository) => world.secrets(repository),
+          vars: (repository) => world.vars(repository),
+          oidc,
+          bundle: { entry: join(BUILD, "index.js"), actionYml: join(ROOT, "action.yml") },
+          workdir,
+          // The fake Google's access token, which Codeman masks: a real one is random.
+          unmasked: [EMULATOR_OWNER],
+          events,
+        });
+      }
       const context = {
         scenario,
         github: this.github,
@@ -381,7 +412,7 @@ export class Session {
     scenario: Scenario,
     error: string,
     timeline: Timeline,
-    simulator: Simulator | undefined,
+    simulator: WorkflowRunner | undefined,
     store: Firestore | undefined,
   ): Promise<ReportData> {
     const safely = async <T>(read: () => Promise<T>): Promise<T | { error: string }> => {
@@ -567,7 +598,7 @@ export class Session {
 type EngineStatus = { gateway?: unknown; ollama?: unknown; vllm?: unknown; tee?: unknown };
 
 /** Each job's log, by a file name in the order the jobs ended. */
-function jobLogs(simulator: Simulator | undefined): Record<string, string> {
+function jobLogs(simulator: WorkflowRunner | undefined): Record<string, string> {
   const jobs: Record<string, string> = {};
   let index = 0;
   for (const run of simulator?.runs ?? []) {
@@ -594,4 +625,38 @@ async function withTimeout<T>(work: Promise<T>, ms: number, timedOut: () => Erro
 /** Whether the e2e bundle is there to mount. */
 export function bundleBuilt(): boolean {
   return existsSync(join(BUILD, "index.js"));
+}
+
+/**
+ * Codeman's repository as act checks it out at `CODEMAN_COMMIT_SHA` (`uses: ./.codeman/action`):
+ * `action.yml`, the e2e bundle as `dist/index.js`, and the files the bundle reads beside it, as the
+ * simulator's executor copies them into its checkout.
+ */
+function codemanAction(): Record<string, string> {
+  const read = (...path: string[]) => readFileSync(join(...path), "utf8");
+  return {
+    "action.yml": read(ROOT, "action.yml"),
+    "dist/index.js": read(BUILD, "index.js"),
+    "AGENTS.md": read(ROOT, "AGENTS.md"),
+    "docs/web/tools/fetch-markdown.md": read(ROOT, "docs", "web", "tools", "fetch-markdown.md"),
+  };
+}
+
+/** act's binary: `CODEMAN_E2E_ACT`, else the first `act` on the `PATH`. */
+async function actBinary(): Promise<string> {
+  const given = process.env.CODEMAN_E2E_ACT;
+  if (given) return given;
+  for (const dir of (process.env.PATH ?? "").split(delimiter)) {
+    const candidate = join(dir, "act");
+    if (dir && existsSync(candidate)) return candidate;
+  }
+  throw new Error(
+    "act is not installed: a scenario with `runner: act` needs act 0.2.89 (docs/development/dependencies.md#act), on the PATH or in CODEMAN_E2E_ACT.",
+  );
+}
+
+/** The Docker daemon act drives: DOCKER_HOST, else the current context's. */
+async function dockerHost(): Promise<string> {
+  if (process.env.DOCKER_HOST) return process.env.DOCKER_HOST;
+  return (await dockerOk(["context", "inspect", "--format", "{{.Endpoints.docker.Host}}"])).trim();
 }

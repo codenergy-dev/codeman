@@ -16,7 +16,8 @@ import {
   type Scenario,
   type Target,
 } from "./scenario/schema.ts";
-import type { RunResult, SimRun, Simulator } from "./simulator/simulator.ts";
+import type { Dispatched } from "./simulator/github.ts";
+import type { RunRequest, RunResult, SimRun } from "./simulator/simulator.ts";
 import type { BuiltWorld } from "./world.ts";
 
 /**
@@ -38,12 +39,29 @@ export interface Infrastructure {
   firestore(down: boolean): Promise<void>;
 }
 
+/**
+ * What runs the workflows: the simulator, or act's driver for a scenario with `runner: act`. Each
+ * starts runs from an event, a schedule, a request or a dispatch, and keeps them, with their jobs.
+ */
+export interface WorkflowRunner {
+  readonly runs: SimRun[];
+  trigger(event: {
+    name: string;
+    repository: string;
+    payload: Record<string, unknown>;
+    triggers?: boolean;
+  }): Promise<SimRun[]>;
+  schedule(repository: string): Promise<SimRun[]>;
+  start(request: RunRequest): Promise<SimRun>;
+  dispatched(dispatch: Dispatched): Promise<SimRun>;
+}
+
 export interface RunContext {
   scenario: Scenario;
   github: RemoteGitHub;
   fakes: Fakes;
   store: Store;
-  simulator: Simulator;
+  simulator: WorkflowRunner;
   world: BuiltWorld;
   timeline: Timeline;
   /** The job faults the executor applies; actions add to it. */
@@ -487,7 +505,7 @@ export class ScenarioRun {
     for (const outcome of settled) {
       if (outcome.status === "rejected") {
         throw new ScenarioFailure(
-          `The simulator could not run a workflow: ${(outcome.reason as Error)?.message ?? outcome.reason}`,
+          `The ${this.context.scenario.runner === "act" ? "act driver" : "simulator"} could not run a workflow: ${(outcome.reason as Error)?.message ?? outcome.reason}`,
         );
       }
       results.push(outcome.value);

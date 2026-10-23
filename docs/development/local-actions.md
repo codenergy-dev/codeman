@@ -51,6 +51,10 @@ You need Docker. The first run builds the image, in a few minutes.
 
 A test that passes here can still fail on GitHub's runner, which has more tools and more open paths: CI stays the check before merging.
 
+## The workflows under act
+
+This image runs one job's code. Codeman's real templates, job after job, run under act 0.2.89 in the e2e suite's smoke scenarios, in the suite's job image, which is this one with `gh` and the suite's test CA: see [under act](e2e/suite.md#under-act).
+
 ## Update the image
 
 - **Ubuntu:** change the `FROM ubuntu:noble-<date>@sha256:<digest>` line, and record the new tag's page in `docs/web/docker-hub/` ([Docker Hub tool](../web/tools/docker-hub.md)).

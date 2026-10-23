@@ -42,6 +42,7 @@ import {
   type Repository,
   RUN_CHAIN_RUNS,
   RUNNERS,
+  type Runner,
   type RunpodWorld,
   type Scenario,
   type StoreMatch,
@@ -121,8 +122,17 @@ export function validateScenario(value: unknown, options: ValidateOptions): Scen
   // In the file's order, so the first error is the first field at fault.
   const name = text(fields.name, ["name"]);
   const tags = fields.tags === undefined ? [] : unique(tagsOf(fields.tags, ["tags"]), ["tags"]);
-  const runner =
-    fields.runner === undefined ? "simulator" : choice(fields.runner, ["runner"], RUNNERS);
+  const runners: Runner[] =
+    fields.runner === undefined
+      ? ["simulator"]
+      : Array.isArray(fields.runner)
+        ? unique(
+            list(fields.runner, ["runner"], (item, at) => choice(item, at, RUNNERS)),
+            ["runner"],
+          )
+        : [choice(fields.runner, ["runner"], RUNNERS)];
+  if (runners.length === 0) throw new Invalid(["runner"], "names no runner");
+  const runner = runners[0] as Runner;
   const profiles =
     fields.profiles === undefined
       ? []
@@ -148,6 +158,7 @@ export function validateScenario(value: unknown, options: ValidateOptions): Scen
     name,
     tags,
     runner,
+    runners,
     profiles,
     timeoutMs,
     world,

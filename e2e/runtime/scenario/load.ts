@@ -106,7 +106,24 @@ export function loadScenarios(
   root: string = SCENARIOS_ROOT,
   options: LoadOptions = {},
 ): Scenario[] {
-  return scenarioFiles(root).map((file) => loadScenario(file, { ...options, root }));
+  return scenarioFiles(root).flatMap((file) => byRunner(loadScenario(file, { ...options, root })));
+}
+
+/**
+ * The scenarios a file makes, one per runner it names: the first keeps the file's ID, each other
+ * gets `.<runner>` after it, such as `happy-path/openrouter-to-done.act`. A scenario on act has
+ * the tag `act`, so `npm run test:e2e -- act` selects every one.
+ */
+export function byRunner(scenario: Scenario): Scenario[] {
+  return scenario.runners.map((runner, index) => ({
+    ...scenario,
+    runner,
+    id: index === 0 ? scenario.id : `${scenario.id}.${runner}`,
+    tags:
+      runner === "act" && !scenario.tags.includes("act")
+        ? [...scenario.tags, "act"]
+        : scenario.tags,
+  }));
 }
 
 /** Its path under `root` without `.yaml`, with `/`; its base name outside `root`. */

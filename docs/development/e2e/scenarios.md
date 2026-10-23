@@ -64,7 +64,7 @@ actions:
 | --- | --- | --- | --- |
 | `name` | Yes | What the scenario shows, in one line | |
 | `tags` | No | Words that select it on the command line: lowercase letters, digits and `-`. `known-bug` marks a scenario that reproduces a bug of Codeman not fixed yet ([known bugs](suite.md#known-bugs)) | None |
-| `runner` | No | `simulator` or `act`. The runtime refuses `act` until [phase 6](suite.md#under-act) | `simulator` |
+| `runner` | No | `simulator`, `act`, or a list of both, such as `[simulator, act]`: the file then makes one scenario per runner ([under act](suite.md#under-act)) | `simulator` |
 | `profiles` | No | The Compose profiles it needs: `ollama`, `vllm` ([memory](suite.md#profiles-and-memory)) | None |
 | `timeout` | No | The whole scenario's time limit | `15m` |
 | `world` | Yes | The users, organizations and repositories; see [the world](#the-world) | |
@@ -354,6 +354,17 @@ The pod's ref must be defined by an earlier action: put the check in an `expect`
           "vllm:cache_config_info": { kv_cache_size_tokens: 87296 }
 ```
 
-## Not available yet
+## Under act
 
-The schema accepts `runner: act`, but the runtime refuses such a scenario until [phase 6](suite.md#under-act): `npm run test:e2e` stops before it starts anything, and names the scenarios.
+A file with `runner: [simulator, act]` makes two scenarios: the first keeps the file's ID, such as `security/set-env-in-agent-output`, and the act one gets `.act` after it, with the tag `act`. The file's path or ID selects both; the `.act` ID, or the tag `act`, the act one alone.
+
+```yaml
+name: The agent's workflow commands reach no later step
+tags: [security, openrouter]
+runner: [simulator, act]
+```
+
+act runs success paths only ([decision 10](../../plans/2026-10-20-end-to-end-test-suite.md#answered-after-the-spikes)). The runtime refuses, before it starts anything, a scenario under act with a `fault` on a job or an `apply` action, anywhere in it.
+
+> [!WARNING]
+> Under act, a run where `open-key` is skipped, such as the run that records a decision's answer, fails: act gives a skipped job's outputs as their unevaluated text ([act's limits](suite.md#acts-limits)). So no scenario with decisions to answer, such as `happy-path/openrouter-to-done`, runs under act.

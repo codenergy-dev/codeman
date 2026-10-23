@@ -1,0 +1,69 @@
+# The agent's output cannot issue workflow commands (src/sandbox.ts prefixes each of its lines).
+# GitHub's runner refuses `::set-env::` and `::add-path::` and fails the step that prints them;
+# act before 0.2.86 ran them (CVE-2026-34041, docs/web/nektos/set-env-and-add-path-workflow-commands-unconditionally-processed.md),
+# and act 0.2.89 refuses them. Here the plan's and the code's agents print both commands on their
+# stdout and stderr, and put them in their summaries and the commit message:
+#
+# - `::set-env::` would point ACTIONS_RESULTS_URL at the fake npm's `/set-env-seen/`: the next
+#   step, the agent job's upload-artifact, would send its artifact calls there;
+# - `::add-path::` would put a directory before the PATH of the later steps.
+#
+# No step fails for them, the fake npm never sees `/set-env-seen/`, and the task goes from its
+# label to codeman:done, on the simulator and under act.
+name: The agent's workflow commands reach no later step
+tags: [security, openrouter]
+runner: [simulator, act]
+timeout: 25m
+world:
+  organizations:
+    - { name: acme, settings: { model: deepseek/deepseek-v4.1-flash, task-budget: 2 } }
+  repositories:
+    - { name: acme/app, fixture: node-small, maintainers: [alice] }
+agent:
+  i1:
+    # No decisions: the task is ready at once, so the chain goes on with no answer to wait for.
+    plan:
+      - steps:
+          - bash: plan=$(sed -n 's/.*Create the plan at `\([^`]*\)`.*/\1/p' .codeman/task.md) && mkdir -p "$(dirname "$plan")" && printf '# Add a health route\n' > "$plan"
+          # On its own output, which OpenCode keeps in its JSON events, and straight on the
+          # stdout and stderr of every process it can open, OpenCode's included.
+          - bash: >-
+              c='::set-env name=ACTIONS_RESULTS_URL::http://npm:8080/set-env-seen/\n::add-path::/tmp/codeman-e2e-add-path\n';
+              printf "$c"; printf "$c" >&2;
+              for fd in /proc/[0-9]*/fd/1 /proc/[0-9]*/fd/2; do printf "$c" > "$fd"; done 2>/dev/null; true
+          - output:
+              summary: "Adds a health route.\n::set-env name=ACTIONS_RESULTS_URL::http://npm:8080/set-env-seen/\n::add-path::/tmp/codeman-e2e-add-path"
+              decisions: []
+    route:
+      - steps:
+          - output:
+              summary: Code, then review.
+              route: [{ stage: code, brief: Add the route. }, { stage: review, brief: Check it. }]
+              skipped: [{ stage: web, reason: No docs. }, { stage: design, reason: Settled. }, { stage: test, reason: Too small. }]
+    code:
+      - steps:
+          # On its own output, which OpenCode keeps in its JSON events, and straight on the
+          # stdout and stderr of every process it can open, OpenCode's included.
+          - bash: >-
+              c='::set-env name=ACTIONS_RESULTS_URL::http://npm:8080/set-env-seen/\n::add-path::/tmp/codeman-e2e-add-path\n';
+              printf "$c"; printf "$c" >&2;
+              for fd in /proc/[0-9]*/fd/1 /proc/[0-9]*/fd/2; do printf "$c" > "$fd"; done 2>/dev/null; true
+          - write: { path: src/health.ts, content: "export const ok = true;\n" }
+          - output:
+              status: done
+              summary: "Adds the route.\n::set-env name=ACTIONS_RESULTS_URL::http://npm:8080/set-env-seen/"
+              commitMessage: "Add a health route\n\n::set-env name=ACTIONS_RESULTS_URL::http://npm:8080/set-env-seen/\n::add-path::/tmp/codeman-e2e-add-path"
+    review:
+      - steps: [{ output: { status: done, summary: The route is right. } }]
+actions:
+  - open-issue: { ref: i1, as: alice, title: Add a health route, labels: [codeman] }
+  # The labeled issue's run, and the chain it starts: plan, route, code, review, each a run.
+  - run: { event: issues.labeled }
+  - expect:
+      issue: i1
+      labels: [codeman:done]
+      pull-request: { ready: true, files: [src/health.ts] }
+      fakes:
+        npm:
+          requests: { where: { path: { contains: /set-env-seen } }, count: 0 }
+      violations: none

@@ -1,6 +1,6 @@
 name: Ollama pod, kept between stages and released at the end
 tags: [pods, ollama]
-runner: simulator
+runner: [simulator, act]
 profiles: [ollama]
 timeout: 25m
 world:
