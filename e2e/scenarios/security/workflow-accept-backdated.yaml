@@ -1,12 +1,11 @@
-# Known bug, not fixed: a staged workflow changed after `/codeman accept-workflows`, by a commit
-# dated before the comment, is moved as if the maintainer had read it. docs/runs/changes.md says
-# "If a staged file changed after the comment, nothing moves." apply finds what the maintainer saw
-# with `commitAt(branch, comment.createdAt)` (src/platform/github/platform.ts), GitHub's
-# `GET /commits?until=`, which compares commit dates: whoever makes a commit chooses its date, so
-# a push made after the comment with an earlier date counts as seen. In whole seconds too, so a
-# commit in the comment's second counts as seen on the fake, whose `until` takes git's.
-# This scenario pushes the change 2 seconds after the comment, dated an hour back, and expects the
-# refusal security/workflow-staged gets for a commit dated now.
+# A staged workflow changed after `/codeman accept-workflows`, by a commit dated before the
+# comment, is not moved. apply once found what the maintainer saw with GitHub's
+# `GET /commits?until=`, which compares commit dates that the committer chooses
+# (docs/plans/2026-10-23-accept-only-the-listed-workflows.md). Now each run that lists the
+# staged workflows records their blob SHAs, and the accept moves only those blobs
+# (docs/runs/changes.md, "Accepting"). This scenario pushes the change 2 seconds after the
+# comment, dated an hour back, and expects the refusal security/workflow-staged gets for a commit
+# dated now; the refusal lists the changed file, and the next accept moves it.
 #
 # Workflows the agent writes never run before a maintainer reads them (docs/runs/changes.md,
 # "On-demand workflows"; docs/plans/2026-09-28-review-before-accepting-workflows.md). The
@@ -19,7 +18,7 @@
 # - an accept of unchanged files moves them into `.github/workflows/`, with the token that may
 #   write workflows (the fake GitHub refuses a workflow file from any other), and the task is done.
 name: A staged workflow changed after the accept, by a backdated commit, is not moved
-tags: [security, openrouter, workflows, known-bug]
+tags: [security, openrouter, workflows]
 runner: simulator
 timeout: 20m
 world:
@@ -87,7 +86,7 @@ actions:
       issue: i1
       labels: [codeman:awaiting-workflow]
       commits: { no-files: [.github/workflows/ci.yml] }
-  # Accepted again, unchanged since: they move, and the task is done.
+  # Accepted again, unchanged since the refusal listed them: they move, and the task is done.
   - comment: { issue: i1, as: alice, body: /codeman accept-workflows }
   - advance: { until: { issue: i1, labels: [codeman:done] }, max-runs: 3 }
   - expect:

@@ -1,7 +1,7 @@
 ---
-status: in progress
+status: completed
 created_at: 2026-10-23T12:28:00-03:00
-updated_at: 2026-10-23T14:28:00-03:00
+updated_at: 2026-10-23T15:12:00-03:00
 commit: 03a30f1
 ---
 
@@ -51,7 +51,9 @@ commit: 03a30f1
    - **Done on 2026-10-23.** [Accepting](../runs/changes.md#accepting) gets a table of what the accept compares, and [staging](../runs/changes.md#staging) says each listing records. `npm run check` passes: 911 tests, 5 skipped.
 4. **The e2e scenario.** `security/workflow-accept-backdated` loses its `known-bug` tag and expects the refusal. Done when `node --test "e2e/runtime/scenario/*.test.ts"` validates it, and later when it and `security/workflow-staged` pass three times in a row (Docker is busy now).
    - **Validated on 2026-10-23**; the runs wait for Docker. The scenario's steps are unchanged: its refusal and second accept now hold.
+   - **Done on 2026-10-23**, on `42c13f1`. `workflow-accept-backdated` passed in 179.1 s, 179.7 s and 183.9 s, `workflow-staged` in 179.0 s, 181.6 s and 163.0 s.
 5. **The e2e plan.** Its 5.5 results say the bug is fixed, linking here. Then this plan is `completed`.
+   - **Done on 2026-10-23.**
 
 ## Out of scope
 
