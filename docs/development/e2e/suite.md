@@ -76,7 +76,7 @@ A scenario's `profiles` field names the pods it needs. The runtime starts the pr
 | `ollama` | Also Ollama's model seed, and Ollama pods | 4 GiB |
 | `vllm` | Also vLLM's model seed, and a vLLM pod | 8 GiB |
 
-A vLLM pod peaks at about 5.5 GiB. Docker Desktop's default of 8 GB shows about 7.8 GB, which is short of what `vllm` requires. The only `vllm` scenario, `parallel/vllm-two-seats`, peaked at 6.3 to 7.0 GiB of containers on a VM of 9.7 GiB: the pod at 4.5 to 5.2 GiB, two agent jobs at about 0.65 GiB each, the emulator and the fakes.
+A vLLM pod peaks at about 5.5 GiB. Docker Desktop's default of 8 GB shows about 7.8 GB, which is short of what `vllm` requires. Two scenarios need `vllm`: `failures/fit-vllm-explicit` runs one vLLM pod and no agent; `parallel/vllm-two-seats`, the largest, peaked at 6.3 to 7.0 GiB of containers on a VM of 9.7 GiB: the pod at 4.5 to 5.2 GiB, two agent jobs at about 0.65 GiB each, the emulator and the fakes.
 
 The largest `ollama` scenario, `parallel/four-tasks-one-pod`, peaks at about 5.6 GiB of containers: four agent jobs of about 0.75 GiB each, the pod at 2.1 GiB, the emulator at 0.3 GiB and the fakes. Five agent jobs and two pods, about 8.5 GiB, would not fit in 7.8 GB.
 
@@ -93,7 +93,7 @@ A vLLM pod takes 5 to 6 minutes to serve on a CPU. Scenarios run one at a time.
    npm run test:e2e -- happy-path/openrouter-plan-only
    ```
 
-   The runtime builds the e2e bundle, builds the images it lacks, starts the services, and runs the scenario. The output ends with `PASS happy-path/openrouter-plan-only`, its time (34 s on the plan's machine), and `1 passed, 0 failed.`
+   The runtime builds the e2e bundle, builds the images it lacks, starts the services with Compose, and runs the scenario. It prints `[e2e] PASS happy-path/openrouter-plan-only` with its time (34 to 39 s on the plan's machine), then a summary that ends with `1 passed, 0 failed.` With the images built and the services down, the whole command takes about a minute.
 2. Run more: name tags, directories or files, or nothing for every scenario.
 3. Stop the services with your last run's `--down`, or `docker compose -f e2e/infra/compose.yaml --profile ollama --profile vllm down`. The named volumes stay, with the models.
 
