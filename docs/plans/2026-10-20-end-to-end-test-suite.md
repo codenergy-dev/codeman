@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-10-20T12:50:34-03:00
-updated_at: 2026-10-23T20:30:00-03:00
+updated_at: 2026-10-23T22:25:28-03:00
 commit: 21130fe
 ---
 
@@ -217,7 +217,7 @@ Answered by the responsible person on 2026-10-20.
 | `e2e/fixtures/` | Synthetic target repositories as file trees; the runtime makes bare repositories of them |
 | `e2e/.build/`, `e2e/.out/` | The e2e bundle and each scenario's report; ignored by git |
 
-There is no `e2e/README.md`: the docs go to `docs/development/e2e.md`.
+There is no `e2e/README.md`: the docs go to `docs/development/e2e/` (phase 7).
 
 ### How a run flows
 
@@ -560,7 +560,7 @@ Done when each image builds from a clean clone, and `pod-ollama` serves `/health
 
 Profiles `ollama` and `vllm`, named volumes for models, Hugging Face's cache and npm, one-shot seed services that check each model's digest or revision, health checks, memory limits.
 
-Done when `docker compose -f e2e/infra/compose.yaml up --wait` reports every service healthy, a second run downloads nothing, and the memory of each profile is recorded in `docs/development/e2e.md`'s draft.
+Done when `docker compose -f e2e/infra/compose.yaml up --wait` reports every service healthy, a second run downloads nothing, and the memory of each profile is recorded in the suite's docs, now [`docs/development/e2e/suite.md`](../development/e2e/suite.md#profiles-and-memory).
 
 Commit message: `Add the e2e suite's images and Compose file`.
 
@@ -970,7 +970,7 @@ Not done: the sandbox's tests under act, and a check that the set-env probe catc
 
 ### Phase 7: docs
 
-- `docs/development/e2e.md`: what the suite covers, how to run it, the memory it needs, how to write a scenario, the seams and the tee and what they hide, the act hazards.
+- `docs/development/e2e/`, one page per subject: [`suite.md`](../development/e2e/suite.md), what the suite covers, how to run it, the memory it needs, the seams and what they hide, how to read a failure, and act's hazards and limits; [`scenarios.md`](../development/e2e/scenarios.md), how to write a scenario; [`fakes.md`](../development/e2e/fakes.md), the fakes, the scripted model and the tee.
 - [`docs/README.md`](../README.md): a row under "Contribute".
 - [`docs/development/guide.md`](../development/guide.md): `build:e2e` and `test:e2e` in [scripts](../development/guide.md#scripts), the suite in [tests](../development/guide.md#tests), `e2e/` in "Outside src/".
 - [`docs/development/local-actions.md`](../development/local-actions.md): act now runs the e2e smoke scenarios; link to the new page.
@@ -979,6 +979,42 @@ Not done: the sandbox's tests under act, and a check that the set-env probe catc
 Done when `src/docs.test.ts` passes and a reader can run one scenario from the page alone. Then set this plan to `completed`.
 
 Commit message: `Document the e2e suite`.
+
+#### 7 results
+
+Done on 2026-10-23. The docs are three pages in `docs/development/e2e/`, not one `e2e.md`; the phase's text above now says so.
+
+- **Read against the code:** [the suite](../development/e2e/suite.md) named `parallel/vllm-two-seats` as the only `vllm` scenario, but `failures/fit-vllm-explicit` needs the profile too, and it described the output of a run wrongly. [The fakes](../development/e2e/fakes.md) said the fake GitHub's `runs`, `jobs` and `artifacts` routes were for the simulator only, but act's driver uses them too. [Writing scenarios](../development/e2e/scenarios.md) matched the code. All three are fixed.
+- **The other pages:** [`docs/README.md`](../README.md) has the three pages under "Contribute"; [the guide](../development/guide.md) has `build:e2e`, `test:e2e`, the suite in its tests and `e2e/` outside `src/`; [running Actions locally](../development/local-actions.md) links to [under act](../development/e2e/suite.md#under-act). `tsconfig.json` includes `e2e/`, and `.gitignore` ignores `e2e/.build/` and `e2e/.out/`.
+- **A reader runs one scenario from the page alone:** with the Compose project down (`docker compose -f e2e/infra/compose.yaml --profile ollama --profile vllm down`, as the page says) and the images built, `npm run test:e2e -- happy-path/openrouter-plan-only` started the services and passed in 39 s, 53 s for the whole command. The only change the page needed was what the output looks like.
+
+## Final results
+
+Run on 2026-10-23 on the plan's machine (Docker VM 9.7 GiB), `HEAD` `80e1457` with this phase's doc changes.
+
+| Command | Scenarios | Result | Time |
+| --- | --- | --- | --- |
+| `npm run test:e2e` | 43: every file, both runners of the two act smoke files | 43 passed, 0 failed, none `known-bug` | 6,887 s (1 h 55 min) |
+| `npm run test:e2e -- act` | `pods/ollama-keep-and-release.act`, `security/set-env-in-agent-output.act` | 2 passed, 0 failed | 686 s (11 min): 342 s and 316 s |
+| `npm run check` | 929 tests | Passed four times; one of those runs reported 1 failure it did not name, and three runs after it had none | About 60 s |
+
+No scenario is tagged `known-bug`: each bug the suite found was fixed by its own plan and lost its tag.
+
+The steps:
+
+| Step | State |
+| --- | --- |
+| 0.1, 0.2 | Done: [0.1 results](#01-results), [0.2 results](#02-results) |
+| 1.1 | Done, with the divergence recorded under it: `dist/index.js` holds the wiring, `dist/gateway.js` no override code |
+| 2.1 to 2.7 | Done: each fake under `e2e/fakes/`, with its tests in `npm test`; the fake Hub was added as well |
+| 3.1 to 3.3 | Done: the audits in [dependencies](../development/dependencies.md#the-end-to-end-test-suite), the images under `e2e/infra/images/`, the Compose file, and each profile's memory in [the suite](../development/e2e/suite.md#profiles-and-memory) |
+| 4.1 to 4.4 | Done: [4.3 and 4.4 results](#43-and-44-results) |
+| 5.1 to 5.4 | Done, three passes each, with the catalogue's changes recorded in each step's results |
+| 5.5 | Done but for two scenarios. `security/symlink-fifo-submodule` is covered by `failures/clones-inside-tree`. **`security/jail-escape` is not written** (below) |
+| 6.1, 6.2 | Done: [6 results](#6-results). `happy-path/openrouter-to-done` stays on the simulator ([decision 12](#answered-after-the-spikes)) |
+| 7 | Done: [7 results](#7-results) |
+
+**Why the plan is not completed:** `security/jail-escape`, the scenario of an agent that tries to leave its jail, was asked for on 2026-10-23 and is not written. Work on it was stopped before any scenario was drafted, and none was run. The jail is still covered by the sandbox's own tests (`CODEMAN_SANDBOX_TEST=1`, on CI and in `npm run test:runner`), as [the jail plan](2026-10-19-jail-the-agent-in-a-read-only-mount-namespace.md) records. The responsible person decides whether that scenario is written under this plan or under a plan of its own, such as the [roadmap's](../security/overview.md#roadmap) item 2, which would test the sandbox against a hostile agent. Then this plan can be set to `completed`.
 
 ## Out of scope
 
