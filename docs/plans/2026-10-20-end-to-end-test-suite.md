@@ -1,7 +1,7 @@
 ---
-status: in progress
+status: completed
 created_at: 2026-10-20T12:50:34-03:00
-updated_at: 2026-10-23T22:25:28-03:00
+updated_at: 2026-10-23T23:00:00-03:00
 commit: 21130fe
 ---
 
@@ -202,6 +202,12 @@ Answered by the responsible person on 2026-10-20.
     - b) Work around act by patching the templates for act only.
 
     **Answer: a),** on 2026-10-23. b) would test something other than the real templates. act's limits are in [the suite's docs](../development/e2e/suite.md). The two act source pages extended in phase 6, at the same commit, are kept as refreshed at the responsible person's request.
+
+13. **The jail-escape scenario** (the agent tries to leave its jail; asked for on 2026-10-23, not written in step 5.5's wrap-up).
+    - a) Its own plan, under the [security roadmap's](../security/overview.md#roadmap) item 2, which tests the sandbox against a hostile agent and can set the threat model first.
+    - b) Written now, under this plan.
+
+    **Answer: a),** on 2026-10-23. This plan is completed without it.
 
 ## Design
 
@@ -1010,11 +1016,11 @@ The steps:
 | 3.1 to 3.3 | Done: the audits in [dependencies](../development/dependencies.md#the-end-to-end-test-suite), the images under `e2e/infra/images/`, the Compose file, and each profile's memory in [the suite](../development/e2e/suite.md#profiles-and-memory) |
 | 4.1 to 4.4 | Done: [4.3 and 4.4 results](#43-and-44-results) |
 | 5.1 to 5.4 | Done, three passes each, with the catalogue's changes recorded in each step's results |
-| 5.5 | Done but for two scenarios. `security/symlink-fifo-submodule` is covered by `failures/clones-inside-tree`. **`security/jail-escape` is not written** (below) |
+| 5.5 | Done but for two scenarios. `security/symlink-fifo-submodule` is covered by `failures/clones-inside-tree`. `security/jail-escape` moved to a plan of its own (decision 13) |
 | 6.1, 6.2 | Done: [6 results](#6-results). `happy-path/openrouter-to-done` stays on the simulator ([decision 12](#answered-after-the-spikes)) |
 | 7 | Done: [7 results](#7-results) |
 
-**Why the plan is not completed:** `security/jail-escape`, the scenario of an agent that tries to leave its jail, was asked for on 2026-10-23 and is not written. Work on it was stopped before any scenario was drafted, and none was run. The jail is still covered by the sandbox's own tests (`CODEMAN_SANDBOX_TEST=1`, on CI and in `npm run test:runner`), as [the jail plan](2026-10-19-jail-the-agent-in-a-read-only-mount-namespace.md) records. The responsible person decides whether that scenario is written under this plan or under a plan of its own, such as the [roadmap's](../security/overview.md#roadmap) item 2, which would test the sandbox against a hostile agent. Then this plan can be set to `completed`.
+**Why the jail-escape scenario is not here:** it was asked for on 2026-10-23, then moved out of this plan by decision 13. The jail is still covered by the sandbox's own tests (`CODEMAN_SANDBOX_TEST=1`, on CI and in `npm run test:runner`), as [the jail plan](2026-10-19-jail-the-agent-in-a-read-only-mount-namespace.md) records.
 
 ## Out of scope
 
