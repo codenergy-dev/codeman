@@ -1,8 +1,17 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { GITHUB } from "./platform/github/conventions.ts";
-import { fixPrompt, OUTPUT_FILE, planPrompt, routePrompt, stagePrompt } from "./prompt.ts";
+import {
+  fixPrompt,
+  OUTPUT_FILE,
+  planPrompt,
+  routePrompt,
+  stagePrompt,
+  WRAP_UP_OPENING,
+  wrapUpPrompt,
+} from "./prompt.ts";
 import { DEFAULTS } from "./settings.ts";
+import { wrapUpMinutesOf } from "./steps/agent.ts";
 import type { TaskContext } from "./tasks.ts";
 
 const task: TaskContext = {
@@ -531,5 +540,43 @@ test("review has the last word, even on a branch with nothing but the plan", () 
   assert.match(
     prompt,
     /report `blocked`, and say in `reason` why, so a maintainer closes the issue/,
+  );
+});
+
+test("the wrap-up leaves the timed-out work consistent, and does not carry on the task", () => {
+  const code = { ...task, action: "implement" as const, stage: "test" as const };
+  const prompt = wrapUpPrompt(code, 50, 10);
+  assert.ok(prompt.startsWith(WRAP_UP_OPENING));
+  assert.match(prompt, /stopped it after 50 minutes/);
+  assert.match(prompt, /You have 10 minutes/);
+  assert.match(prompt, /the next run of the test stage carries on from it/);
+  assert.match(prompt, /Do not carry on the task\. \.codeman\/task\.md describes it/);
+  assert.match(prompt, /plans\/2026-09-24-add-rate-limiting\.md/);
+  assert.match(prompt, /`git status` and `git diff`/);
+  assert.match(prompt, /`## Progress`/);
+  assert.match(prompt, /with `status` `partial`/);
+  assert.ok(prompt.includes(OUTPUT_FILE));
+  // No issue text: the task file, which quotes it as data, is where the agent reads it.
+  assert.doesNotMatch(prompt, /OPENROUTER_API_KEY/);
+});
+
+test("only the routed stages that commit unfinished work get a wrap-up", () => {
+  const settings = { ...DEFAULTS, model: "a/b", "wrap-up-minutes": 7 };
+  const of = (action: TaskContext["action"], stage?: TaskContext["stage"]) =>
+    wrapUpMinutesOf({ action, stage, settings });
+  assert.deepEqual(
+    [of("implement", "web"), of("implement", "design"), of("implement", "code")],
+    [7, 7, 7],
+  );
+  assert.equal(of("implement", "test"), 7);
+  assert.equal(of("implement"), 7, "a stage without a record is code");
+  assert.deepEqual([of("implement", "review"), of("plan"), of("route")], [0, 0, 0]);
+  assert.equal(
+    wrapUpMinutesOf({
+      action: "implement",
+      stage: "code",
+      settings: { ...settings, "wrap-up-minutes": 0 },
+    }),
+    0,
   );
 });

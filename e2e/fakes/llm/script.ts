@@ -19,6 +19,9 @@ import { HttpError } from "../http.ts";
  *         - output: { status: done, summary: Adds the route., commitMessage: Add a health route }
  *       fix:
  *         - output: { status: done, summary: Shorter. }
+ *       wrap-up:
+ *         - bash: rm -f scratch.txt
+ *         - output: { status: partial, summary: Half done. }
  * ```
  */
 
@@ -56,6 +59,8 @@ export interface Round {
   steps: Turn[];
   /** The turns of the fix pass, when Codeman resumes the session with its output's problems. */
   fix: Turn[] | undefined;
+  /** The turns of the wrap-up, the new session after the round ran out of time. */
+  wrapUp: Turn[] | undefined;
   /** What each reply of the round reports, unless a `usage` step says otherwise. */
   usage: Usage | undefined;
   /** The final answer's text, after the last step: `Done.` by default. */
@@ -65,6 +70,8 @@ export interface Round {
   finalUsage: Usage | undefined;
   fixFinalDelayMs: number;
   fixFinalUsage: Usage | undefined;
+  wrapUpFinalDelayMs: number;
+  wrapUpFinalUsage: Usage | undefined;
 }
 
 /** A scenario's script: rounds by issue ref and stage. */
@@ -119,18 +126,25 @@ export function scriptOf(value: unknown): Script {
 function roundOf(value: unknown, path: string): Round {
   const fields = record(value, path);
   for (const name of Object.keys(fields)) {
-    if (!["steps", "fix", "usage", "final"].includes(name)) {
-      fail(`${path}.${name}`, "absent: a round has steps, and may have fix, usage and final");
+    if (!["steps", "fix", "wrap-up", "usage", "final"].includes(name)) {
+      fail(
+        `${path}.${name}`,
+        "absent: a round has steps, and may have fix, wrap-up, usage and final",
+      );
     }
   }
   if (!Array.isArray(fields.steps)) fail(`${path}.steps`, "a list of steps");
   if (fields.fix !== undefined && !Array.isArray(fields.fix))
     fail(`${path}.fix`, "a list of steps");
+  if (fields["wrap-up"] !== undefined && !Array.isArray(fields["wrap-up"]))
+    fail(`${path}.wrap-up`, "a list of steps");
   if (fields.final !== undefined && typeof fields.final !== "string") {
     fail(`${path}.final`, "a string");
   }
   const steps = turnsOf(fields.steps, `${path}.steps`);
   const fix = fields.fix === undefined ? undefined : turnsOf(fields.fix, `${path}.fix`);
+  const wrapUp =
+    fields["wrap-up"] === undefined ? undefined : turnsOf(fields["wrap-up"], `${path}.wrap-up`);
   return {
     steps: steps.turns,
     fix: fix?.turns,
@@ -140,6 +154,9 @@ function roundOf(value: unknown, path: string): Round {
     finalUsage: steps.usage,
     fixFinalDelayMs: fix?.delayMs ?? 0,
     fixFinalUsage: fix?.usage,
+    wrapUp: wrapUp?.turns,
+    wrapUpFinalDelayMs: wrapUp?.delayMs ?? 0,
+    wrapUpFinalUsage: wrapUp?.usage,
   };
 }
 

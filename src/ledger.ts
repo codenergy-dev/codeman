@@ -1,10 +1,11 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import {
   type BilledHours,
+  EARLY_RESERVATION_MS,
   ended,
   expired,
   type LedgerRun,
-  RESERVATION_MS,
+  MAX_RESERVATION_MS,
   reconciledMonth,
   reserving,
   runAmount,
@@ -247,9 +248,10 @@ export class Ledger {
    * the task's runs and the month's, and when what remains of the task's budget fits in the
    * repository's month and the organization's, writes it as the run's limit, open. Tasks and
    * repositories that open at once each see the others' reservations, or run again once they
-   * are written, so together they never pass a budget. Writes nothing when it refuses.
+   * are written, so together they never pass a budget. Writes nothing when it refuses. The
+   * reservation expires after `lastsMs` (`reservationMs`).
    */
-  async reserve(run: string, budgets: Budgets): Promise<Reservation> {
+  async reserve(run: string, budgets: Budgets, lastsMs: number): Promise<Reservation> {
     const { owner } = this.#source.runtime.repository;
     const repository = this.#repository();
     const path = LAYOUT.run(owner, run);
@@ -325,7 +327,7 @@ export class Ledger {
           fields: {
             status: "open",
             reservedAt: now,
-            expiresAt: new Date(now.getTime() + RESERVATION_MS),
+            expiresAt: new Date(now.getTime() + lastsMs),
             limit,
             ...(carried === undefined ? {} : { carried }),
             // An earlier attempt's figures give way to this one's, and count as spent before.
@@ -456,7 +458,7 @@ export class Ledger {
           };
           // A run's billed times lie within its agent job, which ends before its reservation
           // does: every run that overlaps one that overlaps this run ends after this.
-          const since = new Date(first[0] - RESERVATION_MS);
+          const since = new Date(first[0] - MAX_RESERVATION_MS);
           const found = endpointRuns(
             await tx.query(LAYOUT.endpointRuns(pool, busy.endpoint), {
               where: [{ field: "to", op: ">=", value: since }],
@@ -745,7 +747,7 @@ export function ledgerRuns(documents: readonly StoredDocument[]): LedgerRun[] {
         podCost: amount(fields.podCost),
         start,
         // Runs opened before reservations expire as theirs would.
-        expiresAt: date(fields.expiresAt) ?? new Date(start.getTime() + RESERVATION_MS),
+        expiresAt: date(fields.expiresAt) ?? new Date(start.getTime() + EARLY_RESERVATION_MS),
         closedAt: date(fields.closedAt),
       },
     ];

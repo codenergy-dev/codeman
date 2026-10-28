@@ -37,6 +37,29 @@ ${problems.map((problem) => `- ${problem}`).join("\n")}
 Rewrite ${OUTPUT_FILE} so that it follows the shape and the limits in ${TASK_FILE}. Keep its content, shortened where it is too long. Change no other file.`;
 }
 
+/** How the wrap-up's prompt starts, which tells its conversation from the agent's own. */
+export const WRAP_UP_OPENING = "The agent that worked on this task ran out of time.";
+
+/**
+ * Sent to a new session after a routed stage's agent ran out of time, so that what Codeman
+ * commits is consistent and the next run of the stage can carry on from it (docs/runs/agent.md,
+ * "Wrap-up"). It reads the task file for the stage and its rules, not to do its work.
+ */
+export function wrapUpPrompt(task: TaskContext, minutes: number, wrapUpMinutes: number): string {
+  const stage = task.stage ?? "code";
+  return `${WRAP_UP_OPENING} Codeman stopped it after ${minutes} minutes, wherever it was. You have ${wrapUpMinutes} minutes to leave its work consistent: Codeman then commits the working tree to the task branch, and the next run of the ${stage} stage carries on from it.
+
+Do not carry on the task. ${TASK_FILE} describes it: read it for the stage, the plan at \`${task.planPath}\`, and the rules, which still hold. Then:
+
+1. Find what the run changed, with \`git status\` and \`git diff\`.
+2. Leave each change whole. Finish a half-written change only when a few lines do it; otherwise undo it, with \`git checkout -- <path>\`, or by deleting a file the run added. Do not leave code that does not build, nor tests of code that is not there.
+3. Remove what does not belong in the commit: scratch files, test output, probes and backups.
+4. Update the plan's \`## Progress\` section: what is done, what is left, and where the next run should start.
+5. Write \`${OUTPUT_FILE}\` in the shape ${TASK_FILE} gives, with \`status\` \`partial\`, a summary of what is done and what is left, and a commit message. Report \`blocked\` instead only when the plan cannot be carried out as approved.
+
+Start no new work, and run no long command, such as the whole test suite.`;
+}
+
 type Quote = (label: string, text: string) => string;
 
 /**

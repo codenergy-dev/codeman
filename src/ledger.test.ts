@@ -54,13 +54,17 @@ test("a run's document grows with each job, and each job says what it did", asyn
   pick.ledger.pick("300-1-8", { ...picked, action: "record", stage: "", agent: false });
   await pick.ledger.flush(pick.runtime);
   const open = ledger(store, "open-key", { at: "2026-10-07T12:01:00Z" });
-  const reserved = await open.ledger.reserve("300-1-7", {
-    task: 7,
-    taskBudget: 1.75,
-    monthlyBudget: 20,
-    recorded: 0,
-    billed: new Map(),
-  });
+  const reserved = await open.ledger.reserve(
+    "300-1-7",
+    {
+      task: 7,
+      taskBudget: 1.75,
+      monthlyBudget: 20,
+      recorded: 0,
+      billed: new Map(),
+    },
+    2 * 3_600_000,
+  );
   assert.deepEqual(reserved, {
     outcome: "reserved",
     limit: 1.75,
@@ -208,12 +212,16 @@ test("a terminated pod's time that no task counted counts in the organization's 
 
   const open = ledger(store, "open-key", { at: "2026-10-07T13:00:00Z" });
   const budgets = { task: 9, taskBudget: 1, monthlyBudget: 20, recorded: 0, billed: new Map() };
-  const repository = await open.ledger.reserve("300-1-9", budgets);
+  const repository = await open.ledger.reserve("300-1-9", budgets, 2 * 3_600_000);
   assert.ok(Math.abs(repository.month - 0.24) < 1e-9, `${repository.month}`);
-  const organization = await open.ledger.reserve("300-1-9", {
-    ...budgets,
-    organizationBudget: 100,
-  });
+  const organization = await open.ledger.reserve(
+    "300-1-9",
+    {
+      ...budgets,
+      organizationBudget: 100,
+    },
+    2 * 3_600_000,
+  );
   assert.ok(
     Math.abs((organization.organization ?? 0) - 0.36) < 1e-9,
     `${organization.organization}`,
@@ -238,14 +246,18 @@ test("the organization's month still counts the untracked time of its pods from 
     { op: "create", path: "organizations/other/pods/n9", fields: fields(9) },
   ]);
   const open = ledger(store, "open-key", { at: "2026-10-07T13:00:00Z" });
-  const reserved = await open.ledger.reserve("300-1-9", {
-    task: 9,
-    taskBudget: 1,
-    monthlyBudget: 20,
-    organizationBudget: 100,
-    recorded: 0,
-    billed: new Map(),
-  });
+  const reserved = await open.ledger.reserve(
+    "300-1-9",
+    {
+      task: 9,
+      taskBudget: 1,
+      monthlyBudget: 20,
+      organizationBudget: 100,
+      recorded: 0,
+      billed: new Map(),
+    },
+    2 * 3_600_000,
+  );
   assert.ok(Math.abs((reserved.organization ?? 0) - 0.5) < 1e-9, `${reserved.organization}`);
 });
 
@@ -278,14 +290,18 @@ test("Serverless runs of two repositories split the time they shared the endpoin
       },
       { now: () => new Date(at) },
     );
-    const reservation = await open.reserve(run, {
-      task: Number(run.split("-")[2]),
-      taskBudget: 1,
-      monthlyBudget: 20,
-      organizationBudget: 100,
-      recorded: 0,
-      billed: new Map(),
-    });
+    const reservation = await open.reserve(
+      run,
+      {
+        task: Number(run.split("-")[2]),
+        taskBudget: 1,
+        monthlyBudget: 20,
+        organizationBudget: 100,
+        recorded: 0,
+        billed: new Map(),
+      },
+      2 * 3_600_000,
+    );
     return [reservation.month, reservation.organization].map((amount) => amount?.toFixed(4));
   };
 
@@ -365,13 +381,17 @@ test("a run that open-key opened again keeps its earlier attempt's time in the s
   await closeOnEndpoint(store, "300-1-7", "codeman", [minutes(0, 10)], NOON + 11 * 60_000);
   // A re-run of its open-key reserves again: what it spent becomes spentBefore.
   const reopen = ledger(store, "open-key", { at: new Date(NOON + 12 * 60_000).toISOString() });
-  await reopen.ledger.reserve("300-1-7", {
-    task: 7,
-    taskBudget: 2,
-    monthlyBudget: 20,
-    recorded: 0,
-    billed: new Map(),
-  });
+  await reopen.ledger.reserve(
+    "300-1-7",
+    {
+      task: 7,
+      taskBudget: 2,
+      monthlyBudget: 20,
+      recorded: 0,
+      billed: new Map(),
+    },
+    2 * 3_600_000,
+  );
   await closeOnEndpoint(store, "310-1-4", "other", [minutes(5, 15)], NOON + 16 * 60_000);
   assert.equal(await costOf(store, "310-1-4"), 0.45, "the earlier attempt shared the worker");
   const reopened = (await store.get("organizations/codenergy/runs/300-1-7"))?.fields;
@@ -507,6 +527,7 @@ test("a task's run from select to close-key, and a re-run of its key jobs, write
         "task-budget": "2",
         "monthly-budget": "20",
         "ledger-run": task?.["ledger-run"] ?? "",
+        "agent-job-minutes": task?.["agent-job-minutes"] ?? "",
       },
       runId: "300",
       attempt,
@@ -633,24 +654,34 @@ test("a pod two organizations of a pool shared: its untracked time splits by wha
   const mine = await of("codenergy", "open-key", "2026-10-07T13:00:00Z").ledger.reserve(
     "300-1-9",
     budgets,
+    2 * 3_600_000,
   );
   assert.ok(Math.abs((mine.organization ?? 0) - 0.24) < 1e-9, `${mine.organization}`);
   const theirs = await of("other", "open-key", "2026-10-07T13:00:00Z").ledger.reserve(
     "300-1-9",
     budgets,
+    2 * 3_600_000,
   );
   assert.ok(Math.abs((theirs.organization ?? 0) - 0.12) < 1e-9, `${theirs.organization}`);
   // A billed hour above the pool's estimate splits between them, each counting its share.
   const hour = Date.parse("2026-10-07T12:00:00Z");
   const billed = new Map([["runpod", new Map([[hour, 0.6]])]]);
-  const a = await of("codenergy", "open-key", "2026-10-07T13:00:00Z").ledger.reserve("300-1-9", {
-    ...budgets,
-    billed,
-  });
-  const b = await of("other", "open-key", "2026-10-07T13:00:00Z").ledger.reserve("300-1-9", {
-    ...budgets,
-    billed,
-  });
+  const a = await of("codenergy", "open-key", "2026-10-07T13:00:00Z").ledger.reserve(
+    "300-1-9",
+    {
+      ...budgets,
+      billed,
+    },
+    2 * 3_600_000,
+  );
+  const b = await of("other", "open-key", "2026-10-07T13:00:00Z").ledger.reserve(
+    "300-1-9",
+    {
+      ...budgets,
+      billed,
+    },
+    2 * 3_600_000,
+  );
   assert.ok(
     Math.abs((a.organization ?? 0) + (b.organization ?? 0) - 0.6) < 1e-9,
     `${a.organization} ${b.organization}`,

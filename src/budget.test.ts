@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   costsByWorkflowRun,
+  EARLY_RESERVATION_MS,
   type LedgerRun,
-  RESERVATION_MS,
   reconciledMonth,
   runLimit,
   spentBy,
@@ -35,7 +35,7 @@ function run(id: string, start: string, fields: Partial<LedgerRun> = {}, minutes
     status: "closed",
     account: "runpod",
     start: at,
-    expiresAt: new Date(at.getTime() + RESERVATION_MS),
+    expiresAt: new Date(at.getTime() + EARLY_RESERVATION_MS),
     closedAt: fields.status === "open" ? undefined : new Date(at.getTime() + minutes * 60_000),
     ...fields,
   };

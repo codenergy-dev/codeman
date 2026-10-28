@@ -84,6 +84,20 @@ test("the run calls the task's workflow with each of select's task outputs, from
   );
 });
 
+test("the agent job's timeout comes from the settings, and open-key reserves past it", () => {
+  assert.equal(
+    entries(task, ["jobs", "agent"]).get("timeout-minutes"),
+    `\${{ fromJSON(inputs.agent-job-minutes) }}`,
+  );
+  assert.equal(
+    stepInput(task, "open-key", "agent-job-minutes"),
+    `\${{ inputs.agent-job-minutes }}`,
+  );
+  // The agent's time is a setting the agent step reads from the task, not an input.
+  assert.equal(stepInput(task, "agent", "agent-minutes"), undefined);
+  assert.doesNotMatch(readFileSync("action.yml", "utf8"), /^ {2}agent-minutes:$/m);
+});
+
 test("each job keeps the secrets it had before parallel tasks, and the agent job its permissions", () => {
   const declared = entries(task, ["on", "workflow_call", "secrets"]);
   const passed = entries(caller, ["jobs", "task", "secrets"]);

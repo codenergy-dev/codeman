@@ -55,7 +55,7 @@ stateDiagram-v2
   [*] --> run: open-key joins or creates the pod
   run --> keep: close-key, with pod-reuse task, when the gateway answered
   run --> [*]: close-key, with pod-reuse run or a silent gateway
-  run --> [*]: 2 hours pass
+  run --> [*]: its reservation expires
   keep --> run: the task's next run joins the pod
   keep --> [*]: release-pod, 15 minutes, or the sweep
 ```
@@ -63,7 +63,7 @@ stateDiagram-v2
 | Lease | Taken by | Lasts | Ends when | Counts against capacity |
 | --- | --- | --- | --- | --- |
 | Creation | The `open-key` that creates the pod, on its settings | 5 minutes | The pod is registered; or it expires, as when its job died, and the next task takes it | Not a run lease |
-| Run | `open-key`, when it joins or creates the pod | 2 hours at most, as a [budget reservation](../budget/budget.md) | `close-key` turns it into a keep lease or drops it | Yes |
+| Run | `open-key`, when it joins or creates the pod | As long as the run's [budget reservation](../budget/budget.md#expiry): an hour past the `agent` job's timeout | `close-key` turns it into a keep lease or drops it | Yes |
 | Keep | `close-key`, with `pod-reuse: task` (the default) and a gateway that answered | 15 minutes | `release-pod`, the task's next run, its expiry, or the sweep when the task now runs on other settings | No |
 
 - `release-pod` ends the task's keep lease when `apply` says the task does not go on: it is not ready, routing or in a routed stage.
@@ -77,7 +77,7 @@ stateDiagram-v2
 | --- | --- |
 | Creation lease | 5 minutes |
 | Claims while another task creates the pod | Every 10 seconds, 40 claims at most: about 7 minutes |
-| Run lease | 2 hours at most |
+| Run lease | An hour past the `agent` job's timeout: 2 hours 10 minutes with the default [agent time](../settings/reference.md#agent-time) |
 | Keep lease | 15 minutes |
 | The model served | Within 25 minutes of the pod's creation |
 | A failed start reported | 2 minutes, then the pod terminates itself |

@@ -185,6 +185,7 @@ export interface Messages {
   cutText(field: string, length: number, max: number): string;
   droppedChange(path: string, reason: DropReason): string;
   outOfTime: string;
+  outOfTimeWrappedUp: string;
   partial: string;
   maxRuns(stage: RoutedStage, runs: number, max: number): string;
   stageNeedsMaintainer(stage: RoutedStage): string;

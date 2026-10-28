@@ -66,6 +66,13 @@ export interface Settings {
   "max-question-chars": number;
   "max-label-chars": number;
   "max-summary-chars": number;
+  /** How long an agent run has, in minutes, before Codeman stops it. */
+  "agent-minutes": number;
+  /**
+   * How long the wrap-up after a run that ran out of time has, in minutes; 0 turns it off. See
+   * docs/runs/agent.md#wrap-up.
+   */
+  "wrap-up-minutes": number;
   /** The language Codeman talks to maintainers in: a BCP 47 tag, or `auto` for the issue's. */
   language: string;
   /**
@@ -109,6 +116,8 @@ export const DEFAULTS: Omit<Settings, "model"> = {
   "max-question-chars": 600,
   "max-label-chars": 150,
   "max-summary-chars": 2000,
+  "agent-minutes": 50,
+  "wrap-up-minutes": 10,
   language: "auto",
   provider: "openrouter",
 };
@@ -124,7 +133,22 @@ export const LIMIT_BOUNDS: Readonly<Partial<Record<SettingName, { min: number; m
   "max-question-chars": { min: 1, max: 1500 },
   "max-label-chars": { min: 1, max: 300 },
   "max-summary-chars": { min: 1, max: 4000 },
+  "agent-minutes": { min: 5, max: 300 },
+  "wrap-up-minutes": { min: 2, max: 30 },
 };
+
+/**
+ * GitHub's longest job on its hosted runners, in minutes. The bounds of `agent-minutes` and
+ * `wrap-up-minutes` keep the `agent` job's timeout within it.
+ */
+export const MAX_JOB_MINUTES = 360;
+/** What the `agent` job needs besides the agent and its wrap-up: setup, seal, collect, upload. */
+export const AGENT_JOB_OVERHEAD_MINUTES = 10;
+
+/** The `agent` job's timeout, in minutes: the agent's time, its wrap-up's, and the overhead. */
+export function agentJobMinutes(settings: Pick<Settings, "agent-minutes" | "wrap-up-minutes">) {
+  return settings["agent-minutes"] + settings["wrap-up-minutes"] + AGENT_JOB_OVERHEAD_MINUTES;
+}
 
 /**
  * Codeman's cap on the tasks one run works on at once: each runs its own jobs, and may hold its
@@ -173,6 +197,8 @@ const NAMES: readonly SettingName[] = [
   "max-question-chars",
   "max-label-chars",
   "max-summary-chars",
+  "agent-minutes",
+  "wrap-up-minutes",
   "language",
   "provider",
   ...PROVIDER_SETTINGS,
@@ -255,6 +281,7 @@ export function parseSetting(name: SettingName, text: string): Parsed<string | n
   }
   const value = Number(text);
   const integer = settingKind(name) === "integer";
+  if (name === "wrap-up-minutes" && text !== "" && value === 0) return { ok: true, value };
   if (
     text === "" ||
     !Number.isFinite(value) ||
@@ -268,7 +295,8 @@ export function parseSetting(name: SettingName, text: string): Parsed<string | n
   }
   const bounds = LIMIT_BOUNDS[name];
   if (bounds && (value < bounds.min || value > bounds.max)) {
-    return { ok: false, error: `\`${name}\` must be from ${bounds.min} to ${bounds.max}.` };
+    const off = name === "wrap-up-minutes" ? "0, which turns the wrap-up off, or " : "";
+    return { ok: false, error: `\`${name}\` must be ${off}from ${bounds.min} to ${bounds.max}.` };
   }
   return { ok: true, value };
 }
@@ -280,6 +308,9 @@ export const PROFILE_SETTINGS: readonly SettingName[] = [
   ...PROVIDER_SETTINGS,
   ...PROVIDER_BLOCKS,
 ];
+
+/** Settings a profile may change besides where its model is served: the agent's times. */
+export const PROFILE_TIMES: readonly SettingName[] = ["agent-minutes", "wrap-up-minutes"];
 
 /** The settings that go with a provider: dropped by a layer or profile that changes provider. */
 const PROVIDER_KEYS: readonly string[] = [...PROVIDER_SETTINGS, ...PROVIDER_BLOCKS];
@@ -368,14 +399,14 @@ export interface Conditions {
 }
 
 /**
- * A rule that picks a provider, a model and that provider's settings for some runs: the first
- * profile whose conditions all hold applies.
+ * A rule that picks a provider, a model and that provider's settings, and the agent's times, for
+ * some runs: the first profile whose conditions all hold applies.
  */
 export interface Profile {
   name: string;
   /** Conditions that must all hold; a profile without any always applies. */
   conditions: Conditions;
-  /** The settings it changes, of `PROFILE_SETTINGS`. */
+  /** The settings it changes, of `PROFILE_SETTINGS` and `PROFILE_TIMES`. */
   settings: PartialSettings;
 }
 
@@ -469,11 +500,12 @@ function setting(entry: YamlEntry, what: "setting" | "profile"): Read<string | n
   const misplaced = misplacedCondition(name, what, text);
   if (misplaced) return { ok: false, line, error: misplaced };
   if (!isSettingName(name)) return { ok: false, line, error: `unknown setting \`${name}\`.` };
-  if (what === "profile" && !PROFILE_SETTINGS.includes(name)) {
+  const allowed = [...PROFILE_SETTINGS, ...PROFILE_TIMES];
+  if (what === "profile" && !allowed.includes(name)) {
     return {
       ok: false,
       line,
-      error: `a profile cannot set \`${name}\`; it sets only ${PROFILE_SETTINGS.map((n) => `\`${n}\``).join(", ")}.`,
+      error: `a profile cannot set \`${name}\`; it sets only ${allowed.map((n) => `\`${n}\``).join(", ")}.`,
     };
   }
   if (value.kind !== "scalar") {
@@ -689,7 +721,11 @@ function resolveLayers(layers: readonly SettingsLayer[]): Parsed<Resolved> {
       settings: top,
     });
     if (!served.ok) return served;
-    const settings = { ...omit(top, PROFILE_SETTINGS), ...served.value };
+    const settings = {
+      ...omit(top, PROFILE_SETTINGS),
+      ...pick(profile.settings, PROFILE_TIMES),
+      ...served.value,
+    };
     if (settings.model === undefined) {
       return {
         ok: false,

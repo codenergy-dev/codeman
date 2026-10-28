@@ -61,7 +61,7 @@ flowchart TD
   month -- no --> over["over-budget"]
   month -- yes --> org{"Fits the organization's month?"}
   org -- no --> overOrg["over-organization-budget"]
-  org -- yes --> write["Write the limit, open, for 2 hours"]
+  org -- yes --> write["Write the limit, open,<br/>past the agent job's timeout"]
   write --> provider{"The provider opens the run?"}
   provider -- no --> failed["failed, at a cost of 0"]
   provider -- yes --> opened["opened"]
@@ -77,7 +77,14 @@ The tasks of one workflow run, as many as its [profiles' counts](../settings/pro
 
 ### Expiry
 
-A reservation whose run never closes, as after a cancelled job, expires 2 hours after it was made. That is longer than the jobs' timeouts add up to. The run goes on counting its whole limit.
+A reservation whose run never closes, as after a cancelled job, expires an hour after the `agent` job's timeout, counted from when it was made. That hour covers `open-key` (35 minutes at most), `close-key` (10) and the waits between the jobs, so a run that closes always does so first. The run goes on counting its whole limit.
+
+| Agent time ([settings](../settings/reference.md#agent-time)) | The `agent` job's timeout | The reservation |
+| --- | --- | --- |
+| The defaults: 50 minutes, and 10 of wrap-up | 70 minutes | 2 hours 10 minutes |
+| The longest: 300 minutes, and 30 of wrap-up | 340 minutes | 6 hours 40 minutes |
+
+Reservations made before the agent's time was a setting expire after 2 hours.
 
 An expired OpenRouter run's key tells what it spent. The task's next `open-key` or `close-key`, whatever its provider, takes its cost from there. It does the same for an OpenRouter run that read its cost before OpenRouter counted it ([OpenRouter](../inference/openrouter.md#refreshing-earlier-runs)).
 

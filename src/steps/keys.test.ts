@@ -19,6 +19,8 @@ function openInputs(extra: Record<string, string> = {}): Record<string, string> 
     "task-budget": "2",
     "monthly-budget": "20",
     "ledger-run": "300-1-7",
+    // A reservation of two hours.
+    "agent-job-minutes": "60",
     ...extra,
   };
 }
@@ -92,8 +94,13 @@ test("opens a run limited to what remains of the task's budget, reserved in the 
     "250-1-8": { status: "closed", cost: 2.75 },
     "300-1-7": {},
   });
-  const { runtime, inference } = await open(store);
-  assert.deepEqual(inference.opened, [{ task: "7", runId: "300", limit: 1.75 }]);
+  // An agent job of 130 minutes: the reservation, and a pod's run lease, last an hour more.
+  const { runtime, inference } = await open(store, {
+    inputs: openInputs({ "agent-job-minutes": "130" }),
+  });
+  assert.deepEqual(inference.opened, [
+    { task: "7", runId: "300", limit: 1.75, reservationMs: 190 * 60_000 },
+  ]);
   assert.equal(runtime.outputs.status, "opened");
   assert.equal(runtime.outputs["key-limit"], "1.75");
   assert.equal(runtime.outputs["task-spent"], "0.2500");
@@ -109,7 +116,7 @@ test("opens a run limited to what remains of the task's budget, reserved in the 
   assert.equal(reserved?.carried, 0, "the task's record counted nothing the ledger does not");
   const { reservedAt, expiresAt } = reserved ?? {};
   assert.ok(reservedAt instanceof Date && expiresAt instanceof Date);
-  assert.equal(expiresAt.getTime() - reservedAt.getTime(), 2 * HOUR);
+  assert.equal(expiresAt.getTime() - reservedAt.getTime(), 190 * 60_000);
   assert.ok(reserved?.openedAt instanceof Date);
   assert.ok(
     runtime

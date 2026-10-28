@@ -89,8 +89,6 @@ export interface Repository {
   variables: Record<string, string>;
   /** Submodules of its first commit: each path's commit SHA, as a gitlink. */
   submodules: Record<string, string>;
-  /** The `agent-minutes` of its copy of `codeman-task.yml`; undefined: the template's. */
-  agentMinutes: number | undefined;
   /** Undefined: the organization's, or every provider's for a user account. */
   secrets: ProviderSecret[] | undefined;
 }

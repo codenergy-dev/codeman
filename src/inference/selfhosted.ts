@@ -795,7 +795,7 @@ export class PodInference implements InferenceProvider {
     };
     let waiting = false;
     for (let claims = 0; claims < CLAIMS; claims++) {
-      const claim = await this.#registry.claim(description, holder, run.runId);
+      const claim = await this.#registry.claim(description, holder, run.runId, run.reservationMs);
       if (claim.kind === "wait") {
         if (!waiting)
           log.info("Another task is creating the pod for these settings; waiting for it.");

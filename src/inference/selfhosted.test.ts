@@ -83,7 +83,10 @@ function setup(options: { real?: boolean; image?: string; hub?: ModelHub } = {})
   ) => {
     const provider = make(more, of);
     const runtime = new FakeRuntime();
-    const opened = await provider.open({ task, runId, limit }, runtime);
+    const opened = await provider.open(
+      { task, runId, limit, reservationMs: 2 * 3_600_000 },
+      runtime,
+    );
     return { provider, opened, handle: JSON.parse(opened.handle) as PodHandle, runtime };
   };
   const registry = new PodRegistry(store, "o", () => now);
@@ -291,6 +294,7 @@ test("a run that would pass the month's budget creates no pod", async () => {
       "task-budget": "2",
       "monthly-budget": "20",
       "ledger-run": "300-1-7",
+      "agent-job-minutes": "60",
     },
   });
   await openKey(fakeServices(new FakePlatform(), runtime, undefined, make(), undefined, store));
@@ -308,7 +312,10 @@ test("close-key reports the pod and whether it was kept, and records its pods' c
     "300-1-7": { ...runpod, status: "open", limit: 1, reservedAt: new Date() },
   });
   const provider = make({ pods: ["old"] });
-  const opened = await provider.open({ task: "7", runId: "300", limit: 1 }, new FakeRuntime());
+  const opened = await provider.open(
+    { task: "7", runId: "300", limit: 1, reservationMs: 2 * 3_600_000 },
+    new FakeRuntime(),
+  );
   gpu.billed.old = 0.42;
   const runtime = new FakeRuntime({ inputs: { handle: opened.handle, "ledger-run": "300-1-7" } });
   await closeKey(fakeServices(new FakePlatform(), runtime, undefined, provider, undefined, store));
@@ -365,7 +372,7 @@ test("open terminates the organization's pods that nothing holds, and never anot
   };
   /** A pod the registry holds, with its creator's run lease. */
   const held = async (settings: string, holder: string) => {
-    const claim = await registry.claim({ ...description, settings }, holder, "200");
+    const claim = await registry.claim({ ...description, settings }, holder, "200", 2 * 3_600_000);
     assert.equal(claim.kind, "create");
     const pod = await create({ CODEMAN_ORGANIZATION: "o", CODEMAN_NONCE: claim.pod.nonce });
     await registry.register(claim.pod.nonce, {
@@ -390,7 +397,12 @@ test("open terminates the organization's pods that nothing holds, and never anot
   await registry.leave(kept.nonce, "o/s#4", { keepUntil: new Date(now().getTime() + 60_000) });
   const expired = { nonce: "", pod: "pod8" };
   {
-    const claim = await registry.claim({ ...description, settings: "s8" }, "o/r#9", "100");
+    const claim = await registry.claim(
+      { ...description, settings: "s8" },
+      "o/r#9",
+      "100",
+      2 * 3_600_000,
+    );
     const pod = await create({ CODEMAN_ORGANIZATION: "o", CODEMAN_NONCE: claim.pod.nonce });
     await registry.register(claim.pod.nonce, {
       pod: pod.id,
@@ -408,7 +420,12 @@ test("open terminates the organization's pods that nothing holds, and never anot
   gpu.setStatus(stopped.pod, "stopped");
   // A task that holds the creation lease of other settings, and whose pod the provider just
   // created: it is held.
-  const creating = await registry.claim({ ...description, settings: "s11" }, "o/r#12", "300");
+  const creating = await registry.claim(
+    { ...description, settings: "s11" },
+    "o/r#12",
+    "300",
+    2 * 3_600_000,
+  );
   const fresh = await create({ CODEMAN_ORGANIZATION: "o", CODEMAN_NONCE: creating.pod.nonce });
 
   const { opened } = await open("13", "300");
@@ -516,7 +533,7 @@ test("a task that waits for another's creation lease joins its pod, from its sta
     reuse: "task",
     provider: "fake",
   };
-  const claim = await registry.claim(description, "o/r#7", "300");
+  const claim = await registry.claim(description, "o/r#7", "300", 2 * 3_600_000);
   const nonce = claim.pod.nonce;
   const pod = await gpu.pods.create({
     name: "n",
@@ -571,7 +588,7 @@ test("a creator whose lease another task took terminates its own pod and joins t
       reuse: "task",
       provider: "fake",
     };
-    const claim = await registry.claim(description, "o/r#8", "300");
+    const claim = await registry.claim(description, "o/r#8", "300", 2 * 3_600_000);
     assert.equal(claim.kind, "create");
     const rival = await create({
       ...spec,
@@ -1404,6 +1421,7 @@ test("a registered pod of another account is neither joined nor swept", async ()
     },
     "o/s#1",
     "200",
+    2 * 3_600_000,
   );
   await registry.register(claim.pod.nonce, {
     pod: "elsewhere",

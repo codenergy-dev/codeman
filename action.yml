@@ -44,6 +44,8 @@ inputs:
     description: "(open-key, close-key) OpenRouter management key, for OpenRouter inference. Without it, open-key does not refresh what the task's expired OpenRouter runs cost."
   inference:
     description: "(open-key, close-key, release-pod) The run's inference, as select outputs it: its provider and profile, and the account of every provider the settings name. Empty is OpenRouter."
+  agent-job-minutes:
+    description: "(open-key) The agent job's timeout, in minutes, as select outputs it: the run's budget reservation and pod lease last 60 minutes more."
   gpu-key:
     description: "(open-key, close-key, release-pod) Runpod's account key, for the runpod-pod and runpod-serverless providers. With organization-monthly-budget, open-key also needs it when the settings name a Runpod provider or the organization's runs used Runpod this month, to read its account's billing."
   pod-image:
@@ -67,9 +69,6 @@ inputs:
   harness:
     description: "(agent) Agent harness to run."
     default: opencode
-  agent-minutes:
-    description: "(agent) Minutes the agent may run before it is stopped. Keep it below the job's timeout."
-    default: "50"
   key-job-result:
     description: "(apply) Result of the open-key job."
   key-status:

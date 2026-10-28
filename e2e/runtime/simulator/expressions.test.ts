@@ -207,6 +207,8 @@ const SAMPLE: Contexts = {
     "base-sha": "abc",
     "organization-monthly-budget": "",
     inference: "{}",
+    // select outputs it for every task, one without an agent too.
+    "agent-job-minutes": "70",
     "ledger-run": "",
   },
   needs: {

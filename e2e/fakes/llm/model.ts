@@ -165,10 +165,17 @@ export class ScriptedModel {
         `Round ${round} of ${found.stage} is not scripted: issue ${found.issue} has ${rounds.length}.`,
       );
     }
-    const turns = found.phase === "main" ? scripted.steps : scripted.fix;
-    if (!turns) return this.#violation(log, `Round ${round} of ${found.stage} has no fix steps.`);
-    // In the main phase, turn 0 read the task file, so step i is turn i + 1.
-    const index = found.phase === "main" ? found.turn - 1 : found.turn;
+    const turns =
+      found.phase === "main"
+        ? scripted.steps
+        : found.phase === "fix"
+          ? scripted.fix
+          : scripted.wrapUp;
+    if (!turns) {
+      return this.#violation(log, `Round ${round} of ${found.stage} has no ${found.phase} steps.`);
+    }
+    // In the main phase and the wrap-up, turn 0 read the task file, so step i is turn i + 1.
+    const index = found.phase === "fix" ? found.turn : found.turn - 1;
     const turn: Turn | undefined = turns[index];
     if (turn) {
       log.kind = "step";
@@ -179,16 +186,15 @@ export class ScriptedModel {
     }
     if (index === turns.length) {
       log.kind = "final";
-      const main = found.phase === "main";
+      const [usage, delayMs] =
+        found.phase === "main"
+          ? [scripted.finalUsage, scripted.finalDelayMs]
+          : found.phase === "fix"
+            ? [scripted.fixFinalUsage, scripted.fixFinalDelayMs]
+            : [scripted.wrapUpFinalUsage, scripted.wrapUpFinalDelayMs];
       return {
         log,
-        chunks: this.#text(
-          scripted.final,
-          (main ? scripted.finalUsage : scripted.fixFinalUsage) ?? scripted.usage,
-          main ? scripted.finalDelayMs : scripted.fixFinalDelayMs,
-          request,
-          signal,
-        ),
+        chunks: this.#text(scripted.final, usage ?? scripted.usage, delayMs, request, signal),
       };
     }
     return this.#violation(log, "The conversation went on after the round's final answer.");

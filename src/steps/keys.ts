@@ -5,6 +5,7 @@ import {
   type LedgerRun,
   MIN_RUN_BUDGET,
   monthStart,
+  reservationMs,
   taskTotal,
   usd,
 } from "../budget.ts";
@@ -101,14 +102,20 @@ async function open(services: Services, ledger: Ledger, run: string): Promise<Op
   const costs = await openRouterCosts(services, runs);
   if (costs) await ledger.refresh(runs, { costs }, runtime);
 
-  const reservation = await ledger.reserve(run, {
-    task: Number(task),
-    taskBudget,
-    monthlyBudget,
-    organizationBudget,
-    recorded: choice.recorded.spent,
-    billed,
-  });
+  // The run's reservation, and its run lease on a pod, outlast its agent job.
+  const lastsMs = reservationMs(positiveNumber(runtime, "agent-job-minutes"));
+  const reservation = await ledger.reserve(
+    run,
+    {
+      task: Number(task),
+      taskBudget,
+      monthlyBudget,
+      organizationBudget,
+      recorded: choice.recorded.spent,
+      billed,
+    },
+    lastsMs,
+  );
   const { limit } = reservation;
   runtime.output("task-spent", reservation.task.toFixed(4));
   runtime.output("month-spent", reservation.month.toFixed(4));
@@ -152,7 +159,10 @@ async function open(services: Services, ledger: Ledger, run: string): Promise<Op
 
   let opened: OpenedRun;
   try {
-    opened = await inference().open({ task, runId: runtime.run.id, limit }, runtime);
+    opened = await inference().open(
+      { task, runId: runtime.run.id, limit, reservationMs: lastsMs },
+      runtime,
+    );
   } catch (error) {
     // The reservation ends; a reservation that cannot be ended counts until it expires.
     ledger.fail(

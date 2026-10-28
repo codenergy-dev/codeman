@@ -129,6 +129,17 @@ No setting is required. A provider may require some of its own settings ([provid
 | A [routed stage's](../glossary.md#routed-stage) agent runs in a row that end without finishing it: partial, or out of time | `/codeman fix` or `/codeman continue` |
 | Review's rounds in a row asking for changes | `/codeman fix`, `/codeman continue`, or a review that passes |
 
+### Agent time
+
+| Setting | Type | Default | Allowed values | Meaning |
+| --- | --- | --- | --- | --- |
+| `agent-minutes` | Whole number, minutes | `50` | 5 to 300 | How long an agent run has before Codeman stops it |
+| `wrap-up-minutes` | Whole number, minutes | `10` | `0`, or 2 to 30 | How long the wrap-up after a run that ran out of time has. `0` turns it off |
+
+- Both may be set at the top level and in a [profile](profiles.md), so a slower model gets more time.
+- The `agent` job's timeout is their sum plus 10 minutes, 340 at most, within GitHub's 360. The run's [budget reservation](../budget/budget.md#reservations) lasts an hour more.
+- See [time limit](../runs/agent.md#time-limit).
+
 ### Agent output limits
 
 | Setting | Type | Default | Allowed values | Meaning |
@@ -160,6 +171,7 @@ These limits are what the agent is told. See [agent output](../runs/agent.md#age
 | `monthly-budget` | Yes | Yes | Error | Yes | No |
 | `organization-monthly-budget`, `pool` | Yes | Error | Error | No | No |
 | `language` | Yes | Yes | Error | No | Yes |
+| `agent-minutes`, `wrap-up-minutes` | Yes | Yes | Yes | No | No |
 | `max-files`, `max-file-bytes`, the agent output limits | Yes | Yes | Error | No | No |
 
 - **Error:** setting it there stops the run with an error.

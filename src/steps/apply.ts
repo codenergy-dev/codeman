@@ -429,6 +429,10 @@ async function applyStage(task: TaskContext, io: Io): Promise<void> {
 
   warnings.push(...cutTexts(t, output.value.cuts));
   const { status, summary, reason } = output.value;
+  // A wrap-up's output: the run is out of time whatever it reports, unless the plan is blocked.
+  if (manifest.timedOut && manifest.wrappedUp && status !== "blocked") {
+    return unfinished("out-of-time", t.outOfTimeWrappedUp, summary);
+  }
   switch (status) {
     case "partial":
       return unfinished("partial", t.partial, summary);

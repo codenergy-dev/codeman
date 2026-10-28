@@ -154,12 +154,13 @@ export class Session {
   readonly #file: string;
   readonly #tools: ReturnType<typeof tools>;
 
-  constructor(file: string, toolNames: readonly string[] = TOOL_NAMES) {
+  /** `prompt` starts the conversation: Codeman's harness prompt, or its wrap-up prompt. */
+  constructor(file: string, toolNames: readonly string[] = TOOL_NAMES, prompt = HARNESS_PROMPT) {
     this.#file = file;
     this.#tools = tools(toolNames);
     this.messages = [
       { role: "system", content: SYSTEM },
-      { role: "user", content: HARNESS_PROMPT },
+      { role: "user", content: prompt },
     ];
   }
 

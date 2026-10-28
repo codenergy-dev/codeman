@@ -102,16 +102,6 @@ export async function buildWorld(
     ".github/workflows/codeman.yml": readFileSync(join(TEMPLATES, "codeman.yml"), "utf8"),
     ".github/workflows/codeman-task.yml": readFileSync(join(TEMPLATES, "codeman-task.yml"), "utf8"),
   };
-  const workflowsOf = (repository: Scenario["world"]["repositories"][number]) =>
-    repository.agentMinutes === undefined
-      ? workflows
-      : {
-          ...workflows,
-          ".github/workflows/codeman-task.yml": withAgentMinutes(
-            workflows[".github/workflows/codeman-task.yml"],
-            repository.agentMinutes,
-          ),
-        };
   const ownerIds = new Set<string>();
   for (const repository of world.repositories) {
     const collaborators: Record<string, Role> = { ...repository.collaborators };
@@ -121,7 +111,7 @@ export async function buildWorld(
       name: repository.name.split("/")[1] ?? repository.name,
       private: repository.private,
       drafts: repository.drafts,
-      files: { ...fixtureFiles(repository.fixture), ...workflowsOf(repository) },
+      files: { ...fixtureFiles(repository.fixture), ...workflows },
       ...(Object.keys(repository.submodules).length > 0
         ? { submodules: repository.submodules }
         : {}),
@@ -230,19 +220,6 @@ async function setUpProviders(world: World, fakes: Fakes): Promise<void> {
 }
 
 /** A fixture's files, as text, by their path under it. */
-/**
- * The task workflow with the agent's time limit a repository chose: the `agent-minutes` input of
- * its Codeman step, which a repository may lower in its copy (action.yml). Fails if the template
- * no longer has the one line it replaces.
- */
-export function withAgentMinutes(template: string, minutes: number): string {
-  const line = /^(\s+agent-minutes: )\d+$/m;
-  if (!line.test(template)) {
-    throw new Error("templates/codeman-task.yml has no agent-minutes line to replace.");
-  }
-  return template.replace(line, `$1${minutes}`);
-}
-
 export function fixtureFiles(directory: string): Record<string, string> {
   const files: Record<string, string> = {};
   for (const entry of readdirSync(directory, { recursive: true, withFileTypes: true })) {

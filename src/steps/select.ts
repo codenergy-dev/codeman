@@ -20,6 +20,7 @@ import {
 import type { Runtime } from "../runtime/runtime.ts";
 import type { Services } from "../services.ts";
 import {
+  agentJobMinutes,
   isSettingName,
   mostTasks,
   type PartialSettings,
@@ -737,6 +738,8 @@ function taskOutputs(task: Picked, run: string, pool: Pool): Record<string, stri
     // Only the organization's settings set it; empty when they do not.
     "organization-monthly-budget": String(task.settings["organization-monthly-budget"] ?? ""),
     inference: JSON.stringify(choice),
+    // The agent job's timeout, which the run's reservation outlasts.
+    "agent-job-minutes": String(agentJobMinutes(task.settings)),
     // The run's document in the ledger, which the key jobs add to; none without an agent.
     "ledger-run": task.needsAgent ? run : "",
   };

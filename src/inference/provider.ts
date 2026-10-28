@@ -22,6 +22,8 @@ export interface RunRequest {
   runId: string;
   /** What the run may spend, in USD. */
   limit: number;
+  /** How long the run's reservation lasts: a pod's run lease lasts as long. */
+  reservationMs: number;
 }
 
 export interface OpenedRun {

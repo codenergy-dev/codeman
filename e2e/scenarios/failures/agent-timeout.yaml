@@ -1,20 +1,23 @@
-# The agent runs out of its time: the repository's copy of codeman-task.yml gives it one minute
-# (`agent-minutes`, which a repository may lower), and the code stage's agent writes a file, then
-# hangs on the model's reply. Codeman stops the harness, seals the sandbox and collects the work so
-# far; apply commits it to the task branch with the stage's own message, and the task stays in the
-# code stage, with the run comment "The agent ran out of time. Its work so far is committed."
-# (docs/runs/agent.md, "Time limit"; the keep-unfinished-work-collectable plan). The run opened
-# its key, so it moved the task: next-run starts the next code run, which finishes from the
-# committed work, and review passes.
-name: An agent out of time has its work so far committed, and the next run finishes the stage
+# The agent runs out of its time, and a wrap-up leaves its work consistent. The organization's
+# settings give it 5 minutes (`agent-minutes`, its least), and the code stage's agent writes the
+# route and a probe's log, then hangs on the model's reply. Codeman stops the harness, then starts
+# the wrap-up, a new session with the wrap-up prompt (docs/runs/agent.md, "Wrap-up"): it removes
+# the log, adds the plan's progress notes and reports `partial`. Codeman seals the sandbox and
+# collects; apply commits the route and the notes, without the log, with the wrap-up's message,
+# and the task stays in the code stage, with the run comment "The agent ran out of time. A wrap-up
+# left its work consistent, and it is committed." and the wrap-up's summary. The run opened its
+# key, so it moved the task: next-run starts the next code run, which finishes from the committed
+# work, and review passes.
+name: An agent out of time gets a wrap-up, its work is committed, and the next run finishes the stage
 tags: [failures, openrouter]
 runner: simulator
-timeout: 20m
+timeout: 25m
 world:
   organizations:
-    - { name: acme, settings: { model: deepseek/deepseek-v4.1-flash, task-budget: 2 } }
+    - name: acme
+      settings: { model: deepseek/deepseek-v4.1-flash, task-budget: 2, agent-minutes: 5 }
   repositories:
-    - { name: acme/app, fixture: node-small, maintainers: [alice], agent-minutes: 1 }
+    - { name: acme/app, fixture: node-small, maintainers: [alice] }
 agent:
   i1:
     plan:
@@ -28,13 +31,19 @@ agent:
               route: [{ stage: code, brief: Add the route. }, { stage: review, brief: Check it. }]
               skipped: [{ stage: web, reason: No docs. }, { stage: design, reason: Settled. }, { stage: test, reason: Too small. }]
     code:
-      # Out of time: the reply after the write never ends.
+      # Out of time: the reply after the writes never ends.
       - steps:
           - write: { path: src/health.ts, content: "export const ok = true;\n" }
+          - write: { path: probe.log, content: "a probe's output\n" }
           - hang
+        # The wrap-up removes the log, notes the progress in the plan, and reports partial.
+        wrap-up:
+          - bash: test -f probe.log && rm probe.log
+          - bash: plan=$(sed -n 's/.*The plan at `\([^`]*\)` is approved.*/\1/p' .codeman/task.md | head -n 1) && printf '\n## Progress\n\n- The route is in; its test is left.\n' >> "$plan"
+          - output: { status: partial, summary: The route is in; its test is left., commitMessage: "Add the health route, before its test" }
       # The next run finds the file on the branch, and adds the test.
       - steps:
-          - bash: test -f src/health.ts
+          - bash: test -f src/health.ts && test ! -e probe.log
           - write: { path: src/health.test.ts, content: "import './health.ts';\n" }
           - output: { status: done, summary: Adds the route and its test., commitMessage: Add the health route's test }
     review:
@@ -47,17 +56,27 @@ actions:
       labels: [codeman:done]
       comments:
         - kind: run
-          contains: [Code stage, out of time, The agent ran out of time. Its work so far is committed.]
+          contains:
+            - Code stage
+            - out of time
+            - The agent ran out of time. A wrap-up left its work consistent, and it is committed.
+            - The route is in; its test is left.
         - kind: run
           contains: Adds the route and its test.
-      # The unfinished run's commit, with the stage's message, then the next run's.
-      commits: { count: { at-least: 3 }, files: [src/health.ts, src/health.test.ts] }
+      # The wrap-up's commit, with its message, then the next run's; never the probe's log.
+      commits: { count: { at-least: 3 }, files: [src/health.ts, src/health.test.ts], no-files: [probe.log] }
       pull-request: { ready: true, files: [src/health.ts, src/health.test.ts] }
       store:
         - collection: organizations/acme/runs
           where: { status: closed, stage: code }
           count: 2
         - { collection: organizations/acme/runs, where: { status: closed }, count: 5 }
+      fakes:
+        llm:
+          # The wrap-up played its three steps, then its final answer, in the first code round.
+          turns:
+            where: { stage: code, round: 0, phase: wrap-up, kind: step }
+            count: 3
       violations: none
-  - expect: { issue: i1, commits: { message: "Code for #1" } }
+  - expect: { issue: i1, commits: { message: "Add the health route, before its test" } }
   - expect: { issue: i1, commits: { message: Add the health route's test } }

@@ -17,6 +17,11 @@ export interface Manifest {
   harness: string;
   exitCode: number | null;
   timedOut: boolean;
+  /**
+   * After a run out of time, whether its wrap-up finished: its output, if valid, is the wrap-up's
+   * (docs/runs/agent.md#wrap-up).
+   */
+  wrappedUp?: boolean;
   /** How long the harness ran, measured outside the sandbox. */
   durationMs?: number;
   changes: Change[];

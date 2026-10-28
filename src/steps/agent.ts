@@ -25,6 +25,7 @@ import {
   stagePrompt,
   TASK_FILE,
   WEB_TOOL_PATH,
+  wrapUpPrompt,
 } from "../prompt.ts";
 import { nextDecisionId } from "../record.ts";
 import { downloadResults, RESULTS_DIR } from "../results.ts";
@@ -39,9 +40,10 @@ import {
   writeAsAgent,
 } from "../sandbox.ts";
 import type { Services } from "../services.ts";
+import type { TaskContext } from "../tasks.ts";
 import { oneLine } from "../text.ts";
 import { GENERIC_TOOL } from "../webdocs.ts";
-import { positiveNumber, readTask, resultDir, workdir } from "./common.ts";
+import { readTask, resultDir, workdir } from "./common.ts";
 
 export const MAX_OUTPUT_BYTES = 1024 * 1024;
 /** Time the agent needs at least to fix its output in the same run. */
@@ -78,7 +80,7 @@ async function agentJob(services: Services, reached: () => void): Promise<void> 
   const harnessName = runtime.input("harness") || "opencode";
   const harness = harnesses[harnessName];
   if (!harness) throw new Error(`Unknown harness "${harnessName}".`);
-  const minutes = positiveNumber(runtime, "agent-minutes");
+  const minutes = task.settings["agent-minutes"];
   const workspace = runtime.workspace();
 
   runtime.startGroup(`Install ${harness.name}`);
@@ -122,6 +124,7 @@ async function agentJob(services: Services, reached: () => void): Promise<void> 
   reached();
   let run: Awaited<ReturnType<typeof runAsAgent>>;
   let durationMs: number;
+  let wrappedUp = false;
   try {
     runtime.info(`Running ${harness.name} with ${task.model} for up to ${minutes} minutes.`);
     const started = Date.now();
@@ -174,6 +177,24 @@ async function agentJob(services: Services, reached: () => void): Promise<void> 
         else runtime.warning(`The agent did not finish fixing ${OUTPUT_FILE}.`);
       }
     }
+
+    // Out of time: a new session leaves the work consistent before Codeman commits it.
+    const wrapUpMinutes = wrapUpMinutesOf(task);
+    if (run.timedOut && !access.stopped?.aborted && wrapUpMinutes > 0) {
+      runtime.info(
+        `The agent ran out of time: a wrap-up of up to ${wrapUpMinutes} minutes leaves its work consistent.`,
+      );
+      const wrapUp = await runAsAgent(
+        harness.command({ ...options, prompt: wrapUpPrompt(task, minutes, wrapUpMinutes) }),
+        worktree,
+        wrapUpMinutes * 60_000,
+        runtime,
+        access.stopped,
+      );
+      // One that fails leaves the tree as it left it, and apply reads it as out of time.
+      wrappedUp = wrapUp.exitCode === 0 && !wrapUp.timedOut;
+      if (!wrappedUp) runtime.warning("The wrap-up did not finish.");
+    }
     durationMs = Date.now() - started;
     // Stop everything the agent could still run and take its paths away, before root collects.
     sealAgentSandbox(worktree);
@@ -206,6 +227,7 @@ async function agentJob(services: Services, reached: () => void): Promise<void> 
     harness: harness.name,
     exitCode: run.exitCode,
     timedOut: run.timedOut,
+    ...(wrappedUp ? { wrappedUp } : {}),
     durationMs,
     changes,
   };
@@ -222,6 +244,16 @@ async function agentJob(services: Services, reached: () => void): Promise<void> 
   if (access.stopped?.aborted) runtime.fail(`The run stopped: ${stopReason(access.stopped)}`);
   else if (run.timedOut) runtime.fail(`The agent did not finish within ${minutes} minutes.`);
   else if (run.exitCode !== 0) runtime.fail(`The agent exited with code ${run.exitCode}.`);
+}
+
+/**
+ * The minutes of the wrap-up after a run that ran out of time: `wrap-up-minutes` for a routed
+ * stage whose unfinished work is committed (web, design, code, test); 0, none, for review,
+ * which commits nothing, and for planning and routing, whose runs out of time commit nothing.
+ */
+export function wrapUpMinutesOf(task: Pick<TaskContext, "action" | "stage" | "settings">): number {
+  if (task.action !== "implement" || task.stage === "review") return 0;
+  return task.settings["wrap-up-minutes"];
 }
 
 /**

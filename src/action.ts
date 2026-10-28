@@ -11,7 +11,7 @@ export const CODEMAN_REPOSITORY = "codenergy-dev/codeman";
  * whenever the templates change in a way this code depends on: an input, an output, a job, a
  * permission, a secret or a step that older copies lack. See docs/development/guide.md.
  */
-export const TEMPLATE_VERSION = 1;
+export const TEMPLATE_VERSION = 2;
 
 /**
  * The action's own directory, the checkout of Codeman the job runs: one level above `src/` in

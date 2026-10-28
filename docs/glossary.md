@@ -186,7 +186,7 @@ One source of settings, in this order: Codeman's defaults, the organization's se
 
 ### Lease
 
-A task's hold in the pod registry: a creation lease on a pod's settings while the task creates the pod (5 minutes), a run lease while its run is open (2 hours at most), or a keep lease after the run (15 minutes). A pod that no unexpired lease holds is terminated. See [pods](inference/pods.md).
+A task's hold in the pod registry: a creation lease on a pod's settings while the task creates the pod (5 minutes), a run lease while its run is open (as long as its budget reservation), or a keep lease after the run (15 minutes). A pod that no unexpired lease holds is terminated. See [pods](inference/pods.md).
 
 ### Ledger
 

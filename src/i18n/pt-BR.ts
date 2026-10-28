@@ -248,6 +248,8 @@ export const ptBR: Messages = {
     return `Mudança em ${path} descartada: ${why}.`;
   },
   outOfTime: "O tempo do agente acabou. O trabalho feito até aqui foi commitado.",
+  outOfTimeWrappedUp:
+    "O tempo do agente acabou. Uma rodada de fechamento deixou o trabalho consistente, e ele foi commitado.",
   partial: "O trabalho feito até aqui foi commitado na branch da tarefa.",
   maxRuns: (stage, runs, max) =>
     `A ${OF_STAGE(stage)} rodou ${runs} vezes seguidas sem terminar (\`max-runs\` é ${max}). Comente \`/codeman continue <orientação>\` para permitir mais ${max} rodadas.`,

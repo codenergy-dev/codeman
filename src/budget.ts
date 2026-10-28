@@ -1,3 +1,5 @@
+import { MAX_JOB_MINUTES } from "./settings.ts";
+
 export type Fetch = typeof fetch;
 
 /** Below this, a run is not worth starting: it would stop midway. */
@@ -17,10 +19,24 @@ export function usd(amount: number): string {
 }
 
 /**
- * How long a run's reservation holds: longer than a run lasts, from `open-key` (35 minutes at
- * most) through the agent (60) to `close-key` (10), with the waits between the jobs.
+ * What a run lasts besides its `agent` job: `open-key` (35 minutes at most), `close-key` (10), and
+ * the waits between the jobs.
  */
-export const RESERVATION_MS = 2 * 3_600_000;
+const BEYOND_AGENT_JOB_MINUTES = 60;
+
+/**
+ * How long a run's reservation, and its run lease on a pod, hold: longer than the run lasts, from
+ * `open-key` through its `agent` job, of `agentJobMinutes`, to `close-key`.
+ */
+export function reservationMs(agentJobMinutes: number): number {
+  return (agentJobMinutes + BEYOND_AGENT_JOB_MINUTES) * 60_000;
+}
+
+/** The longest reservation the settings allow, of an `agent` job of GitHub's longest. */
+export const MAX_RESERVATION_MS = reservationMs(MAX_JOB_MINUTES);
+
+/** How long reservations held before the agent's time was a setting. */
+export const EARLY_RESERVATION_MS = 2 * 3_600_000;
 
 const HOUR_MS = 3_600_000;
 

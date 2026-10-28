@@ -19,9 +19,10 @@ profiles:
 | --- | --- |
 | `name` | Required. 1 to 64 letters, digits, `.`, `_` or `-`, starting with a letter or a digit, and unique in the list |
 | `stages`, `tasks`, `min-tasks`, `max-tasks` | Its [conditions](#conditions), all optional |
-| `provider`, `model`, and the provider's settings | What it changes ([providers](providers.md)). A profile changes nothing else |
+| `provider`, `model`, and the provider's settings | Where its runs get their model ([providers](providers.md)) |
+| `agent-minutes`, `wrap-up-minutes` | Its runs' [agent time](reference.md#agent-time), as a slower model may need more |
 
-Any other setting in a profile stops the run with an error. Budgets and limits stay at the top level. The budgets count every agent run in the [ledger](../glossary.md#ledger), whatever profile served it ([budget](../budget/budget.md)).
+A profile changes nothing else: any other setting in a profile stops the run with an error. Budgets and limits stay at the top level. The budgets count every agent run in the [ledger](../glossary.md#ledger), whatever profile served it ([budget](../budget/budget.md)).
 
 ## Conditions
 

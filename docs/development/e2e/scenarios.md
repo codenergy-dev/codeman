@@ -100,7 +100,6 @@ actions:
 | `variables` | Both | Other variables, `{ NAME: value }`, not `GITHUB_*` nor `CODEMAN_SETTINGS` | None |
 | `secrets` | Both | The provider secrets given: `openrouter`, `runpod`, `runpod-serverless` | A repository's organization's, else all three |
 | `submodules` | Repository | `{ path: sha }`: gitlinks of its first commit, as `git submodule add` records them, such as `{ vendor/lib: "<40 hex>" }`. The commit need not exist; the checkout leaves the path empty | None |
-| `agent-minutes` | Repository | The `agent-minutes` of its copy of `codeman-task.yml`, a whole number, as a repository may lower it ([time limit](../../runs/agent.md#time-limit)) | The template's 50 |
 
 A repository whose owner is no organization of the world belongs to a user account.
 
@@ -148,6 +147,7 @@ agent:
 | --- | --- |
 | `steps` | Required. One model turn each, in order |
 | `fix` | The steps of the [fix pass](../../runs/agent.md#the-fix-pass), when Codeman resumes the session with its output's problems |
+| `wrap-up` | The steps of the [wrap-up](../../runs/agent.md#wrap-up), the new session after the round ran out of time. Like `steps`, its first turn reads the task file |
 | `usage` | `{ prompt, completion, cached }` tokens that each reply reports, for deterministic costs |
 | `final` | The text of the last reply, which ends OpenCode's loop. `Done.` by default |
 

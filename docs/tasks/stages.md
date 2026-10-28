@@ -130,6 +130,7 @@ The web stage never runs in this order.
 - So that the commit holds only the work, the agent is told to keep scratch work in a temporary directory outside the working tree, such as one `mktemp -d` creates under `/tmp`. Scratch work includes clones of other repositories, copies of this one, test output, probe scripts and backups.
 - So that a run cut short still leaves a record, the agents of the stages that commit (all but review) keep a `## Progress` section at the end of the plan as they go. It says what they tried, what failed, what worked and what is left.
 - The progress section is committed with the partial work, and the next run starts from it. Progress notes do not change the plan's scope or decisions.
+- A run that runs out of time gets a [wrap-up](../runs/agent.md#wrap-up) first: a short new session that leaves the work consistent and updates the progress section.
 
 ### Statuses by stage
 

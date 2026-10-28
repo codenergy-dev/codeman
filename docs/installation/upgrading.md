@@ -78,6 +78,7 @@ flowchart TD
 | 2026-10-15 | [The dispatch reads the default branch](#the-dispatch-reads-the-default-branch) | `e26a8c9`, fixed by `e0370fd` | Repositories whose batches take another repository's tasks | Copy `codeman.yml` | Dispatches fail |
 | 2026-10-15 | [A spent pod waits for its close](#a-spent-pod-waits-for-its-close) | `ca7f3e8`; on pods from `c69ea45` | Pod runs | None | No |
 | 2026-10-19 | [Review rounds block at max-runs](#review-rounds-block-at-max-runs) | `503e9fc` | Tasks that reach review | None, or raise `max-runs` | No |
+| 2026-10-28 | [Agent time in the settings](#agent-time-in-the-settings) | This plan's first commit | Every installation, and copies of `codeman-task.yml` that changed `agent-minutes` | Copy both templates; move a changed `agent-minutes` to the settings | Yes: template version 2 |
 
 The [older versions](#older-versions) entries say what Codeman does with tasks, pod images and records from before some of these changes.
 
@@ -284,6 +285,23 @@ Copy `codeman.yml` again in each repository of the pool, from a commit at or aft
 #### How to verify
 
 In a run whose batch takes another repository's tasks, the `dispatch` job succeeds.
+
+### Agent time in the settings
+
+- **Since:** 2026-10-28 ([plan for configurable agent time](../plans/2026-10-28-configurable-agent-time-and-wrap-up-after-timeout.md)).
+- **Who is affected:** every installation: the templates are version 2.
+- **Breaking:** yes. Until the templates are copied again, every job fails saying the files are template version 1.
+
+The agent's time is now the `agent-minutes` setting, and the `agent` job's timeout follows it ([agent time](../settings/reference.md#agent-time)). `codeman-task.yml` no longer passes `agent-minutes` to the agent step, and its `agent` job's `timeout-minutes` comes from `select`.
+
+#### What to do
+
+1. **Copy both templates again**, keeping the steps you added to the `agent` job.
+2. **If your copy of `codeman-task.yml` changed `agent-minutes`**, or the `agent` job's `timeout-minutes`, write the time as `agent-minutes` in `.codeman/settings.yml` or the organization's settings instead.
+
+#### How to verify
+
+The `agent` step's log says "Running … for up to N minutes", N being your `agent-minutes`.
 
 ## Backend
 

@@ -29,9 +29,13 @@ async function selectStep(platform: FakePlatform): Promise<FakeRuntime> {
 
 /**
  * Writes what the agent job uploads: the changed files, the manifest and the output. A null text
- * deletes the file.
+ * deletes the file. `run` overrides how the run ended, as after a timeout.
  */
-function agentResult(files: Record<string, string | null>, output: unknown): void {
+function agentResult(
+  files: Record<string, string | null>,
+  output: unknown,
+  run: Pick<Manifest, "timedOut" | "wrappedUp"> = { timedOut: false },
+): void {
   const dir = join(workdir, "result");
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
@@ -46,7 +50,7 @@ function agentResult(files: Record<string, string | null>, output: unknown): voi
     version: 1,
     harness: "test",
     exitCode: 0,
-    timedOut: false,
+    ...run,
     durationMs: 1000,
     changes,
   };
@@ -536,6 +540,43 @@ test("a review with commands in codeman:ready does not stop the task from routin
   assert.deepEqual([runtime.outputs.action, runtime.outputs.stage], ["route", "route"]);
 });
 
+test("after a timeout, a wrap-up's output is out of time whatever it reports, unless blocked", async () => {
+  const platform = new FakePlatform({ ".codeman/settings.yml": "model: a/b\n" });
+  const { issue } = await plannedTask(platform);
+  await routeStep(platform, ["code", "review"]);
+  const wrappedUp = { timedOut: true, wrappedUp: true };
+
+  // The wrap-up reports done: the work is committed, and the code stage runs again.
+  await selectStep(platform);
+  agentResult(
+    { "src/limit.ts": "export const limit = 10;\n" },
+    {
+      status: "done",
+      summary: "The limiter is in; its tests are left.",
+      commitMessage: "Add a limiter",
+    },
+    wrappedUp,
+  );
+  await applyStep(platform);
+  assert.deepEqual(stateLabels(platform, issue), ["codeman:coding"]);
+  const comment = platform.botComments(issue).at(-1) ?? "";
+  assert.match(comment, /A wrap-up left its work consistent, and it is committed\./);
+  assert.match(comment, /The limiter is in; its tests are left\./);
+  const branch = record(platform, issue)?.branch ?? "";
+  assert.equal(platform.commits.get(platform.branches.get(branch) ?? "")?.message, "Add a limiter");
+
+  // The wrap-up finds the plan cannot be carried out: the task is blocked, as for any stage.
+  await selectStep(platform);
+  agentResult(
+    {},
+    { status: "blocked", summary: "Half done.", reason: "The plan's API does not exist." },
+    wrappedUp,
+  );
+  await applyStep(platform);
+  assert.deepEqual(stateLabels(platform, issue), ["codeman:blocked"]);
+  assert.match(platform.botComments(issue).at(-1) ?? "", /The plan's API does not exist\./);
+});
+
 test("max-runs blocks a stage at its max-runs-th unfinished run, and review at its max-runs-th round", async () => {
   const platform = new FakePlatform({ ".codeman/settings.yml": "model: a/b\nmax-runs: 2\n" });
   const { issue } = await plannedTask(platform);
@@ -896,6 +937,21 @@ test("an issue a maintainer did not open is left alone", async () => {
   assert.deepEqual(stateLabels(platform, issue), []);
   assert.equal(platform.botComments(issue).length, 1, "a panel that says why");
   assert.ok(runtime.logged("warning").some((line) => line.includes("not opened by a maintainer")));
+});
+
+test("select gives each task its agent's times, and its agent job's timeout", async () => {
+  const platform = new FakePlatform({
+    ".codeman/settings.yml": "model: a/b\nagent-minutes: 90\nwrap-up-minutes: 15\n",
+  });
+  platform.maintainers.add("alice");
+  platform.openIssue("alice", "Add a cache");
+  const runtime = new FakeRuntime({ inputs: { workdir } });
+  await select(fakeServices(platform, runtime));
+  const { settings } = readTask(runtime);
+  assert.equal(settings["agent-minutes"], 90);
+  assert.equal(settings["wrap-up-minutes"], 15);
+  const [task] = JSON.parse(runtime.outputs.tasks ?? "") as Record<string, string>[];
+  assert.equal(task?.["agent-job-minutes"], "115", "both times, and the job's 10 minutes");
 });
 
 test("select resolves a task's commands, a manual run's inputs, the file, then the organization's settings", async () => {

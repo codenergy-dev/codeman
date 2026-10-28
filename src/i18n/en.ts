@@ -239,6 +239,8 @@ export const en: Messages = {
     return `Dropped the change to ${path}: ${why}.`;
   },
   outOfTime: "The agent ran out of time. Its work so far is committed.",
+  outOfTimeWrappedUp:
+    "The agent ran out of time. A wrap-up left its work consistent, and it is committed.",
   partial: "Work so far is committed to the task branch.",
   maxRuns: (stage, runs, max) =>
     `The ${STAGES[stage]} stage has run ${runs} times in a row without finishing (\`max-runs\` is ${max}). Comment \`/codeman continue <guidance>\` to allow ${max} more runs.`,

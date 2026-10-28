@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { after, before, beforeEach, test } from "node:test";
-import { fixPrompt, OUTPUT_FILE, TASK_FILE } from "../../../src/prompt.ts";
+import { fixPrompt, OUTPUT_FILE, TASK_FILE, WRAP_UP_OPENING } from "../../../src/prompt.ts";
 import type { ChatRequest } from "../openrouter/chat.ts";
 import { LlmFake } from "./llm.ts";
 import { callId, type TurnLog, type Violation } from "./model.ts";
@@ -39,6 +39,10 @@ const SCRIPT = {
           },
         ],
         fix: [{ output: { status: "done", summary: "Short." } }],
+        "wrap-up": [
+          { bash: { command: "rm -f scratch.txt" } },
+          { output: { status: "partial", summary: "Half done." } },
+        ],
       },
       { steps: [{ raw: "not json" }] },
     ],
@@ -190,6 +194,34 @@ test("the fix pass plays the round's fix steps; the next run is the next round",
   assert.equal(violations.length, 1);
   assert.match(violations[0]?.reason ?? "", /Round 2 of code is not scripted/);
   assert.deepEqual([violations[0]?.round, violations[0]?.turn], [2, 1]);
+});
+
+test("the wrap-up, a new session on the same task file, plays the round's wrap-up steps", async () => {
+  const file = taskFile(SCENARIO, "i1", "code");
+  await new Session(file).run(streamed);
+  // OpenCode sends the prompt quoted, as a JSON string.
+  const wrapUp = new Session(
+    file,
+    undefined,
+    JSON.stringify(`${WRAP_UP_OPENING} Codeman stopped it.`),
+  );
+  const calls = await wrapUp.run(streamed);
+  assert.deepEqual(
+    calls.map((call) => call.function.name),
+    ["read", "bash", "write"],
+    "it reads the task file first, as the agent's own session does",
+  );
+  assert.equal(
+    JSON.parse(calls.at(-1)?.function.arguments ?? "{}").content,
+    `${JSON.stringify({ status: "partial", summary: "Half done." }, null, 2)}\n`,
+  );
+  const turns = (await (await control("GET", "/turns")).json()) as TurnLog[];
+  const played = turns.filter((turn) => turn.phase === "wrap-up").map((turn) => turn.kind);
+  assert.deepEqual(played, ["step", "step", "final"]);
+  assert.ok(
+    turns.every((turn) => turn.round === undefined || turn.round === 0),
+    "one round",
+  );
 });
 
 test("an unscripted request gets an error and is recorded", async () => {

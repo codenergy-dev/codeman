@@ -1,6 +1,5 @@
 import { randomBytes } from "node:crypto";
 import { storedBatch } from "../board.ts";
-import { RESERVATION_MS } from "../budget.ts";
 import { LAYOUT } from "../store/layout.ts";
 import type { Fields, Store, StoredDocument, Value } from "../store/store.ts";
 
@@ -133,9 +132,9 @@ export class PodRegistry {
    * creation lease that expired ends, so the task takes it over. A pod has room while its
    * unexpired run leases and the tasks its batch reserved that have not joined are fewer than
    * its capacity; a task of its batch always has room (decision 13 of the plan for GPU batches
-   * across repositories).
+   * across repositories). The run lease lasts `leaseMs`, as long as the run's reservation.
    */
-  claim(description: PodDescription, holder: string, run: string): Promise<Claim> {
+  claim(description: PodDescription, holder: string, run: string, leaseMs: number): Promise<Claim> {
     return this.#store.transaction(
       async (tx) => {
         const now = this.#now();
@@ -174,7 +173,7 @@ export class PodRegistry {
           holder,
           run,
           kind: "run",
-          until: new Date(now.getTime() + RESERVATION_MS),
+          until: new Date(now.getTime() + leaseMs),
         };
         for (const stale of pods) {
           if (stale.status !== "creating" || (stale.creatingUntil ?? now) > now) continue;

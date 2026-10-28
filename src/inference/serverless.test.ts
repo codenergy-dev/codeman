@@ -46,7 +46,10 @@ function provider(changes: Partial<Endpoint> = {}, usage = "") {
 
 test("a run checks the endpoint and prices its workers; the agent gets only a token", async () => {
   const serverless = provider();
-  const opened = await serverless.open({ task: "7", runId: "300", limit: 1.6 }, new FakeRuntime());
+  const opened = await serverless.open(
+    { task: "7", runId: "300", limit: 1.6, reservationMs: 2 * 3_600_000 },
+    new FakeRuntime(),
+  );
   const handle = JSON.parse(opened.handle) as ServerlessHandle;
   assert.deepEqual(handle, {
     mode: "serverless",
@@ -63,12 +66,15 @@ test("a run checks the endpoint and prices its workers; the agent gets only a to
 
 test("refuses an endpoint that breaks Codeman's rules or does not serve the model", async () => {
   await assert.rejects(
-    provider({ workersMin: 1 }).open({ task: "7", runId: "1", limit: 1 }, new FakeRuntime()),
+    provider({ workersMin: 1 }).open(
+      { task: "7", runId: "1", limit: 1, reservationMs: 2 * 3_600_000 },
+      new FakeRuntime(),
+    ),
     /endpoint ep1 cannot serve this run: it keeps 1 active worker/,
   );
   await assert.rejects(
     provider({ env: { ...endpoint.env, MODEL_NAME: "other/model" } }).open(
-      { task: "7", runId: "1", limit: 1 },
+      { task: "7", runId: "1", limit: 1, reservationMs: 2 * 3_600_000 },
       new FakeRuntime(),
     ),
     /it serves `other\/model`/,

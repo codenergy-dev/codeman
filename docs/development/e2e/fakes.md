@@ -96,9 +96,10 @@ No gateway passes a token upstream, so the model tells a request's place from it
 | The stage | The task file's first heading |
 | The round | The nonce of the task file's quoted blocks, new for each run of the stage |
 | The fix pass | The last user message is Codeman's fix prompt |
+| The wrap-up | The conversation's user message is Codeman's wrap-up prompt. Its task file has the round's nonce, so it is the same round |
 | The turn | The tool results since the last user message |
 
-The first turn of every conversation reads the task file. OpenCode's title request gets a title.
+The first turn of every conversation but the fix pass's reads the task file. OpenCode's title request gets a title.
 
 ## The tee
 

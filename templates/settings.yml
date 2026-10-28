@@ -4,6 +4,11 @@
 # override it.
 # Reference: https://github.com/codenergy-dev/codeman/blob/main/docs/settings/reference.md
 
+# How long an agent run has, in minutes (5 to 300), and the wrap-up after one that ran out of
+# time (0, which turns it off, or 2 to 30). A profile may set its own.
+# agent-minutes: 50
+# wrap-up-minutes: 10
+
 # Model ID, in the form the provider takes: OpenRouter's, Ollama's or a Hugging Face ID on Runpod
 # pods, or the Hugging Face ID the vLLM worker serves on Runpod Serverless. It serves the runs no profile serves; without
 # it, only profiles serve agent runs, and each profile sets its own.

@@ -19744,7 +19744,7 @@ import { readFileSync } from "node:fs";
 import { isAbsolute, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 var CODEMAN_REPOSITORY = "codenergy-dev/codeman";
-var TEMPLATE_VERSION = 1;
+var TEMPLATE_VERSION = 2;
 var ACTION_ROOT = fileURLToPath(new URL("..", import.meta.url));
 var FULL_SHA = /^[0-9a-f]{40}$/;
 function actionCommit(root = ACTION_ROOT) {
@@ -20654,6 +20654,8 @@ var DEFAULTS = {
   "max-question-chars": 600,
   "max-label-chars": 150,
   "max-summary-chars": 2e3,
+  "agent-minutes": 50,
+  "wrap-up-minutes": 10,
   language: "auto",
   provider: "openrouter"
 };
@@ -20663,8 +20665,15 @@ var LIMIT_BOUNDS = {
   "max-title-chars": { min: 1, max: 200 },
   "max-question-chars": { min: 1, max: 1500 },
   "max-label-chars": { min: 1, max: 300 },
-  "max-summary-chars": { min: 1, max: 4e3 }
+  "max-summary-chars": { min: 1, max: 4e3 },
+  "agent-minutes": { min: 5, max: 300 },
+  "wrap-up-minutes": { min: 2, max: 30 }
 };
+var MAX_JOB_MINUTES = 360;
+var AGENT_JOB_OVERHEAD_MINUTES = 10;
+function agentJobMinutes(settings) {
+  return settings["agent-minutes"] + settings["wrap-up-minutes"] + AGENT_JOB_OVERHEAD_MINUTES;
+}
 var MAX_TASKS = 10;
 var TASK_SETTINGS = /* @__PURE__ */ new Set([
   "model",
@@ -20696,6 +20705,8 @@ var NAMES = [
   "max-question-chars",
   "max-label-chars",
   "max-summary-chars",
+  "agent-minutes",
+  "wrap-up-minutes",
   "language",
   "provider",
   ...PROVIDER_SETTINGS
@@ -20745,6 +20756,7 @@ function parseSetting(name, text) {
   }
   const value = Number(text);
   const integer = settingKind(name) === "integer";
+  if (name === "wrap-up-minutes" && text !== "" && value === 0) return { ok: true, value };
   if (text === "" || !Number.isFinite(value) || value <= 0 || integer && !Number.isInteger(value)) {
     return {
       ok: false,
@@ -20753,7 +20765,8 @@ function parseSetting(name, text) {
   }
   const bounds = LIMIT_BOUNDS[name];
   if (bounds && (value < bounds.min || value > bounds.max)) {
-    return { ok: false, error: `\`${name}\` must be from ${bounds.min} to ${bounds.max}.` };
+    const off = name === "wrap-up-minutes" ? "0, which turns the wrap-up off, or " : "";
+    return { ok: false, error: `\`${name}\` must be ${off}from ${bounds.min} to ${bounds.max}.` };
   }
   return { ok: true, value };
 }
@@ -20763,6 +20776,7 @@ var PROFILE_SETTINGS = [
   ...PROVIDER_SETTINGS,
   ...PROVIDER_BLOCKS
 ];
+var PROFILE_TIMES = ["agent-minutes", "wrap-up-minutes"];
 var PROVIDER_KEYS = [...PROVIDER_SETTINGS, ...PROVIDER_BLOCKS];
 var BLOCKS = {
   ollama: {
@@ -20862,11 +20876,12 @@ function setting(entry, what) {
   const misplaced = misplacedCondition(name, what, text);
   if (misplaced) return { ok: false, line, error: misplaced };
   if (!isSettingName(name)) return { ok: false, line, error: `unknown setting \`${name}\`.` };
-  if (what === "profile" && !PROFILE_SETTINGS.includes(name)) {
+  const allowed = [...PROFILE_SETTINGS, ...PROFILE_TIMES];
+  if (what === "profile" && !allowed.includes(name)) {
     return {
       ok: false,
       line,
-      error: `a profile cannot set \`${name}\`; it sets only ${PROFILE_SETTINGS.map((n) => `\`${n}\``).join(", ")}.`
+      error: `a profile cannot set \`${name}\`; it sets only ${allowed.map((n) => `\`${n}\``).join(", ")}.`
     };
   }
   if (value.kind !== "scalar") {
@@ -21010,7 +21025,11 @@ function resolveLayers(layers) {
       settings: top
     });
     if (!served.ok) return served;
-    const settings = { ...omit(top, PROFILE_SETTINGS), ...served.value };
+    const settings = {
+      ...omit(top, PROFILE_SETTINGS),
+      ...pick(profile2.settings, PROFILE_TIMES),
+      ...served.value
+    };
     if (settings.model === void 0) {
       return {
         ok: false,
@@ -21272,7 +21291,12 @@ function runLimit(taskBudget, spent) {
 function usd(amount2) {
   return `US$ ${amount2.toFixed(2)}`;
 }
-var RESERVATION_MS = 2 * 36e5;
+var BEYOND_AGENT_JOB_MINUTES = 60;
+function reservationMs(agentJobMinutes2) {
+  return (agentJobMinutes2 + BEYOND_AGENT_JOB_MINUTES) * 6e4;
+}
+var MAX_RESERVATION_MS = reservationMs(MAX_JOB_MINUTES);
+var EARLY_RESERVATION_MS = 2 * 36e5;
 var HOUR_MS = 36e5;
 function runAmount(run2) {
   const own = run2.cost ?? (run2.status === "open" ? run2.limit ?? 0 : 0);
@@ -23226,9 +23250,9 @@ var PodRegistry = class {
    * creation lease that expired ends, so the task takes it over. A pod has room while its
    * unexpired run leases and the tasks its batch reserved that have not joined are fewer than
    * its capacity; a task of its batch always has room (decision 13 of the plan for GPU batches
-   * across repositories).
+   * across repositories). The run lease lasts `leaseMs`, as long as the run's reservation.
    */
-  claim(description, holder, run2) {
+  claim(description, holder, run2, leaseMs) {
     return this.#store.transaction(
       async (tx) => {
         const now = this.#now();
@@ -23260,7 +23284,7 @@ var PodRegistry = class {
           holder,
           run: run2,
           kind: "run",
-          until: new Date(now.getTime() + RESERVATION_MS)
+          until: new Date(now.getTime() + leaseMs)
         };
         for (const stale of pods) {
           if (stale.status !== "creating" || (stale.creatingUntil ?? now) > now) continue;
@@ -23950,7 +23974,7 @@ var PodInference = class {
     };
     let waiting = false;
     for (let claims = 0; claims < CLAIMS; claims++) {
-      const claim = await this.#registry.claim(description, holder, run2.runId);
+      const claim = await this.#registry.claim(description, holder, run2.runId, run2.reservationMs);
       if (claim.kind === "wait") {
         if (!waiting)
           log.info("Another task is creating the pod for these settings; waiting for it.");
@@ -24932,9 +24956,10 @@ var Ledger = class {
    * the task's runs and the month's, and when what remains of the task's budget fits in the
    * repository's month and the organization's, writes it as the run's limit, open. Tasks and
    * repositories that open at once each see the others' reservations, or run again once they
-   * are written, so together they never pass a budget. Writes nothing when it refuses.
+   * are written, so together they never pass a budget. Writes nothing when it refuses. The
+   * reservation expires after `lastsMs` (`reservationMs`).
    */
-  async reserve(run2, budgets) {
+  async reserve(run2, budgets, lastsMs) {
     const { owner } = this.#source.runtime.repository;
     const repository = this.#repository();
     const path = LAYOUT.run(owner, run2);
@@ -24995,7 +25020,7 @@ var Ledger = class {
           fields: {
             status: "open",
             reservedAt: now,
-            expiresAt: new Date(now.getTime() + RESERVATION_MS),
+            expiresAt: new Date(now.getTime() + lastsMs),
             limit,
             ...carried === void 0 ? {} : { carried },
             // An earlier attempt's figures give way to this one's, and count as spent before.
@@ -25115,7 +25140,7 @@ var Ledger = class {
             busy: busy.spans,
             pricePerSecond: busy.pricePerSecond
           };
-          const since = new Date(first[0] - RESERVATION_MS);
+          const since = new Date(first[0] - MAX_RESERVATION_MS);
           const found = endpointRuns(
             await tx.query(LAYOUT.endpointRuns(pool2, busy.endpoint), {
               where: [{ field: "to", op: ">=", value: since }]
@@ -25360,7 +25385,7 @@ function ledgerRuns(documents) {
         podCost: amount2(fields.podCost),
         start,
         // Runs opened before reservations expire as theirs would.
-        expiresAt: date(fields.expiresAt) ?? new Date(start.getTime() + RESERVATION_MS),
+        expiresAt: date(fields.expiresAt) ?? new Date(start.getTime() + EARLY_RESERVATION_MS),
         closedAt: date(fields.closedAt)
       }
     ];
@@ -31503,6 +31528,7 @@ Tests: ${test ?? "(no report)"}`,
     return `Dropped the change to ${path}: ${why}.`;
   },
   outOfTime: "The agent ran out of time. Its work so far is committed.",
+  outOfTimeWrappedUp: "The agent ran out of time. A wrap-up left its work consistent, and it is committed.",
   partial: "Work so far is committed to the task branch.",
   maxRuns: (stage, runs, max) => `The ${STAGES2[stage]} stage has run ${runs} times in a row without finishing (\`max-runs\` is ${max}). Comment \`/codeman continue <guidance>\` to allow ${max} more runs.`,
   stageNeedsMaintainer: (stage) => `The ${STAGES2[stage]} stage needs a maintainer.`,
@@ -31770,6 +31796,7 @@ Testes: ${test ?? "(sem relat\xF3rio)"}`,
     return `Mudan\xE7a em ${path} descartada: ${why}.`;
   },
   outOfTime: "O tempo do agente acabou. O trabalho feito at\xE9 aqui foi commitado.",
+  outOfTimeWrappedUp: "O tempo do agente acabou. Uma rodada de fechamento deixou o trabalho consistente, e ele foi commitado.",
   partial: "O trabalho feito at\xE9 aqui foi commitado na branch da tarefa.",
   maxRuns: (stage, runs, max) => `A ${OF_STAGE(stage)} rodou ${runs} vezes seguidas sem terminar (\`max-runs\` \xE9 ${max}). Comente \`/codeman continue <orienta\xE7\xE3o>\` para permitir mais ${max} rodadas.`,
   stageNeedsMaintainer: (stage) => `A ${OF_STAGE(stage)} precisa de um mantenedor.`,
@@ -32342,6 +32369,21 @@ ${problems.map((problem2) => `- ${problem2}`).join("\n")}
 
 Rewrite ${OUTPUT_FILE} so that it follows the shape and the limits in ${TASK_FILE}. Keep its content, shortened where it is too long. Change no other file.`;
 }
+var WRAP_UP_OPENING = "The agent that worked on this task ran out of time.";
+function wrapUpPrompt(task, minutes, wrapUpMinutes) {
+  const stage = task.stage ?? "code";
+  return `${WRAP_UP_OPENING} Codeman stopped it after ${minutes} minutes, wherever it was. You have ${wrapUpMinutes} minutes to leave its work consistent: Codeman then commits the working tree to the task branch, and the next run of the ${stage} stage carries on from it.
+
+Do not carry on the task. ${TASK_FILE} describes it: read it for the stage, the plan at \`${task.planPath}\`, and the rules, which still hold. Then:
+
+1. Find what the run changed, with \`git status\` and \`git diff\`.
+2. Leave each change whole. Finish a half-written change only when a few lines do it; otherwise undo it, with \`git checkout -- <path>\`, or by deleting a file the run added. Do not leave code that does not build, nor tests of code that is not there.
+3. Remove what does not belong in the commit: scratch files, test output, probes and backups.
+4. Update the plan's \`## Progress\` section: what is done, what is left, and where the next run should start.
+5. Write \`${OUTPUT_FILE}\` in the shape ${TASK_FILE} gives, with \`status\` \`partial\`, a summary of what is done and what is left, and a commit message. Report \`blocked\` instead only when the plan cannot be carried out as approved.
+
+Start no new work, and run no long command, such as the whole test suite.`;
+}
 function quoter() {
   const nonce = randomBytes4(6).toString("hex");
   return (label, text) => [`<<<${label} ${nonce}`, text.trim() || "(empty)", `>>>${label} ${nonce}`].join("\n");
@@ -32782,7 +32824,7 @@ async function agentJob(services, reached) {
   const harnessName = runtime2.input("harness") || "opencode";
   const harness = harnesses[harnessName];
   if (!harness) throw new Error(`Unknown harness "${harnessName}".`);
-  const minutes = positiveNumber(runtime2, "agent-minutes");
+  const minutes = task.settings["agent-minutes"];
   const workspace = runtime2.workspace();
   runtime2.startGroup(`Install ${harness.name}`);
   createAgentUser();
@@ -32816,6 +32858,7 @@ async function agentJob(services, reached) {
   reached();
   let run2;
   let durationMs;
+  let wrappedUp = false;
   try {
     runtime2.info(`Running ${harness.name} with ${task.model} for up to ${minutes} minutes.`);
     const started = Date.now();
@@ -32858,6 +32901,21 @@ async function agentJob(services, reached) {
         else runtime2.warning(`The agent did not finish fixing ${OUTPUT_FILE}.`);
       }
     }
+    const wrapUpMinutes = wrapUpMinutesOf(task);
+    if (run2.timedOut && !access2.stopped?.aborted && wrapUpMinutes > 0) {
+      runtime2.info(
+        `The agent ran out of time: a wrap-up of up to ${wrapUpMinutes} minutes leaves its work consistent.`
+      );
+      const wrapUp = await runAsAgent(
+        harness.command({ ...options, prompt: wrapUpPrompt(task, minutes, wrapUpMinutes) }),
+        worktree,
+        wrapUpMinutes * 6e4,
+        runtime2,
+        access2.stopped
+      );
+      wrappedUp = wrapUp.exitCode === 0 && !wrapUp.timedOut;
+      if (!wrappedUp) runtime2.warning("The wrap-up did not finish.");
+    }
     durationMs = Date.now() - started;
     sealAgentSandbox(worktree);
   } finally {
@@ -32886,6 +32944,7 @@ async function agentJob(services, reached) {
     harness: harness.name,
     exitCode: run2.exitCode,
     timedOut: run2.timedOut,
+    ...wrappedUp ? { wrappedUp } : {},
     durationMs,
     changes
   };
@@ -32900,6 +32959,10 @@ async function agentJob(services, reached) {
   if (access2.stopped?.aborted) runtime2.fail(`The run stopped: ${stopReason(access2.stopped)}`);
   else if (run2.timedOut) runtime2.fail(`The agent did not finish within ${minutes} minutes.`);
   else if (run2.exitCode !== 0) runtime2.fail(`The agent exited with code ${run2.exitCode}.`);
+}
+function wrapUpMinutesOf(task) {
+  if (task.action !== "implement" || task.stage === "review") return 0;
+  return task.settings["wrap-up-minutes"];
 }
 async function modelAccess(runtime2, task, credential) {
   const choice = inferenceChoice(task.settings, task.record);
@@ -33846,6 +33909,9 @@ async function applyStage(task, io) {
   }
   warnings.push(...cutTexts(t, output.value.cuts));
   const { status: status2, summary: summary2, reason } = output.value;
+  if (manifest.timedOut && manifest.wrappedUp && status2 !== "blocked") {
+    return unfinished("out-of-time", t.outOfTimeWrappedUp, summary2);
+  }
   switch (status2) {
     case "partial":
       return unfinished("partial", t.partial, summary2);
@@ -34612,14 +34678,19 @@ async function open(services, ledger, run2) {
   const runs = await ledger.taskRuns(run2, runtime2);
   const costs = await openRouterCosts(services, runs);
   if (costs) await ledger.refresh(runs, { costs }, runtime2);
-  const reservation = await ledger.reserve(run2, {
-    task: Number(task),
-    taskBudget,
-    monthlyBudget,
-    organizationBudget,
-    recorded: choice.recorded.spent,
-    billed
-  });
+  const lastsMs = reservationMs(positiveNumber(runtime2, "agent-job-minutes"));
+  const reservation = await ledger.reserve(
+    run2,
+    {
+      task: Number(task),
+      taskBudget,
+      monthlyBudget,
+      organizationBudget,
+      recorded: choice.recorded.spent,
+      billed
+    },
+    lastsMs
+  );
   const { limit } = reservation;
   runtime2.output("task-spent", reservation.task.toFixed(4));
   runtime2.output("month-spent", reservation.month.toFixed(4));
@@ -34657,7 +34728,10 @@ async function open(services, ledger, run2) {
   runtime2.info(`Reserved ${usd(limit)} for this run in Codeman's ledger.`);
   let opened;
   try {
-    opened = await inference().open({ task, runId: runtime2.run.id, limit }, runtime2);
+    opened = await inference().open(
+      { task, runId: runtime2.run.id, limit, reservationMs: lastsMs },
+      runtime2
+    );
   } catch (error3) {
     ledger.fail(
       run2,
@@ -35255,6 +35329,8 @@ function taskOutputs(task, run2, pool2) {
     // Only the organization's settings set it; empty when they do not.
     "organization-monthly-budget": String(task.settings["organization-monthly-budget"] ?? ""),
     inference: JSON.stringify(choice),
+    // The agent job's timeout, which the run's reservation outlasts.
+    "agent-job-minutes": String(agentJobMinutes(task.settings)),
     // The run's document in the ledger, which the key jobs add to; none without an agent.
     "ledger-run": task.needsAgent ? run2 : ""
   };

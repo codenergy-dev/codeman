@@ -3,9 +3,12 @@ import { readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 import { PROVIDERS } from "./inference/providers.ts";
 import {
+  agentJobMinutes,
   applies,
   DEFAULTS,
   isSettingName,
+  LIMIT_BOUNDS,
+  MAX_JOB_MINUTES,
   MAX_TASKS,
   mostTasks,
   type PartialSettings,
@@ -157,6 +160,55 @@ test("only the organization's settings set organization-monthly-budget", () => {
     error:
       "the `settings` input (organization variable CODEMAN_SETTINGS), line 1: `organization-monthly-budget` must be a positive number.",
   });
+});
+
+test("the agent's times: defaults, bounds, a profile's own, and one job's limit", () => {
+  const top = resolveSettings({ model: "a/b" });
+  assert.ok(top.ok && top.value["agent-minutes"] === 50 && top.value["wrap-up-minutes"] === 10);
+  assert.ok(top.ok && agentJobMinutes(top.value) === 70);
+
+  assert.deepEqual(parseSetting("wrap-up-minutes", "0"), { ok: true, value: 0 });
+  assert.deepEqual(parseSetting("wrap-up-minutes", "1"), {
+    ok: false,
+    error: "`wrap-up-minutes` must be 0, which turns the wrap-up off, or from 2 to 30.",
+  });
+  assert.deepEqual(parseSetting("agent-minutes", "0"), {
+    ok: false,
+    error: "`agent-minutes` must be a positive whole number.",
+  });
+  assert.deepEqual(parseSetting("agent-minutes", "301"), {
+    ok: false,
+    error: "`agent-minutes` must be from 5 to 300.",
+  });
+  assert.ok(!TASK_SETTINGS.has("agent-minutes"), "not a command");
+
+  const parsed = parseSettings(
+    [
+      "model: a/b",
+      "agent-minutes: 40",
+      "profiles:",
+      "  - name: slow",
+      "    stages: [code]",
+      "    agent-minutes: 120",
+      "    wrap-up-minutes: 0",
+    ].join("\n"),
+  );
+  assert.ok(parsed.ok);
+  if (!parsed.ok) return;
+  const code = resolveRun([{}, {}, parsed.value], { stage: "code", tasks: 1 });
+  assert.ok(code.ok && code.value.profile === "slow");
+  assert.ok(code.ok && code.value.settings["agent-minutes"] === 120);
+  assert.ok(code.ok && code.value.settings["wrap-up-minutes"] === 0);
+  const plan = resolveRun([{}, {}, parsed.value], { stage: "plan", tasks: 1 });
+  assert.ok(plan.ok && plan.value.settings["agent-minutes"] === 40);
+  assert.ok(plan.ok && plan.value.settings["wrap-up-minutes"] === 10);
+
+  // GitHub stops a job after 360 minutes: the longest agent and wrap-up still fit in one.
+  const longest = { "agent-minutes": 300, "wrap-up-minutes": 30 };
+  assert.ok(resolveSettings(longest).ok);
+  assert.equal(LIMIT_BOUNDS["agent-minutes"]?.max, longest["agent-minutes"]);
+  assert.equal(LIMIT_BOUNDS["wrap-up-minutes"]?.max, longest["wrap-up-minutes"]);
+  assert.ok(agentJobMinutes(longest) <= MAX_JOB_MINUTES);
 });
 
 test("no setting is required: without a model, the top level serves no agent run", () => {
@@ -590,7 +642,7 @@ test("rejects malformed profiles, naming the line", () => {
     ["profiles:\n  - model: a/b", "line 2: a profile needs a `name`."],
     [
       "profiles:\n  - name: a\n    task-budget: 5",
-      "line 3: a profile cannot set `task-budget`; it sets only `provider`, `model`, `engine`, `gpu`, `endpoint`, `pod-reuse`, `ollama`, `vllm`.",
+      "line 3: a profile cannot set `task-budget`; it sets only `provider`, `model`, `engine`, `gpu`, `endpoint`, `pod-reuse`, `ollama`, `vllm`, `agent-minutes`, `wrap-up-minutes`.",
     ],
     ["profiles:\n  - name: a\n    secret: x", "line 3: unknown setting `secret`."],
     ["profiles:\n  - name: a\n    provider: spot", "line 3: `provider` must be one of"],

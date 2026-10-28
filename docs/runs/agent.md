@@ -25,7 +25,10 @@ flowchart LR
   files --> run["Run the harness in the jail,<br/>up to agent-minutes"]
   run --> check{"Output invalid,<br/>and 2 minutes left?"}
   check -->|yes| fix["Resume the session once,<br/>with the problems"]
-  check -->|no| seal["Seal the sandbox"]
+  check -->|no| late{"Out of time,<br/>in web, design, code or test?"}
+  late -->|yes| wrap["Wrap-up: a new session,<br/>up to wrap-up-minutes"]
+  late -->|no| seal["Seal the sandbox"]
+  wrap --> seal
   fix --> seal
   seal --> collect["Collect the changes"]
   collect --> upload["Upload codeman-result"]
@@ -68,8 +71,29 @@ flowchart LR
 
 ### Time limit
 
-- The agent has `agent-minutes` to run: 50 in the template, inside the `agent` job's 60-minute timeout. Codeman then stops the harness: it sends SIGTERM to every process of `codeman-agent`, then SIGKILL after 10 seconds.
+- The agent has the run's `agent-minutes` ([agent time](../settings/reference.md#agent-time)): 50 by default. Codeman then stops the harness: it sends SIGTERM to every process of `codeman-agent`, then SIGKILL after 10 seconds.
+- The `agent` job's timeout is `agent-minutes` plus `wrap-up-minutes` plus 10 minutes, which `select` computes for each task: the job's own steps fit in those 10.
 - The fix pass of the [agent output](#agent-output) gets what is left of that time, and runs only when at least 2 minutes are.
+- A run of web, design, code or test that runs out of time gets a [wrap-up](#wrap-up), of `wrap-up-minutes`.
+
+### Wrap-up
+
+A run stopped by its time leaves its work wherever it was: half-written edits, scratch files, tests of code that is not there. `apply` commits the working tree whatever it holds, so the wrap-up makes it consistent first.
+
+1. The agent job starts a new session of the harness, in a new jail, with Codeman's wrap-up prompt. It gets `wrap-up-minutes`: 10 by default ([agent time](../settings/reference.md#agent-time)).
+2. The prompt says the agent ran out of time and must not carry on the task. It reads the task file for the stage, the plan and the rules, and `git status` and `git diff` for what the run changed.
+3. It finishes a half-written change only when a few lines do it, and otherwise undoes it. It removes what does not belong in the commit, updates the plan's `## Progress` section with what is done and what is left, and writes the output with status `partial`.
+4. `apply` commits the result, and the task stays in its stage, out of time: the run comment says "The agent ran out of time. A wrap-up left its work consistent, and it is committed.", with the wrap-up's summary. Only `blocked` changes that: it blocks the task with the wrap-up's reason.
+
+| When | What happens |
+| --- | --- |
+| The wrap-up fails, or runs out of its own time | The working tree is committed as it left it, and the run is out of time, as without a wrap-up |
+| The run was stopped by its budget | No wrap-up: the run's key no longer pays for one |
+| Review | No wrap-up: review commits nothing |
+| Planning and routing | No wrap-up: a planning or routing run out of time commits nothing |
+| `wrap-up-minutes: 0` | No wrap-up |
+
+A fresh session, rather than the stopped one, because that one may have stopped in the middle of a tool call, with a context close to full ([decision 4](../plans/2026-10-28-configurable-agent-time-and-wrap-up-after-timeout.md#4-a-fresh-session-or-the-timed-out-one)).
 
 ### Sealing
 

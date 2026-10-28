@@ -48,13 +48,17 @@ test("Firestore emulator: two runs that reserve at once near the monthly budget"
   });
   const runtime = new FakeRuntime({ runId: "300" });
   const reserve = (task: number) =>
-    new Ledger(store, { runtime, job: "open-key" }).reserve(`300-1-${task}`, {
-      task,
-      taskBudget: 2,
-      monthlyBudget: 20,
-      recorded: 0,
-      billed: new Map(),
-    });
+    new Ledger(store, { runtime, job: "open-key" }).reserve(
+      `300-1-${task}`,
+      {
+        task,
+        taskBudget: 2,
+        monthlyBudget: 20,
+        recorded: 0,
+        billed: new Map(),
+      },
+      2 * 3_600_000,
+    );
   const outcomes = await Promise.all([reserve(7), reserve(8)]);
   assert.deepEqual(outcomes.map((one) => one.outcome).sort(), ["over-budget", "reserved"]);
   const open = await store.query("organizations/o/runs", {
@@ -99,7 +103,7 @@ test("Firestore emulator: tasks that claim a pod's settings at once get one crea
     provider: "runpod",
   };
   const claims = await Promise.all(
-    ["o/r#7", "o/s#7"].map((holder) => registry.claim(description, holder, "300")),
+    ["o/r#7", "o/s#7"].map((holder) => registry.claim(description, holder, "300", 2 * 3_600_000)),
   );
   assert.deepEqual(claims.map((claim) => claim.kind).sort(), ["create", "wait"]);
   assert.equal((await registry.live()).length, 1);

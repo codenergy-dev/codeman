@@ -403,7 +403,10 @@ test("the provider tells what each run of a task spent, and names each run's key
   ]);
   const provider = new OpenRouterProvider(new OpenRouter("mk", fetch), o, () => 24);
   assert.deepEqual(await provider.taskCosts("7"), { "100": 0.25, "103": 0.1235 });
-  const run = await provider.open({ task: "7", runId: "300", limit: 1.75 }, new FakeRuntime());
+  const run = await provider.open(
+    { task: "7", runId: "300", limit: 1.75, reservationMs: 2 * 3_600_000 },
+    new FakeRuntime(),
+  );
   assert.deepEqual(run, { handle: "h", credential: "sk-or-v1-x" });
   assert.equal(calls.length, 3);
   const body = JSON.parse(String(calls[2]?.[1].body));

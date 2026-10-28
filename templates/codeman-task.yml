@@ -38,6 +38,10 @@ on:
       inference:
         type: string
         required: true
+      # The agent job's timeout, in minutes, from the settings' agent-minutes and wrap-up-minutes.
+      agent-job-minutes:
+        type: string
+        required: true
       # The run's document in Codeman's ledger; empty for a task without an agent.
       ledger-run:
         type: string
@@ -115,12 +119,13 @@ jobs:
         id: codeman
         with:
           step: open-key
-          template-version: 1
+          template-version: 2
           task: ${{ inputs.task }}
           task-budget: ${{ inputs.task-budget }}
           monthly-budget: ${{ inputs.monthly-budget }}
           organization-monthly-budget: ${{ inputs.organization-monthly-budget }}
           inference: ${{ inputs.inference }}
+          agent-job-minutes: ${{ inputs.agent-job-minutes }}
           ledger-run: ${{ inputs.ledger-run }}
           firebase-project: ${{ vars.CODEMAN_FIREBASE_PROJECT }}
           workload-identity-provider: ${{ vars.CODEMAN_WORKLOAD_IDENTITY_PROVIDER }}
@@ -139,7 +144,8 @@ jobs:
     needs: open-key
     if: needs.open-key.outputs.status == 'opened'
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # The settings' agent-minutes and wrap-up-minutes, and 10 minutes for the job's own steps.
+    timeout-minutes: ${{ fromJSON(inputs.agent-job-minutes) }}
     permissions:
       contents: read
       # Downloads the results of workflows the agent asked for. The agent never sees the token.
@@ -189,7 +195,7 @@ jobs:
         id: codeman
         with:
           step: agent
-          template-version: 1
+          template-version: 2
           task: ${{ inputs.task }}
           github-token: ${{ github.token }}
           encrypted-key: ${{ needs.open-key.outputs.encrypted-key }}
@@ -199,7 +205,6 @@ jobs:
           context-length: ${{ needs.open-key.outputs.context-length }}
           # The runpod-serverless provider: held by the gateway outside the sandbox.
           serverless-key: ${{ secrets.CODEMAN_RUNPOD_SERVERLESS_KEY }}
-          agent-minutes: 50
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
@@ -262,7 +267,7 @@ jobs:
         id: codeman
         with:
           step: close-key
-          template-version: 1
+          template-version: 2
           handle: ${{ needs.open-key.outputs.handle }}
           key-hash: ${{ needs.open-key.outputs.key-hash }}
           inference: ${{ inputs.inference }}
@@ -342,7 +347,7 @@ jobs:
         id: codeman
         with:
           step: apply
-          template-version: 1
+          template-version: 2
           task: ${{ inputs.task }}
           github-token: ${{ steps.app-token.outputs.token }}
           workflow-token: ${{ steps.workflow-token.outputs.token }}
@@ -410,7 +415,7 @@ jobs:
       - uses: ./.codeman/action
         with:
           step: release-pod
-          template-version: 1
+          template-version: 2
           handle: ${{ needs.open-key.outputs.handle }}
           inference: ${{ inputs.inference }}
           ledger-run: ${{ inputs.ledger-run }}

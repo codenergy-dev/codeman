@@ -232,7 +232,6 @@ function worldOf(value: unknown, path: Path, options: ValidateOptions): World {
       "variables",
       "secrets",
       "submodules",
-      "agent-minutes",
     ]);
     required(repo, at, ["name", "fixture"]);
     const name = text(repo.name, [...at, "name"]);
@@ -261,10 +260,6 @@ function worldOf(value: unknown, path: Path, options: ValidateOptions): World {
       variables: variablesOf(repo.variables, [...at, "variables"]),
       secrets: repo.secrets === undefined ? undefined : secretsOf(repo.secrets, [...at, "secrets"]),
       submodules: submodulesOf(repo.submodules, [...at, "submodules"]),
-      agentMinutes:
-        repo["agent-minutes"] === undefined
-          ? undefined
-          : positiveWhole(repo["agent-minutes"], [...at, "agent-minutes"]),
     } satisfies Repository;
   });
   if (repositories.length === 0) {
@@ -419,12 +414,6 @@ function submodulesOf(value: unknown, path: Path): Record<string, string> {
     submodules[file] = commit;
   }
   return submodules;
-}
-
-/** A whole number of at least 1. */
-function positiveWhole(value: unknown, path: Path): number {
-  if (!Number.isInteger(value) || (value as number) < 1) fail(path, "a whole number of at least 1");
-  return value as number;
 }
 
 /** `meet: { issues, timeout }`: at least 2 issues; 2 minutes by default. */

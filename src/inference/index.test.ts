@@ -251,7 +251,10 @@ test("a vLLM pod's choice reaches its pod: the vLLM image, its settings and max-
         hub: { model: async (id) => ({ id, weightsBytes: 1e9 }), vision: async () => false },
       },
     );
-    await provider.open({ task: "7", runId: "300", limit: 1 }, new FakeRuntime());
+    await provider.open(
+      { task: "7", runId: "300", limit: 1, reservationMs: 2 * 3_600_000 },
+      new FakeRuntime(),
+    );
     assert.equal(
       gpu.created[0]?.env.CODEMAN_VLLM,
       '{"max-num-seqs":"3","tool-call-parser":"qwen3_xml"}',
@@ -267,7 +270,7 @@ test("a vLLM pod's choice reaches its pod: the vLLM image, its settings and max-
   if (POD_IMAGES.vllm === "") {
     await assert.rejects(
       inferenceProvider(runtime, () => new MemoryStore()).open(
-        { task: "7", runId: "300", limit: 1 },
+        { task: "7", runId: "300", limit: 1, reservationMs: 2 * 3_600_000 },
         new FakeRuntime(),
       ),
       /pins no vLLM pod image yet/,

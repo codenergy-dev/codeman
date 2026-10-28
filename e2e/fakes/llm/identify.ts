@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { HARNESS_PROMPT, OUTPUT_FILE, TASK_FILE } from "../../../src/prompt.ts";
+import { HARNESS_PROMPT, OUTPUT_FILE, TASK_FILE, WRAP_UP_OPENING } from "../../../src/prompt.ts";
 import { ROUTED_STAGES, type Stage } from "../../../src/stages.ts";
 import type { ChatMessage, ChatRequest } from "../openrouter/chat.ts";
 import { MARKER } from "./script.ts";
@@ -14,12 +14,14 @@ import { MARKER } from "./script.ts";
  * - the task's first heading names the stage (src/prompt.ts);
  * - the nonce of its quoted blocks, random per task file, tells one run of the stage from the
  *   next, so the model counts rounds by the nonces it sees;
- * - the last user message is the harness prompt, or Codeman's fix prompt for the fix pass;
+ * - the last user message is the harness prompt, Codeman's fix prompt for the fix pass, or its
+ *   wrap-up prompt for the new session after a run out of time, which reads the task file first
+ *   too;
  * - the turn is the number of tool results since that message: each scripted turn makes one
  *   tool call.
  */
 
-export type Phase = "main" | "fix";
+export type Phase = "main" | "fix" | "wrap-up";
 
 export type Identified =
   /** A conversation's first turn: the model reads the task file. */
@@ -72,12 +74,14 @@ export function textOf(message: ChatMessage | undefined): string {
 
 /**
  * Whether a request comes from the agent's OpenCode: one of its user messages is Codeman's
- * harness prompt, which its title request repeats too. Others, such as the gateway's probe of
- * tool calls (src/gateway/vllm.ts, `probe`), do not.
+ * harness prompt or its wrap-up prompt, which its title request repeats too. Others, such as the
+ * gateway's probe of tool calls (src/gateway/vllm.ts, `probe`), do not.
  */
 export function fromAgent(request: ChatRequest): boolean {
   return request.messages.some(
-    (message) => message.role === "user" && textOf(message).includes(HARNESS_PROMPT),
+    (message) =>
+      message.role === "user" &&
+      (textOf(message).includes(HARNESS_PROMPT) || textOf(message).includes(WRAP_UP_OPENING)),
   );
 }
 
@@ -96,15 +100,17 @@ export function identify(request: ChatRequest): Identified {
   const prompt = textOf(messages[last]);
   const phase: Phase | undefined = prompt.includes(FIX)
     ? "fix"
-    : prompt.includes(HARNESS_PROMPT)
-      ? "main"
-      : undefined;
+    : prompt.includes(WRAP_UP_OPENING)
+      ? "wrap-up"
+      : prompt.includes(HARNESS_PROMPT)
+        ? "main"
+        : undefined;
   if (!phase) {
     return { kind: "unknown", reason: "The last user message is not Codeman's harness prompt." };
   }
   const after = messages.slice(last + 1);
   const results = after.filter((message) => message.role === "tool");
-  if (phase === "main" && results.length === 0) return { kind: "start", workdir };
+  if (phase !== "fix" && results.length === 0) return { kind: "start", workdir };
 
   const text = messages
     .filter((message) => message.role === "tool")
