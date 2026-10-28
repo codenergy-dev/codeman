@@ -1,7 +1,7 @@
 ---
 status: completed
 created_at: 2026-10-22T16:06:00-03:00
-updated_at: 2026-10-22T17:05:00-03:00
+updated_at: 2026-10-27T12:00:00-03:00
 commit: 5c04539
 ---
 
@@ -51,5 +51,6 @@ Fixing the bug now, as work separate from the e2e plan. Only a stop for the budg
 ## Out of scope
 
 - **Publishing and pinning new pod images.** The fix is in `dist/gateway.js`, so it reaches pods only once images built from it are pinned in `POD_IMAGES`, in a later commit ([pod images](../development/guide.md#pod-images)). The e2e pods run the e2e bundle, so the scenario checks the fix now.
+  - **Published on 2026-10-27.** The images built from `dfef37e`, which contains `8bf1854` and `36a1b38`, the gateway's only later change, are pinned in `POD_IMAGES`: `codeman-ollama@sha256:f5f89da1e8042fadb70edb7d2be44dee5cfc16f022f5da0330da020ca6b304e9` and `codeman-vllm@sha256:061cb8b15e456b92239b65cdc7abc0706cbfe3219a2abbcb15c2a82edcba82a0`. Each image's `/opt/codeman/gateway.js` is byte for byte `dist/gateway.js` ([audit log](../development/dependencies.md#audit-log)). Pods on the images pinned before still answer `503` after the next tick.
 - **A silent run's `503`.** A run stopped after 30 minutes without a request still answers `503`, which an agent that comes back retries until its job ends.
 - **Serverless budgets.** The agent job's gateway never calls `expireRuns`: a spent Serverless run gets `402` from `handle`'s budget check, as before.
