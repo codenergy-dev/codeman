@@ -118,6 +118,9 @@ A repository whose owner is no organization of the world belongs to a user accou
 | `openrouter.lags` | `{ usage, analytics }`: a duration, or `hold` until settled | None |
 | `openrouter.credits` | The account's credits, in USD | 100 |
 
+> [!NOTE]
+> A pod run's cost counts from the pod's creation ([the budget cut-off](../../inference/self-hosted.md#the-budget-cut-off)), and no action moves that clock. A scenario that spends a run's budget on a pod, through a high `runpod.catalog` price, must leave the agent time to start first: its first request came 59 seconds after the pod's creation on a loaded machine. `budgets/spent-run-gets-402` gives it 180 seconds.
+
 ### What the runtime adds
 
 - Codeman's workflow templates in each repository's `.github/workflows/`.
