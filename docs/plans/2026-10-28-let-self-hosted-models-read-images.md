@@ -1,7 +1,7 @@
 ---
 status: completed
 created_at: 2026-10-28T17:30:00-03:00
-updated_at: 2026-10-28T17:40:00-03:00
+updated_at: 2026-10-28T18:01:00-03:00
 commit: 9033755
 ---
 
@@ -60,6 +60,7 @@ An agent on a pod reads the images its model can read, such as the design stage'
 ## Out of scope
 
 - **Publishing and pinning new pod images.** Ollama's `vision` reaches pods only once images built from the new `dist/gateway.js` are pinned in `POD_IMAGES`, in a later commit. vLLM pods need no new image.
+  - **Published on 2026-10-28.** The images built from `8c611a4`, this plan's commit, are pinned in `POD_IMAGES`: `codeman-ollama@sha256:98c454e3577a05230b873276f6b7c1d1da1309db9e04411565509f2a46dfae89` and `codeman-vllm@sha256:a5b4a03205fc96f1ae3a731a03124a5a27eaf2d36450f937ff1f063112fc681e`. Each image's `/opt/codeman/gateway.js` is byte for byte `dist/gateway.js` ([audit log](../development/dependencies.md#audit-log)). A run that joins a pod on an image pinned before reads text only on Ollama.
 - **Runpod Serverless.** Nothing tells whether an endpoint's worker serves its model's vision tower, so Serverless models stay text only.
 - **Images in the issue.** The agent gets the issue's text; images linked from it are not downloaded for it.
 - **The gateway's 32 MB body limit.** OpenCode resizes images to at most 2000×2000 pixels and 5 MB of base64, and resends the history each turn: many large images in one session can exceed it.

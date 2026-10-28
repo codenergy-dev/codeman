@@ -130,7 +130,7 @@ Otherwise the model reads text only: OpenCode replaces each image with an error 
 
 - **Why not always.** An image sent to a model that cannot read it would make the engine refuse the whole request.
 - **When Codeman cannot tell,** such as when Hugging Face does not answer, the model reads text only and the run goes on.
-- **Older gateways.** The gateways of the pod images pinned on 2026-10-27 do not report it, so their Ollama models read text only. vLLM pods do not depend on the image.
+- **Older gateways.** The gateways of pod images pinned before 2026-10-28, and of an older image given with the `pod-image` input, do not report it, so their Ollama models read text only. vLLM pods do not depend on the image.
 
 > [!NOTE]
 > Models on [Serverless](../inference/serverless.md) read text only: nothing tells whether an endpoint's worker serves its model's vision tower.
