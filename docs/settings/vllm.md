@@ -13,7 +13,7 @@ vllm:
   kv-cache-dtype: fp8                 # half the K/V cache's memory
   speculative-method: mtp             # with speculative-tokens: --speculative-config
   speculative-tokens: 3
-  language-model-only: true           # skips the vision tower, leaving its memory to the cache
+  language-model-only: true           # skips the vision tower, leaving its memory to the cache; the agent reads text only
 ```
 
 - **Required.** The block needs `tool-call-parser` ([tool calls](#tool-calls)).
@@ -39,7 +39,7 @@ Only these keys, taken from `vllm serve` of vLLM 0.31.0, the version in Codeman'
 | `speculative-method` | `--speculative-config` | `mtp`, `ngram`, `eagle3`, `dflash`, `dspark` or `draft_model` | None | No speculative decoding |
 | `speculative-tokens` | `--speculative-config` | Whole number, at least 1 | None | Required with `speculative-method` |
 | `speculative-model` | `--speculative-config` | A Hugging Face model ID | None | Required with `eagle3`, `dflash`, `dspark` and `draft_model`, refused with `mtp` and `ngram` |
-| `language-model-only` | `--language-model-only` | `true` or `false` | `false` | vLLM's; `true` skips a multimodal model's vision tower |
+| `language-model-only` | `--language-model-only` | `true` or `false` | `false` | vLLM's; `true` skips a multimodal model's vision tower, so the agent reads text only ([images](pod-engines.md#images)) |
 | `enforce-eager` | `--enforce-eager` | `true` or `false` | `false` | vLLM's ([starting](#starting)) |
 | `async-scheduling` | `--async-scheduling` | `true` or `false` | Decided by vLLM | vLLM's |
 

@@ -359,6 +359,23 @@ test("OpenRouter and pods need nothing from the agent job but their credential",
     contextLength: 32768,
   });
   assert.equal(pod.baseUrl, "https://pod1-8080.proxy.runpod.net/v1");
+  assert.equal(pod.vision, undefined, "without a handle, text only");
+  const handle = { mode: "pod", podId: "pod1", vision: true };
+  const reading = await agentAccess({
+    provider: "runpod-pod",
+    credential: "t",
+    baseUrl: "https://pod1-8080.proxy.runpod.net/v1",
+    handle: JSON.stringify(handle),
+  });
+  assert.equal(reading.vision, true, "the pod's handle says its model reads images");
+  const { vision: _, ...textOnly } = handle;
+  const plain = await agentAccess({
+    provider: "runpod-pod",
+    credential: "t",
+    baseUrl: "https://pod1-8080.proxy.runpod.net/v1",
+    handle: JSON.stringify(textOnly),
+  });
+  assert.equal(plain.vision, undefined);
   await assert.rejects(agentAccess({ provider: "runpod-pod", credential: "t" }), /URL is missing/);
 });
 

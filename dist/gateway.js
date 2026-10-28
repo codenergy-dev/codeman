@@ -1602,6 +1602,7 @@ async function prepareOllama(server, model, log, options = { parallel: 1 }) {
   const show = await call("/api/show", { model });
   const modelContext = ollamaContextLength(show);
   const family = typeof show?.details?.family === "string" ? show.details.family : void 0;
+  const vision = Array.isArray(show?.capabilities) && show.capabilities.includes("vision");
   const listed = modelEntry(await call("/api/tags"), model);
   const parallel = family && OLLAMA_SERIAL_FAMILIES.has(family) ? 1 : options.parallel;
   if (parallel < options.parallel) {
@@ -1644,7 +1645,8 @@ async function prepareOllama(server, model, log, options = { parallel: 1 }) {
     digest: listed.digest,
     size: placement2.size,
     sizeVram: placement2.sizeVram,
-    family
+    family,
+    vision
   });
   if (options.configured) {
     const context = options.configured;

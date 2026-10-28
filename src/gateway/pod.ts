@@ -248,6 +248,11 @@ export interface FitReport {
   size: number;
   sizeVram: number;
   family: string | undefined;
+  /**
+   * Whether the model reads images: `/api/show` lists its `vision` capability. None from gateways
+   * before it.
+   */
+  vision?: boolean | undefined;
 }
 
 /** The model's start failed for a reason its settings can fix; `message` says how. */
@@ -288,9 +293,11 @@ export async function prepareOllama(
   const show = (await call("/api/show", { model })) as {
     model_info?: Record<string, unknown>;
     details?: { family?: unknown };
+    capabilities?: unknown;
   } | null;
   const modelContext = ollamaContextLength(show);
   const family = typeof show?.details?.family === "string" ? show.details.family : undefined;
+  const vision = Array.isArray(show?.capabilities) && show.capabilities.includes("vision");
   const listed = modelEntry(await call("/api/tags"), model);
   const parallel = family && OLLAMA_SERIAL_FAMILIES.has(family) ? 1 : options.parallel;
   if (parallel < options.parallel) {
@@ -345,6 +352,7 @@ export async function prepareOllama(
     size: placement.size,
     sizeVram: placement.sizeVram,
     family,
+    vision,
   });
 
   if (options.configured) {

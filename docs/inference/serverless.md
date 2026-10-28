@@ -17,6 +17,8 @@ With `provider: runpod-serverless`, an [agent run](../glossary.md#agent-run) use
 
 Runpod's API does not say whether an endpoint runs on Secure Cloud. The [installation steps](../installation/runpod.md#serverless) do.
 
+Nor does it say whether the worker serves its model's vision tower, so the agent reads text only ([images](../settings/pod-engines.md#images)).
+
 ## What a run costs
 
 Runpod bills endpoints by the hour at the finest, so a run's cost is an estimate. It is priced at the flex price of the endpoint's dearest GPU type.

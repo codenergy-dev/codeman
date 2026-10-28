@@ -283,6 +283,7 @@ export function fakeFit(variables: Readonly<Record<string, string>>, pod: Pod): 
     size: 30_000_000_000,
     sizeVram: 30_000_000_000,
     family: "qwen3moe",
+    vision: false,
   };
 }
 

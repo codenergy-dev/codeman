@@ -114,8 +114,26 @@ To serve a larger context, or to fit at all:
 | --- | --- | --- |
 | Fewer parallel requests | `num-parallel`, or the profile's `tasks` or `max-tasks` | `max-num-seqs`, or the profile's `tasks` or `max-tasks` |
 | A quantized K/V cache | `kv-cache-type: q8_0`: half the cache's memory, with some loss of precision | `kv-cache-dtype: fp8`: half the cache's memory |
-| Skip a vision tower | — | `language-model-only: true` |
+| Skip a vision tower | — | `language-model-only: true`; the agent then reads text only ([images](#images)) |
 | A GPU with more memory | `gpu` | `gpu` |
+
+## Images
+
+The agent reads images, such as the design stage's screenshots, only when Codeman knows its model can. `open-key` decides it on every run, a joined pod's included, logs why, and passes it to the agent job in the run's handle.
+
+| Engine | The model reads images when |
+| --- | --- |
+| Ollama | The pod's gateway reports that Ollama's `/api/show` lists the model's `vision` capability ([show model details](../web/ollama/show-model-details.md)) |
+| vLLM | The model's `config.json` on Hugging Face, at `main`, has a `vision_config` and does not set `language_model_only: true`, and the `vllm` block does not set `language-model-only: true` |
+
+Otherwise the model reads text only: OpenCode replaces each image with an error saying the model cannot read it ([transform.ts](../web/opencode/opencode-packages-opencode-src-provider-transform-ts-at-545f51d.md)).
+
+- **Why not always.** An image sent to a model that cannot read it would make the engine refuse the whole request.
+- **When Codeman cannot tell,** such as when Hugging Face does not answer, the model reads text only and the run goes on.
+- **Older gateways.** The gateways of the pod images pinned on 2026-10-27 do not report it, so their Ollama models read text only. vLLM pods do not depend on the image.
+
+> [!NOTE]
+> Models on [Serverless](../inference/serverless.md) read text only: nothing tells whether an endpoint's worker serves its model's vision tower.
 
 ## Errors common to both blocks
 

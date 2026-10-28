@@ -116,6 +116,22 @@ test("with self-hosted inference, the only provider is the gateway's, and the to
   });
 });
 
+test("a self-hosted model that reads images gets image input; any other, text only", () => {
+  const provider = { baseUrl: "https://pod1-8080.proxy.runpod.net/v1", apiKey: "run-token" };
+  const model = (config: Record<string, unknown>) =>
+    (config.provider as { codeman: { models: Record<string, unknown> } }).codeman.models["m/v"];
+  assert.deepEqual(model(openCodeConfig("m/v", undefined, { ...provider, vision: true })), {
+    name: "m/v",
+    attachment: true,
+    modalities: { input: ["text", "image"], output: ["text"] },
+  });
+  // Unknown to OpenCode's catalog, a model without modalities reads text only.
+  assert.deepEqual(model(openCodeConfig("m/v", undefined, provider)), { name: "m/v" });
+  assert.deepEqual(model(openCodeConfig("m/v", undefined, { ...provider, vision: false })), {
+    name: "m/v",
+  });
+});
+
 test("only the e2e build turns OpenCode's model catalog fetch off", () => {
   const options = { executable: "/opt/codeman/opencode", model: "a/b", apiKey: "k", prompt: "p" };
   assert.equal(openCode.command(options).env.OPENCODE_DISABLE_MODELS_FETCH, undefined);

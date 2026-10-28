@@ -73,6 +73,45 @@ test("a missing, private, gated, disabled or GGUF model stops the run, saying wh
   await assert.rejects(huggingFace.model("not-an-id"), /not a Hugging Face model ID/);
 });
 
+test("a model reads images when its configuration has a vision tower that vLLM serves", async () => {
+  const config = {
+    architectures: ["Qwen3_5ForConditionalGeneration"],
+    vision_config: { depth: 27 },
+  };
+  const { hub: huggingFace, calls } = hub(
+    json(config),
+    json({ ...config, language_model_only: false }),
+    json({ architectures: ["Qwen2ForCausalLM"] }),
+    json({ ...config, language_model_only: true }),
+    json({ ...config, vision_config: null }),
+  );
+  assert.equal(await huggingFace.vision("unsloth/Qwen3.8-27B-NVFP4"), true);
+  assert.equal(await huggingFace.vision("a/b"), true);
+  assert.equal(await huggingFace.vision("a/b"), false, "no vision tower");
+  assert.equal(await huggingFace.vision("a/b"), false, "the model serves its language model only");
+  assert.equal(await huggingFace.vision("a/b"), false);
+  const [url, init] = calls[0] ?? [];
+  assert.equal(url, "https://huggingface.co/unsloth/Qwen3.8-27B-NVFP4/resolve/main/config.json");
+  assert.equal(new Headers(init?.headers).get("authorization"), null);
+});
+
+test("a configuration that cannot be read says why", async () => {
+  const { hub: huggingFace } = hub(
+    new Response("{}", { status: 404 }),
+    new Response("not json", { status: 200 }),
+  );
+  await assert.rejects(huggingFace.vision("a/b"), /^Error: Hugging Face answered 404\.$/);
+  await assert.rejects(huggingFace.vision("a/b"), /^Error: Its config\.json is not JSON\.$/);
+  await assert.rejects(huggingFace.vision("not-an-id"), /not a Hugging Face model ID/);
+  const failing = new HuggingFace((async () => {
+    throw new Error("network down");
+  }) as typeof fetch);
+  await assert.rejects(
+    failing.vision("a/b"),
+    /^Error: Hugging Face could not be reached \(network down\)\.$/,
+  );
+});
+
 test("an unreachable API stops the run before any pod", async () => {
   const failing = new HuggingFace((async () => {
     throw new Error("network down");

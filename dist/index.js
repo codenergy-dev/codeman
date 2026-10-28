@@ -22761,10 +22761,7 @@ var HuggingFace = class {
     this.#fetch = fetchFn;
   }
   async model(id) {
-    if (!isHuggingFaceId(id)) {
-      throw new Error(`\`${id}\` is not a Hugging Face model ID, \`namespace/name\`.`);
-    }
-    const path = id.split("/").map(encodeURIComponent).join("/");
+    const path = repositoryPath(id);
     let response;
     try {
       response = await this.#fetch(`${HUB}/api/models/${path}?blobs=true`, {
@@ -22785,7 +22782,35 @@ var HuggingFace = class {
     }
     return checked(id, await response.json());
   }
+  /**
+   * From the model's `config.json` at `main`, which vLLM downloads: one more public call (see
+   * docs/web/hugging-face/unsloth-qwen3-8-27b-nvfp4-at-f0b7c9e.md).
+   */
+  async vision(id) {
+    const path = repositoryPath(id);
+    let response;
+    try {
+      response = await this.#fetch(`${HUB}/${path}/resolve/main/config.json`, {
+        signal: AbortSignal.timeout(3e4)
+      });
+    } catch (error3) {
+      throw new Error(
+        `Hugging Face could not be reached (${error3 instanceof Error ? error3.message : error3}).`
+      );
+    }
+    if (!response.ok) throw new Error(`Hugging Face answered ${response.status}.`);
+    const config = await response.json().catch(() => {
+      throw new Error("Its config.json is not JSON.");
+    });
+    return typeof config?.vision_config === "object" && config.vision_config !== null && config.language_model_only !== true;
+  }
 };
+function repositoryPath(id) {
+  if (!isHuggingFaceId(id)) {
+    throw new Error(`\`${id}\` is not a Hugging Face model ID, \`namespace/name\`.`);
+  }
+  return id.split("/").map(encodeURIComponent).join("/");
+}
 function notPublic(id) {
   return new Error(
     `Hugging Face has no public model \`${id}\`: check its ID, whose case counts. Codeman serves only public models, without a token.`
@@ -23649,6 +23674,7 @@ var PodInference = class {
     const status2 = await this.#admin(handle, "GET", "/admin/status").catch(
       () => ({})
     );
+    if (await this.#readsImages(handle.podId, status2, log)) handle = { ...handle, vision: true };
     const pods = this.#takeEvents();
     if (!pods.some(({ pod, event }) => pod === handle.podId && event === "created")) {
       pods.push({ pod: handle.podId, event: "joined" });
@@ -23660,6 +23686,44 @@ var PodInference = class {
       contextLength: status2.contextLength,
       pods
     };
+  }
+  /**
+   * Whether the agent is told its model reads images (the plan for letting self-hosted models read
+   * images): with vLLM, when the model's configuration has a vision tower that the settings do not
+   * skip; with Ollama, when the gateway's fit says Ollama lists the `vision` capability. When it
+   * cannot tell, text only: images sent to a model that cannot read them would fail its requests.
+   */
+  async #readsImages(podId, status2, log) {
+    const { model } = this.#settings;
+    const textOnly = "the agent reads text only.";
+    if (!onVllm(this.#settings)) {
+      const vision2 = status2.fit?.engine === void 0 ? status2.fit?.vision : void 0;
+      log.info(
+        vision2 === void 0 ? `Pod ${podId}'s gateway does not say whether ${model} reads images: ${textOnly}` : vision2 ? `Ollama lists the vision capability of ${model}: the agent reads images.` : `Ollama does not list the vision capability of ${model}: ${textOnly}`
+      );
+      return vision2 === true;
+    }
+    if (this.#settings.vllm?.["language-model-only"] === "true") {
+      log.info(
+        `\`language-model-only\` keeps vLLM from serving ${model}'s vision tower: ${textOnly}`
+      );
+      return false;
+    }
+    const hub = this.#options.hub ?? new HuggingFace(this.#options.fetch);
+    let vision;
+    try {
+      vision = await hub.vision(model);
+    } catch (error3) {
+      const reason = error3 instanceof Error ? error3.message : String(error3);
+      log.info(
+        `Could not tell whether ${model} reads images: ${reason} The agent reads text only.`
+      );
+      return false;
+    }
+    log.info(
+      vision ? `${model}'s configuration on Hugging Face has a vision tower, which vLLM serves: the agent reads images.` : `${model}'s configuration on Hugging Face has no vision tower: ${textOnly}`
+    );
+    return vision;
   }
   /**
    * Ends the run on the pod and reads what it used, then keeps the pod for the next runs on its
@@ -30598,6 +30662,7 @@ function openCodeConfig(model, instructions, provider) {
       output: Math.min(32768, Math.floor(provider.contextLength / 4))
     }
   } : {};
+  const vision = provider?.vision ? { attachment: true, modalities: { input: ["text", "image"], output: ["text"] } } : {};
   return {
     $schema: "https://opencode.ai/config.json",
     // Added to the repository's AGENTS.md, not used in its place.
@@ -30612,7 +30677,7 @@ function openCodeConfig(model, instructions, provider) {
         npm: "@ai-sdk/openai-compatible",
         name: "Codeman",
         options: { baseURL: provider.baseUrl, apiKey: provider.apiKey },
-        models: { [model]: { name: model, ...limit } }
+        models: { [model]: { name: model, ...limit, ...vision } }
       }
     } : {
       openrouter: {
@@ -30933,10 +30998,12 @@ async function agentAccess(inputs) {
   if (inputs.provider === "openrouter") return { apiKey: inputs.credential, finish: done };
   if (inputs.provider === "runpod-pod") {
     if (!inputs.baseUrl) throw new Error("The pod's gateway URL is missing.");
+    const handle2 = inputs.handle ? parseHandle(inputs.handle) : void 0;
     return {
       apiKey: inputs.credential,
       baseUrl: inputs.baseUrl,
       contextLength: inputs.contextLength,
+      ...handle2?.mode === "pod" && handle2.vision ? { vision: true } : {},
       finish: done
     };
   }
@@ -32756,7 +32823,7 @@ async function agentJob(services, reached) {
       executable,
       model: task.model,
       apiKey: access2.apiKey,
-      provider: access2.baseUrl ? { baseUrl: access2.baseUrl, contextLength: access2.contextLength } : void 0,
+      provider: access2.baseUrl ? { baseUrl: access2.baseUrl, contextLength: access2.contextLength, vision: access2.vision } : void 0,
       prompt: HARNESS_PROMPT,
       instructions: `${worktree}/${RULES_PATH}`
     };

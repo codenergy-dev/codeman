@@ -17,6 +17,8 @@ export interface AgentAccess {
   /** The OpenAI-compatible API to call; undefined for the harness's own provider. */
   baseUrl?: string | undefined;
   contextLength?: number | undefined;
+  /** Whether the model reads images; text only when undefined. */
+  vision?: boolean | undefined;
   /** Aborted, with the reason, when the run stops before the agent ends: the agent must stop. */
   stopped?: AbortSignal | undefined;
   /** Stops what the agent job started for the run, and reports what it measured. */
@@ -56,10 +58,12 @@ export async function agentAccess(inputs: AccessInputs): Promise<AgentAccess> {
   if (inputs.provider === "openrouter") return { apiKey: inputs.credential, finish: done };
   if (inputs.provider === "runpod-pod") {
     if (!inputs.baseUrl) throw new Error("The pod's gateway URL is missing.");
+    const handle = inputs.handle ? parseHandle(inputs.handle) : undefined;
     return {
       apiKey: inputs.credential,
       baseUrl: inputs.baseUrl,
       contextLength: inputs.contextLength,
+      ...(handle?.mode === "pod" && handle.vision ? { vision: true } : {}),
       finish: done,
     };
   }

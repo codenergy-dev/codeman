@@ -13,6 +13,8 @@ With `provider: openrouter`, the default, each [agent run](../glossary.md#agent-
 
 `open-key` passes the key to the agent job encrypted ([the key between jobs](#the-key-between-jobs)).
 
+The agent reads images when OpenCode's model catalog says the model does: Codeman registers OpenRouter's models without capabilities of its own, so the catalog's apply ([provider.ts](../web/opencode/opencode-packages-opencode-src-provider-provider-ts-at-545f51d.md#a-model-from-the-configuration)).
+
 ## How it works
 
 ### Closing a run

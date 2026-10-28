@@ -17,6 +17,11 @@ export interface ModelHub {
    * a message that says what to change.
    */
   model(id: string): Promise<HubModel>;
+  /**
+   * Whether vLLM serves the model's vision tower, unless told not to: its configuration has one,
+   * and does not say to serve its language model only. Throws when it cannot tell, saying why.
+   */
+  vision(id: string): Promise<boolean>;
 }
 
 /** The fields of the model's information Codeman reads (docs/web/hugging-face/). */
@@ -42,10 +47,7 @@ export class HuggingFace implements ModelHub {
   }
 
   async model(id: string): Promise<HubModel> {
-    if (!isHuggingFaceId(id)) {
-      throw new Error(`\`${id}\` is not a Hugging Face model ID, \`namespace/name\`.`);
-    }
-    const path = id.split("/").map(encodeURIComponent).join("/");
+    const path = repositoryPath(id);
     let response: Response;
     try {
       response = await this.#fetch(`${HUB}/api/models/${path}?blobs=true`, {
@@ -67,6 +69,41 @@ export class HuggingFace implements ModelHub {
     }
     return checked(id, (await response.json()) as ModelInfo);
   }
+
+  /**
+   * From the model's `config.json` at `main`, which vLLM downloads: one more public call (see
+   * docs/web/hugging-face/unsloth-qwen3-8-27b-nvfp4-at-f0b7c9e.md).
+   */
+  async vision(id: string): Promise<boolean> {
+    const path = repositoryPath(id);
+    let response: Response;
+    try {
+      response = await this.#fetch(`${HUB}/${path}/resolve/main/config.json`, {
+        signal: AbortSignal.timeout(30_000),
+      });
+    } catch (error) {
+      throw new Error(
+        `Hugging Face could not be reached (${error instanceof Error ? error.message : error}).`,
+      );
+    }
+    if (!response.ok) throw new Error(`Hugging Face answered ${response.status}.`);
+    const config = (await response.json().catch(() => {
+      throw new Error("Its config.json is not JSON.");
+    })) as { vision_config?: unknown; language_model_only?: unknown } | null;
+    return (
+      typeof config?.vision_config === "object" &&
+      config.vision_config !== null &&
+      config.language_model_only !== true
+    );
+  }
+}
+
+/** The model's path on the Hub, `namespace/name`; throws for anything else. */
+function repositoryPath(id: string): string {
+  if (!isHuggingFaceId(id)) {
+    throw new Error(`\`${id}\` is not a Hugging Face model ID, \`namespace/name\`.`);
+  }
+  return id.split("/").map(encodeURIComponent).join("/");
 }
 
 function notPublic(id: string): Error {

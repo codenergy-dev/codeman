@@ -130,7 +130,7 @@ async function agentJob(services: Services, reached: () => void): Promise<void> 
       model: task.model,
       apiKey: access.apiKey,
       provider: access.baseUrl
-        ? { baseUrl: access.baseUrl, contextLength: access.contextLength }
+        ? { baseUrl: access.baseUrl, contextLength: access.contextLength, vision: access.vision }
         : undefined,
       prompt: HARNESS_PROMPT,
       instructions: `${worktree}/${RULES_PATH}`,

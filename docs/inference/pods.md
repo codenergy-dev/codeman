@@ -205,7 +205,7 @@ A gateway that reports its start failed, such as for a model that does not fit t
 
 In the pod, the gateway starts the engine with the pod's settings, finds the largest context that fits the GPU, and reports that [fit](../glossary.md#fit) in its status. How it fits is in [context and the GPU](../settings/pod-engines.md#context-and-the-gpu), and in [Ollama's memory](../settings/ollama.md#memory) and [vLLM's](../settings/vllm.md#memory).
 
-`open-key` logs the fit and gives the agent its context length. For a pod the task created after a search, it records the fit in the cache of fits. A start that fails is reported in the status for 2 minutes, then the pod terminates itself.
+`open-key` logs the fit and gives the agent its context length, and whether its model reads images ([images](../settings/pod-engines.md#images)). For a pod the task created after a search, it records the fit in the cache of fits. A start that fails is reported in the status for 2 minutes, then the pod terminates itself.
 
 ### Closing a run
 

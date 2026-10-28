@@ -51,6 +51,11 @@ export function openCodeConfig(
         },
       }
     : {};
+  // OpenCode's catalog does not list the gateway's models, so without these they read text only:
+  // OpenCode replaces their images with an error (docs/web/opencode/, transform.ts).
+  const vision = provider?.vision
+    ? { attachment: true, modalities: { input: ["text", "image"], output: ["text"] } }
+    : {};
   return {
     $schema: "https://opencode.ai/config.json",
     // Added to the repository's AGENTS.md, not used in its place.
@@ -66,7 +71,7 @@ export function openCodeConfig(
             npm: "@ai-sdk/openai-compatible",
             name: "Codeman",
             options: { baseURL: provider.baseUrl, apiKey: provider.apiKey },
-            models: { [model]: { name: model, ...limit } },
+            models: { [model]: { name: model, ...limit, ...vision } },
           },
         }
       : {

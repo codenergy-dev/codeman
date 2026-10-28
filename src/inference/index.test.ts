@@ -248,7 +248,7 @@ test("a vLLM pod's choice reaches its pod: the vLLM image, its settings and max-
         store: () => new MemoryStore(),
         gpu,
         fetch: gateways.fetch,
-        hub: { model: async (id) => ({ id, weightsBytes: 1e9 }) },
+        hub: { model: async (id) => ({ id, weightsBytes: 1e9 }), vision: async () => false },
       },
     );
     await provider.open({ task: "7", runId: "300", limit: 1 }, new FakeRuntime());

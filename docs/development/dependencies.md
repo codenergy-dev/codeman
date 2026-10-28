@@ -169,6 +169,7 @@ How Codeman contains it:
 2. Its configuration goes through `OPENCODE_CONFIG_CONTENT`, which overrides the repository's:
    - `autoupdate: false` and `share: "disabled"`;
    - only one provider: `openrouter`, or on self-hosted inference Codeman's gateway, as `codeman`;
+   - on self-hosted inference, the model's context length and, when it reads images, its image input, which OpenCode's catalog cannot give for the gateway's models ([images](../settings/pod-engines.md#images));
    - `deny` for `webfetch`, `websearch`, `external_directory`, `question` and `doom_loop`. No permission is left as `ask`, because nobody is there to answer.
 3. `opencode.json`, `opencode.jsonc` and `.opencode/` are protected only by the default rules of `.codemanignore` ([change policy](../runs/changes.md#change-policy)), so the apply job drops the agent's changes to them.
    - A repository can re-allow them with `!`. The agent can then change the harness configuration of later runs.

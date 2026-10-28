@@ -202,10 +202,22 @@ test("with a context in the pod's settings, it loads once and checks the GPU", a
     size: SIZE + 65536 * 400_000,
     sizeVram: SIZE + 65536 * 400_000,
     family: "qwen3moe",
+    vision: false,
   });
   assert.ok(
     logs.includes(`Serving ${MODEL} with a context length of 65536, from the pod's settings.`),
   );
+});
+
+test("the fit says the model reads images when Ollama lists its vision capability", async () => {
+  const show = { ...SHOW, capabilities: ["completion", "tools", "vision"] };
+  const fake = await fakeOllama({ fits: () => true, show, configured: 65536 });
+  const fit = await prepareOllama(fake.ollama, MODEL, () => undefined, {
+    configured: 65536,
+    parallel: 1,
+  });
+  fake.close();
+  assert.equal(fit.vision, true);
 });
 
 test("a context in the settings that puts part of the model off the GPU stops the start", async () => {

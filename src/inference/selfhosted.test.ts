@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import { GATEWAY_VERSION, sha256 } from "../gateway/gateway.ts";
+import type { FitReport } from "../gateway/pod.ts";
 import { closeKey, openKey } from "../steps/keys.ts";
 import { LAYOUT } from "../store/layout.ts";
 import { MemoryStore } from "../store/memory.ts";
@@ -794,6 +795,43 @@ test("an image that cannot apply Ollama settings is refused before any pod is cr
   }
 });
 
+test("an Ollama model reads images when the pod's gateway says Ollama lists its vision capability", async () => {
+  const { gateways, open } = setup({ real: true, image: SHARED_IMAGE });
+  const a = await open("7", "300", { parallel: 4 });
+  assert.equal(a.handle.vision, undefined);
+  assert.ok(
+    a.runtime
+      .logged("info")
+      .includes(
+        "Ollama does not list the vision capability of qwen3-coder:30b: the agent reads text only.",
+      ),
+  );
+  const gateway = gateways.gateway("pod1");
+  assert.ok(gateway);
+  gateway.fit = { ...(gateway.fit as FitReport), vision: true };
+  const b = await open("8", "300", { parallel: 4 });
+  assert.equal(b.handle.podId, "pod1");
+  assert.equal(b.handle.vision, true);
+  assert.ok(
+    b.runtime
+      .logged("info")
+      .includes("Ollama lists the vision capability of qwen3-coder:30b: the agent reads images."),
+  );
+});
+
+test("a gateway that does not report it leaves an Ollama model text only", async () => {
+  const { open } = setup();
+  const { handle, runtime } = await open("7", "300");
+  assert.equal(handle.vision, undefined);
+  assert.ok(
+    runtime
+      .logged("info")
+      .includes(
+        "Pod pod1's gateway does not say whether qwen3-coder:30b reads images: the agent reads text only.",
+      ),
+  );
+});
+
 test("a pod whose gateway does not apply the Ollama settings fails the run, and is terminated", async () => {
   const { gpu, gateways, open } = setup({ image: SHARED_IMAGE });
   gateways.state("pod1").version = GATEWAY_VERSION;
@@ -1001,11 +1039,16 @@ test("a task that waits for a pod whose start fails fails with it, after its cre
   assert.deepEqual(await registry.live(), []);
 });
 
-/** vLLM pods: an image of their own, a fake Hugging Face, and the test model. */
+/**
+ * vLLM pods: an image of their own, a fake Hugging Face, and the test model. `vision` says which
+ * models read images; the others read text only.
+ */
 function vllmSetup(
   models: Record<string, number | Error> = { "unsloth/Qwen3.8-27B-NVFP4": 23.4e9 },
+  vision: Record<string, boolean | Error> = {},
 ) {
   const asked: string[] = [];
+  const configs: string[] = [];
   const hub: ModelHub = {
     model: async (id) => {
       asked.push(id);
@@ -1014,8 +1057,14 @@ function vllmSetup(
       if (found === undefined) throw new Error(`Hugging Face has no public model \`${id}\`.`);
       return { id, weightsBytes: found };
     },
+    vision: async (id) => {
+      configs.push(id);
+      const found = vision[id] ?? false;
+      if (found instanceof Error) throw found;
+      return found;
+    },
   };
-  return { ...setup({ real: true, image: VLLM_IMAGE, hub }), asked };
+  return { ...setup({ real: true, image: VLLM_IMAGE, hub }), asked, configs };
 }
 const VLLM_IMAGE = "ghcr.io/o/codeman-vllm@sha256:2";
 const onVllm: Partial<PodSettings> = {
@@ -1100,6 +1149,64 @@ test("a vLLM pod's settings key has its engine and settings; Ollama pods keep th
     "the context is not part of the key",
   );
   assert.deepEqual([vllmDiskGb(0), vllmDiskGb(23.4e9), vllmDiskGb(100e9)], [80, 80, 165]);
+});
+
+const QWEN = "unsloth/Qwen3.8-27B-NVFP4";
+
+test("a vLLM model with a vision tower reads images, on a created pod and a joined one", async () => {
+  const { open, configs } = vllmSetup(undefined, { [QWEN]: true });
+  const created = await open("7", "300", onVllm);
+  assert.equal(created.handle.vision, true, "the agent job reads it from the handle");
+  assert.ok(
+    created.runtime
+      .logged("info")
+      .includes(
+        `${QWEN}'s configuration on Hugging Face has a vision tower, which vLLM serves: the agent reads images.`,
+      ),
+  );
+  const joined = await open("8", "300", onVllm);
+  assert.equal(joined.handle.podId, "pod1");
+  assert.equal(joined.handle.vision, true);
+  assert.deepEqual(configs, [QWEN, QWEN], "each run checks it, a join too");
+});
+
+test("with language-model-only, or without a vision tower, a vLLM model reads text only", async () => {
+  const skipped = vllmSetup(undefined, { [QWEN]: true });
+  const languageOnly = { ...onVllm, vllm: { ...onVllm.vllm, "language-model-only": "true" } };
+  const a = await skipped.open("7", "300", languageOnly);
+  assert.equal(a.handle.vision, undefined);
+  assert.deepEqual(skipped.configs, [], "nothing to ask Hugging Face");
+  assert.ok(
+    a.runtime
+      .logged("info")
+      .includes(
+        `\`language-model-only\` keeps vLLM from serving ${QWEN}'s vision tower: the agent reads text only.`,
+      ),
+  );
+  const textOnly = vllmSetup();
+  const b = await textOnly.open("7", "300", onVllm);
+  assert.equal(b.handle.vision, undefined);
+  assert.ok(
+    b.runtime
+      .logged("info")
+      .includes(
+        `${QWEN}'s configuration on Hugging Face has no vision tower: the agent reads text only.`,
+      ),
+  );
+});
+
+test("a configuration that cannot be read leaves a vLLM model text only, and the run goes on", async () => {
+  const { open } = vllmSetup(undefined, { [QWEN]: new Error("Hugging Face answered 503.") });
+  const { opened, handle, runtime } = await open("7", "300", onVllm);
+  assert.equal(handle.vision, undefined);
+  assert.ok(opened.credential, "the run has its access");
+  assert.ok(
+    runtime
+      .logged("info")
+      .includes(
+        `Could not tell whether ${QWEN} reads images: Hugging Face answered 503. The agent reads text only.`,
+      ),
+  );
 });
 
 test("without a pinned vLLM image, a run stops before any pod, at no cost", async () => {
@@ -1207,7 +1314,10 @@ test("vLLM's cache of fits: written after the creator's search, read into the ne
 
 test("a vLLM pod whose gateway does not report vLLM's settings and fit fails the run", async () => {
   // Not Codeman's gateway: it answers as one that knows nothing of vLLM.
-  const hub: ModelHub = { model: async (id) => ({ id, weightsBytes: 1e9 }) };
+  const hub: ModelHub = {
+    model: async (id) => ({ id, weightsBytes: 1e9 }),
+    vision: async () => false,
+  };
   const { gpu, gateways, open } = setup({ image: VLLM_IMAGE, hub });
   gateways.state("pod1").version = GATEWAY_VERSION;
   await assert.rejects(

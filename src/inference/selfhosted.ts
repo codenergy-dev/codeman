@@ -161,6 +161,8 @@ export interface PodHandle {
    * nothing of the token.
    */
   shared?: { task: string; tokenSha256: string } | undefined;
+  /** Set when the pod's model reads images, which the agent job tells the harness. */
+  vision?: true | undefined;
 }
 
 /** A task's name in the pod registry, across the organization's repositories: `owner/name#7`. */
@@ -472,10 +474,11 @@ export class PodInference implements InferenceProvider {
     } catch (error) {
       throw new OpenFailure(error, this.#takeEvents());
     }
-    // The context length is informational: a failure to read it does not undo the run.
+    // The context and images are informational: a failure to read them does not undo the run.
     const status = (await this.#admin(handle, "GET", "/admin/status").catch(
       () => ({}),
     )) as GatewayStatus;
+    if (await this.#readsImages(handle.podId, status, log)) handle = { ...handle, vision: true };
     const pods = this.#takeEvents();
     if (!pods.some(({ pod, event }) => pod === handle.podId && event === "created")) {
       pods.push({ pod: handle.podId, event: "joined" });
@@ -487,6 +490,51 @@ export class PodInference implements InferenceProvider {
       contextLength: status.contextLength,
       pods,
     };
+  }
+
+  /**
+   * Whether the agent is told its model reads images (the plan for letting self-hosted models read
+   * images): with vLLM, when the model's configuration has a vision tower that the settings do not
+   * skip; with Ollama, when the gateway's fit says Ollama lists the `vision` capability. When it
+   * cannot tell, text only: images sent to a model that cannot read them would fail its requests.
+   */
+  async #readsImages(podId: string, status: GatewayStatus, log: Log): Promise<boolean> {
+    const { model } = this.#settings;
+    const textOnly = "the agent reads text only.";
+    if (!onVllm(this.#settings)) {
+      const vision = status.fit?.engine === undefined ? status.fit?.vision : undefined;
+      log.info(
+        vision === undefined
+          ? `Pod ${podId}'s gateway does not say whether ${model} reads images: ${textOnly}`
+          : vision
+            ? `Ollama lists the vision capability of ${model}: the agent reads images.`
+            : `Ollama does not list the vision capability of ${model}: ${textOnly}`,
+      );
+      return vision === true;
+    }
+    if (this.#settings.vllm?.["language-model-only"] === "true") {
+      log.info(
+        `\`language-model-only\` keeps vLLM from serving ${model}'s vision tower: ${textOnly}`,
+      );
+      return false;
+    }
+    const hub = this.#options.hub ?? new HuggingFace(this.#options.fetch);
+    let vision: boolean;
+    try {
+      vision = await hub.vision(model);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      log.info(
+        `Could not tell whether ${model} reads images: ${reason} The agent reads text only.`,
+      );
+      return false;
+    }
+    log.info(
+      vision
+        ? `${model}'s configuration on Hugging Face has a vision tower, which vLLM serves: the agent reads images.`
+        : `${model}'s configuration on Hugging Face has no vision tower: ${textOnly}`,
+    );
+    return vision;
   }
 
   /**

@@ -13,9 +13,11 @@ export interface HarnessOptions {
   apiKey: string;
   /**
    * An OpenAI-compatible API to use instead of OpenRouter: a gateway of Codeman's self-hosted
-   * inference, which takes `apiKey` as its token.
+   * inference, which takes `apiKey` as its token. `vision` says its model reads images.
    */
-  provider?: { baseUrl: string; contextLength?: number | undefined } | undefined;
+  provider?:
+    | { baseUrl: string; contextLength?: number | undefined; vision?: boolean | undefined }
+    | undefined;
   /** Short instruction for the agent; the full task is in a file it is pointed to. */
   prompt: string;
   /** Absolute path of Codeman's working rules, to load next to the repository's `AGENTS.md`. */
