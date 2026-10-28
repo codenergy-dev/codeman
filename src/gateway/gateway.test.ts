@@ -6,7 +6,10 @@ import { fakeEngine } from "../testing/fake-gpu.ts";
 import { Gateway, type GatewayOptions, runSettings, sha256, type Upstream } from "./gateway.ts";
 import { expiry, type PodPolicy } from "./pod.ts";
 
-/** An OpenAI-compatible engine: answers each request as `respond` says, and keeps the bodies. */
+/**
+ * An OpenAI-compatible engine: answers each request as `respond` says, after its `delayMs` and
+ * once its `hold` settles, and keeps the bodies.
+ */
 async function engine(
   respond: (
     body: Record<string, unknown>,
@@ -14,6 +17,7 @@ async function engine(
   ) => {
     status?: number;
     delayMs?: number;
+    hold?: Promise<void>;
     chunks: string[];
     type?: string;
   },
@@ -32,6 +36,7 @@ async function engine(
     headers.push(request.headers);
     const answer = respond(body, request);
     await new Promise((resolve) => setTimeout(resolve, answer.delayMs ?? 0));
+    await answer.hold;
     response.writeHead(answer.status ?? 200, {
       "Content-Type": answer.type ?? "application/json",
     });
@@ -480,7 +485,12 @@ test("a lone spent run stops and takes no more of the pod; the pod waits for its
 });
 
 test("a run stopped for its budget answers 402, which agents do not retry; one stopped for its silence 503", async () => {
-  const upstream = await engine(() => ({ delayMs: 200, chunks: [JSON.stringify(completion)] }));
+  // The engine answers only once the run has stopped, however long the test takes to stop it.
+  let answer = () => {};
+  const hold = new Promise<void>((resolve) => {
+    answer = resolve;
+  });
+  const upstream = await engine(() => ({ hold, chunks: [JSON.stringify(completion)] }));
   let now = 1_000_000;
   const { instance, url } = await gateway({ upstream: upstream.url, now: () => now });
   const spent = (answer: { status: number; json: () => Promise<unknown> }) => ({
@@ -496,6 +506,7 @@ test("a run stopped for its budget answers 402, which agents do not retry; one s
   }
   now += 100_000;
   instance.expireRuns(30 * 60_000);
+  answer();
   assert.deepEqual(instance.status().active, ["8"]);
   const aborted = spent(await inFlight);
   assert.equal(aborted.status, 402, "the request in flight when the run stopped");

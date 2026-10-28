@@ -11,16 +11,30 @@ import { byName, dispatch, results, setup } from "./testing.ts";
 const skip = hasGit() ? false : "git is not on the PATH";
 
 /**
- * A scripted shell: each line of a `run:` is `out <name>=<value>`, `fail`, or `wait <ms>`, which
- * a cancellation cuts short. It tracks how many commands run at once.
+ * A scripted shell: each line of a `run:` is `out <name>=<value>`, `fail`, `wait <ms>`, which a
+ * cancellation cuts short, or `meet`, which waits until two commands have run at once. It tracks
+ * how many commands run at once.
  */
 function scripted() {
   let running = 0;
   const peak = { value: 0 };
+  const meeting: (() => void)[] = [];
+  const meet = (signal: AbortSignal) =>
+    new Promise<void>((resolve) => {
+      if (peak.value >= 2) {
+        resolve();
+        return;
+      }
+      meeting.push(resolve);
+      signal.addEventListener("abort", () => resolve(), { once: true });
+      // After 5 seconds, so that commands that never run at once fail the checks, not hang.
+      setTimeout(resolve, 5_000).unref();
+    });
   const executor = new RecordingExecutor(async (command: Command) => {
     if (command.kind !== "run") return undefined;
     running++;
     peak.value = Math.max(peak.value, running);
+    if (peak.value >= 2) for (const release of meeting.splice(0)) release();
     try {
       for (const line of command.script.split("\n")) {
         const [verb, rest = ""] = line.trim().split(/ (.*)/s);
@@ -29,6 +43,9 @@ function scripted() {
           writeOutputs(command.env, { [name]: value });
         } else if (verb === "fail") {
           return { exitCode: 1, output: "failed\n" };
+        } else if (verb === "meet") {
+          await meet(command.signal);
+          if (command.signal.aborted) return { exitCode: 143, output: "cancelled\n" };
         } else if (verb === "wait") {
           await sleep(Number(rest), undefined, { signal: command.signal }).catch(() => undefined);
           if (command.signal.aborted) return { exitCode: 143, output: "cancelled\n" };
@@ -177,7 +194,7 @@ ${step("out legs=${{ inputs.legs }}")}    outputs:
       max-parallel: 2
       matrix:
         include: \${{ fromJSON(inputs.legs) }}
-${step("wait 30\nout task=${{ matrix.task }}\n${{ matrix.fail && 'fail' || 'true' }}\nwait 30")}    outputs:
+${step("meet\nout task=${{ matrix.task }}\n${{ matrix.fail && 'fail' || 'true' }}\nwait 30")}    outputs:
       task: \${{ steps.s.outputs.task }}
 `,
     },
