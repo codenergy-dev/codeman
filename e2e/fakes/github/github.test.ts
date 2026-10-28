@@ -393,13 +393,17 @@ jobs: {}
   );
 });
 
-test("gh's default-branch query needs metadata: read", { skip }, async () => {
+test("gh's default-branch query needs contents: read; REST's needs metadata", {
+  skip,
+}, async () => {
   const query = {
     query:
       "query RepositoryInfo($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { id defaultBranchRef { name } } }",
     variables: { owner: "acme", name: "app" },
   };
-  const without = await call("POST", "/api/graphql", await appToken({ actions: "write" }), query);
+  // The dispatch job's token, which GitHub refused on 2026-10-28.
+  const dispatch = await appToken({ actions: "write", metadata: "read" });
+  const without = await call("POST", "/api/graphql", dispatch, query);
   assert.equal(without.status, 200);
   assert.equal(without.body.data.repository.defaultBranchRef, null);
   assert.deepEqual(without.body.errors, [
@@ -409,17 +413,21 @@ test("gh's default-branch query needs metadata: read", { skip }, async () => {
       message: "Resource not accessible by integration",
     },
   ]);
-  const withMetadata = await call(
+  const withContents = await call(
     "POST",
     "/api/graphql",
-    await appToken({ actions: "write", metadata: "read" }),
+    await appToken({ actions: "write", contents: "read", metadata: "read" }),
     query,
   );
-  assert.deepEqual(withMetadata.body, {
+  assert.deepEqual(withContents.body, {
     data: {
-      repository: { ...withMetadata.body.data.repository, defaultBranchRef: { name: "main" } },
+      repository: { ...withContents.body.data.repository, defaultBranchRef: { name: "main" } },
     },
   });
+  // The REST repository gives the same token its default branch.
+  const rest = await call("GET", "/api/v3/repos/acme/app", dispatch);
+  assert.equal(rest.status, 200);
+  assert.equal(rest.body.default_branch, "main");
   const other = await call("POST", "/api/graphql", await appToken({ metadata: "read" }), {
     query: "{ viewer { login } }",
   });

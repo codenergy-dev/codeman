@@ -1,7 +1,7 @@
 ---
 status: completed
 created_at: 2026-10-20T12:50:34-03:00
-updated_at: 2026-10-23T23:00:00-03:00
+updated_at: 2026-10-28T18:21:00-03:00
 commit: 21130fe
 ---
 
@@ -1021,6 +1021,10 @@ The steps:
 | 7 | Done: [7 results](#7-results) |
 
 **Why the jail-escape scenario is not here:** it was asked for on 2026-10-23, then moved out of this plan by decision 13. The jail is still covered by the sandbox's own tests (`CODEMAN_SANDBOX_TEST=1`, on CI and in `npm run test:runner`), as [the jail plan](2026-10-19-jail-the-agent-in-a-read-only-mount-namespace.md) records.
+
+## Notes
+
+- 2026-10-28, after the plan was completed: the bug "`gh workflow run` without a ref needs `metadata: read`" was misread. A dispatch with `metadata: read` failed on GitHub with the same error. The fake GitHub answered `defaultBranchRef` to `metadata: read`, so it confirmed the assumption instead of GitHub's behavior. The fake now asks `contents: read` for it, and the `dispatch` job reads the default branch through REST and passes `--ref` ([plan](2026-10-28-dispatch-on-the-default-branch-read-by-rest.md)).
 
 ## Out of scope
 

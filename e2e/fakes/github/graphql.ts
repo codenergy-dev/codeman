@@ -118,9 +118,10 @@ async function markReady(world: World, caller: Caller & { kind: "token" }, id: s
 }
 
 /**
- * The repository as gh's `RepositoryInfo` query reads it. Its `defaultBranchRef` needs
- * `metadata: read`: without it GitHub answers the field null with a FORBIDDEN error, which gh
- * reports as "Resource not accessible by integration (repository.defaultBranchRef)".
+ * The repository as gh's `RepositoryInfo` query reads it. Its `defaultBranchRef`, a Git ref, needs
+ * `contents: read`: without it GitHub answers the field null with a FORBIDDEN error, which gh
+ * reports as "Resource not accessible by integration (repository.defaultBranchRef)". A token with
+ * `actions: write` and `metadata: read` got that error on GitHub (2026-10-28).
  */
 function repositoryQuery(
   world: World,
@@ -143,8 +144,8 @@ function repositoryQuery(
     };
   }
   const covered = world.covers(caller.token, repository);
-  const metadata = !covered || grants(caller.token.permissions, "metadata", "read");
-  const contents = covered && grants(caller.token.permissions, "contents", "write");
+  const ref = !covered || grants(caller.token.permissions, "contents", "read");
+  const writes = covered && grants(caller.token.permissions, "contents", "write");
   const node = {
     id: repository.nodeId,
     databaseId: repository.id,
@@ -154,14 +155,14 @@ function repositoryQuery(
     hasIssuesEnabled: true,
     description: null,
     hasWikiEnabled: false,
-    viewerPermission: contents ? "WRITE" : "READ",
-    defaultBranchRef: metadata ? { name: repository.defaultBranch } : null,
+    viewerPermission: writes ? "WRITE" : "READ",
+    defaultBranchRef: ref ? { name: repository.defaultBranch } : null,
     parent: null,
     mergeCommitAllowed: true,
     rebaseMergeAllowed: true,
     squashMergeAllowed: true,
   };
-  if (metadata) return { data: { repository: node } };
+  if (ref) return { data: { repository: node } };
   return {
     data: { repository: node },
     errors: [

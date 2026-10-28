@@ -218,7 +218,7 @@ jobs:
           owner: ${{ matrix.owner }}
           repositories: ${{ matrix.repository }}
           permission-actions: write
-          # To read the repository's default branch, which gh starts the workflow on.
+          # To read the repository's default branch, which the workflow starts on.
           permission-metadata: read
       - run: |
           busy=$(gh api "repos/$OWNER/$REPOSITORY/actions/concurrency_groups/codeman" \
@@ -228,8 +228,10 @@ jobs:
             echo "$busy"
           fi
           # Always Codeman's workflow on the default branch, the only one Workload Identity
-          # admits: given no ref, gh takes the repository's default branch.
-          gh workflow run codeman.yml --repo "$OWNER/$REPOSITORY" -f batch="$BATCHES"
+          # admits. Read through REST, which needs metadata: given no ref, gh would read it
+          # through GraphQL's defaultBranchRef, which this token cannot.
+          branch=$(gh api "repos/$OWNER/$REPOSITORY" --jq .default_branch)
+          gh workflow run codeman.yml --repo "$OWNER/$REPOSITORY" --ref "$branch" -f batch="$BATCHES"
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           OWNER: ${{ matrix.owner }}

@@ -95,9 +95,13 @@ sequenceDiagram
 
 `select` outputs `dispatches`: one entry per other repository with tasks in a batch it formed, only for owners in the pool that agree. The `dispatch` job runs one leg for each entry:
 
-1. It mints a token for that owner, limited to that repository, with `actions: write` and `metadata: read`. gh reads the repository's default branch with it.
+1. It mints a token for that owner, limited to that repository, with `actions: write` and `metadata: read`.
 2. It logs whether that repository's `codeman` group is busy.
-3. It starts the target's `codeman.yml` on its default branch with `workflow_dispatch`, with the batch IDs as its `batch` input, which the started run only logs.
+3. It reads the repository's default branch from the REST repository, which `metadata: read` allows.
+4. It starts the target's `codeman.yml` on that branch with `workflow_dispatch`, with the batch IDs as its `batch` input, which the started run only logs.
+
+> [!NOTE]
+> The dispatch passes the branch to `gh workflow run` as `--ref`. Without it, gh reads the branch through GraphQL's `defaultBranchRef`, which this token cannot: "Resource not accessible by integration (repository.defaultBranchRef)".
 
 The dispatched run waits in that repository's `codeman` group like any other.
 

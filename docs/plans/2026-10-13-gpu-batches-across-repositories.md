@@ -1,7 +1,7 @@
 ---
 status: completed
 created_at: 2026-10-13T20:52:00-03:00
-updated_at: 2026-10-15T22:30:00-03:00
+updated_at: 2026-10-28T18:21:00-03:00
 commit: 95962c0
 ---
 
@@ -260,6 +260,7 @@ Total: about US$ 3 to 5 on Runpod, a few cents on OpenRouter, and Firestore with
 
 - 2026-10-14, after the plan was completed, at the responsible person's request: a dispatch always starts the target's `codeman.yml` on its default branch (`gh workflow run codeman.yml` with no ref), the only workflow and branch Workload Identity admits. The board no longer holds a repository's branch and workflow file, and `Runtime.workflow` is gone, so nothing a member's run writes on the board chooses what a dispatch starts. Snapshots written before still read; their extra fields are ignored.
 - 2026-10-15, in production, with the responsible person's approval: every dispatch failed with "Resource not accessible by integration (repository.defaultBranchRef)". With no ref, `gh workflow run` reads the target's default branch, which a token with `permission-actions: write` alone cannot. The `dispatch` job's token also asks for `permission-metadata: read`, which every GitHub App has.
+- 2026-10-28, in production: `metadata: read` did not fix it; a dispatch failed again with the same error. The `dispatch` job now reads the default branch through REST and passes it to gh as `--ref` ([plan](2026-10-28-dispatch-on-the-default-branch-read-by-rest.md)).
 
 ## Out of scope
 

@@ -257,11 +257,14 @@ test("the dispatch job wakes each repository with a token for it alone, that may
   // Untrusted-looking values reach the shell through the environment only.
   assert.ok(!/\$\{\{ matrix\.[a-z]+ \}\}"/.test(job));
   // Always Codeman's workflow on the default branch: nothing from the board picks the file or ref.
+  // The branch comes from REST, which metadata: read allows; gh's own GraphQL read does not.
+  assert.match(job, /branch=\$\(gh api "repos\/\$OWNER\/\$REPOSITORY" --jq \.default_branch\)/);
   assert.match(
     job,
-    /gh workflow run codeman\.yml --repo "\$OWNER\/\$REPOSITORY" -f batch="\$BATCHES"/,
+    /gh workflow run codeman\.yml --repo "\$OWNER\/\$REPOSITORY" --ref "\$branch" -f batch="\$BATCHES"/,
   );
-  assert.ok(!/--ref|matrix\.(workflow|ref)/.test(job));
+  assert.equal(job.match(/--ref/g)?.length, 1);
+  assert.ok(!/matrix\.(workflow|ref)/.test(job));
   // The agent's permissions stay as they were.
   assert.deepEqual(
     entries(task, ["jobs", "agent", "permissions"]),

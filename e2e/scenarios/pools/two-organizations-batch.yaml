@@ -1,9 +1,10 @@
 # Two organizations of a pool share one Runpod account and one pod (docs/installation/pool.md,
 # docs/runs/batches.md). globex's task waits alone on the board; acme's run forms the batch of 2,
 # starts its own task, reserves globex's and wakes globex's repository with a dispatch, whose
-# token reads the target's default branch with metadata: read (e26a8c9: without it, gh workflow
-# run gets "Resource not accessible by integration (repository.defaultBranchRef)"). globex's run
-# honors the reservation, and its task joins the batch's pod.
+# token reads the target's default branch through REST and passes it as --ref (without it, gh
+# workflow run reads it through GraphQL and gets "Resource not accessible by integration
+# (repository.defaultBranchRef)"). globex's run honors the reservation, and its task joins the
+# batch's pod.
 name: Two organizations of a pool batch their tasks on one pod, through a dispatch
 tags: [pools, ollama, pods]
 runner: simulator

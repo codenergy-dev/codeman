@@ -269,15 +269,17 @@ Run Codeman by hand, as in [check the setup](setup.md#6-check-the-setup). Its ta
 
 ### The dispatch reads the default branch
 
-- **Since:** 2026-10-15, `e26a8c9`.
+- **Since:** 2026-10-15, `e26a8c9`; fixed on 2026-10-28 ([plan](../plans/2026-10-28-dispatch-on-the-default-branch-read-by-rest.md)).
 - **Who is affected:** each repository of the pool, whose batches take tasks of its other repositories.
 - **Breaking:** only the dispatches. The template version does not change: files copied before keep running, and only their dispatches fail.
 
-The `dispatch` job's App token also asks for `metadata: read` (`permission-metadata: read`; the job's own token has no permission). Without it, `gh workflow run` cannot read the target repository's default branch. Every dispatch to another repository of the pool fails with "Resource not accessible by integration (repository.defaultBranchRef)".
+The `dispatch` job's App token has `actions: write` and `metadata: read`. Without `--ref`, `gh workflow run` reads the target repository's default branch through GraphQL, which that token cannot. Every dispatch to another repository of the pool fails with "Resource not accessible by integration (repository.defaultBranchRef)".
+
+`e26a8c9` added `metadata: read` to the token, which did not fix it. The `dispatch` job now reads the default branch through REST, which `metadata: read` allows, and passes it to gh as `--ref`.
 
 #### What to do
 
-Copy `codeman.yml` again in each repository of the pool. The App already has that permission, which every GitHub App has, so its installations approve nothing.
+Copy `codeman.yml` again in each repository of the pool, from a commit at or after the fix. The token asks for no new permission, so the App's installations approve nothing.
 
 #### How to verify
 
