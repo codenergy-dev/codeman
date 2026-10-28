@@ -34,7 +34,8 @@ test("main refuses a fake it does not know", async () => {
   child.stderr.on("data", (chunk: Buffer) => {
     stderr += chunk.toString();
   });
-  const [code] = await once(child, "exit");
+  // `close`, not `exit`: the child's stderr may still hold unread data when it exits.
+  const [code] = await once(child, "close");
   assert.notEqual(code, 0);
   assert.match(stderr, /No fake "nope"; the fakes are [a-z, ]*\bgoogle\b[a-z, ]*\./);
 });

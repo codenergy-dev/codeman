@@ -260,14 +260,15 @@ export class Tee {
         ? { tools: [PING_TOOL], tool_choice: "auto" }
         : {}),
     };
-    if (found.kind === "turn") {
-      const held = this.#now();
-      await this.#meet(found.issue, abort.signal);
+    // Only a turn the meet holds gets `heldMs`: the clock may tick while a turn goes on at once.
+    const hold = found.kind === "turn" ? this.#meet(found.issue, abort.signal) : undefined;
+    if (hold) {
+      const heldMs = await hold;
       if (abort.signal.aborted) {
         record.end = this.#now();
         return undefined;
       }
-      if (this.#now() > held) record.heldMs = this.#now() - held;
+      record.heldMs = heldMs;
       record.engine.start = this.#now();
     }
     let answer: { status: number; contentType: string; text: string };
@@ -311,11 +312,20 @@ export class Tee {
 
   /**
    * Holds an agent's turn of `issue` until turns of `meet.issues` issues are held, which it then
-   * releases together, or until `meet.timeoutMs` passes; at once without `meet` or after a meet.
+   * releases together, or until `meet.timeoutMs` passes; resolves to how long it held the turn.
+   * Returns undefined for a turn that goes on at once: without `meet`, after a meet, or the turn
+   * that completes the meet.
    */
-  #meet(issue: string, signal: AbortSignal): Promise<void> {
+  #meet(issue: string, signal: AbortSignal): Promise<number> | undefined {
     const meet = this.#setup.meet;
-    if (!meet || this.#met) return Promise.resolve();
+    if (!meet || this.#met) return undefined;
+    const issues = new Set(this.#held.map((one) => one.issue)).add(issue);
+    if (issues.size >= meet.issues) {
+      this.#met = true;
+      for (const held of [...this.#held]) held.release();
+      return undefined;
+    }
+    const since = this.#now();
     return new Promise((resolve) => {
       const entry = {
         issue,
@@ -324,16 +334,19 @@ export class Tee {
           signal.removeEventListener("abort", entry.release);
           const at = this.#held.indexOf(entry);
           if (at >= 0) this.#held.splice(at, 1);
-          resolve();
+          resolve(this.#now() - since);
         },
       };
-      const timer = setTimeout(entry.release, meet.timeoutMs);
+      // The timeout counts on the tee's clock, which `heldMs` reports. Timers run on the event
+      // loop's own clock, and may fire before the tee's has moved `timeoutMs`.
+      const expire = () => {
+        const left = meet.timeoutMs - (this.#now() - since);
+        if (left > 0) timer = setTimeout(expire, left);
+        else entry.release();
+      };
+      let timer = setTimeout(expire, meet.timeoutMs);
       signal.addEventListener("abort", entry.release, { once: true });
       this.#held.push(entry);
-      if (new Set(this.#held.map((one) => one.issue)).size >= meet.issues) {
-        this.#met = true;
-        for (const held of [...this.#held]) held.release();
-      }
     });
   }
 

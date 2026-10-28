@@ -43,6 +43,9 @@ class FakeOllama {
   context = 32_768;
   loaded = false;
   delayMs = 0;
+  /** With more than 0, each chat waits until that many are at the engine, or 5 seconds pass. */
+  gather = 0;
+  readonly #gathering: (() => void)[] = [];
   error: { status: number; body: unknown } | undefined;
   readonly chats: ChatRequest[] = [];
   readonly windows: { start: number; end: number }[] = [];
@@ -94,6 +97,7 @@ class FakeOllama {
       const body = request.json() as ChatRequest;
       this.chats.push(body);
       const start = Date.now();
+      if (this.gather > 0) await this.#gathered();
       await sleep(this.delayMs);
       this.windows.push({ start, end: Date.now() });
       if (this.error) return json(this.error.body, this.error.status);
@@ -110,11 +114,24 @@ class FakeOllama {
     });
   }
 
+  /** Resolves once `gather` chats wait together; after 5 seconds, so that one never met fails. */
+  #gathered(): Promise<void> {
+    return new Promise((resolve) => {
+      this.#gathering.push(resolve);
+      const releaseAll = () => {
+        for (const release of this.#gathering.splice(0)) release();
+      };
+      if (this.#gathering.length >= this.gather) releaseAll();
+      else setTimeout(releaseAll, 5_000).unref();
+    });
+  }
+
   reset() {
     this.server.reset();
     this.context = 32_768;
     this.loaded = false;
     this.delayMs = 0;
+    this.gather = 0;
     this.error = undefined;
     this.chats.length = 0;
     this.windows.length = 0;
@@ -256,7 +273,9 @@ test("a whole round plays through the tee, streamed or as JSON", async () => {
 });
 
 test("concurrent requests are timestamped at the engine", async () => {
-  engine.delayMs = 200;
+  // The engine answers once the three are there: on a busy machine, requests sent at once may
+  // reach the tee further apart than any fixed time at the engine.
+  engine.gather = 3;
   await Promise.all(
     [1, 2, 3].map(() => timed(new Session(taskFile(SCENARIO, "i1", "code")).request())),
   );
@@ -445,11 +464,17 @@ test("with meet, the agents' turns wait for another issue's, and go to the engin
   const meeting = new ScriptedModel();
   const round = [{ steps: [{ bash: "ls" }, { output: { status: "done", summary: "Lists." } }] }];
   meeting.load(SCENARIO, scriptOf({ i1: { code: round }, i2: { code: round } }));
-  const meet = new Tee({
-    engine: engineOrigin,
-    script: localScripts(meeting),
-    meet: { issues: 2, timeoutMs: 5_000 },
-  });
+  // A clock that moves on each read, as a busy machine's may between two: a turn that goes on at
+  // once is still not held.
+  let ticks = 0;
+  const meet = new Tee(
+    {
+      engine: engineOrigin,
+      script: localScripts(meeting),
+      meet: { issues: 2, timeoutMs: 5_000 },
+    },
+    { now: () => Date.now() + ticks++ },
+  );
   const origin = await meet.server.listen();
   closers.push(() => meet.server.close());
   const send: Send = async (request) => {
@@ -462,14 +487,21 @@ test("with meet, the agents' turns wait for another issue's, and go to the engin
   // The task file's read is no turn of an issue: it is not held.
   await first.step(send);
   await second.step(send);
-  // i1's first turn waits until i2's arrives, 300 ms later; both then reach the engine at once.
+  // i1's first turn waits until i2's arrives, 300 ms after the tee holds it; both then reach the
+  // engine at once.
   const held = first.step(send);
+  for (let tries = 0; !meet.records.some((record) => record.identified?.kind === "turn"); tries++) {
+    assert.ok(tries < 1_000, "i1's turn reached the tee");
+    await sleep(5);
+  }
   await sleep(300);
   await Promise.all([held, second.step(send)]);
   const turns = meet.records.filter((record) => record.identified?.kind === "turn");
   assert.equal(turns.length, 2);
   const [one, two] = turns;
   assert.ok((one?.heldMs ?? 0) >= 250, `i1's turn was held: ${one?.heldMs} ms`);
+  assert.ok((one?.engine.start ?? 0) >= (two?.at ?? Infinity), "i1's turn waited for i2's");
+  assert.equal(two?.heldMs, undefined, "i2's turn completes the meet, and is not held");
   assert.ok(Math.abs((one?.engine.start ?? 0) - (two?.engine.start ?? 0)) < 50);
   assert.ok((one?.engine.start ?? 0) < (two?.engine.end ?? 0));
   // After the meet, nothing is held: i1's next turn goes on alone.
@@ -494,7 +526,8 @@ test("with meet, a turn no other issue meets goes on after its timeout", async (
   const session = new Session(taskFile(SCENARIO, "i1", "code"));
   await session.step(send);
   assert.equal((await session.step(send)).calls[0]?.function.name, "write");
-  assert.ok((lone.records.at(-1)?.heldMs ?? 0) >= 150);
+  // The tee holds a turn its whole timeout by its own clock, which `heldMs` reports.
+  assert.ok((lone.records.at(-1)?.heldMs ?? 0) >= 200, `held ${lone.records.at(-1)?.heldMs} ms`);
 });
 
 test("the tee's environment names the engine and one source of scripts", async () => {
@@ -557,14 +590,44 @@ test("the runners are the engine's llama-server processes, with their context an
   }
 });
 
+/**
+ * An engine's `count` requests, each held until the tee's sampler read them all at once twice, or
+ * 5 seconds passed: on a busy machine, a fixed time at the engine may end before they all arrive,
+ * or before the sampler comes.
+ */
+function heldUntilSampled(count: number) {
+  let inFlight = 0;
+  let sampledAll = 0;
+  let release = () => {};
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+    setTimeout(resolve, 5_000).unref();
+  });
+  return {
+    get inFlight() {
+      return inFlight;
+    },
+    /** Called as the sampler reads the engine. */
+    sampled() {
+      if (inFlight === count && ++sampledAll >= 2) release();
+    },
+    async request() {
+      inFlight++;
+      await released;
+      inFlight--;
+    },
+  };
+}
+
 test("the runners' slots are sampled while agents' requests are at the engine", async () => {
   // A runner of 2 slots: at most 2 of the engine's requests process at once, the others wait.
+  const requests = heldUntilSampled(3);
   const slotsServer = new FakeServer("llama-server");
   slotsServer.route("GET", "/slots", () => {
-    const busy = Math.min(2, inFlight);
+    const busy = Math.min(2, requests.inFlight);
+    requests.sampled();
     return json([0, 1].map((id) => ({ id, n_ctx: 32_768, is_processing: id < busy })));
   });
-  let inFlight = 0;
   const slotsOrigin = await slotsServer.listen();
   const proc = mkdtempSync(join(tmpdir(), "codeman-e2e-proc-"));
   mkdirSync(join(proc, "42"));
@@ -577,9 +640,7 @@ test("the runners' slots are sampled while agents' requests are at the engine", 
   );
   const engineServer = new FakeServer("engine");
   engineServer.route("POST", "/v1/chat/completions", async () => {
-    inFlight++;
-    await sleep(300);
-    inFlight--;
+    await requests.request();
     return json({
       choices: [{ index: 0, message: { role: "assistant", content: "OK" }, finish_reason: "stop" }],
     });
@@ -621,23 +682,25 @@ test("the runners' slots are sampled while agents' requests are at the engine", 
 
 test("vLLM's running and waiting requests are sampled from its metrics while agents' requests are at the engine", async () => {
   // vLLM with max-num-seqs 2: at most 2 requests run, the others wait.
-  let inFlight = 0;
+  const requests = heldUntilSampled(3);
   const engineServer = new FakeServer("vllm");
-  engineServer.route("GET", "/metrics", () => ({
-    status: 200,
-    headers: { "content-type": "text/plain" },
-    body: [
-      "# TYPE vllm:num_requests_running gauge",
-      `vllm:num_requests_running{engine="0",model_name="m"} ${Math.min(2, inFlight)}.0`,
-      `vllm:num_requests_waiting{engine="0",model_name="m"} ${Math.max(0, inFlight - 2)}.0`,
-      `vllm:num_requests_waiting_by_reason{engine="0",model_name="m",reason="capacity"} 9.0`,
-      "",
-    ].join("\n"),
-  }));
+  engineServer.route("GET", "/metrics", () => {
+    const inFlight = requests.inFlight;
+    requests.sampled();
+    return {
+      status: 200,
+      headers: { "content-type": "text/plain" },
+      body: [
+        "# TYPE vllm:num_requests_running gauge",
+        `vllm:num_requests_running{engine="0",model_name="m"} ${Math.min(2, inFlight)}.0`,
+        `vllm:num_requests_waiting{engine="0",model_name="m"} ${Math.max(0, inFlight - 2)}.0`,
+        `vllm:num_requests_waiting_by_reason{engine="0",model_name="m",reason="capacity"} 9.0`,
+        "",
+      ].join("\n"),
+    };
+  });
   engineServer.route("POST", "/v1/chat/completions", async () => {
-    inFlight++;
-    await sleep(300);
-    inFlight--;
+    await requests.request();
     return json({
       choices: [{ index: 0, message: { role: "assistant", content: "OK" }, finish_reason: "stop" }],
     });
