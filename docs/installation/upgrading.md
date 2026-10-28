@@ -75,7 +75,7 @@ flowchart TD
 | 2026-10-14 | [Secret renamed](#secret-renamed) | `362a8da` | Every installation | Add the new secret before copying the templates | Once the templates are copied |
 | 2026-10-14 | [Codeman's commit from a variable](#codemans-commit-from-a-variable) | `7e2a137`, `840e90b` | Workflow files with `uses: codenergy-dev/codeman@` | Add the variable, copy both templates | Yes |
 | 2026-10-14 | [Backend mapping gains repository_id](#backend-mapping-gains-repository_id) | `c4da7e2` | Backends set up before, moving to the listed-repositories condition | Update the mapping | No |
-| 2026-10-15 | [The dispatch reads the default branch](#the-dispatch-reads-the-default-branch) | `e26a8c9` | Repositories whose batches take another repository's tasks | Copy `codeman.yml` | Dispatches fail |
+| 2026-10-15 | [The dispatch reads the default branch](#the-dispatch-reads-the-default-branch) | `e26a8c9`, fixed by `e0370fd` | Repositories whose batches take another repository's tasks | Copy `codeman.yml` | Dispatches fail |
 | 2026-10-15 | [A spent pod waits for its close](#a-spent-pod-waits-for-its-close) | `ca7f3e8`; on pods from `c69ea45` | Pod runs | None | No |
 | 2026-10-19 | [Review rounds block at max-runs](#review-rounds-block-at-max-runs) | `503e9fc` | Tasks that reach review | None, or raise `max-runs` | No |
 
@@ -269,7 +269,7 @@ Run Codeman by hand, as in [check the setup](setup.md#6-check-the-setup). Its ta
 
 ### The dispatch reads the default branch
 
-- **Since:** 2026-10-15, `e26a8c9`; fixed on 2026-10-28 ([plan](../plans/2026-10-28-dispatch-on-the-default-branch-read-by-rest.md)).
+- **Since:** 2026-10-15, `e26a8c9`; fixed on 2026-10-28, `e0370fd` ([plan](../plans/2026-10-28-dispatch-on-the-default-branch-read-by-rest.md)).
 - **Who is affected:** each repository of the pool, whose batches take tasks of its other repositories.
 - **Breaking:** only the dispatches. The template version does not change: files copied before keep running, and only their dispatches fail.
 
@@ -279,7 +279,7 @@ The `dispatch` job's App token has `actions: write` and `metadata: read`. Withou
 
 #### What to do
 
-Copy `codeman.yml` again in each repository of the pool, from a commit at or after the fix. The token asks for no new permission, so the App's installations approve nothing.
+Copy `codeman.yml` again in each repository of the pool, from a commit at or after `e0370fd`. The token asks for no new permission, so the App's installations approve nothing.
 
 #### How to verify
 

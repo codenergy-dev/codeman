@@ -1,7 +1,7 @@
 ---
 status: completed
 created_at: 2026-10-28T18:21:00-03:00
-updated_at: 2026-10-28T18:52:00-03:00
+updated_at: 2026-10-28T18:56:00-03:00
 commit: a8a103e
 ---
 
@@ -33,7 +33,7 @@ The `dispatch` job starts another pool repository's `codeman.yml` on its default
 
 ## Results
 
-All steps are done. Of step 3's files, `docs/runs/runs-and-jobs.md`, `docs/security/overview.md` and `docs/security/secrets.md` only list the token's permissions, which do not change, so they stay as they are.
+All steps are done, in `e0370fd`. Of step 3's files, `docs/runs/runs-and-jobs.md`, `docs/security/overview.md` and `docs/security/secrets.md` only list the token's permissions, which do not change, so they stay as they are.
 
 - `npm run check`: 933 tests pass, none fail; lint, type check and build pass.
 - `npm run test:e2e -- pools/two-organizations-batch` passes (75 s).
