@@ -1582,7 +1582,7 @@ test("parallel tasks: next-run starts another run only when some task moved", as
     "key-status": "over-budget",
     "agent-job-result": "skipped",
   });
-  assert.equal(over.outputs.chain, undefined);
+  assert.equal(over.outputs.chain, "false");
   assert.deepEqual(marks(), []);
 
   // The organization's month refuses a run the same way, and says so.
@@ -1603,7 +1603,7 @@ test("parallel tasks: next-run starts another run only when some task moved", as
     "organization-month-spent": "29.5",
     "agent-job-result": "skipped",
   });
-  assert.equal(shared.outputs.chain, undefined);
+  assert.equal(shared.outputs.chain, "false");
   assert.deepEqual(stateLabels(organization, limited), [], "back to where it was");
   const status = organization.botComments(limited).find((body) => body.includes("codeman:status"));
   assert.match(
@@ -1637,7 +1637,7 @@ test("a routing run the budget refuses updates the panel only", async () => {
       "agent-job-result": "skipped",
     });
     assert.deepEqual(stateLabels(platform, issue), ["codeman:ready"]);
-    assert.equal(refused.outputs.chain, undefined);
+    assert.equal(refused.outputs.chain, "false");
     assert.match(panel() ?? "", message);
     assert.equal(runComments(), planned, "no run comment for a run that moved nothing");
   }
@@ -1838,6 +1838,106 @@ test("concurrency: a profile's busy instances hold its other tasks back, which s
   });
   await select(fakeServices(other, busy, undefined, undefined, undefined, store));
   assert.equal(busy.outputs.action, "none");
+});
+
+test("fallback: a busy profile's tasks go to the next one that holds, in the list's order", async () => {
+  const settings = [
+    "profiles:",
+    "  - name: cheap",
+    "    stages: [route]",
+    "    max-tasks: 1",
+    "    model: c/d",
+    "  - name: dear",
+    "    stages: [route]",
+    "    max-tasks: 1",
+    "    model: e/f",
+    "  - name: wide",
+    "    stages: [plan]",
+    "    tasks: 3",
+    "    model: g/h",
+  ].join("\n");
+  const platform = new FakePlatform({ ".codeman/settings.yml": settings });
+  const tasks = readyTasks(platform, 3);
+  const first = new FakeRuntime({ inputs: { workdir }, runId: "1" });
+  await select(fakeServices(platform, first, undefined, undefined, undefined, new MemoryStore()));
+  // Each has one instance: the first task takes `cheap`, the next falls back to `dear`.
+  assert.deepEqual(pickedTasks(first), [
+    ["1", "route", "cheap"],
+    ["2", "route", "dear"],
+  ]);
+  const context = readTask(new FakeRuntime({ inputs: { workdir, task: "2" } }));
+  assert.deepEqual([context.profile, context.model], ["dear", "e/f"], "the fallback's own");
+  const [, , third = 0] = tasks;
+  assert.match(
+    platform.botComments(third)[0] ?? "",
+    /Waiting for profile `cheap`: its one instance is busy, as many as its `concurrency` allows\. The other settings that could serve it cannot now either\. Codeman checks again at every run\./,
+  );
+});
+
+test("fallback: a pod profile without room is set aside, and the next run serves the task with the next", async () => {
+  const settings = [
+    "profiles:",
+    "  - name: salad",
+    "    stages: [route]",
+    "    provider: runpod-pod",
+    '    gpu: "GPU A"',
+    "    model: qwen3-coder:30b",
+    "  - name: router",
+    "    stages: [route]",
+    "    model: c/d",
+  ].join("\n");
+  const store = new MemoryStore();
+  const platform = new FakePlatform({ ".codeman/settings.yml": settings });
+  const [issue = 0] = readyTasks(platform, 1);
+  const first = new FakeRuntime({ inputs: { workdir }, runId: "1" });
+  await select(fakeServices(platform, first, undefined, undefined, undefined, store));
+  assert.deepEqual(pickedTasks(first), [["1", "route", "salad"]]);
+  const key = JSON.parse(first.outputs.inference ?? "{}").concurrency?.key;
+
+  // open-key found no room: it ended the pod's document so, and refused the run.
+  await store.write([
+    {
+      op: "set",
+      path: "pools/o/pods/n1",
+      fields: {
+        status: "ended",
+        live: false,
+        key,
+        endedAt: new Date(),
+        reason: "unavailable: No GPU A has room.",
+      },
+    },
+  ]);
+  const refused = await applyLeg(platform, "1", {
+    "key-job-result": "success",
+    "key-status": "profile-unavailable",
+    "key-reason": "No GPU A has room.",
+    "agent-job-result": "skipped",
+  });
+  assert.equal(refused.outputs.chain, "true", "the next run starts at once");
+  assert.deepEqual(stateLabels(platform, issue), ["codeman:ready"], "back to where it was");
+  const panel = platform.botComments(issue).find((body) => body.includes("codeman:status"));
+  assert.match(
+    panel ?? "",
+    /The provider of profile `salad` has no room for a pod now, so Codeman sets it aside for 15 minutes: the next settings that can serve the task do, or it waits\./,
+  );
+
+  const second = new FakeRuntime({ inputs: { workdir }, runId: "2" });
+  await select(fakeServices(platform, second, undefined, undefined, undefined, store));
+  assert.deepEqual(pickedTasks(second), [["1", "route", "router"]]);
+
+  // With no fallback, the task waits, and says until when.
+  const alone = new FakePlatform({
+    ".codeman/settings.yml": settings.replace(/ {2}- name: router\n.*\n.*\n?/, ""),
+  });
+  const [lone = 0] = readyTasks(alone, 1);
+  const third = new FakeRuntime({ inputs: { workdir }, runId: "3" });
+  await select(fakeServices(alone, third, undefined, undefined, undefined, store));
+  assert.equal(third.outputs.action, "none");
+  assert.match(
+    alone.botComments(lone)[0] ?? "",
+    /Waiting for profile `salad`: its provider had no room for a pod, so Codeman tries it again from .+ UTC\. Codeman checks again at every run\./,
+  );
 });
 
 test("profiles pick the tasks: a stage nothing serves blocks the task, which continue resumes", async () => {

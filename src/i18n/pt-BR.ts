@@ -217,6 +217,8 @@ export const ptBR: Messages = {
     `Aguardando ${tasks} tarefas prontas para o perfil \`${profile}\`; ${ready} ${ready === 1 ? "está" : "estão"}, em ${repositories} ${repositories === 1 ? "repositório" : "repositórios"}.${othersCannot(others)} O Codeman verifica de novo a cada rodada.`,
   waitingForInstances: (profile, instances, others = 0) =>
     `Aguardando ${profile === undefined ? "as configurações de nível superior" : `o perfil \`${profile}\``}: ${instances === 1 ? "sua instância está ocupada" : `suas ${instances} instâncias estão ocupadas`}, o máximo que o \`concurrency\` permite.${othersCannot(others)} O Codeman verifica de novo a cada rodada.`,
+  waitingForRoom: (profile, until, others = 0) =>
+    `Aguardando ${profile === undefined ? "as configurações de nível superior" : `o perfil \`${profile}\``}: seu provedor não tinha espaço para um pod, então o Codeman tenta de novo a partir de ${ptBR.dateTime(until)}.${othersCannot(others)} O Codeman verifica de novo a cada rodada.`,
   noSettingsForStage: (stage) =>
     `Nenhuma configuração se aplica à ${OF_STAGE(stage)}: nenhum perfil a atende com qualquer número de tarefas, e as configurações de nível superior não têm \`model\`. Inclua a etapa num perfil, ou um \`model\` no nível superior, em \`.codeman/settings.yml\` ou nas configurações da organização.`,
 
@@ -232,6 +234,8 @@ export const ptBR: Messages = {
     `O orçamento mensal da organização foi atingido: ${used} usados de ${budget}, e esta rodada pode usar até ${limit}.`,
   concurrencyReached: (profile, instances) =>
     `${profile === undefined ? "As configurações de nível superior já rodam" : `O perfil \`${profile}\` já roda`} ${instances === 1 ? "sua única instância" : `${instances} instâncias`}, o máximo que o \`concurrency\` permite.`,
+  profileUnavailable: (profile, minutes) =>
+    `${profile === undefined ? "O provedor das configurações de nível superior não tem" : `O provedor do perfil \`${profile}\` não tem`} espaço para um pod agora, então o Codeman o deixa de lado por ${minutes} minutos: as próximas configurações que puderem atendem a tarefa, ou ela aguarda.`,
   tryLater: (reason) => `${reason} O Codeman tenta de novo numa próxima rodada.`,
 
   planUnfinished: "O agente não terminou o plano. Veja o log da rodada.",

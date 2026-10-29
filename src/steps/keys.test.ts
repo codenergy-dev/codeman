@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { decrypt } from "../crypto.ts";
-import { ConcurrencyReached, OpenFailure } from "../inference/provider.ts";
+import { ConcurrencyReached, OpenFailure, ProfileUnavailable } from "../inference/provider.ts";
 import { MemoryStore } from "../store/memory.ts";
 import { FakeAccounts, FakeInference } from "../testing/fake-inference.ts";
 import { FakePlatform, fakeServices } from "../testing/fake-platform.ts";
@@ -343,6 +343,31 @@ test("a pod's key at its concurrency: the run is refused, its reservation ends, 
   assert.match(runtime.outputs.reason ?? "", /They serve the top-level settings\.$/);
   const fields = await run(store, "300-1-7");
   assert.deepEqual([fields?.status, fields?.refusal], ["refused", "concurrency-reached"]);
+  assert.ok(await store.get("organizations/o/events/300-1-7-pod-terminated-pod9"));
+});
+
+test("a provider without room for a pod: the run is refused as unavailable, at no cost", async () => {
+  const store = new MemoryStore();
+  await seedRuns(store, { "300-1-7": {} });
+  const inference = new FakeInference();
+  inference.failure = new ProfileUnavailable(new Error("No GPU A has room."), [
+    { pod: "pod9", event: "terminated", reason: "no live document holds it" },
+  ]);
+  const choice = JSON.parse(POD_CHOICE);
+  const { runtime } = await open(store, {
+    inference,
+    inputs: openInputs({
+      inference: JSON.stringify({ ...choice, profile: "salad" }),
+      "gpu-key": "k",
+    }),
+  });
+  assert.equal(runtime.outputs.status, "profile-unavailable");
+  assert.equal(
+    runtime.outputs.reason,
+    "No GPU A has room. The provider of profile `salad` has no room for a pod now; it is set aside for 15 minutes.",
+  );
+  const fields = await run(store, "300-1-7");
+  assert.deepEqual([fields?.status, fields?.refusal], ["refused", "profile-unavailable"]);
   assert.ok(await store.get("organizations/o/events/300-1-7-pod-terminated-pod9"));
 });
 

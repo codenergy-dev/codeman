@@ -64,6 +64,11 @@ export interface Waiting {
    */
   busy?: number | undefined;
   /**
+   * When enough tasks are ready, but its provider had no room for a pod lately: until when it is
+   * set aside (decision 4 of the plan for falling back to the next profile). Then `busy` is absent.
+   */
+  unavailableUntil?: Date | undefined;
+  /**
    * How many other profiles, or the top level, could serve it after that one, and cannot now
    * either (decision 2 of the plan for falling back to the next profile); absent when none.
    */
@@ -112,6 +117,8 @@ export function formBatches(
     places: number;
     limit: (repository: string) => number;
     seats?: (offer: Offer) => number;
+    /** Until when an offer's provider has no room for a new pod; undefined when it may. */
+    unavailable?: (offer: Offer) => Date | undefined;
   },
 ): Formation {
   const ordered = [...candidates].sort(byPriority);
@@ -189,13 +196,14 @@ export function formBatches(
     const full = complete.find(({ offer }) => offer.place === first.place);
     if (full) {
       const those = ready[full.index] ?? [];
+      const until = options.unavailable?.(full.offer);
       waiting.push({
         number: candidate.number,
         tasks: full.offer.tasks,
         profile: full.offer.profile,
         ready: those.length,
         repositories: new Set(those.map((task) => task.repository)).size,
-        busy: full.offer.concurrency?.instances ?? 0,
+        ...(until ? { unavailableUntil: until } : { busy: full.offer.concurrency?.instances ?? 0 }),
         ...also,
       });
       continue;

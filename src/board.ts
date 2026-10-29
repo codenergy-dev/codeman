@@ -164,6 +164,8 @@ export function exchange(
     places: number;
     /** The free seats of an offer's key, before any batch forms; unlimited without it. */
     seats?: (offer: Offer) => number;
+    /** Until when an offer's provider has no room for a new pod. */
+    unavailable?: (offer: Offer) => Date | undefined;
   },
 ): Promise<Exchange> {
   const { pool, now } = input;
@@ -272,6 +274,7 @@ export function exchange(
         places: Math.max(0, input.places - honored.length),
         limit: (other) => Math.max(0, MAX_TASKS - (reserved.get(other) ?? 0)),
         ...(input.seats ? { seats: input.seats } : {}),
+        ...(input.unavailable ? { unavailable: input.unavailable } : {}),
       });
 
       const formed: Started[] = [];

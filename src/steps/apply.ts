@@ -9,6 +9,7 @@ import {
   type RunOutcome,
   taskLanguage,
 } from "../i18n/index.ts";
+import { UNAVAILABLE_MINUTES } from "../inference/registry.ts";
 import { addPod } from "../inference/spend.ts";
 import {
   type Cut,
@@ -87,10 +88,12 @@ export async function apply(services: Services): Promise<void> {
   const chain = chains(task.action, io.jobs.keyJob, io.jobs.keyStatus);
   if (task.action === "record") await recordAnswers(task, io);
   else if (task.action === "accept") await acceptWorkflows(task, io);
-  else if (await keyFailed(task, io)) return;
-  else if (task.action === "implement") await applyStage(task, io);
-  else if (task.action === "route") await applyRoute(task, io);
-  else await applyPlan(task, io);
+  // A refused key still chains when `chains` says so, as at a profile's cap or without room.
+  else if (!(await keyFailed(task, io))) {
+    if (task.action === "implement") await applyStage(task, io);
+    else if (task.action === "route") await applyRoute(task, io);
+    else await applyPlan(task, io);
+  }
   runtime.output("chain", String(chain));
   if (chain) {
     // A run's tasks are legs of a matrix, whose outputs keep one leg's value: next-run looks
@@ -118,7 +121,7 @@ export interface JobResults {
   keyJob: string;
   /**
    * Its status output: `opened`, `over-budget`, `over-organization-budget`, `task-budget-spent`,
-   * `missing-credentials` or `concurrency-reached`.
+   * `missing-credentials`, `concurrency-reached` or `profile-unavailable`.
    */
   keyStatus: string;
   /** Its reason output, in English, when it opened nothing. */
@@ -193,8 +196,13 @@ export function chains(action: TaskContext["action"], keyJob: string, keyStatus:
     action === "record" ||
     action === "accept" ||
     // A run refused at its profile's cap starts the next, whose `select` makes it wait in view
-    // (decision 6 of the plan for limiting concurrent instances of a profile).
-    (keyJob === "success" && (keyStatus === "opened" || keyStatus === "concurrency-reached"))
+    // (decision 6 of the plan for limiting concurrent instances of a profile), or, refused for no
+    // room, serves it with the next profile (decision 4 of the plan for falling back to the next
+    // profile).
+    (keyJob === "success" &&
+      (keyStatus === "opened" ||
+        keyStatus === "concurrency-reached" ||
+        keyStatus === "profile-unavailable"))
   );
 }
 
@@ -245,7 +253,9 @@ async function keyFailed(task: TaskContext, io: Io): Promise<boolean> {
             )
           : status === "concurrency-reached"
             ? t.concurrencyReached(task.profile, task.settings.concurrency)
-            : t.noKey;
+            : status === "profile-unavailable"
+              ? t.profileUnavailable(task.profile, UNAVAILABLE_MINUTES)
+              : t.noKey;
     await finish(io, task, task.fromState === "planning" ? "new" : task.fromState, {
       message: t.tryLater(reason),
       retry: true,

@@ -22,9 +22,10 @@ import {
   type OpenedRun,
   OpenFailure,
   type PodEvent,
+  ProfileUnavailable,
 } from "../inference/provider.ts";
 import { accountOf, isHourlyAccount } from "../inference/providers.ts";
-import { PodRegistry } from "../inference/registry.ts";
+import { PodRegistry, UNAVAILABLE_MINUTES } from "../inference/registry.ts";
 import { releasePod } from "../inference/selfhosted.ts";
 import { type Ledger, ledgerRun } from "../ledger.ts";
 import type { Services } from "../services.ts";
@@ -60,7 +61,8 @@ type Opened =
         | "task-budget-spent"
         | "over-budget"
         | "over-organization-budget"
-        | "concurrency-reached";
+        | "concurrency-reached"
+        | "profile-unavailable";
       reason: string;
       /** What the provider did with pods before it refused, such as orphans it terminated. */
       pods?: PodEvent[] | undefined;
@@ -203,6 +205,15 @@ async function open(services: Services, ledger: Ledger, run: string): Promise<Op
     if (error instanceof ConcurrencyReached) {
       // Refused, not failed: the reservation ends, and a later run tries again.
       return refuse("concurrency-reached", `${error.message} They serve ${profile}.`, error.pods);
+    }
+    if (error instanceof ProfileUnavailable) {
+      // Refused, not failed: the next run serves the task with the next profile (decision 4 of
+      // the plan for falling back to the next profile).
+      return refuse(
+        "profile-unavailable",
+        `${error.message} The provider of ${profile} has no room for a pod now; it is set aside for ${UNAVAILABLE_MINUTES} minutes.`,
+        error.pods,
+      );
     }
     // The reservation ends; a reservation that cannot be ended counts until it expires.
     ledger.fail(

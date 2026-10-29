@@ -176,6 +176,11 @@ export interface Messages {
    * busy, as many as its `concurrency` allows; and how many others cannot serve it now either.
    */
   waitingForInstances(profile: string | undefined, instances: number, others?: number): string;
+  /**
+   * A task that waits because the provider of its profile (undefined: the top level) had no room
+   * for a pod, until an ISO time; and how many others cannot serve it now either.
+   */
+  waitingForRoom(profile: string | undefined, until: string, others?: number): string;
   /** A task whose stage no profile, nor the top level, serves at any count. */
   noSettingsForStage(stage: Stage): string;
 
@@ -188,6 +193,11 @@ export interface Messages {
   organizationBudgetReached(used: string, budget: string, limit: string): string;
   /** A run refused because its profile (undefined: the top level) ran all its instances. */
   concurrencyReached(profile: string | undefined, instances: number): string;
+  /**
+   * A run refused because the provider of its profile (undefined: the top level) has no room for
+   * a pod now, which is set aside for some minutes.
+   */
+  profileUnavailable(profile: string | undefined, minutes: number): string;
   tryLater(reason: string): string;
 
   // Results.

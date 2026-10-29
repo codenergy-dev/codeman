@@ -343,11 +343,18 @@ export async function select(services: Services): Promise<void> {
     own.flatMap((task) => task.offers.filter((offer) => !offer.pod).map((offer) => offer.key)),
     runtime,
   );
+  // A key whose provider had no room lately takes only its live pods' seats (decision 4 of the plan
+  // for falling back to the next profile).
+  const unavailable = (offer: Offer): Date | undefined => {
+    const until = offer.pod ? pods.get(offer.key)?.unavailableUntil : undefined;
+    return until && until > now ? until : undefined;
+  };
   const seats = (offer: Offer): number => {
+    const busy = pods.get(offer.key) ?? { pods: 0, free: 0 };
+    if (offer.pod && unavailable(offer)) return busy.free;
     if (!offer.concurrency) return Number.POSITIVE_INFINITY;
     const { instances, tasks } = offer.concurrency;
     if (!offer.pod) return instances * tasks - (open.get(offer.key) ?? 0);
-    const busy = pods.get(offer.key) ?? { pods: 0, free: 0 };
     return busy.free + Math.max(0, instances - busy.pods) * tasks;
   };
   const board = await exchange(store, {
@@ -358,6 +365,7 @@ export async function select(services: Services): Promise<void> {
     own,
     places: cap - withoutAgent.length,
     seats,
+    unavailable,
   });
   for (const { number, batch } of board.dropped) {
     runtime.info(
@@ -598,11 +606,15 @@ export async function select(services: Services): Promise<void> {
   const wait = async (work: Work, waiting: Waiting): Promise<void> => {
     const { task, talk, record } = work;
     const profile = waiting.profile ?? "";
-    const { ready, repositories, busy } = waiting;
+    const { ready, repositories, busy, unavailableUntil } = waiting;
+    const named =
+      waiting.profile === undefined ? "the top-level settings" : `profile \`${profile}\``;
     runtime.info(
-      busy === undefined
-        ? `#${task.number} ${oneLine(task.title)}: waits for ${waiting.tasks} tasks ready for profile \`${profile}\`; ${ready} ${ready === 1 ? "is" : "are"}, in ${repositories} ${repositories === 1 ? "repository" : "repositories"}.`
-        : `#${task.number} ${oneLine(task.title)}: waits for a seat; the ${busy} instance(s) of ${waiting.profile === undefined ? "the top-level settings" : `profile \`${profile}\``} that its \`concurrency\` allows are busy.`,
+      unavailableUntil
+        ? `#${task.number} ${oneLine(task.title)}: waits; the provider of ${named} had no room for a pod, and is set aside until ${unavailableUntil.toISOString()}.`
+        : busy === undefined
+          ? `#${task.number} ${oneLine(task.title)}: waits for ${waiting.tasks} tasks ready for profile \`${profile}\`; ${ready} ${ready === 1 ? "is" : "are"}, in ${repositories} ${repositories === 1 ? "repository" : "repositories"}.`
+          : `#${task.number} ${oneLine(task.title)}: waits for a seat; the ${busy} instance(s) of ${named} that its \`concurrency\` allows are busy.`,
     );
     if (waiting.others) {
       runtime.info(
@@ -610,8 +622,9 @@ export async function select(services: Services): Promise<void> {
       );
     }
     const t = messages(taskLanguage(work.language, record?.language));
-    const message =
-      busy === undefined
+    const message = unavailableUntil
+      ? t.waitingForRoom(waiting.profile, unavailableUntil.toISOString(), waiting.others)
+      : busy === undefined
         ? t.waitingForTasks(waiting.tasks, profile, ready, repositories, waiting.others)
         : t.waitingForInstances(waiting.profile, busy, waiting.others);
     if (talk.status?.body.includes(message)) return;

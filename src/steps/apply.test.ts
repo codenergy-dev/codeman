@@ -15,6 +15,11 @@ test("starts another run only when this one moved a task", () => {
     true,
     "the next run's select makes it wait in view",
   );
+  assert.equal(
+    chains("implement", "success", "profile-unavailable"),
+    true,
+    "the next run's select serves it with the next profile",
+  );
   assert.equal(chains("plan", "failure", ""), false, "no key was created");
 });
 

@@ -23451,13 +23451,14 @@ function formBatches(candidates, options) {
     const full = complete2.find(({ offer }) => offer.place === first.place);
     if (full) {
       const those2 = ready[full.index] ?? [];
+      const until = options.unavailable?.(full.offer);
       waiting.push({
         number: candidate.number,
         tasks: full.offer.tasks,
         profile: full.offer.profile,
         ready: those2.length,
         repositories: new Set(those2.map((task) => task.repository)).size,
-        busy: full.offer.concurrency?.instances ?? 0,
+        ...until ? { unavailableUntil: until } : { busy: full.offer.concurrency?.instances ?? 0 },
         ...also
       });
       continue;
@@ -23590,7 +23591,8 @@ function exchange(store, input) {
       const formation = formBatches(candidates, {
         places: Math.max(0, input.places - honored.length),
         limit: (other) => Math.max(0, MAX_TASKS - (reserved.get(other) ?? 0)),
-        ...input.seats ? { seats: input.seats } : {}
+        ...input.seats ? { seats: input.seats } : {},
+        ...input.unavailable ? { unavailable: input.unavailable } : {}
       });
       const formed = [];
       const named = [];
@@ -32266,6 +32268,7 @@ Tests: ${test ?? "(no report)"}`,
   removeLabelHint: "Remove the `codeman:blocked` label to try again.",
   waitingForTasks: (tasks, profile2, ready, repositories, others = 0) => `Waiting for ${tasks} tasks ready for profile \`${profile2}\`; ${ready} ${ready === 1 ? "is" : "are"}, in ${repositories} ${repositories === 1 ? "repository" : "repositories"}.${othersCannot(others)} Codeman checks again at every run.`,
   waitingForInstances: (profile2, instances, others = 0) => `Waiting for ${profile2 === void 0 ? "the top-level settings" : `profile \`${profile2}\``}: ${instances === 1 ? "its one instance is" : `its ${instances} instances are`} busy, as many as its \`concurrency\` allows.${othersCannot(others)} Codeman checks again at every run.`,
+  waitingForRoom: (profile2, until, others = 0) => `Waiting for ${profile2 === void 0 ? "the top-level settings" : `profile \`${profile2}\``}: its provider had no room for a pod, so Codeman tries it again from ${en.dateTime(until)}.${othersCannot(others)} Codeman checks again at every run.`,
   noSettingsForStage: (stage) => `No settings apply to the ${STAGES2[stage]} stage: no profile serves it with any number of tasks, and the top-level settings have no \`model\`. Add the stage to a profile, or a top-level \`model\`, in \`.codeman/settings.yml\` or the organization's settings.`,
   noKey: "Codeman could not give this run access to its model (an OpenRouter key, or a GPU). See the run log.",
   missingCredentials: "Codeman could not give this run access to its model: the workflow does not pass the secret of a provider the run needs, its own or one whose billing counts in the organization's month.",
@@ -32273,6 +32276,7 @@ Tests: ${test ?? "(no report)"}`,
   monthlyBudgetReached: (used, budget, limit) => `The monthly budget is reached: ${used} used of ${budget}, and this run may use up to ${limit}.`,
   organizationBudgetReached: (used, budget, limit) => `The organization's monthly budget is reached: ${used} used of ${budget}, and this run may use up to ${limit}.`,
   concurrencyReached: (profile2, instances) => `${profile2 === void 0 ? "The top-level settings already run" : `Profile \`${profile2}\` already runs`} ${instances === 1 ? "its one instance" : `${instances} instances`}, as many as its \`concurrency\` allows.`,
+  profileUnavailable: (profile2, minutes) => `${profile2 === void 0 ? "The top-level settings' provider has" : `The provider of profile \`${profile2}\` has`} no room for a pod now, so Codeman sets it aside for ${minutes} minutes: the next settings that can serve the task do, or it waits.`,
   tryLater: (reason) => `${reason} Codeman will try again in a later run.`,
   planUnfinished: "The agent did not finish the plan. See the run log.",
   noResult: "The agent produced no result. See the run log.",
@@ -32545,6 +32549,7 @@ Testes: ${test ?? "(sem relat\xF3rio)"}`,
   removeLabelHint: "Remova a label `codeman:blocked` para tentar de novo.",
   waitingForTasks: (tasks, profile2, ready, repositories, others = 0) => `Aguardando ${tasks} tarefas prontas para o perfil \`${profile2}\`; ${ready} ${ready === 1 ? "est\xE1" : "est\xE3o"}, em ${repositories} ${repositories === 1 ? "reposit\xF3rio" : "reposit\xF3rios"}.${othersCannot2(others)} O Codeman verifica de novo a cada rodada.`,
   waitingForInstances: (profile2, instances, others = 0) => `Aguardando ${profile2 === void 0 ? "as configura\xE7\xF5es de n\xEDvel superior" : `o perfil \`${profile2}\``}: ${instances === 1 ? "sua inst\xE2ncia est\xE1 ocupada" : `suas ${instances} inst\xE2ncias est\xE3o ocupadas`}, o m\xE1ximo que o \`concurrency\` permite.${othersCannot2(others)} O Codeman verifica de novo a cada rodada.`,
+  waitingForRoom: (profile2, until, others = 0) => `Aguardando ${profile2 === void 0 ? "as configura\xE7\xF5es de n\xEDvel superior" : `o perfil \`${profile2}\``}: seu provedor n\xE3o tinha espa\xE7o para um pod, ent\xE3o o Codeman tenta de novo a partir de ${ptBR.dateTime(until)}.${othersCannot2(others)} O Codeman verifica de novo a cada rodada.`,
   noSettingsForStage: (stage) => `Nenhuma configura\xE7\xE3o se aplica \xE0 ${OF_STAGE(stage)}: nenhum perfil a atende com qualquer n\xFAmero de tarefas, e as configura\xE7\xF5es de n\xEDvel superior n\xE3o t\xEAm \`model\`. Inclua a etapa num perfil, ou um \`model\` no n\xEDvel superior, em \`.codeman/settings.yml\` ou nas configura\xE7\xF5es da organiza\xE7\xE3o.`,
   noKey: "O Codeman n\xE3o conseguiu dar a esta rodada acesso ao modelo (uma chave do OpenRouter, ou uma GPU). Veja o log da rodada.",
   missingCredentials: "O Codeman n\xE3o conseguiu dar a esta rodada acesso ao modelo: o workflow n\xE3o passa o segredo de um provedor de que a rodada precisa, o dela ou um cuja cobran\xE7a conta no m\xEAs da organiza\xE7\xE3o.",
@@ -32552,6 +32557,7 @@ Testes: ${test ?? "(sem relat\xF3rio)"}`,
   monthlyBudgetReached: (used, budget, limit) => `O or\xE7amento mensal foi atingido: ${used} usados de ${budget}, e esta rodada pode usar at\xE9 ${limit}.`,
   organizationBudgetReached: (used, budget, limit) => `O or\xE7amento mensal da organiza\xE7\xE3o foi atingido: ${used} usados de ${budget}, e esta rodada pode usar at\xE9 ${limit}.`,
   concurrencyReached: (profile2, instances) => `${profile2 === void 0 ? "As configura\xE7\xF5es de n\xEDvel superior j\xE1 rodam" : `O perfil \`${profile2}\` j\xE1 roda`} ${instances === 1 ? "sua \xFAnica inst\xE2ncia" : `${instances} inst\xE2ncias`}, o m\xE1ximo que o \`concurrency\` permite.`,
+  profileUnavailable: (profile2, minutes) => `${profile2 === void 0 ? "O provedor das configura\xE7\xF5es de n\xEDvel superior n\xE3o tem" : `O provedor do perfil \`${profile2}\` n\xE3o tem`} espa\xE7o para um pod agora, ent\xE3o o Codeman o deixa de lado por ${minutes} minutos: as pr\xF3ximas configura\xE7\xF5es que puderem atendem a tarefa, ou ela aguarda.`,
   tryLater: (reason) => `${reason} O Codeman tenta de novo numa pr\xF3xima rodada.`,
   planUnfinished: "O agente n\xE3o terminou o plano. Veja o log da rodada.",
   noResult: "O agente n\xE3o produziu resultado. Veja o log da rodada.",
@@ -34464,10 +34470,11 @@ async function apply(services) {
   const chain = chains(task.action, io.jobs.keyJob, io.jobs.keyStatus);
   if (task.action === "record") await recordAnswers(task, io);
   else if (task.action === "accept") await acceptWorkflows(task, io);
-  else if (await keyFailed(task, io)) return;
-  else if (task.action === "implement") await applyStage(task, io);
-  else if (task.action === "route") await applyRoute(task, io);
-  else await applyPlan(task, io);
+  else if (!await keyFailed(task, io)) {
+    if (task.action === "implement") await applyStage(task, io);
+    else if (task.action === "route") await applyRoute(task, io);
+    else await applyPlan(task, io);
+  }
   runtime2.output("chain", String(chain));
   if (chain) {
     mkdirSync5(chainDir(runtime2), { recursive: true });
@@ -34506,8 +34513,10 @@ function goesOn(state) {
 }
 function chains(action, keyJob, keyStatus) {
   return action === "record" || action === "accept" || // A run refused at its profile's cap starts the next, whose `select` makes it wait in view
-  // (decision 6 of the plan for limiting concurrent instances of a profile).
-  keyJob === "success" && (keyStatus === "opened" || keyStatus === "concurrency-reached");
+  // (decision 6 of the plan for limiting concurrent instances of a profile), or, refused for no
+  // room, serves it with the next profile (decision 4 of the plan for falling back to the next
+  // profile).
+  keyJob === "success" && (keyStatus === "opened" || keyStatus === "concurrency-reached" || keyStatus === "profile-unavailable");
 }
 async function keyFailed(task, io) {
   const t = say(task);
@@ -34546,7 +34555,7 @@ async function keyFailed(task, io) {
       t.money(io.jobs.organizationMonthSpent ?? 0),
       t.money(task.settings["organization-monthly-budget"] ?? 0),
       limit
-    ) : status2 === "concurrency-reached" ? t.concurrencyReached(task.profile, task.settings.concurrency) : t.noKey;
+    ) : status2 === "concurrency-reached" ? t.concurrencyReached(task.profile, task.settings.concurrency) : status2 === "profile-unavailable" ? t.profileUnavailable(task.profile, UNAVAILABLE_MINUTES) : t.noKey;
     await finish(io, task, task.fromState === "planning" ? "new" : task.fromState, {
       message: t.tryLater(reason),
       retry: true
@@ -35540,6 +35549,13 @@ async function open(services, ledger, run2) {
     if (error3 instanceof ConcurrencyReached) {
       return refuse("concurrency-reached", `${error3.message} They serve ${profile2}.`, error3.pods);
     }
+    if (error3 instanceof ProfileUnavailable) {
+      return refuse(
+        "profile-unavailable",
+        `${error3.message} The provider of ${profile2} has no room for a pod now; it is set aside for ${UNAVAILABLE_MINUTES} minutes.`,
+        error3.pods
+      );
+    }
     ledger.fail(
       run2,
       oneLine(error3 instanceof Error ? error3.message : String(error3)),
@@ -35851,11 +35867,16 @@ async function select(services) {
     own.flatMap((task) => task.offers.filter((offer) => !offer.pod).map((offer) => offer.key)),
     runtime2
   );
+  const unavailable = (offer) => {
+    const until = offer.pod ? pods.get(offer.key)?.unavailableUntil : void 0;
+    return until && until > now ? until : void 0;
+  };
   const seats = (offer) => {
+    const busy = pods.get(offer.key) ?? { pods: 0, free: 0 };
+    if (offer.pod && unavailable(offer)) return busy.free;
     if (!offer.concurrency) return Number.POSITIVE_INFINITY;
     const { instances, tasks: tasks2 } = offer.concurrency;
     if (!offer.pod) return instances * tasks2 - (open3.get(offer.key) ?? 0);
-    const busy = pods.get(offer.key) ?? { pods: 0, free: 0 };
     return busy.free + Math.max(0, instances - busy.pods) * tasks2;
   };
   const board = await exchange(store, {
@@ -35865,7 +35886,8 @@ async function select(services) {
     now,
     own,
     places: cap - withoutAgent.length,
-    seats
+    seats,
+    unavailable
   });
   for (const { number: number3, batch } of board.dropped) {
     runtime2.info(
@@ -36056,9 +36078,10 @@ async function select(services) {
   const wait = async (work, waiting) => {
     const { task, talk, record } = work;
     const profile2 = waiting.profile ?? "";
-    const { ready: ready2, repositories, busy } = waiting;
+    const { ready: ready2, repositories, busy, unavailableUntil } = waiting;
+    const named = waiting.profile === void 0 ? "the top-level settings" : `profile \`${profile2}\``;
     runtime2.info(
-      busy === void 0 ? `#${task.number} ${oneLine(task.title)}: waits for ${waiting.tasks} tasks ready for profile \`${profile2}\`; ${ready2} ${ready2 === 1 ? "is" : "are"}, in ${repositories} ${repositories === 1 ? "repository" : "repositories"}.` : `#${task.number} ${oneLine(task.title)}: waits for a seat; the ${busy} instance(s) of ${waiting.profile === void 0 ? "the top-level settings" : `profile \`${profile2}\``} that its \`concurrency\` allows are busy.`
+      unavailableUntil ? `#${task.number} ${oneLine(task.title)}: waits; the provider of ${named} had no room for a pod, and is set aside until ${unavailableUntil.toISOString()}.` : busy === void 0 ? `#${task.number} ${oneLine(task.title)}: waits for ${waiting.tasks} tasks ready for profile \`${profile2}\`; ${ready2} ${ready2 === 1 ? "is" : "are"}, in ${repositories} ${repositories === 1 ? "repository" : "repositories"}.` : `#${task.number} ${oneLine(task.title)}: waits for a seat; the ${busy} instance(s) of ${named} that its \`concurrency\` allows are busy.`
     );
     if (waiting.others) {
       runtime2.info(
@@ -36066,7 +36089,7 @@ async function select(services) {
       );
     }
     const t = messages(taskLanguage(work.language, record?.language));
-    const message = busy === void 0 ? t.waitingForTasks(waiting.tasks, profile2, ready2, repositories, waiting.others) : t.waitingForInstances(waiting.profile, busy, waiting.others);
+    const message = unavailableUntil ? t.waitingForRoom(waiting.profile, unavailableUntil.toISOString(), waiting.others) : busy === void 0 ? t.waitingForTasks(waiting.tasks, profile2, ready2, repositories, waiting.others) : t.waitingForInstances(waiting.profile, busy, waiting.others);
     if (talk.status?.body.includes(message)) return;
     const served = resolveOwn(
       work.own,

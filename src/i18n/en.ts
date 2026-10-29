@@ -208,6 +208,8 @@ export const en: Messages = {
     `Waiting for ${tasks} tasks ready for profile \`${profile}\`; ${ready} ${ready === 1 ? "is" : "are"}, in ${repositories} ${repositories === 1 ? "repository" : "repositories"}.${othersCannot(others)} Codeman checks again at every run.`,
   waitingForInstances: (profile, instances, others = 0) =>
     `Waiting for ${profile === undefined ? "the top-level settings" : `profile \`${profile}\``}: ${instances === 1 ? "its one instance is" : `its ${instances} instances are`} busy, as many as its \`concurrency\` allows.${othersCannot(others)} Codeman checks again at every run.`,
+  waitingForRoom: (profile, until, others = 0) =>
+    `Waiting for ${profile === undefined ? "the top-level settings" : `profile \`${profile}\``}: its provider had no room for a pod, so Codeman tries it again from ${en.dateTime(until)}.${othersCannot(others)} Codeman checks again at every run.`,
   noSettingsForStage: (stage) =>
     `No settings apply to the ${STAGES[stage]} stage: no profile serves it with any number of tasks, and the top-level settings have no \`model\`. Add the stage to a profile, or a top-level \`model\`, in \`.codeman/settings.yml\` or the organization's settings.`,
 
@@ -223,6 +225,8 @@ export const en: Messages = {
     `The organization's monthly budget is reached: ${used} used of ${budget}, and this run may use up to ${limit}.`,
   concurrencyReached: (profile, instances) =>
     `${profile === undefined ? "The top-level settings already run" : `Profile \`${profile}\` already runs`} ${instances === 1 ? "its one instance" : `${instances} instances`}, as many as its \`concurrency\` allows.`,
+  profileUnavailable: (profile, minutes) =>
+    `${profile === undefined ? "The top-level settings' provider has" : `The provider of profile \`${profile}\` has`} no room for a pod now, so Codeman sets it aside for ${minutes} minutes: the next settings that can serve the task do, or it waits.`,
   tryLater: (reason) => `${reason} Codeman will try again in a later run.`,
 
   planUnfinished: "The agent did not finish the plan. See the run log.",
