@@ -1,7 +1,7 @@
 ---
-status: in progress
+status: completed
 created_at: 2026-10-29T16:54:04-03:00
-updated_at: 2026-10-29T20:20:00-03:00
+updated_at: 2026-10-29T20:40:00-03:00
 commit: 3d614ce
 ---
 
@@ -139,6 +139,7 @@ Each step ends with `npm run check` passing, and is one commit.
 6. **Docs.** [Profiles](../settings/profiles.md) (which applies, fallback, waiting), [batches](../runs/batches.md#forming-batches), [pods](../inference/pods.md#creating), [Salad installation](../installation/salad.md) (the 30 minutes, with this plan's example), [budget outcomes](../budget/budget.md#outcomes-of-open-key), [data layout](../backend/data-layout.md#pod-registry) (`unavailable: `), the [glossary](../glossary.md) (fallback), and an [upgrading](../installation/upgrading.md) entry for decisions 1 and 2. Done when `src/docs.test.ts` passes.
    - **Done on 2026-10-29.** Also [mixing providers](../installation/mixing-providers.md), [runs](../runs/runs-and-jobs.md#the-next-run), the [settings reference](../settings/reference.md#concurrency) and the e2e [suite](../development/e2e/suite.md) (with step 5). The profiles page's example is the Salad, Runpod and OpenRouter case this plan began with, with `wrap-up-minutes: 5`, since the pod's start counts in Salad's 30 minutes.
 7. **Build.** Rebuild `dist/`. Done when CI's build check passes. `dist/gateway.js` bundles the Runpod adapter, which step 3 changes, so a push to `main` publishes new pod images; their gateway behaves as before, so pinning them is not needed.
+   - **Done on 2026-10-29.** Each step committed `dist/` rebuilt; `npm run build` changes nothing after step 6.
 
 ## Out of scope
 
@@ -147,3 +148,10 @@ Each step ends with `npm run check` passing, and is one commit.
 - Fallback for a stage whose batch cannot be completed at any count: that task waits for tasks, as today.
 - Settings for the 15 and 10 minutes.
 - Choosing a profile by price; the list's order is the only preference.
+
+## Outcome
+
+- Implemented in `3a0ac54`, `5a63f0d`, `98ee43b` and `79859a4`; tested end to end in `abae1e6`; documented in `5a3ac0a`.
+- `npm run check` passes: 1010 tests.
+- The e2e scenarios of `parallel`, `pods`, `pools`, `budgets` and `profiles` pass: 25 of 25.
+- Found on the way, and fixed in `79859a4`: a `concurrency-reached` refusal never started the next run.
