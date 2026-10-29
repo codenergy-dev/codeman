@@ -23708,6 +23708,7 @@ var CLAIMS = Math.ceil(CREATE_LEASE_MS / CLAIM_POLL_MS) + 10;
 var DISK_GB = 80;
 var VLLM_BASE_DISK_GB = 40;
 var VLLM_DISK_SPARE = 0.25;
+var VLLM_SHARED_MEMORY_GB = 8;
 var BILLING_DAYS = 30;
 var END_ATTEMPTS = 3;
 var END_RETRY_MS = 5e3;
@@ -24366,7 +24367,11 @@ var PodInference = class {
       url: target.url,
       start: startedBefore && !own ? this.#now().getTime() : created,
       created,
-      pricePerSecond: running.pricePerSecond ?? record.pricePerSecond ?? await this.#host.price(this.#settings.gpuType, running.host ?? this.#hosts[0]),
+      pricePerSecond: running.pricePerSecond ?? record.pricePerSecond ?? await this.#host.price(
+        this.#settings.gpuType,
+        running.host ?? this.#hosts[0],
+        this.#settings.priority
+      ),
       limit: run2.limit,
       reuse: this.#settings.reuse,
       holder,
@@ -24392,7 +24397,7 @@ var PodInference = class {
     const { model, gpuType, image, engine, priority } = this.#settings;
     if (!image) throw new Error("No pod image is pinned; see docs/installation/runpod.md#pods.");
     const hosts = this.#hosts;
-    const prices = await this.#prices(gpuType, hosts);
+    const prices = await this.#prices(gpuType, hosts, priority);
     const vllm2 = onVllm(this.#settings) ? await this.#prepareVllm(log) : void 0;
     const fits = !vllm2 && fitsTheGpu(image);
     const memory = fits ? await this.#host.memory?.(gpuType).catch(() => void 0) : void 0;
@@ -24422,13 +24427,13 @@ var PodInference = class {
       port: GATEWAY_PORT,
       gpuType,
       diskGb: vllm2?.diskGb ?? DISK_GB,
-      ...vllm2 ? { minCudaVersion: VLLM_MIN_CUDA } : {},
+      ...vllm2 ? { minCudaVersion: VLLM_MIN_CUDA, sharedMemoryGb: VLLM_SHARED_MEMORY_GB } : {},
       ...this.#settings.hosts ? { hosts } : {},
       ...priority ? { priority } : {}
     });
     this.#events.push({ pod: pod.id, event: "created" });
     const host = pod.host && prices.has(pod.host) ? pod.host : [...prices.keys()][0];
-    const listed = host && prices.get(host) || await this.#host.price(gpuType, host);
+    const listed = host && prices.get(host) || await this.#host.price(gpuType, host, priority);
     const on = hosts.length > 1 || hosts[0] !== "secure" ? ` on ${host ?? hosts[0]} hosts` : "";
     log.info(
       `Created pod ${pod.id} with ${gpuType}${on}, at ${usd(listed * 3600)} per hour; waiting for ${model}.`
@@ -24443,12 +24448,12 @@ var PodInference = class {
    * The GPU type's price on each kind of host that offers it, in the settings' order. Throws the
    * first kind's reason when none does, before any pod is created.
    */
-  async #prices(gpuType, hosts) {
+  async #prices(gpuType, hosts, priority) {
     const prices = /* @__PURE__ */ new Map();
     let first;
     for (const host of hosts) {
       try {
-        prices.set(host, await this.#host.price(gpuType, host));
+        prices.set(host, await this.#host.price(gpuType, host, priority));
       } catch (error3) {
         first ??= error3;
       }

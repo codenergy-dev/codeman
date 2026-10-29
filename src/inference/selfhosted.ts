@@ -67,6 +67,11 @@ const DISK_GB = 80;
 const VLLM_BASE_DISK_GB = 40;
 /** Room a vLLM pod's disk leaves beyond the model's weights, as a share of them. */
 const VLLM_DISK_SPARE = 0.25;
+/**
+ * Shared memory a vLLM pod asks for, in GB, where the provider sets it per container: vLLM's
+ * Docker guide runs it with the host's (`--ipc=host`), and Salad's default is 64 MB.
+ */
+const VLLM_SHARED_MEMORY_GB = 8;
 /** Billing is read this far back; older pods have left the spend table's refreshed rows. */
 const BILLING_DAYS = 30;
 /** Tries of `/admin/end` at a run's close, and the wait between two. */
@@ -1041,7 +1046,11 @@ export class PodInference implements InferenceProvider {
       pricePerSecond:
         running.pricePerSecond ??
         record.pricePerSecond ??
-        (await this.#host.price(this.#settings.gpuType, running.host ?? this.#hosts[0])),
+        (await this.#host.price(
+          this.#settings.gpuType,
+          running.host ?? this.#hosts[0],
+          this.#settings.priority,
+        )),
       limit: run.limit,
       reuse: this.#settings.reuse,
       holder,
@@ -1075,7 +1084,7 @@ export class PodInference implements InferenceProvider {
     const { model, gpuType, image, engine, priority } = this.#settings;
     if (!image) throw new Error("No pod image is pinned; see docs/installation/runpod.md#pods.");
     const hosts = this.#hosts;
-    const prices = await this.#prices(gpuType, hosts);
+    const prices = await this.#prices(gpuType, hosts, priority);
     const vllm = onVllm(this.#settings) ? await this.#prepareVllm(log) : undefined;
     const fits = !vllm && fitsTheGpu(image);
     const memory = fits ? await this.#host.memory?.(gpuType).catch(() => undefined) : undefined;
@@ -1107,14 +1116,14 @@ export class PodInference implements InferenceProvider {
       port: GATEWAY_PORT,
       gpuType,
       diskGb: vllm?.diskGb ?? DISK_GB,
-      ...(vllm ? { minCudaVersion: VLLM_MIN_CUDA } : {}),
+      ...(vllm ? { minCudaVersion: VLLM_MIN_CUDA, sharedMemoryGb: VLLM_SHARED_MEMORY_GB } : {}),
       ...(this.#settings.hosts ? { hosts } : {}),
       ...(priority ? { priority } : {}),
     });
     this.#events.push({ pod: pod.id, event: "created" });
     // The price on the kind of host the provider placed it on; the first offered when it says none.
     const host = pod.host && prices.has(pod.host) ? pod.host : [...prices.keys()][0];
-    const listed = (host && prices.get(host)) || (await this.#host.price(gpuType, host));
+    const listed = (host && prices.get(host)) || (await this.#host.price(gpuType, host, priority));
     const on = hosts.length > 1 || hosts[0] !== "secure" ? ` on ${host ?? hosts[0]} hosts` : "";
     log.info(
       `Created pod ${pod.id} with ${gpuType}${on}, at ${usd(listed * 3600)} per hour; waiting for ${model}.`,
@@ -1131,12 +1140,16 @@ export class PodInference implements InferenceProvider {
    * The GPU type's price on each kind of host that offers it, in the settings' order. Throws the
    * first kind's reason when none does, before any pod is created.
    */
-  async #prices(gpuType: string, hosts: readonly HostKind[]): Promise<Map<HostKind, number>> {
+  async #prices(
+    gpuType: string,
+    hosts: readonly HostKind[],
+    priority: string | undefined,
+  ): Promise<Map<HostKind, number>> {
     const prices = new Map<HostKind, number>();
     let first: unknown;
     for (const host of hosts) {
       try {
-        prices.set(host, await this.#host.price(gpuType, host));
+        prices.set(host, await this.#host.price(gpuType, host, priority));
       } catch (error) {
         first ??= error;
       }

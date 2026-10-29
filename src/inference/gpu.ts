@@ -62,6 +62,11 @@ export interface PodSpec {
   hosts?: readonly HostKind[] | undefined;
   /** Its priority, as the provider names it; the provider's highest when undefined. */
   priority?: string | undefined;
+  /**
+   * The shared memory (`/dev/shm`) it needs, in GB, for a provider that sets it per container;
+   * the provider's default when undefined.
+   */
+  sharedMemoryGb?: number | undefined;
 }
 
 /** A CUDA version that hosts of a GPU type offer, and whether one of them has room now. */
@@ -90,10 +95,10 @@ export interface Pod {
 
 export interface PodHost {
   /**
-   * The price of one GPU of this type on a pod, on a kind of host (`secure` by default), in USD
-   * per second. Throws when not offered there.
+   * The price of one GPU of this type on a pod, on a kind of host (`secure` by default) and at a
+   * priority (the provider's highest by default), in USD per second. Throws when not offered there.
    */
-  price(gpuType: string, host?: HostKind): Promise<number>;
+  price(gpuType: string, host?: HostKind, priority?: string): Promise<number>;
   /**
    * The memory of one GPU of this type, in GB, as the provider lists it; undefined when it does
    * not say. The gateway starts its search for the context that fits from it.
