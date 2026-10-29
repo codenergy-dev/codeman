@@ -1,7 +1,7 @@
 ---
-status: in progress
+status: completed
 created_at: 2026-10-29T08:02:44-03:00
-updated_at: 2026-10-29T08:45:00-03:00
+updated_at: 2026-10-29T10:08:54-03:00
 commit: b60b66a
 ---
 
@@ -128,7 +128,7 @@ Answered on 2026-10-29: every recommendation is accepted.
 4. **OpenRouter and Serverless.** The reservation's transaction counts the organization's open, unexpired runs of the key, and refuses as `concurrency-reached` at `concurrency` × most tasks (`src/ledger.ts`, `src/steps/keys.ts`). Done when `src/ledger.test.ts` covers under the cap, at it, and an expired run that no longer counts.
 5. **`apply`.** A `concurrency-reached` refusal returns the task to its previous state and uploads the chain artifact (`src/steps/apply.ts`). Done when `src/steps/apply.test.ts` covers it.
 6. **`select`.** Read the pool's live pods and the organization's open runs, give `formBatches` (`src/batches.ts`) the free seats per key, and report tasks held back as waiting, with the message in `src/i18n/en.ts` and `src/i18n/pt-BR.ts` (`src/board.ts`, `src/steps/select.ts`). Done when `src/batches.test.ts` and `src/board.test.ts` cover a full key, a key with seats left, a kept pod that takes the next batch, and an OpenRouter profile at its cap.
-7. **End to end.** Two scenarios with `concurrency: 1`: two batches of one on a pod, where the second waits and then runs on the same pod; and two OpenRouter tasks of a `max-tasks: 1` profile, where the second waits for the first ([scenarios](../development/e2e/scenarios.md)). Done when `npm test` and the e2e suite pass.
+7. **End to end.** Two scenarios with `concurrency: 1`: two batches of one on a pod, where the second waits and then runs on a pod of its own once the first ended, never two at once (`parallel/concurrency-one-pod`); and two OpenRouter tasks of a one-task profile, where the second waits for the first (`parallel/concurrency-openrouter`). `parallel/two-batches-two-pods` sets `concurrency: 2` to keep its two pods ([scenarios](../development/e2e/scenarios.md)). Done when `npm test` and the e2e suite pass.
 8. **Docs.** Update the [settings reference](../settings/reference.md), [profiles](../settings/profiles.md), [runs](../runs/runs-and-jobs.md#which-tasks-a-run-takes), [batches](../runs/batches.md), [pods](../inference/pods.md#capacity), [OpenRouter](../inference/openrouter.md), [Serverless](../inference/serverless.md), [budget outcomes](../budget/budget.md#outcomes-of-open-key), [data layout](../backend/data-layout.md) (both new fields), the [glossary](../glossary.md) (instance), and an [upgrading](../installation/upgrading.md) entry: with the default of 1, a profile that ran several pods or batches at once now runs one, unless it sets `concurrency`. Done when `src/docs.test.ts` passes.
 9. **Build.** Rebuild `dist/`. Done when CI's build check passes.
 
@@ -140,3 +140,9 @@ Answered on 2026-10-29: every recommendation is accepted.
 - Terminating pods or cancelling runs above a lowered cap: it takes effect as they end.
 - Pods on images that serve one run at a time, whose settings hash holds the task.
 - A cap in money; the [budgets](../budget/budget.md) already bound spend.
+
+## Outcome
+
+- Implemented in `447fd2d`.
+- `npm run check` passes: 952 tests.
+- The e2e scenarios of `parallel`, `pools`, `budgets`, `serverless` and `happy-path` pass: 19 of 19.

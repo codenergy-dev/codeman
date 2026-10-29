@@ -79,7 +79,7 @@ flowchart TD
 | 2026-10-15 | [A spent pod waits for its close](#a-spent-pod-waits-for-its-close) | `ca7f3e8`; on pods from `c69ea45` | Pod runs | None | No |
 | 2026-10-19 | [Review rounds block at max-runs](#review-rounds-block-at-max-runs) | `503e9fc` | Tasks that reach review | None, or raise `max-runs` | No |
 | 2026-10-28 | [Agent time in the settings](#agent-time-in-the-settings) | `50c9a5a` | Every installation, and copies of `codeman-task.yml` that changed `agent-minutes` | Copy both templates; move a changed `agent-minutes` to the settings | Yes: template version 2 |
-| 2026-10-29 | [One instance of a profile at a time](#one-instance-of-a-profile-at-a-time) | This plan's first commit | Profiles that ran several pods, or several batches, at once | Set `concurrency` to keep them | No: tasks wait instead |
+| 2026-10-29 | [One instance of a profile at a time](#one-instance-of-a-profile-at-a-time) | `447fd2d` | Profiles that ran several pods, or several batches, at once | Set `concurrency` to keep them | No: tasks wait instead |
 
 The [older versions](#older-versions) entries say what Codeman does with tasks, pod images and records from before some of these changes.
 
@@ -208,7 +208,7 @@ A task blocked by review's rounds says "Review asked for changes 3 times in a ro
 
 ### One instance of a profile at a time
 
-- **Since:** 2026-10-29 ([plan for limiting concurrent instances of a profile](../plans/2026-10-29-limit-concurrent-instances-of-a-profile.md)).
+- **Since:** 2026-10-29, `447fd2d` ([plan for limiting concurrent instances of a profile](../plans/2026-10-29-limit-concurrent-instances-of-a-profile.md)).
 - **Who is affected:** settings whose profile, or top level, ran several [instances](../glossary.md#instance) at once: several pods of the same settings, or several batches of OpenRouter or Serverless runs, in the pool or the organization.
 - **Breaking:** no. No setting stops the run, but tasks that ran at once now wait for each other.
 
