@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { E2E, redirects } from "./e2e.ts";
 import { Runpod } from "./inference/runpod.ts";
+import { Salad } from "./inference/salad.ts";
 
 const env = (endpoints: unknown) => ({ CODEMAN_E2E_ENDPOINTS: JSON.stringify(endpoints) });
 
@@ -61,6 +62,25 @@ test("Runpod's API, pods and Serverless queues go to the fakes", async () => {
   assert.equal(runpod.serverless.queueUrl("e1"), "http://runpod:9001/v2/e1");
 });
 
+test("Salad's API and Container Gateway go to the fakes, and its pods take the local images", async () => {
+  const { fetch: fetchFn, urls } = recording();
+  const e2e = redirects(
+    env({
+      salad: "http://salad:9000",
+      runpodPods: "http://runpod:9002/pods/{id}/{port}",
+      saladPods: "http://salad:9000/pods/{id}/{port}",
+    }),
+    fetchFn,
+  );
+  const salad = e2e.gpu(new Salad({ key: "key", organization: "o", project: "p" }, e2e.fetch));
+  await salad.pods.get("codeman-1");
+  assert.deepEqual(urls, [
+    "http://salad:9000/api/public/organizations/o/projects/p/containers/codeman-1",
+  ]);
+  assert.equal(await salad.pods.url("codeman-1", 8080), "http://salad:9000/pods/codeman-1/8080");
+  assert.equal(salad.pods.unservedImages, undefined);
+});
+
 test("without an override, a service keeps its production URL", async () => {
   const e2e = redirects(env({ runpod: "http://runpod:9000" }));
   const runpod = e2e.gpu(new Runpod("key", e2e.fetch));
@@ -84,6 +104,7 @@ test("the variable must be a JSON object of known keys and URLs", () => {
     [env({ runpodPods: "http://runpod:9002/{id}-{port}/" }), /runpodPods must be/],
     [env({ runpodPods: "http://runpod:9002/{id}-{port}?a=b" }), /runpodPods must be/],
     [env({ runpodPods: "file:///{id}-{port}" }), /runpodPods must be/],
+    [env({ saladPods: "http://salad:9000/pods/{id}" }), /saladPods must be/],
   ];
   for (const [variables, error] of invalid) {
     assert.throws(() => redirects(variables), error, JSON.stringify(variables));

@@ -12,12 +12,14 @@ The Compose file, [`e2e/infra/compose.yaml`](../../../e2e/infra/compose.yaml), r
 | `google` | GitHub's OIDC issuer, Google's STS and IAM Credentials | `http://google:8080` |
 | `openrouter` | OpenRouter's management API, and its inference API for OpenCode | `http://openrouter:8080` |
 | `runpod` | Runpod's REST API, the pods' proxy, and the Serverless queues | `http://runpod:8080`; a pod at `/pods/{id}/{port}` |
+| `salad` | Salad's API for GPU classes and container groups, and the groups' Container Gateway | `http://salad:8080`; a group at `/pods/{name}/{port}` |
 | `llm` | The scripted model, behind OpenRouter, the Serverless queues and the tee | `http://llm:8080` |
 | `npm` | The npm registry, for OpenCode's tarballs only | `http://npm:8080` |
 | `huggingface` | Hugging Face's Hub, for the model information only | `http://huggingface:8080` |
 | `firestore` | Firestore, as Google's emulator with Codeman's rules | `http://firestore:8080` |
 
 - **The fake Hub** serves `GET /api/models/{namespace}/{name}`, the one route Codeman calls before it creates a vLLM pod ([`huggingface.ts`](../../../e2e/fakes/huggingface/huggingface.ts)). Its models come from the `codeman-e2e-hf` volume, mounted read-only, in [the client's cache layout](../../web/hugging-face/understand-caching.md): each file's size and hash from its blob. Without the `vllm` profile the volume is empty, and every model answers 401, as the Hub does for a missing one. Its unit tests use `models.json`, the pinned model as the seeded volume gives it.
+- **The fake Salad** answers one organization and one project, `e2e-salad/codeman`, which the world's `CODEMAN_SALAD_ORGANIZATION` and `CODEMAN_SALAD_PROJECT` name, with the `Salad-Api-Key` of the world's `CODEMAN_SALAD_API_KEY` ([`salad.ts`](../../../e2e/fakes/salad/salad.ts)). Its classes are two community ones, `RTX 4090 (24 GB)` and `RTX 3090 (24 GB)`, and a secure one, `RTX PRO 6000 (96 GB)`, at Salad's prices by priority. A group is `pending`, then `deploying` while its container starts, then `running`; it has its `networking.dns` once it runs. A deleted group answers 404, and its container is stopped. Its errors are problem details.
 - **The fake Runpod's errors** are Runpod's problems, `application/problem+json`: 400 for a GPU without capacity, 402 under the `low-balance` fault, 422 for a body outside the contract ([create a pod](../../web/runpod/create-a-pod.md#errors)).
 - **The fake GitHub's permissions** follow [GitHub's table](../../web/github/permissions-required-for-github-apps.md): one pull request reads with Contents or Pull requests, an issue with Issues alone. Where the table lists Issues and Pull requests as alternatives, as for an issue's labels and comments, the fake takes Pull requests only on a pull request.
 - **The fake GitHub** serves HTTPS under a `*.localhost` name, which `@actions/artifact` requires. A test CA signs its certificate, made once and kept in a volume while valid. Node, git and `gh` in the job image trust it.
@@ -68,6 +70,7 @@ Each fake's own routes are under `/_fake/<fake>/`.
 | `google` | `PUT setup`, the provider, service accounts and condition; `POST runs`, a run's OIDC request token; `PUT faults` |
 | `openrouter` | `GET keys`, with each key's shown `usage` and real spend; `PUT keys/{hash}/usage`; `PUT credits`, the account's credits until the next reset; `PUT lags`; `POST settle`; `PUT prices`; `PUT completions`; `GET generations`, each billed request |
 | `runpod` | `GET pods`, terminated ones included, with each one's env, `cost` and `billing` (`running`, or `stopped` once it exited or was terminated); `POST pods/{id}/{action}`; `PUT setup`; `GET` and `PATCH catalog`; `PUT endpoints/{id}` and its `workers`; `GET jobs`, the Serverless jobs; `GET endpoints/{id}/cost`; `PUT faults`, `{ podStart, lowBalance, holdQueues, podAgeMs }`, where `podAgeMs` dates the pods created from then on, and their billing, that far back. The setup's shapes refuse unknown keys |
+| `salad` | `GET groups`, deleted ones included, with each one's env, `gpu`, `host`, `priority`, `restartPolicy`, `replicas`, `networking`, `deleted` and `deletedAt`; `PUT setup`, `{ keys, organization, project, classes }` |
 | `llm` | `PUT scripts/{scenario}`, `GET scripts`, `DELETE scripts/{scenario}`; `GET turns`, each request and what it was taken for; `GET violations`, the requests no script covered |
 
 The `fakes` check of a scenario reads these lists ([checks](scenarios.md#the-fakes-lists)).
@@ -130,9 +133,9 @@ Its inspection API, under `/_fake/tee/` on port 9091 and on the engine's port:
 
 ## The pod launcher
 
-No container gets the Docker socket. When the fake Runpod creates a pod, it calls the runtime's launcher, on the host, behind a token of the session ([`launcher.ts`](../../../e2e/runtime/launcher.ts)).
+No container gets the Docker socket. When the fake Runpod creates a pod, or the fake Salad a container group, it calls the runtime's launcher, on the host, behind a token of the session ([`launcher.ts`](../../../e2e/runtime/launcher.ts)).
 
-1. The launcher maps the pod's image to a local e2e image, by the allowlist of [`e2e/infra/pod-images.ts`](../../../e2e/infra/pod-images.ts): Codeman's [pinned pod images](../../glossary.md#pinned-pod-image), by digest. Any other image is refused.
+1. The launcher maps the pod's image to a local e2e image, by the allowlist of [`e2e/infra/pod-images.ts`](../../../e2e/infra/pod-images.ts): Codeman's [pinned pod images](../../glossary.md#pinned-pod-image), by digest. Any other image is refused. The local images are built from the sources' gateway, so the e2e build lets Salad pods run the pinned images, which the published build refuses until images that serve on Salad are pinned.
 2. It runs the container with `docker run --init` on the jobs network, with the pod's environment, the tee's options of the scenario (`world.runpod.tee`), and its model's volume, read-only. A vLLM pod also gets 1 GiB of `/dev/shm`, as a Runpod pod has more than Docker's default of 64 MiB: vLLM's CPU engine allocates 160 MiB there at its start, and fails without it.
-3. The fake Runpod's proxy forwards `/pods/{id}/{port}` to the container.
+3. The fake Runpod's proxy, or the fake Salad's Container Gateway, forwards `/pods/{id}/{port}` to the container.
 4. A terminated pod's container is removed, after the runtime reads its engine's state, which the `engine` check then gives for that pod ([checks](scenarios.md#checks)). Every container of a scenario goes when the scenario ends.

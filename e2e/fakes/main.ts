@@ -20,6 +20,7 @@ const FAKES: Record<string, () => Promise<FakeModule>> = {
   npm: () => import("./npm/npm.ts"),
   openrouter: () => import("./openrouter/openrouter.ts"),
   runpod: () => import("./runpod/runpod.ts"),
+  salad: () => import("./salad/salad.ts"),
   tee: () => import("./llm/tee.ts"),
 };
 

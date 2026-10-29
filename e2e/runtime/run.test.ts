@@ -10,6 +10,7 @@ import { FakeServer } from "../fakes/http.ts";
 import { LlmFake } from "../fakes/llm/llm.ts";
 import { OpenRouterFake } from "../fakes/openrouter/openrouter.ts";
 import { RunpodFake } from "../fakes/runpod/runpod.ts";
+import { SaladFake } from "../fakes/salad/salad.ts";
 import { FakeClient, type Fakes } from "./fakes.ts";
 import type { JobFault } from "./faults.ts";
 import { FaultingExecutor } from "./faults.ts";
@@ -57,6 +58,7 @@ before(async () => {
     llm: await listen("llm", new LlmFake().server),
     openrouter: await listen("openrouter", new OpenRouterFake({ managementKey: "m" }).server),
     runpod: await listen("runpod", new RunpodFake().server),
+    salad: await listen("salad", new SaladFake().server),
     npm: await listen("npm", new FakeServer("npm")),
     huggingface: await listen("huggingface", new FakeServer("huggingface")),
     firestore: "http://127.0.0.1:1",

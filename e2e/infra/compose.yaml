@@ -150,6 +150,20 @@ services:
       seed-ollama: { condition: service_completed_successfully, required: false }
       seed-hf: { condition: service_completed_successfully, required: false }
 
+  # Salad's API and Container Gateway; its groups' containers start through the same launcher.
+  salad:
+    <<: *fake
+    command: [node, e2e/fakes/main.ts, salad]
+    environment:
+      <<: *fake-environment
+      FAKE_SALAD_LAUNCHER: ${CODEMAN_E2E_LAUNCHER:-}
+      FAKE_SALAD_LAUNCHER_TOKEN: ${CODEMAN_E2E_LAUNCHER_TOKEN:-}
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    depends_on:
+      llm: { condition: service_healthy }
+      seed-ollama: { condition: service_completed_successfully, required: false }
+      seed-hf: { condition: service_completed_successfully, required: false }
+
   # OpenCode's tarballs (decision 4), from the volume seed-npm fills.
   npm:
     <<: *fake

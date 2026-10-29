@@ -1,0 +1,73 @@
+name: Ollama pod on Salad, on community hosts the settings allow, deleted at the end
+tags: [pods, ollama, salad]
+profiles: [ollama]
+timeout: 25m
+world:
+  organizations:
+    - name: acme
+      settings:
+        provider: salad-pod
+        model: qwen2.5:0.5b
+        gpu: RTX 4090 (24 GB)
+        # Salad's consumer GPUs run on community hosts, which only the settings may allow.
+        hosts: [community]
+        task-budget: 2
+  repositories:
+    - { name: acme/app, fixture: node-small, maintainers: [alice] }
+agent:
+  i1:
+    plan:
+      - steps:
+          - bash: plan=$(sed -n 's/.*Create the plan at `\([^`]*\)`.*/\1/p' .codeman/task.md) && mkdir -p "$(dirname "$plan")" && printf '# Add a health route\n' > "$plan"
+          - output: { summary: Adds a health route., decisions: [] }
+    route:
+      - steps:
+          - output:
+              summary: Code, then review.
+              route: [{ stage: code, brief: Add the route. }, { stage: review, brief: Check it. }]
+              skipped: [{ stage: web, reason: No docs. }, { stage: design, reason: Settled. }, { stage: test, reason: Too small. }]
+    code:
+      - steps:
+          - write: { path: src/health.ts, content: "export const ok = true;\n" }
+          - output: { status: done, summary: Adds the route., commitMessage: Add a health route }
+    review:
+      - steps: [{ output: { status: done, summary: The route is right. } }]
+actions:
+  - open-issue: { ref: i1, as: alice, title: Add a health route, labels: [codeman] }
+  # The labeled issue's run, and the chain it starts: plan, route, code, review, each a run.
+  - run: { event: issues.labeled }
+  - expect:
+      issue: i1
+      labels: [codeman:done]
+      pull-request: { ready: true, files: [src/health.ts] }
+  # One group of one replica that never restarts its container, at the highest priority, on the
+  # community class `gpu` names, kept between the stages and deleted by the last one's release.
+  - expect:
+      fakes:
+        salad:
+          groups:
+            where:
+              deleted: true
+              gpu: RTX 4090 (24 GB)
+              host: community
+              priority: high
+              restartPolicy: never
+              replicas: 1
+              networking: { auth: false, port: 8080 }
+              env:
+                CODEMAN_MODEL: qwen2.5:0.5b
+                CODEMAN_ENGINE: ollama
+                CODEMAN_GPU_MEMORY_GB: "24"
+                CODEMAN_ORGANIZATION: acme
+                CODEMAN_POOL: acme
+            count: 1
+      store:
+        - { collection: pools/acme/pods, count: 1 }
+        - { collection: pools/acme/pods, where: { live: false, status: ended, leases: [] }, count: 1 }
+        - { collection: organizations/acme/events, where: { type: pod-created }, count: 1 }
+        - { collection: organizations/acme/events, where: { type: pod-joined }, count: 3 }
+        - { collection: organizations/acme/events, where: { type: pod-terminated }, count: 1 }
+        - { collection: organizations/acme/runs, where: { provider: salad-pod, status: closed }, count: 4 }
+      # The pod's time, at the RTX 4090's high price of 0.44 USD an hour, split among the runs.
+      ledger: { cost-at-least: 0.001, cost-at-most: 0.3, runs: 4 }
+      violations: none

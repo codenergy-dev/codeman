@@ -802,6 +802,10 @@ test("today's flat files read the same, and the template is one", () => {
     ok: true,
     value: { gpu: "NVIDIA RTX  A6000" },
   });
+  assert.deepEqual(parseSettings("gpu: RTX 4090 (24 GB)"), {
+    ok: true,
+    value: { gpu: "RTX 4090 (24 GB)" },
+  });
 });
 
 /** The plan's example, with a profile per stage and the default for the others. */

@@ -166,6 +166,7 @@ export class Session {
       llm: await client("llm", 8080),
       openrouter: await client("openrouter", 8080),
       runpod: await client("runpod", 8080),
+      salad: await client("salad", 8080),
       npm: await client("npm", 8080),
       huggingface: await client("huggingface", 8080),
       firestore: `http://${await compose.port("firestore", 8080)}`,
@@ -377,7 +378,7 @@ export class Session {
 
   /**
    * Checks the scenario starts from nothing of an earlier one: no document in its store, no pod
-   * on the fake Runpod, no container of the session, and no event, dispatch or violation on the
+   * on the fake Runpod, no group on the fake Salad, no container of the session, and no event, dispatch or violation on the
    * fake GitHub but its new world's. The repositories are new: the fake refuses one that exists.
    */
   async #fresh(scenario: Scenario, store: Firestore): Promise<void> {
@@ -393,6 +394,8 @@ export class Session {
     }
     const pods = await this.fakes.runpod.json<{ status: string }[]>("GET", "/runpod/pods");
     if (pods.length > 0) left.push(`${pods.length} pods on the fake Runpod`);
+    const groups = await this.fakes.salad.json<unknown[]>("GET", "/salad/groups");
+    if (groups.length > 0) left.push(`${groups.length} container groups on the fake Salad`);
     const containers = (
       await dockerOk(["ps", "-aq", "--filter", `label=${SESSION_LABEL}=${this.id}`])
     ).trim();
@@ -428,6 +431,7 @@ export class Session {
       github: ["events", "dispatches", "violations", "requests"],
       openrouter: ["keys", "generations", "requests"],
       runpod: ["pods", "jobs", "requests"],
+      salad: ["groups", "requests"],
       google: ["requests"],
       llm: ["turns", "violations", "requests"],
       npm: ["requests"],
@@ -535,7 +539,8 @@ export class Session {
   /**
    * A pod's engine, read inside its container: the gateway's `/admin/status`, with the admin
    * token Codeman derives from the account's key and the pod's nonce (its `CODEMAN_NONCE`, as the
-   * fake Runpod recorded the pod's env), Ollama's `/api/ps`, vLLM's models and metrics.
+   * fake Runpod or the fake Salad recorded the pod's env), Ollama's `/api/ps`, vLLM's models and
+   * metrics.
    */
   async #engine(id: string): Promise<EngineStatus> {
     const container = this.launcher.pods.get(id);
@@ -564,9 +569,19 @@ export class Session {
       "GET",
       "/runpod/pods",
     );
-    const nonce = pods.find((pod) => pod.id === id)?.env?.CODEMAN_NONCE;
-    if (!nonce) throw new Error(`The fake Runpod has no CODEMAN_NONCE for pod ${id}.`);
-    const token = adminToken(PROVIDER_KEYS.CODEMAN_RUNPOD_API_KEY ?? "", nonce);
+    const groups = await this.fakes.salad.json<{ name: string; env?: Record<string, string> }[]>(
+      "GET",
+      "/salad/groups",
+    );
+    const onRunpod = pods.find((pod) => pod.id === id)?.env?.CODEMAN_NONCE;
+    const onSalad = groups.find((group) => group.name === id)?.env?.CODEMAN_NONCE;
+    const nonce = onRunpod ?? onSalad;
+    if (!nonce)
+      throw new Error(`Neither the fake Runpod nor Salad has a CODEMAN_NONCE for pod ${id}.`);
+    const key = onRunpod
+      ? PROVIDER_KEYS.CODEMAN_RUNPOD_API_KEY
+      : PROVIDER_KEYS.CODEMAN_SALAD_API_KEY;
+    const token = adminToken(key ?? "", nonce);
     const status: EngineStatus = {
       gateway: parse(await get("http://127.0.0.1:8080/admin/status", token)),
     };

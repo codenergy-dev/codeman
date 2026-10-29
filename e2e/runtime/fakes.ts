@@ -147,6 +147,7 @@ export interface Fakes {
   llm: FakeClient;
   openrouter: FakeClient;
   runpod: FakeClient;
+  salad: FakeClient;
   npm: FakeClient;
   huggingface: FakeClient;
   /** The emulator's origin from the host, such as `http://127.0.0.1:41234`. */
@@ -157,6 +158,7 @@ export const FAKE_NAMES: readonly FakeName[] = [
   "github",
   "openrouter",
   "runpod",
+  "salad",
   "google",
   "llm",
   "npm",
@@ -170,6 +172,7 @@ export const INTERNAL = {
   llm: "http://llm:8080",
   openrouter: "http://openrouter:8080",
   runpod: "http://runpod:8080",
+  salad: "http://salad:8080",
   npm: "http://npm:8080",
   huggingface: "http://huggingface:8080",
   firestore: "http://firestore:8080",
@@ -185,6 +188,8 @@ export function bundleEndpoints(internal: typeof INTERNAL = INTERNAL): Record<st
     runpod: internal.runpod,
     runpodServerless: internal.runpod,
     runpodPods: `${internal.runpod}/pods/{id}/{port}`,
+    salad: internal.salad,
+    saladPods: `${internal.salad}/pods/{id}/{port}`,
     npm: internal.npm,
     huggingFace: internal.huggingface,
     googleSts: internal.google,

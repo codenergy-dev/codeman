@@ -1156,6 +1156,8 @@ function runSettings(body) {
 }
 
 // src/e2e.ts
+var PODS = { runpod: "runpodPods", salad: "saladPods" };
+var PODS_KEYS = Object.values(PODS);
 var E2E = false ? redirects(process.env) : void 0;
 
 // src/inference/gpu.ts

@@ -188,11 +188,12 @@ export function scalar(text: string): string | undefined {
   return plainScalar(text.replace(/\s+#.*$/, "").trim());
 }
 
-const WORD = /^[A-Za-z0-9._~/:_-]*$/;
+const WORD = /^[A-Za-z0-9._~/:_()-]*$/;
 
 /**
  * A plain scalar: one word of safe characters, as before profiles, or several separated by
- * spaces, such as a GPU type. Words that YAML would read as a key or a list item are refused.
+ * spaces, such as a GPU type, Salad's with its memory in parentheses. Words that YAML would read
+ * as a key or a list item are refused.
  */
 function plainScalar(text: string): string | undefined {
   const words = text.split(/ +/);

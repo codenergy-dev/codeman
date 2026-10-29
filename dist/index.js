@@ -19773,6 +19773,8 @@ function actionPathIn(workspace, root = ACTION_ROOT) {
 }
 
 // src/e2e.ts
+var PODS = { runpod: "runpodPods", salad: "saladPods" };
+var PODS_KEYS = Object.values(PODS);
 var E2E = false ? redirects(process.env) : void 0;
 
 // src/pool.ts
@@ -21333,7 +21335,7 @@ function scalar(text) {
   if (quoted) return quoted[2];
   return plainScalar(text.replace(/\s+#.*$/, "").trim());
 }
-var WORD = /^[A-Za-z0-9._~/:_-]*$/;
+var WORD = /^[A-Za-z0-9._~/:_()-]*$/;
 function plainScalar(text) {
   const words = text.split(/ +/);
   if (!words.every((word) => WORD.test(word))) return void 0;

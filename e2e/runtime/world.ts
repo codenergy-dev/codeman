@@ -13,7 +13,7 @@ import { PROVIDER_SECRETS, type Scenario, secretsOf, type World } from "./scenar
  * Builds a scenario's world on fakes that were just reset: its users, organizations and
  * repositories (each from its fixture, with Codeman's workflow templates), Codeman's own public
  * repository at the commit `CODEMAN_COMMIT_SHA` names, the App and its installations, the
- * Google side that admits the scenario's owners, Runpod's and OpenRouter's setups, and the agent's
+ * Google side that admits the scenario's owners, Runpod's, Salad's and OpenRouter's setups, and the agent's
  * script on the scripted model. Each scenario gets its own Firestore project, so no document of
  * an earlier scenario is in its store.
  */
@@ -39,7 +39,11 @@ export const PROVIDER_KEYS: Record<string, string> = {
   CODEMAN_OPENROUTER_MANAGEMENT_KEY: "e2e-openrouter-management-key",
   CODEMAN_RUNPOD_API_KEY: "e2e-runpod-api-key",
   CODEMAN_RUNPOD_SERVERLESS_KEY: "e2e-runpod-serverless-key",
+  CODEMAN_SALAD_API_KEY: "e2e-salad-api-key",
 };
+
+/** The fake Salad's organization and project, as the variables give them. */
+export const SALAD_ACCOUNT = { organization: "e2e-salad", project: "codeman" };
 
 const PROVIDER =
   "projects/123456789/locations/global/workloadIdentityPools/codeman/providers/github";
@@ -165,6 +169,8 @@ export async function buildWorld(
     CODEMAN_FIREBASE_PROJECT: project,
     CODEMAN_WORKLOAD_IDENTITY_PROVIDER: PROVIDER,
     CODEMAN_SERVICE_ACCOUNT: serviceAccount,
+    CODEMAN_SALAD_ORGANIZATION: SALAD_ACCOUNT.organization,
+    CODEMAN_SALAD_PROJECT: SALAD_ACCOUNT.project,
   };
   const repositoryOf = (name: string) => {
     const found = world.repositories.find((one) => one.name.toLowerCase() === name.toLowerCase());
@@ -209,6 +215,10 @@ async function setUpProviders(world: World, fakes: Fakes): Promise<void> {
     keys: [PROVIDER_KEYS.CODEMAN_RUNPOD_API_KEY, PROVIDER_KEYS.CODEMAN_RUNPOD_SERVERLESS_KEY],
     ...(runpod?.catalog ? { catalog: runpod.catalog } : {}),
     endpoints: runpod?.endpoints ?? [],
+  });
+  await fakes.salad.json("PUT", "/salad/setup", {
+    keys: [PROVIDER_KEYS.CODEMAN_SALAD_API_KEY],
+    ...SALAD_ACCOUNT,
   });
   const openrouter = world.openrouter;
   if (openrouter?.credits !== undefined) {

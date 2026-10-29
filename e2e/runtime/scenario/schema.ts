@@ -56,6 +56,7 @@ export const PROVIDER_SECRETS = {
   openrouter: "CODEMAN_OPENROUTER_MANAGEMENT_KEY",
   runpod: "CODEMAN_RUNPOD_API_KEY",
   "runpod-serverless": "CODEMAN_RUNPOD_SERVERLESS_KEY",
+  salad: "CODEMAN_SALAD_API_KEY",
 } as const;
 export type ProviderSecret = keyof typeof PROVIDER_SECRETS;
 
@@ -340,6 +341,7 @@ export const FAKES = [
   "github",
   "openrouter",
   "runpod",
+  "salad",
   "google",
   "llm",
   "npm",
@@ -519,6 +521,7 @@ export const FAKE_LISTS: Readonly<Record<FakeName, readonly string[]>> = {
   github: ["events", "dispatches", "runs", "violations", "requests", "tokens"],
   openrouter: ["keys", "generations", "requests"],
   runpod: ["jobs", "requests"],
+  salad: ["groups", "requests"],
   google: ["requests"],
   llm: ["turns", "violations", "requests"],
   npm: ["requests"],

@@ -471,6 +471,7 @@ export async function fakeList(fakes: Fakes, fake: string, list: string): Promis
     "openrouter.generations": "/openrouter/generations",
     "runpod.jobs": "/runpod/jobs",
     "runpod.pods": "/runpod/pods",
+    "salad.groups": "/salad/groups",
     "llm.turns": "/llm/turns",
     "llm.violations": "/llm/violations",
   };

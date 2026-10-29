@@ -297,6 +297,7 @@ Every scenario also ends with an implicit `violations: none`.
 | `github` | `events`, `dispatches`, `runs`, `violations`, `requests`, `tokens` |
 | `openrouter` | `keys`, `generations`, `requests` |
 | `runpod` | `jobs`, `requests` |
+| `salad` | `groups`, `requests` |
 | `google`, `npm`, `huggingface` | `requests` |
 | `llm` | `turns`, `violations`, `requests` |
 

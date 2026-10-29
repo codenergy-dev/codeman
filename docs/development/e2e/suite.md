@@ -39,7 +39,7 @@ The suite replaces some parts of the real path. What each replacement hides, no 
 | act, for the scenarios [under act](#under-act) | GitHub's runner, with the actions' own code | What [act's limits](#acts-limits) list |
 | The tee, in each pod | The agent's chat to the engine | The engine reads a short fixed prompt, not the agent's: real prefill, real context use and parsing of the agent's tool calls go untested |
 | The tee's `/api/ps` and pull | Ollama's `size_vram`, and its registry pull | A real GPU's memory, and a pull from the registry |
-| The pod launcher | Runpod's machines, and Codeman's pinned pod images | The published images: the e2e images are built locally, with the e2e gateway |
+| The pod launcher | Runpod's and Salad's machines, and Codeman's pinned pod images | The published images: the e2e images are built locally, with the e2e gateway |
 | The simulator's masks | GitHub's runner's, which hide each secret a step registers and skip each job output holding one | The fake Google's access token, `owner`, the one the Firestore emulator takes as an admin: Codeman masks it, but the simulator does not, since a real token is random and a common word would hide every output with it, such as `select`'s `dispatches`. A log that printed the token would not show it masked |
 
 ## Before you run it
