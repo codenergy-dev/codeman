@@ -55,9 +55,11 @@ const near = (actual: number | undefined, expected: number) =>
  * Pods on a fake GPU cloud, with the pod registry in memory. By default each pod's gateway answers
  * as one that serves one run at a time; with `real`, Codeman's own gateway answers.
  */
-function setup(options: { real?: boolean; image?: string; hub?: ModelHub } = {}) {
+function setup(
+  options: { real?: boolean; image?: string; hub?: ModelHub; noBilling?: boolean } = {},
+) {
   let now = new Date("2026-10-03T12:00:00Z");
-  const gpu = new FakeGpu({ now: () => now });
+  const gpu = new FakeGpu({ now: () => now, noBilling: options.noBilling === true });
   const gateways = new FakeGateways(gpu, { real: options.real === true });
   after(() => gateways.close());
   const store = new MemoryStore();
@@ -343,6 +345,46 @@ test("a kept pod's time between runs counts in its cost, before Runpod bills it"
   const usage = await second.provider.close(second.opened.handle, new FakeRuntime());
   assert.ok(Math.abs(usage.cost - 0.06) < 1e-9, "the run: 5 minutes");
   assert.equal(usage.podCosts?.pod1, 0.204, "the pod: 17 minutes, 2 of them between runs");
+});
+
+test("without the provider's billing, as on Salad, a run costs its pod's time from its creation at the price of its priority", async () => {
+  const { gpu, open, advance } = setup({ noBilling: true });
+  gpu.priorityPrices.medium = { "GPU-A": 0.0001 };
+  // What a billing would say, were it read.
+  gpu.billed.pod1 = 9;
+  const first = await open("7", "300", { priority: "medium" }, repository, 1.5);
+  assert.equal(first.handle.pricePerSecond, 0.0001, "the listed price at its priority");
+  assert.equal(first.handle.start, first.handle.created, "from the pod's creation");
+  advance(10 * 60_000);
+  const runtime = new FakeRuntime();
+  const usage = await first.provider.close(first.opened.handle, runtime);
+  near(usage.cost, 0.06);
+  assert.deepEqual(usage.podCosts, { pod1: 0.06 }, "the pod's lifetime, no billing");
+  assert.deepEqual(runtime.logged("warning"), [], "an estimate by design, not a failure");
+  // The next run counts the kept pod's time between runs, still without billing.
+  advance(2 * 60_000);
+  const second = await open("7", "301", { priority: "medium" }, repository, 1.1);
+  advance(5 * 60_000);
+  const next = await second.provider.close(second.opened.handle, new FakeRuntime());
+  near(next.cost, 0.03);
+  assert.deepEqual(next.podCosts, { pod1: 0.102 }, "17 minutes of the pod");
+});
+
+test("without the provider's billing, runs on a shared pod each count their share of its time", async () => {
+  const { gpu, open, advance } = setup({ real: true, image: SHARED_IMAGE, noBilling: true });
+  gpu.billed.pod1 = 9;
+  const a = await open("7", "300");
+  const b = await open("8", "300");
+  assert.equal(gpu.created.length, 1);
+  advance(10 * 60_000);
+  const first = await a.provider.close(a.opened.handle, new FakeRuntime());
+  near(first.cost, 0.06);
+  assert.deepEqual(first.podCosts, { pod1: 0.06 }, "its share, as the gateway measured it");
+  assert.equal(first.podShared, true);
+  advance(10 * 60_000);
+  const second = await b.provider.close(b.opened.handle, new FakeRuntime());
+  near(second.cost, 0.18);
+  assert.deepEqual(second.podCosts, { pod1: 0.18 });
 });
 
 test("Codeman's environment for an organization: its own, or a repository's from before the registry", () => {

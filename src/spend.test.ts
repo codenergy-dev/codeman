@@ -121,6 +121,23 @@ test("the notes say how each provider of the rows is measured, once each and in 
   );
 });
 
+test("a Salad row is marked an estimate that nothing refreshes, and the month says so", () => {
+  const salad = { ...row(0.1), provider: "salad-pod" as const };
+  const cell = (t = en) => spendTable(t, { rows: [salad] })[2]?.split(" | ")[3];
+  assert.equal(cell(), "Salad (pod)");
+  assert.equal(cell(ptBR), "Salad (pod)");
+  const [note, month] = spendNotes(en, { rows: [salad] });
+  assert.match(
+    note ?? "",
+    /^\*\*Salad \(pod\)\*\*: a run's cost is an estimate: its pod's time at/,
+  );
+  assert.match(note ?? "", /Salad has no billing API, so nothing refreshes it\.$/);
+  assert.match(month ?? "", /Salad's runs count their estimates, since Salad has no billing/);
+  const [nota, mes] = spendNotes(ptBR, { rows: [salad] });
+  assert.match(nota ?? "", /^\*\*Salad \(pod\)\*\*: o custo de uma rodada é uma estimativa/);
+  assert.match(mes ?? "", /as rodadas da Salad contam as suas estimativas/);
+});
+
 test("the oldest rows fold into one past the limit, with their sums", () => {
   let spending = addRow(undefined, row(0.1, 1), 2);
   spending = addRow(spending, row(0.2, 2), 2);

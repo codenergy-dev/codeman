@@ -580,7 +580,10 @@ export class PodInference implements InferenceProvider {
    * Ends the run on the pod and reads what it used, then keeps the pod for the next runs on its
    * settings (a keep lease) or leaves it; a pod that no run uses and no task keeps is terminated.
    * A run alone on its pod costs the pod's time since it started; a run on a shared pod, its
-   * share, and the task counts what the gateway gave it of the pod: Runpod bills the pod whole.
+   * share, and the task counts what the gateway gave it of the pod: the provider bills the pod
+   * whole. Both are at the pod's price: the rate its provider bills, or the listed one when it
+   * says none, as on Salad, whose costs are only these estimates (decision 5 of the plan for Salad
+   * pods).
    */
   async close(text: string, log: Log): Promise<RunUsage> {
     const handle = parseHandle(text);
@@ -605,8 +608,9 @@ export class PodInference implements InferenceProvider {
       };
     }
     const billed = await this.#billing([...this.#settings.pods, handle.podId], now, log);
-    // Runpod bills a running pod late, so the pod also counts for its whole life so far,
-    // including a kept pod's time between runs; its billing wins once higher.
+    // Runpod bills a running pod late, and Salad not at all, so the pod also counts for its
+    // whole life so far, including a kept pod's time between runs; its billing, when the
+    // provider has one, wins once higher.
     const lifetime =
       handle.created === undefined
         ? undefined

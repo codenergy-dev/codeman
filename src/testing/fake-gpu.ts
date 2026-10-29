@@ -30,6 +30,8 @@ export class FakeGpu implements GpuProvider {
   readonly prices: Record<string, number>;
   /** The same on community hosts; none is offered there unless listed. */
   readonly communityPrices: Record<string, number> = {};
+  /** USD per second at a priority, by priority and GPU type, as Salad lists them; else `prices`. */
+  readonly priorityPrices: Record<string, Record<string, number>> = {};
   /** GB of memory, by GPU type; types not listed do not say. */
   readonly memories: Record<string, number> = { "GPU-A": 48 };
   /** The CUDA versions hosts offer, by GPU type; types not listed offer 13.0, with room. */
@@ -54,14 +56,18 @@ export class FakeGpu implements GpuProvider {
       now?: () => Date;
       /** Images whose gateway cannot serve on this cloud, as Salad lists them. */
       unservedImages?: ReadonlySet<string>;
+      /** A cloud without pod billing, as Salad: `pods.billing` is left out. */
+      noBilling?: boolean;
     } = {},
   ) {
     this.prices = options.prices ?? { "GPU-A": 0.0002 };
     this.now = options.now ?? (() => new Date("2026-10-03T12:00:00Z"));
     this.pods = {
       unservedImages: options.unservedImages,
-      price: async (gpuType, host = "secure") => {
-        const price = (host === "community" ? this.communityPrices : this.prices)[gpuType];
+      price: async (gpuType, host = "secure", priority) => {
+        const price =
+          (priority === undefined ? undefined : this.priorityPrices[priority]?.[gpuType]) ??
+          (host === "community" ? this.communityPrices : this.prices)[gpuType];
         if (price === undefined) throw new Error(`No ${gpuType} on ${host} hosts.`);
         return price;
       },
@@ -88,7 +94,10 @@ export class FakeGpu implements GpuProvider {
           env: { ...spec.env },
           gpuType: spec.gpuType,
           createdAt: this.now(),
-          pricePerSecond: prices[spec.gpuType],
+          pricePerSecond:
+            (spec.priority === undefined
+              ? undefined
+              : this.priorityPrices[spec.priority]?.[spec.gpuType]) ?? prices[spec.gpuType],
           host,
         };
         this.live.set(pod.id, pod);
@@ -114,14 +123,18 @@ export class FakeGpu implements GpuProvider {
         this.live.delete(id);
       },
       url: async (id, port) => `https://${id}-${port}.pods.test`,
-      billing: async (ids) => {
-        const billed: Record<string, number> = {};
-        for (const id of ids) {
-          const amount = this.billed[id];
-          if (amount !== undefined) billed[id] = amount;
-        }
-        return billed;
-      },
+      ...(options.noBilling
+        ? {}
+        : {
+            billing: async (ids: readonly string[]) => {
+              const billed: Record<string, number> = {};
+              for (const id of ids) {
+                const amount = this.billed[id];
+                if (amount !== undefined) billed[id] = amount;
+              }
+              return billed;
+            },
+          }),
     };
     this.serverless = {
       endpoint: async (id) => {

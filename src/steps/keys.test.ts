@@ -389,6 +389,29 @@ test("a provider without its secret opens nothing, and says which", async () => 
   assert.equal((await run(runs, "300-1-7"))?.status, "refused");
 });
 
+test("the organization's month counts Salad's runs from the ledger, and reads no billing of Salad's", async () => {
+  const store = new MemoryStore();
+  await seedRuns(store, {
+    "250-1-8": { status: "closed", cost: 5, provider: "salad-pod" },
+    "260-1-9": { status: "closed", cost: 1, provider: "runpod-pod", repository: "o/s" },
+    "300-1-7": {},
+  });
+  const accounts = new FakeAccounts();
+  // Salad's account counts in no reconciliation, so the job need not have its key.
+  accounts.secrets.salad = "CODEMAN_SALAD_API_KEY";
+  const { runtime } = await open(store, {
+    accounts,
+    inputs: openInputs({ "organization-monthly-budget": "50" }),
+  });
+  assert.equal(runtime.outputs.status, "opened");
+  assert.deepEqual(accounts.billingRead, ["runpod"], "Runpod's billing only");
+  assert.equal(runtime.outputs["organization-month-spent"], "6.0000");
+  assert.match(
+    runtime.logged("info").join("\n"),
+    /the organization's runs count US\$ 6\.00 of US\$ 50\.00, with runpod's hourly billing\./,
+  );
+});
+
 test("closes the run by its handle, and reports what it used and the task's spend from the ledger", async () => {
   const store = new MemoryStore();
   await seedRuns(store, {

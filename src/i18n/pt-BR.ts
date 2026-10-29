@@ -169,10 +169,10 @@ export const ptBR: Messages = {
       "runpod-serverless":
         "**Runpod (Serverless)**: o custo de uma rodada é uma estimativa do tempo que a Runpod cobra pelos seus workers, que conta no mês assim que a rodada termina; o tempo em que um worker atendeu várias rodadas ao mesmo tempo, de qualquer repositório da organização, é dividido entre elas, e as rodadas seguintes o atualizam.",
       "salad-pod":
-        "**Salad (pod)**: o custo de uma rodada é uma estimativa, o tempo do seu pod desde a sua criação ao preço que a Salad lista para a sua GPU e prioridade; a tarefa conta também o tempo do pod entre rodadas. A Salad não tem API de cobrança, então nada o atualiza.",
+        "**Salad (pod)**: o custo de uma rodada é uma estimativa: o tempo do seu pod ao preço que a Salad lista para a sua GPU e prioridade, incluído o download gratuito da sua imagem; a tarefa conta também o tempo do pod entre rodadas. A Salad não tem API de cobrança, então nada o atualiza.",
     })[provider],
   monthNote:
-    "**Mês**: o que as rodadas do repositório contam neste mês no registro do Codeman antes da rodada, uma estimativa: o custo de cada rodada como acima, e o limite inteiro de cada rodada ainda aberta. O orçamento mensal da organização, quando ela tem um, conta as rodadas de todos os repositórios e a cobrança da Runpod por hora.",
+    "**Mês**: o que as rodadas do repositório contam neste mês no registro do Codeman antes da rodada, uma estimativa: o custo de cada rodada como acima, e o limite inteiro de cada rodada ainda aberta. O orçamento mensal da organização, quando ela tem um, conta as rodadas de todos os repositórios e a cobrança da Runpod por hora; as rodadas da Salad contam as suas estimativas, já que a Salad não tem cobrança a ler.",
   earlierRuns: (runs) => `Rodadas anteriores (${runs})`,
   totalRow: (runs) => `Total (${runs} ${runs === 1 ? "rodada" : "rodadas"})`,
   runsWithoutRow: "Rodadas sem linha",

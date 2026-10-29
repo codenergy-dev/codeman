@@ -24256,7 +24256,10 @@ var PodInference = class {
    * Ends the run on the pod and reads what it used, then keeps the pod for the next runs on its
    * settings (a keep lease) or leaves it; a pod that no run uses and no task keeps is terminated.
    * A run alone on its pod costs the pod's time since it started; a run on a shared pod, its
-   * share, and the task counts what the gateway gave it of the pod: Runpod bills the pod whole.
+   * share, and the task counts what the gateway gave it of the pod: the provider bills the pod
+   * whole. Both are at the pod's price: the rate its provider bills, or the listed one when it
+   * says none, as on Salad, whose costs are only these estimates (decision 5 of the plan for Salad
+   * pods).
    */
   async close(text, log) {
     const handle = parseHandle(text);
@@ -32128,9 +32131,9 @@ var en = {
     openrouter: "**OpenRouter**: a run's cost is what its key used, exact, and the task's later runs refresh it, whatever their provider.",
     "runpod-pod": "**Runpod (pod)**: a run's cost is its pod's time at the pod's price; the task also counts its pod's time between runs, refreshed later from Runpod's billing.",
     "runpod-serverless": "**Runpod (Serverless)**: a run's cost is an estimate of the time Runpod bills its workers, which counts in the month as soon as the run ends; time a worker served several runs at once, of any of the organization's repositories, is split among them, and later runs refresh it.",
-    "salad-pod": "**Salad (pod)**: a run's cost is an estimate, its pod's time from its creation at Salad's listed price for its GPU and priority; the task also counts its pod's time between runs. Salad has no billing API, so nothing refreshes it."
+    "salad-pod": "**Salad (pod)**: a run's cost is an estimate: its pod's time at Salad's listed price for its GPU and priority, the free download of its image included; the task also counts its pod's time between runs. Salad has no billing API, so nothing refreshes it."
   })[provider],
-  monthNote: "**Month**: what the repository's runs count this month in Codeman's ledger before the run, an estimate: each run's cost as above, and the whole limit of each run still open. The organization's monthly budget, when it has one, counts every repository's runs and Runpod's billing by the hour.",
+  monthNote: "**Month**: what the repository's runs count this month in Codeman's ledger before the run, an estimate: each run's cost as above, and the whole limit of each run still open. The organization's monthly budget, when it has one, counts every repository's runs and Runpod's billing by the hour; Salad's runs count their estimates, since Salad has no billing to read.",
   earlierRuns: (runs) => `Earlier runs (${runs})`,
   totalRow: (runs) => `Total (${runs} ${runs === 1 ? "run" : "runs"})`,
   runsWithoutRow: "Runs without a row",
@@ -32403,9 +32406,9 @@ var ptBR = {
     openrouter: "**OpenRouter**: o custo de uma rodada \xE9 o que a sua chave usou, exato, e as rodadas seguintes da tarefa o atualizam, qualquer que seja o seu provedor.",
     "runpod-pod": "**Runpod (pod)**: o custo de uma rodada \xE9 o tempo do seu pod ao pre\xE7o dele; a tarefa conta tamb\xE9m o tempo do pod entre rodadas, atualizado depois pela cobran\xE7a da Runpod.",
     "runpod-serverless": "**Runpod (Serverless)**: o custo de uma rodada \xE9 uma estimativa do tempo que a Runpod cobra pelos seus workers, que conta no m\xEAs assim que a rodada termina; o tempo em que um worker atendeu v\xE1rias rodadas ao mesmo tempo, de qualquer reposit\xF3rio da organiza\xE7\xE3o, \xE9 dividido entre elas, e as rodadas seguintes o atualizam.",
-    "salad-pod": "**Salad (pod)**: o custo de uma rodada \xE9 uma estimativa, o tempo do seu pod desde a sua cria\xE7\xE3o ao pre\xE7o que a Salad lista para a sua GPU e prioridade; a tarefa conta tamb\xE9m o tempo do pod entre rodadas. A Salad n\xE3o tem API de cobran\xE7a, ent\xE3o nada o atualiza."
+    "salad-pod": "**Salad (pod)**: o custo de uma rodada \xE9 uma estimativa: o tempo do seu pod ao pre\xE7o que a Salad lista para a sua GPU e prioridade, inclu\xEDdo o download gratuito da sua imagem; a tarefa conta tamb\xE9m o tempo do pod entre rodadas. A Salad n\xE3o tem API de cobran\xE7a, ent\xE3o nada o atualiza."
   })[provider],
-  monthNote: "**M\xEAs**: o que as rodadas do reposit\xF3rio contam neste m\xEAs no registro do Codeman antes da rodada, uma estimativa: o custo de cada rodada como acima, e o limite inteiro de cada rodada ainda aberta. O or\xE7amento mensal da organiza\xE7\xE3o, quando ela tem um, conta as rodadas de todos os reposit\xF3rios e a cobran\xE7a da Runpod por hora.",
+  monthNote: "**M\xEAs**: o que as rodadas do reposit\xF3rio contam neste m\xEAs no registro do Codeman antes da rodada, uma estimativa: o custo de cada rodada como acima, e o limite inteiro de cada rodada ainda aberta. O or\xE7amento mensal da organiza\xE7\xE3o, quando ela tem um, conta as rodadas de todos os reposit\xF3rios e a cobran\xE7a da Runpod por hora; as rodadas da Salad contam as suas estimativas, j\xE1 que a Salad n\xE3o tem cobran\xE7a a ler.",
   earlierRuns: (runs) => `Rodadas anteriores (${runs})`,
   totalRow: (runs) => `Total (${runs} ${runs === 1 ? "rodada" : "rodadas"})`,
   runsWithoutRow: "Rodadas sem linha",

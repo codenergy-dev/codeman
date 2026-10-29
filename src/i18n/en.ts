@@ -161,10 +161,10 @@ export const en: Messages = {
       "runpod-serverless":
         "**Runpod (Serverless)**: a run's cost is an estimate of the time Runpod bills its workers, which counts in the month as soon as the run ends; time a worker served several runs at once, of any of the organization's repositories, is split among them, and later runs refresh it.",
       "salad-pod":
-        "**Salad (pod)**: a run's cost is an estimate, its pod's time from its creation at Salad's listed price for its GPU and priority; the task also counts its pod's time between runs. Salad has no billing API, so nothing refreshes it.",
+        "**Salad (pod)**: a run's cost is an estimate: its pod's time at Salad's listed price for its GPU and priority, the free download of its image included; the task also counts its pod's time between runs. Salad has no billing API, so nothing refreshes it.",
     })[provider],
   monthNote:
-    "**Month**: what the repository's runs count this month in Codeman's ledger before the run, an estimate: each run's cost as above, and the whole limit of each run still open. The organization's monthly budget, when it has one, counts every repository's runs and Runpod's billing by the hour.",
+    "**Month**: what the repository's runs count this month in Codeman's ledger before the run, an estimate: each run's cost as above, and the whole limit of each run still open. The organization's monthly budget, when it has one, counts every repository's runs and Runpod's billing by the hour; Salad's runs count their estimates, since Salad has no billing to read.",
   earlierRuns: (runs) => `Earlier runs (${runs})`,
   totalRow: (runs) => `Total (${runs} ${runs === 1 ? "run" : "runs"})`,
   runsWithoutRow: "Runs without a row",
