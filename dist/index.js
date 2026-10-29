@@ -23323,6 +23323,9 @@ var ConcurrencyReached = class extends OpenFailure {
 import { randomBytes as randomBytes2 } from "node:crypto";
 
 // src/batches.ts
+function byPreference(a, b) {
+  return (a.place ?? 0) - (b.place ?? 0) || b.tasks - a.tasks;
+}
 function byPriority(a, b) {
   return a.since - b.since || (a.repository < b.repository ? -1 : a.repository > b.repository ? 1 : 0) || a.rank - b.rank;
 }
@@ -23339,7 +23342,7 @@ function formBatches(candidates, options) {
   const batches = [];
   for (const candidate of ordered) {
     if (taken.has(candidate)) continue;
-    const offers = [...candidate.offers].sort((a, b) => b.tasks - a.tasks);
+    const offers = [...candidate.offers].sort(byPreference);
     for (const offer of offers) {
       if (!offer.pod && !candidate.own) continue;
       const eligible = offering(offer, candidate);
@@ -23379,13 +23382,19 @@ function formBatches(candidates, options) {
       unserved.push(candidate.number);
       continue;
     }
-    const offers = [...candidate.offers].sort((a, b) => a.tasks - b.tasks);
+    const offers = [...candidate.offers].sort(
+      (a, b) => (a.place ?? 0) - (b.place ?? 0) || a.tasks - b.tasks
+    );
     const ready = offers.map((offer) => offering(offer, candidate));
     const complete2 = offers.flatMap(
       (offer, index) => (ready[index]?.length ?? 0) >= offer.tasks ? [{ offer, index }] : []
     );
     if (complete2.some(({ offer }) => free(offer) >= offer.tasks)) continue;
-    const [full] = complete2;
+    const [first] = offers;
+    if (!first) continue;
+    const others = new Set(offers.map((offer) => offer.place)).size - 1;
+    const also = others > 0 ? { others } : {};
+    const full = complete2.find(({ offer }) => offer.place === first.place);
     if (full) {
       const those2 = ready[full.index] ?? [];
       waiting.push({
@@ -23394,21 +23403,20 @@ function formBatches(candidates, options) {
         profile: full.offer.profile,
         ready: those2.length,
         repositories: new Set(those2.map((task) => task.repository)).size,
-        busy: full.offer.concurrency?.instances ?? 0
+        busy: full.offer.concurrency?.instances ?? 0,
+        ...also
       });
       continue;
     }
-    const [first] = offers;
     const those = ready[0] ?? [];
-    if (first) {
-      waiting.push({
-        number: candidate.number,
-        tasks: first.tasks,
-        profile: first.profile,
-        ready: those.length,
-        repositories: new Set(those.map((task) => task.repository)).size
-      });
-    }
+    waiting.push({
+      number: candidate.number,
+      tasks: first.tasks,
+      profile: first.profile,
+      ready: those.length,
+      repositories: new Set(those.map((task) => task.repository)).size,
+      ...also
+    });
   }
   return { batches, waiting, unserved };
 }
@@ -23667,6 +23675,7 @@ function parseOffers(value) {
       {
         tasks: offer.tasks,
         profile: offer.profile,
+        ...Number.isInteger(offer.place) && (offer.place ?? -1) >= 0 ? { place: offer.place } : {},
         key: offer.key,
         pod: offer.pod === true,
         ...count3(instances) && count3(tasks) ? { concurrency: { instances, tasks } } : {}
@@ -32170,8 +32179,8 @@ Tests: ${test ?? "(no report)"}`,
   stageBlockedHint: "Comment `/codeman continue <guidance>` to try again, or `/codeman replan <what to change>` to revise the plan, for example to widen its scope.",
   replanHint: "Comment `/codeman replan <what to change>` to try again.",
   removeLabelHint: "Remove the `codeman:blocked` label to try again.",
-  waitingForTasks: (tasks, profile2, ready, repositories) => `Waiting for ${tasks} tasks ready for profile \`${profile2}\`; ${ready} ${ready === 1 ? "is" : "are"}, in ${repositories} ${repositories === 1 ? "repository" : "repositories"}. Codeman checks again at every run.`,
-  waitingForInstances: (profile2, instances) => `Waiting for ${profile2 === void 0 ? "the top-level settings" : `profile \`${profile2}\``}: ${instances === 1 ? "its one instance is" : `its ${instances} instances are`} busy, as many as its \`concurrency\` allows. Codeman checks again at every run.`,
+  waitingForTasks: (tasks, profile2, ready, repositories, others = 0) => `Waiting for ${tasks} tasks ready for profile \`${profile2}\`; ${ready} ${ready === 1 ? "is" : "are"}, in ${repositories} ${repositories === 1 ? "repository" : "repositories"}.${othersCannot(others)} Codeman checks again at every run.`,
+  waitingForInstances: (profile2, instances, others = 0) => `Waiting for ${profile2 === void 0 ? "the top-level settings" : `profile \`${profile2}\``}: ${instances === 1 ? "its one instance is" : `its ${instances} instances are`} busy, as many as its \`concurrency\` allows.${othersCannot(others)} Codeman checks again at every run.`,
   noSettingsForStage: (stage) => `No settings apply to the ${STAGES2[stage]} stage: no profile serves it with any number of tasks, and the top-level settings have no \`model\`. Add the stage to a profile, or a top-level \`model\`, in \`.codeman/settings.yml\` or the organization's settings.`,
   noKey: "Codeman could not give this run access to its model (an OpenRouter key, or a GPU). See the run log.",
   missingCredentials: "Codeman could not give this run access to its model: the workflow does not pass the secret of a provider the run needs, its own or one whose billing counts in the organization's month.",
@@ -32278,6 +32287,10 @@ Tests: ${test ?? "(no report)"}`,
 };
 function capitalize(text) {
   return text.charAt(0).toUpperCase() + text.slice(1);
+}
+function othersCannot(others) {
+  if (others <= 0) return "";
+  return others === 1 ? " The other settings that could serve it cannot now either." : ` The ${others} other settings that could serve it cannot now either.`;
 }
 
 // src/i18n/pt-BR.ts
@@ -32445,8 +32458,8 @@ Testes: ${test ?? "(sem relat\xF3rio)"}`,
   stageBlockedHint: "Comente `/codeman continue <orienta\xE7\xE3o>` para tentar de novo, ou `/codeman replan <o que mudar>` para revisar o plano, por exemplo para ampliar o escopo.",
   replanHint: "Comente `/codeman replan <o que mudar>` para tentar de novo.",
   removeLabelHint: "Remova a label `codeman:blocked` para tentar de novo.",
-  waitingForTasks: (tasks, profile2, ready, repositories) => `Aguardando ${tasks} tarefas prontas para o perfil \`${profile2}\`; ${ready} ${ready === 1 ? "est\xE1" : "est\xE3o"}, em ${repositories} ${repositories === 1 ? "reposit\xF3rio" : "reposit\xF3rios"}. O Codeman verifica de novo a cada rodada.`,
-  waitingForInstances: (profile2, instances) => `Aguardando ${profile2 === void 0 ? "as configura\xE7\xF5es de n\xEDvel superior" : `o perfil \`${profile2}\``}: ${instances === 1 ? "sua inst\xE2ncia est\xE1 ocupada" : `suas ${instances} inst\xE2ncias est\xE3o ocupadas`}, o m\xE1ximo que o \`concurrency\` permite. O Codeman verifica de novo a cada rodada.`,
+  waitingForTasks: (tasks, profile2, ready, repositories, others = 0) => `Aguardando ${tasks} tarefas prontas para o perfil \`${profile2}\`; ${ready} ${ready === 1 ? "est\xE1" : "est\xE3o"}, em ${repositories} ${repositories === 1 ? "reposit\xF3rio" : "reposit\xF3rios"}.${othersCannot2(others)} O Codeman verifica de novo a cada rodada.`,
+  waitingForInstances: (profile2, instances, others = 0) => `Aguardando ${profile2 === void 0 ? "as configura\xE7\xF5es de n\xEDvel superior" : `o perfil \`${profile2}\``}: ${instances === 1 ? "sua inst\xE2ncia est\xE1 ocupada" : `suas ${instances} inst\xE2ncias est\xE3o ocupadas`}, o m\xE1ximo que o \`concurrency\` permite.${othersCannot2(others)} O Codeman verifica de novo a cada rodada.`,
   noSettingsForStage: (stage) => `Nenhuma configura\xE7\xE3o se aplica \xE0 ${OF_STAGE(stage)}: nenhum perfil a atende com qualquer n\xFAmero de tarefas, e as configura\xE7\xF5es de n\xEDvel superior n\xE3o t\xEAm \`model\`. Inclua a etapa num perfil, ou um \`model\` no n\xEDvel superior, em \`.codeman/settings.yml\` ou nas configura\xE7\xF5es da organiza\xE7\xE3o.`,
   noKey: "O Codeman n\xE3o conseguiu dar a esta rodada acesso ao modelo (uma chave do OpenRouter, ou uma GPU). Veja o log da rodada.",
   missingCredentials: "O Codeman n\xE3o conseguiu dar a esta rodada acesso ao modelo: o workflow n\xE3o passa o segredo de um provedor de que a rodada precisa, o dela ou um cuja cobran\xE7a conta no m\xEAs da organiza\xE7\xE3o.",
@@ -32553,6 +32566,10 @@ Testes: ${test ?? "(sem relat\xF3rio)"}`,
 };
 function capitalize2(text) {
   return text.charAt(0).toUpperCase() + text.slice(1);
+}
+function othersCannot2(others) {
+  if (others <= 0) return "";
+  return others === 1 ? " A outra configura\xE7\xE3o que poderia atend\xEA-la tamb\xE9m n\xE3o pode agora." : ` As outras ${others} configura\xE7\xF5es que poderiam atend\xEA-la tamb\xE9m n\xE3o podem agora.`;
 }
 
 // src/i18n/index.ts
@@ -35958,8 +35975,13 @@ async function select(services) {
     runtime2.info(
       busy === void 0 ? `#${task.number} ${oneLine(task.title)}: waits for ${waiting.tasks} tasks ready for profile \`${profile2}\`; ${ready2} ${ready2 === 1 ? "is" : "are"}, in ${repositories} ${repositories === 1 ? "repository" : "repositories"}.` : `#${task.number} ${oneLine(task.title)}: waits for a seat; the ${busy} instance(s) of ${waiting.profile === void 0 ? "the top-level settings" : `profile \`${profile2}\``} that its \`concurrency\` allows are busy.`
     );
+    if (waiting.others) {
+      runtime2.info(
+        `#${task.number}: the ${waiting.others} other profile(s) or top-level settings that could serve it cannot now either.`
+      );
+    }
     const t = messages(taskLanguage(work.language, record?.language));
-    const message = busy === void 0 ? t.waitingForTasks(waiting.tasks, profile2, ready2, repositories) : t.waitingForInstances(waiting.profile, busy);
+    const message = busy === void 0 ? t.waitingForTasks(waiting.tasks, profile2, ready2, repositories, waiting.others) : t.waitingForInstances(waiting.profile, busy, waiting.others);
     if (talk.status?.body.includes(message)) return;
     const served = resolveOwn(
       work.own,

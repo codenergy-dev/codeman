@@ -429,6 +429,9 @@ function parseOffers(value: unknown): Offer[] | undefined {
           {
             tasks: offer.tasks as number,
             profile: offer.profile,
+            ...(Number.isInteger(offer.place) && (offer.place ?? -1) >= 0
+              ? { place: offer.place }
+              : {}),
             key: offer.key as string,
             pod: offer.pod === true,
             ...(count(instances) && count(tasks)

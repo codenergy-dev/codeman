@@ -63,6 +63,11 @@ export interface Waiting {
    * has (`concurrency`).
    */
   busy?: number | undefined;
+  /**
+   * How many other profiles, or the top level, could serve it after that one, and cannot now
+   * either (decision 2 of the plan for falling back to the next profile); absent when none.
+   */
+  others?: number | undefined;
 }
 
 export interface Formation {
@@ -71,6 +76,15 @@ export interface Formation {
   waiting: Waiting[];
   /** The forming repository's tasks whose stage nothing serves at any count. */
   unserved: number[];
+}
+
+/**
+ * A task's offers in the order it tries them (decision 1 of the plan for falling back to the next
+ * profile): by its profile's place in the list, then from the largest count down. Offers without a
+ * place, from older snapshots, keep the count order.
+ */
+export function byPreference(a: Offer, b: Offer): number {
+  return (a.place ?? 0) - (b.place ?? 0) || b.tasks - a.tasks;
 }
 
 /** Candidates in priority order: oldest `since` first, then by repository, then by rank. */
@@ -83,9 +97,9 @@ export function byPriority(a: BatchCandidate, b: BatchCandidate): number {
 }
 
 /**
- * Forms batches: in priority order, the first task that some offer completes takes the largest
- * such count n, with the first n tasks that offer the same count and key (choice 25); then the
- * next. A local offer (not on a pod) is completed only by the forming repository's own tasks.
+ * Forms batches: in priority order, the first task that some offer completes takes the first such
+ * offer, by its profile's place and then its largest count n (`byPreference`), with the first n
+ * tasks that offer the same count and key (choice 25); then the next. A local offer (not on a pod) is completed only by the forming repository's own tasks.
  * The forming repository takes at most `places` tasks in all, and another repository at most
  * `limit(repository)`. A batch of n takes n of its key's free seats, `seats(offer)` before any
  * batch forms, and none forms without them (decision 5 of the plan for limiting concurrent
@@ -117,7 +131,7 @@ export function formBatches(
   const batches: FormedBatch[] = [];
   for (const candidate of ordered) {
     if (taken.has(candidate)) continue;
-    const offers = [...candidate.offers].sort((a, b) => b.tasks - a.tasks);
+    const offers = [...candidate.offers].sort(byPreference);
     for (const offer of offers) {
       if (!offer.pod && !candidate.own) continue;
       const eligible = offering(offer, candidate);
@@ -157,14 +171,22 @@ export function formBatches(
       unserved.push(candidate.number);
       continue;
     }
-    const offers = [...candidate.offers].sort((a, b) => a.tasks - b.tasks);
+    // By place, then from the smallest count up.
+    const offers = [...candidate.offers].sort(
+      (a, b) => (a.place ?? 0) - (b.place ?? 0) || a.tasks - b.tasks,
+    );
     const ready = offers.map((offer) => offering(offer, candidate));
     const complete = offers.flatMap((offer, index) =>
       (ready[index]?.length ?? 0) >= offer.tasks ? [{ offer, index }] : [],
     );
     // A count it could complete now, with free seats, is left for a later run, without a message.
     if (complete.some(({ offer }) => free(offer) >= offer.tasks)) continue;
-    const [full] = complete;
+    const [first] = offers;
+    if (!first) continue;
+    // Why the profile it prefers cannot serve it, and how many after it cannot either.
+    const others = new Set(offers.map((offer) => offer.place)).size - 1;
+    const also = others > 0 ? { others } : {};
+    const full = complete.find(({ offer }) => offer.place === first.place);
     if (full) {
       const those = ready[full.index] ?? [];
       waiting.push({
@@ -174,20 +196,19 @@ export function formBatches(
         ready: those.length,
         repositories: new Set(those.map((task) => task.repository)).size,
         busy: full.offer.concurrency?.instances ?? 0,
+        ...also,
       });
       continue;
     }
-    const [first] = offers;
     const those = ready[0] ?? [];
-    if (first) {
-      waiting.push({
-        number: candidate.number,
-        tasks: first.tasks,
-        profile: first.profile,
-        ready: those.length,
-        repositories: new Set(those.map((task) => task.repository)).size,
-      });
-    }
+    waiting.push({
+      number: candidate.number,
+      tasks: first.tasks,
+      profile: first.profile,
+      ready: those.length,
+      repositories: new Set(those.map((task) => task.repository)).size,
+      ...also,
+    });
   }
   return { batches, waiting, unserved };
 }

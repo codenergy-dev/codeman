@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-10-29T16:54:04-03:00
-updated_at: 2026-10-29T17:20:00-03:00
+updated_at: 2026-10-29T17:45:00-03:00
 commit: 3d614ce
 ---
 
@@ -128,7 +128,8 @@ Each step ends with `npm run check` passing, and is one commit.
 
 1. **Offers per profile.** `servedCounts` gives, for each count, one offer per profile that holds, then the top level when it has a model (decision 2), each with its place in the list; `resolveRun` accepts the profile to resolve, so `prepare` and the honoring of reservations resolve the batch's own profile. Done when `src/settings.test.ts` covers two profiles at one count, the top level after them, and a named profile.
    - **Done on 2026-10-29.** `servingRuns`, `ServingChoice` and `place` in `src/settings.ts`; `prepare` and the waiting panel resolve the batch's profile. Until step 2, batches still prefer the largest count, now with the fallbacks at each count.
-2. **Forming in the list's order.** `formBatches` tries a task's offers by place, then count (decision 1), skips a key without seats, and says, for a task that waits, every profile that could have served it and why. Older board offers, without a place, keep the count order (`src/batches.ts`, `src/board.ts`). Done when `src/batches.test.ts` and `src/board.test.ts` cover a busy first profile served by the second, a free first profile preferred over a larger batch of the second, and all of them busy.
+2. **Forming in the list's order.** `formBatches` tries a task's offers by place, then count (decision 1), skips a key without seats, and says, for a task that waits, why the profile it prefers cannot serve it, and how many after it cannot either. Older board offers, without a place, keep the count order (`src/batches.ts`, `src/board.ts`). Done when `src/batches.test.ts` and `src/board.test.ts` cover a busy first profile served by the second, a free first profile preferred over a larger batch of the second, and all of them busy.
+   - **Done on 2026-10-29.** `byPreference` in `src/batches.ts`; `Waiting.others`, and the sentence it adds to both waiting messages; `place` kept on the board.
 3. **Unavailable pods.** The pod providers throw an `Unavailable` error for decision 3's signs (`src/inference/provider.ts`, `runpod.ts`, `selfhosted.ts`); a Salad start without a running instance after 10 minutes is one. `#create` ends the document with `unavailable: `, and joiners that find it so throw it too. `PodRegistry.instances` reports the keys with such an end in the last 15 minutes. Done when `src/inference/runpod.test.ts`, `selfhosted.test.ts` and `registry.test.ts` cover each sign, a joiner, an expired mark, and a rule-breaking create.
 4. **Refusing and going back.** `open-key` refuses an `Unavailable` as `profile-unavailable`; `apply` returns the task to its previous state and chains the next run; `select` counts a marked key as without seats, and words the waiting panel in `src/i18n/en.ts` and `pt-BR.ts` (`src/steps/keys.ts`, `apply.ts`, `select.ts`). Done when `src/steps/keys.test.ts`, `apply.test.ts` and `flow.test.ts` cover it.
 5. **End to end.** Two scenarios: a task whose first profile, a pod at `concurrency: 1`, is busy runs on the second, an OpenRouter profile (`profiles/fallback-busy`); a task whose fake Runpod has no room is refused, then runs on the second profile in the next run (`profiles/fallback-unavailable`). Done when they and the `parallel`, `pods` and `pools` scenarios pass.

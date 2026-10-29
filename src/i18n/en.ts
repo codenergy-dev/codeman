@@ -204,10 +204,10 @@ export const en: Messages = {
   replanHint: "Comment `/codeman replan <what to change>` to try again.",
   removeLabelHint: "Remove the `codeman:blocked` label to try again.",
 
-  waitingForTasks: (tasks, profile, ready, repositories) =>
-    `Waiting for ${tasks} tasks ready for profile \`${profile}\`; ${ready} ${ready === 1 ? "is" : "are"}, in ${repositories} ${repositories === 1 ? "repository" : "repositories"}. Codeman checks again at every run.`,
-  waitingForInstances: (profile, instances) =>
-    `Waiting for ${profile === undefined ? "the top-level settings" : `profile \`${profile}\``}: ${instances === 1 ? "its one instance is" : `its ${instances} instances are`} busy, as many as its \`concurrency\` allows. Codeman checks again at every run.`,
+  waitingForTasks: (tasks, profile, ready, repositories, others = 0) =>
+    `Waiting for ${tasks} tasks ready for profile \`${profile}\`; ${ready} ${ready === 1 ? "is" : "are"}, in ${repositories} ${repositories === 1 ? "repository" : "repositories"}.${othersCannot(others)} Codeman checks again at every run.`,
+  waitingForInstances: (profile, instances, others = 0) =>
+    `Waiting for ${profile === undefined ? "the top-level settings" : `profile \`${profile}\``}: ${instances === 1 ? "its one instance is" : `its ${instances} instances are`} busy, as many as its \`concurrency\` allows.${othersCannot(others)} Codeman checks again at every run.`,
   noSettingsForStage: (stage) =>
     `No settings apply to the ${STAGES[stage]} stage: no profile serves it with any number of tasks, and the top-level settings have no \`model\`. Add the stage to a profile, or a top-level \`model\`, in \`.codeman/settings.yml\` or the organization's settings.`,
 
@@ -346,4 +346,12 @@ export const en: Messages = {
 
 function capitalize(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/** The sentence about the other settings that could serve a waiting task; empty when none. */
+function othersCannot(others: number): string {
+  if (others <= 0) return "";
+  return others === 1
+    ? " The other settings that could serve it cannot now either."
+    : ` The ${others} other settings that could serve it cannot now either.`;
 }

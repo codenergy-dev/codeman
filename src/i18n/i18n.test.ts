@@ -161,3 +161,12 @@ test("says which text of the agent's output was cut", () => {
   );
   assert.match(ptBR.cutText("summary", 5000, 4000), /^summary tinha 5000 caracteres/);
 });
+
+test("a waiting task's panel says when its fallbacks cannot serve it either", () => {
+  assert.equal(
+    en.waitingForInstances("cheap", 1, 2),
+    "Waiting for profile `cheap`: its one instance is busy, as many as its `concurrency` allows. The 2 other settings that could serve it cannot now either. Codeman checks again at every run.",
+  );
+  assert.ok(!en.waitingForTasks(4, "four", 3, 1).includes("other settings"));
+  assert.ok(ptBR.waitingForTasks(4, "four", 3, 1, 1).includes("A outra configuração"));
+});

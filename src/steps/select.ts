@@ -604,11 +604,16 @@ export async function select(services: Services): Promise<void> {
         ? `#${task.number} ${oneLine(task.title)}: waits for ${waiting.tasks} tasks ready for profile \`${profile}\`; ${ready} ${ready === 1 ? "is" : "are"}, in ${repositories} ${repositories === 1 ? "repository" : "repositories"}.`
         : `#${task.number} ${oneLine(task.title)}: waits for a seat; the ${busy} instance(s) of ${waiting.profile === undefined ? "the top-level settings" : `profile \`${profile}\``} that its \`concurrency\` allows are busy.`,
     );
+    if (waiting.others) {
+      runtime.info(
+        `#${task.number}: the ${waiting.others} other profile(s) or top-level settings that could serve it cannot now either.`,
+      );
+    }
     const t = messages(taskLanguage(work.language, record?.language));
     const message =
       busy === undefined
-        ? t.waitingForTasks(waiting.tasks, profile, ready, repositories)
-        : t.waitingForInstances(waiting.profile, busy);
+        ? t.waitingForTasks(waiting.tasks, profile, ready, repositories, waiting.others)
+        : t.waitingForInstances(waiting.profile, busy, waiting.others);
     if (talk.status?.body.includes(message)) return;
     const served = resolveOwn(
       work.own,

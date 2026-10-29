@@ -161,14 +161,21 @@ export interface Messages {
   /** A task that a profile serves only with `tasks` tasks in the run, of which `ready` are. */
   /**
    * A task that waits for a batch: the count, the profile, and how many ready tasks that count
-   * serves, in how many of the pool's repositories.
+   * serves, in how many of the pool's repositories; and how many other profiles, or the top
+   * level, could serve it after that one and cannot now either.
    */
-  waitingForTasks(tasks: number, profile: string, ready: number, repositories: number): string;
+  waitingForTasks(
+    tasks: number,
+    profile: string,
+    ready: number,
+    repositories: number,
+    others?: number,
+  ): string;
   /**
    * A task that waits for a seat: every instance of its profile (undefined: the top level) is
-   * busy, as many as its `concurrency` allows.
+   * busy, as many as its `concurrency` allows; and how many others cannot serve it now either.
    */
-  waitingForInstances(profile: string | undefined, instances: number): string;
+  waitingForInstances(profile: string | undefined, instances: number, others?: number): string;
   /** A task whose stage no profile, nor the top level, serves at any count. */
   noSettingsForStage(stage: Stage): string;
 

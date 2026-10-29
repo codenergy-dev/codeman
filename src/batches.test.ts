@@ -180,3 +180,46 @@ test("a batch takes its key's free seats, and a task with none waits for a busy 
     [1],
   );
 });
+
+test("a task tries its profiles in the list's order, then each one's largest count", () => {
+  // `cheap` is first, at one task; `dear` after it, at up to 3; the top level last.
+  const cheap: Offer = {
+    tasks: 1,
+    profile: "cheap",
+    place: 0,
+    key: "kc",
+    pod: true,
+    concurrency: { instances: 1, tasks: 1 },
+  };
+  const dear = (tasks: number): Offer => ({
+    tasks,
+    profile: "dear",
+    place: 1,
+    key: "kd",
+    pod: true,
+    concurrency: { instances: 1, tasks: 3 },
+  });
+  const top = (tasks: number): Offer => ({ tasks, place: 2, key: "kt", pod: false });
+  const offers = [cheap, dear(1), dear(2), dear(3), top(1), top(2), top(3)];
+  const three = [1, 2, 3].map((number) => task("o/a", number, offers));
+  const seats = (free: Record<string, number>) => ({
+    ...unlimited,
+    seats: (offer: Offer) => free[offer.key] ?? Number.POSITIVE_INFINITY,
+  });
+  const shape = (formed: ReturnType<typeof formBatches>) =>
+    formed.batches.map((batch) => [batch.profile ?? "top", batch.tasks.map((one) => one.number)]);
+  // A free first profile is preferred over a larger batch of the next.
+  assert.deepEqual(shape(formBatches(three, seats({ kc: 1, kd: 3 }))), [
+    ["cheap", [1]],
+    ["dear", [2, 3]],
+  ]);
+  // A busy first profile falls back to the next, at its largest count.
+  assert.deepEqual(shape(formBatches(three, seats({ kc: 0, kd: 3 }))), [["dear", [1, 2, 3]]]);
+  // Then to the top level, when every profile is busy.
+  assert.deepEqual(shape(formBatches(three, seats({ kc: 0, kd: 0, kt: 1 }))), [["top", [1]]]);
+  // With nothing free, a task waits for the profile it prefers, and says the others cannot either.
+  const none = formBatches([task("o/a", 1, offers)], seats({ kc: 0, kd: 0, kt: 0 }));
+  assert.deepEqual(none.waiting, [
+    { number: 1, tasks: 1, profile: "cheap", ready: 1, repositories: 1, busy: 1, others: 2 },
+  ]);
+});

@@ -213,10 +213,10 @@ export const ptBR: Messages = {
   replanHint: "Comente `/codeman replan <o que mudar>` para tentar de novo.",
   removeLabelHint: "Remova a label `codeman:blocked` para tentar de novo.",
 
-  waitingForTasks: (tasks, profile, ready, repositories) =>
-    `Aguardando ${tasks} tarefas prontas para o perfil \`${profile}\`; ${ready} ${ready === 1 ? "está" : "estão"}, em ${repositories} ${repositories === 1 ? "repositório" : "repositórios"}. O Codeman verifica de novo a cada rodada.`,
-  waitingForInstances: (profile, instances) =>
-    `Aguardando ${profile === undefined ? "as configurações de nível superior" : `o perfil \`${profile}\``}: ${instances === 1 ? "sua instância está ocupada" : `suas ${instances} instâncias estão ocupadas`}, o máximo que o \`concurrency\` permite. O Codeman verifica de novo a cada rodada.`,
+  waitingForTasks: (tasks, profile, ready, repositories, others = 0) =>
+    `Aguardando ${tasks} tarefas prontas para o perfil \`${profile}\`; ${ready} ${ready === 1 ? "está" : "estão"}, em ${repositories} ${repositories === 1 ? "repositório" : "repositórios"}.${othersCannot(others)} O Codeman verifica de novo a cada rodada.`,
+  waitingForInstances: (profile, instances, others = 0) =>
+    `Aguardando ${profile === undefined ? "as configurações de nível superior" : `o perfil \`${profile}\``}: ${instances === 1 ? "sua instância está ocupada" : `suas ${instances} instâncias estão ocupadas`}, o máximo que o \`concurrency\` permite.${othersCannot(others)} O Codeman verifica de novo a cada rodada.`,
   noSettingsForStage: (stage) =>
     `Nenhuma configuração se aplica à ${OF_STAGE(stage)}: nenhum perfil a atende com qualquer número de tarefas, e as configurações de nível superior não têm \`model\`. Inclua a etapa num perfil, ou um \`model\` no nível superior, em \`.codeman/settings.yml\` ou nas configurações da organização.`,
 
@@ -355,4 +355,12 @@ export const ptBR: Messages = {
 
 function capitalize(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/** The sentence about the other settings that could serve a waiting task; empty when none. */
+function othersCannot(others: number): string {
+  if (others <= 0) return "";
+  return others === 1
+    ? " A outra configuração que poderia atendê-la também não pode agora."
+    : ` As outras ${others} configurações que poderiam atendê-la também não podem agora.`;
 }

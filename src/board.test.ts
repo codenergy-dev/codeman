@@ -124,9 +124,9 @@ test("2 and 2 across two repositories form a batch of 4; the other repository's 
   assert.deepEqual((await run(store, "a/x", own([3]), at(12))).honored, []);
 });
 
-test("an offer's cap stays on the board, and a batch forms only on its key's free seats", async () => {
+test("an offer's cap and place stay on the board, and a batch forms only on its key's free seats", async () => {
   const store = new MemoryStore();
-  const capped: Offer = { ...four, concurrency: { instances: 1, tasks: 4 } };
+  const capped: Offer = { ...four, place: 1, concurrency: { instances: 1, tasks: 4 } };
   await run(store, "a/x", own([1, 2], [capped]), at(0));
   const document = await store.get(LAYOUT.boardEntry(pool.id, "a/x"));
   const entry = document && boardEntry(document);
