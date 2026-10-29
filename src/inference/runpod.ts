@@ -9,6 +9,7 @@ import {
   type PodHost,
   type PodSpec,
   type PodStatus,
+  PodUnavailable,
   type ServerlessHost,
 } from "./gpu.ts";
 
@@ -199,7 +200,9 @@ export class Runpod implements GpuProvider {
    * Creates the pod on the first cloud of its `hosts` whose hosts have room (decision 9 of the
    * plan for Salad pods). With one kind of host, the pod is created there without asking, as
    * before; with several, the clouds without room, or that do not offer the GPU type, are passed
-   * over, and a creation that fails moves on to the next.
+   * over, and a creation that fails moves on to the next. A `PodUnavailable` when a cloud that
+   * offers the GPU type had no room, or answered `400`, Runpod's only sign of no capacity
+   * (decision 3 of the plan for falling back to the next profile).
    */
   async #createPod(spec: PodSpec): Promise<Pod> {
     if (spec.priority !== undefined && !PRIORITIES.includes(spec.priority)) {
@@ -209,27 +212,41 @@ export class Runpod implements GpuProvider {
     }
     const hosts = spec.hosts ?? DEFAULT_HOSTS;
     const [only] = hosts;
-    if (hosts.length === 1 && only) return this.#createOn(spec, only);
     const problems: string[] = [];
-    for (const host of hosts) {
-      const gpu = await this.#availability(spec.gpuType, host, spec.minCudaVersion);
-      if (!gpu || gpu[host] === false) {
-        problems.push(`${CLOUD_NAMES[host]} does not offer it`);
-        continue;
-      }
-      if (!gpu.availability || gpu.availability === "NONE") {
-        problems.push(`${CLOUD_NAMES[host]} has no room`);
-        continue;
-      }
+    let full = false;
+    const create = async (host: HostKind): Promise<Pod | undefined> => {
       try {
         return await this.#createOn(spec, host);
       } catch (error) {
+        if (hosts.length === 1 && !(error instanceof RunpodError && error.status === 400)) {
+          throw error;
+        }
+        full ||= error instanceof RunpodError && error.status === 400;
         problems.push(`${CLOUD_NAMES[host]}: ${error instanceof Error ? error.message : error}`);
+        return undefined;
+      }
+    };
+    if (hosts.length === 1 && only) {
+      const pod = await create(only);
+      if (pod) return pod;
+    } else {
+      for (const host of hosts) {
+        const gpu = await this.#availability(spec.gpuType, host, spec.minCudaVersion);
+        if (!gpu || gpu[host] === false) {
+          problems.push(`${CLOUD_NAMES[host]} does not offer it`);
+          continue;
+        }
+        if (!gpu.availability || gpu.availability === "NONE") {
+          full = true;
+          problems.push(`${CLOUD_NAMES[host]} has no room`);
+          continue;
+        }
+        const pod = await create(host);
+        if (pod) return pod;
       }
     }
-    throw new Error(
-      `Runpod created no pod with ${spec.gpuType}${spec.minCudaVersion ? ` and CUDA ${spec.minCudaVersion} or newer` : ""}: ${problems.join("; ")}.`,
-    );
+    const message = `Runpod created no pod with ${spec.gpuType}${spec.minCudaVersion ? ` and CUDA ${spec.minCudaVersion} or newer` : ""}: ${problems.join("; ")}.`;
+    throw full ? new PodUnavailable(message) : new Error(message);
   }
 
   async #createOn(spec: PodSpec, host: HostKind): Promise<Pod> {
@@ -359,11 +376,22 @@ export class Runpod implements GpuProvider {
     if (absent.includes(response.status)) return undefined;
     if (!response.ok) {
       const problem = describeProblem(await response.text().catch(() => ""));
-      throw new Error(
+      throw new RunpodError(
         `Runpod ${method} ${path.split("?")[0]} failed with ${response.status}${problem ? `: ${problem}` : "."}`,
+        response.status,
       );
     }
     return response.status === 204 ? undefined : response.json();
+  }
+}
+
+/** A request Runpod answered with an error status. */
+class RunpodError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
   }
 }
 

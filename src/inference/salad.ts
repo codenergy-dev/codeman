@@ -201,7 +201,29 @@ export class Salad implements GpuProvider {
     const group = (await this.#request(this.#containers(id), "GET", undefined, [404])) as
       | SaladGroup
       | undefined;
-    return group ? this.#toPod(group) : undefined;
+    if (!group) return undefined;
+    const pod = await this.#toPod(group);
+    if (pod.status !== "starting") return pod;
+    const allocated = await this.#allocated(id);
+    return allocated === undefined ? pod : { ...pod, allocated };
+  }
+
+  /**
+   * Whether a node holds the group's instance: it downloads, creates or runs it, rather than
+   * waits for one (docs/web/salad/list-container-group-instances.md). Undefined when Salad does
+   * not list its instances.
+   */
+  async #allocated(id: string): Promise<boolean | undefined> {
+    const listed = (await this.#request(
+      `${this.#containers(id)}/instances`,
+      "GET",
+      undefined,
+      [404],
+    )) as { instances?: { state?: string }[] } | undefined;
+    if (!listed) return undefined;
+    return (listed.instances ?? []).some(
+      ({ state }) => state === "downloading" || state === "creating" || state === "running",
+    );
   }
 
   /** `GET .../containers`, which returns the project's groups in one page of up to 100. */

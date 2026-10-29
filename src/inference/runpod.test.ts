@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Fetch } from "../budget.ts";
+import { PodUnavailable } from "./gpu.ts";
 import { Runpod } from "./runpod.ts";
 
 function near(actual: number | undefined, expected: number): void {
@@ -391,4 +392,45 @@ test("prices a GPU type on each kind of host, and reads CUDA versions on Communi
     { version: "13.0", available: true },
   ]);
   assert.match(calls[1]?.[0] ?? "", /cloud=COMMUNITY&minCudaVersion=13\.0$/);
+});
+
+test("a cloud without room, or a creation answered with 400, makes the pod unavailable", async () => {
+  const noCapacity = () =>
+    new Response(JSON.stringify({ title: "Bad Request", detail: "no instances available" }), {
+      status: 400,
+    });
+  // One kind of host: the creation's 400.
+  const one = fakeFetch([noCapacity()]);
+  await assert.rejects(new Runpod("rk", one.fetch).pods.create(spec), (error) => {
+    assert.ok(error instanceof PodUnavailable);
+    assert.match(error.message, /Secure Cloud: Runpod POST \/pods failed with 400/);
+    return true;
+  });
+  // Several: no room on one, a 400 on the other.
+  const gpu = { id: "NVIDIA RTX A6000", secure: true, community: true };
+  const both = fakeFetch([
+    { ...gpu, availability: "NONE" },
+    { ...gpu, availability: "LOW" },
+    noCapacity(),
+  ]);
+  await assert.rejects(
+    new Runpod("rk", both.fetch).pods.create({ ...spec, hosts: ["secure", "community"] }),
+    PodUnavailable,
+  );
+  // Other failures are not: a server error on one kind of host, as before, and no cloud that
+  // offers the GPU type.
+  const failed = fakeFetch([new Response("", { status: 500 })]);
+  await assert.rejects(new Runpod("rk", failed.fetch).pods.create(spec), (error) => {
+    assert.ok(!(error instanceof PodUnavailable));
+    assert.equal((error as Error).message, "Runpod POST /pods failed with 500.");
+    return true;
+  });
+  const offered = fakeFetch([
+    { ...gpu, secure: false },
+    { ...gpu, community: false },
+  ]);
+  await assert.rejects(
+    new Runpod("rk", offered.fetch).pods.create({ ...spec, hosts: ["secure", "community"] }),
+    (error) => !(error instanceof PodUnavailable),
+  );
 });

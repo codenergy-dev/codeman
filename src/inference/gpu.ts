@@ -91,6 +91,11 @@ export interface Pod {
   cudaVersion?: string | undefined;
   /** The kind of host it runs on, when the provider says. */
   host?: HostKind | undefined;
+  /**
+   * Whether the provider has given it a machine yet; undefined when the provider does not say,
+   * as Runpod, whose pods have one once created.
+   */
+  allocated?: boolean | undefined;
 }
 
 export interface PodHost {
@@ -202,21 +207,34 @@ export function podCost(start: Date, end: Date, pricePerSecond: number): number 
 }
 
 /**
- * Waits until the pod runs and `ready` says its service answers, polling every `interval`.
- * Throws when the pod fails, stops or disappears, or `timeoutMs` passes.
- */
-/**
  * A pod's gateway says its model could not be served, and why, such as a model that does not fit
  * the GPU: waiting longer would not help, and another pod of the same settings would fail the
  * same way.
  */
 export class PodStartFailure extends Error {}
 
+/**
+ * The provider has no room for the pod now: no GPU of its type on the hosts it may use, or no
+ * machine allocated in time (decision 3 of the plan for falling back to the next profile). Not a
+ * mistake in the settings: the run falls back to the next profile.
+ */
+export class PodUnavailable extends Error {}
+
+/**
+ * Waits until the pod runs and `ready` says its service answers, polling every `interval`.
+ * Throws when the pod fails, stops or disappears, or `timeoutMs` passes; a `PodUnavailable` when
+ * the provider has allocated it no machine once `allocationMs` passes.
+ */
 export async function waitUntilReady(
   host: Pick<PodHost, "get">,
   id: string,
   ready: () => Promise<boolean>,
-  options: { timeoutMs: number; intervalMs?: number; wait?: (ms: number) => Promise<void> },
+  options: {
+    timeoutMs: number;
+    allocationMs?: number | undefined;
+    intervalMs?: number;
+    wait?: (ms: number) => Promise<void>;
+  },
 ): Promise<Pod> {
   const wait = options.wait ?? sleep;
   const interval = options.intervalMs ?? 10_000;
@@ -225,6 +243,15 @@ export async function waitUntilReady(
     if (!pod) throw new Error(`Pod ${id} no longer exists.`);
     if (pod.status === "failed" || pod.status === "stopped" || pod.status === "terminated") {
       throw new Error(`Pod ${id} is ${pod.status}.`);
+    }
+    if (
+      pod.allocated === false &&
+      options.allocationMs !== undefined &&
+      waited >= options.allocationMs
+    ) {
+      throw new PodUnavailable(
+        `Pod ${id} got no machine within ${Math.round(options.allocationMs / 60_000)} minutes.`,
+      );
     }
     if (pod.status === "running") {
       const served = await ready().catch((error: unknown) => {

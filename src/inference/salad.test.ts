@@ -204,17 +204,44 @@ test("maps a group's states, running only with a running instance", async () => 
     ["failed", 0, "failed"],
     ["something-new", 0, "starting"],
   ];
-  const { fetch } = fakeFetch([
-    classes,
-    ...states.map(([status, running]) => ({
-      ...group,
-      current_state: { status, instance_status_counts: { running_count: running } },
-    })),
-  ]);
+  const { fetch } = fakeFetch(
+    states.flatMap(([status, running, expected], index) => [
+      { ...group, current_state: { status, instance_status_counts: { running_count: running } } },
+      // The classes once, then a starting group's instances, which say whether a node holds it.
+      ...(index === 0 ? [classes] : []),
+      ...(expected === "starting" ? [{ instances: [] }] : []),
+    ]),
+  );
   const salad = new Salad(ACCOUNT, fetch);
   for (const [status, running, expected] of states) {
     assert.equal((await salad.pods.get(group.name))?.status, expected, `${status}, ${running}`);
   }
+});
+
+test("a starting group is allocated once a node downloads, creates or runs its instance", async () => {
+  const starting = { ...group, current_state: { status: "deploying" } };
+  const instances = (state: string) => ({ instances: [{ state }] });
+  const { fetch, calls } = fakeFetch([
+    starting,
+    classes,
+    instances("allocating"),
+    starting,
+    instances("downloading"),
+    starting,
+    new Response("", { status: 404 }),
+    {
+      ...group,
+      current_state: { status: "running", instance_status_counts: { running_count: 1 } },
+    },
+  ]);
+  const salad = new Salad(ACCOUNT, fetch);
+  assert.equal((await salad.pods.get(group.name))?.allocated, false);
+  assert.equal(calls[2]?.[0], `${CONTAINERS}/${group.name}/instances`);
+  assert.equal((await salad.pods.get(group.name))?.allocated, true);
+  assert.equal((await salad.pods.get(group.name))?.allocated, undefined, "not listed");
+  const running = await salad.pods.get(group.name);
+  assert.deepEqual([running?.status, running?.allocated], ["running", undefined]);
+  assert.equal(calls.length, 8, "a running group's instances are not read");
 });
 
 test("a deleted group is gone, and deleting it again is not an error", async () => {

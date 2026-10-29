@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-10-29T16:54:04-03:00
-updated_at: 2026-10-29T17:45:00-03:00
+updated_at: 2026-10-29T18:30:00-03:00
 commit: 3d614ce
 ---
 
@@ -131,10 +131,11 @@ Each step ends with `npm run check` passing, and is one commit.
 2. **Forming in the list's order.** `formBatches` tries a task's offers by place, then count (decision 1), skips a key without seats, and says, for a task that waits, why the profile it prefers cannot serve it, and how many after it cannot either. Older board offers, without a place, keep the count order (`src/batches.ts`, `src/board.ts`). Done when `src/batches.test.ts` and `src/board.test.ts` cover a busy first profile served by the second, a free first profile preferred over a larger batch of the second, and all of them busy.
    - **Done on 2026-10-29.** `byPreference` in `src/batches.ts`; `Waiting.others`, and the sentence it adds to both waiting messages; `place` kept on the board.
 3. **Unavailable pods.** The pod providers throw an `Unavailable` error for decision 3's signs (`src/inference/provider.ts`, `runpod.ts`, `selfhosted.ts`); a Salad start without a running instance after 10 minutes is one. `#create` ends the document with `unavailable: `, and joiners that find it so throw it too. `PodRegistry.instances` reports the keys with such an end in the last 15 minutes. Done when `src/inference/runpod.test.ts`, `selfhosted.test.ts` and `registry.test.ts` cover each sign, a joiner, an expired mark, and a rule-breaking create.
+   - **Done on 2026-10-29.** `PodUnavailable` (`src/inference/gpu.ts`) and `ProfileUnavailable` (`src/inference/provider.ts`); `UNAVAILABLE` and `unavailableUntil` in `src/inference/registry.ts`; `ALLOCATION_MINUTES` in `src/inference/selfhosted.ts`. Salad's group counts do not say whether a downloading instance holds a node, so a starting group's instances are read ([list instances](../web/salad/list-container-group-instances.md)): `downloading`, `creating` or `running` is allocated. A single-cloud Runpod create keeps skipping the catalog, as before, and only its `400` is unavailable. The tests cover each sign but the registry's, which `selfhosted.test.ts` reads through `instances`.
 4. **Refusing and going back.** `open-key` refuses an `Unavailable` as `profile-unavailable`; `apply` returns the task to its previous state and chains the next run; `select` counts a marked key as without seats, and words the waiting panel in `src/i18n/en.ts` and `pt-BR.ts` (`src/steps/keys.ts`, `apply.ts`, `select.ts`). Done when `src/steps/keys.test.ts`, `apply.test.ts` and `flow.test.ts` cover it.
 5. **End to end.** Two scenarios: a task whose first profile, a pod at `concurrency: 1`, is busy runs on the second, an OpenRouter profile (`profiles/fallback-busy`); a task whose fake Runpod has no room is refused, then runs on the second profile in the next run (`profiles/fallback-unavailable`). Done when they and the `parallel`, `pods` and `pools` scenarios pass.
 6. **Docs.** [Profiles](../settings/profiles.md) (which applies, fallback, waiting), [batches](../runs/batches.md#forming-batches), [pods](../inference/pods.md#creating), [Salad installation](../installation/salad.md) (the 30 minutes, with this plan's example), [budget outcomes](../budget/budget.md#outcomes-of-open-key), [data layout](../backend/data-layout.md#pod-registry) (`unavailable: `), the [glossary](../glossary.md) (fallback), and an [upgrading](../installation/upgrading.md) entry for decisions 1 and 2. Done when `src/docs.test.ts` passes.
-7. **Build.** Rebuild `dist/`. Done when CI's build check passes. The gateway does not change, so no pod image is published.
+7. **Build.** Rebuild `dist/`. Done when CI's build check passes. `dist/gateway.js` bundles the Runpod adapter, which step 3 changes, so a push to `main` publishes new pod images; their gateway behaves as before, so pinning them is not needed.
 
 ## Out of scope
 

@@ -14,9 +14,10 @@ import type { PodSpec } from "./gpu.ts";
 import type { ModelHub } from "./huggingface.ts";
 import { IMAGES_BEFORE_SALAD, POD_IMAGES } from "./images.ts";
 import { IMAGES_WITHOUT_OLLAMA_SETTINGS, ollama, SINGLE_RUN_IMAGES } from "./ollama.ts";
-import { ConcurrencyReached, OpenFailure } from "./provider.ts";
-import { CREATE_LEASE_MS, PodRegistry } from "./registry.ts";
+import { ConcurrencyReached, OpenFailure, ProfileUnavailable } from "./provider.ts";
+import { CREATE_LEASE_MS, PodRegistry, UNAVAILABLE_MINUTES } from "./registry.ts";
 import {
+  ALLOCATION_MINUTES,
   accountFingerprint,
   adminToken,
   END_ATTEMPTS,
@@ -1150,6 +1151,69 @@ test("a task that waits for a pod whose start fails fails with it, after its cre
   assert.deepEqual(await registry.live(), []);
 });
 
+test("a cloud without room refuses the run as unavailable, and its key gets no pod for a while", async () => {
+  const { gpu, registry, open, advance } = setup({ real: true, image: SHARED_IMAGE });
+  const keyed: Partial<PodSettings> = { concurrency: { key: "0123456789abcdef", pods: 1 } };
+  gpu.full = true;
+  await assert.rejects(open("7", "300", keyed), (error: unknown) => {
+    assert.ok(error instanceof ProfileUnavailable);
+    assert.equal(error.message, "No GPU-A has room.");
+    return true;
+  });
+  assert.deepEqual(gpu.created, []);
+  const marked = (await registry.instances()).get("0123456789abcdef");
+  assert.deepEqual(marked, {
+    pods: 0,
+    free: 0,
+    unavailableUntil: new Date(Date.parse("2026-10-03T12:00:00Z") + UNAVAILABLE_MINUTES * 60_000),
+  });
+  // The mark expires; a pod that ended otherwise leaves none.
+  advance(UNAVAILABLE_MINUTES * 60_000 + 1);
+  assert.equal((await registry.instances()).get("0123456789abcdef"), undefined);
+  gpu.full = false;
+  await open("8", "300", keyed);
+  assert.equal((await registry.instances()).get("0123456789abcdef")?.unavailableUntil, undefined);
+});
+
+test("a pod that gets no machine in time is deleted, and its creator and joiners fall back", async () => {
+  const { gpu, registry, open, setWait, advance } = setup({ real: true, image: SHARED_IMAGE });
+  const keyed: Partial<PodSettings> = {
+    parallel: 4,
+    concurrency: { key: "0123456789abcdef", pods: 1 },
+  };
+  gpu.unallocated = true;
+  let joining: Promise<unknown> | undefined;
+  let joined = () => {};
+  const joinerWaits = new Promise<void>((resolve) => {
+    joined = resolve;
+  });
+  let waits = 0;
+  setWait(async (ms) => {
+    waits++;
+    // Task 8 joins the pod task 7 created while it waits for a machine, then both wait.
+    if (waits === 1) {
+      joining = open("8", "300", keyed).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      await joinerWaits;
+    } else if (waits === 2) {
+      joined();
+    }
+    advance(ms);
+  });
+  await assert.rejects(open("7", "300", keyed), (error: unknown) => {
+    assert.ok(error instanceof ProfileUnavailable);
+    assert.equal(error.message, `Pod pod1 got no machine within ${ALLOCATION_MINUTES} minutes.`);
+    return true;
+  });
+  assert.deepEqual(gpu.terminated, ["pod1"]);
+  const failure = await joining;
+  assert.ok(failure instanceof ProfileUnavailable, "task 8 falls back too");
+  assert.equal(gpu.created.length, 1, "no other pod");
+  assert.ok((await registry.instances()).get("0123456789abcdef")?.unavailableUntil);
+});
+
 /**
  * vLLM pods: an image of their own, a fake Hugging Face, and the test model. `vision` says which
  * models read images; the others read text only.
@@ -1341,15 +1405,21 @@ test("without a host that offers vLLM's CUDA now, a run stops before creating th
     { version: "13.0", available: false },
     { version: "13.1", available: false },
   ];
-  await assert.rejects(
-    open("7", "300", onVllm),
-    /^Error: No host with GPU-A and CUDA 13\.0 or newer has room now \(Fake offers 13\.0, 13\.1\), which vLLM's image needs, so no pod was created: try again later, or use another GPU type\.$/,
-  );
+  await assert.rejects(open("7", "300", onVllm), (error: unknown) => {
+    // No room is not a mistake in the settings: the run falls back to the next profile.
+    assert.ok(error instanceof ProfileUnavailable);
+    assert.equal(
+      error.message,
+      "No host with GPU-A and CUDA 13.0 or newer has room now (Fake offers 13.0, 13.1), which vLLM's image needs, so no pod was created: try again later, or use another GPU type.",
+    );
+    return true;
+  });
   gpu.cuda["GPU-A"] = [{ version: "12.8", available: true }];
-  await assert.rejects(
-    open("8", "300", onVllm),
-    /Fake offers no host with GPU-A and CUDA 13\.0 or newer/,
-  );
+  await assert.rejects(open("8", "300", onVllm), (error: unknown) => {
+    assert.ok(!(error instanceof ProfileUnavailable));
+    assert.match(String(error), /Fake offers no host with GPU-A and CUDA 13\.0 or newer/);
+    return true;
+  });
   assert.deepEqual(gpu.created, []);
   assert.deepEqual(await registry.live(), [], "the creation leases ended");
   // Ollama pods ask for no CUDA version.

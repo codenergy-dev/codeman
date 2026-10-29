@@ -1162,6 +1162,8 @@ var E2E = false ? redirects(process.env) : void 0;
 
 // src/inference/gpu.ts
 var DEFAULT_HOSTS = ["secure"];
+var PodUnavailable = class extends Error {
+};
 
 // src/inference/runpod.ts
 var API = "https://api.runpod.io/v2";
@@ -1285,7 +1287,9 @@ var Runpod = class {
    * Creates the pod on the first cloud of its `hosts` whose hosts have room (decision 9 of the
    * plan for Salad pods). With one kind of host, the pod is created there without asking, as
    * before; with several, the clouds without room, or that do not offer the GPU type, are passed
-   * over, and a creation that fails moves on to the next.
+   * over, and a creation that fails moves on to the next. A `PodUnavailable` when a cloud that
+   * offers the GPU type had no room, or answered `400`, Runpod's only sign of no capacity
+   * (decision 3 of the plan for falling back to the next profile).
    */
   async #createPod(spec) {
     if (spec.priority !== void 0 && !PRIORITIES.includes(spec.priority)) {
@@ -1295,27 +1299,41 @@ var Runpod = class {
     }
     const hosts = spec.hosts ?? DEFAULT_HOSTS;
     const [only] = hosts;
-    if (hosts.length === 1 && only) return this.#createOn(spec, only);
     const problems = [];
-    for (const host of hosts) {
-      const gpu = await this.#availability(spec.gpuType, host, spec.minCudaVersion);
-      if (!gpu || gpu[host] === false) {
-        problems.push(`${CLOUD_NAMES[host]} does not offer it`);
-        continue;
-      }
-      if (!gpu.availability || gpu.availability === "NONE") {
-        problems.push(`${CLOUD_NAMES[host]} has no room`);
-        continue;
-      }
+    let full = false;
+    const create = async (host) => {
       try {
         return await this.#createOn(spec, host);
       } catch (error2) {
+        if (hosts.length === 1 && !(error2 instanceof RunpodError && error2.status === 400)) {
+          throw error2;
+        }
+        full ||= error2 instanceof RunpodError && error2.status === 400;
         problems.push(`${CLOUD_NAMES[host]}: ${error2 instanceof Error ? error2.message : error2}`);
+        return void 0;
+      }
+    };
+    if (hosts.length === 1 && only) {
+      const pod = await create(only);
+      if (pod) return pod;
+    } else {
+      for (const host of hosts) {
+        const gpu = await this.#availability(spec.gpuType, host, spec.minCudaVersion);
+        if (!gpu || gpu[host] === false) {
+          problems.push(`${CLOUD_NAMES[host]} does not offer it`);
+          continue;
+        }
+        if (!gpu.availability || gpu.availability === "NONE") {
+          full = true;
+          problems.push(`${CLOUD_NAMES[host]} has no room`);
+          continue;
+        }
+        const pod = await create(host);
+        if (pod) return pod;
       }
     }
-    throw new Error(
-      `Runpod created no pod with ${spec.gpuType}${spec.minCudaVersion ? ` and CUDA ${spec.minCudaVersion} or newer` : ""}: ${problems.join("; ")}.`
-    );
+    const message = `Runpod created no pod with ${spec.gpuType}${spec.minCudaVersion ? ` and CUDA ${spec.minCudaVersion} or newer` : ""}: ${problems.join("; ")}.`;
+    throw full ? new PodUnavailable(message) : new Error(message);
   }
   async #createOn(spec, host) {
     const pod = await this.#request("/pods", "POST", {
@@ -1421,11 +1439,19 @@ var Runpod = class {
     if (absent.includes(response.status)) return void 0;
     if (!response.ok) {
       const problem = describeProblem(await response.text().catch(() => ""));
-      throw new Error(
-        `Runpod ${method} ${path.split("?")[0]} failed with ${response.status}${problem ? `: ${problem}` : "."}`
+      throw new RunpodError(
+        `Runpod ${method} ${path.split("?")[0]} failed with ${response.status}${problem ? `: ${problem}` : "."}`,
+        response.status
       );
     }
     return response.status === 204 ? void 0 : response.json();
+  }
+};
+var RunpodError = class extends Error {
+  status;
+  constructor(message, status) {
+    super(message);
+    this.status = status;
   }
 };
 function toPod(pod) {

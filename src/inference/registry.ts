@@ -63,8 +63,9 @@ export interface RegisteredPod {
    * older documents, which no cap counts.
    */
   key: string | undefined;
-  /** Why it ended, once it did. */
+  /** Why it ended, and when, once it did. */
   reason: string | undefined;
+  endedAt?: Date | undefined;
 }
 
 /** The settings a pod serves, as its document shows them; `settings` is their hash. */
@@ -107,7 +108,22 @@ export interface KeyInstances {
   pods: number;
   /** Infinite when one of them has no capacity, as before batches. */
   free: number;
+  /**
+   * Until when the provider is taken to have no room for another pod of the key: a pod of it
+   * ended unavailable within `UNAVAILABLE_MINUTES` (decision 4 of the plan for falling back to the
+   * next profile). Its live pods' seats stay free.
+   */
+  unavailableUntil?: Date | undefined;
 }
+
+/**
+ * The start of the registry's reason for a pod the provider had no room for, before why: `select`
+ * creates no other pod of its key for `UNAVAILABLE_MINUTES`, and the tasks that joined it fall
+ * back too (decision 4 of the plan for falling back to the next profile).
+ */
+export const UNAVAILABLE = "unavailable: ";
+/** How long a key stays without new pods once one ended unavailable. */
+export const UNAVAILABLE_MINUTES = 15;
 
 /** What a transaction changes in a live pod: its leases, its status, or its end, and why. */
 export interface Change {
@@ -367,8 +383,9 @@ export class PodRegistry {
 
   /**
    * The live pods of each batch key, of every account, and their free seats (decision 5 of the
-   * plan for limiting concurrent instances of a profile): what `select` holds tasks back by. A
-   * read, not a claim: `open-key` checks again.
+   * plan for limiting concurrent instances of a profile): what `select` holds tasks back by; and
+   * the keys whose provider had no room lately (decision 4 of the plan for falling back to the
+   * next profile). A read, not a claim: `open-key` checks again.
    */
   async instances(): Promise<Map<string, KeyInstances>> {
     const now = this.#now();
@@ -391,7 +408,18 @@ export class PodRegistry {
           ? 0
           : seatsLeft(pod, pod.batch ? await batchOf(pod.batch) : undefined, now);
       const before = counted.get(pod.key) ?? { pods: 0, free: 0 };
-      counted.set(pod.key, { pods: before.pods + 1, free: before.free + free });
+      counted.set(pod.key, { ...before, pods: before.pods + 1, free: before.free + free });
+    }
+    const since = new Date(now.getTime() - UNAVAILABLE_MINUTES * 60_000);
+    const ended = await this.#store.query(LAYOUT.pods(this.#pool), {
+      where: [{ field: "endedAt", op: ">", value: since }],
+    });
+    for (const pod of ended.map(registered)) {
+      if (pod.key === undefined || !pod.endedAt || !pod.reason?.startsWith(UNAVAILABLE)) continue;
+      const until = new Date(pod.endedAt.getTime() + UNAVAILABLE_MINUTES * 60_000);
+      const before = counted.get(pod.key) ?? { pods: 0, free: 0 };
+      if (before.unavailableUntil && before.unavailableUntil >= until) continue;
+      counted.set(pod.key, { ...before, unavailableUntil: until });
     }
     return counted;
   }
@@ -534,5 +562,6 @@ export function registered(document: StoredDocument): RegisteredPod {
     batch: text(fields.batch),
     key: text(fields.key),
     reason: text(fields.reason),
+    endedAt: date(fields.endedAt),
   };
 }

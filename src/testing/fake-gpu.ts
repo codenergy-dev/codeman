@@ -14,6 +14,7 @@ import type {
   PodStatus,
   ServerlessHost,
 } from "../inference/gpu.ts";
+import { PodUnavailable } from "../inference/gpu.ts";
 import { parseOllamaVariables } from "../inference/ollama.ts";
 import { parseVllmSettings } from "../inference/vllm.ts";
 
@@ -46,6 +47,10 @@ export class FakeGpu implements GpuProvider {
   readonly hours = new Map<number, number>();
   /** The status a pod has after `create`, and how many `get`s it takes to run. */
   startAfter = 0;
+  /** Whether the cloud has no room: `create` throws a `PodUnavailable`. */
+  full = false;
+  /** Whether new pods get no machine, as on Salad: they stay starting, not allocated. */
+  unallocated = false;
   now: () => Date;
   #next = 1;
   #gets = new Map<string, number>();
@@ -77,6 +82,7 @@ export class FakeGpu implements GpuProvider {
           ({ version }) => Number(version) >= Number(min),
         ),
       create: async (spec) => {
+        if (this.full) throw new PodUnavailable(`No ${spec.gpuType} has room.`);
         this.created.push(spec);
         // On the first kind of host of its list that offers the GPU type.
         const host =
@@ -108,6 +114,7 @@ export class FakeGpu implements GpuProvider {
         if (!pod) return undefined;
         const gets = (this.#gets.get(id) ?? 0) + 1;
         this.#gets.set(id, gets);
+        if (pod.status === "starting" && this.unallocated) return { ...pod, allocated: false };
         if (pod.status === "starting" && gets > this.startAfter) {
           pod.status = "running";
           pod.cudaVersion = this.cudaVersion;

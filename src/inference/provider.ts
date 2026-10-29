@@ -91,6 +91,13 @@ export class ConcurrencyReached extends OpenFailure {
   }
 }
 
+/**
+ * An open refused because the provider has no room for the run's pod now (decision 4 of the plan
+ * for falling back to the next profile): not the task's fault, so the next run serves it with the
+ * next profile.
+ */
+export class ProfileUnavailable extends OpenFailure {}
+
 /** What a run used, in OpenRouter's terms. Unknown figures are left out. */
 export interface RunUsage {
   /** What the run spent, in USD. */

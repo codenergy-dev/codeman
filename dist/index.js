@@ -20316,6 +20316,8 @@ function podCost(start, end, pricePerSecond) {
 }
 var PodStartFailure = class extends Error {
 };
+var PodUnavailable = class extends Error {
+};
 async function waitUntilReady(host, id, ready, options) {
   const wait = options.wait ?? sleep;
   const interval = options.intervalMs ?? 1e4;
@@ -20324,6 +20326,11 @@ async function waitUntilReady(host, id, ready, options) {
     if (!pod) throw new Error(`Pod ${id} no longer exists.`);
     if (pod.status === "failed" || pod.status === "stopped" || pod.status === "terminated") {
       throw new Error(`Pod ${id} is ${pod.status}.`);
+    }
+    if (pod.allocated === false && options.allocationMs !== void 0 && waited >= options.allocationMs) {
+      throw new PodUnavailable(
+        `Pod ${id} got no machine within ${Math.round(options.allocationMs / 6e4)} minutes.`
+      );
     }
     if (pod.status === "running") {
       const served = await ready().catch((error3) => {
@@ -20493,7 +20500,9 @@ var Runpod = class {
    * Creates the pod on the first cloud of its `hosts` whose hosts have room (decision 9 of the
    * plan for Salad pods). With one kind of host, the pod is created there without asking, as
    * before; with several, the clouds without room, or that do not offer the GPU type, are passed
-   * over, and a creation that fails moves on to the next.
+   * over, and a creation that fails moves on to the next. A `PodUnavailable` when a cloud that
+   * offers the GPU type had no room, or answered `400`, Runpod's only sign of no capacity
+   * (decision 3 of the plan for falling back to the next profile).
    */
   async #createPod(spec) {
     if (spec.priority !== void 0 && !PRIORITIES.includes(spec.priority)) {
@@ -20503,27 +20512,41 @@ var Runpod = class {
     }
     const hosts = spec.hosts ?? DEFAULT_HOSTS;
     const [only] = hosts;
-    if (hosts.length === 1 && only) return this.#createOn(spec, only);
     const problems = [];
-    for (const host of hosts) {
-      const gpu = await this.#availability(spec.gpuType, host, spec.minCudaVersion);
-      if (!gpu || gpu[host] === false) {
-        problems.push(`${CLOUD_NAMES[host]} does not offer it`);
-        continue;
-      }
-      if (!gpu.availability || gpu.availability === "NONE") {
-        problems.push(`${CLOUD_NAMES[host]} has no room`);
-        continue;
-      }
+    let full = false;
+    const create = async (host) => {
       try {
         return await this.#createOn(spec, host);
       } catch (error3) {
+        if (hosts.length === 1 && !(error3 instanceof RunpodError && error3.status === 400)) {
+          throw error3;
+        }
+        full ||= error3 instanceof RunpodError && error3.status === 400;
         problems.push(`${CLOUD_NAMES[host]}: ${error3 instanceof Error ? error3.message : error3}`);
+        return void 0;
+      }
+    };
+    if (hosts.length === 1 && only) {
+      const pod = await create(only);
+      if (pod) return pod;
+    } else {
+      for (const host of hosts) {
+        const gpu = await this.#availability(spec.gpuType, host, spec.minCudaVersion);
+        if (!gpu || gpu[host] === false) {
+          problems.push(`${CLOUD_NAMES[host]} does not offer it`);
+          continue;
+        }
+        if (!gpu.availability || gpu.availability === "NONE") {
+          full = true;
+          problems.push(`${CLOUD_NAMES[host]} has no room`);
+          continue;
+        }
+        const pod = await create(host);
+        if (pod) return pod;
       }
     }
-    throw new Error(
-      `Runpod created no pod with ${spec.gpuType}${spec.minCudaVersion ? ` and CUDA ${spec.minCudaVersion} or newer` : ""}: ${problems.join("; ")}.`
-    );
+    const message = `Runpod created no pod with ${spec.gpuType}${spec.minCudaVersion ? ` and CUDA ${spec.minCudaVersion} or newer` : ""}: ${problems.join("; ")}.`;
+    throw full ? new PodUnavailable(message) : new Error(message);
   }
   async #createOn(spec, host) {
     const pod = await this.#request("/pods", "POST", {
@@ -20629,11 +20652,19 @@ var Runpod = class {
     if (absent.includes(response.status)) return void 0;
     if (!response.ok) {
       const problem2 = describeProblem(await response.text().catch(() => ""));
-      throw new Error(
-        `Runpod ${method} ${path.split("?")[0]} failed with ${response.status}${problem2 ? `: ${problem2}` : "."}`
+      throw new RunpodError(
+        `Runpod ${method} ${path.split("?")[0]} failed with ${response.status}${problem2 ? `: ${problem2}` : "."}`,
+        response.status
       );
     }
     return response.status === 204 ? void 0 : response.json();
+  }
+};
+var RunpodError = class extends Error {
+  status;
+  constructor(message, status2) {
+    super(message);
+    this.status = status2;
   }
 };
 function toPod(pod) {
@@ -20804,7 +20835,28 @@ var Salad = class {
   }
   async #get(id) {
     const group = await this.#request(this.#containers(id), "GET", void 0, [404]);
-    return group ? this.#toPod(group) : void 0;
+    if (!group) return void 0;
+    const pod = await this.#toPod(group);
+    if (pod.status !== "starting") return pod;
+    const allocated = await this.#allocated(id);
+    return allocated === void 0 ? pod : { ...pod, allocated };
+  }
+  /**
+   * Whether a node holds the group's instance: it downloads, creates or runs it, rather than
+   * waits for one (docs/web/salad/list-container-group-instances.md). Undefined when Salad does
+   * not list its instances.
+   */
+  async #allocated(id) {
+    const listed = await this.#request(
+      `${this.#containers(id)}/instances`,
+      "GET",
+      void 0,
+      [404]
+    );
+    if (!listed) return void 0;
+    return (listed.instances ?? []).some(
+      ({ state }) => state === "downloading" || state === "creating" || state === "running"
+    );
   }
   /** `GET .../containers`, which returns the project's groups in one page of up to 100. */
   async #list(env) {
@@ -23318,6 +23370,8 @@ var ConcurrencyReached = class extends OpenFailure {
     this.instances = instances;
   }
 };
+var ProfileUnavailable = class extends OpenFailure {
+};
 
 // src/inference/registry.ts
 import { randomBytes as randomBytes2 } from "node:crypto";
@@ -23708,6 +23762,8 @@ function storedBatch(document) {
 // src/inference/registry.ts
 var CREATE_LEASE_MS = 5 * 6e4;
 var ATTEMPTS2 = 20;
+var UNAVAILABLE = "unavailable: ";
+var UNAVAILABLE_MINUTES = 15;
 var PodRegistry = class {
   #store;
   /** The pool's ID, whose registry this is. */
@@ -23886,8 +23942,9 @@ var PodRegistry = class {
   }
   /**
    * The live pods of each batch key, of every account, and their free seats (decision 5 of the
-   * plan for limiting concurrent instances of a profile): what `select` holds tasks back by. A
-   * read, not a claim: `open-key` checks again.
+   * plan for limiting concurrent instances of a profile): what `select` holds tasks back by; and
+   * the keys whose provider had no room lately (decision 4 of the plan for falling back to the
+   * next profile). A read, not a claim: `open-key` checks again.
    */
   async instances() {
     const now = this.#now();
@@ -23905,7 +23962,18 @@ var PodRegistry = class {
       if (pod.key === void 0 || !holds(pod, now)) continue;
       const free = pod.status === "abandoned" ? 0 : seatsLeft(pod, pod.batch ? await batchOf(pod.batch) : void 0, now);
       const before = counted2.get(pod.key) ?? { pods: 0, free: 0 };
-      counted2.set(pod.key, { pods: before.pods + 1, free: before.free + free });
+      counted2.set(pod.key, { ...before, pods: before.pods + 1, free: before.free + free });
+    }
+    const since = new Date(now.getTime() - UNAVAILABLE_MINUTES * 6e4);
+    const ended3 = await this.#store.query(LAYOUT.pods(this.#pool), {
+      where: [{ field: "endedAt", op: ">", value: since }]
+    });
+    for (const pod of ended3.map(registered)) {
+      if (pod.key === void 0 || !pod.endedAt || !pod.reason?.startsWith(UNAVAILABLE)) continue;
+      const until = new Date(pod.endedAt.getTime() + UNAVAILABLE_MINUTES * 6e4);
+      const before = counted2.get(pod.key) ?? { pods: 0, free: 0 };
+      if (before.unavailableUntil && before.unavailableUntil >= until) continue;
+      counted2.set(pod.key, { ...before, unavailableUntil: until });
     }
     return counted2;
   }
@@ -24008,12 +24076,14 @@ function registered(document) {
     capacity: typeof capacity === "number" && Number.isInteger(capacity) && capacity > 0 ? capacity : void 0,
     batch: text(fields.batch),
     key: text(fields.key),
-    reason: text(fields.reason)
+    reason: text(fields.reason),
+    endedAt: date(fields.endedAt)
   };
 }
 
 // src/inference/selfhosted.ts
 var START_MINUTES = 25;
+var ALLOCATION_MINUTES = 10;
 var KEPT_IDLE_MINUTES = 15;
 var RUN_IDLE_MINUTES = 30;
 var CLAIM_POLL_MS = 1e4;
@@ -24211,6 +24281,7 @@ var PodInference = class {
       handle = await this.#claim(run2, holder, settings, token, log);
     } catch (error3) {
       if (error3 instanceof ConcurrencyReached) throw error3;
+      if (error3 instanceof PodUnavailable) throw new ProfileUnavailable(error3, this.#takeEvents());
       throw new OpenFailure(error3, this.#takeEvents());
     }
     const status2 = await this.#admin(handle, "GET", "/admin/status").catch(
@@ -24543,8 +24614,8 @@ var PodInference = class {
             })
           );
         }
-        if (error3 instanceof PodStartFailure) throw error3;
-        const failed2 = startFailure(left.pod);
+        if (error3 instanceof PodStartFailure || error3 instanceof PodUnavailable) throw error3;
+        const failed2 = startFailure(left.pod) ?? unavailability(left.pod);
         if (failed2) throw failed2;
       }
     }
@@ -24562,7 +24633,10 @@ var PodInference = class {
     try {
       launched = await this.#launch(record, log);
     } catch (error3) {
-      await this.#registry.end(record.nonce, "the provider did not create it");
+      await this.#registry.end(
+        record.nonce,
+        error3 instanceof PodUnavailable ? `${UNAVAILABLE}${error3.message}` : "the provider did not create it"
+      );
       throw error3;
     }
     const { pod, listed } = launched;
@@ -24592,7 +24666,7 @@ var PodInference = class {
     } catch (error3) {
       await this.#registry.end(
         record.nonce,
-        error3 instanceof PodStartFailure ? `${START_FAILED}${error3.message}` : `it did not serve ${this.#settings.model}`
+        error3 instanceof PodStartFailure ? `${START_FAILED}${error3.message}` : error3 instanceof PodUnavailable ? `${UNAVAILABLE}${error3.message}` : `it did not serve ${this.#settings.model}`
       );
       this.#events.push(
         await terminatePod(this.#host, pod.id, void 0, {
@@ -24639,6 +24713,7 @@ var PodInference = class {
       },
       {
         timeoutMs: Math.max(0, created + START_MINUTES * 6e4 - this.#now().getTime()),
+        allocationMs: Math.max(0, created + ALLOCATION_MINUTES * 6e4 - this.#now().getTime()),
         wait: this.#options.wait
       }
     );
@@ -24801,8 +24876,13 @@ var PodInference = class {
         const versions = [...new Set(offered.map(({ version }) => version))];
         const on = this.#hosts.length > 1 ? ` on ${this.#hosts.join(" or ")} hosts` : "";
         const provider = displayName2(this.#options.gpu.name);
-        throw new Error(
-          versions.length === 0 ? `${provider} offers no host${on} with ${gpuType} and CUDA ${VLLM_MIN_CUDA} or newer, which vLLM's image needs, so no pod was created: use another GPU type, or \`engine: ollama\`.` : `No host${on} with ${gpuType} and CUDA ${VLLM_MIN_CUDA} or newer has room now (${provider} offers ${versions.join(", ")}), which vLLM's image needs, so no pod was created: try again later, or use another GPU type.`
+        if (versions.length === 0) {
+          throw new Error(
+            `${provider} offers no host${on} with ${gpuType} and CUDA ${VLLM_MIN_CUDA} or newer, which vLLM's image needs, so no pod was created: use another GPU type, or \`engine: ollama\`.`
+          );
+        }
+        throw new PodUnavailable(
+          `No host${on} with ${gpuType} and CUDA ${VLLM_MIN_CUDA} or newer has room now (${provider} offers ${versions.join(", ")}), which vLLM's image needs, so no pod was created: try again later, or use another GPU type.`
         );
       }
     }
@@ -24954,6 +25034,11 @@ function startFailure(pod) {
   const reason = pod?.status === "ended" ? pod.reason : void 0;
   if (!reason?.startsWith(START_FAILED)) return void 0;
   return new PodStartFailure(reason.slice(START_FAILED.length));
+}
+function unavailability(pod) {
+  const reason = pod?.status === "ended" ? pod.reason : void 0;
+  if (!reason?.startsWith(UNAVAILABLE)) return void 0;
+  return new PodUnavailable(reason.slice(UNAVAILABLE.length));
 }
 function quotedValues(settings) {
   return vllmValues(settings).map((value) => `\`${value}\``).join(", ");

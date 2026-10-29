@@ -20,6 +20,7 @@ import {
   type PodHost,
   PodStartFailure,
   type PodStatus,
+  PodUnavailable,
   podCost,
   type ServerlessHost,
   waitUntilReady,
@@ -33,6 +34,7 @@ import {
   OpenFailure,
   type PodEvent,
   type PodLife,
+  ProfileUnavailable,
   type RunRequest,
   type RunUsage,
 } from "./provider.ts";
@@ -44,11 +46,17 @@ import {
   PodRegistry,
   type RegisteredPod,
   registered,
+  UNAVAILABLE,
 } from "./registry.ts";
 import { VLLM_MIN_CUDA } from "./vllm.ts";
 
 /** How long a new pod has to pull its image and model and serve it. */
 export const START_MINUTES = 25;
+/**
+ * How long a new pod may wait for the provider to give it a machine, before the run falls back to
+ * the next profile (decision 4 of the plan for falling back to the next profile).
+ */
+export const ALLOCATION_MINUTES = 10;
 /** How long a kept pod waits for a task's next run, and a task's keep lease lasts. */
 export const KEPT_IDLE_MINUTES = 15;
 /** A run whose agent sends no request for this long has lost it. */
@@ -511,6 +519,7 @@ export class PodInference implements InferenceProvider {
       handle = await this.#claim(run, holder, settings, token, log);
     } catch (error) {
       if (error instanceof ConcurrencyReached) throw error;
+      if (error instanceof PodUnavailable) throw new ProfileUnavailable(error, this.#takeEvents());
       throw new OpenFailure(error, this.#takeEvents());
     }
     // The context and images are informational: a failure to read them does not undo the run.
@@ -887,10 +896,10 @@ export class PodInference implements InferenceProvider {
             }),
           );
         }
-        // Another pod of the same settings would fail the same way (choice 12).
-        if (error instanceof PodStartFailure) throw error;
+        // Another pod of the same settings would fail the same way (choice 12), or find no room.
+        if (error instanceof PodStartFailure || error instanceof PodUnavailable) throw error;
         // Its creator read the failure first, and terminated it.
-        const failed = startFailure(left.pod);
+        const failed = startFailure(left.pod) ?? unavailability(left.pod);
         if (failed) throw failed;
       }
     }
@@ -915,7 +924,12 @@ export class PodInference implements InferenceProvider {
     try {
       launched = await this.#launch(record, log);
     } catch (error) {
-      await this.#registry.end(record.nonce, "the provider did not create it");
+      await this.#registry.end(
+        record.nonce,
+        error instanceof PodUnavailable
+          ? `${UNAVAILABLE}${error.message}`
+          : "the provider did not create it",
+      );
       throw error;
     }
     const { pod, listed } = launched;
@@ -948,7 +962,9 @@ export class PodInference implements InferenceProvider {
         record.nonce,
         error instanceof PodStartFailure
           ? `${START_FAILED}${error.message}`
-          : `it did not serve ${this.#settings.model}`,
+          : error instanceof PodUnavailable
+            ? `${UNAVAILABLE}${error.message}`
+            : `it did not serve ${this.#settings.model}`,
       );
       this.#events.push(
         await terminatePod(this.#host, pod.id, undefined, {
@@ -1009,6 +1025,7 @@ export class PodInference implements InferenceProvider {
       },
       {
         timeoutMs: Math.max(0, created + START_MINUTES * 60_000 - this.#now().getTime()),
+        allocationMs: Math.max(0, created + ALLOCATION_MINUTES * 60_000 - this.#now().getTime()),
         wait: this.#options.wait,
       },
     );
@@ -1197,10 +1214,13 @@ export class PodInference implements InferenceProvider {
         const versions = [...new Set(offered.map(({ version }) => version))];
         const on = this.#hosts.length > 1 ? ` on ${this.#hosts.join(" or ")} hosts` : "";
         const provider = displayName(this.#options.gpu.name);
-        throw new Error(
-          versions.length === 0
-            ? `${provider} offers no host${on} with ${gpuType} and CUDA ${VLLM_MIN_CUDA} or newer, which vLLM's image needs, so no pod was created: use another GPU type, or \`engine: ollama\`.`
-            : `No host${on} with ${gpuType} and CUDA ${VLLM_MIN_CUDA} or newer has room now (${provider} offers ${versions.join(", ")}), which vLLM's image needs, so no pod was created: try again later, or use another GPU type.`,
+        if (versions.length === 0) {
+          throw new Error(
+            `${provider} offers no host${on} with ${gpuType} and CUDA ${VLLM_MIN_CUDA} or newer, which vLLM's image needs, so no pod was created: use another GPU type, or \`engine: ollama\`.`,
+          );
+        }
+        throw new PodUnavailable(
+          `No host${on} with ${gpuType} and CUDA ${VLLM_MIN_CUDA} or newer has room now (${provider} offers ${versions.join(", ")}), which vLLM's image needs, so no pod was created: try again later, or use another GPU type.`,
         );
       }
     }
@@ -1369,6 +1389,13 @@ function startFailure(pod: RegisteredPod | undefined): PodStartFailure | undefin
   const reason = pod?.status === "ended" ? pod.reason : undefined;
   if (!reason?.startsWith(START_FAILED)) return undefined;
   return new PodStartFailure(reason.slice(START_FAILED.length));
+}
+
+/** The lack of room a pod ended with, for the tasks that joined it to fall back with. */
+function unavailability(pod: RegisteredPod | undefined): PodUnavailable | undefined {
+  const reason = pod?.status === "ended" ? pod.reason : undefined;
+  if (!reason?.startsWith(UNAVAILABLE)) return undefined;
+  return new PodUnavailable(reason.slice(UNAVAILABLE.length));
 }
 
 /** The vLLM settings of pod settings, for messages: `` `max-num-seqs=4` ``. */
