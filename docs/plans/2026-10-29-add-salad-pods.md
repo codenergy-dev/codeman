@@ -1,7 +1,7 @@
 ---
-status: in progress
+status: completed
 created_at: 2026-10-29T10:26:49-03:00
-updated_at: 2026-10-29T11:04:05-03:00
+updated_at: 2026-10-29T15:52:14-03:00
 commit: 1bdf038
 ---
 
@@ -33,6 +33,8 @@ SaladCloud's Container Engine runs a container image on a GPU, billed per second
 | GPU memory | Not a field of `GpuClass`; only in its name, such as `RTX 4090 (24 GB)`, minus a part Windows reserves | `memory` in the catalog |
 | API | `https://api.salad.com/api/public`, `Salad-Api-Key` header, 240 requests a minute per key, errors sometimes as HTML | REST v2, Bearer key |
 | Docs license | [CC-BY-4.0](https://github.com/SaladTechnologies/salad-cloud-docs): pages can be copied in full | None: own words |
+
+Each fact is recorded in [`docs/web/salad/`](../web/salad/), and Runpod's Community Cloud in [choose a pod](../web/runpod/choose-a-pod.md) and [Runpod's REST API](../web/runpod/runpod-rest-api.md) (step 1). Two facts come from what the pages leave out: Salad has no billing API (no path in its OpenAPI document, and usage only in the Portal: [billing](../web/salad/billing.md)), and no field filters hosts by CUDA ([create a container group](../web/salad/create-container-group.md)).
 
 ### What changes in Codeman
 
@@ -183,7 +185,41 @@ Each step ends with `npm run check` passing (lint, types, tests and the build, `
 
 ## Handover
 
-Written in step 9.
+The code is complete, but `salad-pod` does not run yet: every pinned pod image is listed in `IMAGES_BEFORE_SALAD` (`src/inference/images.ts`), so `salad-pod` refuses them until new images are pinned. Runpod pods keep running on the pinned images.
+
+### 1. Publish and pin the images
+
+1. Push `main`. Its commits change `dist/gateway.js`, so `.github/workflows/pod-image.yml` publishes `codeman-ollama` and `codeman-vllm`.
+2. Pin both digests in `POD_IMAGES`, following [Pin the digests](../development/guide.md#pin-the-digests). Leave `IMAGES_BEFORE_SALAD` as it is: the images the new digests replace are already in it, and the new ones must not be added.
+3. Push the pinning commit. A Runpod task on the new images confirms that steps 2 and 3 changed nothing there: the gateway now listens on `::`, and checks CUDA before vLLM.
+
+### 2. Test live on Salad
+
+Use a dedicated Salad user, an organization with a few dollars of credits, and a repository whose code may leave for third-party hosts ([Salad installation](../installation/salad.md)). Set `hosts: [community]`, `gpu` to one of the cheapest classes, by its name as `GET /organizations/{org}/gpu-classes` lists it, and the model `qwen2.5:0.5b`.
+
+During and after one task, check each assumption the adapter makes that the documentation did not settle:
+
+| # | Assumption | Where it matters | How to check |
+| --- | --- | --- | --- |
+| 1 | With `restart_policy: never`, a container that exits, with 0 or not, is neither restarted nor reallocated. Salad's docs describe only the default ([managing deployments](../web/salad/managing-deployments.md)) | A pod that ends itself (decision 4); else an orphan bills until the next sweep | Let a kept pod idle past 15 minutes: the group stops, and its System Events show no new instance |
+| 2 | `DELETE` removes a running group without a stop first | `close-key`, `release-pod`, the sweep | After the task, the group is gone from the Portal and the list |
+| 3 | `networking.dns` is a bare host name, known soon after creation, served over HTTPS on 443 | The pod's URL, read until it answers | `open-key` reaches `/health` |
+| 4 | `GET` and the list return `container.environment_variables` with their values | The orphan sweep finds Codeman's groups by their environment | Leave a group behind (cancel a job mid-run): the next `open-key` deletes it |
+| 5 | The list is not paginated, at most 100 groups | The sweep misses groups past 100 in the project | Keep Codeman's project for Codeman only |
+| 6 | A group reads `running`, with `running_count` above 0, only once its instance is up | When `open-key` starts polling the gateway | `open-key`'s log |
+| 7 | A group whose instance exited reads `succeeded` or `stopped` | The pod counts as stopped | The group's status after assumption 1's check |
+| 8 | The GPU classes' prices are USD per hour | Every cost and budget | Compare the run's cost with the Portal's usage for the hour |
+| 9 | 8 vCPU and 32 GB of RAM, kept within each class's bounds, fit most nodes | How fast a group is allocated | Time from creation to `running` |
+| 10 | 8 GB of `/dev/shm` is enough for vLLM on one GPU | vLLM pods | One `engine: vllm` task, with `Qwen/Qwen2.5-0.5B-Instruct` |
+| 11 | A Salad class of type `secure` is a Salad Dedicated class; none of Salad's pages says so outright | `hosts: [secure]`, the default | Only with a Dedicated contract |
+| 12 | `nvidia-smi` is on the `PATH`, or in `/usr/lib/wsl/lib` under WSL2 | vLLM's CUDA check; unread, the start goes on | The pod's log names the driver's CUDA |
+| 13 | Codeman's polling stays within 240 requests a minute per key | Several tasks at once | No `429` in the key jobs' logs |
+
+Also compare the task's spend row with Salad's Portal: the row is an estimate from the group's creation, so it should be a little above the bill (decision 5).
+
+### 3. When something differs
+
+Reopen this plan (`status: in progress`), record what Salad did beside its assumption, and fix the adapter. If assumption 1 fails, decision 4 is reviewed first, since an orphan would bill until a sweep finds it.
 
 ## Out of scope
 
