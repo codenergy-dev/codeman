@@ -259,12 +259,18 @@ test("concurrency: 1 by default, from 1 to 10, inherited by profiles, and no tas
   const counts = servedCounts(layers, "code");
   assert.ok(counts.ok);
   assert.deepEqual(
-    counts.ok ? counts.value.slice(0, 3).map(({ tasks, concurrency }) => [tasks, concurrency]) : [],
+    counts.ok
+      ? counts.value
+          .slice(0, 5)
+          .map(({ tasks, profile, concurrency }) => [tasks, profile ?? "top", concurrency])
+      : [],
     [
-      [1, { instances: 2, tasks: 2 }],
-      [2, { instances: 2, tasks: 2 }],
-      // The top level serves the counts the profile does not, with its own.
-      [3, { instances: 3, tasks: 2 }],
+      [1, "pod", { instances: 2, tasks: 2 }],
+      // The top level serves every count after the profile, with its own.
+      [1, "top", { instances: 3, tasks: 2 }],
+      [2, "pod", { instances: 2, tasks: 2 }],
+      [2, "top", { instances: 3, tasks: 2 }],
+      [3, "top", { instances: 3, tasks: 2 }],
     ],
   );
   // It is not what serves the model: the batch key stays the same.
@@ -432,11 +438,11 @@ test("the counts at which a stage is served, and by what", () => {
   const code = servedCounts(pods, "code");
   assert.ok(code.ok);
   assert.deepEqual(
-    code.value.map(({ tasks, profile, pod }) => [tasks, profile, pod]),
+    code.value.map(({ tasks, profile, place, pod }) => [tasks, profile, place, pod]),
     [
-      [1, "up-to-two", false],
-      [2, "up-to-two", false],
-      [4, "four", false],
+      [1, "up-to-two", 1, false],
+      [2, "up-to-two", 1, false],
+      [4, "four", 0, false],
     ],
   );
   // The same settings at each count share a batch key; another profile's differs.
@@ -445,22 +451,64 @@ test("the counts at which a stage is served, and by what", () => {
   assert.notEqual(one?.key, four?.key);
   assert.match(one?.key ?? "", /^[0-9a-f]{16}$/);
   assert.deepEqual(servedCounts(pods, "plan"), { ok: true, value: [] }, "nothing serves it");
-  // A top level with a model serves every count no profile does.
+  // A top level with a model serves every count, after the profiles that do: their fallback.
   const top = layers(["model: e/f", "profiles:", "  - name: four", "    tasks: 4"]);
   const served = servedCounts(top, "plan");
   assert.ok(served.ok);
-  assert.deepEqual(served.ok ? served.value.map((count) => count.profile ?? "top") : [], [
-    "top",
-    "top",
-    "top",
-    "four",
-    "top",
-    "top",
-    "top",
-    "top",
-    "top",
-    "top",
+  assert.deepEqual(
+    served.ok ? served.value.map((count) => `${count.tasks} ${count.profile ?? "top"}`) : [],
+    [
+      "1 top",
+      "2 top",
+      "3 top",
+      "4 four",
+      "4 top",
+      "5 top",
+      "6 top",
+      "7 top",
+      "8 top",
+      "9 top",
+      "10 top",
+    ],
+  );
+  assert.ok(served.ok && served.value.every((count) => count.place === (count.profile ? 0 : 1)));
+  // Two profiles at one count: each is an offer, in the list's order, with its own key.
+  const both = layers([
+    "model: e/f",
+    "profiles:",
+    "  - name: cheap",
+    "    stages: [code]",
+    "    max-tasks: 1",
+    "    model: a/b",
+    "    concurrency: 1",
+    "  - name: dear",
+    "    stages: [code]",
+    "    max-tasks: 3",
+    "    model: c/d",
   ]);
+  const fallbacks = servedCounts(both, "code");
+  assert.ok(fallbacks.ok);
+  const atOne = fallbacks.ok ? fallbacks.value.filter((count) => count.tasks === 1) : [];
+  assert.deepEqual(
+    atOne.map(({ profile, place }) => [profile ?? "top", place]),
+    [
+      ["cheap", 0],
+      ["dear", 1],
+      ["top", 2],
+    ],
+  );
+  assert.equal(new Set(atOne.map(({ key }) => key)).size, 3);
+  // A batch's run resolves the profile it formed for, not the first that holds.
+  const dear = resolveRun(both, { stage: "code", tasks: 1 }, { profile: "dear" });
+  assert.ok(dear.ok && dear.value.profile === "dear" && dear.value.settings.model === "c/d");
+  const first = resolveRun(both, { stage: "code", tasks: 1 });
+  assert.ok(first.ok && first.value.profile === "cheap");
+  const atTop = resolveRun(both, { stage: "code", tasks: 1 }, { profile: undefined });
+  assert.ok(atTop.ok && atTop.value.profile === undefined && atTop.value.settings.model === "e/f");
+  assert.deepEqual(resolveRun(both, { stage: "code", tasks: 2 }, { profile: "cheap" }), {
+    ok: false,
+    error: "Profile `cheap` does not apply to the `code` stage with 2 task(s).",
+  });
   // A task's model gives the top level one, for the top level's provider.
   const own = servedCounts([{ model: "g/h" }, {}, pods[2] ?? {}], "plan");
   assert.ok(own.ok && own.value.length === MAX_TASKS);

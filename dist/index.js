@@ -21804,20 +21804,21 @@ function resolveLayers(layers) {
   }
   return { ok: true, value: { top, profiled, forTask, providers } };
 }
-function servingRun(resolved, run2) {
-  const chosen = resolved.profiled.find(({ profile: profile2 }) => applies(profile2, run2));
-  if (chosen) return chosen;
-  return resolved.top.model === void 0 ? void 0 : { settings: resolved.top };
+function servingRuns(resolved, run2) {
+  const chosen = resolved.profiled.filter(({ profile: profile2 }) => applies(profile2, run2));
+  return resolved.top.model === void 0 ? chosen : [...chosen, { settings: resolved.top }];
 }
-function resolveRun(layers, run2) {
+function resolveRun(layers, run2, chosen) {
   const resolved = resolveLayers(layers);
   if (!resolved.ok) return resolved;
   const { top, forTask, providers } = resolved.value;
-  const served = run2 ? servingRun(resolved.value, run2) : { settings: top };
+  const candidates = run2 ? servingRuns(resolved.value, run2) : [];
+  const served = !run2 ? { settings: top } : chosen ? candidates.find(({ profile: profile2 }) => profile2?.name === chosen.profile) : candidates[0];
   if (!served) {
+    const what = chosen ? `${chosen.profile === void 0 ? "The top-level settings do" : `Profile \`${chosen.profile}\` does`} not apply` : "No settings apply";
     return {
       ok: false,
-      error: `No settings apply to the \`${run2?.stage}\` stage with ${run2?.tasks} task(s): no profile does, and the top-level settings have no \`model\`.`
+      error: chosen ? `${what} to the \`${run2?.stage}\` stage with ${run2?.tasks} task(s).` : `${what} to the \`${run2?.stage}\` stage with ${run2?.tasks} task(s): no profile does, and the top-level settings have no \`model\`.`
     };
   }
   const base = served.settings;
@@ -21868,20 +21869,23 @@ function mostTasks(layers, profile2) {
 function servedCounts(layers, stage) {
   const resolved = resolveLayers(layers);
   if (!resolved.ok) return resolved;
+  const places = new Map(resolved.value.profiled.map(({ profile: profile2 }, index) => [profile2, index]));
   const counts = [];
   for (let tasks = 1; tasks <= MAX_TASKS; tasks++) {
-    if (!servingRun(resolved.value, { stage, tasks })) continue;
-    const run2 = resolveRun(layers, { stage, tasks });
-    if (!run2.ok) return run2;
-    const { settings, profile: profile2 } = run2.value;
-    const most = mostTasks(layers, profile2);
-    counts.push({
-      tasks,
-      profile: profile2,
-      key: batchKey(settings, profile2, most),
-      pod: isPodProvider(settings.provider),
-      concurrency: { instances: settings.concurrency, tasks: most }
-    });
+    for (const served of servingRuns(resolved.value, { stage, tasks })) {
+      const run2 = resolveRun(layers, { stage, tasks }, { profile: served.profile?.name });
+      if (!run2.ok) return run2;
+      const { settings, profile: profile2 } = run2.value;
+      const most = mostTasks(layers, profile2);
+      counts.push({
+        tasks,
+        profile: profile2,
+        place: served.profile ? places.get(served.profile) ?? 0 : places.size,
+        key: batchKey(settings, profile2, most),
+        pod: isPodProvider(settings.provider),
+        concurrency: { instances: settings.concurrency, tasks: most }
+      });
+    }
   }
   return { ok: true, value: counts };
 }
@@ -35660,12 +35664,12 @@ async function select(services) {
   }
   const inherited = [inputs, fileSettings.value, shared.value];
   const cap = tasksPerRun(inherited);
-  const resolveOwn = (own2, run2) => {
-    const resolved = resolveRun([own2, ...inherited], run2);
+  const resolveOwn = (own2, run2, chosen) => {
+    const resolved = resolveRun([own2, ...inherited], run2, chosen);
     if (resolved.ok) return { own: own2, resolved: resolved.value };
     if (own2.model !== void 0 || own2.gpu !== void 0) {
       const { model: _model, gpu: _gpu, ...rest } = own2;
-      const fallback = resolveRun([rest, ...inherited], run2);
+      const fallback = resolveRun([rest, ...inherited], run2, chosen);
       if (fallback.ok) return { own: rest, resolved: fallback.value, rejected: resolved.error };
     }
     throw new Error(resolved.error);
@@ -35816,7 +35820,11 @@ async function select(services) {
     const baseSha = branchSha ?? await repo.branchSha(defaultBranch);
     if (!baseSha) throw new Error(`Branch ${defaultBranch} not found.`);
     const runConditions = work.agentStage && started ? { stage: work.agentStage, tasks: started.size } : void 0;
-    const { own: own2, resolved, rejected } = resolveOwn(work.own, runConditions);
+    const { own: own2, resolved, rejected } = resolveOwn(
+      work.own,
+      runConditions,
+      started ? { profile: started.profile } : void 0
+    );
     const rejection = rejected ?? work.rejected;
     if (rejection) problems.push({ problem: { kind: "settings-rejected", error: rejection } });
     for (const line of settingSources([own2, ...inherited])) runtime2.info(line);
@@ -35953,10 +35961,11 @@ async function select(services) {
     const t = messages(taskLanguage(work.language, record?.language));
     const message = busy === void 0 ? t.waitingForTasks(waiting.tasks, profile2, ready2, repositories) : t.waitingForInstances(waiting.profile, busy);
     if (talk.status?.body.includes(message)) return;
-    const served = resolveOwn(work.own, {
-      stage: work.agentStage ?? "plan",
-      tasks: waiting.tasks
-    });
+    const served = resolveOwn(
+      work.own,
+      { stage: work.agentStage ?? "plan", tasks: waiting.tasks },
+      { profile: waiting.profile }
+    );
     await repo.upsertComment(
       task.number,
       talk.status?.id ?? null,

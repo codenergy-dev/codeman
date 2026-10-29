@@ -32,6 +32,7 @@ import {
   resolveRun,
   SETTINGS_FILE,
   type ServedCount,
+  type ServingChoice,
   type Settings,
   type SettingsLayer,
   SHARED_SETTINGS,
@@ -232,12 +233,13 @@ export async function select(services: Services): Promise<void> {
   const resolveOwn = (
     own: PartialSettings,
     run?: RunConditions,
+    chosen?: ServingChoice,
   ): { own: PartialSettings; resolved: RunSettings; rejected?: string } => {
-    const resolved = resolveRun([own, ...inherited], run);
+    const resolved = resolveRun([own, ...inherited], run, chosen);
     if (resolved.ok) return { own, resolved: resolved.value };
     if (own.model !== undefined || own.gpu !== undefined) {
       const { model: _model, gpu: _gpu, ...rest } = own;
-      const fallback = resolveRun([rest, ...inherited], run);
+      const fallback = resolveRun([rest, ...inherited], run, chosen);
       if (fallback.ok) return { own: rest, resolved: fallback.value, rejected: resolved.error };
     }
     throw new Error(resolved.error);
@@ -429,7 +431,13 @@ export async function select(services: Services): Promise<void> {
     if (!baseSha) throw new Error(`Branch ${defaultBranch} not found.`);
     const runConditions: RunConditions | undefined =
       work.agentStage && started ? { stage: work.agentStage, tasks: started.size } : undefined;
-    const { own, resolved, rejected } = resolveOwn(work.own, runConditions);
+    // The profile the batch formed for, which may be a fallback (decision 2 of the plan for falling
+    // back to the next profile).
+    const { own, resolved, rejected } = resolveOwn(
+      work.own,
+      runConditions,
+      started ? { profile: started.profile } : undefined,
+    );
     const rejection = rejected ?? work.rejected;
     if (rejection) problems.push({ problem: { kind: "settings-rejected", error: rejection } });
     for (const line of settingSources([own, ...inherited])) runtime.info(line);
@@ -602,10 +610,11 @@ export async function select(services: Services): Promise<void> {
         ? t.waitingForTasks(waiting.tasks, profile, ready, repositories)
         : t.waitingForInstances(waiting.profile, busy);
     if (talk.status?.body.includes(message)) return;
-    const served = resolveOwn(work.own, {
-      stage: work.agentStage ?? "plan",
-      tasks: waiting.tasks,
-    });
+    const served = resolveOwn(
+      work.own,
+      { stage: work.agentStage ?? "plan", tasks: waiting.tasks },
+      { profile: waiting.profile },
+    );
     await repo.upsertComment(
       task.number,
       talk.status?.id ?? null,

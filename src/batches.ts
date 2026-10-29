@@ -12,6 +12,11 @@ export interface Offer {
   /** Undefined when the top level serves it. */
   profile?: string | undefined;
   key: string;
+  /**
+   * Its profile's place in the list, which a task tries before its count (decision 1 of the plan
+   * for falling back to the next profile); absent from older snapshots, which keep the count order.
+   */
+  place?: number | undefined;
   /** Whether a pod serves it: then tasks of other repositories may complete its batch. */
   pod: boolean;
   /**

@@ -816,37 +816,56 @@ function resolveLayers(layers: readonly SettingsLayer[]): Parsed<Resolved> {
 }
 
 /**
- * What serves a run: the first profile whose conditions hold, else the top level when it has a
- * model; undefined when neither does.
+ * What may serve a run, by preference (decision 2 of the plan for falling back to the next
+ * profile): each profile whose conditions hold, in the list's order, then the top level when it
+ * has a model. Empty when none does.
  */
-function servingRun(
+function servingRuns(
   resolved: Resolved,
   run: RunConditions,
-): { profile?: Profile; settings: PartialSettings } | undefined {
-  const chosen = resolved.profiled.find(({ profile }) => applies(profile, run));
-  if (chosen) return chosen;
-  return resolved.top.model === undefined ? undefined : { settings: resolved.top };
+): { profile?: Profile; settings: PartialSettings }[] {
+  const chosen = resolved.profiled.filter(({ profile }) => applies(profile, run));
+  return resolved.top.model === undefined ? chosen : [...chosen, { settings: resolved.top }];
 }
 
 /**
- * The settings of a run: the profile that serves it (the first whose conditions hold, with the
- * values it sets replacing the top level's, except those the task's own commands set), else the
- * top level. Without `run`, as for a run without an agent, the top level, whose model may be
- * empty. A task's own provider settings (`gpu`) apply to the runs whose provider accepts them,
- * and its model to the runs on the top level's provider.
+ * Which of the profiles, or the top level, a run is resolved with: `profile` undefined for the
+ * top level. Without it, the first that may serve the run.
+ */
+export interface ServingChoice {
+  profile: string | undefined;
+}
+
+/**
+ * The settings of a run: the profile that serves it (the first whose conditions hold, or the one
+ * `chosen` names, with the values it sets replacing the top level's, except those the task's own
+ * commands set), else the top level. Without `run`, as for a run without an agent, the top level,
+ * whose model may be empty. A task's own provider settings (`gpu`) apply to the runs whose
+ * provider accepts them, and its model to the runs on the top level's provider.
  */
 export function resolveRun(
   layers: readonly SettingsLayer[],
   run?: RunConditions,
+  chosen?: ServingChoice,
 ): Parsed<RunSettings> {
   const resolved = resolveLayers(layers);
   if (!resolved.ok) return resolved;
   const { top, forTask, providers } = resolved.value;
-  const served = run ? servingRun(resolved.value, run) : { settings: top };
+  const candidates = run ? servingRuns(resolved.value, run) : [];
+  const served = !run
+    ? { settings: top }
+    : chosen
+      ? candidates.find(({ profile }) => profile?.name === chosen.profile)
+      : candidates[0];
   if (!served) {
+    const what = chosen
+      ? `${chosen.profile === undefined ? "The top-level settings do" : `Profile \`${chosen.profile}\` does`} not apply`
+      : "No settings apply";
     return {
       ok: false,
-      error: `No settings apply to the \`${run?.stage}\` stage with ${run?.tasks} task(s): no profile does, and the top-level settings have no \`model\`.`,
+      error: chosen
+        ? `${what} to the \`${run?.stage}\` stage with ${run?.tasks} task(s).`
+        : `${what} to the \`${run?.stage}\` stage with ${run?.tasks} task(s): no profile does, and the top-level settings have no \`model\`.`,
     };
   }
   const base = served.settings;
@@ -923,13 +942,18 @@ export function mostTasks(layers: readonly SettingsLayer[], profile: string | un
 
 /**
  * A count of a batch's tasks at which a stage is served (an offer, in the terms of the plan for GPU
- * batches across repositories), the profile that serves it, and the batch key: tasks with the
+ * batches across repositories), a profile that serves it, and the batch key: tasks with the
  * same count and key run with the same resolved settings, so they form a batch.
  */
 export interface ServedCount {
   tasks: number;
   /** Undefined when the top level does. */
   profile?: string | undefined;
+  /**
+   * Its place in the list of profiles, which a batch prefers before its count (decision 1 of the
+   * plan for falling back to the next profile); the top level's is after every profile's.
+   */
+  place: number;
   /** A hash of what serves the task at this count (`batchKey`). */
   key: string;
   /** Whether a pod serves it: its batch may span the pool's repositories. */
@@ -952,7 +976,8 @@ export interface Instances {
 
 /**
  * The counts of a batch's tasks, from 1 to `MAX_TASKS`, at which some profile or the top level
- * serves a stage, each with what serves it. Empty when nothing does at any count.
+ * serves a stage: at each count, each profile that may serve it, then the top level, with what
+ * serves it there. Empty when nothing does at any count.
  */
 export function servedCounts(
   layers: readonly SettingsLayer[],
@@ -960,20 +985,23 @@ export function servedCounts(
 ): Parsed<ServedCount[]> {
   const resolved = resolveLayers(layers);
   if (!resolved.ok) return resolved;
+  const places = new Map(resolved.value.profiled.map(({ profile }, index) => [profile, index]));
   const counts: ServedCount[] = [];
   for (let tasks = 1; tasks <= MAX_TASKS; tasks++) {
-    if (!servingRun(resolved.value, { stage, tasks })) continue;
-    const run = resolveRun(layers, { stage, tasks });
-    if (!run.ok) return run;
-    const { settings, profile } = run.value;
-    const most = mostTasks(layers, profile);
-    counts.push({
-      tasks,
-      profile,
-      key: batchKey(settings, profile, most),
-      pod: isPodProvider(settings.provider),
-      concurrency: { instances: settings.concurrency, tasks: most },
-    });
+    for (const served of servingRuns(resolved.value, { stage, tasks })) {
+      const run = resolveRun(layers, { stage, tasks }, { profile: served.profile?.name });
+      if (!run.ok) return run;
+      const { settings, profile } = run.value;
+      const most = mostTasks(layers, profile);
+      counts.push({
+        tasks,
+        profile,
+        place: served.profile ? (places.get(served.profile) ?? 0) : places.size,
+        key: batchKey(settings, profile, most),
+        pod: isPodProvider(settings.provider),
+        concurrency: { instances: settings.concurrency, tasks: most },
+      });
+    }
   }
   return { ok: true, value: counts };
 }
