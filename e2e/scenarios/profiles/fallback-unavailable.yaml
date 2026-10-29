@@ -1,0 +1,54 @@
+# A fallback for a profile without room (docs/settings/profiles.md, "Fallback"): `gpu` is listed
+# first, on a Runpod GPU type that has no stock, and `router` after it serves the same stage on
+# OpenRouter. The first run's open-key finds no room: Runpod answers 400, so the run is refused
+# as profile-unavailable, at no cost, and the pod's registry document ends so. next-run's run
+# sets `gpu` aside and plans i1 on `router`.
+name: A pod profile without room is set aside, and the next run serves the task with the next
+tags: [profiles, fallback, pods, openrouter]
+runner: simulator
+timeout: 15m
+world:
+  organizations:
+    - name: acme
+      settings:
+        task-budget: 2
+        profiles:
+          - { name: gpu, stages: [plan], provider: runpod-pod, gpu: NVIDIA GeForce RTX 4090, model: qwen2.5:0.5b }
+          - { name: router, stages: [plan], model: deepseek/deepseek-v4.1-flash }
+  repositories:
+    - { name: acme/app, fixture: node-small, maintainers: [alice] }
+  runpod:
+    catalog:
+      - id: NVIDIA GeForce RTX 4090
+        name: RTX 4090
+        pool: ADA_24
+        manufacturer: NVIDIA
+        memory: 24
+        secure: true
+        community: true
+        price: { secure: 0.69, community: 0.34, serverless: 1.1 }
+        maxCount: { secure: 8, community: 4 }
+        availability: NONE
+        cudaVersions: [{ version: "12.8", available: true }, { version: "13.0", available: true }]
+agent:
+  i1:
+    plan:
+      - steps:
+          - bash: plan=$(sed -n 's/.*Create the plan at `\([^`]*\)`.*/\1/p' .codeman/task.md) && mkdir -p "$(dirname "$plan")" && printf '# A small change\n' > "$plan"
+          - output:
+              summary: Plans a small change.
+              decisions:
+                - { id: 1, title: Port, question: Which port?, options: [{ key: a, label: "8080" }, { key: b, label: "3000" }], recommendation: a }
+actions:
+  - open-issue: { ref: i1, as: alice, title: Add a health route, labels: [codeman] }
+  # The run is refused on gpu, and next-run's run plans i1 on router.
+  - run: { event: issues.labeled }
+  - expect: { issue: i1, labels: [codeman:awaiting-decision] }
+  - expect:
+      pods: [{ count: 0 }]
+      store:
+        - { collection: organizations/acme/runs, where: { status: refused, refusal: profile-unavailable, profile: gpu }, count: 1 }
+        - { collection: organizations/acme/runs, where: { provider: openrouter, status: closed, stage: plan, profile: router }, count: 1 }
+        - { collection: pools/acme/pods, where: { live: false, status: ended }, count: 1 }
+      ledger: { runs: 2 }
+      violations: none

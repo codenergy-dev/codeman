@@ -13,7 +13,7 @@ Codeman's bundles of the [e2e build](../guide.md#the-e2e-build) run the template
 - **Google:** the OIDC, STS and IAM Credentials path, with its signature, audience and [attribute condition](../../glossary.md#attribute-condition). Firestore's emulator runs Codeman's security rules.
 - **Pods:** the [gateway](../../glossary.md#gateway) as a process, in front of real Ollama 0.35.1 or vLLM 0.31.0 on the CPU, with the same tiny model on both.
 
-Each scenario is a YAML file under [`e2e/scenarios/`](../../../e2e/scenarios/happy-path/openrouter-plan-only.yaml), by subject: `happy-path/`, `pods/`, `serverless/`, `parallel/`, `pools/`, `budgets/`, `failures/`, `commands/` and `security/` today. The catalogue is phase 5 of the [plan](../../plans/2026-10-20-end-to-end-test-suite.md#phase-5-the-scenario-catalogue).
+Each scenario is a YAML file under [`e2e/scenarios/`](../../../e2e/scenarios/happy-path/openrouter-plan-only.yaml), by subject: `happy-path/`, `pods/`, `serverless/`, `parallel/`, `pools/`, `budgets/`, `failures/`, `commands/`, `profiles/` and `security/` today. The catalogue is phase 5 of the [plan](../../plans/2026-10-20-end-to-end-test-suite.md#phase-5-the-scenario-catalogue).
 
 ## What it does not cover
 

@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-10-29T16:54:04-03:00
-updated_at: 2026-10-29T19:10:00-03:00
+updated_at: 2026-10-29T20:20:00-03:00
 commit: 3d614ce
 ---
 
@@ -135,6 +135,7 @@ Each step ends with `npm run check` passing, and is one commit.
 4. **Refusing and going back.** `open-key` refuses an `Unavailable` as `profile-unavailable`; `apply` returns the task to its previous state and chains the next run; `select` counts a marked key as without seats, and words the waiting panel in `src/i18n/en.ts` and `pt-BR.ts` (`src/steps/keys.ts`, `apply.ts`, `select.ts`). Done when `src/steps/keys.test.ts`, `apply.test.ts` and `flow.test.ts` cover it.
    - **Done on 2026-10-29.** A bug found on the way: `apply` returned after a refused key before it wrote the chain mark, so a `concurrency-reached` refusal never started the next run, though `chains` said it should. `apply` now writes `chain` after any refusal, `false` for those that do not chain. `select` gives a key without room only its live pods' seats, and its waiting panel says until when (`waitingForRoom`); the refusal says so too (`profileUnavailable`).
 5. **End to end.** Two scenarios: a task whose first profile, a pod at `concurrency: 1`, is busy runs on the second, an OpenRouter profile (`profiles/fallback-busy`); a task whose fake Runpod has no room is refused, then runs on the second profile in the next run (`profiles/fallback-unavailable`). Done when they and the `parallel`, `pods` and `pools` scenarios pass.
+   - **Done on 2026-10-29.** `profiles/fallback-busy` passed in 84.5 s and `profiles/fallback-unavailable` in 55.1 s. `npm run test:e2e -- parallel pods pools budgets`, which also selected the scenarios those tags share with `failures/` and `profiles/`, passed 25 of 25, `budgets/` included since `apply`'s refusal path changed.
 6. **Docs.** [Profiles](../settings/profiles.md) (which applies, fallback, waiting), [batches](../runs/batches.md#forming-batches), [pods](../inference/pods.md#creating), [Salad installation](../installation/salad.md) (the 30 minutes, with this plan's example), [budget outcomes](../budget/budget.md#outcomes-of-open-key), [data layout](../backend/data-layout.md#pod-registry) (`unavailable: `), the [glossary](../glossary.md) (fallback), and an [upgrading](../installation/upgrading.md) entry for decisions 1 and 2. Done when `src/docs.test.ts` passes.
 7. **Build.** Rebuild `dist/`. Done when CI's build check passes. `dist/gateway.js` bundles the Runpod adapter, which step 3 changes, so a push to `main` publishes new pod images; their gateway behaves as before, so pinning them is not needed.
 

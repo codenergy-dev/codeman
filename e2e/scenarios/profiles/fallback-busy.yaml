@@ -1,0 +1,46 @@
+# A fallback for a busy profile (docs/settings/profiles.md, "Fallback"): `solo` is listed first and
+# runs one pod at a time; `spare`, after it, serves the same stage on OpenRouter. The run takes 2
+# tasks, as `pair`'s count allows: i1 goes to solo's pod, and i2, which would wait for solo's one
+# instance, falls back to spare in the same run.
+name: A busy pod profile's next task falls back to the next profile, in the same run
+tags: [profiles, fallback, ollama, pods, openrouter, concurrency]
+runner: simulator
+profiles: [ollama]
+timeout: 20m
+world:
+  organizations:
+    - name: acme
+      settings:
+        task-budget: 2
+        profiles:
+          - { name: solo, stages: [plan], tasks: 1, concurrency: 1, provider: runpod-pod, gpu: NVIDIA GeForce RTX 4090, model: qwen2.5:0.5b }
+          - { name: spare, stages: [plan], tasks: 1, model: deepseek/deepseek-v4.1-flash }
+          # Never applies to a plan: it only makes the run take 2 tasks.
+          - { name: pair, stages: [route, code, review], max-tasks: 2, model: deepseek/deepseek-v4.1-flash }
+  repositories:
+    - { name: acme/app, fixture: node-small, maintainers: [alice] }
+agent:
+  i1:
+    plan: &plan
+      - steps:
+          - bash: plan=$(sed -n 's/.*Create the plan at `\([^`]*\)`.*/\1/p' .codeman/task.md) && mkdir -p "$(dirname "$plan")" && printf '# A small change\n' > "$plan"
+          - output:
+              summary: Plans a small change.
+              decisions:
+                - { id: 1, title: Port, question: Which port?, options: [{ key: a, label: "8080" }, { key: b, label: "3000" }], recommendation: a }
+  i2: { plan: *plan }
+actions:
+  - open-issue: { ref: i1, as: alice, title: Add a health route, labels: [codeman] }
+  - open-issue: { ref: i2, as: alice, title: Add a version route, labels: [codeman] }
+  - run: { event: issues.labeled }
+  - expect: { issue: i1, labels: [codeman:awaiting-decision] }
+  - expect: { issue: i2, labels: [codeman:awaiting-decision] }
+  - expect:
+      pods:
+        - { status: TERMINATED, count: 1 }
+      store:
+        - { collection: organizations/acme/runs, where: { provider: runpod-pod, status: closed, stage: plan, profile: solo }, count: 1 }
+        - { collection: organizations/acme/runs, where: { provider: openrouter, status: closed, stage: plan, profile: spare }, count: 1 }
+        - { collection: organizations/acme/runs, where: { status: refused }, count: 0 }
+      ledger: { runs: 2 }
+      violations: none
