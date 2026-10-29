@@ -62,7 +62,7 @@ The contexts that fitted a pod's image, model, GPU type and engine settings befo
 
 ### Capacity
 
-The most runs a pod serves at once: its parallel requests. A task that finds every pod of its settings full creates another. See [shared pods](inference/pods.md#shared-pods).
+The most runs a pod serves at once: its parallel requests. A task that finds every pod of its settings full creates another, while its profile's [concurrency](settings/profiles.md#concurrency) allows. See [shared pods](inference/pods.md#shared-pods).
 
 ### Change policy
 
@@ -159,6 +159,10 @@ The program that runs the agent in the sandbox, with the model and the task file
 ### Inference provider
 
 Where an agent run's model is served, chosen with `provider`: `openrouter`, `runpod-pod` or `runpod-serverless`. It is not the Workload Identity provider. See [providers](settings/providers.md).
+
+### Instance
+
+What serves one batch of a profile: a pod on `runpod-pod`, or as many open runs as the profile's most tasks on OpenRouter and Serverless. `concurrency` caps how many run at once. See [concurrency](settings/profiles.md#concurrency).
 
 ## K
 

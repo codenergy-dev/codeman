@@ -20656,9 +20656,11 @@ var DEFAULTS = {
   "max-summary-chars": 2e3,
   "agent-minutes": 50,
   "wrap-up-minutes": 10,
+  concurrency: 1,
   language: "auto",
   provider: "openrouter"
 };
+var MAX_TASKS = 10;
 var LIMIT_BOUNDS = {
   "max-decisions": { min: 1, max: 10 },
   "max-options": { min: 2, max: 6 },
@@ -20667,14 +20669,14 @@ var LIMIT_BOUNDS = {
   "max-label-chars": { min: 1, max: 300 },
   "max-summary-chars": { min: 1, max: 4e3 },
   "agent-minutes": { min: 5, max: 300 },
-  "wrap-up-minutes": { min: 2, max: 30 }
+  "wrap-up-minutes": { min: 2, max: 30 },
+  concurrency: { min: 1, max: MAX_TASKS }
 };
 var MAX_JOB_MINUTES = 360;
 var AGENT_JOB_OVERHEAD_MINUTES = 10;
 function agentJobMinutes(settings) {
   return settings["agent-minutes"] + settings["wrap-up-minutes"] + AGENT_JOB_OVERHEAD_MINUTES;
 }
-var MAX_TASKS = 10;
 var TASK_SETTINGS = /* @__PURE__ */ new Set([
   "model",
   "task-budget",
@@ -20707,6 +20709,7 @@ var NAMES = [
   "max-summary-chars",
   "agent-minutes",
   "wrap-up-minutes",
+  "concurrency",
   "language",
   "provider",
   ...PROVIDER_SETTINGS
@@ -20776,7 +20779,11 @@ var PROFILE_SETTINGS = [
   ...PROVIDER_SETTINGS,
   ...PROVIDER_BLOCKS
 ];
-var PROFILE_TIMES = ["agent-minutes", "wrap-up-minutes"];
+var PROFILE_RUNS = [
+  "agent-minutes",
+  "wrap-up-minutes",
+  "concurrency"
+];
 var PROVIDER_KEYS = [...PROVIDER_SETTINGS, ...PROVIDER_BLOCKS];
 var BLOCKS = {
   ollama: {
@@ -20876,7 +20883,7 @@ function setting(entry, what) {
   const misplaced = misplacedCondition(name, what, text);
   if (misplaced) return { ok: false, line, error: misplaced };
   if (!isSettingName(name)) return { ok: false, line, error: `unknown setting \`${name}\`.` };
-  const allowed = [...PROFILE_SETTINGS, ...PROFILE_TIMES];
+  const allowed = [...PROFILE_SETTINGS, ...PROFILE_RUNS];
   if (what === "profile" && !allowed.includes(name)) {
     return {
       ok: false,
@@ -21027,7 +21034,7 @@ function resolveLayers(layers) {
     if (!served.ok) return served;
     const settings = {
       ...omit(top, PROFILE_SETTINGS),
-      ...pick(profile2.settings, PROFILE_TIMES),
+      ...pick(profile2.settings, PROFILE_RUNS),
       ...served.value
     };
     if (settings.model === void 0) {
@@ -21133,11 +21140,13 @@ function servedCounts(layers, stage) {
     const run2 = resolveRun(layers, { stage, tasks });
     if (!run2.ok) return run2;
     const { settings, profile: profile2 } = run2.value;
+    const most = mostTasks(layers, profile2);
     counts.push({
       tasks,
       profile: profile2,
-      key: batchKey(settings, profile2, mostTasks(layers, profile2)),
-      pod: settings.provider === "runpod-pod"
+      key: batchKey(settings, profile2, most),
+      pod: settings.provider === "runpod-pod",
+      concurrency: { instances: settings.concurrency, tasks: most }
     });
   }
   return { ok: true, value: counts };
@@ -22875,6 +22884,14 @@ var OpenFailure = class extends Error {
     this.pods = pods;
   }
 };
+var ConcurrencyReached = class extends OpenFailure {
+  /** The instances that are busy. */
+  instances;
+  constructor(message, instances, pods) {
+    super(new Error(message), pods);
+    this.instances = instances;
+  }
+};
 
 // src/inference/registry.ts
 import { randomBytes } from "node:crypto";
@@ -22887,6 +22904,8 @@ function formBatches(candidates, options) {
   const ordered = [...candidates].sort(byPriority);
   const taken = /* @__PURE__ */ new Set();
   const used = /* @__PURE__ */ new Map();
+  const seated = /* @__PURE__ */ new Map();
+  const free = (offer) => (options.seats?.(offer) ?? Number.POSITIVE_INFINITY) - (seated.get(offer.key) ?? 0);
   let places = options.places;
   const offering = (offer, from) => ordered.filter(
     (other) => !taken.has(other) && (offer.pod || from.own && other.own) && other.offers.some((one) => one.tasks === offer.tasks && one.key === offer.key)
@@ -22898,7 +22917,7 @@ function formBatches(candidates, options) {
     for (const offer of offers) {
       if (!offer.pod && !candidate.own) continue;
       const eligible = offering(offer, candidate);
-      if (eligible.length < offer.tasks) continue;
+      if (eligible.length < offer.tasks || free(offer) < offer.tasks) continue;
       const tasks = eligible.slice(0, offer.tasks);
       const own = tasks.filter((task) => task.own).length;
       if (own > places) continue;
@@ -22915,6 +22934,7 @@ function formBatches(candidates, options) {
         used.set(repository, (used.get(repository) ?? 0) + count3);
       }
       places -= own;
+      seated.set(offer.key, (seated.get(offer.key) ?? 0) + offer.tasks);
       batches.push({
         size: offer.tasks,
         key: offer.key,
@@ -22935,7 +22955,23 @@ function formBatches(candidates, options) {
     }
     const offers = [...candidate.offers].sort((a, b) => a.tasks - b.tasks);
     const ready = offers.map((offer) => offering(offer, candidate));
-    if (offers.some((offer, index) => (ready[index]?.length ?? 0) >= offer.tasks)) continue;
+    const complete2 = offers.flatMap(
+      (offer, index) => (ready[index]?.length ?? 0) >= offer.tasks ? [{ offer, index }] : []
+    );
+    if (complete2.some(({ offer }) => free(offer) >= offer.tasks)) continue;
+    const [full] = complete2;
+    if (full) {
+      const those2 = ready[full.index] ?? [];
+      waiting.push({
+        number: candidate.number,
+        tasks: full.offer.tasks,
+        profile: full.offer.profile,
+        ready: those2.length,
+        repositories: new Set(those2.map((task) => task.repository)).size,
+        busy: full.offer.concurrency?.instances ?? 0
+      });
+      continue;
+    }
     const [first] = offers;
     const those = ready[0] ?? [];
     if (first) {
@@ -23065,7 +23101,8 @@ function exchange(store, input) {
       }
       const formation = formBatches(candidates, {
         places: Math.max(0, input.places - honored.length),
-        limit: (other) => Math.max(0, MAX_TASKS - (reserved.get(other) ?? 0))
+        limit: (other) => Math.max(0, MAX_TASKS - (reserved.get(other) ?? 0)),
+        ...input.seats ? { seats: input.seats } : {}
       });
       const formed = [];
       const named = [];
@@ -23198,12 +23235,15 @@ function parseOffers(value) {
   const offers = parsed.flatMap((item) => {
     const offer = item;
     const valid = Number.isInteger(offer?.tasks) && (offer?.tasks ?? 0) >= 1 && (offer?.tasks ?? 0) <= MAX_TASKS && typeof offer?.key === "string" && (offer.profile === void 0 || typeof offer.profile === "string");
+    const count3 = (value2) => Number.isInteger(value2) && value2 >= 1 && value2 <= MAX_TASKS;
+    const { instances, tasks } = offer?.concurrency ?? {};
     return valid && offer ? [
       {
         tasks: offer.tasks,
         profile: offer.profile,
         key: offer.key,
-        pod: offer.pod === true
+        pod: offer.pod === true,
+        ...count3(instances) && count3(tasks) ? { concurrency: { instances, tasks } } : {}
       }
     ] : [];
   });
@@ -23243,16 +23283,7 @@ var PodRegistry = class {
     this.#pool = pool2;
     this.#now = now;
   }
-  /**
-   * Finds the pod of `description`'s settings for the task `holder` of workflow run `run`: joins
-   * the oldest serving one that has room, with a run lease; waits for another task's unexpired
-   * creation lease on a pod that will have room; or takes the creation lease, with a run lease. A
-   * creation lease that expired ends, so the task takes it over. A pod has room while its
-   * unexpired run leases and the tasks its batch reserved that have not joined are fewer than
-   * its capacity; a task of its batch always has room (decision 13 of the plan for GPU batches
-   * across repositories). The run lease lasts `leaseMs`, as long as the run's reservation.
-   */
-  claim(description, holder, run2, leaseMs) {
+  claim(description, holder, run2, leaseMs, instances) {
     return this.#store.transaction(
       async (tx) => {
         const now = this.#now();
@@ -23265,20 +23296,8 @@ var PodRegistry = class {
         const hasRoom = async (pod2) => {
           if (pod2.capacity === void 0 || pod2.seats.includes(holder)) return true;
           if (description.batch !== void 0 && pod2.batch === description.batch) return true;
-          const runs = new Set(
-            pod2.leases.filter((one) => one.kind === "run" && one.until > now && one.holder !== holder).map((one) => one.holder)
-          );
-          let pending = 0;
-          if (pod2.batch) {
-            const document = await tx.get(LAYOUT.batch(this.#pool, pod2.batch));
-            const batch = document && storedBatch(document);
-            for (const member of batch?.members ?? []) {
-              const of = `${member.repository}#${member.number}`;
-              if (member.status === "dropped" || of === holder) continue;
-              if (!pod2.seats.includes(of) && !runs.has(of)) pending++;
-            }
-          }
-          return runs.size + pending < pod2.capacity;
+          const document = pod2.batch ? await tx.get(LAYOUT.batch(this.#pool, pod2.batch)) : void 0;
+          return seatsLeft(pod2, document ? storedBatch(document) : void 0, now, holder) > 0;
         };
         const lease = {
           holder,
@@ -23321,6 +23340,15 @@ var PodRegistry = class {
           if (pod2.status !== "creating" || (pod2.creatingUntil ?? now) <= now) continue;
           if (await hasRoom(pod2)) return { kind: "wait", pod: pod2 };
         }
+        if (instances !== void 0 && description.key !== void 0) {
+          const ofKey = (await tx.query(LAYOUT.pods(this.#pool), {
+            where: [
+              { field: "key", op: "==", value: description.key },
+              { field: "live", op: "==", value: true }
+            ]
+          })).map(registered).filter((pod2) => sameAccount(pod2.account, description.account) && holds(pod2, now));
+          if (ofKey.length >= instances) return { kind: "full", pods: ofKey.length };
+        }
         const pod = {
           nonce: randomBytes(16).toString("hex"),
           settings: description.settings,
@@ -23335,6 +23363,7 @@ var PodRegistry = class {
           account: description.account,
           capacity: description.capacity,
           batch: description.batch,
+          key: description.key,
           reason: void 0
         };
         tx.write({
@@ -23421,6 +23450,31 @@ var PodRegistry = class {
     return documents.map(registered).filter((pod) => sameAccount(pod.account, account)).sort(byAge);
   }
   /**
+   * The live pods of each batch key, of every account, and their free seats (decision 5 of the
+   * plan for limiting concurrent instances of a profile): what `select` holds tasks back by. A
+   * read, not a claim: `open-key` checks again.
+   */
+  async instances() {
+    const now = this.#now();
+    const counted2 = /* @__PURE__ */ new Map();
+    const batches = /* @__PURE__ */ new Map();
+    const batchOf = (id) => {
+      let read = batches.get(id);
+      if (!read) {
+        read = this.#store.get(LAYOUT.batch(this.#pool, id)).then((document) => document ? storedBatch(document) : void 0);
+        batches.set(id, read);
+      }
+      return read;
+    };
+    for (const pod of await this.live()) {
+      if (pod.key === void 0 || !holds(pod, now)) continue;
+      const free = pod.status === "abandoned" ? 0 : seatsLeft(pod, pod.batch ? await batchOf(pod.batch) : void 0, now);
+      const before = counted2.get(pod.key) ?? { pods: 0, free: 0 };
+      counted2.set(pod.key, { pods: before.pods + 1, free: before.free + free });
+    }
+    return counted2;
+  }
+  /**
    * Changes a live pod as `decide` says, in a transaction that reads it again: nothing when it
    * returns undefined, or when the pod is no longer live. Returns the pod as it is now.
    */
@@ -23455,6 +23509,22 @@ var PodRegistry = class {
 };
 function sameAccount(pod, account) {
   return pod === void 0 || account === void 0 || pod === account;
+}
+function holds(pod, now) {
+  return pod.status !== "creating" || (pod.creatingUntil ?? now) > now;
+}
+function seatsLeft(pod, batch, now, holder) {
+  if (pod.capacity === void 0) return Number.POSITIVE_INFINITY;
+  const runs = new Set(
+    pod.leases.filter((one) => one.kind === "run" && one.until > now && one.holder !== holder).map((one) => one.holder)
+  );
+  let pending = 0;
+  for (const member of batch?.members ?? []) {
+    const of = `${member.repository}#${member.number}`;
+    if (member.status === "dropped" || of === holder) continue;
+    if (!pod.seats.includes(of) && !runs.has(of)) pending++;
+  }
+  return Math.max(0, pod.capacity - runs.size - pending);
 }
 function heldBy(leases, now) {
   return [...new Set(leases.filter((one) => one.until > now).map((one) => one.holder))];
@@ -23502,6 +23572,7 @@ function registered(document) {
     account: text(fields.account),
     capacity: typeof capacity === "number" && Number.isInteger(capacity) && capacity > 0 ? capacity : void 0,
     batch: text(fields.batch),
+    key: text(fields.key),
     reason: text(fields.reason)
   };
 }
@@ -23693,6 +23764,7 @@ var PodInference = class {
       await this.#sweep(holder, settings, log);
       handle = await this.#claim(run2, holder, settings, token, log);
     } catch (error3) {
+      if (error3 instanceof ConcurrencyReached) throw error3;
       throw new OpenFailure(error3, this.#takeEvents());
     }
     const status2 = await this.#admin(handle, "GET", "/admin/status").catch(
@@ -23959,7 +24031,7 @@ var PodInference = class {
   async #claim(run2, holder, settings, token, log) {
     const { model, gpuType, image, reuse } = this.#settings;
     const capacity = podCapacity(this.#settings);
-    const { batch } = this.#settings;
+    const { batch, concurrency } = this.#settings;
     const description = {
       settings,
       model,
@@ -23970,11 +24042,25 @@ var PodInference = class {
       account: this.#account,
       organization: this.#options.repository.owner.toLowerCase(),
       ...capacity === void 0 ? {} : { capacity },
-      ...batch === void 0 ? {} : { batch }
+      ...batch === void 0 ? {} : { batch },
+      ...concurrency === void 0 ? {} : { key: concurrency.key }
     };
     let waiting = false;
     for (let claims = 0; claims < CLAIMS; claims++) {
-      const claim = await this.#registry.claim(description, holder, run2.runId, run2.reservationMs);
+      const claim = await this.#registry.claim(
+        description,
+        holder,
+        run2.runId,
+        run2.reservationMs,
+        concurrency?.pods
+      );
+      if (claim.kind === "full") {
+        throw new ConcurrencyReached(
+          `Every pod of these settings is full, and ${claim.pods} of them run, as many as \`concurrency\` allows: no pod was created.`,
+          claim.pods,
+          this.#takeEvents()
+        );
+      }
       if (claim.kind === "wait") {
         if (!waiting)
           log.info("Another task is creating the pod for these settings; waiting for it.");
@@ -24603,7 +24689,14 @@ function inferenceChoice(settings, record, options = {}) {
     ...options.profile ? { profile: options.profile } : {},
     accounts: [.../* @__PURE__ */ new Set([accountOf(settings.provider), ...options.accounts ?? []])],
     recorded: { spent: record?.spent ?? 0 },
-    ...options.pool ? { pool: options.pool } : {}
+    ...options.pool ? { pool: options.pool } : {},
+    ...options.key === void 0 ? {} : {
+      concurrency: {
+        key: options.key,
+        instances: settings.concurrency,
+        tasks: options.parallel ?? 1
+      }
+    }
   };
   if (settings.provider === "openrouter") return { provider: "openrouter", ...budgeted };
   const common = {
@@ -24639,7 +24732,7 @@ function parseInferenceChoice(text) {
   }
   const choice = JSON.parse(text);
   const amount2 = (value) => typeof value === "number" && Number.isFinite(value);
-  const budgeted = isProviderName(choice.provider) && Array.isArray(choice.accounts) && choice.accounts.every((name) => typeof name === "string" && name !== "") && amount2(choice.recorded?.spent) && (choice.profile === void 0 || typeof choice.profile === "string") && (choice.pool === void 0 || validPool(choice.pool));
+  const budgeted = isProviderName(choice.provider) && Array.isArray(choice.accounts) && choice.accounts.every((name) => typeof name === "string" && name !== "") && amount2(choice.recorded?.spent) && (choice.profile === void 0 || typeof choice.profile === "string") && (choice.pool === void 0 || validPool(choice.pool)) && (choice.concurrency === void 0 || validConcurrency(choice.concurrency));
   if (!budgeted) throw new Error("The inference input is not a valid choice.");
   if (choice.provider === "openrouter") return choice;
   const valid = typeof choice.model === "string" && ENGINES[choice.engine] !== void 0 && Array.isArray(choice.pods) && (choice.provider === "runpod-pod" ? typeof choice.gpu === "string" : typeof choice.endpoint === "string");
@@ -24666,6 +24759,11 @@ function parseInferenceChoice(text) {
     }
   }
   return choice;
+}
+function validConcurrency(value) {
+  const cap = value;
+  const count3 = (number3) => Number.isInteger(number3) && number3 >= 1 && number3 <= MAX_TASKS;
+  return typeof cap?.key === "string" && /^[0-9a-f]{16}$/.test(cap.key) && count3(cap.instances) && count3(cap.tasks);
 }
 function validPool(value) {
   const pool2 = value;
@@ -24737,7 +24835,8 @@ function selfHosted(choice, repository, inputs) {
         ollama: ollamaEnvironment(choice.ollama),
         ...choice.engine === "vllm" ? { vllm: checkedVllm(choice.vllm) } : {},
         parallel: choice.parallel,
-        batch: choice.batch
+        batch: choice.batch,
+        ...choice.concurrency ? { concurrency: { key: choice.concurrency.key, pods: choice.concurrency.instances } } : {}
       },
       {
         repository,
@@ -24886,7 +24985,8 @@ var Ledger = class {
         model: picked.model,
         provider: picked.provider,
         profile: picked.profile ?? null,
-        ...picked.batch ? { batch: picked.batch } : {}
+        ...picked.batch ? { batch: picked.batch } : {},
+        ...picked.key ? { key: picked.key } : {}
       });
     }
     this.#event(run2, "task-picked", { action: picked.action, stage: picked.stage });
@@ -24911,6 +25011,22 @@ var Ledger = class {
       ...ledgerRuns(await monthQuery(this.#store, owner, month)),
       ...await untrackedQuery(this.#store, this.#pool(), owner, month)
     ]);
+  }
+  /**
+   * How many runs of each batch key hold a reservation now, in the organization: those a
+   * `concurrency` caps on OpenRouter and Serverless.
+   */
+  async openRuns(keys, log) {
+    const { owner } = this.#source.runtime.repository;
+    const counts = /* @__PURE__ */ new Map();
+    await this.#retry(log, "read Codeman's ledger", async () => {
+      for (const key of new Set(keys)) {
+        const now = this.#now();
+        const runs = ledgerRuns(await openQuery(this.#store, owner, key));
+        counts.set(key, runs.filter((run2) => reserving(run2, now)).length);
+      }
+    });
+    return counts;
   }
   /**
    * Replaces the costs of a task's `runs` with what the providers say now: OpenRouter's keys,
@@ -24969,7 +25085,7 @@ var Ledger = class {
         const organization = budgets.organizationBudget !== void 0;
         const pool2 = this.#pool();
         const otherMembers = pool2.members.filter((member) => member !== owner.toLowerCase());
-        const [task, month, untracked, poolRuns] = await Promise.all([
+        const [task, month, untracked, poolRuns, keyRuns] = await Promise.all([
           taskQuery(tx, owner, repository, budgets.task).then(ledgerRuns),
           monthQuery(tx, owner, ledgerMonth(now), organization ? void 0 : repository).then(
             ledgerRuns
@@ -24984,7 +25100,8 @@ var Ledger = class {
               ...ledgerRuns(await monthQuery(tx, member, ledgerMonth(now))),
               ...await untrackedQuery(tx, pool2, member, ledgerMonth(now))
             ])
-          ).then((lists) => lists.flat()) : Promise.resolve([])
+          ).then((lists) => lists.flat()) : Promise.resolve([]),
+          budgets.concurrency ? openQuery(tx, owner, budgets.concurrency.key).then(ledgerRuns) : Promise.resolve([])
         ]);
         const own = task.find((other) => other.id === run2);
         const before = own && own.status !== "open" ? runAmount(own) : 0;
@@ -25013,6 +25130,15 @@ var Ledger = class {
         }
         if (reservation.organization !== void 0 && budgets.organizationBudget !== void 0 && reservation.organization + limit > budgets.organizationBudget) {
           return { ...reservation, outcome: "over-organization-budget" };
+        }
+        if (budgets.concurrency) {
+          const concurrent = keyRuns.filter(
+            (other) => other.id !== run2 && reserving(other, now)
+          ).length;
+          if (concurrent >= budgets.concurrency.runs) {
+            return { ...reservation, concurrent, outcome: "concurrency-reached" };
+          }
+          reservation.concurrent = concurrent;
         }
         tx.write({
           op: "set",
@@ -25049,9 +25175,10 @@ var Ledger = class {
     this.#pods(run2, pods);
   }
   /** `open-key` refused the run: `status` is its output, `reason` why. */
-  refuse(run2, status2, reason) {
+  refuse(run2, status2, reason, pods) {
     this.#update(run2, { status: "refused", refusedAt: this.#now(), refusal: status2, reason });
     this.#event(run2, "key-refused", { status: status2, reason });
+    this.#pods(run2, pods);
   }
   /**
    * `close-key` ended the run's access and read what it used; `agentJob` is the agent job's
@@ -25346,6 +25473,14 @@ function taskQuery(store, owner, repository, task) {
     where: [
       { field: "repository", op: "==", value: repository },
       { field: "task", op: "==", value: task }
+    ]
+  });
+}
+function openQuery(store, owner, key) {
+  return store.query(LAYOUT.runs(owner), {
+    where: [
+      { field: "key", op: "==", value: key },
+      { field: "status", op: "==", value: "open" }
     ]
   });
 }
@@ -31501,12 +31636,14 @@ Tests: ${test ?? "(no report)"}`,
   replanHint: "Comment `/codeman replan <what to change>` to try again.",
   removeLabelHint: "Remove the `codeman:blocked` label to try again.",
   waitingForTasks: (tasks, profile2, ready, repositories) => `Waiting for ${tasks} tasks ready for profile \`${profile2}\`; ${ready} ${ready === 1 ? "is" : "are"}, in ${repositories} ${repositories === 1 ? "repository" : "repositories"}. Codeman checks again at every run.`,
+  waitingForInstances: (profile2, instances) => `Waiting for ${profile2 === void 0 ? "the top-level settings" : `profile \`${profile2}\``}: ${instances === 1 ? "its one instance is" : `its ${instances} instances are`} busy, as many as its \`concurrency\` allows. Codeman checks again at every run.`,
   noSettingsForStage: (stage) => `No settings apply to the ${STAGES2[stage]} stage: no profile serves it with any number of tasks, and the top-level settings have no \`model\`. Add the stage to a profile, or a top-level \`model\`, in \`.codeman/settings.yml\` or the organization's settings.`,
   noKey: "Codeman could not give this run access to its model (an OpenRouter key, or a GPU). See the run log.",
   missingCredentials: "Codeman could not give this run access to its model: the workflow does not pass the secret of a provider the run needs, its own or one whose billing counts in the organization's month.",
   taskBudgetSpent: (spent, budget, minimum) => `The task has spent ${spent} of its ${budget} budget, and a run needs at least ${minimum}. A maintainer can raise it with \`/codeman set task-budget <usd>\`, then comment \`/codeman continue\`.`,
   monthlyBudgetReached: (used, budget, limit) => `The monthly budget is reached: ${used} used of ${budget}, and this run may use up to ${limit}.`,
   organizationBudgetReached: (used, budget, limit) => `The organization's monthly budget is reached: ${used} used of ${budget}, and this run may use up to ${limit}.`,
+  concurrencyReached: (profile2, instances) => `${profile2 === void 0 ? "The top-level settings already run" : `Profile \`${profile2}\` already runs`} ${instances === 1 ? "its one instance" : `${instances} instances`}, as many as its \`concurrency\` allows.`,
   tryLater: (reason) => `${reason} Codeman will try again in a later run.`,
   planUnfinished: "The agent did not finish the plan. See the run log.",
   noResult: "The agent produced no result. See the run log.",
@@ -31769,12 +31906,14 @@ Testes: ${test ?? "(sem relat\xF3rio)"}`,
   replanHint: "Comente `/codeman replan <o que mudar>` para tentar de novo.",
   removeLabelHint: "Remova a label `codeman:blocked` para tentar de novo.",
   waitingForTasks: (tasks, profile2, ready, repositories) => `Aguardando ${tasks} tarefas prontas para o perfil \`${profile2}\`; ${ready} ${ready === 1 ? "est\xE1" : "est\xE3o"}, em ${repositories} ${repositories === 1 ? "reposit\xF3rio" : "reposit\xF3rios"}. O Codeman verifica de novo a cada rodada.`,
+  waitingForInstances: (profile2, instances) => `Aguardando ${profile2 === void 0 ? "as configura\xE7\xF5es de n\xEDvel superior" : `o perfil \`${profile2}\``}: ${instances === 1 ? "sua inst\xE2ncia est\xE1 ocupada" : `suas ${instances} inst\xE2ncias est\xE3o ocupadas`}, o m\xE1ximo que o \`concurrency\` permite. O Codeman verifica de novo a cada rodada.`,
   noSettingsForStage: (stage) => `Nenhuma configura\xE7\xE3o se aplica \xE0 ${OF_STAGE(stage)}: nenhum perfil a atende com qualquer n\xFAmero de tarefas, e as configura\xE7\xF5es de n\xEDvel superior n\xE3o t\xEAm \`model\`. Inclua a etapa num perfil, ou um \`model\` no n\xEDvel superior, em \`.codeman/settings.yml\` ou nas configura\xE7\xF5es da organiza\xE7\xE3o.`,
   noKey: "O Codeman n\xE3o conseguiu dar a esta rodada acesso ao modelo (uma chave do OpenRouter, ou uma GPU). Veja o log da rodada.",
   missingCredentials: "O Codeman n\xE3o conseguiu dar a esta rodada acesso ao modelo: o workflow n\xE3o passa o segredo de um provedor de que a rodada precisa, o dela ou um cuja cobran\xE7a conta no m\xEAs da organiza\xE7\xE3o.",
   taskBudgetSpent: (spent, budget, minimum) => `A tarefa gastou ${spent} do or\xE7amento de ${budget}, e uma rodada precisa de pelo menos ${minimum}. Um mantenedor pode aument\xE1-lo com \`/codeman set task-budget <usd>\` e depois comentar \`/codeman continue\`.`,
   monthlyBudgetReached: (used, budget, limit) => `O or\xE7amento mensal foi atingido: ${used} usados de ${budget}, e esta rodada pode usar at\xE9 ${limit}.`,
   organizationBudgetReached: (used, budget, limit) => `O or\xE7amento mensal da organiza\xE7\xE3o foi atingido: ${used} usados de ${budget}, e esta rodada pode usar at\xE9 ${limit}.`,
+  concurrencyReached: (profile2, instances) => `${profile2 === void 0 ? "As configura\xE7\xF5es de n\xEDvel superior j\xE1 rodam" : `O perfil \`${profile2}\` j\xE1 roda`} ${instances === 1 ? "sua \xFAnica inst\xE2ncia" : `${instances} inst\xE2ncias`}, o m\xE1ximo que o \`concurrency\` permite.`,
   tryLater: (reason) => `${reason} O Codeman tenta de novo numa pr\xF3xima rodada.`,
   planUnfinished: "O agente n\xE3o terminou o plano. Veja o log da rodada.",
   noResult: "O agente n\xE3o produziu resultado. Veja o log da rodada.",
@@ -33718,7 +33857,9 @@ function goesOn(state) {
   return state === "ready" || state === "routing" || routedStageOfState(state) !== void 0;
 }
 function chains(action, keyJob, keyStatus) {
-  return action === "record" || action === "accept" || keyJob === "success" && keyStatus === "opened";
+  return action === "record" || action === "accept" || // A run refused at its profile's cap starts the next, whose `select` makes it wait in view
+  // (decision 6 of the plan for limiting concurrent instances of a profile).
+  keyJob === "success" && (keyStatus === "opened" || keyStatus === "concurrency-reached");
 }
 async function keyFailed(task, io) {
   const t = say(task);
@@ -33757,7 +33898,7 @@ async function keyFailed(task, io) {
       t.money(io.jobs.organizationMonthSpent ?? 0),
       t.money(task.settings["organization-monthly-budget"] ?? 0),
       limit
-    ) : t.noKey;
+    ) : status2 === "concurrency-reached" ? t.concurrencyReached(task.profile, task.settings.concurrency) : t.noKey;
     await finish(io, task, task.fromState === "planning" ? "new" : task.fromState, {
       message: t.tryLater(reason),
       retry: true
@@ -34637,7 +34778,7 @@ async function openKey(services) {
   await ledger.check(runtime2);
   const outcome = await open(services, ledger, run2);
   if (outcome.status === "opened") ledger.open(run2, outcome.limit, outcome.pods);
-  else ledger.refuse(run2, outcome.status, outcome.reason);
+  else ledger.refuse(run2, outcome.status, outcome.reason, outcome.pods);
   await ledger.flush(runtime2);
 }
 async function open(services, ledger, run2) {
@@ -34649,10 +34790,10 @@ async function open(services, ledger, run2) {
   const organizationBudget = runtime2.input("organization-monthly-budget") === "" ? void 0 : positiveNumber(runtime2, "organization-monthly-budget");
   const choice = parseInferenceChoice(runtime2.input("inference"));
   if (choice.profile) runtime2.info(`The run uses the profile \`${choice.profile}\`.`);
-  const refuse = (status2, reason) => {
+  const refuse = (status2, reason, pods) => {
     runtime2.output("status", status2);
     runtime2.output("reason", reason);
-    return { status: status2, reason };
+    return { status: status2, reason, ...pods ? { pods } : {} };
   };
   const accounts = services.accounts();
   const now = /* @__PURE__ */ new Date();
@@ -34679,6 +34820,8 @@ async function open(services, ledger, run2) {
   const costs = await openRouterCosts(services, runs);
   if (costs) await ledger.refresh(runs, { costs }, runtime2);
   const lastsMs = reservationMs(positiveNumber(runtime2, "agent-job-minutes"));
+  const cap = choice.concurrency;
+  const runsCap = cap && choice.provider !== "runpod-pod" ? { key: cap.key, runs: cap.instances * cap.tasks } : void 0;
   const reservation = await ledger.reserve(
     run2,
     {
@@ -34687,7 +34830,8 @@ async function open(services, ledger, run2) {
       monthlyBudget,
       organizationBudget,
       recorded: choice.recorded.spent,
-      billed
+      billed,
+      concurrency: runsCap
     },
     lastsMs
   );
@@ -34725,6 +34869,18 @@ async function open(services, ledger, run2) {
       `The organization's monthly budget is reached: ${usd(reservation.organization ?? 0)} used of ${usd(organizationBudget ?? 0)}, and this run may use up to ${usd(limit)}.`
     );
   }
+  const profile2 = choice.profile ? `profile \`${choice.profile}\`` : "the top-level settings";
+  if (reservation.outcome === "concurrency-reached" && runsCap) {
+    return refuse(
+      "concurrency-reached",
+      `The ${reservation.concurrent ?? 0} open run(s) of ${profile2} in the organization are as many as its \`concurrency\` allows: ${cap?.instances} instance(s) of ${cap?.tasks} run(s).`
+    );
+  }
+  if (runsCap) {
+    runtime2.info(
+      `The organization has ${reservation.concurrent ?? 0} other open run(s) of ${profile2}, of ${runsCap.runs} its \`concurrency\` allows.`
+    );
+  }
   runtime2.info(`Reserved ${usd(limit)} for this run in Codeman's ledger.`);
   let opened;
   try {
@@ -34733,6 +34889,9 @@ async function open(services, ledger, run2) {
       runtime2
     );
   } catch (error3) {
+    if (error3 instanceof ConcurrencyReached) {
+      return refuse("concurrency-reached", `${error3.message} They serve ${profile2}.`, error3.pods);
+    }
     ledger.fail(
       run2,
       oneLine(error3 instanceof Error ? error3.message : String(error3)),
@@ -35039,13 +35198,26 @@ async function select(services) {
     updatedAt: work.task.updatedAt,
     offers: work.counts.filter((count3) => count3.tasks <= cap)
   }));
+  const pods = await new PodRegistry(store, pool2.id).instances();
+  const open3 = await ledger.openRuns(
+    own.flatMap((task) => task.offers.filter((offer) => !offer.pod).map((offer) => offer.key)),
+    runtime2
+  );
+  const seats = (offer) => {
+    if (!offer.concurrency) return Number.POSITIVE_INFINITY;
+    const { instances, tasks: tasks2 } = offer.concurrency;
+    if (!offer.pod) return instances * tasks2 - (open3.get(offer.key) ?? 0);
+    const busy = pods.get(offer.key) ?? { pods: 0, free: 0 };
+    return busy.free + Math.max(0, instances - busy.pods) * tasks2;
+  };
   const board = await exchange(store, {
     pool: pool2,
     repository: repositoryName(repo.repository),
     run: { id: runtime2.run.id, attempt: runtime2.run.attempt },
     now,
     own,
-    places: cap - withoutAgent.length
+    places: cap - withoutAgent.length,
+    seats
   });
   for (const { number: number3, batch } of board.dropped) {
     runtime2.info(
@@ -35133,6 +35305,7 @@ async function select(services) {
       fromState: fromState.state,
       model,
       settings,
+      profile: profile2,
       ignore,
       defaultBranch,
       branch,
@@ -35187,6 +35360,7 @@ async function select(services) {
       accounts,
       parallel,
       batch: started?.batch,
+      key: started?.key,
       context: context3,
       start
     };
@@ -35230,12 +35404,12 @@ async function select(services) {
   const wait = async (work, waiting) => {
     const { task, talk, record } = work;
     const profile2 = waiting.profile ?? "";
-    const { ready: ready2, repositories } = waiting;
+    const { ready: ready2, repositories, busy } = waiting;
     runtime2.info(
-      `#${task.number} ${oneLine(task.title)}: waits for ${waiting.tasks} tasks ready for profile \`${profile2}\`; ${ready2} ${ready2 === 1 ? "is" : "are"}, in ${repositories} ${repositories === 1 ? "repository" : "repositories"}.`
+      busy === void 0 ? `#${task.number} ${oneLine(task.title)}: waits for ${waiting.tasks} tasks ready for profile \`${profile2}\`; ${ready2} ${ready2 === 1 ? "is" : "are"}, in ${repositories} ${repositories === 1 ? "repository" : "repositories"}.` : `#${task.number} ${oneLine(task.title)}: waits for a seat; the ${busy} instance(s) of ${waiting.profile === void 0 ? "the top-level settings" : `profile \`${profile2}\``} that its \`concurrency\` allows are busy.`
     );
     const t = messages(taskLanguage(work.language, record?.language));
-    const message = t.waitingForTasks(waiting.tasks, profile2, ready2, repositories);
+    const message = busy === void 0 ? t.waitingForTasks(waiting.tasks, profile2, ready2, repositories) : t.waitingForInstances(waiting.profile, busy);
     if (talk.status?.body.includes(message)) return;
     const served = resolveOwn(work.own, {
       stage: work.agentStage ?? "plan",
@@ -35293,7 +35467,8 @@ async function select(services) {
       model: one.model,
       provider: one.settings.provider,
       profile: one.profile,
-      batch: one.batch
+      batch: one.batch,
+      key: one.key
     });
   }
   await ledger.flush(runtime2);
@@ -35316,7 +35491,8 @@ function taskOutputs(task, run2, pool2) {
     accounts: task.accounts,
     parallel: task.parallel,
     pool: pool2,
-    batch: task.batch
+    batch: task.batch,
+    key: task.key
   });
   return {
     task: String(task.number),

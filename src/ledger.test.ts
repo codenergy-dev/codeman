@@ -688,3 +688,60 @@ test("a pod two organizations of a pool shared: its untracked time splits by wha
   );
   assert.ok(Math.abs((a.organization ?? 0) - 0.4) < 1e-9, `${a.organization}`);
 });
+
+test("on OpenRouter and Serverless, a key's open runs in the organization stop at its cap", async () => {
+  const store = new MemoryStore();
+  const pick = ledger(store, "select");
+  const openRouter: PickedRun = { ...picked, provider: "openrouter", model: "a/b", key: "k1" };
+  for (const run of ["300-1-7", "300-1-8", "300-1-9"]) pick.ledger.pick(run, openRouter);
+  pick.ledger.pick("300-1-6", { ...openRouter, key: "k2" });
+  await pick.ledger.flush(pick.runtime);
+  const open = ledger(store, "open-key", { at: "2026-10-07T12:01:00Z" });
+  const budgets = (task: number) => ({
+    task,
+    taskBudget: 1,
+    monthlyBudget: 20,
+    recorded: 0,
+    billed: new Map(),
+    concurrency: { key: "k1", runs: 2 },
+  });
+  const reserve = (run: string, task: number) =>
+    open.ledger.reserve(run, budgets(task), 2 * 3_600_000);
+  // Another key's run counts for its own key only.
+  assert.equal(
+    (
+      await open.ledger.reserve(
+        "300-1-6",
+        { ...budgets(6), concurrency: { key: "k2", runs: 1 } },
+        2 * 3_600_000,
+      )
+    ).outcome,
+    "reserved",
+  );
+  const first = await reserve("300-1-7", 7);
+  assert.deepEqual([first.outcome, first.concurrent], ["reserved", 0]);
+  const second = await reserve("300-1-8", 8);
+  assert.deepEqual([second.outcome, second.concurrent], ["reserved", 1]);
+  const third = await reserve("300-1-9", 9);
+  assert.deepEqual([third.outcome, third.concurrent], ["concurrency-reached", 2]);
+  assert.equal(
+    (await store.get("organizations/codenergy/runs/300-1-9"))?.fields.status,
+    "picked",
+    "nothing reserved",
+  );
+  assert.deepEqual(
+    await open.ledger.openRuns(["k1", "k2", "k3"], open.runtime),
+    new Map([
+      ["k1", 2],
+      ["k2", 1],
+      ["k3", 0],
+    ]),
+  );
+
+  // A run that closed, or whose reservation expired, no longer counts.
+  open.ledger.close("300-1-7", { cost: 0.1 }, "success");
+  await open.ledger.flush(open.runtime);
+  assert.equal((await reserve("300-1-9", 9)).outcome, "reserved");
+  const later = ledger(store, "open-key", { at: "2026-10-07T15:00:00Z" });
+  assert.deepEqual(await later.ledger.openRuns(["k1"], later.runtime), new Map([["k1", 0]]));
+});

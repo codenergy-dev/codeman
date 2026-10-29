@@ -24,6 +24,7 @@ import {
 import { HuggingFace, type ModelHub } from "./huggingface.ts";
 import { IMAGES_WITHOUT_OLLAMA_SETTINGS, OLLAMA_VERSION, SINGLE_RUN_IMAGES } from "./ollama.ts";
 import {
+  ConcurrencyReached,
   type InferenceProvider,
   type OpenedRun,
   OpenFailure,
@@ -103,6 +104,11 @@ export interface PodSettings extends SelfHostedSettings {
   parallel?: number | undefined;
   /** The batch the task runs in, whose pod it joins first. */
   batch?: string | undefined;
+  /**
+   * The run's batch key, and how many live pods of it may run at once (decision 4 of the plan
+   * for limiting concurrent instances of a profile); undefined: no cap.
+   */
+  concurrency?: { key: string; pods: number } | undefined;
 }
 
 /** Whether pod settings serve their model with vLLM. */
@@ -472,6 +478,7 @@ export class PodInference implements InferenceProvider {
       await this.#sweep(holder, settings, log);
       handle = await this.#claim(run, holder, settings, token, log);
     } catch (error) {
+      if (error instanceof ConcurrencyReached) throw error;
       throw new OpenFailure(error, this.#takeEvents());
     }
     // The context and images are informational: a failure to read them does not undo the run.
@@ -780,7 +787,7 @@ export class PodInference implements InferenceProvider {
   ): Promise<PodHandle> {
     const { model, gpuType, image, reuse } = this.#settings;
     const capacity = podCapacity(this.#settings);
-    const { batch } = this.#settings;
+    const { batch, concurrency } = this.#settings;
     const description: PodDescription = {
       settings,
       model,
@@ -792,10 +799,24 @@ export class PodInference implements InferenceProvider {
       organization: this.#options.repository.owner.toLowerCase(),
       ...(capacity === undefined ? {} : { capacity }),
       ...(batch === undefined ? {} : { batch }),
+      ...(concurrency === undefined ? {} : { key: concurrency.key }),
     };
     let waiting = false;
     for (let claims = 0; claims < CLAIMS; claims++) {
-      const claim = await this.#registry.claim(description, holder, run.runId, run.reservationMs);
+      const claim = await this.#registry.claim(
+        description,
+        holder,
+        run.runId,
+        run.reservationMs,
+        concurrency?.pods,
+      );
+      if (claim.kind === "full") {
+        throw new ConcurrencyReached(
+          `Every pod of these settings is full, and ${claim.pods} of them run, as many as \`concurrency\` allows: no pod was created.`,
+          claim.pods,
+          this.#takeEvents(),
+        );
+      }
       if (claim.kind === "wait") {
         if (!waiting)
           log.info("Another task is creating the pod for these settings; waiting for it.");

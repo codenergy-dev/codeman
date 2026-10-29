@@ -76,6 +76,21 @@ export class OpenFailure extends Error {
   }
 }
 
+/**
+ * An open refused because the instances of the run's batch key are as many as its `concurrency`
+ * allows, and full (decision 4 of the plan for limiting concurrent instances of a profile): not
+ * the task's fault, so a later run tries again.
+ */
+export class ConcurrencyReached extends OpenFailure {
+  /** The instances that are busy. */
+  readonly instances: number;
+
+  constructor(message: string, instances: number, pods: PodEvent[]) {
+    super(new Error(message), pods);
+    this.instances = instances;
+  }
+}
+
 /** What a run used, in OpenRouter's terms. Unknown figures are left out. */
 export interface RunUsage {
   /** What the run spent, in USD. */

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { decrypt } from "../crypto.ts";
-import { OpenFailure } from "../inference/provider.ts";
+import { ConcurrencyReached, OpenFailure } from "../inference/provider.ts";
 import { MemoryStore } from "../store/memory.ts";
 import { FakeAccounts, FakeInference } from "../testing/fake-inference.ts";
 import { FakePlatform, fakeServices } from "../testing/fake-platform.ts";
@@ -277,6 +277,73 @@ test("a failed open records what its provider did with pods, with the reasons it
   assert.ok(await store.get("organizations/o/events/300-1-7-pod-created-pod1"));
   const terminated = await store.get("organizations/o/events/300-1-7-pod-terminated-pod1");
   assert.equal(terminated?.fields.reason, "it did not serve m");
+});
+
+test("a profile's open runs at its concurrency: the next is refused, unreserved and unblocked", async () => {
+  const store = new MemoryStore();
+  const later = new Date(Date.now() + HOUR);
+  const open1 = { status: "open", key: "0123456789abcdef", limit: 1, expiresAt: later };
+  await seedRuns(store, {
+    "290-1-5": open1,
+    "291-1-6": { ...open1, key: "fedcba9876543210" },
+    "300-1-7": { key: "0123456789abcdef" },
+  });
+  const choice = (instances: number) =>
+    JSON.stringify({
+      provider: "openrouter",
+      profile: "small",
+      accounts: ["openrouter"],
+      recorded: { spent: 0 },
+      concurrency: { key: "0123456789abcdef", instances, tasks: 1 },
+    });
+  const refused = await open(store, { inputs: openInputs({ inference: choice(1) }) });
+  assert.equal(refused.runtime.outputs.status, "concurrency-reached");
+  assert.match(
+    refused.runtime.outputs.reason ?? "",
+    /The 1 open run\(s\) of profile `small` in the organization are as many as its `concurrency` allows/,
+  );
+  assert.deepEqual(refused.inference.opened, [], "no key");
+  const fields = await run(store, "300-1-7");
+  assert.deepEqual([fields?.status, fields?.refusal], ["refused", "concurrency-reached"]);
+
+  // With two instances, the other key's run counting for its own, it opens.
+  await seedRuns(store, { "300-1-7": { key: "0123456789abcdef" } });
+  const opened = await open(store, { inputs: openInputs({ inference: choice(2) }) });
+  assert.equal(opened.runtime.outputs.status, "opened");
+  assert.ok(
+    opened.runtime
+      .logged("info")
+      .includes(
+        "The organization has 1 other open run(s) of profile `small`, of 2 its `concurrency` allows.",
+      ),
+  );
+});
+
+test("a pod's key at its concurrency: the run is refused, its reservation ends, its pods recorded", async () => {
+  const store = new MemoryStore();
+  await seedRuns(store, { "300-1-7": {} });
+  const inference = new FakeInference();
+  inference.failure = new ConcurrencyReached(
+    "Every pod of these settings is full, and 1 of them run, as many as `concurrency` allows: no pod was created.",
+    1,
+    [{ pod: "pod9", event: "terminated", reason: "no live document holds it" }],
+  );
+  const choice = JSON.parse(POD_CHOICE);
+  const { runtime } = await open(store, {
+    inference,
+    inputs: openInputs({
+      inference: JSON.stringify({
+        ...choice,
+        concurrency: { key: "0123456789abcdef", instances: 1, tasks: 1 },
+      }),
+      "gpu-key": "k",
+    }),
+  });
+  assert.equal(runtime.outputs.status, "concurrency-reached");
+  assert.match(runtime.outputs.reason ?? "", /They serve the top-level settings\.$/);
+  const fields = await run(store, "300-1-7");
+  assert.deepEqual([fields?.status, fields?.refusal], ["refused", "concurrency-reached"]);
+  assert.ok(await store.get("organizations/o/events/300-1-7-pod-terminated-pod9"));
 });
 
 test("a task that started before the ledger carries what its record counted", async () => {

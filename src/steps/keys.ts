@@ -11,7 +11,12 @@ import {
 } from "../budget.ts";
 import { encrypt } from "../crypto.ts";
 import { choicePool, gpuProvider, parseInferenceChoice } from "../inference/index.ts";
-import { type OpenedRun, OpenFailure, type PodEvent } from "../inference/provider.ts";
+import {
+  ConcurrencyReached,
+  type OpenedRun,
+  OpenFailure,
+  type PodEvent,
+} from "../inference/provider.ts";
 import { accountOf, isHourlyAccount } from "../inference/providers.ts";
 import { PodRegistry } from "../inference/registry.ts";
 import { releasePod } from "../inference/selfhosted.ts";
@@ -36,7 +41,7 @@ export async function openKey(services: Services): Promise<void> {
   await ledger.check(runtime);
   const outcome = await open(services, ledger, run);
   if (outcome.status === "opened") ledger.open(run, outcome.limit, outcome.pods);
-  else ledger.refuse(run, outcome.status, outcome.reason);
+  else ledger.refuse(run, outcome.status, outcome.reason, outcome.pods);
   await ledger.flush(runtime);
 }
 
@@ -48,8 +53,11 @@ type Opened =
         | "missing-credentials"
         | "task-budget-spent"
         | "over-budget"
-        | "over-organization-budget";
+        | "over-organization-budget"
+        | "concurrency-reached";
       reason: string;
+      /** What the provider did with pods before it refused, such as orphans it terminated. */
+      pods?: PodEvent[] | undefined;
     };
 
 async function open(services: Services, ledger: Ledger, run: string): Promise<Opened> {
@@ -65,10 +73,14 @@ async function open(services: Services, ledger: Ledger, run: string): Promise<Op
       : positiveNumber(runtime, "organization-monthly-budget");
   const choice = parseInferenceChoice(runtime.input("inference"));
   if (choice.profile) runtime.info(`The run uses the profile \`${choice.profile}\`.`);
-  const refuse = (status: Exclude<Opened["status"], "opened">, reason: string): Opened => {
+  const refuse = (
+    status: Exclude<Opened["status"], "opened">,
+    reason: string,
+    pods?: PodEvent[],
+  ): Opened => {
     runtime.output("status", status);
     runtime.output("reason", reason);
-    return { status, reason };
+    return { status, reason, ...(pods ? { pods } : {}) };
   };
 
   // The account of the run's provider; with an organization's budget, also each GPU account
@@ -104,6 +116,13 @@ async function open(services: Services, ledger: Ledger, run: string): Promise<Op
 
   // The run's reservation, and its run lease on a pod, outlast its agent job.
   const lastsMs = reservationMs(positiveNumber(runtime, "agent-job-minutes"));
+  // On OpenRouter and Serverless, the ledger's open runs are the instances; on a pod, the
+  // registry's pods (decision 4 of the plan for limiting concurrent instances of a profile).
+  const cap = choice.concurrency;
+  const runsCap =
+    cap && choice.provider !== "runpod-pod"
+      ? { key: cap.key, runs: cap.instances * cap.tasks }
+      : undefined;
   const reservation = await ledger.reserve(
     run,
     {
@@ -113,6 +132,7 @@ async function open(services: Services, ledger: Ledger, run: string): Promise<Op
       organizationBudget,
       recorded: choice.recorded.spent,
       billed,
+      concurrency: runsCap,
     },
     lastsMs,
   );
@@ -155,6 +175,18 @@ async function open(services: Services, ledger: Ledger, run: string): Promise<Op
       `The organization's monthly budget is reached: ${usd(reservation.organization ?? 0)} used of ${usd(organizationBudget ?? 0)}, and this run may use up to ${usd(limit)}.`,
     );
   }
+  const profile = choice.profile ? `profile \`${choice.profile}\`` : "the top-level settings";
+  if (reservation.outcome === "concurrency-reached" && runsCap) {
+    return refuse(
+      "concurrency-reached",
+      `The ${reservation.concurrent ?? 0} open run(s) of ${profile} in the organization are as many as its \`concurrency\` allows: ${cap?.instances} instance(s) of ${cap?.tasks} run(s).`,
+    );
+  }
+  if (runsCap) {
+    runtime.info(
+      `The organization has ${reservation.concurrent ?? 0} other open run(s) of ${profile}, of ${runsCap.runs} its \`concurrency\` allows.`,
+    );
+  }
   runtime.info(`Reserved ${usd(limit)} for this run in Codeman's ledger.`);
 
   let opened: OpenedRun;
@@ -164,6 +196,10 @@ async function open(services: Services, ledger: Ledger, run: string): Promise<Op
       runtime,
     );
   } catch (error) {
+    if (error instanceof ConcurrencyReached) {
+      // Refused, not failed: the reservation ends, and a later run tries again.
+      return refuse("concurrency-reached", `${error.message} They serve ${profile}.`, error.pods);
+    }
     // The reservation ends; a reservation that cannot be ended counts until it expires.
     ledger.fail(
       run,

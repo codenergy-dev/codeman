@@ -58,7 +58,7 @@ contexts/{key}                               the cache of fits
 
 | Phase | Fields |
 | --- | --- |
-| Picked, by `select` | `repository` (`owner/name`), `task`, `workflowRun`, `attempt`, `month` (`2026-10`), `status: picked`, `pickedAt`, `stage`, `model`, `provider` (`openrouter`, `runpod-pod` or `runpod-serverless`), `profile`; `batch`, the [batch](../glossary.md#batch) of a pod's run |
+| Picked, by `select` | `repository` (`owner/name`), `task`, `workflowRun`, `attempt`, `month` (`2026-10`), `status: picked`, `pickedAt`, `stage`, `model`, `provider` (`openrouter`, `runpod-pod` or `runpod-serverless`), `profile`; `batch`, the [batch](../glossary.md#batch) of a pod's run; `key`, its batch key, whose open runs a [concurrency](../settings/profiles.md#concurrency) caps |
 | Reserved, by `open-key` | `status: open`, `reservedAt`, `expiresAt`, `limit`; `carried`, on the task's first run in the ledger |
 | Opened | `openedAt` |
 | Refused | `status: refused`, `refusedAt`, `refusal` (the `open-key` status), `reason` |
@@ -96,6 +96,7 @@ Only a refresh of an OpenRouter run's cost from its key writes `expired`. Other 
 | `organization` | Its creator's |
 | `capacity` | The runs it serves at once, when limited |
 | `batch` | Its creator's batch |
+| `key` | Its creator's batch key, whose live pods a [concurrency](../settings/profiles.md#concurrency) caps; absent from older pods, which count for none |
 | `status` | `creating`, `serving`, `abandoned` or `ended` |
 | `live` | Whether the registry holds it: until it ends |
 | `claimedAt`, `claimedBy`, `creatingUntil` | The creation lease |
@@ -168,5 +169,6 @@ Only a refresh of an OpenRouter run's cost from its key writes `expired`. Other 
 Firestore's automatic single-field indexes serve every query:
 
 - The budgets' queries filter on equality only: an organization's or a repository's runs of a month, a task's runs, a pod's runs, and the pods that ended in a month.
-- So do the registry's: the pool's live pods, of some settings or all.
+- So does the count of a batch key's open runs, by `key` and `status`.
+- So do the registry's: the pool's live pods, of some settings, of a batch key, or all.
 - The split's query, an endpoint's runs whose times end after a moment, is a range on one field.

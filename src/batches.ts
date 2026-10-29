@@ -14,6 +14,11 @@ export interface Offer {
   key: string;
   /** Whether a pod serves it: then tasks of other repositories may complete its batch. */
   pod: boolean;
+  /**
+   * How many instances of what serves it run at once, and the most tasks one serves; absent from
+   * older snapshots, which no cap holds back.
+   */
+  concurrency?: { instances: number; tasks: number } | undefined;
 }
 
 /** A ready task that may join a batch. */
@@ -48,6 +53,11 @@ export interface Waiting {
   /** How many ready tasks that count and key serve, itself included, and in how many repositories. */
   ready: number;
   repositories: number;
+  /**
+   * When enough tasks are ready, but the instances of what serves it are all busy: how many it
+   * has (`concurrency`).
+   */
+  busy?: number | undefined;
 }
 
 export interface Formation {
@@ -72,16 +82,25 @@ export function byPriority(a: BatchCandidate, b: BatchCandidate): number {
  * such count n, with the first n tasks that offer the same count and key (choice 25); then the
  * next. A local offer (not on a pod) is completed only by the forming repository's own tasks.
  * The forming repository takes at most `places` tasks in all, and another repository at most
- * `limit(repository)`. Then says which of the forming repository's other tasks wait, or are
+ * `limit(repository)`. A batch of n takes n of its key's free seats, `seats(offer)` before any
+ * batch forms, and none forms without them (decision 5 of the plan for limiting concurrent
+ * instances of a profile). Then says which of the forming repository's other tasks wait, or are
  * served by nothing.
  */
 export function formBatches(
   candidates: readonly BatchCandidate[],
-  options: { places: number; limit: (repository: string) => number },
+  options: {
+    places: number;
+    limit: (repository: string) => number;
+    seats?: (offer: Offer) => number;
+  },
 ): Formation {
   const ordered = [...candidates].sort(byPriority);
   const taken = new Set<BatchCandidate>();
   const used = new Map<string, number>();
+  const seated = new Map<string, number>();
+  const free = (offer: Offer) =>
+    (options.seats?.(offer) ?? Number.POSITIVE_INFINITY) - (seated.get(offer.key) ?? 0);
   let places = options.places;
   const offering = (offer: Offer, from: BatchCandidate) =>
     ordered.filter(
@@ -97,7 +116,7 @@ export function formBatches(
     for (const offer of offers) {
       if (!offer.pod && !candidate.own) continue;
       const eligible = offering(offer, candidate);
-      if (eligible.length < offer.tasks) continue;
+      if (eligible.length < offer.tasks || free(offer) < offer.tasks) continue;
       const tasks = eligible.slice(0, offer.tasks);
       const own = tasks.filter((task) => task.own).length;
       if (own > places) continue;
@@ -114,6 +133,7 @@ export function formBatches(
         used.set(repository, (used.get(repository) ?? 0) + count);
       }
       places -= own;
+      seated.set(offer.key, (seated.get(offer.key) ?? 0) + offer.tasks);
       batches.push({
         size: offer.tasks,
         key: offer.key,
@@ -134,8 +154,24 @@ export function formBatches(
     }
     const offers = [...candidate.offers].sort((a, b) => a.tasks - b.tasks);
     const ready = offers.map((offer) => offering(offer, candidate));
-    // A count it could complete now is left for a later run, without a message.
-    if (offers.some((offer, index) => (ready[index]?.length ?? 0) >= offer.tasks)) continue;
+    const complete = offers.flatMap((offer, index) =>
+      (ready[index]?.length ?? 0) >= offer.tasks ? [{ offer, index }] : [],
+    );
+    // A count it could complete now, with free seats, is left for a later run, without a message.
+    if (complete.some(({ offer }) => free(offer) >= offer.tasks)) continue;
+    const [full] = complete;
+    if (full) {
+      const those = ready[full.index] ?? [];
+      waiting.push({
+        number: candidate.number,
+        tasks: full.offer.tasks,
+        profile: full.offer.profile,
+        ready: those.length,
+        repositories: new Set(those.map((task) => task.repository)).size,
+        busy: full.offer.concurrency?.instances ?? 0,
+      });
+      continue;
+    }
     const [first] = offers;
     const those = ready[0] ?? [];
     if (first) {

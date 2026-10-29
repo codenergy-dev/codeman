@@ -73,6 +73,11 @@ export interface Settings {
    * docs/runs/agent.md#wrap-up.
    */
   "wrap-up-minutes": number;
+  /**
+   * How many instances of the run's profile, or of the top level, run at once: pods on
+   * `runpod-pod`, batches of runs on other providers. See docs/settings/profiles.md#concurrency.
+   */
+  concurrency: number;
   /** The language Codeman talks to maintainers in: a BCP 47 tag, or `auto` for the issue's. */
   language: string;
   /**
@@ -118,9 +123,16 @@ export const DEFAULTS: Omit<Settings, "model"> = {
   "max-summary-chars": 2000,
   "agent-minutes": 50,
   "wrap-up-minutes": 10,
+  concurrency: 1,
   language: "auto",
   provider: "openrouter",
 };
+
+/**
+ * Codeman's cap on the tasks one run works on at once: each runs its own jobs, and may hold its
+ * own key or pod. A profile's counts are from 1 to this.
+ */
+export const MAX_TASKS = 10;
 
 /**
  * Bounds of some settings. The output limits keep what the agent writes within a comment of
@@ -135,6 +147,7 @@ export const LIMIT_BOUNDS: Readonly<Partial<Record<SettingName, { min: number; m
   "max-summary-chars": { min: 1, max: 4000 },
   "agent-minutes": { min: 5, max: 300 },
   "wrap-up-minutes": { min: 2, max: 30 },
+  concurrency: { min: 1, max: MAX_TASKS },
 };
 
 /**
@@ -149,12 +162,6 @@ export const AGENT_JOB_OVERHEAD_MINUTES = 10;
 export function agentJobMinutes(settings: Pick<Settings, "agent-minutes" | "wrap-up-minutes">) {
   return settings["agent-minutes"] + settings["wrap-up-minutes"] + AGENT_JOB_OVERHEAD_MINUTES;
 }
-
-/**
- * Codeman's cap on the tasks one run works on at once: each runs its own jobs, and may hold its
- * own key or pod. A profile's counts are from 1 to this.
- */
-export const MAX_TASKS = 10;
 
 /** Settings a maintainer can change for one task with `/codeman set`. */
 export const TASK_SETTINGS: ReadonlySet<SettingName> = new Set([
@@ -199,6 +206,7 @@ const NAMES: readonly SettingName[] = [
   "max-summary-chars",
   "agent-minutes",
   "wrap-up-minutes",
+  "concurrency",
   "language",
   "provider",
   ...PROVIDER_SETTINGS,
@@ -309,8 +317,15 @@ export const PROFILE_SETTINGS: readonly SettingName[] = [
   ...PROVIDER_BLOCKS,
 ];
 
-/** Settings a profile may change besides where its model is served: the agent's times. */
-export const PROFILE_TIMES: readonly SettingName[] = ["agent-minutes", "wrap-up-minutes"];
+/**
+ * Settings a profile may change besides where its model is served: the agent's times, and how
+ * many instances of it run at once.
+ */
+export const PROFILE_RUNS: readonly SettingName[] = [
+  "agent-minutes",
+  "wrap-up-minutes",
+  "concurrency",
+];
 
 /** The settings that go with a provider: dropped by a layer or profile that changes provider. */
 const PROVIDER_KEYS: readonly string[] = [...PROVIDER_SETTINGS, ...PROVIDER_BLOCKS];
@@ -406,7 +421,7 @@ export interface Profile {
   name: string;
   /** Conditions that must all hold; a profile without any always applies. */
   conditions: Conditions;
-  /** The settings it changes, of `PROFILE_SETTINGS` and `PROFILE_TIMES`. */
+  /** The settings it changes, of `PROFILE_SETTINGS` and `PROFILE_RUNS`. */
   settings: PartialSettings;
 }
 
@@ -500,7 +515,7 @@ function setting(entry: YamlEntry, what: "setting" | "profile"): Read<string | n
   const misplaced = misplacedCondition(name, what, text);
   if (misplaced) return { ok: false, line, error: misplaced };
   if (!isSettingName(name)) return { ok: false, line, error: `unknown setting \`${name}\`.` };
-  const allowed = [...PROFILE_SETTINGS, ...PROFILE_TIMES];
+  const allowed = [...PROFILE_SETTINGS, ...PROFILE_RUNS];
   if (what === "profile" && !allowed.includes(name)) {
     return {
       ok: false,
@@ -723,7 +738,7 @@ function resolveLayers(layers: readonly SettingsLayer[]): Parsed<Resolved> {
     if (!served.ok) return served;
     const settings = {
       ...omit(top, PROFILE_SETTINGS),
-      ...pick(profile.settings, PROFILE_TIMES),
+      ...pick(profile.settings, PROFILE_RUNS),
       ...served.value,
     };
     if (settings.model === undefined) {
@@ -881,6 +896,20 @@ export interface ServedCount {
   key: string;
   /** Whether a pod serves it: its batch may span the pool's repositories. */
   pod: boolean;
+  /** How many instances of what serves it run at once (`concurrency`). */
+  concurrency: Instances;
+}
+
+/**
+ * How many instances of a profile, or of the top level, run at once: pods on `runpod-pod`,
+ * batches of runs on other providers (decision 2 of the plan for limiting concurrent instances of
+ * a profile).
+ */
+export interface Instances {
+  /** Its `concurrency`. */
+  instances: number;
+  /** The most tasks one instance serves (`mostTasks`): a pod's capacity, or a batch's runs. */
+  tasks: number;
 }
 
 /**
@@ -899,11 +928,13 @@ export function servedCounts(
     const run = resolveRun(layers, { stage, tasks });
     if (!run.ok) return run;
     const { settings, profile } = run.value;
+    const most = mostTasks(layers, profile);
     counts.push({
       tasks,
       profile,
-      key: batchKey(settings, profile, mostTasks(layers, profile)),
+      key: batchKey(settings, profile, most),
       pod: settings.provider === "runpod-pod",
+      concurrency: { instances: settings.concurrency, tasks: most },
     });
   }
   return { ok: true, value: counts };

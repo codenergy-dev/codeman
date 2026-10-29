@@ -164,6 +164,11 @@ export interface Messages {
    * serves, in how many of the pool's repositories.
    */
   waitingForTasks(tasks: number, profile: string, ready: number, repositories: number): string;
+  /**
+   * A task that waits for a seat: every instance of its profile (undefined: the top level) is
+   * busy, as many as its `concurrency` allows.
+   */
+  waitingForInstances(profile: string | undefined, instances: number): string;
   /** A task whose stage no profile, nor the top level, serves at any count. */
   noSettingsForStage(stage: Stage): string;
 
@@ -174,6 +179,8 @@ export interface Messages {
   taskBudgetSpent(spent: string, budget: string, minimum: string): string;
   monthlyBudgetReached(used: string, budget: string, limit: string): string;
   organizationBudgetReached(used: string, budget: string, limit: string): string;
+  /** A run refused because its profile (undefined: the top level) ran all its instances. */
+  concurrencyReached(profile: string | undefined, instances: number): string;
   tryLater(reason: string): string;
 
   // Results.

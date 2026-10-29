@@ -1,9 +1,9 @@
 # The plan's parallel/five-tasks-two-pods, scaled down to fit Docker's memory (docs/plans/
 # 2026-10-20-end-to-end-test-suite.md, 5.2 results): 5 tasks on 2 pods at once need 5 agent jobs
 # and 2 pods, about 8.5 GiB. Here 2 planning tasks form 2 batches of 1 in one run, whose cap of 2
-# comes from another profile. Both batches want the same pod settings, with one parallel request:
-# the second task finds the first pod full, and creates another (docs/inference/pods.md,
-# "Capacity").
+# comes from another profile. Both batches want the same pod settings, with one parallel request,
+# and `concurrency: 2` allows two pods: the second task finds the first pod full, and creates
+# another (docs/inference/pods.md, "Capacity").
 name: Two batches on the same settings in one run get two pods, one creator each
 tags: [parallel, ollama, pods]
 runner: simulator
@@ -15,7 +15,7 @@ world:
       settings:
         task-budget: 2
         profiles:
-          - { name: solo, stages: [plan], tasks: 1, provider: runpod-pod, gpu: NVIDIA GeForce RTX 4090, model: qwen2.5:0.5b }
+          - { name: solo, stages: [plan], tasks: 1, concurrency: 2, provider: runpod-pod, gpu: NVIDIA GeForce RTX 4090, model: qwen2.5:0.5b }
           # Never applies to a plan: it only makes the run take 2 tasks.
           - { name: pair, stages: [route, code, review], max-tasks: 2, model: deepseek/deepseek-v4.1-flash }
   repositories:

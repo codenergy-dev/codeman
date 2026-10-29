@@ -10,6 +10,11 @@ test("starts another run only when this one moved a task", () => {
   assert.equal(chains("plan", "success", "opened"), true);
   assert.equal(chains("implement", "success", "opened"), true);
   assert.equal(chains("implement", "success", "over-budget"), false, "the budget is reached");
+  assert.equal(
+    chains("implement", "success", "concurrency-reached"),
+    true,
+    "the next run's select makes it wait in view",
+  );
   assert.equal(chains("plan", "failure", ""), false, "no key was created");
 });
 

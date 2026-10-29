@@ -39,7 +39,7 @@ A run works on as many tasks as the [profiles' counts](../settings/profiles.md#h
 2. The tasks that another repository's batch reserved for this one ([reservations](batches.md#reservations)).
 3. [Batches](batches.md). A profile's count is the size of a [batch](../glossary.md#batch): the tasks that run at once with the same settings. On a pod, a batch may take tasks of the pool's other repositories; on other providers, it is tasks of this run.
 
-A task that no batch of its count completes waits. A task whose stage nothing serves is blocked.
+A task that no batch of its count completes waits, and so does one whose profile runs as many [instances](../glossary.md#instance) as its [concurrency](../settings/profiles.md#concurrency) allows. A task whose stage nothing serves is blocked.
 
 Once picked:
 
@@ -58,6 +58,7 @@ When a run moved a task, its `next-run` job starts another run with `workflow_di
 | Recorded answers, or accepted workflows | Yes | |
 | Got its key, so its agent ran, even if the agent then failed | Yes | |
 | Got no key: a budget refused it, a provider's secret is missing, or the key job failed | No | It would be picked again without moving. |
+| Got no key because its profile's instances were all busy (`concurrency-reached`) | Yes | The next run's `select` makes it wait in view, and lists a pod's task on the board. |
 | Waits for more ready tasks | No | No run moves it until there are enough. |
 
 A run in which no task moved starts no other run. The loop is bounded by the budgets, `max-runs` and the states: tasks that are blocked, done or awaiting an answer never start a run.

@@ -124,3 +124,59 @@ test("a task that no count completes waits, saying how many are ready and where"
   ]);
   assert.deepEqual(formed.unserved, [2]);
 });
+
+test("a batch takes its key's free seats, and a task with none waits for a busy instance", () => {
+  const one: Offer = {
+    tasks: 1,
+    profile: "small",
+    key: "k1",
+    pod: false,
+    concurrency: { instances: 2, tasks: 1 },
+  };
+  const seats = (free: number) => ({ ...unlimited, seats: () => free });
+  // Two instances of one task each: two batches of one, then the third waits.
+  const two = formBatches(
+    [task("o/a", 1, [one]), task("o/a", 2, [one]), task("o/a", 3, [one])],
+    seats(2),
+  );
+  assert.deepEqual(
+    two.batches.map((batch) => batch.tasks.map((one) => one.number)),
+    [[1], [2]],
+  );
+  assert.deepEqual(two.waiting, [
+    { number: 3, tasks: 1, profile: "small", ready: 1, repositories: 1, busy: 2 },
+  ]);
+  // One seat left, as another run holds the other.
+  assert.equal(
+    formBatches([task("o/a", 1, [one]), task("o/a", 2, [one])], seats(1)).batches.length,
+    1,
+  );
+  // A batch of 4 needs 4 seats: with 3, it does not form, and its tasks wait.
+  const capped: Offer = { ...four, concurrency: { instances: 1, tasks: 4 } };
+  const tasks = [1, 2, 3, 4].map((number) => task("o/a", number, [capped]));
+  const full = formBatches(tasks, seats(3));
+  assert.deepEqual(full.batches, []);
+  assert.deepEqual(
+    full.waiting.map((waiting) => [waiting.number, waiting.busy]),
+    [
+      [1, 1],
+      [2, 1],
+      [3, 1],
+      [4, 1],
+    ],
+  );
+  // Each key counts its own seats.
+  const other: Offer = { ...one, key: "k2", profile: "other" };
+  const apart = formBatches(
+    [task("o/a", 1, [one]), task("o/a", 2, [other]), task("o/a", 3, [planner(1)])],
+    { ...unlimited, seats: (offer) => (offer.key === "k1" ? 0 : 1) },
+  );
+  assert.deepEqual(
+    apart.batches.map((batch) => batch.key),
+    ["k2", "kp"],
+  );
+  assert.deepEqual(
+    apart.waiting.map((waiting) => waiting.number),
+    [1],
+  );
+});

@@ -21,7 +21,8 @@ A pod's capacity is its [parallel requests](../glossary.md#parallel-requests): t
 
 - A pod takes a task only while its unexpired run leases, and the tasks of its [batch](../runs/batches.md#on-the-pod) that have not joined, are fewer than its capacity.
 - A task of its batch always joins it.
-- A task that finds every pod of its settings full creates another. So two batches of 4 on the same settings get two pods.
+- A task that finds every pod of its settings full creates another, while its profile's [concurrency](../settings/profiles.md#concurrency) allows. So two batches of 4 on the same settings get two pods with `concurrency: 2`, and one after the other with the default of 1.
+- At the cap, `open-key` creates no pod: it refuses the run as `concurrency-reached`, and the task waits for a seat.
 
 ### Seats
 
@@ -165,11 +166,12 @@ In one store transaction, `open-key` reads the live pods of its pod settings on 
 - for an Ollama pod, the [Ollama settings](../settings/ollama.md) when there are some, the derived `num-parallel` included;
 - for a vLLM pod, the engine and its [vLLM settings](../settings/vllm.md), the derived `max-num-seqs` included.
 
-The account is its fingerprint: an HMAC of a fixed label with the account key. Then `open-key` does one of three things:
+The account is its fingerprint: an HMAC of a fixed label with the account key. Then `open-key` does one of four things:
 
 1. It joins the oldest pod that serves the settings and has room, with a run lease ([shared pods](#shared-pods)).
 2. While another task holds the settings' creation lease, it waits, and claims again every 10 seconds.
-3. Otherwise, it takes the creation lease, for 5 minutes, and creates the pod.
+3. When the live pods of its batch key are as many as its `concurrency`, it refuses the run, at no cost ([concurrency](../settings/profiles.md#concurrency)).
+4. Otherwise, it takes the creation lease, for 5 minutes, and creates the pod.
 
 Tasks that claim at once see each other's writes, or run their transaction again: one creates, the others wait for its pod. A pod created after its creator's lease was taken is terminated, and its creator joins the other.
 

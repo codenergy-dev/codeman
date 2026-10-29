@@ -79,6 +79,7 @@ flowchart TD
 | 2026-10-15 | [A spent pod waits for its close](#a-spent-pod-waits-for-its-close) | `ca7f3e8`; on pods from `c69ea45` | Pod runs | None | No |
 | 2026-10-19 | [Review rounds block at max-runs](#review-rounds-block-at-max-runs) | `503e9fc` | Tasks that reach review | None, or raise `max-runs` | No |
 | 2026-10-28 | [Agent time in the settings](#agent-time-in-the-settings) | `50c9a5a` | Every installation, and copies of `codeman-task.yml` that changed `agent-minutes` | Copy both templates; move a changed `agent-minutes` to the settings | Yes: template version 2 |
+| 2026-10-29 | [One instance of a profile at a time](#one-instance-of-a-profile-at-a-time) | This plan's first commit | Profiles that ran several pods, or several batches, at once | Set `concurrency` to keep them | No: tasks wait instead |
 
 The [older versions](#older-versions) entries say what Codeman does with tasks, pod images and records from before some of these changes.
 
@@ -204,6 +205,36 @@ Copying `codeman.yml` again is optional: it updates the description of the manua
 #### How to verify
 
 A task blocked by review's rounds says "Review asked for changes 3 times in a row (`max-runs` is 3)".
+
+### One instance of a profile at a time
+
+- **Since:** 2026-10-29 ([plan for limiting concurrent instances of a profile](../plans/2026-10-29-limit-concurrent-instances-of-a-profile.md)).
+- **Who is affected:** settings whose profile, or top level, ran several [instances](../glossary.md#instance) at once: several pods of the same settings, or several batches of OpenRouter or Serverless runs, in the pool or the organization.
+- **Breaking:** no. No setting stops the run, but tasks that ran at once now wait for each other.
+
+The new `concurrency` setting caps a profile's instances, 1 by default ([concurrency](../settings/profiles.md#concurrency)). Before, a task that found every pod of its settings full created another, and OpenRouter and Serverless runs had no cap but each run's.
+
+#### What to do
+
+To keep running several at once, set `concurrency` at the top level, for every profile, or in the profiles that need it:
+
+```yaml
+concurrency: 2
+profiles:
+  - name: solo
+    stages: [plan]
+    tasks: 1
+    provider: runpod-pod
+    gpu: "NVIDIA RTX A6000"
+    model: qwen3-coder:30b
+    concurrency: 3
+```
+
+The workflow files need no change. Pods and runs from before the change carry no batch key and count for none, so the cap holds fully once they end.
+
+#### How to verify
+
+A task beyond the cap keeps its labels, and its panel says "Waiting for profile `<name>`: its one instance is busy, as many as its `concurrency` allows."
 
 ## Workflow files and secrets
 

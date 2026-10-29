@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { storedBatch } from "../board.ts";
+import { type StoredBatch, storedBatch } from "../board.ts";
 import { LAYOUT } from "../store/layout.ts";
 import type { Fields, Store, StoredDocument, Value } from "../store/store.ts";
 
@@ -58,6 +58,11 @@ export interface RegisteredPod {
   capacity: number | undefined;
   /** The batch of the task that created it, whose tasks it waits for. */
   batch: string | undefined;
+  /**
+   * The batch key of the task that created it, whose instances count together; undefined on
+   * older documents, which no cap counts.
+   */
+  key: string | undefined;
   /** Why it ended, once it did. */
   reason: string | undefined;
 }
@@ -82,16 +87,27 @@ export interface PodDescription {
   capacity?: number;
   /** The task's batch. */
   batch?: string;
+  /** The task's batch key (decision 3 of the plan for limiting concurrent instances of a profile). */
+  key?: string;
 }
 
 /**
  * What a claim found: a pod to join, with the task's lease and seat written; another task's
- * creation lease to wait for; or the creation lease, now the task's.
+ * creation lease to wait for; the creation lease, now the task's; or no room, with as many live
+ * pods of the task's key as its `concurrency` allows.
  */
 export type Claim =
   | { kind: "join"; pod: RegisteredPod; seat: number }
   | { kind: "wait"; pod: RegisteredPod }
-  | { kind: "create"; pod: RegisteredPod; seat: number };
+  | { kind: "create"; pod: RegisteredPod; seat: number }
+  | { kind: "full"; pods: number };
+
+/** The live pods of a batch key, and their free seats in all. */
+export interface KeyInstances {
+  pods: number;
+  /** Infinite when one of them has no capacity, as before batches. */
+  free: number;
+}
 
 /** What a transaction changes in a live pod: its leases, its status, or its end, and why. */
 export interface Change {
@@ -132,9 +148,30 @@ export class PodRegistry {
    * creation lease that expired ends, so the task takes it over. A pod has room while its
    * unexpired run leases and the tasks its batch reserved that have not joined are fewer than
    * its capacity; a task of its batch always has room (decision 13 of the plan for GPU batches
-   * across repositories). The run lease lasts `leaseMs`, as long as the run's reservation.
+   * across repositories). The run lease lasts `leaseMs`, as long as the run's reservation. With
+   * `instances`, it creates no pod while the live pods of `description.key` are that many
+   * (decision 4 of the plan for limiting concurrent instances of a profile): it finds them full.
    */
-  claim(description: PodDescription, holder: string, run: string, leaseMs: number): Promise<Claim> {
+  claim(
+    description: PodDescription,
+    holder: string,
+    run: string,
+    leaseMs: number,
+  ): Promise<Exclude<Claim, { kind: "full" }>>;
+  claim(
+    description: PodDescription,
+    holder: string,
+    run: string,
+    leaseMs: number,
+    instances: number | undefined,
+  ): Promise<Claim>;
+  claim(
+    description: PodDescription,
+    holder: string,
+    run: string,
+    leaseMs: number,
+    instances?: number,
+  ): Promise<Claim> {
     return this.#store.transaction(
       async (tx) => {
         const now = this.#now();
@@ -152,22 +189,10 @@ export class PodRegistry {
         const hasRoom = async (pod: RegisteredPod): Promise<boolean> => {
           if (pod.capacity === undefined || pod.seats.includes(holder)) return true;
           if (description.batch !== undefined && pod.batch === description.batch) return true;
-          const runs = new Set(
-            pod.leases
-              .filter((one) => one.kind === "run" && one.until > now && one.holder !== holder)
-              .map((one) => one.holder),
-          );
-          let pending = 0;
-          if (pod.batch) {
-            const document = await tx.get(LAYOUT.batch(this.#pool, pod.batch));
-            const batch = document && storedBatch(document);
-            for (const member of batch?.members ?? []) {
-              const of = `${member.repository}#${member.number}`;
-              if (member.status === "dropped" || of === holder) continue;
-              if (!pod.seats.includes(of) && !runs.has(of)) pending++;
-            }
-          }
-          return runs.size + pending < pod.capacity;
+          const document = pod.batch
+            ? await tx.get(LAYOUT.batch(this.#pool, pod.batch))
+            : undefined;
+          return seatsLeft(pod, document ? storedBatch(document) : undefined, now, holder) > 0;
         };
         const lease: Lease = {
           holder,
@@ -210,6 +235,19 @@ export class PodRegistry {
           if (pod.status !== "creating" || (pod.creatingUntil ?? now) <= now) continue;
           if (await hasRoom(pod)) return { kind: "wait", pod };
         }
+        if (instances !== undefined && description.key !== undefined) {
+          const ofKey = (
+            await tx.query(LAYOUT.pods(this.#pool), {
+              where: [
+                { field: "key", op: "==", value: description.key },
+                { field: "live", op: "==", value: true },
+              ],
+            })
+          )
+            .map(registered)
+            .filter((pod) => sameAccount(pod.account, description.account) && holds(pod, now));
+          if (ofKey.length >= instances) return { kind: "full", pods: ofKey.length };
+        }
         const pod: RegisteredPod = {
           nonce: randomBytes(16).toString("hex"),
           settings: description.settings,
@@ -224,6 +262,7 @@ export class PodRegistry {
           account: description.account,
           capacity: description.capacity,
           batch: description.batch,
+          key: description.key,
           reason: undefined,
         };
         tx.write({
@@ -327,6 +366,37 @@ export class PodRegistry {
   }
 
   /**
+   * The live pods of each batch key, of every account, and their free seats (decision 5 of the
+   * plan for limiting concurrent instances of a profile): what `select` holds tasks back by. A
+   * read, not a claim: `open-key` checks again.
+   */
+  async instances(): Promise<Map<string, KeyInstances>> {
+    const now = this.#now();
+    const counted = new Map<string, KeyInstances>();
+    const batches = new Map<string, Promise<StoredBatch | undefined>>();
+    const batchOf = (id: string) => {
+      let read = batches.get(id);
+      if (!read) {
+        read = this.#store
+          .get(LAYOUT.batch(this.#pool, id))
+          .then((document) => (document ? storedBatch(document) : undefined));
+        batches.set(id, read);
+      }
+      return read;
+    };
+    for (const pod of await this.live()) {
+      if (pod.key === undefined || !holds(pod, now)) continue;
+      const free =
+        pod.status === "abandoned"
+          ? 0
+          : seatsLeft(pod, pod.batch ? await batchOf(pod.batch) : undefined, now);
+      const before = counted.get(pod.key) ?? { pods: 0, free: 0 };
+      counted.set(pod.key, { pods: before.pods + 1, free: before.free + free });
+    }
+    return counted;
+  }
+
+  /**
    * Changes a live pod as `decide` says, in a transaction that reads it again: nothing when it
    * returns undefined, or when the pod is no longer live. Returns the pod as it is now.
    */
@@ -370,6 +440,39 @@ export class PodRegistry {
  */
 function sameAccount(pod: string | undefined, account: string | undefined): boolean {
   return pod === undefined || account === undefined || pod === account;
+}
+
+/**
+ * Whether a live pod counts as an instance at `now`: serving, abandoned, which still bills, or
+ * being created under a creation lease that has not expired.
+ */
+function holds(pod: RegisteredPod, now: Date): boolean {
+  return pod.status !== "creating" || (pod.creatingUntil ?? now) > now;
+}
+
+/**
+ * The runs a pod can still take: its capacity, less its unexpired run leases and the tasks its
+ * batch reserved that have not joined, other than `holder`'s. Infinite without a capacity.
+ */
+export function seatsLeft(
+  pod: RegisteredPod,
+  batch: StoredBatch | undefined,
+  now: Date,
+  holder?: string,
+): number {
+  if (pod.capacity === undefined) return Number.POSITIVE_INFINITY;
+  const runs = new Set(
+    pod.leases
+      .filter((one) => one.kind === "run" && one.until > now && one.holder !== holder)
+      .map((one) => one.holder),
+  );
+  let pending = 0;
+  for (const member of batch?.members ?? []) {
+    const of = `${member.repository}#${member.number}`;
+    if (member.status === "dropped" || of === holder) continue;
+    if (!pod.seats.includes(of) && !runs.has(of)) pending++;
+  }
+  return Math.max(0, pod.capacity - runs.size - pending);
 }
 
 /** The holders of the leases that have not expired at `now`. */
@@ -429,6 +532,7 @@ export function registered(document: StoredDocument): RegisteredPod {
         ? capacity
         : undefined,
     batch: text(fields.batch),
+    key: text(fields.key),
     reason: text(fields.reason),
   };
 }

@@ -83,6 +83,19 @@ interface Budgeted {
    * organization alone.
    */
   pool?: Pool | undefined;
+  /**
+   * The run's batch key, and how many instances of it run at once, each serving at most `tasks`
+   * tasks: pods on `runpod-pod`, batches of runs on other providers (the plan for limiting
+   * concurrent instances of a profile). Absent from older choices: no cap.
+   */
+  concurrency?: ChoiceConcurrency | undefined;
+}
+
+/** A run's cap on the instances of its batch key. */
+export interface ChoiceConcurrency {
+  key: string;
+  instances: number;
+  tasks: number;
 }
 
 /** The task's choice of inference, from its resolved settings and its record. */
@@ -100,6 +113,8 @@ export function inferenceChoice(
     pool?: Pool | undefined;
     /** The batch of a pod's task. */
     batch?: string | undefined;
+    /** The run's batch key, which its `concurrency` caps. */
+    key?: string | undefined;
   } = {},
 ): InferenceChoice {
   const budgeted: Budgeted = {
@@ -107,6 +122,15 @@ export function inferenceChoice(
     accounts: [...new Set([accountOf(settings.provider), ...(options.accounts ?? [])])],
     recorded: { spent: record?.spent ?? 0 },
     ...(options.pool ? { pool: options.pool } : {}),
+    ...(options.key === undefined
+      ? {}
+      : {
+          concurrency: {
+            key: options.key,
+            instances: settings.concurrency,
+            tasks: options.parallel ?? 1,
+          },
+        }),
   };
   if (settings.provider === "openrouter") return { provider: "openrouter", ...budgeted };
   const common = {
@@ -161,7 +185,8 @@ export function parseInferenceChoice(text: string): InferenceChoice {
     choice.accounts.every((name) => typeof name === "string" && name !== "") &&
     amount(choice.recorded?.spent) &&
     (choice.profile === undefined || typeof choice.profile === "string") &&
-    (choice.pool === undefined || validPool(choice.pool));
+    (choice.pool === undefined || validPool(choice.pool)) &&
+    (choice.concurrency === undefined || validConcurrency(choice.concurrency));
   if (!budgeted) throw new Error("The inference input is not a valid choice.");
   if (choice.provider === "openrouter") return choice;
   const valid =
@@ -203,6 +228,19 @@ export function parseInferenceChoice(text: string): InferenceChoice {
     }
   }
   return choice;
+}
+
+/** A cap as a choice carries it: a batch key, and counts from 1 to `MAX_TASKS`. */
+function validConcurrency(value: unknown): boolean {
+  const cap = value as Partial<ChoiceConcurrency> | null;
+  const count = (number: unknown) =>
+    Number.isInteger(number) && (number as number) >= 1 && (number as number) <= MAX_TASKS;
+  return (
+    typeof cap?.key === "string" &&
+    /^[0-9a-f]{16}$/.test(cap.key) &&
+    count(cap.instances) &&
+    count(cap.tasks)
+  );
 }
 
 /** A pool as a choice carries it: its ID, and some of its members, by their lowercase logins. */
@@ -312,6 +350,9 @@ export function selfHosted(
         ...(choice.engine === "vllm" ? { vllm: checkedVllm(choice.vllm) } : {}),
         parallel: choice.parallel,
         batch: choice.batch,
+        ...(choice.concurrency
+          ? { concurrency: { key: choice.concurrency.key, pods: choice.concurrency.instances } }
+          : {}),
       },
       {
         repository,

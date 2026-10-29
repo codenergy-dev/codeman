@@ -117,8 +117,8 @@ export interface JobResults {
   /** The result of the key job: `success`, `failure`, `skipped` or `cancelled`. */
   keyJob: string;
   /**
-   * Its status output: `opened`, `over-budget`, `over-organization-budget`, `task-budget-spent`
-   * or `missing-credentials`.
+   * Its status output: `opened`, `over-budget`, `over-organization-budget`, `task-budget-spent`,
+   * `missing-credentials` or `concurrency-reached`.
    */
   keyStatus: string;
   /** Its reason output, in English, when it opened nothing. */
@@ -190,7 +190,11 @@ export function goesOn(state: State | "new"): boolean {
  */
 export function chains(action: TaskContext["action"], keyJob: string, keyStatus: string): boolean {
   return (
-    action === "record" || action === "accept" || (keyJob === "success" && keyStatus === "opened")
+    action === "record" ||
+    action === "accept" ||
+    // A run refused at its profile's cap starts the next, whose `select` makes it wait in view
+    // (decision 6 of the plan for limiting concurrent instances of a profile).
+    (keyJob === "success" && (keyStatus === "opened" || keyStatus === "concurrency-reached"))
   );
 }
 
@@ -239,7 +243,9 @@ async function keyFailed(task: TaskContext, io: Io): Promise<boolean> {
               t.money(task.settings["organization-monthly-budget"] ?? 0),
               limit,
             )
-          : t.noKey;
+          : status === "concurrency-reached"
+            ? t.concurrencyReached(task.profile, task.settings.concurrency)
+            : t.noKey;
     await finish(io, task, task.fromState === "planning" ? "new" : task.fromState, {
       message: t.tryLater(reason),
       retry: true,

@@ -162,6 +162,8 @@ export function exchange(
     own: readonly OwnTask[];
     /** The places of the run for the tasks of new batches. */
     places: number;
+    /** The free seats of an offer's key, before any batch forms; unlimited without it. */
+    seats?: (offer: Offer) => number;
   },
 ): Promise<Exchange> {
   const { pool, now } = input;
@@ -269,6 +271,7 @@ export function exchange(
       const formation = formBatches(candidates, {
         places: Math.max(0, input.places - honored.length),
         limit: (other) => Math.max(0, MAX_TASKS - (reserved.get(other) ?? 0)),
+        ...(input.seats ? { seats: input.seats } : {}),
       });
 
       const formed: Started[] = [];
@@ -418,6 +421,9 @@ function parseOffers(value: unknown): Offer[] | undefined {
       (offer?.tasks ?? 0) <= MAX_TASKS &&
       typeof offer?.key === "string" &&
       (offer.profile === undefined || typeof offer.profile === "string");
+    const count = (value: unknown) =>
+      Number.isInteger(value) && (value as number) >= 1 && (value as number) <= MAX_TASKS;
+    const { instances, tasks } = offer?.concurrency ?? {};
     return valid && offer
       ? [
           {
@@ -425,6 +431,9 @@ function parseOffers(value: unknown): Offer[] | undefined {
             profile: offer.profile,
             key: offer.key as string,
             pod: offer.pod === true,
+            ...(count(instances) && count(tasks)
+              ? { concurrency: { instances: instances as number, tasks: tasks as number } }
+              : {}),
           },
         ]
       : [];

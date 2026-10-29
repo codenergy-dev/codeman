@@ -140,6 +140,15 @@ No setting is required. A provider may require some of its own settings ([provid
 - The `agent` job's timeout is their sum plus 10 minutes, 340 at most, within GitHub's 360. The run's [budget reservation](../budget/budget.md#reservations) lasts an hour more.
 - See [time limit](../runs/agent.md#time-limit).
 
+### Concurrency
+
+| Setting | Type | Default | Allowed values | Meaning |
+| --- | --- | --- | --- | --- |
+| `concurrency` | Whole number | `1` | 1 to 10 | How many [instances](../glossary.md#instance) of a profile, or of the top level, run at once: pods on `runpod-pod`, batches of runs on other providers |
+
+- It may be set at the top level and in a [profile](profiles.md). A profile without it takes the top level's.
+- Tasks beyond it wait for a seat. See [concurrency](profiles.md#concurrency).
+
 ### Agent output limits
 
 | Setting | Type | Default | Allowed values | Meaning |
@@ -171,7 +180,7 @@ These limits are what the agent is told. See [agent output](../runs/agent.md#age
 | `monthly-budget` | Yes | Yes | Error | Yes | No |
 | `organization-monthly-budget`, `pool` | Yes | Error | Error | No | No |
 | `language` | Yes | Yes | Error | No | Yes |
-| `agent-minutes`, `wrap-up-minutes` | Yes | Yes | Yes | No | No |
+| `agent-minutes`, `wrap-up-minutes`, `concurrency` | Yes | Yes | Yes | No | No |
 | `max-files`, `max-file-bytes`, the agent output limits | Yes | Yes | Error | No | No |
 
 - **Error:** setting it there stops the run with an error.

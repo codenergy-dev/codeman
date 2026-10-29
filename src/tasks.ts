@@ -386,6 +386,8 @@ export interface TaskContext {
   fromState: State | "new";
   model: string;
   settings: Settings;
+  /** The profile that serves the run; undefined for the top level, and without an agent. */
+  profile?: string | undefined;
   /** The repository's `.codemanignore`, read from the default branch; null when it has none. */
   ignore: string | null;
   defaultBranch: string;

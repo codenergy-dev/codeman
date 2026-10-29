@@ -253,3 +253,82 @@ test("a pod with room takes a task of no batch, and its document records what si
   assert.equal((await registry.claim(sized, "o/s#2", "301", LEASE)).kind, "join");
   assert.equal((await registry.claim(sized, "o/t#3", "302", LEASE)).kind, "create", "full at 2");
 });
+
+test("a key's live pods up to its concurrency: a full pod finds the cap, and no pod is created", async () => {
+  const { registry } = setup();
+  const capped = { ...description, capacity: 1, key: "k1" };
+  const first = await registry.claim(capped, "o/r#1", "300", LEASE, 2);
+  assert.equal(first.kind, "create");
+  if (first.kind !== "create") return;
+  // Being created, it counts: the second task creates the other pod the cap allows.
+  const second = await registry.claim(capped, "o/r#2", "300", LEASE, 2);
+  assert.equal(second.kind, "create");
+  if (second.kind !== "create") return;
+  await registry.register(first.pod.nonce, {
+    pod: "pod1",
+    createdAt: new Date("2026-10-07T12:00:00Z"),
+    pricePerSecond: 0.0002,
+  });
+  await registry.register(second.pod.nonce, {
+    pod: "pod2",
+    createdAt: new Date("2026-10-07T12:01:00Z"),
+    pricePerSecond: 0.0002,
+  });
+  assert.deepEqual(await registry.claim(capped, "o/r#3", "300", LEASE, 2), {
+    kind: "full",
+    pods: 2,
+  });
+  assert.equal((await registry.live()).length, 2, "no pod was created");
+  // Without a cap, as from older choices, it creates another.
+  assert.equal((await registry.claim(capped, "o/r#3", "300", LEASE)).kind, "create");
+
+  // One whose run left, and that its task keeps, has room again.
+  const { registry: other } = setup();
+  const one = await other.claim(capped, "o/r#1", "300", LEASE, 1);
+  assert.equal(one.kind, "create");
+  if (one.kind !== "create") return;
+  await other.register(one.pod.nonce, {
+    pod: "pod1",
+    createdAt: new Date("2026-10-07T12:00:00Z"),
+    pricePerSecond: 0.0002,
+  });
+  assert.equal((await other.claim(capped, "o/r#2", "300", LEASE, 1)).kind, "full");
+  await other.leave(one.pod.nonce, "o/r#1", { keepUntil: new Date("2026-10-07T12:15:00Z") });
+  const kept = await other.claim(capped, "o/r#2", "300", LEASE, 1);
+  assert.equal(kept.kind, "join", "a kept pod takes the next run");
+});
+
+test("a creation lease that expired frees its place under the cap", async () => {
+  const { registry, advance } = setup();
+  const capped = { ...description, capacity: 1, key: "k1" };
+  const dead = await registry.claim(capped, "o/r#1", "300", LEASE, 1);
+  assert.equal(dead.kind, "create");
+  assert.equal((await registry.claim(capped, "o/r#2", "300", LEASE, 1)).kind, "full");
+  advance(CREATE_LEASE_MS + 1);
+  assert.equal((await registry.claim(capped, "o/r#2", "300", LEASE, 1)).kind, "create");
+});
+
+test("an abandoned pod counts against the cap, and the key's instances count its free seats", async () => {
+  const { registry } = setup();
+  const capped = { ...description, capacity: 2, key: "k1" };
+  const first = await registry.claim(capped, "o/r#1", "300", LEASE, 1);
+  assert.equal(first.kind, "create");
+  if (first.kind !== "create") return;
+  await registry.register(first.pod.nonce, {
+    pod: "pod1",
+    createdAt: new Date("2026-10-07T12:00:00Z"),
+    pricePerSecond: 0.0002,
+  });
+  assert.deepEqual(await registry.instances(), new Map([["k1", { pods: 1, free: 1 }]]));
+  assert.equal((await registry.claim(capped, "o/r#2", "300", LEASE, 1)).kind, "join");
+  assert.deepEqual(await registry.instances(), new Map([["k1", { pods: 1, free: 0 }]]));
+  await registry.leave(first.pod.nonce, "o/r#2", { abandon: true });
+  assert.deepEqual(await registry.instances(), new Map([["k1", { pods: 1, free: 0 }]]));
+  assert.deepEqual(await registry.claim(capped, "o/r#3", "300", LEASE, 1), {
+    kind: "full",
+    pods: 1,
+  });
+  // A pod of no key, from before the cap, counts for none.
+  await registry.claim(description, "o/r#4", "300", LEASE);
+  assert.deepEqual([...(await registry.instances()).keys()], ["k1"]);
+});

@@ -7,6 +7,7 @@ import type { Change, Manifest } from "../collect.ts";
 import { decodeStatus, encodeStatus, isStatusComment } from "../record.ts";
 import { ROUTED_STAGES, type RoutedStage } from "../stages.ts";
 import { isRunComment } from "../status.ts";
+import { MemoryStore } from "../store/memory.ts";
 import { FakePlatform, fakeServices } from "../testing/fake-platform.ts";
 import { FakeRuntime } from "../testing/fake-runtime.ts";
 import { exampleSettings } from "../testing/settings-example.ts";
@@ -1048,7 +1049,9 @@ test("pods: select hands the task's pods to the key jobs, and apply takes the le
   };
 
   let selected = await step("1");
-  assert.deepEqual(JSON.parse(selected.outputs.inference ?? ""), {
+  const first = JSON.parse(selected.outputs.inference ?? "");
+  assert.match(first.concurrency?.key ?? "", /^[0-9a-f]{16}$/, "the batch key");
+  assert.deepEqual(first, {
     provider: "runpod-pod",
     engine: "ollama",
     model: "qwen3-coder:30b",
@@ -1063,6 +1066,8 @@ test("pods: select hands the task's pods to the key jobs, and apply takes the le
     batch: "1-1-0",
     // The organization alone, without `pool`.
     pool: { id: "o", members: ["o"] },
+    // One pod at a time, of one task, by default.
+    concurrency: { key: first.concurrency.key, instances: 1, tasks: 1 },
   });
   const task = readTask(selected);
   agentResult({ [task.planPath]: "# Plan\n" }, { summary: "Plan.", language: "en", decisions: [] });
@@ -1252,6 +1257,7 @@ test("profiles: a task planned on OpenRouter and coded on a pod adds up both pro
     accounts: ["openrouter", "runpod"],
     recorded: { spent: 0 },
     pool: { id: "o", members: ["o"] },
+    concurrency: { key: choice.concurrency.key, instances: 1, tasks: 1 },
   });
   const { planPath } = readTask(selected);
   agentResult({ [planPath]: "# Plan\n" }, { summary: "Adds a limiter.", decisions: [] });
@@ -1770,6 +1776,68 @@ test("profiles pick the tasks: tasks served only with more than are ready wait, 
       ["4", "parallel-tasks"],
     ],
   );
+});
+
+test("concurrency: a profile's busy instances hold its other tasks back, which say why", async () => {
+  // One task per instance, two instances; another profile's count lets a run take 3 tasks.
+  const settings = [
+    "profiles:",
+    "  - name: single",
+    "    stages: [route]",
+    "    max-tasks: 1",
+    "    model: c/d",
+    "    concurrency: 2",
+    "  - name: wide",
+    "    stages: [plan]",
+    "    tasks: 3",
+    "    model: e/f",
+  ].join("\n");
+  const store = new MemoryStore();
+  const platform = new FakePlatform({ ".codeman/settings.yml": settings });
+  const tasks = readyTasks(platform, 3);
+  const first = new FakeRuntime({ inputs: { workdir }, runId: "1" });
+  await select(fakeServices(platform, first, undefined, undefined, undefined, store));
+  assert.deepEqual(pickedTasks(first), [
+    ["1", "route", "single"],
+    ["2", "route", "single"],
+  ]);
+  const [, , third = 0] = tasks;
+  assert.deepEqual(stateLabels(platform, third), ["codeman:ready"], "the labels stay");
+  assert.match(
+    platform.botComments(third)[0] ?? "",
+    /Waiting for profile `single`: its 2 instances are busy, as many as its `concurrency` allows\. Codeman checks again at every run\./,
+  );
+  assert.ok(
+    first
+      .logged("info")
+      .includes(
+        "#3 Task 3: waits for a seat; the 2 instance(s) of profile `single` that its `concurrency` allows are busy.",
+      ),
+  );
+  // Each picked run carries its key to the ledger, which open-key counts.
+  const picked = await store.query("organizations/o/runs");
+  const keys = new Set(picked.map((document) => document.fields.key));
+  assert.equal(keys.size, 1);
+
+  // While both runs are open, another repository of the organization starts none of its own.
+  const later = new Date(Date.now() + 3_600_000);
+  await store.write(
+    picked.map((document) => ({
+      op: "set" as const,
+      path: document.path,
+      fields: { status: "open", reservedAt: new Date(), expiresAt: later, limit: 1 },
+      merge: true,
+    })),
+  );
+  const other = new FakePlatform({ ".codeman/settings.yml": settings }, { owner: "o", name: "s" });
+  readyTasks(other, 1);
+  const busy = new FakeRuntime({
+    inputs: { workdir },
+    runId: "2",
+    repository: { owner: "o", name: "s" },
+  });
+  await select(fakeServices(other, busy, undefined, undefined, undefined, store));
+  assert.equal(busy.outputs.action, "none");
 });
 
 test("profiles pick the tasks: a stage nothing serves blocks the task, which continue resumes", async () => {

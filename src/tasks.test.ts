@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { type BatchCandidate, formBatches } from "./batches.ts";
+import { type BatchCandidate, formBatches, type Offer } from "./batches.ts";
 import { descriptionCommands } from "./commands.ts";
 import { en } from "./i18n/en.ts";
 import { GITHUB } from "./platform/github/conventions.ts";
 import type { Comment, Issue, Review, ReviewVerdict } from "./platform/types.ts";
 import { encodeStatus, type TaskRecord } from "./record.ts";
-import { parseSettings, type ServedCount, servedCounts } from "./settings.ts";
+import { parseSettings, servedCounts } from "./settings.ts";
 import type { Stage } from "./stages.ts";
 import { renderRun } from "./status.ts";
 import {
@@ -224,7 +224,7 @@ function exampleCounts(stage: Stage) {
 }
 
 /** A run's own tasks as candidates of `formBatches`, in priority order. */
-function candidates(...counts: ServedCount[][]): BatchCandidate[] {
+function candidates(...counts: Offer[][]): BatchCandidate[] {
   return counts.map((offers, index) => ({
     repository: "o/r",
     number: index + 1,

@@ -58,9 +58,10 @@ After honoring its reservations (below), a `select` forms every batch that the b
 4. **Limits.**
    - The run's own tasks fit in the run's cap, after the tasks without an agent and the reserved ones.
    - Another repository's reserved tasks are at most 10.
+   - A batch of n takes n free seats of its key: on a pod, the room of its key's live pods, and the pods its [concurrency](../settings/profiles.md#concurrency) still allows; on OpenRouter and Serverless, its open runs' places. Each offer on the board carries its profile's cap.
 5. **Documents.** Each batch on a pod gets `pools/{pool}/batches/{run}-{attempt}-{n}`: its count, settings key and profile, who formed it, `expiresAt` 30 minutes later, and each task as `started` (the forming repository's) or `reserved` (the others').
 
-A task that no batch of its count completes waits. Its panel says how many are ready, and where: "Waiting for 4 tasks ready for profile `parallel-tasks`; 3 are, in 2 repositories."
+A task that no batch of its count completes waits. Its panel says how many are ready, and where: "Waiting for 4 tasks ready for profile `parallel-tasks`; 3 are, in 2 repositories." A task whose batch would complete, but whose key has no free seat, waits for one: "Waiting for profile `parallel-tasks`: its one instance is busy, as many as its `concurrency` allows."
 
 ```mermaid
 sequenceDiagram

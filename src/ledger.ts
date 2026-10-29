@@ -66,6 +66,8 @@ export interface PickedRun {
   profile: string | undefined;
   /** The batch whose pod serves it, when it has one. */
   batch?: string | undefined;
+  /** Its batch key, whose open runs count together against its `concurrency`. */
+  key?: string | undefined;
 }
 
 /** What `open-key` checks a run against, and what the task's record counted before the ledger. */
@@ -79,11 +81,22 @@ export interface Budgets {
   recorded: number;
   /** The hourly billing of each GPU account that reconciles the organization's month. */
   billed: ReadonlyMap<string, BilledHours>;
+  /**
+   * On OpenRouter and Serverless, the run's batch key, and how many of its runs may be open at
+   * once in the organization: its `concurrency` times the most tasks of its profile (decision 2
+   * of the plan for limiting concurrent instances of a profile). Undefined: no cap.
+   */
+  concurrency?: { key: string; runs: number } | undefined;
 }
 
 /** What `reserve` found, and whether it reserved the run's limit or why not. */
 export interface Reservation {
-  outcome: "reserved" | "task-budget-spent" | "over-budget" | "over-organization-budget";
+  outcome:
+    | "reserved"
+    | "task-budget-spent"
+    | "over-budget"
+    | "over-organization-budget"
+    | "concurrency-reached";
   /** What the run may spend: what remains of the task's budget, when that is enough. */
   limit: number | undefined;
   /** The task's total before the run. */
@@ -94,6 +107,8 @@ export interface Reservation {
   reserved: { amount: number; runs: number };
   /** The organization's month before the run, when it has a budget. */
   organization: number | undefined;
+  /** With a cap, the other open runs of the run's key in the organization. */
+  concurrent?: number | undefined;
 }
 
 /** Figures the providers give of a task's runs, which replace the ledger's when they differ. */
@@ -177,6 +192,7 @@ export class Ledger {
         provider: picked.provider,
         profile: picked.profile ?? null,
         ...(picked.batch ? { batch: picked.batch } : {}),
+        ...(picked.key ? { key: picked.key } : {}),
       });
     }
     this.#event(run, "task-picked", { action: picked.action, stage: picked.stage });
@@ -201,6 +217,23 @@ export class Ledger {
       ...ledgerRuns(await monthQuery(this.#store, owner, month)),
       ...(await untrackedQuery(this.#store, this.#pool(), owner, month)),
     ]);
+  }
+
+  /**
+   * How many runs of each batch key hold a reservation now, in the organization: those a
+   * `concurrency` caps on OpenRouter and Serverless.
+   */
+  async openRuns(keys: readonly string[], log: Log): Promise<Map<string, number>> {
+    const { owner } = this.#source.runtime.repository;
+    const counts = new Map<string, number>();
+    await this.#retry(log, "read Codeman's ledger", async () => {
+      for (const key of new Set(keys)) {
+        const now = this.#now();
+        const runs = ledgerRuns(await openQuery(this.#store, owner, key));
+        counts.set(key, runs.filter((run) => reserving(run, now)).length);
+      }
+    });
+    return counts;
   }
 
   /**
@@ -261,7 +294,7 @@ export class Ledger {
         const organization = budgets.organizationBudget !== undefined;
         const pool = this.#pool();
         const otherMembers = pool.members.filter((member) => member !== owner.toLowerCase());
-        const [task, month, untracked, poolRuns] = await Promise.all([
+        const [task, month, untracked, poolRuns, keyRuns] = await Promise.all([
           taskQuery(tx, owner, repository, budgets.task).then(ledgerRuns),
           monthQuery(tx, owner, ledgerMonth(now), organization ? undefined : repository).then(
             ledgerRuns,
@@ -278,6 +311,9 @@ export class Ledger {
                   ...(await untrackedQuery(tx, pool, member, ledgerMonth(now))),
                 ]),
               ).then((lists) => lists.flat())
+            : Promise.resolve([]),
+          budgets.concurrency
+            ? openQuery(tx, owner, budgets.concurrency.key).then(ledgerRuns)
             : Promise.resolve([]),
         ]);
         const own = task.find((other) => other.id === run);
@@ -321,6 +357,15 @@ export class Ledger {
         ) {
           return { ...reservation, outcome: "over-organization-budget" };
         }
+        if (budgets.concurrency) {
+          const concurrent = keyRuns.filter(
+            (other) => other.id !== run && reserving(other, now),
+          ).length;
+          if (concurrent >= budgets.concurrency.runs) {
+            return { ...reservation, concurrent, outcome: "concurrency-reached" };
+          }
+          reservation.concurrent = concurrent;
+        }
         tx.write({
           op: "set",
           path,
@@ -361,9 +406,10 @@ export class Ledger {
   }
 
   /** `open-key` refused the run: `status` is its output, `reason` why. */
-  refuse(run: string, status: string, reason: string): void {
+  refuse(run: string, status: string, reason: string, pods?: readonly PodEvent[]): void {
     this.#update(run, { status: "refused", refusedAt: this.#now(), refusal: status, reason });
     this.#event(run, "key-refused", { status, reason });
+    this.#pods(run, pods);
   }
 
   /**
@@ -696,6 +742,16 @@ function taskQuery(
     where: [
       { field: "repository", op: "==", value: repository },
       { field: "task", op: "==", value: task },
+    ],
+  });
+}
+
+/** The organization's open runs of a batch key, expired ones included. */
+function openQuery(store: StoreReader, owner: string, key: string): Promise<StoredDocument[]> {
+  return store.query(LAYOUT.runs(owner), {
+    where: [
+      { field: "key", op: "==", value: key },
+      { field: "status", op: "==", value: "open" },
     ],
   });
 }

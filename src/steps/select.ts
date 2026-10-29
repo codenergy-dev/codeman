@@ -1,10 +1,11 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import type { Waiting } from "../batches.ts";
+import type { Offer, Waiting } from "../batches.ts";
 import { type Dispatch, exchange, handshake, type OwnTask, type Started } from "../board.ts";
 import { descriptionCommands } from "../commands.ts";
 import { type Messages, messages, taskLanguage } from "../i18n/index.ts";
 import { inferenceChoice } from "../inference/index.ts";
+import { PodRegistry } from "../inference/registry.ts";
 import type { WorkflowConventions } from "../platform/conventions.ts";
 import type { CiRun, Comment, Review, ReviewComment } from "../platform/types.ts";
 import { IGNORE_FILE, unprotected } from "../policy.ts";
@@ -332,6 +333,21 @@ export async function select(services: Services): Promise<void> {
     updatedAt: work.task.updatedAt,
     offers: work.counts.filter((count) => count.tasks <= cap),
   }));
+  // The free seats of each key: what its `concurrency` allows, less its busy instances (decision
+  // 5 of the plan for limiting concurrent instances of a profile). Pods are the pool's; runs on
+  // other providers, the organization's.
+  const pods = await new PodRegistry(store, pool.id).instances();
+  const open = await ledger.openRuns(
+    own.flatMap((task) => task.offers.filter((offer) => !offer.pod).map((offer) => offer.key)),
+    runtime,
+  );
+  const seats = (offer: Offer): number => {
+    if (!offer.concurrency) return Number.POSITIVE_INFINITY;
+    const { instances, tasks } = offer.concurrency;
+    if (!offer.pod) return instances * tasks - (open.get(offer.key) ?? 0);
+    const busy = pods.get(offer.key) ?? { pods: 0, free: 0 };
+    return busy.free + Math.max(0, instances - busy.pods) * tasks;
+  };
   const board = await exchange(store, {
     pool,
     repository: repositoryName(repo.repository),
@@ -339,6 +355,7 @@ export async function select(services: Services): Promise<void> {
     now,
     own,
     places: cap - withoutAgent.length,
+    seats,
   });
   for (const { number, batch } of board.dropped) {
     runtime.info(
@@ -448,6 +465,7 @@ export async function select(services: Services): Promise<void> {
       fromState: fromState.state,
       model,
       settings,
+      profile,
       ignore,
       defaultBranch,
       branch,
@@ -507,6 +525,7 @@ export async function select(services: Services): Promise<void> {
       accounts,
       parallel,
       batch: started?.batch,
+      key: started?.key,
       context,
       start,
     };
@@ -571,12 +590,17 @@ export async function select(services: Services): Promise<void> {
   const wait = async (work: Work, waiting: Waiting): Promise<void> => {
     const { task, talk, record } = work;
     const profile = waiting.profile ?? "";
-    const { ready, repositories } = waiting;
+    const { ready, repositories, busy } = waiting;
     runtime.info(
-      `#${task.number} ${oneLine(task.title)}: waits for ${waiting.tasks} tasks ready for profile \`${profile}\`; ${ready} ${ready === 1 ? "is" : "are"}, in ${repositories} ${repositories === 1 ? "repository" : "repositories"}.`,
+      busy === undefined
+        ? `#${task.number} ${oneLine(task.title)}: waits for ${waiting.tasks} tasks ready for profile \`${profile}\`; ${ready} ${ready === 1 ? "is" : "are"}, in ${repositories} ${repositories === 1 ? "repository" : "repositories"}.`
+        : `#${task.number} ${oneLine(task.title)}: waits for a seat; the ${busy} instance(s) of ${waiting.profile === undefined ? "the top-level settings" : `profile \`${profile}\``} that its \`concurrency\` allows are busy.`,
     );
     const t = messages(taskLanguage(work.language, record?.language));
-    const message = t.waitingForTasks(waiting.tasks, profile, ready, repositories);
+    const message =
+      busy === undefined
+        ? t.waitingForTasks(waiting.tasks, profile, ready, repositories)
+        : t.waitingForInstances(waiting.profile, busy);
     if (talk.status?.body.includes(message)) return;
     const served = resolveOwn(work.own, {
       stage: work.agentStage ?? "plan",
@@ -643,6 +667,7 @@ export async function select(services: Services): Promise<void> {
       provider: one.settings.provider,
       profile: one.profile,
       batch: one.batch,
+      key: one.key,
     });
   }
   await ledger.flush(runtime);
@@ -711,6 +736,8 @@ interface Picked {
   parallel: number;
   /** The batch of a pod's task, whose pod it joins. */
   batch: string | undefined;
+  /** Its batch key, whose instances its `concurrency` caps; undefined without an agent. */
+  key: string | undefined;
   context: TaskContext;
   start: () => Promise<void>;
 }
@@ -726,6 +753,7 @@ function taskOutputs(task: Picked, run: string, pool: Pool): Record<string, stri
     parallel: task.parallel,
     pool,
     batch: task.batch,
+    key: task.key,
   });
   return {
     task: String(task.number),

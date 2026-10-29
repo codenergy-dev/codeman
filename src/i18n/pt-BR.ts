@@ -212,6 +212,8 @@ export const ptBR: Messages = {
 
   waitingForTasks: (tasks, profile, ready, repositories) =>
     `Aguardando ${tasks} tarefas prontas para o perfil \`${profile}\`; ${ready} ${ready === 1 ? "está" : "estão"}, em ${repositories} ${repositories === 1 ? "repositório" : "repositórios"}. O Codeman verifica de novo a cada rodada.`,
+  waitingForInstances: (profile, instances) =>
+    `Aguardando ${profile === undefined ? "as configurações de nível superior" : `o perfil \`${profile}\``}: ${instances === 1 ? "sua instância está ocupada" : `suas ${instances} instâncias estão ocupadas`}, o máximo que o \`concurrency\` permite. O Codeman verifica de novo a cada rodada.`,
   noSettingsForStage: (stage) =>
     `Nenhuma configuração se aplica à ${OF_STAGE(stage)}: nenhum perfil a atende com qualquer número de tarefas, e as configurações de nível superior não têm \`model\`. Inclua a etapa num perfil, ou um \`model\` no nível superior, em \`.codeman/settings.yml\` ou nas configurações da organização.`,
 
@@ -225,6 +227,8 @@ export const ptBR: Messages = {
     `O orçamento mensal foi atingido: ${used} usados de ${budget}, e esta rodada pode usar até ${limit}.`,
   organizationBudgetReached: (used, budget, limit) =>
     `O orçamento mensal da organização foi atingido: ${used} usados de ${budget}, e esta rodada pode usar até ${limit}.`,
+  concurrencyReached: (profile, instances) =>
+    `${profile === undefined ? "As configurações de nível superior já rodam" : `O perfil \`${profile}\` já roda`} ${instances === 1 ? "sua única instância" : `${instances} instâncias`}, o máximo que o \`concurrency\` permite.`,
   tryLater: (reason) => `${reason} O Codeman tenta de novo numa próxima rodada.`,
 
   planUnfinished: "O agente não terminou o plano. Veja o log da rodada.",

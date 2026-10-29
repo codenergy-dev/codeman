@@ -9,6 +9,11 @@
 # agent-minutes: 50
 # wrap-up-minutes: 10
 
+# How many instances of a profile, or of the top level, run at once (1 to 10): pods on
+# runpod-pod, batches of runs on the other providers. Tasks beyond them wait for a seat. A profile
+# may set its own; without it, it takes this one.
+# concurrency: 1
+
 # Model ID, in the form the provider takes: OpenRouter's, Ollama's or a Hugging Face ID on Runpod
 # pods, or the Hugging Face ID the vLLM worker serves on Runpod Serverless. It serves the runs no profile serves; without
 # it, only profiles serve agent runs, and each profile sets its own.

@@ -211,6 +211,74 @@ test("the agent's times: defaults, bounds, a profile's own, and one job's limit"
   assert.ok(agentJobMinutes(longest) <= MAX_JOB_MINUTES);
 });
 
+test("concurrency: 1 by default, from 1 to 10, inherited by profiles, and no task's to change", () => {
+  const top = resolveSettings({ model: "a/b" });
+  assert.ok(top.ok && top.value.concurrency === 1);
+  assert.deepEqual(parseSetting("concurrency", "0"), {
+    ok: false,
+    error: "`concurrency` must be a positive whole number.",
+  });
+  assert.deepEqual(parseSetting("concurrency", "11"), {
+    ok: false,
+    error: "`concurrency` must be from 1 to 10.",
+  });
+  assert.deepEqual(parseSetting("concurrency", "1.5"), {
+    ok: false,
+    error: "`concurrency` must be a positive whole number.",
+  });
+  assert.ok(!TASK_SETTINGS.has("concurrency"), "not a command");
+
+  const parsed = parseSettings(
+    [
+      "model: a/b",
+      "concurrency: 3",
+      "profiles:",
+      "  - name: pod",
+      "    stages: [code]",
+      "    max-tasks: 2",
+      "    provider: runpod-pod",
+      '    gpu: "GPU A"',
+      "    model: qwen3-coder:30b",
+      "    concurrency: 2",
+      "  - name: review",
+      "    stages: [review]",
+      "    model: c/d",
+    ].join("\n"),
+  );
+  assert.ok(parsed.ok);
+  if (!parsed.ok) return;
+  const layers = [{}, {}, parsed.value];
+  const code = resolveRun(layers, { stage: "code", tasks: 2 });
+  assert.ok(code.ok && code.value.settings.concurrency === 2, "the profile's own");
+  const review = resolveRun(layers, { stage: "review", tasks: 1 });
+  assert.ok(review.ok && review.value.settings.concurrency === 3, "the top level's");
+  // Each count carries how many instances run at once, and the most tasks one serves.
+  const counts = servedCounts(layers, "code");
+  assert.ok(counts.ok);
+  assert.deepEqual(
+    counts.ok ? counts.value.slice(0, 3).map(({ tasks, concurrency }) => [tasks, concurrency]) : [],
+    [
+      [1, { instances: 2, tasks: 2 }],
+      [2, { instances: 2, tasks: 2 }],
+      // The top level serves the counts the profile does not, with its own.
+      [3, { instances: 3, tasks: 2 }],
+    ],
+  );
+  // It is not what serves the model: the batch key stays the same.
+  const once = parseSettings(
+    ["model: a/b", "profiles:", "  - name: review", "    stages: [review]", "    model: c/d"].join(
+      "\n",
+    ),
+  );
+  assert.ok(once.ok);
+  const without = servedCounts([{}, {}, once.ok ? once.value : {}], "review");
+  const withIt = servedCounts(layers, "review");
+  assert.equal(
+    without.ok ? without.value[0]?.key : undefined,
+    withIt.ok ? withIt.value[0]?.key : undefined,
+  );
+});
+
 test("no setting is required: without a model, the top level serves no agent run", () => {
   const resolved = resolveSettings({}, {}, {});
   assert.deepEqual(resolved, { ok: true, value: { ...DEFAULTS, model: "" } });
@@ -642,7 +710,7 @@ test("rejects malformed profiles, naming the line", () => {
     ["profiles:\n  - model: a/b", "line 2: a profile needs a `name`."],
     [
       "profiles:\n  - name: a\n    task-budget: 5",
-      "line 3: a profile cannot set `task-budget`; it sets only `provider`, `model`, `engine`, `gpu`, `endpoint`, `pod-reuse`, `ollama`, `vllm`, `agent-minutes`, `wrap-up-minutes`.",
+      "line 3: a profile cannot set `task-budget`; it sets only `provider`, `model`, `engine`, `gpu`, `endpoint`, `pod-reuse`, `ollama`, `vllm`, `agent-minutes`, `wrap-up-minutes`, `concurrency`.",
     ],
     ["profiles:\n  - name: a\n    secret: x", "line 3: unknown setting `secret`."],
     ["profiles:\n  - name: a\n    provider: spot", "line 3: `provider` must be one of"],

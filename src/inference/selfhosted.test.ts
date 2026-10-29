@@ -12,7 +12,7 @@ import { seedRuns } from "../testing/ledger-runs.ts";
 import type { PodSpec } from "./gpu.ts";
 import type { ModelHub } from "./huggingface.ts";
 import { IMAGES_WITHOUT_OLLAMA_SETTINGS, ollama, SINGLE_RUN_IMAGES } from "./ollama.ts";
-import { OpenFailure } from "./provider.ts";
+import { ConcurrencyReached, OpenFailure } from "./provider.ts";
 import { CREATE_LEASE_MS, PodRegistry } from "./registry.ts";
 import {
   accountFingerprint,
@@ -499,6 +499,32 @@ test("two tasks of a run share one pod: the first creates it, the other joins, a
   assert.ok(gpu.live.has("pod1"));
   await release(b.opened.handle);
   assert.deepEqual(gpu.terminated, ["pod1"]);
+});
+
+test("at its concurrency, a full pod's key creates no other pod, and the run is refused", async () => {
+  const { gpu, store, open } = setup({ real: true, image: SHARED_IMAGE });
+  const capped: Partial<PodSettings> = {
+    parallel: 1,
+    ollama: { OLLAMA_NUM_PARALLEL: "1" },
+    concurrency: { key: "0123456789abcdef", pods: 1 },
+  };
+  const first = await open("7", "300", capped);
+  assert.equal(first.handle.podId, "pod1");
+  const [document] = await store.query("pools/o/pods");
+  assert.equal(document?.fields.key, "0123456789abcdef", "the pod records its key");
+  await assert.rejects(open("8", "300", capped), (error: unknown) => {
+    assert.ok(error instanceof ConcurrencyReached);
+    assert.equal(error.instances, 1);
+    assert.match(error.message, /1 of them run, as many as `concurrency` allows/);
+    return true;
+  });
+  assert.equal(gpu.created.length, 1, "no other pod");
+  // Two instances allow a second pod.
+  const second = await open("8", "300", {
+    ...capped,
+    concurrency: { key: "0123456789abcdef", pods: 2 },
+  });
+  assert.equal(second.handle.podId, "pod2");
 });
 
 test("tasks of two repositories with the same issue number share a pod, each with its own seat and share", async () => {

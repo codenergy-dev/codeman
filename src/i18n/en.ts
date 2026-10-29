@@ -203,6 +203,8 @@ export const en: Messages = {
 
   waitingForTasks: (tasks, profile, ready, repositories) =>
     `Waiting for ${tasks} tasks ready for profile \`${profile}\`; ${ready} ${ready === 1 ? "is" : "are"}, in ${repositories} ${repositories === 1 ? "repository" : "repositories"}. Codeman checks again at every run.`,
+  waitingForInstances: (profile, instances) =>
+    `Waiting for ${profile === undefined ? "the top-level settings" : `profile \`${profile}\``}: ${instances === 1 ? "its one instance is" : `its ${instances} instances are`} busy, as many as its \`concurrency\` allows. Codeman checks again at every run.`,
   noSettingsForStage: (stage) =>
     `No settings apply to the ${STAGES[stage]} stage: no profile serves it with any number of tasks, and the top-level settings have no \`model\`. Add the stage to a profile, or a top-level \`model\`, in \`.codeman/settings.yml\` or the organization's settings.`,
 
@@ -216,6 +218,8 @@ export const en: Messages = {
     `The monthly budget is reached: ${used} used of ${budget}, and this run may use up to ${limit}.`,
   organizationBudgetReached: (used, budget, limit) =>
     `The organization's monthly budget is reached: ${used} used of ${budget}, and this run may use up to ${limit}.`,
+  concurrencyReached: (profile, instances) =>
+    `${profile === undefined ? "The top-level settings already run" : `Profile \`${profile}\` already runs`} ${instances === 1 ? "its one instance" : `${instances} instances`}, as many as its \`concurrency\` allows.`,
   tryLater: (reason) => `${reason} Codeman will try again in a later run.`,
 
   planUnfinished: "The agent did not finish the plan. See the run log.",

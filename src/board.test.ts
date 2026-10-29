@@ -124,6 +124,46 @@ test("2 and 2 across two repositories form a batch of 4; the other repository's 
   assert.deepEqual((await run(store, "a/x", own([3]), at(12))).honored, []);
 });
 
+test("an offer's cap stays on the board, and a batch forms only on its key's free seats", async () => {
+  const store = new MemoryStore();
+  const capped: Offer = { ...four, concurrency: { instances: 1, tasks: 4 } };
+  await run(store, "a/x", own([1, 2], [capped]), at(0));
+  const document = await store.get(LAYOUT.boardEntry(pool.id, "a/x"));
+  const entry = document && boardEntry(document);
+  assert.deepEqual(entry?.tasks[0]?.offers, [capped]);
+  // b/y's 2 would complete the batch of 4, but its key's only pod has 3 seats free.
+  const full = await exchange(store, {
+    pool,
+    repository: "b/y",
+    run: { id: "200", attempt: 1 },
+    now: at(5),
+    own: own([7, 8], [capped]),
+    places: 4,
+    seats: (offer) => (offer.key === "k4" ? 3 : Number.POSITIVE_INFINITY),
+  });
+  assert.deepEqual([full.formed, full.dispatches], [[], []]);
+  assert.deepEqual(
+    full.waiting.map((one) => [one.number, one.busy]),
+    [
+      [7, 1],
+      [8, 1],
+    ],
+  );
+  const freed = await exchange(store, {
+    pool,
+    repository: "b/y",
+    run: { id: "201", attempt: 1 },
+    now: at(6),
+    own: own([7, 8], [capped]),
+    places: 4,
+    seats: () => 4,
+  });
+  assert.deepEqual(
+    freed.formed.map((task) => task.number),
+    [7, 8],
+  );
+});
+
 test("a reserved task no longer ready is dropped and released; an expired reservation returns its tasks", async () => {
   const store = new MemoryStore();
   await run(store, "a/x", own([1, 2]), at(0));

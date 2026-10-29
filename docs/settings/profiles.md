@@ -21,8 +21,9 @@ profiles:
 | `stages`, `tasks`, `min-tasks`, `max-tasks` | Its [conditions](#conditions), all optional |
 | `provider`, `model`, and the provider's settings | Where its runs get their model ([providers](providers.md)) |
 | `agent-minutes`, `wrap-up-minutes` | Its runs' [agent time](reference.md#agent-time), as a slower model may need more |
+| `concurrency` | How many [instances](../glossary.md#instance) of it run at once ([concurrency](#concurrency)) |
 
-A profile changes nothing else: any other setting in a profile stops the run with an error. Budgets and limits stay at the top level. The budgets count every agent run in the [ledger](../glossary.md#ledger), whatever profile served it ([budget](../budget/budget.md)).
+A profile changes nothing else: any other setting in a profile stops the run with an error. Budgets and the other limits stay at the top level. The budgets count every agent run in the [ledger](../glossary.md#ledger), whatever profile served it ([budget](../budget/budget.md)).
 
 ## Conditions
 
@@ -85,6 +86,7 @@ What happens to a ready task:
 | --- | --- | --- |
 | A batch takes it, within the cap | Runs | – |
 | A batch would take it now, but the run has no place left | Is left for the next run | No message |
+| A batch would take it now, but every instance of its profile is busy | Waits for a seat ([concurrency](#concurrency)) | Its panel says so, such as "Waiting for profile `small-pod`: its one instance is busy, as many as its `concurrency` allows." |
 | No batch of a count that serves it can be completed | Waits. Every run checks it again. Waiting moves nothing, so it starts no other run | Its labels stay, and its panel says so, such as "Waiting for 4 tasks ready for profile `parallel-tasks`; 3 are, in 2 repositories." |
 | Nothing serves its stage at any count: no profile does, and the top level has no `model` | Is blocked: `select` labels it `codeman:blocked` | Its panel names the stage |
 
@@ -93,6 +95,48 @@ To unblock a task, fix the settings, then comment `/codeman continue`. For a tas
 `select`'s log says what it picked, of how many, which tasks wait and which are blocked.
 
 On a pod, these counts also set the engine's [parallel requests](../glossary.md#parallel-requests), unless its settings give them ([Ollama](ollama.md#parallel-requests), [vLLM](vllm.md#parallel-requests)).
+
+## Concurrency
+
+`concurrency` caps how many [instances](../glossary.md#instance) of a profile, or of the top level, run at once. It brakes how fast spend grows as tasks are created and progress: tasks beyond the cap wait for a seat instead of creating another pod or opening more runs.
+
+```yaml
+concurrency: 2           # the top level, and every profile without its own
+profiles:
+  - name: small-pod
+    stages: [code, test]
+    max-tasks: 3
+    provider: runpod-pod
+    gpu: "NVIDIA RTX A6000"
+    model: qwen3-coder:30b
+    concurrency: 1       # one pod at a time, of up to 3 runs
+```
+
+| Provider | One instance | `concurrency: 2` with `max-tasks: 3` allows | Counted across |
+| --- | --- | --- | --- |
+| `runpod-pod` | A pod, which serves up to its [capacity](../glossary.md#capacity) | 2 pods, of 3 runs each | The pool's pods |
+| `openrouter`, `runpod-serverless` | One batch's runs: the profile's most tasks | 6 open runs | The organization's open runs |
+
+- **Default:** 1, a whole number from 1 to 10. A profile without it takes the top level's, and each profile counts its own instances.
+- **Where to set it:** the organization's settings and `.codeman/settings.yml`, at the top level or in a profile. Not a manual run's input nor a task's command: a task cannot raise a shared brake.
+- **What counts together:** the instances of the same profile with the same resolved settings, its batch key ([batches](../runs/batches.md#terms)). A task's `/codeman set model` or `gpu` makes other settings, with their own count.
+- **What counts as busy:** a pod being created, serving, or abandoned, which still bills; a run whose [budget reservation](../budget/budget.md#reservations) is open and not expired.
+- **A kept pod** has all its seats free, so the next batch takes it ([keeping](../inference/pods.md#keeping)).
+- **Lowering it** terminates nothing: it takes effect as pods end and runs close.
+
+> [!NOTE]
+> Pods are shared across a [pool](../glossary.md#pool-of-organizations), so its organizations share a pod profile's instances. OpenRouter and Serverless runs count per organization.
+
+A task beyond the cap:
+
+| When | The task | What the maintainer sees |
+| --- | --- | --- |
+| `select` sees every instance busy | Waits, with its labels. Every run checks it again | "Waiting for profile `small-pod`: its one instance is busy, as many as its `concurrency` allows. Codeman checks again at every run." |
+| Another run took the last seat between `select` and `open-key` | `open-key` refuses its run as `concurrency-reached`, at no cost. The task goes back to its previous state, not blocked, and the next run starts at once to make it wait | "Profile `small-pod` already runs its one instance, as many as its `concurrency` allows. Codeman will try again in a later run." |
+
+A waiting task moves at its repository's next run. On a pod, any run of the pool that sees a seat free can also complete a batch with it from the [board](../runs/batches.md#the-board).
+
+The choices are in the [plan for limiting concurrent instances of a profile](../plans/2026-10-29-limit-concurrent-instances-of-a-profile.md).
 
 ## Layers
 
@@ -164,3 +208,4 @@ With other settings:
 - Their names: the [provider settings plan](../plans/2026-10-08-provider-settings.md).
 - The conditions and counts: the [plan for profiles that pick the tasks](../plans/2026-10-08-profiles-pick-the-tasks.md).
 - Counts as batches: the [plan for GPU batches across repositories](../plans/2026-10-13-gpu-batches-across-repositories.md).
+- Concurrency: the [plan for limiting concurrent instances of a profile](../plans/2026-10-29-limit-concurrent-instances-of-a-profile.md).

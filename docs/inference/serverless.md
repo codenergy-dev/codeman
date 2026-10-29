@@ -48,6 +48,7 @@ The run's limit (`402`) uses the same estimate ([decision 1 of the plan](../plan
 
 An endpoint's workers may serve other repositories, and the other tasks of a [workflow run](../glossary.md#workflow-run) that works on several at once. Each run goes through its own agent job's gateway.
 
+- The organization's open runs of a profile on the endpoint are at most its [concurrency](../settings/profiles.md#concurrency) times its most tasks.
 - The other runs' time counts for this run only while it has a request open, or within the idle timeout after one.
 - The run's limit counts the time it shares with other runs whole, since its gateway cannot see theirs (decision 3 of the [Serverless split plan](../plans/2026-10-07-serverless-cost-split.md)).
 - In the [ledger](../glossary.md#ledger), the shared time is split once the runs close ([below](#splitting-shared-worker-time)).
