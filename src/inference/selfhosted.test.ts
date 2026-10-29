@@ -901,8 +901,8 @@ test("an image whose gateway cannot serve on the provider is refused before any 
       ),
   );
   assert.deepEqual(gpu.created, []);
-  // Every image pinned now is one: Salad pods wait for images built since.
-  for (const pinned of Object.values(POD_IMAGES)) assert.ok(IMAGES_BEFORE_SALAD.has(pinned));
+  // The images pinned now serve on Salad: the ones they replaced stay listed.
+  for (const pinned of Object.values(POD_IMAGES)) assert.ok(!IMAGES_BEFORE_SALAD.has(pinned));
   assert.ok(!IMAGES_BEFORE_SALAD.has(SHARED_IMAGE));
 });
 

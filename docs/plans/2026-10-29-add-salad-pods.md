@@ -1,7 +1,7 @@
 ---
 status: completed
 created_at: 2026-10-29T10:26:49-03:00
-updated_at: 2026-10-29T15:52:14-03:00
+updated_at: 2026-10-29T16:34:20-03:00
 commit: 1bdf038
 ---
 
@@ -192,6 +192,8 @@ The code is complete, but `salad-pod` does not run yet: every pinned pod image i
 1. Push `main`. Its commits change `dist/gateway.js`, so `.github/workflows/pod-image.yml` publishes `codeman-ollama` and `codeman-vllm`.
 2. Pin both digests in `POD_IMAGES`, following [Pin the digests](../development/guide.md#pin-the-digests). Leave `IMAGES_BEFORE_SALAD` as it is: the images the new digests replace are already in it, and the new ones must not be added.
 3. Push the pinning commit. A Runpod task on the new images confirms that steps 2 and 3 changed nothing there: the gateway now listens on `::`, and checks CUDA before vLLM.
+
+- **Pinned on 2026-10-29.** The images built from `4c376d5` are pinned in `POD_IMAGES`: `codeman-ollama@sha256:80d94429681906e1a3e21c8ccb4e722ee2f1ac4d0a552dedbbff213b93fb2a72` and `codeman-vllm@sha256:3475904197578a12c30e61ae59041cb0cb0898cec0482e85368a214963f306b7` ([audit log](../development/dependencies.md#audit-log)). `salad-pod` now serves on them.
 
 ### 2. Test live on Salad
 

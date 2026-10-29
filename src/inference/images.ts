@@ -8,18 +8,18 @@
  * `pod-image` input overrides the Ollama image only. See docs/settings/vllm.md#pod-images.
  */
 export const POD_IMAGES: Readonly<Record<string, string>> = {
-  // Published from 8c611a4.
+  // Published from 4c376d5.
   ollama:
-    "ghcr.io/codenergy-dev/codeman-ollama@sha256:98c454e3577a05230b873276f6b7c1d1da1309db9e04411565509f2a46dfae89",
-  // Published from 8c611a4: vLLM 0.31.0.
-  vllm: "ghcr.io/codenergy-dev/codeman-vllm@sha256:a5b4a03205fc96f1ae3a731a03124a5a27eaf2d36450f937ff1f063112fc681e",
+    "ghcr.io/codenergy-dev/codeman-ollama@sha256:80d94429681906e1a3e21c8ccb4e722ee2f1ac4d0a552dedbbff213b93fb2a72",
+  // Published from 4c376d5: vLLM 0.31.0.
+  vllm: "ghcr.io/codenergy-dev/codeman-vllm@sha256:3475904197578a12c30e61ae59041cb0cb0898cec0482e85368a214963f306b7",
 };
 
 /**
  * Pod images whose gateway cannot serve on Salad: from before it listened on IPv6, which Salad's
  * Container Gateway reaches pods on, and ended a pod by exiting, since Salad gives a pod no key to
  * delete itself (step 2 of the plan for Salad pods). A `salad-pod` run refuses them before
- * creating a group. Every image pinned so far is one: when the new digests are pinned in
+ * creating a group. Every image pinned before 4c376d5 is one: when new digests are pinned in
  * `POD_IMAGES`, the ones they replace stay here, and the new ones are not added.
  */
 export const IMAGES_BEFORE_SALAD: ReadonlySet<string> = new Set([
