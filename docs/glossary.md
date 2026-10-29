@@ -110,6 +110,10 @@ Ollama's context estimate is not a cost: it is a first guess at the [fit](#fit) 
 
 ## F
 
+### Fallback
+
+The next profile that holds for a task, in the list's order, then the top level: what serves the task when the profile it prefers has every instance busy, or its provider had no room for a pod. See [fallback](settings/profiles.md#fallback).
+
 ### Federated token
 
 The token that Google's Security Token Service gives a job in exchange for its [OIDC token](#oidc-token), through the [Workload Identity provider](#workload-identity-provider). The job exchanges it in turn for the [service account](#service-account)'s access token. See [access](backend/backend.md#access).
@@ -273,7 +277,7 @@ A closed list of organizations, set by `pool` in their settings, that share the 
 
 ### Profile
 
-An entry of `profiles`: a name, profile conditions, and the provider, model and provider settings it changes. The first profile whose conditions all hold applies to an agent run. See [profiles](settings/profiles.md).
+An entry of `profiles`: a name, profile conditions, and the provider, model and provider settings it changes. The list is an order of preference: the first profile whose conditions hold, and that can serve now, applies to an agent run, else its [fallback](#fallback). See [profiles](settings/profiles.md).
 
 ### Profile condition
 

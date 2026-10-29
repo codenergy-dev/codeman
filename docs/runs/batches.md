@@ -54,14 +54,15 @@ After honoring its reservations (below), a `select` forms every batch that the b
 
 1. **Candidates.** Its own ready tasks, read from GitHub this run, except those it just honored; and the other snapshots' tasks that no unexpired batch holds. A task that an earlier run of the repository started is a candidate again for its next stage, even while that batch has not expired: one run of a repository is active at a time, so the earlier run has ended.
 2. **Priority.** Oldest `since` first, then by repository, then by each repository's own order (planning before stages).
-3. **Forming.** In that order, the first task that some offer completes takes the largest such count n, with the first n tasks offering the same count and settings key; then the next. A count on OpenRouter or Serverless is completed only by the forming repository's own tasks.
+3. **Forming.** In that order, the first task that some offer completes takes the first such offer, by its profile's place in the list and then its largest count n, with the first n tasks offering the same count and settings key; then the next ([which applies](../settings/profiles.md#which-applies)). A count on OpenRouter or Serverless is completed only by the forming repository's own tasks. Offers from snapshots of older versions have no place, and keep the largest count first.
 4. **Limits.**
    - The run's own tasks fit in the run's cap, after the tasks without an agent and the reserved ones.
    - Another repository's reserved tasks are at most 10.
    - A batch of n takes n free seats of its key: on a pod, the room of its key's live pods, and the pods its [concurrency](../settings/profiles.md#concurrency) still allows; on OpenRouter and Serverless, its open runs' places. Each offer on the board carries its profile's cap.
+   - A pod key whose provider had [no room](../inference/pods.md#no-room) in the last 15 minutes has only its live pods' room.
 5. **Documents.** Each batch on a pod gets `pools/{pool}/batches/{run}-{attempt}-{n}`: its count, settings key and profile, who formed it, `expiresAt` 30 minutes later, and each task as `started` (the forming repository's) or `reserved` (the others').
 
-A task that no batch of its count completes waits. Its panel says how many are ready, and where: "Waiting for 4 tasks ready for profile `parallel-tasks`; 3 are, in 2 repositories." A task whose batch would complete, but whose key has no free seat, waits for one: "Waiting for profile `parallel-tasks`: its one instance is busy, as many as its `concurrency` allows."
+A task that no offer completes waits, with the reason of the profile it prefers. Its panel says how many are ready, and where: "Waiting for 4 tasks ready for profile `parallel-tasks`; 3 are, in 2 repositories." A task whose batch would complete, but whose key has no free seat, waits for one: "Waiting for profile `parallel-tasks`: its one instance is busy, as many as its `concurrency` allows."
 
 ```mermaid
 sequenceDiagram

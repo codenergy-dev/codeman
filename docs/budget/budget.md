@@ -31,6 +31,7 @@ Before it opens a run, `open-key` reserves the run's limit: what remains of the 
 | `over-organization-budget` | The run does not fit the organization's month | `refused` | The same |
 | `missing-credentials` | A secret the run needs is missing ([secrets](#secrets)) | `refused` | Becomes `codeman:blocked`, with an error that names the secret |
 | `concurrency-reached` | Its profile runs as many [instances](../glossary.md#instance) as its `concurrency` allows: open runs of its batch key in the organization, or full pods of it in the pool ([concurrency](../settings/profiles.md#concurrency)) | `refused` | Goes back to its previous state, and the next run starts at once to make it wait for a seat |
+| `profile-unavailable` | Its provider has no room for a pod now ([no room](../inference/pods.md#no-room)) | `refused` | Goes back to its previous state, and the next run starts at once to serve it with the next profile ([fallback](../settings/profiles.md#fallback)) |
 | `open-key` fails | The provider could not open the run, or the store failed in the reservation | `failed`, at a cost of 0, for a provider's failure | Becomes `codeman:blocked`, with the command that tries again |
 
 A run whose provider fails to open it costs nothing, and its reservation ends.

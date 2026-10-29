@@ -214,6 +214,20 @@ A gateway that reports its start failed, such as for a model that does not fit t
 - The creator's `open-key` ends the pod's document with the reason, then terminates the pod.
 - A task that joined the pod reads the reason from the gateway, or, once the pod is gone, from the document ([plan to fail the tasks waiting for a failed pod](../plans/2026-10-22-fail-the-tasks-waiting-for-a-failed-pod.md)).
 
+#### No room
+
+When the provider has no room for the pod now, `open-key` refuses the run as `profile-unavailable`, at no cost, rather than fail the task. Its next run serves it with the next profile that holds ([fallback](../settings/profiles.md#fallback)).
+
+| Provider | No room is |
+| --- | --- |
+| `runpod-pod` | No cloud of `hosts` that offers the GPU has room in the catalog, or a creation answers `400`, Runpod's only sign of no capacity, which a request that breaks a rule also gives ([create a pod](../web/runpod/create-a-pod.md#errors)) |
+| `runpod-pod`, vLLM | No host with the GPU and CUDA 13.0 or newer has room |
+| `salad-pod` | No node downloads, creates or runs the group's instance within 10 minutes of its creation ([list instances](../web/salad/list-container-group-instances.md)). Salad bills nothing meanwhile |
+
+- The creator's `open-key` ends the pod's document with `reason` starting `unavailable: `, then terminates the pod, if it was created.
+- The tasks that joined the pod read it there, and are refused the same way.
+- For 15 minutes after such an end, `select` creates no other pod of the batch key: its live pods keep their free seats, and its other tasks go to the next profile.
+
 #### Starting
 
 In the pod, the gateway starts the engine with the pod's settings, finds the largest context that fits the GPU, and reports that [fit](../glossary.md#fit) in its status. How it fits is in [context and the GPU](../settings/pod-engines.md#context-and-the-gpu), and in [Ollama's memory](../settings/ollama.md#memory) and [vLLM's](../settings/vllm.md#memory).

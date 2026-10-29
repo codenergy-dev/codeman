@@ -150,7 +150,7 @@ No setting is required. A provider may require some of its own settings ([provid
 | `concurrency` | Whole number | `1` | 1 to 10 | How many [instances](../glossary.md#instance) of a profile, or of the top level, run at once: pods on `runpod-pod` and `salad-pod`, batches of runs on other providers |
 
 - It may be set at the top level and in a [profile](profiles.md). A profile without it takes the top level's.
-- Tasks beyond it wait for a seat. See [concurrency](profiles.md#concurrency).
+- Tasks beyond it go to the next profile that serves them, or wait for a seat. See [concurrency](profiles.md#concurrency) and [fallback](profiles.md#fallback).
 
 ### Agent output limits
 

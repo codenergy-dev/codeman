@@ -47,22 +47,73 @@ A profile's [conditions](../glossary.md#profile-condition) sit at its first leve
 
 ## Which applies
 
+The list is an order of preference, from top to bottom. For a ready task, `select` tries:
+
+1. Each profile whose `stages` hold for the task's stage, in the list's order.
+2. For each, its counts from the largest down: the batch forms at the first count that enough ready tasks complete, and that has free seats.
+3. Last, the top-level settings, when they have a `model`.
+
 ```mermaid
 flowchart TD
-  R["An agent run:<br/>its stage and its batch's count"] --> Q{"The next profile, in list order:<br/>do all its conditions hold?"}
-  Q -->|yes| P["The profile's values<br/>override the top level"]
-  Q -->|"no, and profiles are left"| Q
+  R["A ready task: its stage"] --> Q{"The next profile, in list order:<br/>does it serve the stage?"}
+  Q -->|yes| C{"At its largest count first:<br/>enough ready tasks, and a free seat?"}
+  C -->|yes| P["A batch on this profile"]
+  C -->|"no count"| Q
   Q -->|"no profile is left"| T{"Does the top level<br/>have a model?"}
-  T -->|yes| Top["The top-level settings"]
-  T -->|no| N["Nothing serves the run<br/>at this count"]
+  T -->|"yes, and it has a seat"| Top["A batch on the top-level settings"]
+  T -->|"no, or no seat"| W["The task waits"]
 ```
 
-- `select` takes the first profile, in the list's order, whose conditions all hold for the run. Its values replace the top-level ones.
-- With none, the top-level settings apply when they have a `model`.
+- The profile that forms the batch gives its values, which replace the top-level ones.
 - Runs without an agent, recording answers and accepting workflows, use the top-level settings, and need no model.
-- **Put a profile without `stages` last.** It holds for every stage, so the profiles after it apply only at the counts where it does not.
+- **Put a profile without `stages` last.** It holds for every stage, so the profiles after it serve only as its [fallbacks](#fallback).
+- **The order wins over the count.** A profile listed first takes a batch of 1 before a later profile takes a batch of 3. To prefer the larger batch, list its profile first.
 - What a profile that names another provider than the top level's keeps of its provider settings is in [provider settings across layers](provider-settings-across-layers.md).
 - The run's log names the profile, and the spend table's model and provider columns show what each run used.
+
+## Fallback
+
+A profile that cannot serve a task now leaves it to the next one that holds, in the list's order, and then to the top level: its [fallback](../glossary.md#fallback). A profile cannot serve now when:
+
+| Cause | Seen by | For how long |
+| --- | --- | --- |
+| Every [instance](../glossary.md#instance) it may run is busy ([concurrency](#concurrency)) | `select`, from the pool's pods and the organization's open runs | Until an instance ends |
+| Its provider had no room for a pod: Runpod has no GPU of its type on the allowed clouds, or answers a creation with `400`; no host has vLLM's CUDA with room; a Salad group got no machine within 10 minutes | `open-key`, which refuses the run as `profile-unavailable` at no cost ([pods](../inference/pods.md#no-room)) | 15 minutes: its live pods keep taking tasks, but no new pod is created |
+
+When `open-key` finds no room, the task goes back to its state, and the next run starts at once. That run's `select` sets the profile aside and serves the task with the next one.
+
+A mistake in the settings is not a reason to fall back: a model that does not fit the GPU, or an image that cannot serve, still fails the run, so that it shows.
+
+```yaml
+model: deepseek/deepseek-v4.1-flash   # planning, and the last fallback
+profiles:
+  - name: salad                  # the cheapest, first
+    stages: [route, design, code, test, review]
+    max-tasks: 1
+    provider: salad-pod
+    hosts: [community]
+    gpu: "RTX 4090 (24 GB)"
+    priority: medium
+    pod-reuse: run
+    model: qwen3-coder:30b
+    agent-minutes: 20
+    wrap-up-minutes: 5
+  - name: runpod                 # when Salad has no seat or no node
+    stages: [route, design, code, test, review]
+    max-tasks: 1
+    provider: runpod-pod
+    gpu: "NVIDIA RTX A6000"
+    model: qwen3-coder:30b
+```
+
+| When | A code task runs on |
+| --- | --- |
+| `salad` has its seat free, and Salad gives the group a node | `salad` |
+| `salad`'s one pod is busy | `runpod`, without waiting |
+| Salad gives the group no node within 10 minutes | `runpod`, in the next run; `salad` is set aside for 15 minutes |
+| `salad` and `runpod` are both busy | OpenRouter, on the top level's model |
+
+What a `medium` priority means for a run on Salad is in [Salad's priority](../installation/salad.md#pods).
 
 ## How many tasks a run takes
 
@@ -86,7 +137,8 @@ What happens to a ready task:
 | --- | --- | --- |
 | A batch takes it, within the cap | Runs | – |
 | A batch would take it now, but the run has no place left | Is left for the next run | No message |
-| A batch would take it now, but every instance of its profile is busy | Waits for a seat ([concurrency](#concurrency)) | Its panel says so, such as "Waiting for profile `small-pod`: its one instance is busy, as many as its `concurrency` allows." |
+| A batch would take it now, but every instance of each profile that could serve it is busy | Waits for a seat ([concurrency](#concurrency)) | Its panel names the profile it prefers, such as "Waiting for profile `small-pod`: its one instance is busy, as many as its `concurrency` allows. The other settings that could serve it cannot now either." |
+| The profile it prefers had no room for a pod, and no other can serve it | Waits for the profile to come back ([fallback](#fallback)) | "Waiting for profile `salad`: its provider had no room for a pod, so Codeman tries it again from 2026-10-29 17:20 UTC." |
 | No batch of a count that serves it can be completed | Waits. Every run checks it again. Waiting moves nothing, so it starts no other run | Its labels stay, and its panel says so, such as "Waiting for 4 tasks ready for profile `parallel-tasks`; 3 are, in 2 repositories." |
 | Nothing serves its stage at any count: no profile does, and the top level has no `model` | Is blocked: `select` labels it `codeman:blocked` | Its panel names the stage |
 
@@ -98,7 +150,7 @@ On a pod, these counts also set the engine's [parallel requests](../glossary.md#
 
 ## Concurrency
 
-`concurrency` caps how many [instances](../glossary.md#instance) of a profile, or of the top level, run at once. It brakes how fast spend grows as tasks are created and progress: tasks beyond the cap wait for a seat instead of creating another pod or opening more runs.
+`concurrency` caps how many [instances](../glossary.md#instance) of a profile, or of the top level, run at once. It brakes how fast spend grows as tasks are created and progress: tasks beyond the cap go to the next profile that serves them ([fallback](#fallback)), or wait for a seat, instead of creating another pod or opening more runs.
 
 ```yaml
 concurrency: 2           # the top level, and every profile without its own
@@ -131,7 +183,7 @@ A task beyond the cap:
 
 | When | The task | What the maintainer sees |
 | --- | --- | --- |
-| `select` sees every instance busy | Waits, with its labels. Every run checks it again | "Waiting for profile `small-pod`: its one instance is busy, as many as its `concurrency` allows. Codeman checks again at every run." |
+| `select` sees every instance busy | Goes to the next profile that holds ([fallback](#fallback)). Without one, waits, with its labels. Every run checks it again | "Waiting for profile `small-pod`: its one instance is busy, as many as its `concurrency` allows. Codeman checks again at every run." |
 | Another run took the last seat between `select` and `open-key` | `open-key` refuses its run as `concurrency-reached`, at no cost. The task goes back to its previous state, not blocked, and the next run starts at once to make it wait | "Profile `small-pod` already runs its one instance, as many as its `concurrency` allows. Codeman will try again in a later run." |
 
 A waiting task moves at its repository's next run. On a pod, any run of the pool that sees a seat free can also complete a batch with it from the [board](../runs/batches.md#the-board).
@@ -209,3 +261,4 @@ With other settings:
 - The conditions and counts: the [plan for profiles that pick the tasks](../plans/2026-10-08-profiles-pick-the-tasks.md).
 - Counts as batches: the [plan for GPU batches across repositories](../plans/2026-10-13-gpu-batches-across-repositories.md).
 - Concurrency: the [plan for limiting concurrent instances of a profile](../plans/2026-10-29-limit-concurrent-instances-of-a-profile.md).
+- The list's order and the fallback: the [plan for falling back to the next profile](../plans/2026-10-29-fall-back-to-the-next-profile.md).

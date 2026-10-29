@@ -25,7 +25,7 @@ Here, the code and test stages run on a pod, up to 2 tasks at a time, and review
 1. Give each profile a `name`, and beside it the `stages` it is for: `plan`, `route`, `web`, `design`, `code`, `test` or `review` (see [stages](../tasks/stages.md)). A profile without `stages` applies to every stage, so put it last.
 2. To work on several tasks at once, give a profile a [count](../glossary.md#count) of the run's tasks: `tasks` for exactly that many, or `min-tasks` and `max-tasks` for a range, from 1 to 10. See [several tasks at once](#several-tasks-at-once).
 3. Put in each profile only what changes: `provider`, `model` and the provider's settings ([providers](../settings/providers.md)). Everything else, budgets included, stays at the top level and applies to every run.
-4. Order them: the first profile whose [conditions](../glossary.md#profile-condition) hold applies.
+4. Order them by preference: the first profile whose [conditions](../glossary.md#profile-condition) hold applies, and the next ones are its [fallbacks](../settings/profiles.md#fallback) when it is busy or its provider has no room.
 
 ## Rules each profile must follow
 

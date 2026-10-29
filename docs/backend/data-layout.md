@@ -103,7 +103,7 @@ Only a refresh of an OpenRouter run's cost from its key writes `expired`. Other 
 | `leases` | Each with `holder` (`owner/name#task`), `run`, `kind` (`run` or `keep`) and `until` |
 | `seats` | The holders, by [seat](../glossary.md#seat) |
 | `pod`, `createdAt`, `pricePerSecond` | Once the pod exists |
-| `endedAt`, `reason` | Once it ends. For a failed start, `its start failed: ` and the gateway's reason, which the tasks that joined the pod fail with |
+| `endedAt`, `reason` | Once it ends. For a failed start, `its start failed: ` and the gateway's reason, which the tasks that joined the pod fail with. For a provider without room, `unavailable: ` and why: `select` creates no pod of its `key` for 15 minutes after `endedAt` ([no room](../inference/pods.md#no-room)) |
 | `terminatedAt`, `month`, `lifeCost`, `counted`, `untracked`, `untrackedBy` | When a job terminated it: its [untracked time](../glossary.md#untracked-time), and each organization's share of it |
 
 ### Board

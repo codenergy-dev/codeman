@@ -81,6 +81,7 @@ flowchart TD
 | 2026-10-28 | [Agent time in the settings](#agent-time-in-the-settings) | `50c9a5a` | Every installation, and copies of `codeman-task.yml` that changed `agent-minutes` | Copy both templates; move a changed `agent-minutes` to the settings | Yes: template version 2 |
 | 2026-10-29 | [One instance of a profile at a time](#one-instance-of-a-profile-at-a-time) | `447fd2d` | Profiles that ran several pods, or several batches, at once | Set `concurrency` to keep them | No: tasks wait instead |
 | 2026-10-29 | [Salad pods, and the hosts of a pod](#salad-pods-and-the-hosts-of-a-pod) | `190f93f`, `cff2d2a` | Every installation | Copy both templates; for Salad, add its secret and variables | Yes: template version 3 |
+| 2026-10-29 | [Profiles fall back in the list's order](#profiles-fall-back-in-the-lists-order) | `3a0ac54` to `79859a4` | Settings where several profiles, or a profile and a top-level `model`, serve one stage | Reorder the profiles if needed | No: tasks may run on a later profile instead of waiting |
 
 The [older versions](#older-versions) entries say what Codeman does with tasks, pod images and records from before some of these changes.
 
@@ -236,6 +237,31 @@ The workflow files need no change. Pods and runs from before the change carry no
 #### How to verify
 
 A task beyond the cap keeps its labels, and its panel says "Waiting for profile `<name>`: its one instance is busy, as many as its `concurrency` allows."
+
+### Profiles fall back in the list's order
+
+- **Since:** 2026-10-29, `3a0ac54` to `79859a4` ([plan for falling back to the next profile](../plans/2026-10-29-fall-back-to-the-next-profile.md)).
+- **Who is affected:** settings where more than one profile serves a stage, or a profile and a top-level `model` do.
+- **Breaking:** no. No setting stops the run, but a task may run on other settings than before.
+
+Two things changed in which settings serve a task ([which applies](../settings/profiles.md#which-applies)):
+
+| | Before | Now |
+| --- | --- | --- |
+| Order | The largest count that ready tasks complete first, then the first profile that holds at it | The first profile in the list that can form a batch, then its largest count |
+| A profile with every instance busy | The task waits for a seat | The next profile that holds serves it, then the top level ([fallback](../settings/profiles.md#fallback)) |
+| A pod provider without room | `open-key` fails, and the task is blocked | The run is refused as `profile-unavailable`, at no cost, and the next run serves the task with the next profile |
+
+#### What to do
+
+1. Read the profiles of each stage from top to bottom: that is now the order of preference. To prefer a larger batch, list its profile first.
+2. A task that should wait for its profile rather than run on another: narrow the other profiles' `stages` or counts so they do not hold for it, or remove the top-level `model` when every stage has a profile.
+
+The workflow files need no change. A pool's members on an older version keep forming their batches by count; their offers on the board carry no place.
+
+#### How to verify
+
+When the first profile is busy, the next ready task's run log says "Profile `<next>` applies to this run." A task that no profile can serve says why the one it prefers cannot, and "The other settings that could serve it cannot now either."
 
 ## Workflow files and secrets
 

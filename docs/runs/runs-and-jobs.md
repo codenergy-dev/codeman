@@ -58,7 +58,8 @@ When a run moved a task, its `next-run` job starts another run with `workflow_di
 | Recorded answers, or accepted workflows | Yes | |
 | Got its key, so its agent ran, even if the agent then failed | Yes | |
 | Got no key: a budget refused it, a provider's secret is missing, or the key job failed | No | It would be picked again without moving. |
-| Got no key because its profile's instances were all busy (`concurrency-reached`) | Yes | The next run's `select` makes it wait in view, and lists a pod's task on the board. |
+| Got no key because its profile's instances were all busy (`concurrency-reached`) | Yes | The next run's `select` serves it with the next profile, or makes it wait in view, and lists a pod's task on the board. |
+| Got no key because its provider had no room for a pod (`profile-unavailable`) | Yes | The next run's `select` sets the profile aside and serves it with the next ([fallback](../settings/profiles.md#fallback)). |
 | Waits for more ready tasks | No | No run moves it until there are enough. |
 
 A run in which no task moved starts no other run. The loop is bounded by the budgets, `max-runs` and the states: tasks that are blocked, done or awaiting an answer never start a run.

@@ -50,6 +50,9 @@ OpenRouter's management key is not needed then, unless a [profile](mixing-provid
    Result: the run's tasks get a pod on a node with that GPU class.
 
 2. **Choose a priority.** `high`, the default, is never taken by other workloads. `medium`, `low` and `batch` cost less, but a higher-priority workload may take the pod's node, and its tasks fail as a failed pod's do ([priority](../settings/providers.md#priority), [Salad's priority pricing](../web/salad/priority-pricing.md)).
+   - At `medium` and `low`, an instance runs roughly 30 minutes before Salad may take its node ([pricing](../web/salad/saladcloud-pricing.md)). The clock starts when the instance runs, before the pod has pulled and loaded its model.
+   - To keep a run within it, give the profile a short [agent time](../settings/reference.md#agent-time), such as `agent-minutes: 20` and `wrap-up-minutes: 5`, a count of 1, and `pod-reuse: run`: a pod that serves several batches, or that is kept for the task's next stage, outlives one run.
+   - Nothing guarantees it: a run can still lose its node. List a profile on another provider after this one, as its [fallback](../settings/profiles.md#fallback) for when Salad has no node.
 
 3. **Choose an [engine](../glossary.md#engine)**, as on Runpod: Ollama by default, or vLLM, with its block ([Runpod's pods](runpod.md#pods), [choosing an engine](../settings/pod-engines.md#choosing-an-engine)).
    - Salad cannot pick hosts by CUDA version. A vLLM pod checks its host's driver when it starts, and fails, naming the driver's CUDA, when it is older than 13.0 ([CUDA](../settings/vllm.md#cuda)).
