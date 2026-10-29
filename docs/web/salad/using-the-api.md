@@ -1,0 +1,127 @@
+---
+title: Using the API
+url: https://docs.salad.com/reference/api-usage
+created_at: 2026-10-29T11:06:09-03:00
+updated_at: 2026-10-29T11:06:09-03:00
+tool: docs/web/tools/salad.md
+license: CC-BY-4.0
+---
+
+# Using the API
+
+> Start integrating directly with SaladCloud's robust API
+
+*Last Updated: September 22, 2026*
+
+> Keep `SALAD_API_KEY` in a secret environment variable and never expose it. The public API does not enumerate
+> accessible organizations or Container Engine projects; require names from trusted user/configuration context and
+> validate them with scoped reads. Transcription endpoints are organization-scoped and signed media URLs are also
+> sensitive. AI Gateway instead uses `SALAD_AI_GATEWAY_API_KEY` as an organization-specific Bearer token; never
+> substitute one credential for the other. Follow [Safety, Retries, and
+> Freshness](https://docs.salad.com/agents/reference/safety-retries-and-freshness.md).
+
+The SaladCloud API is organized around REST. Our API has predictable resource-oriented URLs, accepts JSON-encoded
+request bodies, returns JSON-encoded responses, and uses standard HTTP response codes, authentication, and verbs.
+
+You can find OpenAPI specifications for all of our public APIs
+[here](https://github.com/SaladTechnologies/salad-cloud-docs/tree/main/api-specs).
+
+## Authentication
+
+Each API request is authenticated with an API access token that can be accessed via the Web Portal. Each user has a
+unique API token that grants API access to any Organization, Project, or Container group that the user has access to. If
+you need to get a new API Token, you are able to refresh API tokens directly from the Web Portal.
+
+This API token should be included in the `Salad-Api-Key` header of each request.
+
+> [!NOTE]
+>
+> Handing this key to an AI agent? It grants everything your account can reach. See [Build with AI
+> Agents](https://docs.salad.com/general/tutorials/build-with-ai-agents.md) for how to scope and store it.
+
+```http theme={null}
+Salad-Api-Key: YOUR_API_KEY
+```
+
+This authentication scheme is also used to access container groups (when authentication is enabled) and inference
+endpoints.
+
+> [!NOTE]
+>
+> AI Gateway pay-per-token requests use a separate key for each user and organization, sent as
+> `Authorization: Bearer <your-ai-gateway-api-key>`. The account key described above is not a substitute. See
+> [Manage Your AI Gateway API Key](https://docs.salad.com/ai-gateway/how-to-guides/manage-api-key.md).
+
+## Get your SaladCloud API Key
+
+Navigate to the `API Access` section under the account drop down
+
+![Account Drop Down Menu](https://mintcdn.com/salad/B_utM-6XUMV1Xhv8/reference/images/account-dropdown.png?fit=max\&auto=format\&n=B_utM-6XUMV1Xhv8\&q=85\&s=31d157e700518548281f5bf653efbfe6)
+
+Copy your API key from the `API Access` page. Be sure to store this key securely, as it is the only way to access the
+SaladCloud APIs.
+
+![API Key Retrieval Screen](https://mintcdn.com/salad/MF5npb_t8nHGysAi/reference/images/api-access-key.png?fit=max\&auto=format\&n=MF5npb_t8nHGysAi\&q=85\&s=aed48b93a401ce11c1ac70acbdecd18e)
+
+## Get Your Salad AI Gateway API Key
+
+Salad AI Gateway does not use the **Current API Key** or the `Salad-Api-Key` header. It uses a separate API key for each
+user and organization:
+
+1. Create the key from the organization's **AI Gateway** page.
+2. Select your username in the upper-right corner of the portal, then select **API Access**.
+3. Under **AI Gateway Keys**, find the organization and click the copy icon next to its masked key.
+
+Send this key as a Bearer token in the `Authorization` header. Follow
+[Pay-Per-Token Onboarding](https://docs.salad.com/ai-gateway/tutorials/pay-per-token-onboarding.md) for the complete setup and first-request
+workflow, or [Manage Your AI Gateway API Key](https://docs.salad.com/ai-gateway/how-to-guides/manage-api-key.md) for regeneration, expiration
+delays, deletion, and organization membership changes. Gateway-specific access errors are documented in
+[AI Gateway Errors](https://docs.salad.com/ai-gateway/reference/errors.md).
+
+## Refreshing API Keys
+
+This section applies to the account's **Current API Key**. Manage AI Gateway keys separately on each organization's **AI
+Gateway** page.
+
+If you need to update your API key for any reason, you can refresh the API key from the `API Access` page. Select
+**Change API Key**, then choose how long the previous key should remain valid.
+
+![Change API Key Screen](https://mintcdn.com/salad/-HeCbeCdJ2veyfLw/reference/images/change-api-key.png?fit=max\&auto=format\&n=-HeCbeCdJ2veyfLw\&q=85\&s=9c2bfee43a2c0f3a08d2deeaf6102a56)
+
+| Current API Key Expiration Date | Previous key stops working |
+| - | - |
+| **Now** (default) | Immediately |
+| **1 Hour** | 1 hour after the change |
+| **1 Day** | 24 hours after the change |
+| **1 Week** | 7 days after the change |
+
+If you choose an overlap window, both the previous key and the new key authenticate successfully until that window
+elapses. This lets you roll the new key out to your applications without downtime. Once the window elapses, the previous
+key is permanently invalidated and cannot be recovered.
+
+> [!NOTE]
+>
+> The default is **Now**. If you leave it selected, the previous token is invalidated immediately and will no longer
+> grant API access.
+
+## Rate Limits
+
+SaladCloud's servers enforce rate limits to ensure our APIs are responsive as we grow. The rate limit is tied to an
+individual API key and set to 240 requests per minute. If your team would like a higher rate limit, please
+[reach out to our team](https://docs.salad.com/support/contact.md).
+
+## Errors
+
+> [!NOTE]
+>
+> Errors from the SaladCloud API may come as HTML documents. Be sure to handle this case in your application.
+
+SaladCloud uses conventional HTTP response codes to indicate the success or failure of an API request. In general:
+
+* Codes in the 2xx range indicate success.
+* Codes in the 4xx range indicate an error that failed given the information provided (e.g., a required parameter was
+  omitted, a change failed, etc.).
+* Codes in the 5xx range indicate an error with SaladCloud's servers (these are rare).
+
+
+This documentation is built and hosted on [Mintlify](https://mintlify.com), a developer documentation platform.

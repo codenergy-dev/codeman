@@ -1,0 +1,153 @@
+---
+title: Billing
+url: https://docs.salad.com/general/explanation/billing
+created_at: 2026-10-29T11:06:09-03:00
+updated_at: 2026-10-29T11:06:09-03:00
+tool: docs/web/tools/salad.md
+license: CC-BY-4.0
+---
+
+# Billing
+
+> Learn how SaladCloud prepaid billing works, including auto and manual recharge options, accepted payment methods, and volume discounts.
+
+*Last Updated: October 27, 2026*
+
+# Prepaid Billing
+
+SaladCloud uses prepaid billing. Billing, payment methods, and credits are managed at the organization level. All credit
+purchases are final, non-transferable between organizations, and expire 12 months from the purchase date. To keep your
+organization's workloads active you must purchase credits as needed to maintain a positive credit balance.
+
+There are two options to purchase credits: Auto Recharge and Manual Recharge. For production workloads, SaladCloud
+strongly recommends enabling Auto Recharge to maintain a positive credit balance and ensure uninterrupted service. For
+testing or non-production workloads, such as long-running batch jobs, either option may be suitable.
+
+## Auto Recharge
+
+With auto recharge, configure a threshold and recharge amount, allowing SaladCloud to automatically replenish your
+organization’s credit balance when needed with a saved payment method.
+
+* **Recharge Threshold**: The balance level that triggers an auto recharge ("when my balance falls below"). We recommend
+  setting this to 10% of your recharge amount (e.g., a \$100 threshold for a \$1,000 top-up). Adjust proportionally as
+  your usage grows.
+* **Recharge Amount**: The amount SaladCloud will add to your balance when the threshold is reached.
+
+You can update these settings anytime through the Billing & Usage page in your portal. If you set the threshold higher
+than your current balance, a recharge triggers immediately upon saving. In general, setting your threshold to \$0 is not
+recommended. Credit processing is not instantaneous and your instances may pause briefly before new credits are applied.
+
+> [!WARNING]
+>
+> Be sure to keep your payment method up to date to avoid service interruptions. If Auto Recharge encounters a payment
+> method error, SaladCloud will notify you by email and shut down usage as soon as possible. In rare cases where usage
+> occurs before shutdown completes, you may receive an invoice at the start of the following month for charges incurred
+> during this period.
+
+![](https://mintcdn.com/salad/8o1ParSgmJGbpSYb/container-engine/images/auto-recharge.png?fit=max\&auto=format\&n=8o1ParSgmJGbpSYb\&q=85\&s=15f1fb7907e25192795591124e270e0d)
+
+## Manual Recharge
+
+At any time, you can add between \$5 and \$10,000 in credits by clicking **Add Credits** on the Billing & Usage page.
+For amounts exceeding \$10,000, or to receive a volume discount, contact our sales team. See
+[Volume Discounts](#volume-discounts) below.
+
+If your balance reaches \$0.00, usage will be shut down as soon as possible. If charges are incurred beyond your
+available balance, you will receive an invoice at the start of the following month.
+
+![](https://mintcdn.com/salad/pEBrSzH4UQRtJw00/container-engine/images/manual-recharge.png?fit=max\&auto=format\&n=pEBrSzH4UQRtJw00\&q=85\&s=1de3d3d271181bdb31598dac7af26a2f)
+
+# Accepted Payment Types
+
+We accept:
+
+* **Credit and debit cards**: Standard payment method for most customers and for automatic recharges.
+* **Crypto on Solana**: USDC, USDT, and RENDER, for manual credit purchases. See [Pay with Crypto](#pay-with-crypto).
+
+# Pay with Crypto
+
+You can buy credits with USDC, USDT, or RENDER on the Solana network directly from the Portal, using a
+[Solflare](https://solflare.com/download) wallet. You don't need SOL for network fees. If you don't have a Solflare
+wallet, you can pay by card instead.
+
+> [!NOTE]
+>
+> Phantom wallets aren't supported yet. Crypto payments are processed through Coinbase's x402 payment service, which
+> rejects the extra security checks Phantom adds to each transaction. No funds are taken on a failed attempt; the
+> payment is rejected before anything is sent on-chain. We'll enable Phantom once Coinbase resolves the issue.
+
+1. In the Portal, go to **Billing & Usage** and click **Add Credits**.
+2. Choose USDC, USDT, or RENDER, and enter the amount of credits to buy (\$5 to \$10,000).
+3. Enter your billing address, which is used to calculate tax.
+4. Review the payment, connect your wallet, and approve the transaction.
+
+Credits are added as soon as the payment settles, and the Portal shows a receipt. You can also pay with crypto when you
+create a new organization.
+
+USDC and USDT are valued at \$1.00. RENDER is valued at the market rate shown when you confirm. The rate is locked for 5
+minutes; if it expires or the market moves before your payment settles, you'll be asked to request a new quote.
+
+> [!WARNING]
+>
+> Crypto payments are final. Once your payment settles it can't be reversed or refunded, and credits can't be converted
+> back to crypto.
+
+**Supported tokens (Solana mainnet):**
+
+| Token | Mint Address |
+| - | - |
+| USDC | EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v |
+| USDT | Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB |
+| RENDER | rndrizKT3MK1iimdxRdWabcF7Zg7AR5T4nud4EkHBof |
+
+For larger purchases or other tokens, contact [support](mailto:cloud@salad.com).
+
+# Volume Discounts
+
+Prepaid credit purchases of \$10,000 or more may be eligible for the discounts listed below.
+
+> [!NOTE]
+>
+> Volume discounts aren't applied automatically. To receive a discount, contact us at
+> [sales@salad.com](mailto:sales@salad.com) before you make your purchase.
+
+| Pre-Paid Amount | Discount |
+| - | - |
+| \$10,000 - \$24,999 | 2% |
+| \$25,000 - \$49,999 | 4% |
+| \$50,000 - \$74,999 | 6% |
+| \$75,000 - \$99,999 | 8% |
+| \$100,000 - \$150,000 | 10% |
+| Above \$150,000 | Contact Sales |
+
+For purchases above \$150,000 or enterprise billing arrangements, also contact us at
+[sales@salad.com](mailto:sales@salad.com).
+
+# Managing Billing and Usage
+
+The SaladCloud Portal **Billing & Usage** page displays your current credit amount and allows you to view and manage
+billing information for your organization. Your current credit balance is displayed at the top of the page so you can
+quickly see how much credit is available for your organization. Note any negative balance that has been invoiced will
+not be reflected in this amount.
+
+From the Billing Information tab you can add or update your payment card, add to your credit balance, and edit auto
+recharge settings. You can also manage billing contact information and historical payment invoices.
+
+The Invoice tab provides access to current and historical invoices for your organization.
+
+![](https://mintcdn.com/salad/B_utM-6XUMV1Xhv8/container-engine/images/usage-monitoring.png?fit=max\&auto=format\&n=B_utM-6XUMV1Xhv8\&q=85\&s=6fb8a38f43da6ed134b6514921d33552)
+
+The Usage tab provides access to detailed graphs of usage information for your organization, allowing you to see usage
+broken down by project and track consumption over time.
+
+The Credits tab shows your credit purchase history.
+
+# Product Usage and Billing
+
+For more details on how usage of individual products are billed, see:
+
+* [Salad Container Engine Billing](https://docs.salad.com/container-engine/explanation/billing-pricing/billing.md)
+* [Transcription API Billing](https://docs.salad.com/transcription/explanation/billing.md)
+
+
+This documentation is built and hosted on [Mintlify](https://mintlify.com), a developer documentation platform.

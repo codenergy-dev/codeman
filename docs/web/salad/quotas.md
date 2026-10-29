@@ -1,0 +1,24 @@
+---
+title: Quotas
+url: https://docs.salad.com/container-engine/reference/quotas
+created_at: 2026-10-29T11:06:09-03:00
+updated_at: 2026-10-29T11:06:09-03:00
+tool: docs/web/tools/salad.md
+license: CC-BY-4.0
+---
+
+# Quotas
+
+*Last Updated: May 12, 2025*
+
+Each organization has a quota for the total number of replicas used across container groups. This includes replicas from
+all created container groups, whether running or not. If autoscaling is enabled, the “Maximum Replicas” value is counted
+toward your quota. You can distribute these replicas among container groups as needed, but each container group is
+limited to a maximum of 500 replicas.
+
+If you are running low on quota, you can request an increase via the Portal quotas page, or by contacting our
+[support team](mailto:cloud@salad.com). Alternatively, you can delete unused container groups or reduce their replica
+count.
+
+
+This documentation is built and hosted on [Mintlify](https://mintlify.com), a developer documentation platform.

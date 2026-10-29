@@ -1,0 +1,42 @@
+---
+title: Disk Space
+url: https://docs.salad.com/container-engine/explanation/container-groups/disk-space
+created_at: 2026-10-29T11:06:09-03:00
+updated_at: 2026-10-29T11:06:09-03:00
+tool: docs/web/tools/salad.md
+license: CC-BY-4.0
+---
+
+# Disk Space
+
+*Last Updated: October 19, 2026*
+
+# How Disk Space is Calculated
+
+When you deploy a workload to the SaladCloud Network, nodes are filtered on the criteria that you specify. If you do not
+specify disk space requirements, nodes are provided which meet a minimum free space allotment. This is calculated based
+on the size of the downloaded container, plus some extra buffer to account for operations like extracting the container,
+installing dependencies, and caching results.
+
+# Requesting additional Disk Space on nodes
+
+If you expect to need significantly more free space on your nodes than your container itself requires, configure it by
+selecting a Disk Space option when configuring your container group in the Portal or in the API by passing
+`"storage_amount"` on the resources object. The API value is in bytes and must be a whole number of gigabytes, from 1 GB
+(`1073741824`) to 250 GB (`268435456000`).
+
+Disk space is ephemeral. It's kept when an instance restarts, but an instance that is reallocated or recreated starts
+with an empty disk, so store results you need to keep outside the container.
+
+![](https://mintcdn.com/salad/ko38nW-LNf6N2Y1I/container-engine/images/portal-select-disk-space.png?fit=max\&auto=format\&n=ko38nW-LNf6N2Y1I\&q=85\&s=31801e1c40530b3ae0d10ee912c07802)
+
+> 📘 Need more space?
+>
+> SaladCloud's disk space requirements for nodes are minimum thresholds; nodes may provide significantly more free space
+> than the minimum. However, if you expect to regularly need more than highest disk space option provided, reach out to
+> your account manager or email [cloud@salad.com](mailto:cloud@salad.com) to request nodes with additional space. We can
+> take a look at how many nodes are available with high levels of free space to help guide you to the right balance of
+> space requirements and node counts.
+
+
+This documentation is built and hosted on [Mintlify](https://mintlify.com), a developer documentation platform.

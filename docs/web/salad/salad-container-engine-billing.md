@@ -1,0 +1,64 @@
+---
+title: Salad Container Engine Billing
+url: https://docs.salad.com/container-engine/explanation/billing-pricing/billing
+created_at: 2026-10-29T11:06:09-03:00
+updated_at: 2026-10-29T11:06:09-03:00
+tool: docs/web/tools/salad.md
+license: CC-BY-4.0
+---
+
+# Salad Container Engine Billing
+
+> Understand how Salad Container Engine billing works, including per-second usage tracking, priority pricing, and cost examples.
+
+*Last Updated: October 19, 2026*
+
+> [!TIP]
+>
+> Looking for current prices? See [salad.com/pricing](https://salad.com/pricing), or check the price shown in the
+> SaladCloud Portal when you create a container group.
+
+For information on options for purchasing SaladCloud credits visit our
+[SaladCloud billing documentation](https://docs.salad.com/general/explanation/billing.md).
+
+Salad Container Engine (SCE) is billed based on the time container group instances are running on one of our machines.
+No charges are incurred while your container group is allocating or downloading. The price per hour is based on the
+hardware resources and [priority level](https://docs.salad.com/container-engine/explanation/billing-pricing/priority-pricing.md#priority-levels)
+you select. Prices are available on our [pricing page](https://salad.com/pricing) and listed in the SaladCloud Portal
+when creating a container group. Usage is tracked per second. When you
+[change the priority](https://docs.salad.com/container-engine/explanation/billing-pricing/priority-pricing.md#changing-priority) of a running
+container group, the new priority's rate applies from that point on.
+
+![](https://mintcdn.com/salad/4KO858akQWmRXuML/container-engine/images/deployment-map.png?fit=max\&auto=format\&n=4KO858akQWmRXuML\&q=85\&s=04e3d3853f227e1f2bc0439f75fb3447)
+
+> [!TIP]
+>
+> **Never Pay for Cold Boot Time Again**
+>
+> You only pay for the time that the hardware is available to be used by your application, you will never pay for Cold
+> Boot time.
+
+## How Billing Rates are Calculated
+
+When creating a Container Group in SCE, you select the required hardware that will be dedicated to your application when
+it runs on SaladCloud. For GPU container groups, there are no additional charges for RAM and vCPU.
+
+### Example 1 - CPU only Container Group
+
+You create a Container Group with 1 vCPU, 2 GB RAM, no GPU, and 10 replicas
+
+Per Instance Cost = 1 vCPU x \$0.005 per vCPU + 2 GB x \$0.001 per GB = \$0.007/hr
+
+**Total Cost** = \$0.007/hr (per Instance) x 10 replicas = \$0.07/hr
+
+### Example 2 - GPU Container Group
+
+You create a Container Group with 4 vCPU, 6 GB RAM, RTX 3060 (8 GB) GPU at "Low" priority, and 5 replicas. GPU rates
+include vCPUs and RAM.
+
+Per Instance Cost = 1 RTX 3060 (8 GB) at "Low" Priority x \$0.047 = \$0.047/hr
+
+**Total Cost** = \$0.047/hr (per Instance) x 5 replicas = \$0.235/hr
+
+
+This documentation is built and hosted on [Mintlify](https://mintlify.com), a developer documentation platform.

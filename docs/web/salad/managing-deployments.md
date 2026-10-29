@@ -1,0 +1,133 @@
+---
+title: Managing Deployments
+url: https://docs.salad.com/container-engine/how-to-guides/managing-deployments
+created_at: 2026-10-29T11:06:09-03:00
+updated_at: 2026-10-29T11:06:09-03:00
+tool: docs/web/tools/salad.md
+license: CC-BY-4.0
+---
+
+# Managing Deployments
+
+*Last Updated: October 19, 2026*
+
+> Before any update, call `get_container_group`, preserve unrelated configuration, and use only fields supported by
+> `ContainerGroupPatch`. After the mutation, re-read the group and instances until the intended version/state is
+> verified or the bounded polling budget expires. See the [deploy/update
+> runbook](https://docs.salad.com/agents/container-engine/deploy-or-update-container-group.md).
+
+### Listing your Container Deployments
+
+In the SaladCloud Portal, you're able to see your deployments for each project on the Container Deployments List page.
+This page shows a high-level view for each of the container groups within the project, including:
+
+* Name of the deployment
+* Date created
+* [Deployment status (Preparing, Stopped, Deploying, Running, Failed)](https://docs.salad.com/container-engine/explanation/container-groups/deployment-lifecycle.md)
+* Replicas running
+* Version
+* Container Gateway details (if enabled)
+* Image source
+* Allocated resources (total desired replica count and vCPUs, RAM and GPU(s) allocated to each replica)
+
+![](https://mintcdn.com/salad/ko38nW-LNf6N2Y1I/container-engine/images/portal-list-container-groups.png?fit=max\&auto=format\&n=ko38nW-LNf6N2Y1I\&q=85\&s=7cdd620286539ed0c0e49118c380ed37)
+
+### Managing a Container Deployment
+
+Click on any of your deployments to drill down to the Container Deployment Detail page. From here, you can start, stop,
+and delete your deployment, as well as edit the display name, replica count, image source, resource requirements, and
+other configuration settings
+
+![](https://mintcdn.com/salad/ko38nW-LNf6N2Y1I/container-engine/images/portal-view-container-group.png?fit=max\&auto=format\&n=ko38nW-LNf6N2Y1I\&q=85\&s=caa05c96772e2ee8b4a40a11640df87b)
+
+### Managing Container Instances
+
+On this page, you can also see a table of all instances of your container that have been allocated, are running,
+stopping, or failed. You can also manage these instances by clicking the action button next to an entry in the list of
+running instances.
+
+You can perform the following actions:
+
+**Restart a container instance** Occasionally, a workload may run for awhile on your node and then some part of the
+application might hang. In these cases, it's typically faster to get back up and running by restarting the container on
+the same node, rather than searching for a new one. The **Restart** option allows you to restart your container on the
+node, with all settings and downloaded data intact.
+
+**Recreate a container instance** For a harder reset, the **Recreate** option allows you to rebuild the container from
+scratch on the node. These features are accessible from the actions dropdown next to each node on the container group
+detail page.
+
+**Reallocate a container instance** If a workload fails to run, SaladCloud will automatically reallocate your container
+to a new node that matches the requirements you specified. However, in some rare cases, a node has trouble running a
+container replica but doesn't outright *fail*. If this happens, it's helpful to be able to manually trigger a
+reallocation of the workload to a new node.
+
+**View Container Logs** Use this link to open the Container Logs tab with the Machine ID filter pre-filled.
+
+### Failures
+
+If container images exit with a 0 exit code, they may be restarted on the same node. If container images exit with a
+non-0 exit code, they will be blocked from the current node and reallocated to another node. Customization of this
+behavior is coming soon.
+
+### Editing Your Container Group Deployment
+
+Inside the "Edit" option on the Managing Deployments page in Salad, you have the flexibility to modify key parameters of
+your Container Group deployment.
+
+* You can change the Display Name to make deployments more descriptive and easily identifiable. Note: the Container
+  Group Name, set upon creation, cannot be edited.
+* You can update the Image Source URL. For private registries, re-enter authentication details. You'll see the first 12
+  characters of the image digest hash after saving.
+* You can adjust the replica count to scale your application up or down as needed.
+* You can modify hardware resource requirements, such as the number of vCPUs, Memory (RAM), GPUs, and
+  [Disk Space](https://docs.salad.com/container-engine/explanation/container-groups/disk-space.md).
+* You can change the [priority level](https://docs.salad.com/container-engine/explanation/billing-pricing/priority-pricing.md#changing-priority).
+  Raising priority is allowed at any time. Lowering priority on a running container group is only allowed after it has
+  been running at its current priority for 1 hour; to lower it right away, stop the container group, change the
+  priority, and start it again.
+* You can edit the [Health Check Probes](https://docs.salad.com/container-engine/explanation/infrastructure-platform/health-probes.md) (Startup,
+  Readiness, and Liveness).
+* You can edit the [Command](https://docs.salad.com/container-engine/how-to-guides/specifying-a-command.md).
+* If enabled, you can edit the [Container Gateway](https://docs.salad.com/container-engine/explanation/infrastructure-platform/networking.md)
+  Port. Note: the edit Container Group functionality doesn't allow for the Container Gateway to be disabled, enabled, or
+  authentication to be changed.
+* You can modify or enable/disable the
+  [External Logging](https://docs.salad.com/container-engine/explanation/infrastructure-platform/external-logging.md) Services.
+* You can edit the [Environment Variables](https://docs.salad.com/container-engine/how-to-guides/environment-variables.md).
+
+This editing functionality lets you update your container images, change hardware requirements, adjust configuration
+aspects, and utilize new features that SaladCloud may release. As you make changes, you will see the predicted cost
+associated with those choices updated in real-time.
+
+**Runtime changes restart replicas when required**
+
+* Saving a change to the image, command, health probes, environment variables, Container Gateway port, external logging,
+  registry credentials, CPU, memory, or disk space creates a new container version, and SaladCloud restarts every
+  replica on it. If the update uses a new image, SaladCloud prepares the image first, and existing replicas keep running
+  the previous version until the image is ready.
+* Display name edits, replica count adjustments, and autoscaler configuration updates apply without forcing a restart.
+* Priority level changes apply to running instances immediately without a restart. The new priority's preemption
+  behavior and hourly rate take effect from that point on.
+* Once a new version is ready, nodes are notified and switch to it within about a minute. A node that misses the
+  notification switches at its next regular check-in, within about 5 minutes. Each node stops the previous version
+  before starting the new one, and every replica restarts at about the same time, so there is no rolling update.
+* When the image changes, each replica downloads the full new image, even on a node that ran the previous version. A
+  container group can be unavailable for the full download plus your application's start-up time. Plan rollouts
+  carefully and consult [Deployment Strategies on SaladCloud](https://docs.salad.com/container-engine/how-to-guides/deployment-strategies.md) for
+  approaches that maintain availability during updates.
+
+If you are updating the Image Source, you will not be able to make additional edits until the new image is done
+preparing/pulling. To avoid confusion the “Edit” button will be disabled until this process is complete.
+
+![](https://mintcdn.com/salad/pEBrSzH4UQRtJw00/container-engine/images/portal-container-instance-actions.png?fit=max\&auto=format\&n=pEBrSzH4UQRtJw00\&q=85\&s=8a65c71f600da256535dc3bcf7c780a0)
+
+![](https://mintcdn.com/salad/pEBrSzH4UQRtJw00/container-engine/images/portal-container-instance-version.png?fit=max\&auto=format\&n=pEBrSzH4UQRtJw00\&q=85\&s=017d35be28819c3cf0320dce7c357ede)
+
+To access the editing options for your Container Group deployment, simply navigate to the SaladCloud dashboard, locate
+your deployment, and select the "Edit" option. To access the Reallocate option after edits resulting in a new container
+version, locate the container instance (on the Container Group detail page) expand the menu in the Actions column, and
+select "Reallocate".
+
+
+This documentation is built and hosted on [Mintlify](https://mintlify.com), a developer documentation platform.

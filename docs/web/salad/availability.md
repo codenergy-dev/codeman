@@ -1,0 +1,71 @@
+---
+title: Availability
+url: https://docs.salad.com/container-engine/explanation/infrastructure-platform/availability
+created_at: 2026-10-29T11:06:09-03:00
+updated_at: 2026-10-29T11:06:09-03:00
+tool: docs/web/tools/salad.md
+license: CC-BY-4.0
+---
+
+# Availability
+
+> Learn how to access and interpret the availability of CPU and GPU resources at different priority levels on SaladCloud.
+
+*Last Updated: October 19, 2026*
+
+> Do not infer current capacity from this page or its screenshot. Use the `salad-container-engine-preflight` skill and
+> call `list_gpu_classes` followed by the current GPU or CPU availability operation with the exact hardware, country,
+> and priority plan. Record the UTC observation time.
+
+SaladCloud provides estimated availability to help you understand how many nodes are available to run your workloads at
+different [priority levels](https://docs.salad.com/container-engine/explanation/billing-pricing/priority-pricing.md#priority-levels).
+Availability is shown in the SaladCloud Portal when creating container groups and via the
+[Get GPU Availability](https://docs.salad.com/reference/saladcloud-api/organizations/get-gpu-availability.md) and
+[Get CPU Availability](https://docs.salad.com/reference/saladcloud-api/organizations/get-cpu-availability.md) API endpoints.
+
+![Availability shown in the Portal](https://mintcdn.com/salad/lmi25xqe590w-U5r/container-engine/images/availability.png?fit=max\&auto=format\&n=lmi25xqe590w-U5r\&q=85\&s=86913155f2d69a8f380b3597cfab79fd)
+
+In the portal, availability is shown under the Estimated Cost when creating a container group. The numbers indicate how
+many nodes are currently online and available to run workloads at each priority level. In this example, there are 557
+nodes available at the "Lowest" priority level and 1,950 nodes available at the "Low" priority level. Clicking a
+priority level card will update the priority level of the container group.
+
+Keep in mind the following considerations when interpreting availability counts:
+
+* **Availability only includes currently online nodes.** Many more nodes are available on our network and can be
+  activated as needed. If you need more capacity than is currently available, reach out to
+  [SaladCloud support](https://docs.salad.com/support.md) and we can work to grow the network based on anticipated needs.
+
+* **Node allocation depends on multiple factors, not just priority level.** Even if few nodes are shown as available at
+  your selected priority level, your workload may be able to be allocated nodes from other workloads. For example, if
+  your workload has higher RAM requirements, nodes from same-priority workloads may be reallocated to meet those needs.
+
+* **Nodes where your workload exited will still appear in availability counts.** Availability data can include nodes
+  that previously ran your workload and exited with a non-zero exit code and will not be reassigned to it. Check your
+  workload’s system events to confirm whether it has failed on nodes.
+
+* **Available nodes may not be immediately reassigned.** Some nodes stay with their current workloads for a period
+  before being reallocated. This prevents excessive workload churn and repeated image pulls. How long a node stays
+  depends on the priority level of the workload it is running, and nodes running high-priority workloads are not
+  reallocated to other workloads.
+
+## Choosing GPU Classes
+
+Availability depends heavily on which GPU classes you select. When you choose them:
+
+* **Start with VRAM.** Your model and its working memory must fit in the GPU's memory, with some room to spare, because
+  a small part of each GPU's VRAM is reserved for the Windows host. The
+  [List GPU Classes](https://docs.salad.com/reference/saladcloud-api/organizations/list-gpu-classes.md) endpoint and
+  [salad.com/pricing](https://salad.com/pricing) show the VRAM of each class.
+* **Select every class that fits.** Each instance can run on any of the classes you select, so more classes means more
+  nodes to choose from and faster allocation. Classes differ in speed and price, so check which GPU an instance received
+  (for example, with `nvidia-smi`) when comparing performance.
+* **Stay with one vendor.** An image built for CUDA runs on NVIDIA GPUs and an image built for ROCm runs on AMD GPUs, so
+  select classes from the vendor your image supports. See [AMD GPUs and ROCm](https://docs.salad.com/container-engine/reference/amd-gpus.md).
+* **Choose a priority.** Higher [priority levels](https://docs.salad.com/container-engine/explanation/billing-pricing/priority-pricing.md) get
+  nodes first and aren't interrupted by lower-priority work, but cost more per hour.
+* **Check availability when you plan.** Availability changes throughout the day, so check it before you deploy or change
+  GPU classes, rather than polling it continuously.
+
+
+This documentation is built and hosted on [Mintlify](https://mintlify.com), a developer documentation platform.
