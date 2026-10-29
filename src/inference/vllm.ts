@@ -215,7 +215,7 @@ export interface VllmSetting {
 }
 
 /**
- * The vLLM settings a pod takes, in the `vllm` block of `runpod-pod`, by their key in the
+ * The vLLM settings a pod takes, in the `vllm` block of a pod provider, by their key in the
  * settings file: arguments of `VLLM_VERSION`'s `vllm serve` (`vllm/engine/arg_utils.py`,
  * `vllm/entrypoints/launchers/cli_args.py`, docs/web/vllm/). Any other key stops the run (decision 3
  * of the plan for vLLM on pods). docs/settings/vllm.md documents the same list, and a test checks

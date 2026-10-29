@@ -95,6 +95,11 @@ export interface Pod {
 
 export interface PodHost {
   /**
+   * Pod images whose gateway cannot serve on this provider, which a run refuses before creating
+   * a pod; none when undefined.
+   */
+  readonly unservedImages?: ReadonlySet<string> | undefined;
+  /**
    * The price of one GPU of this type on a pod, on a kind of host (`secure` by default) and at a
    * priority (the provider's highest by default), in USD per second. Throws when not offered there.
    */

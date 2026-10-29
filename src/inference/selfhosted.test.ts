@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import { after, test } from "node:test";
 import { GATEWAY_VERSION, sha256 } from "../gateway/gateway.ts";
 import type { FitReport } from "../gateway/pod.ts";
@@ -11,6 +12,7 @@ import { FakeRuntime } from "../testing/fake-runtime.ts";
 import { seedRuns } from "../testing/ledger-runs.ts";
 import type { PodSpec } from "./gpu.ts";
 import type { ModelHub } from "./huggingface.ts";
+import { IMAGES_BEFORE_SALAD, POD_IMAGES } from "./images.ts";
 import { IMAGES_WITHOUT_OLLAMA_SETTINGS, ollama, SINGLE_RUN_IMAGES } from "./ollama.ts";
 import { ConcurrencyReached, OpenFailure } from "./provider.ts";
 import { CREATE_LEASE_MS, PodRegistry } from "./registry.ts";
@@ -66,7 +68,7 @@ function setup(options: { real?: boolean; image?: string; hub?: ModelHub } = {})
       {
         repository: of,
         gpu,
-        accountKey: "account-key",
+        account: { key: "account-key" },
         store,
         now: () => now,
         fetch: gateways.fetch,
@@ -838,6 +840,30 @@ test("an image that cannot apply Ollama settings is refused before any pod is cr
   }
 });
 
+test("an image whose gateway cannot serve on the provider is refused before any pod is created", async () => {
+  const image = [...IMAGES_BEFORE_SALAD][0] ?? "";
+  const gpu = new FakeGpu({ unservedImages: IMAGES_BEFORE_SALAD });
+  const inference = new PodInference(
+    { ...settings, image },
+    { repository, gpu, account: { key: "account-key" }, store: new MemoryStore() },
+  );
+  await assert.rejects(
+    inference.open(
+      { task: "7", runId: "300", limit: 1, reservationMs: 3_600_000 },
+      new FakeRuntime(),
+    ),
+    (error: unknown) =>
+      error instanceof OpenFailure &&
+      error.message.startsWith(
+        `The pod image ${image} cannot serve on Fake, so no pod was created`,
+      ),
+  );
+  assert.deepEqual(gpu.created, []);
+  // Every image pinned now is one: Salad pods wait for images built since.
+  for (const pinned of Object.values(POD_IMAGES)) assert.ok(IMAGES_BEFORE_SALAD.has(pinned));
+  assert.ok(!IMAGES_BEFORE_SALAD.has(SHARED_IMAGE));
+});
+
 test("an Ollama model reads images when the pod's gateway says Ollama lists its vision capability", async () => {
   const { gateways, open } = setup({ real: true, image: SHARED_IMAGE });
   const a = await open("7", "300", { parallel: 4 });
@@ -1275,12 +1301,12 @@ test("without a host that offers vLLM's CUDA now, a run stops before creating th
   ];
   await assert.rejects(
     open("7", "300", onVllm),
-    /^Error: No host with GPU-A and CUDA 13\.0 or newer has room now \(Runpod offers 13\.0, 13\.1\), which vLLM's image needs, so no pod was created: try again later, or use another GPU type\.$/,
+    /^Error: No host with GPU-A and CUDA 13\.0 or newer has room now \(Fake offers 13\.0, 13\.1\), which vLLM's image needs, so no pod was created: try again later, or use another GPU type\.$/,
   );
   gpu.cuda["GPU-A"] = [{ version: "12.8", available: true }];
   await assert.rejects(
     open("8", "300", onVllm),
-    /Runpod offers no host with GPU-A and CUDA 13\.0 or newer/,
+    /Fake offers no host with GPU-A and CUDA 13\.0 or newer/,
   );
   assert.deepEqual(gpu.created, []);
   assert.deepEqual(await registry.live(), [], "the creation leases ended");
@@ -1377,17 +1403,40 @@ test("a pod carries its pool and its account's fingerprint, never the key; its d
   );
   const env = gpu.created[0]?.env ?? {};
   assert.equal(env.CODEMAN_POOL, "o");
-  assert.equal(env.CODEMAN_ACCOUNT, accountFingerprint("account-key"));
+  assert.equal(env.CODEMAN_ACCOUNT, accountFingerprint({ key: "account-key" }));
   assert.match(env.CODEMAN_ACCOUNT ?? "", /^[0-9a-f]{16}$/);
-  assert.notEqual(accountFingerprint("account-key"), accountFingerprint("another-key"));
+  assert.notEqual(
+    accountFingerprint({ key: "account-key" }),
+    accountFingerprint({ key: "another-key" }),
+  );
   const [pod] = await store.query("pools/o/pods");
   assert.deepEqual(
     [pod?.fields.account, pod?.fields.capacity, pod?.fields.organization],
-    [accountFingerprint("account-key"), 4, "o"],
+    [accountFingerprint({ key: "account-key" }), 4, "o"],
   );
   assert.equal(podCapacity({ ollama: { OLLAMA_NUM_PARALLEL: "3" } }), 3);
   assert.equal(podCapacity({ vllm: { "max-num-seqs": "2" } }), 2);
   assert.equal(podCapacity({ ollama: {} }), undefined, "no limit, as before batches");
+});
+
+test("an account that names its organization and project gets a fingerprint of its own for each", () => {
+  // Runpod's names neither: its fingerprint is the one its pods carried before Salad's.
+  assert.equal(
+    accountFingerprint({ key: "account-key" }),
+    createHmac("sha256", "account-key")
+      .update("codeman-account-fingerprint")
+      .digest("hex")
+      .slice(0, 16),
+  );
+  const salad = { key: "account-key", organization: "acme", project: "codeman" };
+  const fingerprints = [
+    accountFingerprint({ key: "account-key" }),
+    accountFingerprint(salad),
+    accountFingerprint({ ...salad, project: "other" }),
+    accountFingerprint({ ...salad, organization: "globex" }),
+  ];
+  assert.equal(new Set(fingerprints).size, 4);
+  assert.equal(accountFingerprint(salad), accountFingerprint({ ...salad }));
 });
 
 test("the sweep ends the pool's pods and this organization's older ones that no registry holds", async () => {

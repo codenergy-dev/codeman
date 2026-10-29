@@ -48,6 +48,12 @@ inputs:
     description: "(open-key) The agent job's timeout, in minutes, as select outputs it: the run's budget reservation and pod lease last 60 minutes more."
   gpu-key:
     description: "(open-key, close-key, release-pod) Runpod's account key, for the runpod-pod and runpod-serverless providers. With organization-monthly-budget, open-key also needs it when the settings name a Runpod provider or the organization's runs used Runpod this month, to read its account's billing."
+  salad-key:
+    description: "(open-key, close-key, release-pod) Salad's API key, for the salad-pod provider. It reaches every organization and project of its user; salad-organization and salad-project name the ones Codeman uses."
+  salad-organization:
+    description: "(open-key, close-key, release-pod) The Salad organization whose project holds Codeman's container groups, for the salad-pod provider."
+  salad-project:
+    description: "(open-key, close-key, release-pod) The Salad project, in salad-organization, that holds Codeman's container groups, for the salad-pod provider."
   pod-image:
     description: "(open-key) Codeman's Ollama pod image, by digest. Empty uses the image this version of Codeman pins. vLLM pods always use the pinned vLLM image."
   serverless-key:

@@ -8,6 +8,7 @@ import {
   endpointId,
   hostKinds,
   isHourlyAccount,
+  isPodProvider,
   listSetting,
   PROVIDER_NAMES,
   PROVIDERS,
@@ -129,21 +130,66 @@ test("Serverless needs an endpoint, serves vLLM models, and takes no GPU", () =>
 test("each provider names its account, whose key and billing the budgets use", () => {
   assert.deepEqual(
     PROVIDER_NAMES.map((name) => accountOf(name)),
-    ["openrouter", "runpod", "runpod"],
+    ["openrouter", "runpod", "runpod", "salad"],
   );
   // Ledger runs written before providers name the account itself.
   assert.equal(accountOf("runpod"), "runpod");
   for (const provider of Object.values(PROVIDERS)) assert.ok(ACCOUNTS[provider.account]);
-  assert.deepEqual(["openrouter", "runpod", "", "elsewhere"].map(isHourlyAccount), [
+  // Salad has no billing API: its runs count only in Codeman's ledger.
+  assert.deepEqual(["openrouter", "runpod", "salad", "", "elsewhere"].map(isHourlyAccount), [
     false,
     true,
     false,
     false,
+    false,
   ]);
+  assert.deepEqual(ACCOUNTS.salad?.variables, [
+    { field: "organization", input: "salad-organization", variable: "CODEMAN_SALAD_ORGANIZATION" },
+    { field: "project", input: "salad-project", variable: "CODEMAN_SALAD_PROJECT" },
+  ]);
+  assert.deepEqual(PROVIDER_NAMES.filter(isPodProvider), ["runpod-pod", "salad-pod"]);
   assert.deepEqual(
     PROVIDERS["runpod-serverless"].secrets.map(({ secret }) => secret),
     ["CODEMAN_RUNPOD_SERVERLESS_KEY"],
   );
+});
+
+test("Salad pods take Runpod pods' settings, with Salad's priorities", () => {
+  const pod = { provider: "salad-pod", model: "qwen3-coder:30b", gpu: "RTX 4090 (24 GB)" };
+  assert.equal(providerProblem(pod), undefined);
+  assert.equal(providerProblem({ ...pod, hosts: "community", priority: "batch" }), undefined);
+  assert.equal(
+    providerProblem({ ...pod, priority: "on-demand" }),
+    "With `salad-pod`, `priority` must be one of `high`, `medium`, `low`, `batch`, not `on-demand`.",
+  );
+  assert.equal(
+    providerProblem({
+      provider: "runpod-pod",
+      model: "qwen3-coder:30b",
+      gpu: "G",
+      priority: "high",
+    }),
+    "With `runpod-pod`, `priority` must be one of `on-demand`, not `high`.",
+  );
+  assert.equal(
+    providerProblem({ ...pod, endpoint: "abc" }),
+    "`salad-pod` does not accept `endpoint`; besides `model`, it takes `engine`, `gpu`, `pod-reuse`, `hosts`, `priority`, `ollama` and `vllm`.",
+  );
+  assert.equal(
+    providerProblem({ provider: "salad-pod", model: "qwen3-coder:30b" }),
+    '`salad-pod` needs `gpu`, such as `"RTX 4090 (24 GB)"`.',
+  );
+  assert.equal(
+    providerProblem({ ...pod, engine: "vllm", model: "unsloth/Qwen3.8-27B-NVFP4" }),
+    TOOL_CALL_PARSER_NEEDED,
+  );
+  assert.deepEqual(withProviderDefaults(pod), {
+    ...pod,
+    engine: "ollama",
+    "pod-reuse": "task",
+    hosts: "secure",
+    priority: "high",
+  });
 });
 
 test("a setting's values are every value some provider allows", () => {
@@ -216,6 +262,14 @@ test("the docs give each provider the settings, defaults and secrets of the regi
         ACCOUNTS[PROVIDERS[name].account]?.secret,
         ...PROVIDERS[name].secrets.map(({ secret }) => secret),
       ],
+      name,
+    );
+    const variables = [
+      ...(/^- \*\*Variables:\*\* (.*)$/m.exec(section)?.[1] ?? "").matchAll(/`([A-Z_]+)`/g),
+    ];
+    assert.deepEqual(
+      variables.map((match) => match[1]),
+      (ACCOUNTS[PROVIDERS[name].account]?.variables ?? []).map(({ variable }) => variable),
       name,
     );
   }

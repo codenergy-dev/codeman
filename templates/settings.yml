@@ -19,7 +19,8 @@
 # it, only profiles serve agent runs, and each profile sets its own.
 model: deepseek/deepseek-v4.1-flash
 
-# Where agent runs get their model: openrouter (the default), runpod-pod or runpod-serverless.
+# Where agent runs get their model: openrouter (the default), runpod-pod, runpod-serverless or
+# salad-pod.
 # Each provider accepts only its own settings, below; any other stops the run with an error.
 # See docs/settings/providers.md for the secrets each needs.
 provider: openrouter
@@ -62,6 +63,27 @@ provider: openrouter
 # endpoint: abc123xyz
 # The engine: vllm, the only one on Serverless.
 # engine: vllm
+
+# salad-pod: a GPU pod Codeman rents on Salad, a container group of one replica, which serves the
+# model with Ollama or vLLM. Salad's on-demand GPUs are machines third parties run, which get the
+# repository's code: hosts must allow community.
+# provider: salad-pod
+# The GPU class, by its name in Salad's list; quote it. Required.
+# gpu: "RTX 4090 (24 GB)"
+# Keep the pod for the next run on its settings (task), or one pod per run (run).
+# pod-reuse: task
+# The kinds of host the pod may run on, by preference: secure (the default; Salad's are by
+# contract) and community. Only the settings files set it.
+# hosts: [community]
+# The pod's priority: high (the default), medium, low or batch. Below high, other workloads may
+# take the pod's machine, and its tasks fail.
+# priority: high
+# The engine: ollama (the default), or vllm, with its block as for runpod-pod.
+# engine: ollama
+# ollama:
+#   num-parallel: 4
+# vllm:
+#   tool-call-parser: qwen3_xml
 
 # Profiles: a provider, a model and that provider's settings for some runs. The first profile
 # whose conditions all hold applies; the top-level settings apply when none does. A profile

@@ -48,10 +48,18 @@ export class FakeGpu implements GpuProvider {
   #next = 1;
   #gets = new Map<string, number>();
 
-  constructor(options: { prices?: Record<string, number>; now?: () => Date } = {}) {
+  constructor(
+    options: {
+      prices?: Record<string, number>;
+      now?: () => Date;
+      /** Images whose gateway cannot serve on this cloud, as Salad lists them. */
+      unservedImages?: ReadonlySet<string>;
+    } = {},
+  ) {
     this.prices = options.prices ?? { "GPU-A": 0.0002 };
     this.now = options.now ?? (() => new Date("2026-10-03T12:00:00Z"));
     this.pods = {
+      unservedImages: options.unservedImages,
       price: async (gpuType, host = "secure") => {
         const price = (host === "community" ? this.communityPrices : this.prices)[gpuType];
         if (price === undefined) throw new Error(`No ${gpuType} on ${host} hosts.`);

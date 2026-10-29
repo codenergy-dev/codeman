@@ -58,7 +58,7 @@ export interface OllamaSetting {
 }
 
 /**
- * The Ollama settings a pod takes, in the `ollama` block of `runpod-pod`, by their key in the
+ * The Ollama settings a pod takes, in the `ollama` block of a pod provider, by their key in the
  * settings file: the variables of `OLLAMA_VERSION`'s server (`envconfig`, docs/web/ollama/) that
  * tune how it serves the pod's model. Any other key stops the run (decision 2 of the Ollama
  * settings plan). docs/settings/ollama.md documents the same list, and a test checks it.

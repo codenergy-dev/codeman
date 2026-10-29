@@ -7,7 +7,7 @@ import { FakeAccounts, FakeInference } from "../testing/fake-inference.ts";
 import { FakePlatform, fakeServices } from "../testing/fake-platform.ts";
 import { FakeRuntime } from "../testing/fake-runtime.ts";
 import { seedRuns } from "../testing/ledger-runs.ts";
-import { closeKey, openKey } from "./keys.ts";
+import { closeKey, openKey, release } from "./keys.ts";
 
 const secret = "s".repeat(32);
 const HOUR = 3_600_000;
@@ -526,4 +526,27 @@ test("a task without an ended OpenRouter run does not read OpenRouter", async ()
   accounts.costs = {};
   await close(store, { inference: new FakeInference({ usage: { cost: 0.05 } }), accounts });
   assert.deepEqual(accounts.costsRead, []);
+});
+
+test("release-pod opens the account of the run's pod provider, and nothing for other providers", async () => {
+  const run = (inputs: Record<string, string>) => {
+    const runtime = new FakeRuntime({ inputs, runId: "300" });
+    return { runtime, done: release(fakeServices(new FakePlatform(), runtime)) };
+  };
+  const openrouter = run({
+    inference: JSON.stringify({ ...JSON.parse(POD_CHOICE), provider: "openrouter" }),
+  });
+  await openrouter.done;
+  assert.deepEqual(openrouter.runtime.logged("info"), ["Nothing to release: the run had no pod."]);
+  // A Salad pod needs Salad's key, organization and project, not Runpod's key.
+  const salad = JSON.stringify({
+    ...JSON.parse(POD_CHOICE),
+    provider: "salad-pod",
+    gpu: "RTX 4090 (24 GB)",
+  });
+  await assert.rejects(run({ inference: salad, "gpu-key": "rk" }).done, /salad-key/);
+  await assert.rejects(
+    run({ inference: salad, "salad-key": "sk", "salad-project": "codeman" }).done,
+    /needs `CODEMAN_SALAD_ORGANIZATION`/,
+  );
 });

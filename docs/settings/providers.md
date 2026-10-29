@@ -9,6 +9,7 @@
 | `openrouter` (the default) | OpenRouter | None | OpenRouter's | `openrouter` |
 | `runpod-pod` | A [pod](../glossary.md#pod) Codeman creates, running Ollama or vLLM | `gpu` (required), `pod-reuse`, `engine`, `ollama`, `vllm` | Ollama's, or a Hugging Face ID with vLLM | `runpod` |
 | `runpod-serverless` | A Serverless endpoint a maintainer created, running Runpod's vLLM worker | `endpoint` (required), `engine` | A Hugging Face ID | `runpod` |
+| `salad-pod` | A pod Codeman creates on Salad, a one-replica container group, running Ollama or vLLM | `gpu` (required), `pod-reuse`, `hosts`, `priority`, `engine`, `ollama`, `vllm` | Ollama's, or a Hugging Face ID with vLLM | `salad` |
 
 ## How settings are checked
 
@@ -19,7 +20,7 @@
 
 ## Accounts
 
-Each provider bills an account: `openrouter`, or `runpod` for both Runpod providers. The account's key opens the provider's runs, and the [budgets](../budget/budget.md) read its billing.
+Each provider bills an account: `openrouter`, `runpod` for both Runpod providers, or `salad`. The account's key opens the provider's runs, and the [budgets](../budget/budget.md) read its billing.
 
 ## `openrouter`
 
@@ -68,6 +69,25 @@ The workers of a Serverless endpoint a maintainer created, running Runpod's vLLM
 - **Model ID:** what the worker serves, its Hugging Face ID, such as `Qwen/Qwen3-Coder-30B-A3B-Instruct`.
 - **Secrets:** `CODEMAN_RUNPOD_API_KEY`, in the key jobs; `CODEMAN_RUNPOD_SERVERLESS_KEY`, the endpoint's key, in the agent job.
 - **Cost:** an estimate of the time Runpod bills the endpoint's worker for the run, split with the runs that used it at the same times ([Serverless](../inference/serverless.md)).
+
+## `salad-pod`
+
+A pod Codeman creates on Salad: a container group of one replica, shared like a Runpod pod. Salad's on-demand GPUs are all on Community hosts, so a run needs `hosts` to allow `community`.
+
+| Setting | Default | Allowed values | Meaning |
+| --- | --- | --- | --- |
+| `gpu` | none; required | A Salad GPU class name, such as `"RTX 4090 (24 GB)"` | The pod's GPU class |
+| `pod-reuse` | `task` | `task`, `run` | As on `runpod-pod` |
+| `hosts` | `secure` | A list of `secure` and `community`, each once | The kinds of host the pod may run on: a GPU class of a kind the list lacks is refused. Set only in the settings files, not by `/codeman set` |
+| `priority` | `high` | `high`, `medium`, `low`, `batch` | The container group's priority. Below `high`, other workloads may take the pod's node, and its tasks fail |
+| `engine` | `ollama` | `ollama`, `vllm` | What serves the model, as on `runpod-pod` |
+| `ollama` | none | The keys of [Ollama settings](ollama.md) | As on `runpod-pod` |
+| `vllm` | none | The keys of [vLLM settings](vllm.md); `tool-call-parser` is required | As on `runpod-pod` |
+
+- **Secrets:** `CODEMAN_SALAD_API_KEY`, in the key jobs. The key reaches every organization and project of its user.
+- **Variables:** `CODEMAN_SALAD_ORGANIZATION` and `CODEMAN_SALAD_PROJECT`, in the key jobs: where Codeman creates its container groups.
+- **Cost:** an estimate: the pod's time from its creation at Salad's listed price, split among the runs on it. Salad has no billing API.
+- **Pod image:** a run on an image whose gateway cannot serve on Salad stops before any group is created.
 
 ## How it works
 

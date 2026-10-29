@@ -18,10 +18,13 @@ import {
   accountOf,
   hostKinds,
   isHourlyAccount,
+  isPodProvider,
   isProviderName,
+  type PodProviderName,
   PROVIDERS,
 } from "./providers.ts";
 import { Runpod } from "./runpod.ts";
+import { Salad } from "./salad.ts";
 import { PodInference, ServerlessInference } from "./selfhosted.ts";
 import type { PodSpend } from "./spend.ts";
 import {
@@ -38,36 +41,44 @@ import {
  */
 export type InferenceChoice = (
   | { provider: "openrouter" }
-  | (SelfHostedChoice & {
-      provider: "runpod-pod";
-      gpu: string;
-      podReuse: "task" | "run";
-      /** The `ollama` settings, by key; absent without any. */
-      ollama?: OllamaSettings | undefined;
-      /** The `vllm` settings, by key; absent without any. */
-      vllm?: VllmSettings | undefined;
-      /**
-       * The kinds of host the pod may run on, by preference (`hosts`); absent for the default,
-       * `[secure]`, and from older choices.
-       */
-      hosts?: HostKind[] | undefined;
-      /** The pod's priority (`priority`); absent for the provider's default, the highest. */
-      priority?: string | undefined;
-      /**
-       * The most tasks the run's profile serves at once, which `num-parallel` defaults to on
-       * images that apply Ollama settings (choices 5 and 6 of the plan for fitting Ollama to the
-       * GPU); absent from older choices.
-       */
-      parallel?: number | undefined;
-      /**
-       * The batch the task runs in, whose pod it joins (decision 13 of the plan for GPU batches
-       * across repositories); absent for a task of no batch, and from older choices.
-       */
-      batch?: string | undefined;
-    })
+  | PodChoice
   | (SelfHostedChoice & { provider: "runpod-serverless"; endpoint: string })
 ) &
   Budgeted;
+
+/** A choice of a pod Codeman creates, on Runpod or on Salad. */
+export type PodChoice = SelfHostedChoice & {
+  provider: PodProviderName;
+  gpu: string;
+  podReuse: "task" | "run";
+  /** The `ollama` settings, by key; absent without any. */
+  ollama?: OllamaSettings | undefined;
+  /** The `vllm` settings, by key; absent without any. */
+  vllm?: VllmSettings | undefined;
+  /**
+   * The kinds of host the pod may run on, by preference (`hosts`); absent for the default,
+   * `[secure]`, and from older choices.
+   */
+  hosts?: HostKind[] | undefined;
+  /** The pod's priority (`priority`); absent for the provider's default, the highest. */
+  priority?: string | undefined;
+  /**
+   * The most tasks the run's profile serves at once, which `num-parallel` defaults to on
+   * images that apply Ollama settings (choices 5 and 6 of the plan for fitting Ollama to the
+   * GPU); absent from older choices.
+   */
+  parallel?: number | undefined;
+  /**
+   * The batch the task runs in, whose pod it joins (decision 13 of the plan for GPU batches
+   * across repositories); absent for a task of no batch, and from older choices.
+   */
+  batch?: string | undefined;
+};
+
+/** Whether a choice's runs are served by a pod Codeman creates. */
+export function onPod(choice: InferenceChoice): choice is PodChoice & Budgeted {
+  return isPodProvider(choice.provider);
+}
 
 /** A choice whose model Codeman serves on rented GPUs. */
 export type SelfHostedChoice = {
@@ -82,8 +93,8 @@ interface Budgeted {
   /** The profile the run uses; undefined for the top-level settings. */
   profile?: string | undefined;
   /**
-   * The account of every provider the settings name: `openrouter` or `runpod`, whose billing by
-   * the hour reconciles the organization's month.
+   * The account of every provider the settings name: `openrouter`, `runpod` or `salad`; those
+   * billed by the hour reconcile the organization's month.
    */
   accounts: string[];
   /**
@@ -99,7 +110,7 @@ interface Budgeted {
   pool?: Pool | undefined;
   /**
    * The run's batch key, and how many instances of it run at once, each serving at most `tasks`
-   * tasks: pods on `runpod-pod`, batches of runs on other providers (the plan for limiting
+   * tasks: pods on the pod providers, batches of runs on other providers (the plan for limiting
    * concurrent instances of a profile). Absent from older choices: no cap.
    */
   concurrency?: ChoiceConcurrency | undefined;
@@ -153,21 +164,22 @@ export function inferenceChoice(
     pods: record?.inference?.pods.filter((pod) => !pod.shared).map((pod) => pod.id) ?? [],
     ...budgeted,
   };
-  return settings.provider === "runpod-serverless"
-    ? { ...common, provider: "runpod-serverless", endpoint: settings.endpoint ?? "" }
-    : {
-        ...common,
-        provider: "runpod-pod",
-        gpu: settings.gpu ?? "",
-        podReuse: settings["pod-reuse"] === "run" ? "run" : "task",
-        ...(settings.ollama && Object.keys(settings.ollama).length > 0
-          ? { ollama: settings.ollama }
-          : {}),
-        ...(settings.vllm && Object.keys(settings.vllm).length > 0 ? { vllm: settings.vllm } : {}),
-        ...podPlacement(settings),
-        ...(options.parallel === undefined ? {} : { parallel: options.parallel }),
-        ...(options.batch === undefined ? {} : { batch: options.batch }),
-      };
+  if (settings.provider === "runpod-serverless") {
+    return { ...common, provider: "runpod-serverless", endpoint: settings.endpoint ?? "" };
+  }
+  return {
+    ...common,
+    provider: settings.provider,
+    gpu: settings.gpu ?? "",
+    podReuse: settings["pod-reuse"] === "run" ? "run" : "task",
+    ...(settings.ollama && Object.keys(settings.ollama).length > 0
+      ? { ollama: settings.ollama }
+      : {}),
+    ...(settings.vllm && Object.keys(settings.vllm).length > 0 ? { vllm: settings.vllm } : {}),
+    ...podPlacement(settings),
+    ...(options.parallel === undefined ? {} : { parallel: options.parallel }),
+    ...(options.batch === undefined ? {} : { batch: options.batch }),
+  };
 }
 
 /**
@@ -222,11 +234,9 @@ export function parseInferenceChoice(text: string): InferenceChoice {
     typeof choice.model === "string" &&
     ENGINES[choice.engine] !== undefined &&
     Array.isArray(choice.pods) &&
-    (choice.provider === "runpod-pod"
-      ? typeof choice.gpu === "string"
-      : typeof choice.endpoint === "string");
+    (onPod(choice) ? typeof choice.gpu === "string" : typeof choice.endpoint === "string");
   if (!valid) throw new Error("The inference input is not a valid choice.");
-  if (choice.provider === "runpod-pod") {
+  if (onPod(choice)) {
     // The pod's environment comes from them: only the keys and values the lists take.
     for (const [block, check] of [
       [choice.ollama, ollamaEnvironment],
@@ -244,13 +254,13 @@ export function parseInferenceChoice(text: string): InferenceChoice {
     }
   }
   if (
-    choice.provider === "runpod-pod" &&
+    onPod(choice) &&
     choice.batch !== undefined &&
     (typeof choice.batch !== "string" || !isBatchId(choice.batch))
   ) {
     throw new Error("The inference input is not a valid choice.");
   }
-  if (choice.provider === "runpod-pod") {
+  if (onPod(choice)) {
     const { hosts, priority } = choice;
     const listed =
       hosts === undefined ||
@@ -263,7 +273,7 @@ export function parseInferenceChoice(text: string): InferenceChoice {
       throw new Error("The inference input is not a valid choice.");
     }
   }
-  if (choice.provider === "runpod-pod" && choice.parallel !== undefined) {
+  if (onPod(choice) && choice.parallel !== undefined) {
     const { parallel } = choice;
     if (!Number.isInteger(parallel) || parallel < 1 || parallel > MAX_TASKS) {
       throw new Error("The inference input is not a valid choice.");
@@ -312,8 +322,32 @@ function zero(): Budgeted["recorded"] {
 /** The GPU cloud of an account that rents GPUs, with what opens the account. */
 export function gpuProvider(account: string, settings: GpuAccount): GpuProvider {
   const { key } = settings;
+  // The e2e build reaches the fakes (src/e2e.ts); the published build, the providers.
   if (account === "runpod") return E2E ? E2E.gpu(new Runpod(key, E2E.fetch)) : new Runpod(key);
+  if (account === "salad") {
+    return E2E ? E2E.gpu(new Salad(settings, E2E.fetch)) : new Salad(settings);
+  }
   throw new Error(`Unknown GPU account "${account}".`);
+}
+
+/**
+ * What opens a GPU account, from the key job's inputs: its key, required, and the values that
+ * name its resources, such as Salad's organization and project, each required too.
+ */
+export function gpuAccount(runtime: Runtime, account: string): GpuAccount {
+  const found = ACCOUNTS[account];
+  if (!found) throw new Error(`Unknown GPU account "${account}".`);
+  const settings: GpuAccount = { key: runtime.input(found.input, { required: true }) };
+  for (const { field, input, variable } of found.variables ?? []) {
+    const value = runtime.input(input).trim();
+    if (value === "") {
+      throw new Error(
+        `The run's ${account} account needs \`${variable}\`, which the workflow passes as \`${input}\`: add it to the repository's or the organization's variables.`,
+      );
+    }
+    settings[field] = value;
+  }
+  return settings;
 }
 
 /**
@@ -326,7 +360,7 @@ export function inferenceProvider(runtime: Runtime, store: () => Store): Inferen
     return openRouterProvider(runtime, runtime.input("management-key", { required: true }));
   }
   return selfHosted(choice, runtime.repository, {
-    account: { key: runtime.input("gpu-key", { required: true }) },
+    account: gpuAccount(runtime, accountOf(choice.provider)),
     image: podImage(choice.engine, runtime.input("pod-image")),
     usage: runtime.input("gateway-usage"),
     store,
@@ -349,8 +383,9 @@ export function providerAccounts(runtime: Runtime): ProviderAccounts {
   };
   return {
     missing: (name) => {
-      const { key, secret } = credential(name);
-      return key === "" ? secret : undefined;
+      const { key, secret, variables = [] } = credential(name);
+      if (key === "") return secret;
+      return variables.find(({ input }) => runtime.input(input).trim() === "")?.variable;
     },
     taskCosts: async (task) => {
       const { key } = credential("openrouter");
@@ -385,7 +420,7 @@ export function selfHosted(
   const engine = ENGINES[choice.engine];
   if (!engine) throw new Error(`Unknown engine "${choice.engine}".`);
   const common = { model: choice.model, engine, pods: choice.pods };
-  if (choice.provider === "runpod-pod") {
+  if (onPod(choice)) {
     return new PodInference(
       {
         ...common,
@@ -405,7 +440,7 @@ export function selfHosted(
       {
         repository,
         gpu,
-        accountKey: inputs.account.key,
+        account: inputs.account,
         store: inputs.store(),
         pool: choicePool(choice, repository.owner),
         ...(inputs.fetch ? { fetch: inputs.fetch } : {}),

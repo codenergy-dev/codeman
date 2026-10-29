@@ -562,6 +562,9 @@ test("checks each provider setting on its own, and a task may set its GPU", () =
   assert.equal(parseSetting("pod-reuse", "run").ok, true);
   assert.equal(parseSetting("gpu", "NVIDIA GeForce RTX 4090").ok, true);
   assert.equal(parseSetting("gpu", "x; rm").ok, false);
+  // Salad names its GPU classes with their memory.
+  assert.equal(parseSetting("gpu", "RTX 4090 (24 GB)").ok, true);
+  assert.equal(parseSetting("gpu", "(24 GB)").ok, false);
   assert.equal(parseSetting("endpoint", "abc-123").ok, false);
   assert.ok(TASK_SETTINGS.has("gpu") && TASK_SETTINGS.has("model"));
   assert.ok(!TASK_SETTINGS.has("provider"));
@@ -776,7 +779,7 @@ test("today's flat files read the same, and the template is one", () => {
     assert.ok(uncommented.ok, uncommented.ok ? "" : uncommented.error);
     return uncommented.ok ? uncommented.value : {};
   });
-  for (const name of ["runpod-pod", "runpod-serverless"] as const) {
+  for (const name of ["runpod-pod", "runpod-serverless", "salad-pod"] as const) {
     const block = named.find((settings) => settings.provider === name && !settings.profiles);
     assert.deepEqual(
       Object.keys(block ?? {})
@@ -1768,7 +1771,8 @@ describe("hosts and priority", () => {
       ["hosts: [secure, datacenter]", "line 4: `hosts` must list some of `secure`, `community`"],
       ["hosts: [secure, secure]", "line 4: `hosts` lists a value twice"],
       ["hosts: []", "line 4: `hosts` must list some of"],
-      ["priority: spot", "line 4: `priority` must be one of `on-demand`."],
+      // Before its provider is known, any provider's value: Runpod's and Salad's.
+      ["priority: spot", "line 4: `priority` must be one of `on-demand`, `high`, `medium`"],
     ] as const) {
       const parsed = parseSettings(pod + text);
       assert.ok(!parsed.ok && parsed.error.includes(error), parsed.ok ? text : parsed.error);

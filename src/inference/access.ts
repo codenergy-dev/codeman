@@ -4,7 +4,7 @@ import { Gateway, sha256 } from "../gateway/gateway.ts";
 import { RunpodQueue } from "../gateway/queue.ts";
 import type { GatewayUsage, WorkerSample, Workers } from "../gateway/usage.ts";
 import type { InferenceEngine } from "./engine.ts";
-import type { ProviderName } from "./providers.ts";
+import { isPodProvider, type ProviderName } from "./providers.ts";
 import { parseHandle, START_MINUTES } from "./selfhosted.ts";
 
 /** How often the gateway asks for the endpoint's workers, to tell billed time from a wait. */
@@ -56,7 +56,7 @@ export interface AccessInputs {
 export async function agentAccess(inputs: AccessInputs): Promise<AgentAccess> {
   const done = async () => undefined;
   if (inputs.provider === "openrouter") return { apiKey: inputs.credential, finish: done };
-  if (inputs.provider === "runpod-pod") {
+  if (isPodProvider(inputs.provider)) {
     if (!inputs.baseUrl) throw new Error("The pod's gateway URL is missing.");
     const handle = inputs.handle ? parseHandle(inputs.handle) : undefined;
     return {

@@ -2,6 +2,7 @@ import { E2E } from "../e2e.ts";
 import { ENGINES } from "./engines.ts";
 import { HOST_KINDS, type HostKind, isHostKind } from "./gpu.ts";
 import { type OllamaSettings, ollamaEnvironment } from "./ollama.ts";
+import { SALAD_PRIORITIES } from "./salad.ts";
 import {
   isHuggingFaceId,
   TOOL_CALL_PARSER_NEEDED,
@@ -15,7 +16,12 @@ import {
  * entry; validation, errors, the secrets `open-key` requires and the docs come from here. See
  * docs/settings/providers.md.
  */
-export const PROVIDER_NAMES = ["openrouter", "runpod-pod", "runpod-serverless"] as const;
+export const PROVIDER_NAMES = [
+  "openrouter",
+  "runpod-pod",
+  "runpod-serverless",
+  "salad-pod",
+] as const;
 export type ProviderName = (typeof PROVIDER_NAMES)[number];
 
 /** The settings that only some providers accept; every provider takes `model`. */
@@ -82,9 +88,25 @@ export interface Account {
   secret: string;
   /** Whether the account bills GPUs by the hour, which reconciles the organization's month. */
   hourly: boolean;
+  /**
+   * What names the account's resources beside its key, which reaches more of them: each a field
+   * of the GPU account, the action's input that carries it, and the variable the templates pass
+   * to it. Salad's key reaches every organization and project of its user.
+   */
+  variables?: readonly AccountVariable[];
 }
 
-/** The accounts, by name: OpenRouter's, and Runpod's for pods and Serverless endpoints. */
+/** A public value of an account, such as Salad's organization: a variable, not a secret. */
+export interface AccountVariable {
+  field: "organization" | "project";
+  input: string;
+  variable: string;
+}
+
+/**
+ * The accounts, by name: OpenRouter's, Runpod's for pods and Serverless endpoints, and Salad's
+ * for pods.
+ */
 export const ACCOUNTS: Readonly<Record<string, Account>> = {
   openrouter: {
     input: "management-key",
@@ -92,11 +114,31 @@ export const ACCOUNTS: Readonly<Record<string, Account>> = {
     hourly: false,
   },
   runpod: { input: "gpu-key", secret: "CODEMAN_RUNPOD_API_KEY", hourly: true },
+  // Salad has no billing API: its runs count only in Codeman's ledger (decision 5 of the plan for
+  // Salad pods).
+  salad: {
+    input: "salad-key",
+    secret: "CODEMAN_SALAD_API_KEY",
+    hourly: false,
+    variables: [
+      {
+        field: "organization",
+        input: "salad-organization",
+        variable: "CODEMAN_SALAD_ORGANIZATION",
+      },
+      { field: "project", input: "salad-project", variable: "CODEMAN_SALAD_PROJECT" },
+    ],
+  },
 };
 
 export interface Provider {
   /** The account whose key opens its runs and whose billing counts them. */
   account: string;
+  /**
+   * What serves its runs: an API that bills tokens, a pod Codeman creates, or a Serverless
+   * endpoint a maintainer created.
+   */
+  serves: "api" | "pod" | "serverless";
   /** The settings it accepts beside `model`; any other stops the run. */
   settings: Readonly<Partial<Record<ProviderSettingName, ProviderSetting>>>;
   /** The blocks of settings it accepts; any other stops the run. */
@@ -108,9 +150,16 @@ export interface Provider {
 }
 
 export const PROVIDERS: Readonly<Record<ProviderName, Provider>> = {
-  openrouter: { account: "openrouter", settings: {}, model: "openrouter", secrets: [] },
+  openrouter: {
+    account: "openrouter",
+    serves: "api",
+    settings: {},
+    model: "openrouter",
+    secrets: [],
+  },
   "runpod-pod": {
     account: "runpod",
+    serves: "pod",
     settings: {
       engine: { values: ["ollama", "vllm"], default: "ollama" },
       gpu: { required: true, example: '"NVIDIA RTX A6000"' },
@@ -127,6 +176,7 @@ export const PROVIDERS: Readonly<Record<ProviderName, Provider>> = {
   },
   "runpod-serverless": {
     account: "runpod",
+    serves: "serverless",
     settings: {
       engine: { values: ["vllm"], default: "vllm" },
       endpoint: { required: true, example: "abc123xyz" },
@@ -135,7 +185,31 @@ export const PROVIDERS: Readonly<Record<ProviderName, Provider>> = {
     // The endpoint's key, restricted to it: only the agent job's gateway holds it.
     secrets: [{ secret: "CODEMAN_RUNPOD_SERVERLESS_KEY", input: "serverless-key", job: "agent" }],
   },
+  // A one-replica container group on Salad, whose on-demand hosts are all Community ones: a run
+  // needs `hosts` to allow them (decisions 1 to 3 of the plan for Salad pods).
+  "salad-pod": {
+    account: "salad",
+    serves: "pod",
+    settings: {
+      engine: { values: ["ollama", "vllm"], default: "ollama" },
+      gpu: { required: true, example: '"RTX 4090 (24 GB)"' },
+      "pod-reuse": { values: ["task", "run"], default: "task" },
+      hosts: { values: HOST_KINDS, default: "secure", list: true },
+      priority: { values: SALAD_PRIORITIES, default: "high" },
+    },
+    blocks: { ollama: { engine: "ollama" }, vllm: { engine: "vllm" } },
+    model: "engine",
+    secrets: [],
+  },
 };
+
+/** The providers whose runs are served by a pod Codeman creates. */
+export type PodProviderName = "runpod-pod" | "salad-pod";
+
+/** Whether a provider's runs are served by a pod Codeman creates. */
+export function isPodProvider(name: string): name is PodProviderName {
+  return isProviderName(name) && PROVIDERS[name].serves === "pod";
+}
 
 export function isProviderName(name: string): name is ProviderName {
   return (PROVIDER_NAMES as readonly string[]).includes(name);

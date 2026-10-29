@@ -10,7 +10,13 @@ import {
   usd,
 } from "../budget.ts";
 import { encrypt } from "../crypto.ts";
-import { choicePool, gpuProvider, parseInferenceChoice } from "../inference/index.ts";
+import {
+  choicePool,
+  gpuAccount,
+  gpuProvider,
+  onPod,
+  parseInferenceChoice,
+} from "../inference/index.ts";
 import {
   ConcurrencyReached,
   type OpenedRun,
@@ -120,9 +126,7 @@ async function open(services: Services, ledger: Ledger, run: string): Promise<Op
   // registry's pods (decision 4 of the plan for limiting concurrent instances of a profile).
   const cap = choice.concurrency;
   const runsCap =
-    cap && choice.provider !== "runpod-pod"
-      ? { key: cap.key, runs: cap.instances * cap.tasks }
-      : undefined;
+    cap && !onPod(choice) ? { key: cap.key, runs: cap.instances * cap.tasks } : undefined;
   const reservation = await ledger.reserve(
     run,
     {
@@ -319,19 +323,19 @@ async function openRouterCosts(
 export async function release(services: Services): Promise<void> {
   const { runtime } = services;
   const choice = parseInferenceChoice(runtime.input("inference"));
-  if (choice.provider !== "runpod-pod") {
+  if (!onPod(choice)) {
     runtime.info("Nothing to release: the run had no pod.");
     return;
   }
-  const accountKey = runtime.input("gpu-key", { required: true });
-  const gpu = gpuProvider(accountOf(choice.provider), { key: accountKey });
+  const account = gpuAccount(runtime, accountOf(choice.provider));
+  const gpu = gpuProvider(accountOf(choice.provider), account);
   if (!gpu.pods) throw new Error(`${gpu.name} has no pods.`);
   const handle = runtime.input("handle", { required: true });
   const pool = choicePool(choice, runtime.repository.owner);
   const registry = new PodRegistry(services.store(), pool.id);
   const pods = await releasePod(gpu.pods, registry, handle, runtime, {
     provider: gpu.name,
-    gateway: { accountKey },
+    gateway: { accountKey: account.key },
   });
   const ledger = services.ledger("release-pod", pool);
   ledger.release(ledgerRun(runtime), pods);

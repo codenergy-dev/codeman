@@ -109,11 +109,16 @@ test("each job keeps the secrets it had before parallel tasks, and the agent job
       "CODEMAN_KEY_ENCRYPTION_SECRET",
       "CODEMAN_OPENROUTER_MANAGEMENT_KEY",
       "CODEMAN_RUNPOD_API_KEY",
+      "CODEMAN_SALAD_API_KEY",
     ],
     agent: ["CODEMAN_KEY_ENCRYPTION_SECRET", "CODEMAN_RUNPOD_SERVERLESS_KEY"],
-    "close-key": ["CODEMAN_OPENROUTER_MANAGEMENT_KEY", "CODEMAN_RUNPOD_API_KEY"],
+    "close-key": [
+      "CODEMAN_OPENROUTER_MANAGEMENT_KEY",
+      "CODEMAN_RUNPOD_API_KEY",
+      "CODEMAN_SALAD_API_KEY",
+    ],
     apply: ["CODEMAN_GITHUB_APP_PRIVATE_KEY"],
-    "release-pod": ["CODEMAN_RUNPOD_API_KEY"],
+    "release-pod": ["CODEMAN_RUNPOD_API_KEY", "CODEMAN_SALAD_API_KEY"],
   };
   assert.deepEqual([...entries(task, ["jobs"]).keys()], Object.keys(expected));
   for (const [job, secrets] of Object.entries(expected)) {
@@ -143,8 +148,14 @@ test("each provider's secrets reach the jobs that use them, under the inputs the
   for (const [name, provider] of Object.entries(PROVIDERS)) {
     const account = ACCOUNTS[provider.account];
     assert.ok(account, name);
-    for (const job of ["open-key", "close-key"]) {
+    // Pods are also released by release-pod, which opens their account.
+    const jobs = ["open-key", "close-key", ...(provider.serves === "pod" ? ["release-pod"] : [])];
+    for (const job of jobs) {
       assert.equal(stepInput(task, job, account.input), `\${{ secrets.${account.secret} }}`, job);
+      // The values that name the account's resources are variables, not secrets.
+      for (const { input, variable } of account.variables ?? []) {
+        assert.equal(stepInput(task, job, input), `\${{ vars.${variable} }}`, `${job}: ${input}`);
+      }
     }
     for (const { secret, input, job } of provider.secrets) {
       assert.equal(stepInput(task, job, input), `\${{ secrets.${secret} }}`, `${name}: ${job}`);

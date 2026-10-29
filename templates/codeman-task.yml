@@ -59,6 +59,8 @@ on:
         required: false
       CODEMAN_RUNPOD_SERVERLESS_KEY:
         required: false
+      CODEMAN_SALAD_API_KEY:
+        required: false
 
 permissions: {}
 
@@ -119,7 +121,7 @@ jobs:
         id: codeman
         with:
           step: open-key
-          template-version: 2
+          template-version: 3
           task: ${{ inputs.task }}
           task-budget: ${{ inputs.task-budget }}
           monthly-budget: ${{ inputs.monthly-budget }}
@@ -132,6 +134,9 @@ jobs:
           service-account: ${{ vars.CODEMAN_SERVICE_ACCOUNT }}
           management-key: ${{ secrets.CODEMAN_OPENROUTER_MANAGEMENT_KEY }}
           gpu-key: ${{ secrets.CODEMAN_RUNPOD_API_KEY }}
+          salad-key: ${{ secrets.CODEMAN_SALAD_API_KEY }}
+          salad-organization: ${{ vars.CODEMAN_SALAD_ORGANIZATION }}
+          salad-project: ${{ vars.CODEMAN_SALAD_PROJECT }}
           encryption-secret: ${{ secrets.CODEMAN_KEY_ENCRYPTION_SECRET }}
 
   # Runs the agent with read-only access. Its result is an artifact for the apply job, even when
@@ -195,7 +200,7 @@ jobs:
         id: codeman
         with:
           step: agent
-          template-version: 2
+          template-version: 3
           task: ${{ inputs.task }}
           github-token: ${{ github.token }}
           encrypted-key: ${{ needs.open-key.outputs.encrypted-key }}
@@ -267,7 +272,7 @@ jobs:
         id: codeman
         with:
           step: close-key
-          template-version: 2
+          template-version: 3
           handle: ${{ needs.open-key.outputs.handle }}
           key-hash: ${{ needs.open-key.outputs.key-hash }}
           inference: ${{ inputs.inference }}
@@ -279,6 +284,9 @@ jobs:
           service-account: ${{ vars.CODEMAN_SERVICE_ACCOUNT }}
           management-key: ${{ secrets.CODEMAN_OPENROUTER_MANAGEMENT_KEY }}
           gpu-key: ${{ secrets.CODEMAN_RUNPOD_API_KEY }}
+          salad-key: ${{ secrets.CODEMAN_SALAD_API_KEY }}
+          salad-organization: ${{ vars.CODEMAN_SALAD_ORGANIZATION }}
+          salad-project: ${{ vars.CODEMAN_SALAD_PROJECT }}
 
   # Validates the result and writes it to GitHub: commits, pull request, labels, status comment.
   # No LLM.
@@ -347,7 +355,7 @@ jobs:
         id: codeman
         with:
           step: apply
-          template-version: 2
+          template-version: 3
           task: ${{ inputs.task }}
           github-token: ${{ steps.app-token.outputs.token }}
           workflow-token: ${{ steps.workflow-token.outputs.token }}
@@ -415,7 +423,7 @@ jobs:
       - uses: ./.codeman/action
         with:
           step: release-pod
-          template-version: 2
+          template-version: 3
           handle: ${{ needs.open-key.outputs.handle }}
           inference: ${{ inputs.inference }}
           ledger-run: ${{ inputs.ledger-run }}
@@ -423,4 +431,7 @@ jobs:
           workload-identity-provider: ${{ vars.CODEMAN_WORKLOAD_IDENTITY_PROVIDER }}
           service-account: ${{ vars.CODEMAN_SERVICE_ACCOUNT }}
           gpu-key: ${{ secrets.CODEMAN_RUNPOD_API_KEY }}
+          salad-key: ${{ secrets.CODEMAN_SALAD_API_KEY }}
+          salad-organization: ${{ vars.CODEMAN_SALAD_ORGANIZATION }}
+          salad-project: ${{ vars.CODEMAN_SALAD_PROJECT }}
 

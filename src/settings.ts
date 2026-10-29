@@ -6,6 +6,7 @@ import {
   BLOCK_ENGINES,
   endpointId,
   isOpenRouterModel,
+  isPodProvider,
   listSetting,
   PROVIDER_BLOCKS,
   PROVIDER_NAMES,
@@ -75,15 +76,15 @@ export interface Settings {
    */
   "wrap-up-minutes": number;
   /**
-   * How many instances of the run's profile, or of the top level, run at once: pods on
-   * `runpod-pod`, batches of runs on other providers. See docs/settings/profiles.md#concurrency.
+   * How many instances of the run's profile, or of the top level, run at once: pods on the pod
+   * providers, batches of runs on other providers. See docs/settings/profiles.md#concurrency.
    */
   concurrency: number;
   /** The language Codeman talks to maintainers in: a BCP 47 tag, or `auto` for the issue's. */
   language: string;
   /**
-   * Where agent runs get their model: `openrouter`, `runpod-pod` or `runpod-serverless`. The
-   * settings that follow it are accepted only by some providers (`src/inference/providers.ts`).
+   * Where agent runs get their model: `openrouter`, `runpod-pod`, `runpod-serverless` or
+   * `salad-pod`. The settings that follow it are accepted only by some providers (`src/inference/providers.ts`).
    */
   provider: ProviderName;
   /** What serves the model: `ollama` or `vllm` on pods, `vllm` on Serverless endpoints. */
@@ -241,8 +242,11 @@ export function isModelName(text: string): boolean {
   return isOpenRouterModel(text) || Object.values(ENGINES).some((engine) => engine.isModel(text));
 }
 
-/** GPU type IDs, such as `NVIDIA GeForce RTX 4090`. */
-const GPU_TYPE = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,78}[A-Za-z0-9]$/;
+/**
+ * GPU type IDs, such as Runpod's `NVIDIA GeForce RTX 4090`, and Salad's GPU class names, such as
+ * `RTX 4090 (24 GB)`.
+ */
+const GPU_TYPE = /^[A-Za-z0-9][A-Za-z0-9 ._()-]{0,78}[A-Za-z0-9)]$/;
 
 /** BCP 47 language tags, such as `pt-BR`, without the rarer extensions. */
 const LANGUAGE_TAG = /^[a-z]{2,3}(-[a-z0-9]{2,8}){0,3}$/i;
@@ -935,7 +939,7 @@ export interface ServedCount {
 }
 
 /**
- * How many instances of a profile, or of the top level, run at once: pods on `runpod-pod`,
+ * How many instances of a profile, or of the top level, run at once: pods on pod providers,
  * batches of runs on other providers (decision 2 of the plan for limiting concurrent instances of
  * a profile).
  */
@@ -967,7 +971,7 @@ export function servedCounts(
       tasks,
       profile,
       key: batchKey(settings, profile, most),
-      pod: settings.provider === "runpod-pod",
+      pod: isPodProvider(settings.provider),
       concurrency: { instances: settings.concurrency, tasks: most },
     });
   }
@@ -989,7 +993,7 @@ export function batchKey(
     block === undefined
       ? null
       : Object.fromEntries(Object.entries(block).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
-  const pod = settings.provider === "runpod-pod";
+  const pod = isPodProvider(settings.provider);
   const serving = {
     profile: profile ?? null,
     provider: settings.provider,

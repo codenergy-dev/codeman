@@ -13,6 +13,7 @@ import type { InferenceEngine } from "./engine.ts";
 import {
   DEFAULT_HOSTS,
   endpointProblems,
+  type GpuAccount,
   type GpuProvider,
   type HostKind,
   type Pod,
@@ -330,10 +331,16 @@ export function otherPoolOf(
 /**
  * The GPU account's fingerprint, which a pod's document and environment carry so that a task
  * joins only pods its account runs: an HMAC of a fixed label with the account key, never the key.
+ * An account whose key reaches several organizations and projects, as Salad's does, adds the ones
+ * it names, so that pods of different projects never mix; Runpod's names none.
  */
-export function accountFingerprint(accountKey: string): string {
-  return createHmac("sha256", accountKey)
-    .update("codeman-account-fingerprint")
+export function accountFingerprint(account: GpuAccount): string {
+  const scope =
+    account.organization !== undefined || account.project !== undefined
+      ? `:${account.organization ?? ""}/${account.project ?? ""}`
+      : "";
+  return createHmac("sha256", account.key)
+    .update(`codeman-account-fingerprint${scope}`)
     .digest("hex")
     .slice(0, 16);
 }
@@ -404,7 +411,8 @@ async function callGateway(
 export interface SelfHostedOptions {
   repository: RepositoryRef;
   gpu: GpuProvider;
-  accountKey: string;
+  /** What opens the GPU account: its key derives the gateways' admin tokens. */
+  account: GpuAccount;
   /** Codeman's store, which holds the pod registry. */
   store: Store;
   /** The pool whose registry the pods are in; the organization alone when undefined. */
@@ -445,7 +453,7 @@ export class PodInference implements InferenceProvider {
     this.#options = options;
     this.#host = options.gpu.pods;
     this.#pool = options.pool ?? soloPool(options.repository.owner);
-    this.#account = accountFingerprint(options.accountKey);
+    this.#account = accountFingerprint(options.account);
     this.#registry = new PodRegistry(options.store, this.#pool.id, () => this.#now());
   }
 
@@ -461,12 +469,18 @@ export class PodInference implements InferenceProvider {
   }
 
   /**
-   * Refuses, before any pod, an image known not to apply Ollama settings when the run has some:
-   * a requested setting is never dropped (choice 8 of the Ollama settings plan).
+   * Refuses, before any pod, an image whose gateway cannot serve on the provider, and an image
+   * known not to apply Ollama settings when the run has some: a requested setting is never
+   * dropped (choice 8 of the Ollama settings plan).
    */
   #checkImage(log: Log): void {
     const own = { ollama: this.#own };
     const { image, parallel } = this.#settings;
+    if (image && this.#host.unservedImages?.has(image)) {
+      throw new Error(
+        `The pod image ${image} cannot serve on ${displayName(this.#options.gpu.name)}, so no pod was created: use a version of Codeman whose pinned pod images can (\`IMAGES_BEFORE_SALAD\` in src/inference/images.ts lists those that cannot).`,
+      );
+    }
     if (onVllm(this.#settings)) {
       if (image) return;
       throw new Error(
@@ -1108,7 +1122,7 @@ export class PodInference implements InferenceProvider {
         CODEMAN_NONCE: record.nonce,
         CODEMAN_MODEL: model,
         CODEMAN_ENGINE: engine.name,
-        CODEMAN_ADMIN_SHA256: sha256(adminToken(this.#options.accountKey, record.nonce)),
+        CODEMAN_ADMIN_SHA256: sha256(adminToken(this.#options.account.key, record.nonce)),
         CODEMAN_START_BY: new Date(now.getTime() + START_MINUTES * 60_000).toISOString(),
         CODEMAN_KEPT_IDLE_MINUTES: String(KEPT_IDLE_MINUTES),
         CODEMAN_RUN_IDLE_MINUTES: String(RUN_IDLE_MINUTES),
@@ -1178,10 +1192,11 @@ export class PodInference implements InferenceProvider {
       if (!offered.some(({ available }) => available)) {
         const versions = [...new Set(offered.map(({ version }) => version))];
         const on = this.#hosts.length > 1 ? ` on ${this.#hosts.join(" or ")} hosts` : "";
+        const provider = displayName(this.#options.gpu.name);
         throw new Error(
           versions.length === 0
-            ? `Runpod offers no host${on} with ${gpuType} and CUDA ${VLLM_MIN_CUDA} or newer, which vLLM's image needs, so no pod was created: use another GPU type, or \`engine: ollama\`.`
-            : `No host${on} with ${gpuType} and CUDA ${VLLM_MIN_CUDA} or newer has room now (Runpod offers ${versions.join(", ")}), which vLLM's image needs, so no pod was created: try again later, or use another GPU type.`,
+            ? `${provider} offers no host${on} with ${gpuType} and CUDA ${VLLM_MIN_CUDA} or newer, which vLLM's image needs, so no pod was created: use another GPU type, or \`engine: ollama\`.`
+            : `No host${on} with ${gpuType} and CUDA ${VLLM_MIN_CUDA} or newer has room now (${provider} offers ${versions.join(", ")}), which vLLM's image needs, so no pod was created: try again later, or use another GPU type.`,
         );
       }
     }
@@ -1340,8 +1355,8 @@ export class PodInference implements InferenceProvider {
   }
 
   #admin(target: GatewayTarget, method: string, path: string, body?: unknown): Promise<unknown> {
-    const { fetch: fetchFn = fetch, accountKey } = this.#options;
-    return callGateway(fetchFn, accountKey, target, method, path, body);
+    const { fetch: fetchFn = fetch, account } = this.#options;
+    return callGateway(fetchFn, account.key, target, method, path, body);
   }
 }
 
@@ -1702,4 +1717,9 @@ function spansInOrder(value: unknown): value is Span[] {
     last = to;
   }
   return true;
+}
+
+/** A GPU provider's name as messages write it, such as `Runpod` for `runpod`. */
+function displayName(name: string): string {
+  return `${name.charAt(0).toUpperCase()}${name.slice(1)}`;
 }

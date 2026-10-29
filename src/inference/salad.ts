@@ -11,6 +11,7 @@ import {
   type PodSpec,
   type PodStatus,
 } from "./gpu.ts";
+import { IMAGES_BEFORE_SALAD } from "./images.ts";
 import { describeProblem } from "./runpod.ts";
 
 const API = "https://api.salad.com/api/public";
@@ -97,6 +98,7 @@ export class Salad implements GpuProvider {
     this.#organization = account.organization;
     this.#project = account.project;
     this.pods = {
+      unservedImages: IMAGES_BEFORE_SALAD,
       price: async (gpuType, host = "secure", priority) =>
         price(await this.#class(gpuType, [host]), priority),
       memory: async (gpuType) => memoryGb((await this.#class(gpuType)).name),

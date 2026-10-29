@@ -19744,7 +19744,7 @@ import { readFileSync } from "node:fs";
 import { isAbsolute, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 var CODEMAN_REPOSITORY = "codenergy-dev/codeman";
-var TEMPLATE_VERSION = 2;
+var TEMPLATE_VERSION = 3;
 var ACTION_ROOT = fileURLToPath(new URL("..", import.meta.url));
 var FULL_SHA = /^[0-9a-f]{40}$/;
 function actionCommit(root = ACTION_ROOT) {
@@ -20342,8 +20342,583 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// src/inference/salad.ts
+import { randomBytes } from "node:crypto";
+
+// src/inference/images.ts
+var POD_IMAGES = {
+  // Published from 8c611a4.
+  ollama: "ghcr.io/codenergy-dev/codeman-ollama@sha256:98c454e3577a05230b873276f6b7c1d1da1309db9e04411565509f2a46dfae89",
+  // Published from 8c611a4: vLLM 0.31.0.
+  vllm: "ghcr.io/codenergy-dev/codeman-vllm@sha256:a5b4a03205fc96f1ae3a731a03124a5a27eaf2d36450f937ff1f063112fc681e"
+};
+var IMAGES_BEFORE_SALAD = /* @__PURE__ */ new Set([
+  "ghcr.io/codenergy-dev/codeman-pod@sha256:6a7617fc8772c43600349a971a424bc918982c6d38972e7d1802a1a607e76d27",
+  "ghcr.io/codenergy-dev/codeman-pod@sha256:3252d41775a230249490b5af79aec050151e49c4722bb62f9ce3d247d02f6ca3",
+  "ghcr.io/codenergy-dev/codeman-ollama@sha256:1be16bba4040cbdc9f68276cb98dbc41707c4c38d4e16cf7a490003aa79ca08c",
+  "ghcr.io/codenergy-dev/codeman-ollama@sha256:dd48e69dd1d29a4651cd52bcd820a6127bc5285898a82e67dfbe830d31d896cb",
+  "ghcr.io/codenergy-dev/codeman-ollama@sha256:f5f89da1e8042fadb70edb7d2be44dee5cfc16f022f5da0330da020ca6b304e9",
+  "ghcr.io/codenergy-dev/codeman-ollama@sha256:98c454e3577a05230b873276f6b7c1d1da1309db9e04411565509f2a46dfae89",
+  "ghcr.io/codenergy-dev/codeman-vllm@sha256:061cb8b15e456b92239b65cdc7abc0706cbfe3219a2abbcb15c2a82edcba82a0",
+  "ghcr.io/codenergy-dev/codeman-vllm@sha256:2ffa65329f98ac14f184ea46f596b5d10ff89024914ef7c885e65796e30aa434",
+  "ghcr.io/codenergy-dev/codeman-vllm@sha256:73f6419404c8c419cb8381c3cb593db0325aa6d813beb7f2a31b52923d8a0d30",
+  "ghcr.io/codenergy-dev/codeman-vllm@sha256:a5b4a03205fc96f1ae3a731a03124a5a27eaf2d36450f937ff1f063112fc681e"
+]);
+function podImage(engine, override = "") {
+  if (engine === "ollama" && override !== "") return override;
+  return POD_IMAGES[engine] ?? "";
+}
+
+// src/inference/runpod.ts
+var API = "https://api.runpod.io/v2";
+var HOUR_MS = 36e5;
+var STATUS = {
+  PROVISIONING: "starting",
+  STARTING: "starting",
+  RUNNING: "running",
+  EXITED: "stopped",
+  ERROR: "failed",
+  TERMINATED: "terminated"
+};
+var CLOUDS = {
+  secure: "SECURE",
+  community: "COMMUNITY"
+};
+var CLOUD_NAMES = {
+  secure: "Secure Cloud",
+  community: "Community Cloud"
+};
+var PRIORITIES = ["on-demand"];
+var Runpod = class {
+  name = "runpod";
+  pods;
+  serverless;
+  #apiKey;
+  #fetch;
+  #now;
+  /** The catalog's GPU types, by ID, as read so far. */
+  #gpus = /* @__PURE__ */ new Map();
+  constructor(apiKey, fetchFn = fetch, now = () => /* @__PURE__ */ new Date()) {
+    this.#apiKey = apiKey;
+    this.#fetch = fetchFn;
+    this.#now = now;
+    this.pods = {
+      price: (gpuType, host) => this.#podPrice(gpuType, host),
+      memory: async (gpuType) => {
+        const memory = (await this.#gpu(gpuType))?.memory;
+        return typeof memory === "number" && memory > 0 ? memory : void 0;
+      },
+      cudaVersions: (gpuType, min, host) => this.#cudaVersions(gpuType, min, host),
+      create: (spec) => this.#createPod(spec),
+      get: (id) => this.#getPod(id),
+      list: (env) => this.#listPods(env),
+      terminate: (id) => this.#terminatePod(id),
+      url: async (id, port) => `https://${id}-${port}.proxy.runpod.net`,
+      billing: (ids, since) => this.#podBilling(ids, since)
+    };
+    this.serverless = {
+      endpoint: (id) => this.#endpoint(id),
+      price: (id) => this.#serverlessPrice(id),
+      queueUrl: (id) => `https://api.runpod.ai/v2/${encodeURIComponent(id)}`
+    };
+  }
+  /**
+   * `GET /v2/billing`, by hour: the account's total for each hour from `start` (UTC). The API
+   * snaps the window to whole hours, and takes `startTime` only with `endTime`.
+   */
+  async billedHours(start, end) {
+    const from = new Date(start.getTime() - start.getTime() % HOUR_MS);
+    const to = new Date(Math.ceil(end.getTime() / HOUR_MS) * HOUR_MS);
+    const response = await this.#request(`/billing?bucketSize=hour&${window(from, to)}`);
+    const hours = /* @__PURE__ */ new Map();
+    for (const record of response.records ?? []) {
+      const at = Date.parse(record.startTime ?? "");
+      if (!Number.isFinite(at) || at < from.getTime()) continue;
+      const hour = at - at % HOUR_MS;
+      hours.set(hour, (hours.get(hour) ?? 0) + amount(record.totalAmount));
+    }
+    return hours;
+  }
+  /** A GPU type from Runpod's catalog, read once per type; undefined when Runpod has none. */
+  #gpu(gpuType) {
+    let gpu = this.#gpus.get(gpuType);
+    if (!gpu) {
+      gpu = this.#request(
+        `/catalog/gpus/${encodeURIComponent(gpuType)}`,
+        "GET",
+        void 0,
+        [404]
+      );
+      gpu.catch(() => this.#gpus.delete(gpuType));
+      this.#gpus.set(gpuType, gpu);
+    }
+    return gpu;
+  }
+  async #podPrice(gpuType, host = "secure") {
+    const gpu = await this.#gpu(gpuType);
+    if (!gpu) {
+      throw new Error(
+        `Runpod has no GPU type "${gpuType}". \`gpu\` takes the GPU's ID, such as "NVIDIA RTX A6000", not its display name; see https://docs.runpod.io/references/gpu-types.`
+      );
+    }
+    const hourly = gpu.price?.[host];
+    if (gpu[host] === false || typeof hourly !== "number" || !(hourly > 0)) {
+      throw new Error(`Runpod does not offer ${gpuType} on ${CLOUD_NAMES[host]}.`);
+    }
+    return hourly / 3600;
+  }
+  /**
+   * `GET /v2/catalog/gpus/{id}` with the pods' availability on a cloud, from a CUDA version when
+   * one is given (docs/web/runpod/get-a-gpu-type.md); undefined when Runpod has no such GPU type.
+   */
+  #availability(gpuType, host, minCudaVersion) {
+    const query = `include=AVAILABILITY&product=POD&cloud=${CLOUDS[host]}${minCudaVersion ? `&minCudaVersion=${encodeURIComponent(minCudaVersion)}` : ""}`;
+    return this.#request(
+      `/catalog/gpus/${encodeURIComponent(gpuType)}?${query}`,
+      "GET",
+      void 0,
+      [404]
+    );
+  }
+  /** The CUDA versions a cloud offers from `min`: a missing `cudaVersions` is an empty one. */
+  async #cudaVersions(gpuType, min, host = "secure") {
+    const gpu = await this.#availability(gpuType, host, min);
+    return (gpu?.cudaVersions ?? []).flatMap(
+      ({ version, available }) => typeof version === "string" ? [{ version, available: available === true }] : []
+    );
+  }
+  /**
+   * Creates the pod on the first cloud of its `hosts` whose hosts have room (decision 9 of the
+   * plan for Salad pods). With one kind of host, the pod is created there without asking, as
+   * before; with several, the clouds without room, or that do not offer the GPU type, are passed
+   * over, and a creation that fails moves on to the next.
+   */
+  async #createPod(spec) {
+    if (spec.priority !== void 0 && !PRIORITIES.includes(spec.priority)) {
+      throw new Error(
+        `Runpod offers no pod with the priority \`${spec.priority}\`; it offers ${PRIORITIES.map((p) => `\`${p}\``).join(", ")}.`
+      );
+    }
+    const hosts = spec.hosts ?? DEFAULT_HOSTS;
+    const [only] = hosts;
+    if (hosts.length === 1 && only) return this.#createOn(spec, only);
+    const problems = [];
+    for (const host of hosts) {
+      const gpu = await this.#availability(spec.gpuType, host, spec.minCudaVersion);
+      if (!gpu || gpu[host] === false) {
+        problems.push(`${CLOUD_NAMES[host]} does not offer it`);
+        continue;
+      }
+      if (!gpu.availability || gpu.availability === "NONE") {
+        problems.push(`${CLOUD_NAMES[host]} has no room`);
+        continue;
+      }
+      try {
+        return await this.#createOn(spec, host);
+      } catch (error3) {
+        problems.push(`${CLOUD_NAMES[host]}: ${error3 instanceof Error ? error3.message : error3}`);
+      }
+    }
+    throw new Error(
+      `Runpod created no pod with ${spec.gpuType}${spec.minCudaVersion ? ` and CUDA ${spec.minCudaVersion} or newer` : ""}: ${problems.join("; ")}.`
+    );
+  }
+  async #createOn(spec, host) {
+    const pod = await this.#request("/pods", "POST", {
+      name: spec.name,
+      image: spec.image,
+      gpu: {
+        id: spec.gpuType,
+        count: 1,
+        ...spec.minCudaVersion ? { minCudaVersion: spec.minCudaVersion } : {}
+      },
+      // Secure Cloud unless the settings' `hosts` allow Community Cloud (decision 1 of the plan
+      // for Salad pods, which made decision 6 of the self-hosted inference plan a default).
+      cloud: CLOUDS[host],
+      env: spec.env,
+      ports: [`${spec.port}/http`],
+      disk: spec.diskGb
+    });
+    return { host, ...toPod(pod) };
+  }
+  async #getPod(id) {
+    const pod = await this.#request(`/pods/${encodeURIComponent(id)}`, "GET", void 0, [404]);
+    return pod ? toPod(pod) : void 0;
+  }
+  async #listPods(env) {
+    const pods = [];
+    let cursor;
+    for (let page = 0; page < 100; page++) {
+      const response = await this.#request(
+        `/pods${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`
+      );
+      for (const pod of response.pods ?? []) {
+        const found = toPod(pod);
+        if (Object.entries(env).every(([name, value]) => found.env[name] === value)) {
+          pods.push(found);
+        }
+      }
+      cursor = response.pagination?.nextCursor;
+      if (!response.pagination?.hasNextPage || !cursor) return pods;
+    }
+    throw new Error("Too many Runpod pods to list.");
+  }
+  async #terminatePod(id) {
+    await this.#request(`/pods/${encodeURIComponent(id)}`, "DELETE", void 0, [404]);
+  }
+  /** `GET /v2/billing/pods`, by day, once for every pod; records are per pod per bucket. */
+  async #podBilling(ids, since) {
+    if (ids.length === 0) return {};
+    const start = new Date(
+      Date.UTC(since.getUTCFullYear(), since.getUTCMonth(), since.getUTCDate())
+    );
+    const now = this.#now();
+    const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
+    const response = await this.#request(
+      `/billing/pods?bucketSize=day&${window(start, end)}`
+    );
+    const wanted = new Set(ids);
+    const billed = {};
+    for (const record of response.records ?? []) {
+      if (!record.podId || !wanted.has(record.podId)) continue;
+      billed[record.podId] = (billed[record.podId] ?? 0) + amount(record.totalAmount);
+    }
+    return billed;
+  }
+  async #endpoint(id) {
+    const endpoint2 = await this.#request(
+      `/serverless/${encodeURIComponent(id)}`
+    );
+    return {
+      id: endpoint2.id,
+      type: endpoint2.type,
+      workersMin: endpoint2.workers?.min ?? 0,
+      workersMax: endpoint2.workers?.max ?? 0,
+      idleTimeoutSeconds: endpoint2.workers?.idleTimeout,
+      gpuCount: endpoint2.gpu?.count ?? 1,
+      env: endpoint2.env ?? {}
+    };
+  }
+  /**
+   * The flex price of the endpoint's dearest GPU type, times its GPUs per worker: a worker may
+   * land on any type of its pools. Throws when no price is listed.
+   */
+  async #serverlessPrice(id) {
+    const endpoint2 = await this.#request(
+      `/serverless/${encodeURIComponent(id)}`
+    );
+    const pools = new Set(endpoint2.gpu?.pools ?? []);
+    const excluded = new Set(endpoint2.gpu?.excludedTypes ?? []);
+    const { gpus } = await this.#request("/catalog/gpus");
+    const prices = (gpus ?? []).filter((gpu) => gpu.pool && pools.has(gpu.pool) && !excluded.has(gpu.id)).map((gpu) => gpu.price?.serverless).filter((price2) => typeof price2 === "number" && price2 > 0);
+    if (prices.length === 0)
+      throw new Error(`Runpod lists no Serverless price for endpoint ${id}.`);
+    return Math.max(...prices) * (endpoint2.gpu?.count ?? 1) / 3600;
+  }
+  async #request(path, method = "GET", body, absent = []) {
+    const response = await this.#fetch(`${API}${path}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${this.#apiKey}`,
+        ...body === void 0 ? {} : { "Content-Type": "application/json" }
+      },
+      body: body === void 0 ? null : JSON.stringify(body)
+    });
+    if (absent.includes(response.status)) return void 0;
+    if (!response.ok) {
+      const problem2 = describeProblem(await response.text().catch(() => ""));
+      throw new Error(
+        `Runpod ${method} ${path.split("?")[0]} failed with ${response.status}${problem2 ? `: ${problem2}` : "."}`
+      );
+    }
+    return response.status === 204 ? void 0 : response.json();
+  }
+};
+function toPod(pod) {
+  return {
+    id: pod.id,
+    name: pod.name,
+    status: STATUS[pod.status] ?? "starting",
+    image: pod.image ?? "",
+    env: pod.env ?? {},
+    gpuType: pod.gpu?.id,
+    createdAt: new Date(pod.createdAt),
+    pricePerSecond: typeof pod.cost === "number" && pod.cost > 0 ? pod.cost / 3600 : void 0,
+    ...typeof pod.cudaVersion === "string" && pod.cudaVersion !== "" ? { cudaVersion: pod.cudaVersion } : {},
+    ...pod.cloud === "SECURE" ? { host: "secure" } : {},
+    ...pod.cloud === "COMMUNITY" ? { host: "community" } : {}
+  };
+}
+function timestamp(date) {
+  return `${date.toISOString().slice(0, 19)}Z`;
+}
+function window(start, end) {
+  return `startTime=${encodeURIComponent(timestamp(start))}&endTime=${encodeURIComponent(timestamp(end))}`;
+}
+function describeProblem(body) {
+  let problem2;
+  try {
+    problem2 = JSON.parse(body);
+  } catch {
+    return void 0;
+  }
+  if (typeof problem2 !== "object" || problem2 === null) return void 0;
+  const { title, detail, errors } = problem2;
+  const parts = [title, detail, ...Array.isArray(errors) ? errors : []].filter(
+    (part) => typeof part === "string" && part.trim() !== ""
+  );
+  if (parts.length === 0) return void 0;
+  const text = parts.join(" \u2014 ").replace(/\s+/g, " ").trim();
+  return text.length > 500 ? `${text.slice(0, 499)}\u2026` : text;
+}
+function amount(value) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+// src/inference/salad.ts
+var API2 = "https://api.salad.com/api/public";
+var GB = 1024 ** 3;
+var SALAD_PRIORITIES = ["high", "medium", "low", "batch"];
+var VCPU = 8;
+var MEMORY_MB = 32 * 1024;
+var MAX_DISK_GB = 250;
+var STATUS2 = {
+  pending: "starting",
+  deploying: "starting",
+  running: "running",
+  stopped: "stopped",
+  succeeded: "stopped",
+  failed: "failed"
+};
+var Salad = class {
+  name = "salad";
+  pods;
+  #apiKey;
+  #fetch;
+  #organization;
+  #project;
+  /** The organization's GPU classes, read once; a failed read is not kept. */
+  #classes;
+  constructor(account, fetchFn = fetch) {
+    if (!account.organization || !account.project) {
+      throw new Error(
+        "Salad needs its organization and project names beside its key: set CODEMAN_SALAD_ORGANIZATION and CODEMAN_SALAD_PROJECT."
+      );
+    }
+    this.#apiKey = account.key;
+    this.#fetch = fetchFn;
+    this.#organization = account.organization;
+    this.#project = account.project;
+    this.pods = {
+      unservedImages: IMAGES_BEFORE_SALAD,
+      price: async (gpuType, host = "secure", priority) => price(await this.#class(gpuType, [host]), priority),
+      memory: async (gpuType) => memoryGb((await this.#class(gpuType)).name),
+      create: (spec) => this.#create(spec),
+      get: (id) => this.#get(id),
+      list: (env) => this.#list(env),
+      terminate: (id) => this.#terminate(id),
+      url: (id) => this.#url(id)
+    };
+  }
+  /** `GET /organizations/{organization}/gpu-classes`, once. */
+  #gpuClasses() {
+    if (!this.#classes) {
+      this.#classes = this.#request(
+        `/organizations/${encodeURIComponent(this.#organization)}/gpu-classes`
+      ).then((list4) => list4.items ?? []);
+      this.#classes.catch(() => {
+        this.#classes = void 0;
+      });
+    }
+    return this.#classes;
+  }
+  /**
+   * The GPU class of this name, ignoring case. Throws when Salad has none, or when it runs on a
+   * kind of host that `hosts` does not allow.
+   */
+  async #class(gpuType, hosts) {
+    const wanted = gpuType.trim().toLowerCase();
+    const found = (await this.#gpuClasses()).find(
+      (gpu) => gpu.name.trim().toLowerCase() === wanted
+    );
+    if (!found) {
+      throw new Error(
+        `Salad has no GPU class "${gpuType}". \`gpu\` takes a class's name, such as "RTX 4090 (24 GB)"; see https://salad.com/pricing.`
+      );
+    }
+    const kind = hostOf(found);
+    if (hosts && !hosts.includes(kind)) {
+      throw new Error(
+        kind === "community" ? `Salad's ${found.name} runs on community hosts, machines third parties run, which \`hosts\` does not allow; add \`community\` to \`hosts\` to use it.` : `Salad's ${found.name} runs on secure hosts, which \`hosts\` does not allow; add \`secure\` to \`hosts\` to use it.`
+      );
+    }
+    return found;
+  }
+  /**
+   * `POST .../containers`: a group of one replica that starts at once, never restarts its
+   * container, and is reached through the Container Gateway, which the gateway's run tokens guard.
+   */
+  async #create(spec) {
+    const priority = spec.priority ?? "high";
+    const gpu = await this.#class(spec.gpuType, spec.hosts ?? DEFAULT_HOSTS);
+    price(gpu, priority);
+    if (spec.diskGb > MAX_DISK_GB) {
+      throw new Error(
+        `A Salad container has ${MAX_DISK_GB} GB of disk at most, and this pod needs ${spec.diskGb} GB.`
+      );
+    }
+    const group = await this.#request(this.#containers(), "POST", {
+      name: `codeman-${randomBytes(8).toString("hex")}`,
+      display_name: displayName(spec.name),
+      container: {
+        image: spec.image,
+        environment_variables: environment(spec.env),
+        priority,
+        resources: {
+          cpu: within(VCPU, gpu.min_vcpu, gpu.max_vcpu),
+          memory: within(MEMORY_MB, gpu.min_ram, gpu.max_ram),
+          gpu_classes: [gpu.id],
+          storage_amount: within(spec.diskGb * GB, gpu.min_storage, gpu.max_storage),
+          ...spec.sharedMemoryGb ? { shm_size: spec.sharedMemoryGb * 1024 } : {}
+        }
+      },
+      replicas: 1,
+      // A pod that exits is done: Salad must not start it again, here or on another node.
+      restart_policy: "never",
+      autostart_policy: true,
+      networking: {
+        protocol: "http",
+        port: spec.port,
+        // The Container Gateway's own authentication takes the account key; the gateway's run
+        // tokens guard the pod instead.
+        auth: false,
+        load_balancer: "least_number_of_connections",
+        single_connection_limit: false,
+        client_request_timeout: 1e5,
+        server_response_timeout: 1e5
+      }
+    });
+    return this.#toPod(group);
+  }
+  async #get(id) {
+    const group = await this.#request(this.#containers(id), "GET", void 0, [404]);
+    return group ? this.#toPod(group) : void 0;
+  }
+  /** `GET .../containers`, which returns the project's groups in one page of up to 100. */
+  async #list(env) {
+    const { items } = await this.#request(this.#containers());
+    const pods = await Promise.all((items ?? []).map((group) => this.#toPod(group)));
+    return pods.filter(
+      (pod) => Object.entries(env).every(([name, value]) => pod.env[name] === value)
+    );
+  }
+  /** `DELETE .../containers/{name}`, which stops its instance too. */
+  async #terminate(id) {
+    await this.#request(this.#containers(id), "DELETE", void 0, [404]);
+  }
+  /** The Container Gateway's address of the group, which Salad gives once it has one. */
+  async #url(id) {
+    const group = await this.#request(this.#containers(id), "GET", void 0, [404]);
+    const dns = group?.networking?.dns;
+    if (!dns) throw new Error(`Salad has no address for container group ${id} yet.`);
+    return /^https?:\/\//.test(dns) ? dns : `https://${dns}`;
+  }
+  async #toPod(group) {
+    const classId = group.container?.resources?.gpu_classes?.[0];
+    const gpu = classId ? (await this.#gpuClasses()).find((candidate) => candidate.id === classId) : void 0;
+    const status2 = STATUS2[group.current_state?.status ?? ""] ?? "starting";
+    const running = (group.current_state?.instance_status_counts?.running_count ?? 0) > 0;
+    let pricePerSecond;
+    try {
+      pricePerSecond = gpu ? price(gpu, group.priority ?? "high") : void 0;
+    } catch {
+      pricePerSecond = void 0;
+    }
+    return {
+      id: group.name,
+      name: group.display_name ?? group.name,
+      status: status2 === "running" && !running ? "starting" : status2,
+      image: group.container?.image ?? "",
+      env: group.container?.environment_variables ?? {},
+      gpuType: gpu?.name,
+      createdAt: new Date(group.create_time),
+      // Salad bills no other rate than the class's listed price at the group's priority.
+      pricePerSecond,
+      ...gpu ? { host: hostOf(gpu) } : {}
+    };
+  }
+  #containers(name) {
+    const base = `/organizations/${encodeURIComponent(this.#organization)}/projects/${encodeURIComponent(this.#project)}/containers`;
+    return name === void 0 ? base : `${base}/${encodeURIComponent(name)}`;
+  }
+  async #request(path, method = "GET", body, absent = []) {
+    const response = await this.#fetch(`${API2}${path}`, {
+      method,
+      headers: {
+        "Salad-Api-Key": this.#apiKey,
+        ...body === void 0 ? {} : { "Content-Type": "application/json" }
+      },
+      body: body === void 0 ? null : JSON.stringify(body)
+    });
+    if (absent.includes(response.status)) return void 0;
+    const text = await response.text().catch(() => "");
+    if (!response.ok) {
+      const problem2 = describeProblem(text);
+      throw new Error(
+        `Salad ${method} ${path.split("?")[0]} failed with ${response.status}${problem2 ? `: ${problem2}` : "."}`
+      );
+    }
+    return text.trim() === "" ? void 0 : JSON.parse(text);
+  }
+};
+function hostOf(gpu) {
+  return gpu.gpu_class_type && isHostKind(gpu.gpu_class_type) ? gpu.gpu_class_type : "community";
+}
+function price(gpu, priority = "high") {
+  if (!SALAD_PRIORITIES.includes(priority)) {
+    throw new Error(
+      `Salad offers no priority \`${priority}\`; it offers ${SALAD_PRIORITIES.map((p) => `\`${p}\``).join(", ")}.`
+    );
+  }
+  const listed = Number(gpu.prices?.find((entry) => entry.priority === priority)?.price);
+  if (!Number.isFinite(listed) || !(listed > 0)) {
+    throw new Error(`Salad lists no price for ${gpu.name} at the priority \`${priority}\`.`);
+  }
+  return listed / 3600;
+}
+function memoryGb(name) {
+  const memory = Number(/\((\d+(?:\.\d+)?)\s*GB\)/i.exec(name)?.[1]);
+  return memory > 0 ? memory : void 0;
+}
+function within(value, min, max) {
+  const floor = typeof min === "number" && min > 0 ? Math.max(value, min) : value;
+  return typeof max === "number" && max > 0 ? Math.min(floor, max) : floor;
+}
+function displayName(name) {
+  const shown = name.replace(/[^ ,\-.0-9A-Za-z]/g, "-").slice(0, 63);
+  return shown.length >= 2 ? shown : "codeman";
+}
+function environment(env) {
+  const kept = {};
+  for (const [name, value] of Object.entries(env)) {
+    if (value === "") continue;
+    if (value.length > 1e3) {
+      throw new Error(
+        `Salad takes environment values of 1,000 characters at most; ${name} has ${value.length}.`
+      );
+    }
+    kept[name] = value;
+  }
+  return kept;
+}
+
 // src/inference/providers.ts
-var PROVIDER_NAMES = ["openrouter", "runpod-pod", "runpod-serverless"];
+var PROVIDER_NAMES = [
+  "openrouter",
+  "runpod-pod",
+  "runpod-serverless",
+  "salad-pod"
+];
 var PROVIDER_SETTINGS = [
   "engine",
   "gpu",
@@ -20364,12 +20939,34 @@ var ACCOUNTS = {
     secret: "CODEMAN_OPENROUTER_MANAGEMENT_KEY",
     hourly: false
   },
-  runpod: { input: "gpu-key", secret: "CODEMAN_RUNPOD_API_KEY", hourly: true }
+  runpod: { input: "gpu-key", secret: "CODEMAN_RUNPOD_API_KEY", hourly: true },
+  // Salad has no billing API: its runs count only in Codeman's ledger (decision 5 of the plan for
+  // Salad pods).
+  salad: {
+    input: "salad-key",
+    secret: "CODEMAN_SALAD_API_KEY",
+    hourly: false,
+    variables: [
+      {
+        field: "organization",
+        input: "salad-organization",
+        variable: "CODEMAN_SALAD_ORGANIZATION"
+      },
+      { field: "project", input: "salad-project", variable: "CODEMAN_SALAD_PROJECT" }
+    ]
+  }
 };
 var PROVIDERS = {
-  openrouter: { account: "openrouter", settings: {}, model: "openrouter", secrets: [] },
+  openrouter: {
+    account: "openrouter",
+    serves: "api",
+    settings: {},
+    model: "openrouter",
+    secrets: []
+  },
   "runpod-pod": {
     account: "runpod",
+    serves: "pod",
     settings: {
       engine: { values: ["ollama", "vllm"], default: "ollama" },
       gpu: { required: true, example: '"NVIDIA RTX A6000"' },
@@ -20386,6 +20983,7 @@ var PROVIDERS = {
   },
   "runpod-serverless": {
     account: "runpod",
+    serves: "serverless",
     settings: {
       engine: { values: ["vllm"], default: "vllm" },
       endpoint: { required: true, example: "abc123xyz" }
@@ -20393,8 +20991,27 @@ var PROVIDERS = {
     model: "engine",
     // The endpoint's key, restricted to it: only the agent job's gateway holds it.
     secrets: [{ secret: "CODEMAN_RUNPOD_SERVERLESS_KEY", input: "serverless-key", job: "agent" }]
+  },
+  // A one-replica container group on Salad, whose on-demand hosts are all Community ones: a run
+  // needs `hosts` to allow them (decisions 1 to 3 of the plan for Salad pods).
+  "salad-pod": {
+    account: "salad",
+    serves: "pod",
+    settings: {
+      engine: { values: ["ollama", "vllm"], default: "ollama" },
+      gpu: { required: true, example: '"RTX 4090 (24 GB)"' },
+      "pod-reuse": { values: ["task", "run"], default: "task" },
+      hosts: { values: HOST_KINDS, default: "secure", list: true },
+      priority: { values: SALAD_PRIORITIES, default: "high" }
+    },
+    blocks: { ollama: { engine: "ollama" }, vllm: { engine: "vllm" } },
+    model: "engine",
+    secrets: []
   }
 };
+function isPodProvider(name) {
+  return isProviderName(name) && PROVIDERS[name].serves === "pod";
+}
 function isProviderName(name) {
   return PROVIDER_NAMES.includes(name);
 }
@@ -20824,7 +21441,7 @@ var NAMES = [
 function isModelName(text) {
   return isOpenRouterModel(text) || Object.values(ENGINES).some((engine) => engine.isModel(text));
 }
-var GPU_TYPE = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,78}[A-Za-z0-9]$/;
+var GPU_TYPE = /^[A-Za-z0-9][A-Za-z0-9 ._()-]{0,78}[A-Za-z0-9)]$/;
 var LANGUAGE_TAG = /^[a-z]{2,3}(-[a-z0-9]{2,8}){0,3}$/i;
 function isLanguageTag(text) {
   return LANGUAGE_TAG.test(text);
@@ -21260,7 +21877,7 @@ function servedCounts(layers, stage) {
       tasks,
       profile: profile2,
       key: batchKey(settings, profile2, most),
-      pod: settings.provider === "runpod-pod",
+      pod: isPodProvider(settings.provider),
       concurrency: { instances: settings.concurrency, tasks: most }
     });
   }
@@ -21268,7 +21885,7 @@ function servedCounts(layers, stage) {
 }
 function batchKey(settings, profile2, parallel) {
   const sorted = (block2) => block2 === void 0 ? null : Object.fromEntries(Object.entries(block2).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0));
-  const pod = settings.provider === "runpod-pod";
+  const pod = isPodProvider(settings.provider);
   const serving2 = {
     profile: profile2 ?? null,
     provider: settings.provider,
@@ -21402,18 +22019,6 @@ function readTask(runtime2) {
   return task;
 }
 
-// src/inference/images.ts
-var POD_IMAGES = {
-  // Published from 8c611a4.
-  ollama: "ghcr.io/codenergy-dev/codeman-ollama@sha256:98c454e3577a05230b873276f6b7c1d1da1309db9e04411565509f2a46dfae89",
-  // Published from 8c611a4: vLLM 0.31.0.
-  vllm: "ghcr.io/codenergy-dev/codeman-vllm@sha256:a5b4a03205fc96f1ae3a731a03124a5a27eaf2d36450f937ff1f063112fc681e"
-};
-function podImage(engine, override = "") {
-  if (engine === "ollama" && override !== "") return override;
-  return POD_IMAGES[engine] ?? "";
-}
-
 // src/budget.ts
 var MIN_RUN_BUDGET = 0.1;
 function runLimit(taskBudget, spent) {
@@ -21429,7 +22034,7 @@ function reservationMs(agentJobMinutes2) {
 }
 var MAX_RESERVATION_MS = reservationMs(MAX_JOB_MINUTES);
 var EARLY_RESERVATION_MS = 2 * 36e5;
-var HOUR_MS = 36e5;
+var HOUR_MS2 = 36e5;
 function runAmount(run2) {
   const own = run2.cost ?? (run2.status === "open" ? run2.limit ?? 0 : 0);
   return (run2.spentBefore ?? 0) + own;
@@ -21526,13 +22131,13 @@ function endOf(run2, now) {
 function spread(hours, amount2, start, end) {
   if (amount2 <= 0) return;
   const add2 = (hour, part) => hours.set(hour, (hours.get(hour) ?? 0) + part);
-  const first = start - start % HOUR_MS;
+  const first = start - start % HOUR_MS2;
   if (end <= start) {
     add2(first, amount2);
     return;
   }
-  for (let hour = first; hour < end; hour += HOUR_MS) {
-    const overlap = Math.min(end, hour + HOUR_MS) - Math.max(start, hour);
+  for (let hour = first; hour < end; hour += HOUR_MS2) {
+    const overlap = Math.min(end, hour + HOUR_MS2) - Math.max(start, hour);
     add2(hour, amount2 * overlap / (end - start));
   }
 }
@@ -21541,7 +22146,7 @@ function monthStart(date) {
 }
 
 // src/inference/openrouter.ts
-var API = "https://openrouter.ai/api/v1";
+var API3 = "https://openrouter.ai/api/v1";
 function keyPrefix(repository) {
   return `codeman/${repository.owner}/${repository.name}/`;
 }
@@ -21679,7 +22284,7 @@ var OpenRouter = class {
     return Array.isArray(rows) ? rows : [];
   }
   async #request(path, method = "GET", body) {
-    const response = await this.#fetch(`${API}${path}`, {
+    const response = await this.#fetch(`${API3}${path}`, {
       method,
       headers: {
         Authorization: `Bearer ${this.#managementKey}`,
@@ -21820,314 +22425,8 @@ function sleep2(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// src/inference/runpod.ts
-var API2 = "https://api.runpod.io/v2";
-var HOUR_MS2 = 36e5;
-var STATUS = {
-  PROVISIONING: "starting",
-  STARTING: "starting",
-  RUNNING: "running",
-  EXITED: "stopped",
-  ERROR: "failed",
-  TERMINATED: "terminated"
-};
-var CLOUDS = {
-  secure: "SECURE",
-  community: "COMMUNITY"
-};
-var CLOUD_NAMES = {
-  secure: "Secure Cloud",
-  community: "Community Cloud"
-};
-var PRIORITIES = ["on-demand"];
-var Runpod = class {
-  name = "runpod";
-  pods;
-  serverless;
-  #apiKey;
-  #fetch;
-  #now;
-  /** The catalog's GPU types, by ID, as read so far. */
-  #gpus = /* @__PURE__ */ new Map();
-  constructor(apiKey, fetchFn = fetch, now = () => /* @__PURE__ */ new Date()) {
-    this.#apiKey = apiKey;
-    this.#fetch = fetchFn;
-    this.#now = now;
-    this.pods = {
-      price: (gpuType, host) => this.#podPrice(gpuType, host),
-      memory: async (gpuType) => {
-        const memory = (await this.#gpu(gpuType))?.memory;
-        return typeof memory === "number" && memory > 0 ? memory : void 0;
-      },
-      cudaVersions: (gpuType, min, host) => this.#cudaVersions(gpuType, min, host),
-      create: (spec) => this.#createPod(spec),
-      get: (id) => this.#getPod(id),
-      list: (env) => this.#listPods(env),
-      terminate: (id) => this.#terminatePod(id),
-      url: async (id, port) => `https://${id}-${port}.proxy.runpod.net`,
-      billing: (ids, since) => this.#podBilling(ids, since)
-    };
-    this.serverless = {
-      endpoint: (id) => this.#endpoint(id),
-      price: (id) => this.#serverlessPrice(id),
-      queueUrl: (id) => `https://api.runpod.ai/v2/${encodeURIComponent(id)}`
-    };
-  }
-  /**
-   * `GET /v2/billing`, by hour: the account's total for each hour from `start` (UTC). The API
-   * snaps the window to whole hours, and takes `startTime` only with `endTime`.
-   */
-  async billedHours(start, end) {
-    const from = new Date(start.getTime() - start.getTime() % HOUR_MS2);
-    const to = new Date(Math.ceil(end.getTime() / HOUR_MS2) * HOUR_MS2);
-    const response = await this.#request(`/billing?bucketSize=hour&${window(from, to)}`);
-    const hours = /* @__PURE__ */ new Map();
-    for (const record of response.records ?? []) {
-      const at = Date.parse(record.startTime ?? "");
-      if (!Number.isFinite(at) || at < from.getTime()) continue;
-      const hour = at - at % HOUR_MS2;
-      hours.set(hour, (hours.get(hour) ?? 0) + amount(record.totalAmount));
-    }
-    return hours;
-  }
-  /** A GPU type from Runpod's catalog, read once per type; undefined when Runpod has none. */
-  #gpu(gpuType) {
-    let gpu = this.#gpus.get(gpuType);
-    if (!gpu) {
-      gpu = this.#request(
-        `/catalog/gpus/${encodeURIComponent(gpuType)}`,
-        "GET",
-        void 0,
-        [404]
-      );
-      gpu.catch(() => this.#gpus.delete(gpuType));
-      this.#gpus.set(gpuType, gpu);
-    }
-    return gpu;
-  }
-  async #podPrice(gpuType, host = "secure") {
-    const gpu = await this.#gpu(gpuType);
-    if (!gpu) {
-      throw new Error(
-        `Runpod has no GPU type "${gpuType}". \`gpu\` takes the GPU's ID, such as "NVIDIA RTX A6000", not its display name; see https://docs.runpod.io/references/gpu-types.`
-      );
-    }
-    const hourly = gpu.price?.[host];
-    if (gpu[host] === false || typeof hourly !== "number" || !(hourly > 0)) {
-      throw new Error(`Runpod does not offer ${gpuType} on ${CLOUD_NAMES[host]}.`);
-    }
-    return hourly / 3600;
-  }
-  /**
-   * `GET /v2/catalog/gpus/{id}` with the pods' availability on a cloud, from a CUDA version when
-   * one is given (docs/web/runpod/get-a-gpu-type.md); undefined when Runpod has no such GPU type.
-   */
-  #availability(gpuType, host, minCudaVersion) {
-    const query = `include=AVAILABILITY&product=POD&cloud=${CLOUDS[host]}${minCudaVersion ? `&minCudaVersion=${encodeURIComponent(minCudaVersion)}` : ""}`;
-    return this.#request(
-      `/catalog/gpus/${encodeURIComponent(gpuType)}?${query}`,
-      "GET",
-      void 0,
-      [404]
-    );
-  }
-  /** The CUDA versions a cloud offers from `min`: a missing `cudaVersions` is an empty one. */
-  async #cudaVersions(gpuType, min, host = "secure") {
-    const gpu = await this.#availability(gpuType, host, min);
-    return (gpu?.cudaVersions ?? []).flatMap(
-      ({ version, available }) => typeof version === "string" ? [{ version, available: available === true }] : []
-    );
-  }
-  /**
-   * Creates the pod on the first cloud of its `hosts` whose hosts have room (decision 9 of the
-   * plan for Salad pods). With one kind of host, the pod is created there without asking, as
-   * before; with several, the clouds without room, or that do not offer the GPU type, are passed
-   * over, and a creation that fails moves on to the next.
-   */
-  async #createPod(spec) {
-    if (spec.priority !== void 0 && !PRIORITIES.includes(spec.priority)) {
-      throw new Error(
-        `Runpod offers no pod with the priority \`${spec.priority}\`; it offers ${PRIORITIES.map((p) => `\`${p}\``).join(", ")}.`
-      );
-    }
-    const hosts = spec.hosts ?? DEFAULT_HOSTS;
-    const [only] = hosts;
-    if (hosts.length === 1 && only) return this.#createOn(spec, only);
-    const problems = [];
-    for (const host of hosts) {
-      const gpu = await this.#availability(spec.gpuType, host, spec.minCudaVersion);
-      if (!gpu || gpu[host] === false) {
-        problems.push(`${CLOUD_NAMES[host]} does not offer it`);
-        continue;
-      }
-      if (!gpu.availability || gpu.availability === "NONE") {
-        problems.push(`${CLOUD_NAMES[host]} has no room`);
-        continue;
-      }
-      try {
-        return await this.#createOn(spec, host);
-      } catch (error3) {
-        problems.push(`${CLOUD_NAMES[host]}: ${error3 instanceof Error ? error3.message : error3}`);
-      }
-    }
-    throw new Error(
-      `Runpod created no pod with ${spec.gpuType}${spec.minCudaVersion ? ` and CUDA ${spec.minCudaVersion} or newer` : ""}: ${problems.join("; ")}.`
-    );
-  }
-  async #createOn(spec, host) {
-    const pod = await this.#request("/pods", "POST", {
-      name: spec.name,
-      image: spec.image,
-      gpu: {
-        id: spec.gpuType,
-        count: 1,
-        ...spec.minCudaVersion ? { minCudaVersion: spec.minCudaVersion } : {}
-      },
-      // Secure Cloud unless the settings' `hosts` allow Community Cloud (decision 1 of the plan
-      // for Salad pods, which made decision 6 of the self-hosted inference plan a default).
-      cloud: CLOUDS[host],
-      env: spec.env,
-      ports: [`${spec.port}/http`],
-      disk: spec.diskGb
-    });
-    return { host, ...toPod(pod) };
-  }
-  async #getPod(id) {
-    const pod = await this.#request(`/pods/${encodeURIComponent(id)}`, "GET", void 0, [404]);
-    return pod ? toPod(pod) : void 0;
-  }
-  async #listPods(env) {
-    const pods = [];
-    let cursor;
-    for (let page = 0; page < 100; page++) {
-      const response = await this.#request(
-        `/pods${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`
-      );
-      for (const pod of response.pods ?? []) {
-        const found = toPod(pod);
-        if (Object.entries(env).every(([name, value]) => found.env[name] === value)) {
-          pods.push(found);
-        }
-      }
-      cursor = response.pagination?.nextCursor;
-      if (!response.pagination?.hasNextPage || !cursor) return pods;
-    }
-    throw new Error("Too many Runpod pods to list.");
-  }
-  async #terminatePod(id) {
-    await this.#request(`/pods/${encodeURIComponent(id)}`, "DELETE", void 0, [404]);
-  }
-  /** `GET /v2/billing/pods`, by day, once for every pod; records are per pod per bucket. */
-  async #podBilling(ids, since) {
-    if (ids.length === 0) return {};
-    const start = new Date(
-      Date.UTC(since.getUTCFullYear(), since.getUTCMonth(), since.getUTCDate())
-    );
-    const now = this.#now();
-    const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
-    const response = await this.#request(
-      `/billing/pods?bucketSize=day&${window(start, end)}`
-    );
-    const wanted = new Set(ids);
-    const billed = {};
-    for (const record of response.records ?? []) {
-      if (!record.podId || !wanted.has(record.podId)) continue;
-      billed[record.podId] = (billed[record.podId] ?? 0) + amount(record.totalAmount);
-    }
-    return billed;
-  }
-  async #endpoint(id) {
-    const endpoint2 = await this.#request(
-      `/serverless/${encodeURIComponent(id)}`
-    );
-    return {
-      id: endpoint2.id,
-      type: endpoint2.type,
-      workersMin: endpoint2.workers?.min ?? 0,
-      workersMax: endpoint2.workers?.max ?? 0,
-      idleTimeoutSeconds: endpoint2.workers?.idleTimeout,
-      gpuCount: endpoint2.gpu?.count ?? 1,
-      env: endpoint2.env ?? {}
-    };
-  }
-  /**
-   * The flex price of the endpoint's dearest GPU type, times its GPUs per worker: a worker may
-   * land on any type of its pools. Throws when no price is listed.
-   */
-  async #serverlessPrice(id) {
-    const endpoint2 = await this.#request(
-      `/serverless/${encodeURIComponent(id)}`
-    );
-    const pools = new Set(endpoint2.gpu?.pools ?? []);
-    const excluded = new Set(endpoint2.gpu?.excludedTypes ?? []);
-    const { gpus } = await this.#request("/catalog/gpus");
-    const prices = (gpus ?? []).filter((gpu) => gpu.pool && pools.has(gpu.pool) && !excluded.has(gpu.id)).map((gpu) => gpu.price?.serverless).filter((price) => typeof price === "number" && price > 0);
-    if (prices.length === 0)
-      throw new Error(`Runpod lists no Serverless price for endpoint ${id}.`);
-    return Math.max(...prices) * (endpoint2.gpu?.count ?? 1) / 3600;
-  }
-  async #request(path, method = "GET", body, absent = []) {
-    const response = await this.#fetch(`${API2}${path}`, {
-      method,
-      headers: {
-        Authorization: `Bearer ${this.#apiKey}`,
-        ...body === void 0 ? {} : { "Content-Type": "application/json" }
-      },
-      body: body === void 0 ? null : JSON.stringify(body)
-    });
-    if (absent.includes(response.status)) return void 0;
-    if (!response.ok) {
-      const problem2 = describeProblem(await response.text().catch(() => ""));
-      throw new Error(
-        `Runpod ${method} ${path.split("?")[0]} failed with ${response.status}${problem2 ? `: ${problem2}` : "."}`
-      );
-    }
-    return response.status === 204 ? void 0 : response.json();
-  }
-};
-function toPod(pod) {
-  return {
-    id: pod.id,
-    name: pod.name,
-    status: STATUS[pod.status] ?? "starting",
-    image: pod.image ?? "",
-    env: pod.env ?? {},
-    gpuType: pod.gpu?.id,
-    createdAt: new Date(pod.createdAt),
-    pricePerSecond: typeof pod.cost === "number" && pod.cost > 0 ? pod.cost / 3600 : void 0,
-    ...typeof pod.cudaVersion === "string" && pod.cudaVersion !== "" ? { cudaVersion: pod.cudaVersion } : {},
-    ...pod.cloud === "SECURE" ? { host: "secure" } : {},
-    ...pod.cloud === "COMMUNITY" ? { host: "community" } : {}
-  };
-}
-function timestamp(date) {
-  return `${date.toISOString().slice(0, 19)}Z`;
-}
-function window(start, end) {
-  return `startTime=${encodeURIComponent(timestamp(start))}&endTime=${encodeURIComponent(timestamp(end))}`;
-}
-function describeProblem(body) {
-  let problem2;
-  try {
-    problem2 = JSON.parse(body);
-  } catch {
-    return void 0;
-  }
-  if (typeof problem2 !== "object" || problem2 === null) return void 0;
-  const { title, detail, errors } = problem2;
-  const parts = [title, detail, ...Array.isArray(errors) ? errors : []].filter(
-    (part) => typeof part === "string" && part.trim() !== ""
-  );
-  if (parts.length === 0) return void 0;
-  const text = parts.join(" \u2014 ").replace(/\s+/g, " ").trim();
-  return text.length > 500 ? `${text.slice(0, 499)}\u2026` : text;
-}
-function amount(value) {
-  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
-}
-
 // src/inference/selfhosted.ts
-import { createHmac, randomBytes as randomBytes2 } from "node:crypto";
+import { createHmac, randomBytes as randomBytes3 } from "node:crypto";
 
 // src/gateway/gateway.ts
 import { createHash as createHash2, timingSafeEqual } from "node:crypto";
@@ -23015,7 +23314,7 @@ var ConcurrencyReached = class extends OpenFailure {
 };
 
 // src/inference/registry.ts
-import { randomBytes } from "node:crypto";
+import { randomBytes as randomBytes2 } from "node:crypto";
 
 // src/batches.ts
 function byPriority(a, b) {
@@ -23471,7 +23770,7 @@ var PodRegistry = class {
           if (ofKey.length >= instances) return { kind: "full", pods: ofKey.length };
         }
         const pod = {
-          nonce: randomBytes(16).toString("hex"),
+          nonce: randomBytes2(16).toString("hex"),
           settings: description.settings,
           status: "creating",
           live: true,
@@ -23675,7 +23974,7 @@ function registered(document) {
       { holder, run: text(lease?.run) ?? "", kind: lease?.kind === "keep" ? "keep" : "run", until }
     ];
   });
-  const price = fields.pricePerSecond;
+  const price2 = fields.pricePerSecond;
   const capacity = fields.capacity;
   return {
     nonce: document.path.slice(document.path.lastIndexOf("/") + 1),
@@ -23684,7 +23983,7 @@ function registered(document) {
     live: fields.live === true,
     pod: text(fields.pod),
     createdAt: date(fields.createdAt),
-    pricePerSecond: typeof price === "number" && price > 0 ? price : void 0,
+    pricePerSecond: typeof price2 === "number" && price2 > 0 ? price2 : void 0,
     creatingUntil: date(fields.creatingUntil),
     leases,
     seats: (Array.isArray(fields.seats) ? fields.seats : []).filter(
@@ -23798,8 +24097,9 @@ function otherPoolOf(pod, pool2, owner) {
   if (!named || named === pool2.toLowerCase()) return void 0;
   return pod.env.CODEMAN_ORGANIZATION?.toLowerCase() === owner.toLowerCase() ? named : void 0;
 }
-function accountFingerprint(accountKey) {
-  return createHmac("sha256", accountKey).update("codeman-account-fingerprint").digest("hex").slice(0, 16);
+function accountFingerprint(account) {
+  const scope = account.organization !== void 0 || account.project !== void 0 ? `:${account.organization ?? ""}/${account.project ?? ""}` : "";
+  return createHmac("sha256", account.key).update(`codeman-account-fingerprint${scope}`).digest("hex").slice(0, 16);
 }
 function podCapacity(settings) {
   const text = settings.ollama?.OLLAMA_NUM_PARALLEL ?? settings.vllm?.["max-num-seqs"];
@@ -23842,7 +24142,7 @@ var PodInference = class {
     this.#options = options;
     this.#host = options.gpu.pods;
     this.#pool = options.pool ?? soloPool(options.repository.owner);
-    this.#account = accountFingerprint(options.accountKey);
+    this.#account = accountFingerprint(options.account);
     this.#registry = new PodRegistry(options.store, this.#pool.id, () => this.#now());
   }
   /** The pod events so far, which the caller reports. */
@@ -23855,12 +24155,18 @@ var PodInference = class {
     return this.#options.now?.() ?? /* @__PURE__ */ new Date();
   }
   /**
-   * Refuses, before any pod, an image known not to apply Ollama settings when the run has some:
-   * a requested setting is never dropped (choice 8 of the Ollama settings plan).
+   * Refuses, before any pod, an image whose gateway cannot serve on the provider, and an image
+   * known not to apply Ollama settings when the run has some: a requested setting is never
+   * dropped (choice 8 of the Ollama settings plan).
    */
   #checkImage(log) {
     const own = { ollama: this.#own };
     const { image, parallel } = this.#settings;
+    if (image && this.#host.unservedImages?.has(image)) {
+      throw new Error(
+        `The pod image ${image} cannot serve on ${displayName2(this.#options.gpu.name)}, so no pod was created: use a version of Codeman whose pinned pod images can (\`IMAGES_BEFORE_SALAD\` in src/inference/images.ts lists those that cannot).`
+      );
+    }
     if (onVllm(this.#settings)) {
       if (image) return;
       throw new Error(
@@ -23880,7 +24186,7 @@ var PodInference = class {
     }
   }
   async open(run2, log) {
-    const token = randomBytes2(32).toString("base64url");
+    const token = randomBytes3(32).toString("base64url");
     const holder = leaseHolder(this.#options.repository, run2.task);
     const settings = podSettingsKey(this.#settings, holder);
     let handle;
@@ -24419,7 +24725,7 @@ var PodInference = class {
         CODEMAN_NONCE: record.nonce,
         CODEMAN_MODEL: model,
         CODEMAN_ENGINE: engine.name,
-        CODEMAN_ADMIN_SHA256: sha256(adminToken(this.#options.accountKey, record.nonce)),
+        CODEMAN_ADMIN_SHA256: sha256(adminToken(this.#options.account.key, record.nonce)),
         CODEMAN_START_BY: new Date(now.getTime() + START_MINUTES * 6e4).toISOString(),
         CODEMAN_KEPT_IDLE_MINUTES: String(KEPT_IDLE_MINUTES),
         CODEMAN_RUN_IDLE_MINUTES: String(RUN_IDLE_MINUTES)
@@ -24476,8 +24782,9 @@ var PodInference = class {
       if (!offered.some(({ available }) => available)) {
         const versions = [...new Set(offered.map(({ version }) => version))];
         const on = this.#hosts.length > 1 ? ` on ${this.#hosts.join(" or ")} hosts` : "";
+        const provider = displayName2(this.#options.gpu.name);
         throw new Error(
-          versions.length === 0 ? `Runpod offers no host${on} with ${gpuType} and CUDA ${VLLM_MIN_CUDA} or newer, which vLLM's image needs, so no pod was created: use another GPU type, or \`engine: ollama\`.` : `No host${on} with ${gpuType} and CUDA ${VLLM_MIN_CUDA} or newer has room now (Runpod offers ${versions.join(", ")}), which vLLM's image needs, so no pod was created: try again later, or use another GPU type.`
+          versions.length === 0 ? `${provider} offers no host${on} with ${gpuType} and CUDA ${VLLM_MIN_CUDA} or newer, which vLLM's image needs, so no pod was created: use another GPU type, or \`engine: ollama\`.` : `No host${on} with ${gpuType} and CUDA ${VLLM_MIN_CUDA} or newer has room now (${provider} offers ${versions.join(", ")}), which vLLM's image needs, so no pod was created: try again later, or use another GPU type.`
         );
       }
     }
@@ -24621,8 +24928,8 @@ var PodInference = class {
     }
   }
   #admin(target, method, path, body) {
-    const { fetch: fetchFn = fetch, accountKey } = this.#options;
-    return callGateway(fetchFn, accountKey, target, method, path, body);
+    const { fetch: fetchFn = fetch, account } = this.#options;
+    return callGateway(fetchFn, account.key, target, method, path, body);
   }
 };
 function startFailure(pod) {
@@ -24777,7 +25084,7 @@ var ServerlessInference = class {
     return {
       handle: JSON.stringify(handle),
       // The agent's token for the agent job's gateway, which holds the endpoint's key.
-      credential: randomBytes2(32).toString("base64url"),
+      credential: randomBytes3(32).toString("base64url"),
       contextLength: handle.contextLength
     };
   }
@@ -24849,8 +25156,14 @@ function spansInOrder(value) {
   }
   return true;
 }
+function displayName2(name) {
+  return `${name.charAt(0).toUpperCase()}${name.slice(1)}`;
+}
 
 // src/inference/index.ts
+function onPod(choice) {
+  return isPodProvider(choice.provider);
+}
 function inferenceChoice(settings, record, options = {}) {
   const budgeted = {
     ...options.profile ? { profile: options.profile } : {},
@@ -24872,9 +25185,12 @@ function inferenceChoice(settings, record, options = {}) {
     pods: record?.inference?.pods.filter((pod) => !pod.shared).map((pod) => pod.id) ?? [],
     ...budgeted
   };
-  return settings.provider === "runpod-serverless" ? { ...common, provider: "runpod-serverless", endpoint: settings.endpoint ?? "" } : {
+  if (settings.provider === "runpod-serverless") {
+    return { ...common, provider: "runpod-serverless", endpoint: settings.endpoint ?? "" };
+  }
+  return {
     ...common,
-    provider: "runpod-pod",
+    provider: settings.provider,
     gpu: settings.gpu ?? "",
     podReuse: settings["pod-reuse"] === "run" ? "run" : "task",
     ...settings.ollama && Object.keys(settings.ollama).length > 0 ? { ollama: settings.ollama } : {},
@@ -24912,9 +25228,9 @@ function parseInferenceChoice(text) {
   const budgeted = isProviderName(choice.provider) && Array.isArray(choice.accounts) && choice.accounts.every((name) => typeof name === "string" && name !== "") && amount2(choice.recorded?.spent) && (choice.profile === void 0 || typeof choice.profile === "string") && (choice.pool === void 0 || validPool(choice.pool)) && (choice.concurrency === void 0 || validConcurrency(choice.concurrency));
   if (!budgeted) throw new Error("The inference input is not a valid choice.");
   if (choice.provider === "openrouter") return choice;
-  const valid = typeof choice.model === "string" && ENGINES[choice.engine] !== void 0 && Array.isArray(choice.pods) && (choice.provider === "runpod-pod" ? typeof choice.gpu === "string" : typeof choice.endpoint === "string");
+  const valid = typeof choice.model === "string" && ENGINES[choice.engine] !== void 0 && Array.isArray(choice.pods) && (onPod(choice) ? typeof choice.gpu === "string" : typeof choice.endpoint === "string");
   if (!valid) throw new Error("The inference input is not a valid choice.");
-  if (choice.provider === "runpod-pod") {
+  if (onPod(choice)) {
     for (const [block2, check] of [
       [choice.ollama, ollamaEnvironment],
       [choice.vllm, vllmArguments]
@@ -24926,10 +25242,10 @@ function parseInferenceChoice(text) {
       check(block2);
     }
   }
-  if (choice.provider === "runpod-pod" && choice.batch !== void 0 && (typeof choice.batch !== "string" || !isBatchId(choice.batch))) {
+  if (onPod(choice) && choice.batch !== void 0 && (typeof choice.batch !== "string" || !isBatchId(choice.batch))) {
     throw new Error("The inference input is not a valid choice.");
   }
-  if (choice.provider === "runpod-pod") {
+  if (onPod(choice)) {
     const { hosts, priority } = choice;
     const listed = hosts === void 0 || Array.isArray(hosts) && hosts.length > 0 && new Set(hosts).size === hosts.length && hosts.every((host) => typeof host === "string" && isHostKind(host));
     const values = PROVIDERS[choice.provider].settings.priority?.values ?? [];
@@ -24937,7 +25253,7 @@ function parseInferenceChoice(text) {
       throw new Error("The inference input is not a valid choice.");
     }
   }
-  if (choice.provider === "runpod-pod" && choice.parallel !== void 0) {
+  if (onPod(choice) && choice.parallel !== void 0) {
     const { parallel } = choice;
     if (!Number.isInteger(parallel) || parallel < 1 || parallel > MAX_TASKS) {
       throw new Error("The inference input is not a valid choice.");
@@ -24963,7 +25279,25 @@ function zero() {
 function gpuProvider(account, settings) {
   const { key } = settings;
   if (account === "runpod") return E2E ? E2E.gpu(new Runpod(key, E2E.fetch)) : new Runpod(key);
+  if (account === "salad") {
+    return E2E ? E2E.gpu(new Salad(settings, E2E.fetch)) : new Salad(settings);
+  }
   throw new Error(`Unknown GPU account "${account}".`);
+}
+function gpuAccount(runtime2, account) {
+  const found = ACCOUNTS[account];
+  if (!found) throw new Error(`Unknown GPU account "${account}".`);
+  const settings = { key: runtime2.input(found.input, { required: true }) };
+  for (const { field, input, variable } of found.variables ?? []) {
+    const value = runtime2.input(input).trim();
+    if (value === "") {
+      throw new Error(
+        `The run's ${account} account needs \`${variable}\`, which the workflow passes as \`${input}\`: add it to the repository's or the organization's variables.`
+      );
+    }
+    settings[field] = value;
+  }
+  return settings;
 }
 function inferenceProvider(runtime2, store) {
   const choice = parseInferenceChoice(runtime2.input("inference"));
@@ -24971,7 +25305,7 @@ function inferenceProvider(runtime2, store) {
     return openRouterProvider(runtime2, runtime2.input("management-key", { required: true }));
   }
   return selfHosted(choice, runtime2.repository, {
-    account: { key: runtime2.input("gpu-key", { required: true }) },
+    account: gpuAccount(runtime2, accountOf(choice.provider)),
     image: podImage(choice.engine, runtime2.input("pod-image")),
     usage: runtime2.input("gateway-usage"),
     store,
@@ -24993,8 +25327,9 @@ function providerAccounts(runtime2) {
   };
   return {
     missing: (name) => {
-      const { key, secret } = credential(name);
-      return key === "" ? secret : void 0;
+      const { key, secret, variables = [] } = credential(name);
+      if (key === "") return secret;
+      return variables.find(({ input }) => runtime2.input(input).trim() === "")?.variable;
     },
     taskCosts: async (task) => {
       const { key } = credential("openrouter");
@@ -25012,7 +25347,7 @@ function selfHosted(choice, repository, inputs) {
   const engine = ENGINES[choice.engine];
   if (!engine) throw new Error(`Unknown engine "${choice.engine}".`);
   const common = { model: choice.model, engine, pods: choice.pods };
-  if (choice.provider === "runpod-pod") {
+  if (onPod(choice)) {
     return new PodInference(
       {
         ...common,
@@ -25030,7 +25365,7 @@ function selfHosted(choice, repository, inputs) {
       {
         repository,
         gpu,
-        accountKey: inputs.account.key,
+        account: inputs.account,
         store: inputs.store(),
         pool: choicePool(choice, repository.owner),
         ...inputs.fetch ? { fetch: inputs.fetch } : {},
@@ -30952,13 +31287,13 @@ function copySealedAgentFile(source, target, maxBytes) {
 }
 
 // src/crypto.ts
-import { createCipheriv, createDecipheriv, hkdfSync, randomBytes as randomBytes3 } from "node:crypto";
+import { createCipheriv, createDecipheriv, hkdfSync, randomBytes as randomBytes4 } from "node:crypto";
 var VERSION7 = "v1";
 var INFO = "codeman/openrouter-task-key";
 var MIN_SECRET_LENGTH = 32;
 function encrypt(plaintext, secret) {
-  const salt = randomBytes3(16);
-  const iv = randomBytes3(12);
+  const salt = randomBytes4(16);
+  const iv = randomBytes4(12);
   const cipher = createCipheriv("aes-256-gcm", deriveKey(secret, salt), iv);
   const data = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
   return [VERSION7, salt, iv, cipher.getAuthTag(), data].map((part) => typeof part === "string" ? part : part.toString("base64url")).join(".");
@@ -31345,7 +31680,7 @@ var SAMPLE_MS = 5e3;
 async function agentAccess(inputs) {
   const done = async () => void 0;
   if (inputs.provider === "openrouter") return { apiKey: inputs.credential, finish: done };
-  if (inputs.provider === "runpod-pod") {
+  if (isPodProvider(inputs.provider)) {
     if (!inputs.baseUrl) throw new Error("The pod's gateway URL is missing.");
     const handle2 = inputs.handle ? parseHandle(inputs.handle) : void 0;
     return {
@@ -31660,7 +31995,7 @@ function isObject(value) {
 }
 
 // src/prompt.ts
-import { randomBytes as randomBytes4 } from "node:crypto";
+import { randomBytes as randomBytes5 } from "node:crypto";
 
 // src/i18n/en.ts
 var OUTCOMES = {
@@ -31786,12 +32121,14 @@ var en = {
   provider: (provider) => ({
     openrouter: "OpenRouter",
     "runpod-pod": "Runpod (pod)",
-    "runpod-serverless": "Runpod (Serverless)"
+    "runpod-serverless": "Runpod (Serverless)",
+    "salad-pod": "Salad (pod)"
   })[provider],
   spendNote: (provider) => ({
     openrouter: "**OpenRouter**: a run's cost is what its key used, exact, and the task's later runs refresh it, whatever their provider.",
     "runpod-pod": "**Runpod (pod)**: a run's cost is its pod's time at the pod's price; the task also counts its pod's time between runs, refreshed later from Runpod's billing.",
-    "runpod-serverless": "**Runpod (Serverless)**: a run's cost is an estimate of the time Runpod bills its workers, which counts in the month as soon as the run ends; time a worker served several runs at once, of any of the organization's repositories, is split among them, and later runs refresh it."
+    "runpod-serverless": "**Runpod (Serverless)**: a run's cost is an estimate of the time Runpod bills its workers, which counts in the month as soon as the run ends; time a worker served several runs at once, of any of the organization's repositories, is split among them, and later runs refresh it.",
+    "salad-pod": "**Salad (pod)**: a run's cost is an estimate, its pod's time from its creation at Salad's listed price for its GPU and priority; the task also counts its pod's time between runs. Salad has no billing API, so nothing refreshes it."
   })[provider],
   monthNote: "**Month**: what the repository's runs count this month in Codeman's ledger before the run, an estimate: each run's cost as above, and the whole limit of each run still open. The organization's monthly budget, when it has one, counts every repository's runs and Runpod's billing by the hour.",
   earlierRuns: (runs) => `Earlier runs (${runs})`,
@@ -32059,12 +32396,14 @@ var ptBR = {
   provider: (provider) => ({
     openrouter: "OpenRouter",
     "runpod-pod": "Runpod (pod)",
-    "runpod-serverless": "Runpod (Serverless)"
+    "runpod-serverless": "Runpod (Serverless)",
+    "salad-pod": "Salad (pod)"
   })[provider],
   spendNote: (provider) => ({
     openrouter: "**OpenRouter**: o custo de uma rodada \xE9 o que a sua chave usou, exato, e as rodadas seguintes da tarefa o atualizam, qualquer que seja o seu provedor.",
     "runpod-pod": "**Runpod (pod)**: o custo de uma rodada \xE9 o tempo do seu pod ao pre\xE7o dele; a tarefa conta tamb\xE9m o tempo do pod entre rodadas, atualizado depois pela cobran\xE7a da Runpod.",
-    "runpod-serverless": "**Runpod (Serverless)**: o custo de uma rodada \xE9 uma estimativa do tempo que a Runpod cobra pelos seus workers, que conta no m\xEAs assim que a rodada termina; o tempo em que um worker atendeu v\xE1rias rodadas ao mesmo tempo, de qualquer reposit\xF3rio da organiza\xE7\xE3o, \xE9 dividido entre elas, e as rodadas seguintes o atualizam."
+    "runpod-serverless": "**Runpod (Serverless)**: o custo de uma rodada \xE9 uma estimativa do tempo que a Runpod cobra pelos seus workers, que conta no m\xEAs assim que a rodada termina; o tempo em que um worker atendeu v\xE1rias rodadas ao mesmo tempo, de qualquer reposit\xF3rio da organiza\xE7\xE3o, \xE9 dividido entre elas, e as rodadas seguintes o atualizam.",
+    "salad-pod": "**Salad (pod)**: o custo de uma rodada \xE9 uma estimativa, o tempo do seu pod desde a sua cria\xE7\xE3o ao pre\xE7o que a Salad lista para a sua GPU e prioridade; a tarefa conta tamb\xE9m o tempo do pod entre rodadas. A Salad n\xE3o tem API de cobran\xE7a, ent\xE3o nada o atualiza."
   })[provider],
   monthNote: "**M\xEAs**: o que as rodadas do reposit\xF3rio contam neste m\xEAs no registro do Codeman antes da rodada, uma estimativa: o custo de cada rodada como acima, e o limite inteiro de cada rodada ainda aberta. O or\xE7amento mensal da organiza\xE7\xE3o, quando ela tem um, conta as rodadas de todos os reposit\xF3rios e a cobran\xE7a da Runpod por hora.",
   earlierRuns: (runs) => `Rodadas anteriores (${runs})`,
@@ -32719,7 +33058,7 @@ Do not carry on the task. ${TASK_FILE} describes it: read it for the stage, the 
 Start no new work, and run no long command, such as the whole test suite.`;
 }
 function quoter() {
-  const nonce = randomBytes4(6).toString("hex");
+  const nonce = randomBytes5(6).toString("hex");
   return (label, text) => [`<<<${label} ${nonce}`, text.trim() || "(empty)", `>>>${label} ${nonce}`].join("\n");
 }
 function issueSection(task, quote) {
@@ -35019,7 +35358,7 @@ async function open(services, ledger, run2) {
   if (costs) await ledger.refresh(runs, { costs }, runtime2);
   const lastsMs = reservationMs(positiveNumber(runtime2, "agent-job-minutes"));
   const cap = choice.concurrency;
-  const runsCap = cap && choice.provider !== "runpod-pod" ? { key: cap.key, runs: cap.instances * cap.tasks } : void 0;
+  const runsCap = cap && !onPod(choice) ? { key: cap.key, runs: cap.instances * cap.tasks } : void 0;
   const reservation = await ledger.reserve(
     run2,
     {
@@ -35176,19 +35515,19 @@ async function openRouterCosts(services, runs) {
 async function release(services) {
   const { runtime: runtime2 } = services;
   const choice = parseInferenceChoice(runtime2.input("inference"));
-  if (choice.provider !== "runpod-pod") {
+  if (!onPod(choice)) {
     runtime2.info("Nothing to release: the run had no pod.");
     return;
   }
-  const accountKey = runtime2.input("gpu-key", { required: true });
-  const gpu = gpuProvider(accountOf(choice.provider), { key: accountKey });
+  const account = gpuAccount(runtime2, accountOf(choice.provider));
+  const gpu = gpuProvider(accountOf(choice.provider), account);
   if (!gpu.pods) throw new Error(`${gpu.name} has no pods.`);
   const handle = runtime2.input("handle", { required: true });
   const pool2 = choicePool(choice, runtime2.repository.owner);
   const registry = new PodRegistry(services.store(), pool2.id);
   const pods = await releasePod(gpu.pods, registry, handle, runtime2, {
     provider: gpu.name,
-    gateway: { accountKey }
+    gateway: { accountKey: account.key }
   });
   const ledger = services.ledger("release-pod", pool2);
   ledger.release(ledgerRun(runtime2), pods);
@@ -35810,7 +36149,7 @@ function checkFields(fields, path) {
 }
 
 // src/store/firestore.ts
-var API3 = "https://firestore.googleapis.com";
+var API4 = "https://firestore.googleapis.com";
 var TIMEOUT_MS = 3e4;
 var Firestore = class _Firestore {
   #database;
@@ -35823,7 +36162,7 @@ var Firestore = class _Firestore {
       throw new Error(`"${options.project}" is not a Google Cloud project ID.`);
     }
     this.#database = `projects/${options.project}/databases/(default)`;
-    this.#baseUrl = options.baseUrl ?? API3;
+    this.#baseUrl = options.baseUrl ?? API4;
     this.#token = options.token;
     this.#fetch = options.fetch ?? fetch;
     this.#wait = options.wait ?? ((ms) => sleep6(ms));

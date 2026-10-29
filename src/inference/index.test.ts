@@ -7,9 +7,13 @@ import { FakeRuntime } from "../testing/fake-runtime.ts";
 import { POD_IMAGES } from "./images.ts";
 import {
   choicePool,
+  gpuAccount,
+  gpuProvider,
   inferenceChoice,
   inferenceProvider,
+  onPod,
   parseInferenceChoice,
+  providerAccounts,
   selfHosted,
 } from "./index.ts";
 
@@ -114,6 +118,55 @@ test("builds the provider the choice names, with only the credentials it needs",
   assert.equal(inferenceProvider(pod, store).name, "runpod pods");
   const missing = new FakeRuntime({ inputs: { inference: JSON.stringify(choice) } });
   assert.throws(() => inferenceProvider(missing, store), /gpu-key/);
+});
+
+test("a Salad pod opens Salad's account, with its key, organization and project", () => {
+  const store = () => new MemoryStore();
+  const choice = inferenceChoice(
+    settings({
+      provider: "salad-pod",
+      model: "qwen3-coder:30b",
+      gpu: "RTX 4090 (24 GB)",
+      hosts: "community",
+    }),
+    null,
+  );
+  assert.ok(onPod(choice) && choice.provider === "salad-pod");
+  assert.deepEqual(choice.accounts, ["salad"]);
+  // Salad's highest priority is its default, left out like Runpod's.
+  assert.equal("priority" in choice, false);
+  assert.deepEqual(choice.hosts, ["community"]);
+  assert.deepEqual(parseInferenceChoice(JSON.stringify(choice)), choice);
+  const inputs = {
+    inference: JSON.stringify(choice),
+    "salad-key": "sk",
+    "salad-organization": "acme",
+    "salad-project": "codeman",
+  };
+  assert.equal(inferenceProvider(new FakeRuntime({ inputs }), store).name, "salad pods");
+  assert.deepEqual(gpuAccount(new FakeRuntime({ inputs }), "salad"), {
+    key: "sk",
+    organization: "acme",
+    project: "codeman",
+  });
+  // Runpod's key does not open Salad's account.
+  const runpod = new FakeRuntime({ inputs: { inference: inputs.inference, "gpu-key": "rk" } });
+  assert.throws(() => inferenceProvider(runpod, store), /salad-key/);
+  const { "salad-project": _, ...noProject } = inputs;
+  assert.throws(
+    () => inferenceProvider(new FakeRuntime({ inputs: noProject }), store),
+    /The run's salad account needs `CODEMAN_SALAD_PROJECT`, which the workflow passes as `salad-project`/,
+  );
+  assert.equal(
+    gpuProvider("salad", gpuAccount(new FakeRuntime({ inputs }), "salad")).name,
+    "salad",
+  );
+  assert.throws(() => gpuProvider("salad", { key: "sk" }), /CODEMAN_SALAD_ORGANIZATION/);
+  // The budgets name what a run on Salad lacks: its key, or a variable beside it.
+  const accounts = providerAccounts(new FakeRuntime({ inputs: noProject }));
+  assert.equal(accounts.missing("salad"), "CODEMAN_SALAD_PROJECT");
+  assert.equal(providerAccounts(new FakeRuntime()).missing("salad"), "CODEMAN_SALAD_API_KEY");
+  assert.equal(providerAccounts(new FakeRuntime({ inputs })).missing("salad"), undefined);
 });
 
 test("a pod's choice carries its Ollama settings, checked again when read", () => {
