@@ -1,17 +1,20 @@
 # Self-hosted inference
 
-With `provider: runpod-pod` or `provider: runpod-serverless` ([providers](../settings/providers.md)), a task's agents use a model that Codeman serves on GPUs rented from Runpod, instead of OpenRouter. Runpod charges per second of GPU, whether or not the agent is generating, so a run's cost is time, not tokens.
+With `provider: runpod-pod`, `runpod-serverless` or `salad-pod` ([providers](../settings/providers.md)), a task's agents use a model that Codeman serves on GPUs rented from Runpod or Salad, instead of OpenRouter. Both charge per second of GPU, whether or not the agent is generating, so a run's cost is time, not tokens.
 
-The choice was made in the [self-hosted inference plan](../plans/2026-10-02-self-hosted-inference.md), which records its decisions.
+The choice was made in the [self-hosted inference plan](../plans/2026-10-02-self-hosted-inference.md), which records its decisions. Salad, and the `hosts` that let pods run on third parties' machines, came with the [plan for Salad pods](../plans/2026-10-29-add-salad-pods.md).
 
 ## At a glance
 
 | Provider | GPU | [Engine](../glossary.md#engine) | Billed | Start |
 | --- | --- | --- | --- | --- |
-| `runpod-pod` | A [pod](../glossary.md#pod) Codeman creates, with the task's `gpu`, on Secure Cloud | Ollama or vLLM (`engine`), each in a pod image of Codeman's | Every second the pod exists, from its creation | Minutes (more for vLLM), unless the task's pod was kept |
+| `runpod-pod` | A [pod](../glossary.md#pod) Codeman creates, with the task's `gpu`, on Secure Cloud unless `hosts` allows Community Cloud | Ollama or vLLM (`engine`), each in a pod image of Codeman's | Every second the pod exists, from its creation | Minutes (more for vLLM), unless the task's pod was kept |
 | `runpod-serverless` | The workers of an endpoint a maintainer created ([installation](../installation/runpod.md)) | Runpod's vLLM worker | Every second a worker runs, its model's load and idle timeout included | Minutes, while vLLM prepares the model, unless a worker is still up; a run with no worker for 25 minutes fails |
+| `salad-pod` | A pod Codeman creates, a container group of one replica on the task's GPU class, on Community hosts: consumer PCs ([installation](../installation/salad.md)) | Ollama or vLLM, as on Runpod | Every second the container runs, at the price of its GPU class and priority; the image's download is free | Minutes, more on a slow home connection, unless the task's pod was kept |
 
 ## Choosing
+
+No test of Codeman's has run on Salad yet: what follows compares Runpod's providers with OpenRouter. Salad's GPUs cost less than Runpod's, but run on machines third parties own, and below `high` priority may be taken by other workloads ([priority](../settings/providers.md#priority)).
 
 What Codeman's tests on Runpod showed (step 8 of the plan):
 
@@ -43,7 +46,7 @@ flowchart LR
   keys["Key jobs"] --> provider["InferenceProvider"]
   provider --> openrouter["OpenRouter"]
   provider --> selfhosted["Pods and Serverless<br/>selfhosted.ts"]
-  selfhosted --> gpu["GpuProvider<br/>runpod.ts"]
+  selfhosted --> gpu["GpuProvider<br/>runpod.ts, salad.ts"]
   selfhosted --> gateway["Gateway"]
   gateway --> engine["InferenceEngine<br/>Ollama, vLLM"]
 ```
@@ -51,7 +54,7 @@ flowchart LR
 | Interface | Covers | Implementations |
 | --- | --- | --- |
 | `InferenceProvider` ([`src/inference/provider.ts`](../../src/inference/provider.ts)) | What the [key jobs](../glossary.md#key-jobs) use: opening a run with a limit (a handle, a credential, an API) and closing it (its usage, and what the task's other runs and pods cost, when the provider can tell). | OpenRouter; pods and Serverless ([`selfhosted.ts`](../../src/inference/selfhosted.ts)) |
-| `GpuProvider` ([`gpu.ts`](../../src/inference/gpu.ts)) | Pods (price, create, get, list, terminate, URL, billing) and Serverless endpoints (settings, price, job queue URL), and the account's billing by the hour. | Runpod's REST API v2 ([`runpod.ts`](../../src/inference/runpod.ts)) |
+| `GpuProvider` ([`gpu.ts`](../../src/inference/gpu.ts)) | Pods (price, create, get, list, terminate, URL, billing when the provider has it) and Serverless endpoints (settings, price, job queue URL), and the account's billing by the hour when it has one. | Runpod's REST API v2 ([`runpod.ts`](../../src/inference/runpod.ts)); Salad's Container Engine, pods only and without billing ([`salad.ts`](../../src/inference/salad.ts)) |
 | `InferenceEngine` ([`engine.ts`](../../src/inference/engine.ts)) | Model names and usage from responses. | Ollama, vLLM |
 | Gateway ([`src/gateway/`](../../src/gateway/)) | In front of the engine: the runs' tokens, forwarding, a record per request, each run's budget limit and share of a pod, and usage in OpenRouter's terms. | One program, in the pod or in the agent job |
 
@@ -101,8 +104,11 @@ A pod's gateway then stops the run within 15 seconds. It takes no more of the po
 
 The admin token is an HMAC of the GPU account key and a nonce in the pod's environment, which also holds the token's hash. Only the jobs with the account key manage pods, and no token is stored anywhere.
 
-#### Through Runpod's proxy
+<a id="through-runpods-proxy"></a>
 
-- A pod's gateway is public, through Runpod's proxy, which drops a request that gets no response within 100 seconds.
+#### Through the provider's proxy
+
+- A pod's gateway is public, through Runpod's proxy or Salad's Container Gateway. Each drops a request that gets no response within 100 seconds ([load balancing options](../web/salad/load-balancing-options.md)).
+- The gateway listens on IPv6 too, which Salad's Container Gateway reaches pods on.
 - So the gateway answers a streamed request at once, and sends SSE comments while the engine is silent.
 - Ollama and vLLM listen only on the pod's loopback.

@@ -41,6 +41,7 @@ Notes on the layers:
 - **A repository variable named `CODEMAN_SETTINGS`** replaces the organization's whole, not value by value, since GitHub gives it precedence.
 - **Organization-only settings.** A repository's file or a profile that sets `organization-monthly-budget` or `pool` stops the run with an error. Neither a manual run's inputs nor a task's commands take them.
 - **The profile (5).** Profiles also have conditions, which decide when each one applies and how many tasks a [workflow run](../glossary.md#workflow-run) takes.
+- **Files-only settings.** `hosts` decides whose machines get the repository's code, so only the settings files set it, at the top level or in a profile. A manual run has no input for it, and `/codeman set hosts` is refused ([hosts](providers.md#hosts)).
 - **The task's commands (6).** The description is read first, then the comments, and the last command for a setting wins ([commands](../tasks/commands.md)). What their `model` and `gpu` apply to, and what happens when one does not fit, is in [the model](provider-settings-across-layers.md#the-model).
 
 ### Which value wins
@@ -87,7 +88,7 @@ Settings from .codeman/settings.yml: model=deepseek/deepseek-v4.1-flash, monthly
 Settings from the `settings` input (organization variable CODEMAN_SETTINGS): language=pt-BR.
 ```
 
-When a profile applies, another line names it, such as "Profile `planner` applies to this run." The values that no line names come from that profile, from the provider's defaults (`engine`, `pod-reuse`) or from Codeman's defaults.
+When a profile applies, another line names it, such as "Profile `planner` applies to this run." The values that no line names come from that profile, from the provider's defaults (`engine`, `pod-reuse`, `hosts`, `priority`) or from Codeman's defaults.
 
 > [!NOTE]
 > These lines show what each layer sets, not what the run uses. A provider setting that a change of provider drops is still listed under the layer that set it, such as the organization's `gpu` when a repository's file names `openrouter`.
@@ -101,8 +102,10 @@ No setting is required. A provider may require some of its own settings ([provid
 | Setting | Type | Default | Allowed values | Meaning |
 | --- | --- | --- | --- | --- |
 | `model` | Model ID | None | The provider's form, at most 100 characters ([providers](providers.md)) | The model of the agent runs. At the top level, the model of the runs no profile serves. Without one, only profiles serve agent runs, and each sets its own |
-| `provider` | Choice | `openrouter` | `openrouter`, `runpod-pod`, `runpod-serverless` | Where agent runs get their model. Each provider accepts only its own settings ([providers](providers.md)) |
+| `provider` | Choice | `openrouter` | `openrouter`, `runpod-pod`, `runpod-serverless`, `salad-pod` | Where agent runs get their model. Each provider accepts only its own settings ([providers](providers.md)) |
 | `engine`, `gpu`, `endpoint`, `pod-reuse`, `ollama`, `vllm` | By provider | The provider's | The provider's | The provider's settings, accepted only by some providers. See [providers](providers.md), [Ollama settings](ollama.md) and [vLLM settings](vllm.md) |
+| `hosts` | List of kinds | `[secure]` | `secure`, `community`, each once, by preference | The [kinds of host](providers.md#hosts) a pod may run on, on `runpod-pod` and `salad-pod`. Only the settings files set it |
+| `priority` | Choice | The provider's highest | The provider's: `on-demand` on Runpod; `high`, `medium`, `low`, `batch` on Salad | A pod's [priority](providers.md#priority), on `runpod-pod` and `salad-pod` |
 | `profiles` | List of profiles | None | See [profiles](profiles.md) | A provider, a model and that provider's settings for some agent runs, with conditions: the [stages](../glossary.md#stage) and the [batch's](../glossary.md#batch) [count](../glossary.md#count) of tasks. The counts also decide how many tasks a workflow run takes, one without them |
 | `pool` | List of logins | None: the organization alone | 1 to 10 logins, each once in any case, this organization included | The organizations whose repositories batch tasks on shared pods, such as `[organization-a, organization-b]`. Only the organization's settings set it. See [pools](../runs/batches.md#pools) |
 
@@ -144,7 +147,7 @@ No setting is required. A provider may require some of its own settings ([provid
 
 | Setting | Type | Default | Allowed values | Meaning |
 | --- | --- | --- | --- | --- |
-| `concurrency` | Whole number | `1` | 1 to 10 | How many [instances](../glossary.md#instance) of a profile, or of the top level, run at once: pods on `runpod-pod`, batches of runs on other providers |
+| `concurrency` | Whole number | `1` | 1 to 10 | How many [instances](../glossary.md#instance) of a profile, or of the top level, run at once: pods on `runpod-pod` and `salad-pod`, batches of runs on other providers |
 
 - It may be set at the top level and in a [profile](profiles.md). A profile without it takes the top level's.
 - Tasks beyond it wait for a seat. See [concurrency](profiles.md#concurrency).
@@ -173,7 +176,8 @@ These limits are what the agent is told. See [agent output](../runs/agent.md#age
 | Setting | Organization's settings | `.codeman/settings.yml` | Profile | Manual run's input | `/codeman set` |
 | --- | --- | --- | --- | --- | --- |
 | `model` | Yes | Yes | Yes | Yes | Yes, for the top level's provider |
-| `provider`, `engine`, `endpoint`, `pod-reuse`, `ollama`, `vllm` | Yes | Yes | Yes | No | No |
+| `provider`, `engine`, `endpoint`, `pod-reuse`, `priority`, `ollama`, `vllm` | Yes | Yes | Yes | No | No |
+| `hosts` | Yes | Yes | Yes | No | No: refused, since it decides whose machines get the code |
 | `gpu` | Yes | Yes | Yes | No | Yes, for the runs whose provider accepts it |
 | `profiles` | Yes, the whole list | Yes, the whole list | Error | No | No |
 | `task-budget`, `max-runs` | Yes | Yes | Error | Yes | Yes |

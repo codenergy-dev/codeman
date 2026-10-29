@@ -20,7 +20,7 @@ flowchart LR
   subgraph actions["Your repository's Actions, with Codeman's secrets"]
     select["select<br/>App key, OIDC"]
     dispatch["dispatch<br/>App key"]
-    keys["open-key, close-key, release-pod<br/>management key, Runpod API key, OIDC"]
+    keys["open-key, close-key, release-pod<br/>management key, GPU API keys, OIDC"]
     subgraph agentjob["agent job: the runner's user, with sudo"]
       step["Codeman's step<br/>encryption secret, Serverless key,<br/>read-only GITHUB_TOKEN"]
       subgraph sandbox["Sandbox: codeman-agent, no sudo"]
@@ -57,7 +57,7 @@ flowchart LR
 
 | Who | Can read or change | How |
 | --- | --- | --- |
-| Anyone with write access to a repository that receives Codeman's secrets | Every one it receives: the App's private key, the OpenRouter management key, the Runpod keys and the encryption secret | A workflow pushed to a branch of their own, with no review and no change to the default branch |
+| Anyone with write access to a repository that receives Codeman's secrets | Every one it receives: the App's private key, the OpenRouter management key, the Runpod and Salad keys and the encryption secret | A workflow pushed to a branch of their own, with no review and no change to the default branch |
 | The same people | That repository's `CODEMAN_SETTINGS` and `CODEMAN_COMMIT_SHA` | A repository variable of the same name, which overrides the organization's |
 | With a [pool of organizations](../glossary.md#pool-of-organizations), anyone with write access to such a repository in any member | Every member's installed repositories, with the App's permissions | The App's key, read as above ([risk 8](risks.md#8-a-pool-shares-one-app-key)) |
 | Whoever can change `codeman.yml` or `codeman-task.yml` on the default branch | The backend: all of the project's Firestore data | A change on the default branch, which a ruleset that requires a reviewed pull request holds back |
@@ -101,7 +101,7 @@ Before running Codeman on a repository, go through these items. Each one sets on
 9. With several repositories, set `organization-monthly-budget` in the organization's settings. It holds only as far as people with write access are trusted:
    - a repository variable `CODEMAN_SETTINGS` replaces the organization's settings whole for that repository, `organization-monthly-budget` and `pool` included ([who can read Codeman's secrets](#who-can-read-codemans-secrets));
    - whoever can change the repository's workflow file on the default branch can replace them too.
-10. With self-hosted inference, use a Runpod account dedicated to Codeman, with prepaid credits and no auto-pay.
+10. With self-hosted inference, use a Runpod account, or a Salad user and organization, dedicated to Codeman, with prepaid credits and no auto-pay. Leave `hosts` at `[secure]` unless the repository's code may go to machines third parties own ([risk 6](risks.md#self-hosted-inference)).
 
 ### Codeman's version
 

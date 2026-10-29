@@ -48,7 +48,7 @@ Codeman answers in the language of the issue. Code, commit messages and document
 | An [OpenRouter](https://openrouter.ai) account | Reaching the models. Each [agent run](docs/glossary.md#agent-run) gets its own key, capped at what remains of the task's budget | The credits you add |
 | A [Firebase](https://firebase.google.com) project | The [backend](docs/glossary.md#backend), where Codeman records its runs | Free: the free quota covers Codeman's use |
 | Two workflow files and their credentials | Running Codeman, at the [commit](docs/glossary.md#codemans-commit) that the `CODEMAN_COMMIT_SHA` variable names | Your GitHub Actions minutes |
-| A [Runpod](https://www.runpod.io) account | Optional: serving an open model on your own rented GPUs | What Runpod bills |
+| A [Runpod](https://www.runpod.io) or [Salad](https://salad.com) account | Optional: serving an open model on your own rented GPUs | What Runpod or Salad bills |
 
 ```mermaid
 flowchart LR
@@ -56,7 +56,7 @@ flowchart LR
   app["GitHub App"] -->|tokens| workflow
   workflow -->|"plans, code, pull requests"| issues
   workflow -->|"records its runs"| backend[("Firebase backend")]
-  workflow -->|"agent runs"| models["OpenRouter or Runpod"]
+  workflow -->|"agent runs"| models["OpenRouter, Runpod or Salad"]
 ```
 
 [Installation](docs/installation/setup.md) walks through each part, then a first task.
@@ -69,7 +69,7 @@ Codeman is model-agnostic. It reaches models through OpenRouter by default. You 
 - The file inherits the defaults an organization can [share](docs/installation/shared-settings.md) with its repositories.
 - `.codemanignore` lists the paths the agent may not change.
 
-You can also serve an open model yourself, on GPUs rented from Runpod, with the same budgets:
+You can also serve an open model yourself, on GPUs rented from Runpod or Salad, with the same budgets:
 
 ```yaml
 provider: runpod-pod
@@ -80,6 +80,7 @@ gpu: "NVIDIA RTX A6000"
 Codeman then starts a GPU and serves the model with Ollama or vLLM, behind its own gateway. It shares the GPU among the tasks on the same model and GPU of the organization, or of its [pool](docs/installation/pool.md), and stops it when no task needs it any more.
 
 - A Serverless endpoint works too (`provider: runpod-serverless`).
+- So do Salad's cheaper consumer GPUs (`provider: salad-pod`), which run on machines third parties own: the settings files must allow them with `hosts: [community]` ([Salad](docs/installation/salad.md)).
 - Each provider takes only its own settings; see [self-hosted inference](docs/installation/runpod.md).
 - [Profiles](docs/installation/mixing-providers.md) mix providers in one task, such as OpenRouter to plan and a GPU to write the code, under the same budgets.
 

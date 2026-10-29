@@ -58,7 +58,7 @@ contexts/{key}                               the cache of fits
 
 | Phase | Fields |
 | --- | --- |
-| Picked, by `select` | `repository` (`owner/name`), `task`, `workflowRun`, `attempt`, `month` (`2026-10`), `status: picked`, `pickedAt`, `stage`, `model`, `provider` (`openrouter`, `runpod-pod` or `runpod-serverless`), `profile`; `batch`, the [batch](../glossary.md#batch) of a pod's run; `key`, its batch key, whose open runs a [concurrency](../settings/profiles.md#concurrency) caps |
+| Picked, by `select` | `repository` (`owner/name`), `task`, `workflowRun`, `attempt`, `month` (`2026-10`), `status: picked`, `pickedAt`, `stage`, `model`, `provider` (`openrouter`, `runpod-pod`, `runpod-serverless` or `salad-pod`), `profile`; `batch`, the [batch](../glossary.md#batch) of a pod's run; `key`, its batch key, whose open runs a [concurrency](../settings/profiles.md#concurrency) caps |
 | Reserved, by `open-key` | `status: open`, `reservedAt`, `expiresAt`, `limit`; `carried`, on the task's first run in the ledger |
 | Opened | `openedAt` |
 | Refused | `status: refused`, `refusedAt`, `refusal` (the `open-key` status), `reason` |
@@ -91,7 +91,7 @@ Only a refresh of an OpenRouter run's cost from its key writes `expired`. Other 
 | --- | --- |
 | `settings` | The hash of the [pod settings](../glossary.md#pod-settings) |
 | `model`, `gpuType`, `image`, `reuse` | What it serves |
-| `provider` | `runpod`: the cloud that runs and bills the pod |
+| `provider` | `runpod` or `salad`: the cloud that runs and bills the pod |
 | `account` | The GPU account's fingerprint |
 | `organization` | Its creator's |
 | `capacity` | The runs it serves at once, when limited |

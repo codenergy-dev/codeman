@@ -114,7 +114,7 @@ profiles:
 
 | Provider | One instance | `concurrency: 2` with `max-tasks: 3` allows | Counted across |
 | --- | --- | --- | --- |
-| `runpod-pod` | A pod, which serves up to its [capacity](../glossary.md#capacity) | 2 pods, of 3 runs each | The pool's pods |
+| `runpod-pod`, `salad-pod` | A pod, which serves up to its [capacity](../glossary.md#capacity) | 2 pods, of 3 runs each | The pool's pods |
 | `openrouter`, `runpod-serverless` | One batch's runs: the profile's most tasks | 6 open runs | The organization's open runs |
 
 - **Default:** 1, a whole number from 1 to 10. A profile without it takes the top level's, and each profile counts its own instances.

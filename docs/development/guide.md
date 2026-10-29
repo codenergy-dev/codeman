@@ -117,7 +117,7 @@ The gateway has its own entry point, [`src/gateway/main.ts`](../../src/gateway/m
 | `Platform`, `CiResults`, `Conventions` | [`src/platform/`](../../src/platform/) | A directory each, such as `src/platform/github/` | [Platforms](platforms.md) |
 | `Runtime` | [`src/runtime/`](../../src/runtime/) | `src/runtime/github-actions.ts` | [Platforms](platforms.md) |
 | `Harness` | [`src/harness/`](../../src/harness/) | `src/harness/opencode.ts` | [Agent harness](dependencies.md#agent-harness-opencode) |
-| `InferenceProvider`, `GpuProvider`, `InferenceEngine` | [`src/inference/`](../../src/inference/) | OpenRouter, Runpod, Ollama, vLLM | [Self-hosted inference](../inference/self-hosted.md) |
+| `InferenceProvider`, `GpuProvider`, `InferenceEngine` | [`src/inference/`](../../src/inference/) | OpenRouter, Runpod, Salad, Ollama, vLLM | [Self-hosted inference](../inference/self-hosted.md) |
 | `Store` | [`src/store/`](../../src/store/) | Firestore, and memory for tests | [The store](../backend/backend.md#the-store) |
 
 - Only runtime adapters import `@actions/core`.
@@ -267,7 +267,7 @@ sequenceDiagram
 
 ### Make a new package public, once
 
-A package that GHCR creates is private. Runpod pulls images without credentials, so a pod on a private image never starts.
+A package that GHCR creates is private. Runpod and Salad pull images without credentials, so a pod on a private image never starts.
 
 After the first publish of `codeman-ollama` and of `codeman-vllm`:
 
@@ -294,7 +294,10 @@ Pods on an image pinned before may still exist. Codeman must know what their gat
 | `SINGLE_RUN_IMAGES` | Serves one run at a time | Each task gets a pod of its own on them |
 | `IMAGES_WITHOUT_OLLAMA_SETTINGS` | Cannot apply [Ollama settings](../settings/ollama.md#pod-images) | A run with some stops before creating a pod on them |
 
+`IMAGES_BEFORE_SALAD`, in [`src/inference/images.ts`](../../src/inference/images.ts), holds every image pinned before Codeman served on Salad, whose gateway neither listens on IPv6 nor ends a pod by exiting. `salad-pod` refuses them before any group is created ([Salad's pod images](../installation/salad.md#pod-images)).
+
 - When the Ollama image changes, the image it replaces stays in the lists where it belongs.
+- When new digests are pinned, the ones they replace stay in `IMAGES_BEFORE_SALAD`, and the new ones are not added: they serve on Salad.
 - Both lists hold `ghcr.io/codenergy-dev/codeman-pod` digests, pinned before the images per engine.
 - An image built from the current code needs neither list.
 

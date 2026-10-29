@@ -1,6 +1,6 @@
 # Ollama settings
 
-With `provider: runpod-pod` and its [engine](../glossary.md#engine) `ollama`, an `ollama:` block tunes the [pod](../glossary.md#pod)'s Ollama server. Each key becomes one of the server's environment variables, such as `num-parallel: 4` for `OLLAMA_NUM_PARALLEL=4`.
+With `provider: runpod-pod` or `salad-pod` and its [engine](../glossary.md#engine) `ollama`, an `ollama:` block tunes the [pod](../glossary.md#pod)'s Ollama server. Each key becomes one of the server's environment variables, such as `num-parallel: 4` for `OLLAMA_NUM_PARALLEL=4`.
 
 ```yaml
 provider: runpod-pod
@@ -121,7 +121,7 @@ per token  = attention layers × K/V heads × (key length + value length) × byt
 estimate   = the largest candidate ≤ free ÷ (per token × parallel requests); the floor at least
 ```
 
-- **GPU memory** is the GPU type's memory as Runpod's API gives it, read as GiB.
+- **GPU memory** is the GPU type's memory as Runpod's API gives it, or as a Salad class's name says it, such as `(24 GB)`, read as GiB.
 - **Model size on disk** comes from `/api/tags`.
 - **Attention layers, K/V heads, key and value lengths** come from `/api/show`.
 - **Bytes per element** depend on `kv-cache-type`: 2 for `f16`, 34/32 for `q8_0`, 18/32 for `q4_0`.

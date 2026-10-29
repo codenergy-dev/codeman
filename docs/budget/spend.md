@@ -13,12 +13,12 @@ The [status comment](../glossary.md#status-comment) has a spend table, with one 
 | When | When the run ran |
 | Stage | The run's [stage](../glossary.md#stage) |
 | Model | The run's model |
-| Provider | Where the model was served: `OpenRouter`, `Runpod (pod)` or `Runpod (Serverless)`, for the [providers](../settings/providers.md) `openrouter`, `runpod-pod` and `runpod-serverless` |
+| Provider | Where the model was served: `OpenRouter`, `Runpod (pod)`, `Runpod (Serverless)` or `Salad (pod)`, for the [providers](../settings/providers.md) `openrouter`, `runpod-pod`, `runpod-serverless` and `salad-pod` |
 | Time | How long the agent ran, as the agent job measures it, outside the sandbox |
 | Input and output tokens | As the provider or the [gateway](../glossary.md#gateway) counts them |
 | Context length | The input tokens of the run's largest request |
 | Tokens per second | The mean completion tokens per second |
-| Cost | What the run spent: exact on OpenRouter, measured or estimated on Runpod ([self-hosted runs](#self-hosted-runs)) |
+| Cost | What the run spent: exact on OpenRouter, measured or estimated on Runpod, estimated on Salad ([self-hosted runs](#self-hosted-runs)) |
 | Limit | The key's limit: the run's [budget reservation](../glossary.md#reservation) |
 | Task budget | The task's `task-budget` |
 | Month (estimated) | What the repository's runs counted this month in the [ledger](../glossary.md#ledger) before the run, of the monthly budget |
@@ -46,11 +46,11 @@ The month counts estimates and open runs' limits, so its column is named "Month 
 | Spend | Task | Repository's month | Organization's month |
 | --- | --- | --- | --- |
 | An OpenRouter run's cost | Yes | Yes | Yes |
-| A pod run's time, at the pod's price | Yes | Yes | Yes, reconciled with the billing |
-| A task's pod time between its runs (`podCost`) | Yes | Yes | Yes, reconciled with the billing |
+| A pod run's time, at the pod's price | Yes | Yes | Yes, reconciled with Runpod's billing; Salad's as it is |
+| A task's pod time between its runs (`podCost`) | Yes | Yes | Yes, reconciled with Runpod's billing; Salad's as it is |
 | A Serverless run's share of the worker's estimated time | Yes | Yes | Yes, reconciled with the billing |
 | A pod's [untracked time](../glossary.md#untracked-time) | No | No | Yes, split among the pool's organizations |
-| A pod that terminated itself | No | No | Once Runpod bills it |
+| A pod that terminated itself | No | No | Once Runpod bills it; never on Salad |
 
 A task whose runs use several providers, through [profiles](../settings/profiles.md) or a change of `provider`, adds them up in the ledger.
 
@@ -58,12 +58,18 @@ A task whose runs use several providers, through [profiles](../settings/profiles
 
 A pod run counts its time at the pod's price, and a Serverless run its estimate, in the ledger as soon as they close. So they count in the repository's month at once.
 
-The organization's month reconciles them with Runpod's billing by the hour (`GET /v2/billing`), which also counts the time no run accounts for ([budget](budget.md#reconciling-with-gpu-billing)).
+The organization's month reconciles Runpod's with its billing by the hour (`GET /v2/billing`), which also counts the time no run accounts for ([budget](budget.md#reconciling-with-gpu-billing)).
+
+Salad has no billing API ([plan for Salad pods](../plans/2026-10-29-add-salad-pods.md), decision 5), so its account is not hourly:
+
+- A Salad run's cost is an estimate: the pod's time at the listed price of its GPU class and priority. It counts from the group's creation, so it includes the image's download, which Salad does not bill, and never falls short of the bill on that account.
+- The organization's month counts those estimates as they are. It reads no Salad billing, so a run on another provider needs no Salad key for the month's past Salad runs.
+- A pod's time that no run accounts for counts only when a Codeman job ends the pod ([untracked time](#untracked-time)).
 
 Runpod cannot list terminated pods, and pods serve the organization, or its [pool](../glossary.md#pool-of-organizations), rather than one repository. So the whole account's billing counts in the organization's month. With a pool, it counts in its organizations' months, split by what each estimated.
 
 > [!WARNING]
-> Use a Runpod account dedicated to Codeman, for the pool's repositories: the organization's month counts everything the account bills.
+> Use a Runpod account dedicated to Codeman, for the pool's repositories: the organization's month counts everything the account bills. On Salad, a dedicated organization keeps Salad's own usage page Codeman's alone, the only place to compare the estimates with the bill.
 
 ### A task's pods
 
@@ -104,14 +110,15 @@ It counts in the organization's month at once, spread over the pod's life and re
 
 A pod that the pool's organizations shared splits it among them, in proportion to what their runs counted on it (`untrackedBy`). When none counted anything, it all goes to the organization that created the pod ([decision 14 of the plan for GPU batches across repositories](../plans/2026-10-13-gpu-batches-across-repositories.md)).
 
-A pod that terminated itself has no known end, and its time counts once Runpod bills it.
+A pod that terminated itself has no known end, and its time counts once Runpod bills it. A Salad pod that ended itself counts only what its runs counted, since Salad has no billing to read.
 
 ### In the spend table
 
-Self-hosted rows name `Runpod (pod)` or `Runpod (Serverless)`. The notes under the table say how their figures are measured:
+Self-hosted rows name `Runpod (pod)`, `Runpod (Serverless)` or `Salad (pod)`. The notes under the table say how their figures are measured:
 
 - A pod run's cost is its pod's time at its price. The task also counts its pod's time between runs, refreshed from billing.
 - A Serverless run's cost is an estimate. It counts in the month as soon as the run ends, and shrinks when other runs that used the worker at the same times close.
+- A Salad pod run's cost is an estimate, at Salad's listed price for its GPU and priority, the image's free download included. Nothing refreshes it.
 - The month is the repository's, from the ledger.
 
 ## How it works

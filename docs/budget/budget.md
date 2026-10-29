@@ -44,6 +44,8 @@ A run whose provider fails to open it costs nothing, and its reservation ends.
 - the settings or a profile name a Runpod provider; or
 - the organization's runs used Runpod this month.
 
+Salad's account has no billing to read, so its key, with the variables `CODEMAN_SALAD_ORGANIZATION` and `CODEMAN_SALAD_PROJECT`, is needed only by a run on `salad-pod`.
+
 When one is missing, it opens nothing.
 
 ## How it works
@@ -122,6 +124,7 @@ The organization's month reconciles the runs of each GPU account with its billin
 - Each hour not billed yet counts the estimate, so a run counts as soon as it ends.
 - A run's amount spreads evenly over its time. A task's runs on one pod spread over their span.
 - Open runs count their whole limit, as do the runs of accounts without hourly billing.
+- Salad's account has none: its closed runs count their estimates as they are, never reconciled ([spend](spend.md#the-months)).
 
 With a pool on one Runpod account, each billed hour counts the organization's estimate, plus its share of what the bill exceeds the pool's estimate:
 

@@ -1,6 +1,6 @@
 # A pool of organizations
 
-This page sets up a [pool of organizations](../glossary.md#pool-of-organizations): organizations that share one Runpod account, and so can [batch](../glossary.md#batch) tasks on the same pods. How the pool works is in [batches across repositories](../runs/batches.md#pools).
+This page sets up a [pool of organizations](../glossary.md#pool-of-organizations): organizations that share one GPU account, on Runpod or Salad, and so can [batch](../glossary.md#batch) tasks on the same pods. How the pool works is in [batches across repositories](../runs/batches.md#pools).
 
 Without a pool, an organization is a pool alone: its repositories batch only with each other.
 
@@ -24,6 +24,7 @@ For each organization of the pool:
    | --- | --- |
    | `CODEMAN_GITHUB_APP_CLIENT_ID`, `CODEMAN_GITHUB_APP_PRIVATE_KEY` | The same App's |
    | `CODEMAN_RUNPOD_API_KEY` | The key of the same Runpod account |
+   | `CODEMAN_SALAD_API_KEY`, `CODEMAN_SALAD_ORGANIZATION`, `CODEMAN_SALAD_PROJECT` | The same Salad user's key, organization and project, with `salad-pod` |
    | `CODEMAN_OPENROUTER_MANAGEMENT_KEY` | The OpenRouter keys, as in [credentials](setup.md#secrets) |
    | `CODEMAN_KEY_ENCRYPTION_SECRET` | An encryption secret, which the members need not share |
    | `CODEMAN_FIREBASE_PROJECT`, `CODEMAN_WORKLOAD_IDENTITY_PROVIDER`, `CODEMAN_SERVICE_ACCOUNT` | The same project, provider and service account |

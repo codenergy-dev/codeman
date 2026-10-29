@@ -80,6 +80,7 @@ flowchart TD
 | 2026-10-19 | [Review rounds block at max-runs](#review-rounds-block-at-max-runs) | `503e9fc` | Tasks that reach review | None, or raise `max-runs` | No |
 | 2026-10-28 | [Agent time in the settings](#agent-time-in-the-settings) | `50c9a5a` | Every installation, and copies of `codeman-task.yml` that changed `agent-minutes` | Copy both templates; move a changed `agent-minutes` to the settings | Yes: template version 2 |
 | 2026-10-29 | [One instance of a profile at a time](#one-instance-of-a-profile-at-a-time) | `447fd2d` | Profiles that ran several pods, or several batches, at once | Set `concurrency` to keep them | No: tasks wait instead |
+| 2026-10-29 | [Salad pods, and the hosts of a pod](#salad-pods-and-the-hosts-of-a-pod) | `190f93f`, `cff2d2a` | Every installation | Copy both templates; for Salad, add its secret and variables | Yes: template version 3 |
 
 The [older versions](#older-versions) entries say what Codeman does with tasks, pod images and records from before some of these changes.
 
@@ -333,6 +334,26 @@ The agent's time is now the `agent-minutes` setting, and the `agent` job's timeo
 #### How to verify
 
 The `agent` step's log says "Running … for up to N minutes", N being your `agent-minutes`.
+
+### Salad pods, and the hosts of a pod
+
+- **Since:** 2026-10-29: `hosts` and `priority` in `190f93f`, the `salad-pod` provider and template version 3 in `cff2d2a` ([plan for Salad pods](../plans/2026-10-29-add-salad-pods.md)).
+- **Who is affected:** every installation: the templates are version 3. Pods change only with the new settings.
+- **Breaking:** yes. Until the templates are copied again, every job fails saying the files are template version 2.
+
+The templates pass the key jobs Salad's key and variables, for the new `salad-pod` provider ([Salad](salad.md)). Pods gain `hosts`, the kinds of host they may run on, and `priority` ([hosts](../settings/providers.md#hosts)). `hosts` defaults to `[secure]`, so Runpod pods stay on Secure Cloud, with the same [pod settings](../glossary.md#pod-settings) as before.
+
+#### What to do
+
+1. **Copy both templates again**, keeping the steps you added to the `agent` job.
+2. **To use Salad**, add the secret `CODEMAN_SALAD_API_KEY` and the variables `CODEMAN_SALAD_ORGANIZATION` and `CODEMAN_SALAD_PROJECT`, and allow `hosts: [community]` in the settings files ([Salad](salad.md)).
+
+> [!IMPORTANT]
+> `salad-pod` refuses the pod images pinned before it, which cannot serve on Salad. It works once a later commit pins images built from `cff2d2a` or after ([Salad's pod images](salad.md#pod-images)).
+
+#### How to verify
+
+`select` passes. A new Runpod pod's `open-key` log reads `Created pod <id> with <gpu>, at …`, as before. Only a pod outside the default `hosts` adds `on community hosts`.
 
 ## Backend
 

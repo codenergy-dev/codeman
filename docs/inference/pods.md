@@ -1,6 +1,6 @@
 # Pods
 
-With `provider: runpod-pod`, Codeman creates [pods](../glossary.md#pod) on Runpod and shares each among the tasks that run on the same settings. This page explains how pods are shared, held and ended.
+With `provider: runpod-pod` or `salad-pod`, Codeman creates [pods](../glossary.md#pod) on Runpod or Salad, and shares each among the tasks that run on the same settings. On Salad, a pod is a container group of one replica. This page explains how pods are shared, held and ended.
 
 Codeman keeps a [pool](../glossary.md#pool-of-organizations)'s pods in its [pod registry](../glossary.md#pod-registry), in the [backend](../backend/backend.md) (`pools/{pool}/pods`). Each pod has a document with:
 
@@ -116,7 +116,7 @@ A creator writes its pod's document before it creates the pod. The document stay
 ```mermaid
 sequenceDiagram
   participant K as open-key
-  participant R as Runpod
+  participant R as Runpod or Salad
   participant P as Pod registry
   participant G as Pod gateway
   K->>R: List the account's pods
@@ -163,10 +163,11 @@ Each termination is logged with its reason, and recorded as a `pod-terminated` e
 In one store transaction, `open-key` reads the live pods of its pod settings on its GPU account. The settings are a hash of:
 
 - the model, GPU type, image and `pod-reuse`;
+- `hosts` and `priority`, only when they differ from the provider's defaults, so pods from before them keep their hash;
 - for an Ollama pod, the [Ollama settings](../settings/ollama.md) when there are some, the derived `num-parallel` included;
 - for a vLLM pod, the engine and its [vLLM settings](../settings/vllm.md), the derived `max-num-seqs` included.
 
-The account is its fingerprint: an HMAC of a fixed label with the account key. Then `open-key` does one of four things:
+The account is its fingerprint: an HMAC of a fixed label with the account key. On Salad, whose key reaches several organizations, the label also names the organization and the project, so pods of two projects never mix. Then `open-key` does one of four things:
 
 1. It joins the oldest pod that serves the settings and has room, with a run lease ([shared pods](#shared-pods)).
 2. While another task holds the settings' creation lease, it waits, and claims again every 10 seconds.
@@ -179,7 +180,14 @@ A task claims 40 times at most, counting its waits and the pods it could not cre
 
 #### Creating
 
-The pod runs Codeman's image for its [engine](../glossary.md#engine), pinned by digest, on Secure Cloud. Its environment holds:
+The pod runs Codeman's image for its [engine](../glossary.md#engine), pinned by digest, on a [kind of host](../settings/providers.md#hosts) that `hosts` allows:
+
+| Provider | Where |
+| --- | --- |
+| `runpod-pod` | The first cloud of `hosts`, Secure or Community, that offers the GPU and has room. With one kind, the pod is created there without asking |
+| `salad-pod` | A container group of one replica, in the account's organization and project, on the GPU class `gpu` names, at the settings' `priority`. Its restart policy is `never`, and its Container Gateway, without Salad's authentication, reaches the gateway, which the run tokens guard |
+
+Its environment holds:
 
 | Variable | Value |
 | --- | --- |
@@ -187,16 +195,19 @@ The pod runs Codeman's image for its [engine](../glossary.md#engine), pinned by 
 | `CODEMAN_ADMIN_SHA256` | The admin token's hash |
 | `CODEMAN_START_BY`, `CODEMAN_KEPT_IDLE_MINUTES`, `CODEMAN_RUN_IDLE_MINUTES` | Its limits ([timers](#timers)) |
 | `CODEMAN_OLLAMA` | An Ollama pod's settings, only when there are some |
-| `CODEMAN_GPU_MEMORY_GB` | An Ollama pod's GPU memory, from Runpod's catalog |
+| `CODEMAN_GPU_MEMORY_GB` | An Ollama pod's GPU memory: from Runpod's catalog, or from the Salad class's name, such as `(24 GB)` |
 | `CODEMAN_VLLM` | A vLLM pod's settings |
 | `CODEMAN_FIT` | The context that fitted the same settings before, from the [cache of fits](../glossary.md#cache-of-fits), when there is one; for Ollama, with its model's digest |
 | `CODEMAN_ORGANIZATION`, `CODEMAN_POOL` | The creating organization and its pool |
 | `CODEMAN_ACCOUNT` | The account's fingerprint, never the key |
 | `CODEMAN_POD_SETTINGS`, `CODEMAN_NONCE` | The settings' hash and the document's nonce |
 
-A vLLM pod also gets a host with CUDA 13.0 or newer (`minCudaVersion`), and a container disk sized for its model. Before creating it, `open-key` checks that such a host has room and that Hugging Face serves the model publicly. Otherwise it stops the run, at no cost ([vLLM settings](../settings/vllm.md#cuda)).
+A vLLM pod also gets a container disk sized for its model, and `open-key` checks that Hugging Face serves the model publicly. Its host's CUDA must be 13.0 or newer ([vLLM settings](../settings/vllm.md#cuda)):
 
-The run's cost starts with the pod, since Runpod bills the image and model pulls. `open-key` waits up to 25 minutes for the gateway to report the model served, and ends and terminates a pod that does not.
+- **On Runpod,** the pod asks for such a host (`minCudaVersion`), and `open-key` checks that one has room. Otherwise it stops the run, at no cost.
+- **On Salad,** which cannot pick hosts by CUDA version, the gateway reads the driver's version before it starts vLLM. An older one fails the pod's start, with a reason that names it.
+
+The run's cost starts with the pod, since Runpod bills the image and model pulls. Salad bills only once the container runs, but Codeman counts from the group's creation all the same ([spend](../budget/spend.md#self-hosted-runs)). `open-key` waits up to 25 minutes for the gateway to report the model served, and ends and terminates a pod that does not.
 
 A gateway that reports its start failed, such as for a model that does not fit the GPU, fails the run at once, with its reason. The tasks that waited for the pod fail with it rather than create another.
 
@@ -226,7 +237,12 @@ What the task counts for the pod, beyond its runs, is in [spend](../budget/spend
 
 ### Self-termination
 
-A pod terminates itself: it asks Runpod to, with the pod-scoped key Runpod gives it, and stops its container either way.
+A pod terminates itself, each provider its own way:
+
+| Provider | How |
+| --- | --- |
+| `runpod-pod` | It asks Runpod to, with the pod-scoped key Runpod gives it, and stops its container either way |
+| `salad-pod` | Its gateway exits, which stops the container. Salad gives no key that a pod could hold safely, and its group never restarts the container. The group stays until a key job deletes it: the job that ends the pod, or the next `open-key`'s sweep |
 
 | When | Why |
 | --- | --- |

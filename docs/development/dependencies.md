@@ -17,6 +17,7 @@ Every dependency is audited before it is added (see `AGENTS.md`). This page reco
 | GitHub, OpenRouter, npm registry and the other APIs | Services | Not pinned | What Codeman calls with `fetch` or the packages | Not recorded | None recorded | [External services](#external-services) |
 | OpenCode | Harness, downloaded | 1.18.32, by npm integrity | Runs the agent | Advisories checked 2026-09-24 | CVE-2026-88624, accepted | [Agent harness](#agent-harness-opencode) |
 | Runpod REST API v2 | Service | v2 | The GPUs of pods and Serverless | 2026-10-03 | Keys never expire and have no spending limit | [Runpod](#runpod) |
+| SaladCloud API | Service | `https://api.salad.com/api/public`, not versioned | The GPUs of Salad pods | 2026-10-29 | The key is a user's, reaching all their organizations; hosts are third parties' PCs; no billing API | [Salad](#salad) |
 | Ollama | Engine, in a pod image | 0.35.1, by digest | Serves models on Ollama pods | 2026-10-03 | Several, accepted: loopback only | [Ollama](#ollama) |
 | vLLM | Engine, in a pod image | 0.31.0, by digest | Batches requests whatever the model | 2026-10-13 | Over 100 advisories, each fixed at or before 0.31.0 | [vLLM](#vllm-in-codemans-vllm-pod-image) |
 | Hugging Face Hub API | Service | One route | Checks a vLLM pod's model | 2026-10-13 | None recorded | [Hugging Face](#hugging-face) |
@@ -39,6 +40,7 @@ Every dependency is audited before it is added (see `AGENTS.md`). This page reco
 | Not recorded | The npm packages, with `npm audit` | Not recorded | No known vulnerabilities |
 | 2026-09-24 | OpenCode's advisories | Not recorded | CVE-2026-88624 had no fixed version; accepted for 1.18.32 |
 | 2026-10-03 | Self-hosted inference: Runpod, Ollama, Runpod's vLLM worker | [Self-hosted inference](../plans/2026-10-02-self-hosted-inference.md) | No npm package added. Ollama's advisories accepted for 0.35.1 |
+| 2026-10-29 | Salad's Container Engine, for `salad-pod` | [Salad pods](../plans/2026-10-29-add-salad-pods.md) | No npm package added: the API is called with `fetch`. The key cannot be scoped, so a dedicated user. Hosts are Community ones; `hosts` must allow them |
 | 2026-10-07 | The backend: Cloud Firestore, STS, IAM Credentials, the emulator | [Backend](../plans/2026-10-07-firestore-backend.md) | No npm package added |
 | 2026-10-13 | vLLM and its image, Hugging Face | [vLLM on pods](../plans/2026-10-13-vllm-on-pods.md) | vLLM's advisories each list a fix at or before 0.31.0; the rest accepted |
 | 2026-10-19 | Running Actions locally: act, `actions/runner`, `github/local-action`, a plain image | [Run GitHub Actions locally](../plans/2026-10-19-run-github-actions-locally.md#audit) | None adopted but the plain image. act 0.2.74, as installed, has CVE-2026-34041 and CVE-2026-34042, fixed in 0.2.86 |
@@ -64,19 +66,20 @@ flowchart TB
       O["OpenCode 1.18.32<br/>npm package, integrity checked"]
     end
   end
-  subgraph Pod["A Runpod pod, on Secure Cloud"]
+  subgraph Pod["A pod: on Runpod, Secure Cloud by default; or on Salad"]
     G2["The gateway on port 8080"]
     E["Ollama 0.35.1 or vLLM 0.31.0<br/>on the pod's loopback"]
   end
   A --> GH["GitHub REST and GraphQL"]
   A --> ORK["OpenRouter API: task keys"]
   A --> RP["Runpod REST API v2"]
+  A --> SA["SaladCloud API"]
   A --> FS["Firestore, through STS and IAM Credentials"]
   A --> HF1["Hugging Face API: the model check"]
   A --> NPM["npm registry: OpenCode's package"]
   O --> OR["OpenRouter"]
   O --> G1 --> W["Runpod Serverless: worker-vllm"]
-  O -->|"Runpod's proxy"| G2 --> E
+  O -->|"Runpod's proxy or Salad's Container Gateway"| G2 --> E
   E -->|"vLLM downloads the model"| HF2["Hugging Face Hub"]
 ```
 
@@ -140,7 +143,8 @@ Codeman calls these APIs with `fetch` or through the packages above. Their docum
 | OpenRouter API | [Task keys](../glossary.md#task-key) (list, create, get, disable) and analytics (tokens, requests, throughput, largest prompt) | `docs/web/openrouter/` |
 | npm registry | Downloading the [harness](../glossary.md#harness)'s pinned package and checking its integrity | `docs/web/npm/` |
 | OpenCode | The harness's configuration, permissions, providers and `run` command | `docs/web/opencode/` |
-| Runpod REST API v2 | Self-hosted inference: pods (create, get, list, terminate), Serverless endpoints (get; and the job queue: run, stream, cancel), GPU prices, and billing (account, pods) | `docs/web/runpod/` |
+| Runpod REST API v2 | Self-hosted inference: pods (create, get, list, terminate), Serverless endpoints (get; and the job queue: run, stream, cancel), GPU prices and availability by cloud, and billing (account, pods) | `docs/web/runpod/` |
+| SaladCloud API | Salad pods: container groups (create, get, list, delete) and GPU classes, with their prices | `docs/web/salad/` |
 | Ollama | The engine in Codeman's Ollama pod image: pulling a model, its context length, where it loads it, and its OpenAI-compatible API | `docs/web/ollama/` |
 | llama.cpp | The server Ollama runs for a model in the pod image: how it fits a model to the GPU | `docs/web/llama-cpp/` |
 | vLLM | The engine in Codeman's vLLM pod image: its arguments, how it sizes the K/V cache and refuses a context that does not fit, what it reports, tool calling and reasoning parsers | `docs/web/vllm/`, `docs/web/docker-hub/` |
@@ -186,13 +190,23 @@ Audited on 2026-10-03 for the [self-hosted inference plan](../plans/2026-10-02-s
 - **Why:** it serves the GPU for the `runpod-pod` and `runpod-serverless` providers. A small in-house replacement is not possible: it is the hardware.
 - **Version and pin:** the REST API v2 (`https://api.runpod.io/v2`). v1, which the plan first named, is deprecated and retired on 2026-11-15 ([migrate from API v1](../web/runpod/migrate-from-api-v1.md)).
 - **Data:** the agent's prompts, and so the repository's code, go to a container on Runpod.
-  - Codeman creates pods on Secure Cloud only, which runs in certified data centers of vetted partners ([data security](../web/runpod/data-security-and-legal-compliance.md)).
+  - Codeman creates pods on Secure Cloud, which runs in certified data centers of vetted partners ([data security](../web/runpod/data-security-and-legal-compliance.md)), unless the settings files' `hosts` allow Community Cloud, whose hosts are peer-to-peer providers ([choose a pod](../web/runpod/choose-a-pod.md)).
   - A Serverless endpoint does not report its cloud ([get a Serverless endpoint](../web/runpod/get-a-serverless-endpoint.md)): the maintainer who creates it chooses.
 - **Credentials:** API keys are **All**, **Restricted** or **Read Only**. A restricted key can be limited to one Serverless endpoint, but no key expires or has a spending limit ([manage credentials](../web/runpod/manage-credentials.md)). Codeman uses two:
   - an account key, in the jobs that manage pods and read billing, which run no LLM;
   - for Serverless, a key restricted to the endpoint, held by the agent job's gateway, outside the sandbox.
 - **Spending:** the account spends prepaid credits. At US$ 0, Runpod stops every pod, and terminates those without a network volume ([billing overview](../web/runpod/billing-overview.md)). An account without auto-pay therefore caps what Codeman can spend there.
 - **Terms:** the console's terms apply. Runpod's terms forbid hosts to inspect a pod's data.
+
+### Salad
+
+- **What:** SaladCloud's Container Engine: a container image on a GPU, billed per second while it runs, at a price per GPU class and priority ([billing](../web/salad/salad-container-engine-billing.md)).
+- **Why:** it serves the GPU for the `salad-pod` provider, on consumer GPUs that cost less than Runpod's. A small in-house replacement is not possible: it is the hardware.
+- **Version and pin:** the public API, `https://api.salad.com/api/public`, with no version in its path ([using the API](../web/salad/using-the-api.md)).
+- **Data:** the agent's prompts, and so the repository's code, go to a container on a consumer PC that a third party owns. Salad isolates it in a virtual machine and watches for intrusion, but says its network does not suit sensitive data ([security](../web/salad/security-trust-on-saladcloud.md)). Codeman uses it only when the settings files' `hosts` allow `community` ([hosts](../settings/providers.md#hosts)).
+- **Credentials:** one key per user, which reaches every organization and project the user belongs to; no scope, expiry or spending limit ([using the API](../web/salad/using-the-api.md)). Codeman holds it only in the key jobs, which run no LLM. No pod gets it: a pod ends by exiting, since its group's restart policy is `never` ([create container group](../web/salad/create-container-group.md)).
+- **Spending:** prepaid credits. At US$ 0, usage is shut down "as soon as possible", and what ran past it is invoiced the next month ([billing](../web/salad/billing.md)). Salad has no billing API, so Codeman's costs are estimates, never reconciled.
+- **Rate limit:** 240 requests a minute per key ([using the API](../web/salad/using-the-api.md)).
 
 ### Ollama
 

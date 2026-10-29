@@ -117,10 +117,10 @@ A manipulated agent can send the key out, and spend it until the run ends and `c
 
 ### Pod tokens
 
-- The token opens the pod's gateway, which Runpod's proxy makes public, until the run ends or its budget is spent. The [pod](../glossary.md#pod) costs the same whether the requests come from the agent or not.
+- The token opens the pod's gateway, which Runpod's proxy or Salad's Container Gateway makes public, until the run ends or its budget is spent. The [pod](../glossary.md#pod) costs the same whether the requests come from the agent or not.
 - Tasks may share a pod, whether of one run or of several repositories of the pool. Each run's token then opens only its own run: its requests count in its own records and against its own limit. It cannot end, read or spend another task's run.
 - A leaked token can still make the GPU busy, and so slow the other tasks' requests, until its own run ends or its budget is spent.
-- The admin routes take only the token that the Runpod API key derives.
+- The admin routes take only the token that the GPU account's key derives.
 
 ### Serverless tokens
 
@@ -150,12 +150,15 @@ The agent job logs what the agent does, and run logs are public on public reposi
 
 ### The model provider
 
-The repository's code, issues and comments go to the model provider through OpenRouter, or, with self-hosted inference, to a container on Runpod.
+The repository's code, issues and comments go to the model provider through OpenRouter, or, with self-hosted inference, to a container on Runpod or Salad.
 
 ### Self-hosted inference
 
-- Codeman creates pods on Secure Cloud only, in Runpod's certified data centers. A Serverless endpoint runs where the maintainer who created it chose.
-- A pod's gateway is public behind Runpod's proxy, and serves only whoever holds the run's token. Ollama's and vLLM's own ports stay inside the pod.
+- Codeman creates pods only on the [kinds of host](../settings/providers.md#hosts) that `hosts` allows: by default `secure`, Runpod's certified data centers. A Serverless endpoint runs where the maintainer who created it chose.
+- With `community`, the pod runs on a machine that a third party owns: Runpod's Community Cloud, or any of Salad's on-demand GPUs, which are consumer PCs. The repository's code, the issues and every request of the agent are decrypted there, in the pod's memory. Salad isolates the container in a virtual machine and watches for intrusion, but says its network does not suit sensitive data ([security on SaladCloud](../web/salad/security-trust-on-saladcloud.md)).
+- Only the settings files set `hosts`, so a task's command cannot widen where the code goes.
+- A pod's gateway is public behind Runpod's proxy or Salad's Container Gateway, and serves only whoever holds the run's token. Ollama's and vLLM's own ports stay inside the pod.
+- A pod's environment holds no secret: hashes and public values. A Salad pod holds no key at all, since Salad's only key reaches its user's whole account; it ends by exiting.
 - A vLLM pod downloads its model from Hugging Face. Before creating it, Codeman asks Hugging Face's API whether the model is public, without a token; the request carries only the model's ID.
 - vLLM's usage statistics are turned off. Its arguments that run a model repository's code (`trust-remote-code`), load plugins, or send the cache, traces or requests elsewhere are refused ([vLLM settings](../settings/vllm.md#refused-keys)).
 
@@ -164,6 +167,7 @@ The repository's code, issues and comments go to the model provider through Open
 - Keep secrets out of the repository, as you would anyway.
 - On private repositories, choose a model and provider whose data policy you accept. OpenRouter's privacy settings can restrict providers.
 - With Serverless, choose Secure Cloud data centers.
+- Leave `hosts` at its default, `[secure]`, on private repositories, unless their code may go to third parties' machines.
 
 ## 7. Codeman's own code and dependencies
 

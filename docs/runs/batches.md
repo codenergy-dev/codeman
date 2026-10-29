@@ -24,11 +24,11 @@ The choice was made in the [plan for GPU batches across repositories](../plans/2
 
 ## Pools
 
-A pool is a closed list of organizations that share the board, the batches, the [pod registry](../inference/pods.md) and the Runpod account. Without the `pool` setting, an organization is a pool alone.
+A pool is a closed list of organizations that share the board, the batches, the [pod registry](../inference/pods.md) and the [GPU accounts](../glossary.md#gpu-account), on Runpod or Salad. Without the `pool` setting, an organization is a pool alone.
 
 - `pool` is set only in the organization's settings (`CODEMAN_SETTINGS`), as a list of 1 to 10 logins that includes the organization itself: `pool: [organization-a, organization-b]`. Anywhere else, or without the organization, it stops the run.
 - The pool's ID is its members' logins, lowercase, sorted, joined by `+`: `organization-a+organization-b`. Alone, it is the organization's login.
-- A pool shares one Runpod account: a pod's admin token derives from the account's key, so only that key's jobs can join or end it. Each organization keeps its own budgets.
+- A pool shares each GPU account it uses: a pod's admin token derives from the account's key, so only that key's jobs can join or end it. Each organization keeps its own budgets.
 - Codeman never lists the App's installations: it mints tokens only for owners its pool names and that agree on it.
 
 ### The handshake

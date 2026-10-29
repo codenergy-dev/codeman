@@ -6,11 +6,11 @@ The terms the docs use, one meaning each. A term with several meanings points to
 
 ### Account
 
-Always qualified: the OpenRouter account, whose credits the task keys spend; the [GPU account](#gpu-account), on Runpod; or the backend's [service account](#service-account), in Google Cloud. A GitHub user account counts as its own organization.
+Always qualified: the OpenRouter account, whose credits the task keys spend; the [GPU account](#gpu-account), on Runpod or Salad; or the backend's [service account](#service-account), in Google Cloud. A GitHub user account counts as its own organization.
 
 ### Account fingerprint
 
-How Codeman names a [GPU account](#gpu-account) without its key: the first 16 hex characters of an HMAC-SHA256 of a fixed label with the [Runpod API key](#runpod-api-key). A pod's registry document and environment carry it, so a task joins only pods of its own account. See [pods](inference/pods.md).
+How Codeman names a [GPU account](#gpu-account) without its key: the first 16 hex characters of an HMAC-SHA256 of a fixed label with the account's key: the [Runpod API key](#runpod-api-key), or the [Salad API key](#salad-api-key), whose label also names the Salad organization and project. A pod's registry document and environment carry it, so a task joins only pods of its own account. See [pods](inference/pods.md).
 
 ### Action
 
@@ -18,7 +18,7 @@ What `select` makes a workflow run do for a task: `plan`, `route`, `implement` (
 
 ### Admin token
 
-The token that manages a pod's gateway, on `/usage` and the `/admin/` routes: an HMAC of the [Runpod API key](#runpod-api-key) and the pod's nonce. Only the [key jobs](#key-jobs) can derive it; the pod keeps only its hash. See [the admin token](inference/self-hosted.md#the-admin-token).
+The token that manages a pod's gateway, on `/usage` and the `/admin/` routes: an HMAC of the [GPU account's](#gpu-account) key and the pod's nonce. Only the [key jobs](#key-jobs) can derive it; the pod keeps only its hash. See [the admin token](inference/self-hosted.md#the-admin-token).
 
 ### Agent run
 
@@ -104,7 +104,7 @@ The `ollama` or `vllm` block of the settings, whose keys tune a pod's [engine](#
 
 ### Estimate
 
-A run's cost that Codeman computes rather than reads from a bill: a Serverless run's share of the worker's estimated time, or a pod run's time when its gateway cannot report its share. The organization's [month](#month) reconciles the estimates with Runpod's hourly billing. See [self-hosted runs](budget/spend.md#self-hosted-runs).
+A run's cost that Codeman computes rather than reads from a bill: a Serverless run's share of the worker's estimated time, or a pod run's time when its gateway cannot report its share. On Salad, which has no billing API, every pod run's cost is one. The organization's [month](#month) reconciles the estimates with Runpod's hourly billing, and counts Salad's as they are. See [self-hosted runs](budget/spend.md#self-hosted-runs).
 
 Ollama's context estimate is not a cost: it is a first guess at the [fit](#fit) ([Ollama's memory](settings/ollama.md#memory)).
 
@@ -146,7 +146,7 @@ The App that a maintainer registers for Codeman, under the owner that runs it. C
 
 ### GPU account
 
-The Runpod account that the [Runpod API key](#runpod-api-key) opens: where pods run, and whose billing the organization's [month](#month) reads. A [pool of organizations](#pool-of-organizations) shares one. See [accounts](settings/providers.md#accounts).
+The account that rents Codeman its GPUs: the Runpod account that the [Runpod API key](#runpod-api-key) opens, or the Salad organization and project that the [Salad API key](#salad-api-key) reaches. Pods run there, and the organization's [month](#month) reads Runpod's billing. A [pool of organizations](#pool-of-organizations) shares one. See [accounts](settings/providers.md#accounts).
 
 ## H
 
@@ -154,15 +154,19 @@ The Runpod account that the [Runpod API key](#runpod-api-key) opens: where pods 
 
 The program that runs the agent in the sandbox, with the model and the task file: OpenCode today. See [the agent harness](development/dependencies.md#agent-harness-opencode).
 
+### Hosts
+
+The kinds of host a pod may run on, by preference, with the `hosts` setting: `secure`, data centers, the default; or `community`, machines that third parties own, which get the repository's code. Only the settings files set it. See [hosts](settings/providers.md#hosts).
+
 ## I
 
 ### Inference provider
 
-Where an agent run's model is served, chosen with `provider`: `openrouter`, `runpod-pod` or `runpod-serverless`. It is not the Workload Identity provider. See [providers](settings/providers.md).
+Where an agent run's model is served, chosen with `provider`: `openrouter`, `runpod-pod`, `runpod-serverless` or `salad-pod`. It is not the Workload Identity provider. See [providers](settings/providers.md).
 
 ### Instance
 
-What serves one batch of a profile: a pod on `runpod-pod`, or as many open runs as the profile's most tasks on OpenRouter and Serverless. `concurrency` caps how many run at once. See [concurrency](settings/profiles.md#concurrency).
+What serves one batch of a profile: a pod on `runpod-pod` or `salad-pod`, or as many open runs as the profile's most tasks on OpenRouter and Serverless. `concurrency` caps how many run at once. See [concurrency](settings/profiles.md#concurrency).
 
 ## K
 
@@ -249,7 +253,7 @@ The image of an engine that pods run, pinned by digest in `POD_IMAGES`, not the 
 
 ### Pod
 
-A GPU machine that Codeman creates on Runpod's Secure Cloud, with Codeman's image for its engine, to serve the pool's tasks with the same pod settings. Runpod bills every second it exists. See [pods](inference/pods.md).
+A GPU container that Codeman creates, with Codeman's image for its engine, to serve the pool's tasks with the same pod settings: a pod on Runpod, or a container group of one replica on Salad. It runs on the [hosts](#hosts) its settings allow. Runpod bills every second it exists, Salad every second its container runs. See [pods](inference/pods.md).
 
 ### Pod registry
 
@@ -257,7 +261,7 @@ The pool's documents of its pods in the backend: each pod's settings, capacity, 
 
 ### Pod settings
 
-The hash of what a pod serves: its model, GPU type, image and `pod-reuse`, and its engine's settings with their derived values. Tasks share a pod only when their pod settings are the same. See [pods](inference/pods.md).
+The hash of what a pod serves: its model, GPU type, image and `pod-reuse`, its `hosts` and `priority` when not the provider's defaults, and its engine's settings with their derived values. Tasks share a pod only when their pod settings are the same. See [pods](inference/pods.md).
 
 ### Pool
 
@@ -281,7 +285,7 @@ Always qualified: an [inference provider](#inference-provider), in the settings,
 
 ### Provider settings
 
-The settings that only some [inference providers](#inference-provider) take: `engine`, `gpu`, `endpoint` and `pod-reuse`, and the [engine blocks](#engine-block). A layer or profile that names another provider keeps none of the inherited ones. See [provider settings across layers](settings/provider-settings-across-layers.md).
+The settings that only some [inference providers](#inference-provider) take: `engine`, `gpu`, `endpoint`, `pod-reuse`, `hosts` and `priority`, and the [engine blocks](#engine-block). A layer or profile that names another provider keeps none of the inherited ones. See [provider settings across layers](settings/provider-settings-across-layers.md).
 
 ## R
 
@@ -319,6 +323,10 @@ The runs of the same routed stage that end unfinished, `partial` or out of time,
 
 ## S
 
+### Salad API key
+
+`CODEMAN_SALAD_API_KEY`, the key of a Salad user, which reaches every organization and project the user belongs to. Only the [key jobs](#key-jobs) hold it, with the variables `CODEMAN_SALAD_ORGANIZATION` and `CODEMAN_SALAD_PROJECT`: to create and delete pods and derive their [admin tokens](#admin-token). No pod gets it. See [secrets](security/secrets.md#salad-api-key).
+
 ### Sandbox
 
 How the agent job isolates the agent: it runs as the `codeman-agent` user, without `sudo`, on a copy of the checkout, with a rebuilt environment, in a jail where the rest of the machine is read-only. It protects the job's credentials and the runner's files, not the network. See [agent sandbox](runs/agent.md#agent-sandbox).
@@ -329,7 +337,7 @@ A task's position on a pod, given when the task first joins it and kept for the 
 
 ### Secure Cloud
 
-Runpod's certified data centers. Codeman creates pods there only. A [Serverless endpoint](#serverless-endpoint) runs where the maintainer who created it chose, which Runpod's API does not report. See [self-hosted inference on Runpod](installation/runpod.md).
+Runpod's certified data centers, the `secure` kind of [hosts](#hosts). Codeman creates Runpod pods there unless `hosts` allows Community Cloud. A [Serverless endpoint](#serverless-endpoint) runs where the maintainer who created it chose, which Runpod's API does not report. See [self-hosted inference on Runpod](installation/runpod.md).
 
 ### Serverless endpoint
 

@@ -160,7 +160,8 @@ Codeman picks a pod's image by its engine: one image per engine, built from the 
 | vLLM | `ghcr.io/codenergy-dev/codeman-vllm` | 9.1 GB | Ignored: vLLM pods always run the pinned image |
 
 - **Pinned.** Pods run the image pinned by digest in `POD_IMAGES` in [`src/inference/images.ts`](../../src/inference/images.ts), not the latest build ([pinned pod image](../glossary.md#pinned-pod-image)). Publishing and pinning are in [development](../development/guide.md#pod-images), and the images' contents in [dependencies](../development/dependencies.md#codemans-pod-images).
-- **Pulled by each pod.** Each new pod pulls its own image, and Runpod bills the pull.
+- **Pulled by each pod.** Each new pod pulls its own image. Runpod bills the pull; Salad does not, but Codeman counts it ([spend](../budget/spend.md#the-months)).
+- **Serving on Salad.** Salad pods need images whose gateway listens on IPv6 and ends the pod by exiting. `IMAGES_BEFORE_SALAD` lists the pinned images that cannot, which `salad-pod` refuses before any group is created ([Salad's pod images](../installation/salad.md#pod-images)).
 - **No pinned image.** A version of Codeman whose `POD_IMAGES` has no image for an engine stops that engine's runs in `open-key`, before any pod is created, at no cost ([vLLM's pod images](vllm.md#pod-images)). With `engine: ollama` and no `pod-image` input, a task that would create a pod stops with "No pod image is pinned; see docs/installation/runpod.md#pods."
 - **Images that cannot apply Ollama settings** are in [Ollama's pod images](ollama.md#pod-images).
 
@@ -185,7 +186,7 @@ When the cache cannot be read, `open-key` warns, and the pod searches for its co
 sequenceDiagram
   participant O as open-key
   participant B as Backend
-  participant R as Runpod
+  participant R as Runpod or Salad
   participant G as Pod gateway
   participant E as Engine
   O->>O: Check the block, derive the parallel requests
@@ -212,7 +213,7 @@ sequenceDiagram
    | `CODEMAN_ENGINE` | The engine | `vllm` |
    | `CODEMAN_OLLAMA` | The Ollama variables as JSON, the derived `num-parallel` included; only when there are some | `{"OLLAMA_NUM_PARALLEL":"4"}` |
    | `CODEMAN_VLLM` | The vLLM settings as JSON, by key, the derived `max-num-seqs` included | `{"max-num-seqs":"4","tool-call-parser":"qwen3_xml"}` |
-   | `CODEMAN_GPU_MEMORY_GB` | The GPU type's memory, from Runpod's catalog; Ollama pods only | `96` |
+   | `CODEMAN_GPU_MEMORY_GB` | The GPU type's memory, from Runpod's catalog or the Salad class's name; Ollama pods only | `96` |
    | `CODEMAN_FIT` | The cached context, from the cache of fits | `{"contextLength":131072}` |
 
 4. **The gateway checks them again**, against the same list of keys. A pod terminates itself, saying why, when it cannot read them, or when its image serves another engine.

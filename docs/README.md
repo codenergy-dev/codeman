@@ -10,8 +10,9 @@ New to Codeman? Read the [README](../README.md), then follow [Installation](inst
 | --- | --- |
 | [Installation](installation/setup.md) | Set up Codeman on a repository, then try a task |
 | [Self-hosted inference on Runpod](installation/runpod.md) | Serve models on GPUs you rent from Runpod |
+| [Self-hosted inference on Salad](installation/salad.md) | Serve models on consumer GPUs you rent by the hour from Salad |
 | [Shared settings](installation/shared-settings.md) | Give every repository of an organization the same settings |
-| [A pool of organizations](installation/pool.md) | Let several organizations share one Runpod account and pods |
+| [A pool of organizations](installation/pool.md) | Let several organizations share one GPU account and pods |
 | [Mixing providers](installation/mixing-providers.md) | Use different providers and models for different stages |
 | [Glossary](glossary.md) | Look up the one meaning of each term |
 

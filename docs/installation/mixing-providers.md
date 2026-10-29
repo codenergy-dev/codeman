@@ -34,6 +34,7 @@ Here, the code and test stages run on a pod, up to 2 tasks at a time, and review
 | The top-level `model` is optional, but every stage needs a profile with its own `model` when there is none | A stage that none serves blocks the task that reaches it |
 | A profile on pods needs a `gpu`, in the profile, or at the top level when the top level is on pods too | The first run stops with an error that names the profile |
 | A profile on another provider than the top level's needs its own `model` | The first run stops with an error that names the profile |
+| A profile on `salad-pod` needs `hosts` to allow `community`, in the profile, or at the top level when the top level is on `salad-pod` too | The first run stops before any pod is created, saying to add `community` |
 
 Each profile must work with what it inherits from the top-level settings. What a profile on another provider than the top level's keeps is in [provider settings across layers](../settings/provider-settings-across-layers.md). How profiles are checked is in [checks](../settings/profiles.md#checks).
 
@@ -42,7 +43,7 @@ Each profile must work with what it inherits from the top-level settings. What a
 Add the secrets of every provider the settings and profiles name ([credentials](setup.md#secrets)). A run needs its own provider's. Without one, runs stop, and the task's panel names the missing secret.
 
 > [!NOTE]
-> With `organization-monthly-budget`, every run reads the billing of the Runpod account when a Runpod provider is named, or when a run of the organization's month used it. So a run on OpenRouter needs the Runpod key too.
+> With `organization-monthly-budget`, every run reads the billing of the Runpod account when a Runpod provider is named, or when a run of the organization's month used it. So a run on OpenRouter needs the Runpod key too. Salad has no billing to read, so only a run on `salad-pod` needs the Salad key and its variables.
 
 ## Several tasks at once
 

@@ -2,7 +2,7 @@
 
 This page says what happens to a [provider's](../glossary.md#inference-provider) settings when a [layer](../glossary.md#layer) or a [profile](../glossary.md#profile) changes provider, with worked examples. The order of the layers is in [layers](reference.md#layers).
 
-The provider settings are `engine`, `gpu`, `endpoint`, `pod-reuse`, and the keys of the `ollama` and `vllm` blocks ([providers](providers.md)).
+The provider settings are `engine`, `gpu`, `endpoint`, `pod-reuse`, `hosts`, `priority`, and the keys of the `ollama` and `vllm` blocks ([providers](providers.md)).
 
 ## At a glance
 
@@ -39,7 +39,9 @@ flowchart TD
 3. One that names the same provider, or none, keeps them, and replaces only those it sets.
 4. Each key of the `ollama` and `vllm` blocks counts as a setting of its own. A profile that sets `context-length` keeps the `num-parallel` it inherits ([Ollama settings](ollama.md#how-they-apply)).
 5. A block configures one [engine](../glossary.md#engine). A layer or profile that names another `engine` than the one it inherits leaves out the inherited block of that engine. So a profile with `engine: vllm` on an organization's Ollama pods does not inherit its `ollama` keys ([vLLM settings](vllm.md#how-they-apply)).
-6. Then the provider's defaults fill what is left: `engine`, and `pod-reuse: task`.
+6. Then the provider's defaults fill what is left: `engine`, `pod-reuse: task`, `hosts: [secure]`, and the provider's highest `priority`.
+
+`runpod-pod` and `salad-pod` are two providers. So a profile on `salad-pod` under a top level on `runpod-pod` inherits none of its `hosts`: it sets its own, such as `hosts: [community]`.
 
 ## The model
 

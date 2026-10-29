@@ -14,6 +14,7 @@ The workflow is [`templates/codeman.yml`](../../templates/codeman.yml). It runs 
 | [GitHub App private key](#github-app-private-key), and its App tokens | `select`, `dispatch`, `apply` | No | Yes | Tokens for every installation of the App, with the App's permissions |
 | [OpenRouter management key](#openrouter-management-key) | `open-key`, `close-key` | No | Yes | Keys without limits, on the account's credits; the account's keys listed and changed |
 | [Runpod API key](#runpod-api-key) | `open-key`, `close-key`, `release-pod` | No | Yes | Anything in the Runpod account, including spending all its credits |
+| [Salad API key](#salad-api-key) | `open-key`, `close-key`, `release-pod` | No | Yes | Anything in every Salad organization of the key's user, including spending all their credits |
 | [Runpod Serverless key](#runpod-serverless-key) | Codeman's step in `agent` | No | Yes, with the `agent` job as the template has it | The endpoint, run at the account's cost until someone revokes the key |
 | [Key encryption secret](#key-encryption-secret) | `open-key`, Codeman's step in `agent` | No | Yes, with the `agent` job as the template has it | The task keys in the run logs, decrypted |
 | [The run's task key or run token](#the-runs-task-key-or-run-token) | The agent, in `agent` | Yes: it is the agent's own | Partly | What remains of the task's budget, until the run ends |
@@ -30,11 +31,11 @@ Both templates set `permissions: {}` at the top, so a job's `GITHUB_TOKEN` has o
 | `codeman.yml` | `forward-review` | `actions: write` | — | No | None |
 | `codeman.yml` | `select` | Only `id-token: write` | Contents, pull requests, actions and metadata read; issues write | Yes | App key |
 | `codeman.yml` | `dispatch` | None | For one repository of the pool: `actions: write`, `metadata: read` | No | App key |
-| `codeman-task.yml` | `open-key` | Only `id-token: write` | — | Yes | Management key, Runpod API key, encryption secret |
+| `codeman-task.yml` | `open-key` | Only `id-token: write` | — | Yes | Management key, Runpod and Salad API keys, encryption secret |
 | `codeman-task.yml` | `agent` | `contents: read`, `actions: read` | — | No | Encryption secret, Serverless key |
-| `codeman-task.yml` | `close-key` | Only `id-token: write` | — | Yes | Management key, Runpod API key |
+| `codeman-task.yml` | `close-key` | Only `id-token: write` | — | Yes | Management key, Runpod and Salad API keys |
 | `codeman-task.yml` | `apply` | None | Contents, issues and pull requests write; for `accept` only, a second token with contents and workflows write | No | App key |
-| `codeman-task.yml` | `release-pod` | Only `id-token: write` | — | Yes | Runpod API key |
+| `codeman-task.yml` | `release-pod` | Only `id-token: write` | — | Yes | Runpod and Salad API keys |
 | `codeman.yml` | `next-run` | `actions: write` | — | No | None |
 
 Every job that runs Codeman also uses its `GITHUB_TOKEN` to check `CODEMAN_COMMIT_SHA` against Codeman's public repository ([risk 7](risks.md#7-codemans-own-code-and-dependencies)).
@@ -76,6 +77,17 @@ Every job that runs Codeman also uses its `GITHUB_TOKEN` to check `CODEMAN_COMMI
   - A [pod](../glossary.md#pod) gets only the hash of its admin token, which is derived from this key.
 - **Gap:** it may do anything in the Runpod account, including spend all its credits.
 - **Mitigation:** an account dedicated to Codeman, with prepaid credits and no auto-pay ([installation](../installation/runpod.md)).
+
+### Salad API key
+
+`CODEMAN_SALAD_API_KEY`, for the `salad-pod` provider, with the variables `CODEMAN_SALAD_ORGANIZATION` and `CODEMAN_SALAD_PROJECT`, which name where Codeman creates its container groups.
+
+- **Used by:** `open-key`, `close-key` and `release-pod`.
+- **Why it is safe:**
+  - These jobs check out only Codeman's code, run no LLM, and only call Salad and the pods' gateways.
+  - A pod gets no Salad key at all, only the hash of its admin token, which is derived from this key. It ends by exiting, and the key jobs delete its group ([self-termination](../inference/pods.md#self-termination)).
+- **Gap:** the key is its Salad user's, not the organization's. It may do anything in every organization and project the user belongs to, including spend all their credits ([using the API](../web/salad/using-the-api.md)).
+- **Mitigation:** a Salad user that belongs only to Codeman's organization, with prepaid credits and no auto recharge ([installation](../installation/salad.md)).
 
 ### Runpod Serverless key
 
@@ -127,7 +139,7 @@ GitHub's OIDC token (`id-token: write`), and the backend's tokens made from it.
   - `agent` never gets one, so neither the agent nor a Serverless gateway reaches the backend ([backend](../backend/backend.md)).
 - **Gap:**
   - Whoever can change `codeman.yml` or `codeman-task.yml` on the default branch can read and write all of the project's Firestore data.
-  - That data holds Codeman's records, but no secret. The [pod registry](../glossary.md#pod-registry) holds each pod's nonce, from which only the Runpod API key derives its admin token.
+  - That data holds Codeman's records, but no secret. The [pod registry](../glossary.md#pod-registry) holds each pod's nonce, from which only the GPU account's key derives its admin token.
   - With that access, they can make other repositories' pods end, or take new tasks.
   - The condition cannot tell one job of the workflow from another: `id-token: write` given to `agent` would let the agent in.
 - **Mitigation:**

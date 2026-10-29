@@ -1,6 +1,6 @@
 # Installation
 
-This page sets Codeman up on a repository, step by step, and ends with a first [task](../glossary.md#task). To serve models on your own rented GPUs instead of OpenRouter, see [self-hosted inference on Runpod](runpod.md) once you are done here.
+This page sets Codeman up on a repository, step by step, and ends with a first [task](../glossary.md#task). To serve models on your own rented GPUs instead of OpenRouter, see [self-hosted inference on Runpod](runpod.md) or [on Salad](salad.md) once you are done here.
 
 Codeman has five parts: a GitHub App, an OpenRouter account, credentials in the repository or organization, a [backend](../glossary.md#backend) where Codeman records its runs, and a workflow, which runs the [commit of Codeman](../glossary.md#codemans-commit) that a variable names.
 
@@ -57,6 +57,7 @@ flowchart TD
 | `gcloud`, or [Cloud Shell](https://shell.cloud.google.com), which has it | Setting up the backend's identity | No |
 | `openssl` | Generating the encryption secret | Any random value of 32 characters or more will do |
 | A [Runpod](https://www.runpod.io) account | Serving models on your own GPUs ([Runpod setup](runpod.md)) | Yes |
+| A [Salad](https://salad.com) user and organization | Serving models on consumer GPUs that third parties own ([Salad setup](salad.md)) | Yes |
 
 The `agent` job needs a Linux runner, x64 or arm64. The templates use `ubuntu-latest`.
 
@@ -140,6 +141,7 @@ Which job reads each credential, and why that is safe, is in [secrets](../securi
 | `CODEMAN_OPENROUTER_MANAGEMENT_KEY` | The OpenRouter management key | The settings or a [profile](mixing-providers.md) use the `openrouter` [provider](../glossary.md#inference-provider), the default |
 | `CODEMAN_RUNPOD_API_KEY` | The Runpod account's API key | The settings or a profile use `runpod-pod` or `runpod-serverless`; see [mixing providers](mixing-providers.md#add-the-secrets) for the organization's monthly budget |
 | `CODEMAN_RUNPOD_SERVERLESS_KEY` | A key restricted to the Serverless endpoint | The settings or a profile use `runpod-serverless` |
+| `CODEMAN_SALAD_API_KEY` | The API key of Codeman's Salad user | The settings or a profile use `salad-pod` |
 
 Generate the encryption secret with:
 
@@ -157,6 +159,7 @@ It encrypts each run's OpenRouter key, or self-hosted [run token](../glossary.md
 | `CODEMAN_COMMIT_SHA` | The commit you chose in [Before you start](#choose-codemans-commit) | Always |
 | `CODEMAN_FIREBASE_PROJECT`, `CODEMAN_WORKLOAD_IDENTITY_PROVIDER`, `CODEMAN_SERVICE_ACCOUNT` | The backend; you add them at the end of [step 4](#4-set-up-the-backend) | Always |
 | `CODEMAN_SETTINGS` | Settings the organization's repositories share; see [shared settings](shared-settings.md) | Optional, in the organization |
+| `CODEMAN_SALAD_ORGANIZATION`, `CODEMAN_SALAD_PROJECT` | The Salad organization and project where Codeman creates its pods | The settings or a profile use `salad-pod` |
 
 A repository variable overrides the organization's variable of the same name.
 
@@ -457,7 +460,7 @@ To choose settings for this task, add lines such as `/codeman model <id>` or `/c
 
 ## A pool of organizations
 
-Organizations that share one Runpod account can batch tasks on the same pods. Setting one up is in [a pool of organizations](pool.md).
+Organizations that share one GPU account can batch tasks on the same pods. Setting one up is in [a pool of organizations](pool.md).
 
 ## Next steps
 
@@ -465,6 +468,6 @@ Organizations that share one Runpod account can batch tasks on the same pods. Se
 - [Settings](../settings/reference.md): every setting, and where its value comes from.
 - [Shared settings](shared-settings.md): give the organization's repositories the same settings.
 - [Mixing providers](mixing-providers.md): a different model per stage, and several tasks at once.
-- [Self-hosted inference on Runpod](runpod.md): serve an open model on your own GPUs.
+- [Self-hosted inference on Runpod](runpod.md) or [on Salad](salad.md): serve an open model on GPUs you rent.
 - [Commands](../tasks/commands.md) and [task lifecycle](../tasks/lifecycle.md): steer a task, and read its labels.
 - [Upgrading](upgrading.md) and [backend maintenance](backend-maintenance.md): keep the installation running.

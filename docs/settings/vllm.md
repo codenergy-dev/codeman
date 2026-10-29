@@ -1,6 +1,6 @@
 # vLLM settings
 
-With `provider: runpod-pod` and `engine: vllm`, a [pod](../glossary.md#pod) serves a Hugging Face model with vLLM. A `vllm:` block tunes it: each key becomes one of `vllm serve`'s arguments, such as `max-num-seqs: 4` for `--max-num-seqs 4`.
+With `provider: runpod-pod` or `salad-pod` and `engine: vllm`, a [pod](../glossary.md#pod) serves a Hugging Face model with vLLM. A `vllm:` block tunes it: each key becomes one of `vllm serve`'s arguments, such as `max-num-seqs: 4` for `--max-num-seqs 4`.
 
 ```yaml
 provider: runpod-pod
@@ -222,7 +222,9 @@ Before creating a vLLM pod, `open-key` checks the GPU's hosts, then the model. E
 
 ### CUDA
 
-vLLM 0.31.0's image is built with CUDA 13.0, and fails on a host whose driver is older (CUDA's error 804). So a vLLM pod is created with `minCudaVersion` 13.0 (`VLLM_MIN_CUDA`). Before creating it, `open-key` reads which CUDA versions the GPU type's hosts offer pods on Secure Cloud, and whether they have room ([get a GPU type](../web/runpod/get-a-gpu-type.md)). This check runs before the [model's](#the-model).
+vLLM 0.31.0's image is built with CUDA 13.0, and fails on a host whose driver is older (CUDA's error 804). How a pod gets a newer one depends on the provider.
+
+**On Runpod,** a vLLM pod is created with `minCudaVersion` 13.0 (`VLLM_MIN_CUDA`). Before creating it, `open-key` reads which CUDA versions the GPU type's hosts offer pods, on the clouds `hosts` allows, and whether they have room ([get a GPU type](../web/runpod/get-a-gpu-type.md)). This check runs before the [model's](#the-model).
 
 | When | Message |
 | --- | --- |
@@ -230,6 +232,8 @@ vLLM 0.31.0's image is built with CUDA 13.0, and fails on a host whose driver is
 | None of those hosts has room | "No host with `<gpu>` and CUDA 13.0 or newer has room now (Runpod offers 13.0, 13.1), which vLLM's image needs, so no pod was created: try again later, or use another GPU type." |
 
 `open-key` logs the host's CUDA version once the pod runs. Ollama pods take any host.
+
+**On Salad,** which cannot pick hosts by CUDA version, the pod's gateway reads the driver's version with `nvidia-smi` before it starts vLLM. An older one fails the pod's start: "The host's driver supports CUDA `<version>`, older than the 13.0 that vLLM's image needs." A version it cannot read does not stop the start.
 
 ### The model
 
