@@ -1,7 +1,7 @@
 ---
 status: completed
 created_at: 2026-10-29T16:54:04-03:00
-updated_at: 2026-10-29T20:40:00-03:00
+updated_at: 2026-10-29T21:10:00-03:00
 commit: 3d614ce
 ---
 
@@ -155,3 +155,4 @@ Each step ends with `npm run check` passing, and is one commit.
 - `npm run check` passes: 1010 tests.
 - The e2e scenarios of `parallel`, `pods`, `pools`, `budgets` and `profiles` pass: 25 of 25.
 - Found on the way, and fixed in `79859a4`: a `concurrency-reached` refusal never started the next run.
+- After the push, the images published from `ce1fed1` were pinned in `POD_IMAGES`, though step 7 did not need it: `codeman-ollama@sha256:111bab4d…` and `codeman-vllm@sha256:95e00706…` ([audit log](../development/dependencies.md#audit-log)).
