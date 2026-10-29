@@ -1459,3 +1459,37 @@ test("a registered pod of another account is neither joined nor swept", async ()
   assert.ok(!gpu.terminated.includes("elsewhere"));
   assert.ok((await registry.live()).some((pod) => pod.nonce === claim.pod.nonce));
 });
+
+test("a pod's kinds of host and priority reach its creation, and its price is its host's", async () => {
+  const { gpu, open } = setup();
+  gpu.communityPrices["GPU-A"] = 0.0001;
+  const { handle, runtime } = await open("7", "300", {
+    hosts: ["community", "secure"],
+    priority: "on-demand",
+  });
+  assert.deepEqual(gpu.created[0]?.hosts, ["community", "secure"]);
+  assert.equal(gpu.created[0]?.priority, "on-demand");
+  assert.equal(handle.pricePerSecond, 0.0001);
+  const infos = runtime.logs.map(({ message }) => message);
+  assert.ok(
+    infos.some((line) => line.includes("on community hosts, at US$ 0.36 per hour")),
+    infos.join("\n"),
+  );
+  // The defaults leave the spec as it was: the provider's own defaults apply.
+  await open("8", "300");
+  assert.equal(gpu.created[1]?.hosts, undefined);
+  assert.equal(gpu.created[1]?.priority, undefined);
+});
+
+test("kinds of host and a priority are part of a pod's settings, only when not the defaults", () => {
+  const shared = { ...settings, image: SHARED_IMAGE };
+  const before = sha256(["qwen3-coder:30b", "GPU-A", SHARED_IMAGE, "task"].join("\n")).slice(0, 16);
+  assert.equal(podSettingsKey({ ...shared, hosts: ["secure"] }, "o/r#7"), before);
+  const community = podSettingsKey({ ...shared, hosts: ["community", "secure"] }, "o/r#7");
+  assert.notEqual(community, before);
+  assert.notEqual(
+    podSettingsKey({ ...shared, hosts: ["secure", "community"] }, "o/r#7"),
+    community,
+  );
+  assert.notEqual(podSettingsKey({ ...shared, priority: "low" }, "o/r#7"), before);
+});

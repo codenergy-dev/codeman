@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import { HOST_KINDS } from "./gpu.ts";
 import {
   ACCOUNTS,
   accountOf,
   endpointId,
+  hostKinds,
   isHourlyAccount,
+  listSetting,
   PROVIDER_NAMES,
   PROVIDERS,
   providerProblem,
@@ -42,11 +45,13 @@ test("a pod needs a GPU, serves Ollama models, and keeps the pod for the task by
     ...settings,
     engine: "ollama",
     "pod-reuse": "task",
+    hosts: "secure",
+    priority: "on-demand",
   });
   assert.equal(providerProblem({ ...settings, "pod-reuse": "run" }), undefined);
   assert.equal(
     providerProblem({ ...settings, endpoint: "abc" }),
-    "`runpod-pod` does not accept `endpoint`; besides `model`, it takes `engine`, `gpu`, `pod-reuse`, `ollama` and `vllm`.",
+    "`runpod-pod` does not accept `endpoint`; besides `model`, it takes `engine`, `gpu`, `pod-reuse`, `hosts`, `priority`, `ollama` and `vllm`.",
   );
   assert.equal(
     providerProblem({ ...settings, engine: "sglang" }),
@@ -56,6 +61,42 @@ test("a pod needs a GPU, serves Ollama models, and keeps the pod for the task by
     providerProblem({ ...settings, model: "not a model" }) ?? "",
     /With `runpod-pod`, `model` must be a model name of the engine `ollama`, such as `qwen3-coder:30b`/,
   );
+});
+
+test("a pod's hosts list kinds of host by preference, and Runpod offers one priority", () => {
+  const settings = { provider: "runpod-pod", model: "qwen3-coder:30b", gpu: "NVIDIA RTX A6000" };
+  assert.equal(providerProblem({ ...settings, hosts: "community,secure" }), undefined);
+  assert.equal(providerProblem({ ...settings, hosts: "community" }), undefined);
+  assert.equal(
+    providerProblem({ ...settings, hosts: "secure,datacenter" }),
+    "With `runpod-pod`, `hosts` must list some of `secure`, `community`, each once, such as `[secure, community]`.",
+  );
+  assert.equal(
+    providerProblem({ ...settings, hosts: "secure,secure" }),
+    "With `runpod-pod`, `hosts` lists a value twice: list each of `secure`, `community` once.",
+  );
+  assert.equal(providerProblem({ ...settings, priority: "on-demand" }), undefined);
+  assert.equal(
+    providerProblem({ ...settings, priority: "spot" }),
+    "With `runpod-pod`, `priority` must be one of `on-demand`, not `spot`.",
+  );
+  assert.deepEqual(listSetting("hosts", "[community, secure]", HOST_KINDS), {
+    ok: true,
+    value: "community,secure",
+  });
+  assert.deepEqual(hostKinds(undefined), ["secure"]);
+  assert.deepEqual(hostKinds("community,secure"), ["community", "secure"]);
+  // Neither Serverless nor OpenRouter takes them: an endpoint's cloud is set on the endpoint.
+  for (const other of [
+    { provider: "runpod-serverless", model: "Qwen/Qwen3-Coder-30B-A3B-Instruct", endpoint: "a1" },
+    { provider: "openrouter", model: "a/b" },
+  ]) {
+    assert.match(providerProblem({ ...other, hosts: "secure" }) ?? "", /does not accept `hosts`/);
+    assert.match(
+      providerProblem({ ...other, priority: "on-demand" }) ?? "",
+      /does not accept `priority`/,
+    );
+  }
 });
 
 test("Serverless needs an endpoint, serves vLLM models, and takes no GPU", () => {

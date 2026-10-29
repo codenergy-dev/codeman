@@ -277,3 +277,29 @@ test("a vLLM pod's choice reaches its pod: the vLLM image, its settings and max-
     );
   }
 });
+
+test("a pod's choice carries its kinds of host and its priority, only when not the defaults", () => {
+  const pod = (layer: Partial<Settings>) =>
+    inferenceChoice(
+      settings({ provider: "runpod-pod", model: "qwen3-coder:30b", gpu: "GPU A", ...layer }),
+      null,
+    );
+  const plain = pod({ hosts: "secure", priority: "on-demand" });
+  assert.equal("hosts" in plain, false);
+  assert.equal("priority" in plain, false);
+  const community = pod({ hosts: "community,secure" });
+  assert.ok(community.provider === "runpod-pod");
+  assert.deepEqual(community.hosts, ["community", "secure"]);
+  assert.deepEqual(parseInferenceChoice(JSON.stringify(community)), community);
+  for (const hosts of [[], ["secure", "secure"], ["datacenter"], "secure"]) {
+    assert.throws(
+      () => parseInferenceChoice(JSON.stringify({ ...community, hosts })),
+      /not a valid choice/,
+      JSON.stringify(hosts),
+    );
+  }
+  assert.throws(
+    () => parseInferenceChoice(JSON.stringify({ ...community, priority: "spot" })),
+    /not a valid choice/,
+  );
+});

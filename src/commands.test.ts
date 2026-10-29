@@ -253,3 +253,13 @@ test("an old name is a problem that gives the new one", () => {
     },
   ]);
 });
+
+test("set refuses what only the settings files set, such as `hosts`", () => {
+  assert.deepEqual(parseCommands("/codeman set hosts community"), [
+    {
+      kind: "invalid",
+      text: "/codeman set hosts community",
+      problem: { kind: "set-in-files", name: "hosts" },
+    },
+  ]);
+});

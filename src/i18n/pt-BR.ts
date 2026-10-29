@@ -321,6 +321,8 @@ export const ptBR: Messages = {
         return `\`set\` muda, nesta tarefa, uma destas configurações: ${problem.names.map((name) => `\`${name}\``).join(", ")}.`;
       case "set-one-value":
         return `\`set ${problem.name}\` precisa de um valor.`;
+      case "set-in-files":
+        return `\`${problem.name}\` só é definida nos arquivos de configuração, \`.codeman/settings.yml\` ou a CODEMAN_SETTINGS da organização, e não por uma tarefa: ela decide em que máquinas o código do repositório roda.`;
       case "renamed-setting":
         return `\`${problem.name}\` agora se chama \`${problem.now}\`: escreva \`set ${problem.now}\`.`;
       case "invalid-setting":
@@ -332,6 +334,7 @@ export const ptBR: Messages = {
           choice: `\`${problem.name}\` precisa ser um destes valores: ${(problem.values ?? []).map((value) => `\`${value}\``).join(", ")}.`,
           gpu: `\`${problem.name}\` precisa ser um tipo de GPU, como \`NVIDIA RTX A6000\`.`,
           endpoint: `\`${problem.name}\` precisa ser o ID de um endpoint, com letras e dígitos, ou a URL dele em \`https://api.runpod.ai\`.`,
+          list: `\`${problem.name}\` precisa listar alguns de ${(problem.values ?? []).map((value) => `\`${value}\``).join(", ")}, cada um uma vez.`,
         }[problem.type];
       case "settings-rejected":
         return `As configurações da tarefa não foram aplicadas: ${problem.error}`;

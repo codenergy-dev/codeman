@@ -312,6 +312,8 @@ export const en: Messages = {
         return `\`set\` changes one of ${problem.names.map((name) => `\`${name}\``).join(", ")} for this task.`;
       case "set-one-value":
         return `\`set ${problem.name}\` needs one value.`;
+      case "set-in-files":
+        return `\`${problem.name}\` is set only in the settings files, \`.codeman/settings.yml\` or the organization's CODEMAN_SETTINGS, not by a task: it decides whose machines get the repository's code.`;
       case "renamed-setting":
         return `\`${problem.name}\` is now \`${problem.now}\`: write \`set ${problem.now}\`.`;
       case "invalid-setting":
@@ -323,6 +325,7 @@ export const en: Messages = {
           choice: `\`${problem.name}\` must be one of ${(problem.values ?? []).map((value) => `\`${value}\``).join(", ")}.`,
           gpu: `\`${problem.name}\` must be a GPU type, such as \`NVIDIA RTX A6000\`.`,
           endpoint: `\`${problem.name}\` must be an endpoint's ID, letters and digits, or its URL on \`https://api.runpod.ai\`.`,
+          list: `\`${problem.name}\` must list some of ${(problem.values ?? []).map((value) => `\`${value}\``).join(", ")}, each once.`,
         }[problem.type];
       case "settings-rejected":
         return `The task's settings were not applied: ${problem.error}`;

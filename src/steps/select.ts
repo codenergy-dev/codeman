@@ -22,7 +22,7 @@ import type { Runtime } from "../runtime/runtime.ts";
 import type { Services } from "../services.ts";
 import {
   agentJobMinutes,
-  isSettingName,
+  INPUT_SETTINGS,
   mostTasks,
   type PartialSettings,
   parseSetting,
@@ -837,9 +837,9 @@ function startMessage(t: Messages, task: TaskContext): string {
 /** Settings given as workflow inputs. Empty inputs fall back to the settings file. */
 function inputSettings(runtime: Runtime): PartialSettings {
   const settings: PartialSettings = {};
-  for (const name of ["model", "task-budget", "monthly-budget", "max-runs"]) {
+  for (const name of INPUT_SETTINGS) {
     const text = runtime.input(name);
-    if (text === "" || !isSettingName(name)) continue;
+    if (text === "") continue;
     const parsed = parseSetting(name, text);
     if (!parsed.ok) throw new Error(`Input ${parsed.error}`);
     Object.assign(settings, { [name]: parsed.value });

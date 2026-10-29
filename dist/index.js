@@ -20277,9 +20277,81 @@ function list2(items) {
 // src/inference/engines.ts
 var ENGINES = { ollama, vllm };
 
+// src/inference/gpu.ts
+var HOST_KINDS = ["secure", "community"];
+var DEFAULT_HOSTS = ["secure"];
+function isHostKind(text) {
+  return HOST_KINDS.includes(text);
+}
+var MAX_IDLE_TIMEOUT_SECONDS = 300;
+function endpointProblems(endpoint2) {
+  const problems = [];
+  if (endpoint2.type !== void 0 && endpoint2.type !== "QUEUE") {
+    problems.push(`it is a ${endpoint2.type} endpoint; the vLLM worker needs a queue-based one`);
+  }
+  if (endpoint2.workersMin !== 0) {
+    problems.push(
+      `it keeps ${endpoint2.workersMin} active worker(s), billed all the time; set active workers to 0`
+    );
+  }
+  if (endpoint2.workersMax === 0) {
+    problems.push(
+      "its max workers is 0, as the provider sets it after 7 days without requests; set it to 1"
+    );
+  } else if (endpoint2.workersMax !== 1) {
+    problems.push(`it may run ${endpoint2.workersMax} workers at once; set max workers to 1`);
+  }
+  const idle = endpoint2.idleTimeoutSeconds;
+  if (idle === void 0 || idle > MAX_IDLE_TIMEOUT_SECONDS) {
+    problems.push(
+      `its idle timeout is ${idle === void 0 ? "unknown" : `${idle} seconds`}; set it to ${MAX_IDLE_TIMEOUT_SECONDS} seconds or less`
+    );
+  }
+  return problems;
+}
+function podCost(start, end, pricePerSecond) {
+  return Math.max(0, end.getTime() - start.getTime()) / 1e3 * pricePerSecond;
+}
+var PodStartFailure = class extends Error {
+};
+async function waitUntilReady(host, id, ready, options) {
+  const wait = options.wait ?? sleep;
+  const interval = options.intervalMs ?? 1e4;
+  for (let waited = 0; ; waited += interval) {
+    const pod = await host.get(id);
+    if (!pod) throw new Error(`Pod ${id} no longer exists.`);
+    if (pod.status === "failed" || pod.status === "stopped" || pod.status === "terminated") {
+      throw new Error(`Pod ${id} is ${pod.status}.`);
+    }
+    if (pod.status === "running") {
+      const served = await ready().catch((error3) => {
+        if (error3 instanceof PodStartFailure) throw error3;
+        return false;
+      });
+      if (served) return pod;
+    }
+    if (waited >= options.timeoutMs) {
+      throw new Error(
+        `Pod ${id} was not ready within ${Math.round(options.timeoutMs / 6e4)} minutes.`
+      );
+    }
+    await wait(interval);
+  }
+}
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 // src/inference/providers.ts
 var PROVIDER_NAMES = ["openrouter", "runpod-pod", "runpod-serverless"];
-var PROVIDER_SETTINGS = ["engine", "gpu", "endpoint", "pod-reuse"];
+var PROVIDER_SETTINGS = [
+  "engine",
+  "gpu",
+  "endpoint",
+  "pod-reuse",
+  "hosts",
+  "priority"
+];
 var PROVIDER_BLOCKS = ["ollama", "vllm"];
 var BLOCK_CHECKS = { ollama: ollamaEnvironment, vllm: vllmArguments };
 var BLOCK_ENGINES = {
@@ -20301,7 +20373,12 @@ var PROVIDERS = {
     settings: {
       engine: { values: ["ollama", "vllm"], default: "ollama" },
       gpu: { required: true, example: '"NVIDIA RTX A6000"' },
-      "pod-reuse": { values: ["task", "run"], default: "task" }
+      "pod-reuse": { values: ["task", "run"], default: "task" },
+      // Secure Cloud by default; Community Cloud only when the settings files allow it
+      // (decisions 1 and 9 of the plan for Salad pods).
+      hosts: { values: HOST_KINDS, default: "secure", list: true },
+      // Runpod's REST API offers no interruptible pods (decision 2 of the plan for Salad pods).
+      priority: { values: ["on-demand"], default: "on-demand" }
     },
     blocks: { ollama: { engine: "ollama" }, vllm: { engine: "vllm" } },
     model: "engine",
@@ -20356,6 +20433,11 @@ function providerProblem(settings, serves = true) {
       }
       continue;
     }
+    if (spec.list && spec.values) {
+      const parsed = listSetting(setting2, value, spec.values);
+      if (!parsed.ok) return `With \`${name}\`, ${parsed.error}`;
+      continue;
+    }
     if (spec.values && !spec.values.includes(value)) {
       const offered = spec.values.map((v) => `\`${v}\``).join(", ");
       return setting2 === "engine" ? `\`${name}\` does not offer the engine \`${value}\`; it offers ${offered}.` : `With \`${name}\`, \`${setting2}\` must be one of ${offered}, not \`${value}\`.`;
@@ -20379,6 +20461,23 @@ function providerProblem(settings, serves = true) {
     return TOOL_CALL_PARSER_NEEDED;
   }
   return modelProblem(name, settings.model, settings.engine);
+}
+function listSetting(name, text, values) {
+  const items = text.replace(/^\[(.*)\]$/, "$1").split(",").map((item) => item.trim());
+  const offered = values.map((value) => `\`${value}\``).join(", ");
+  if (items.some((item) => !values.includes(item))) {
+    return {
+      ok: false,
+      error: `\`${name}\` must list some of ${offered}, each once, such as \`[${values.join(", ")}]\`.`
+    };
+  }
+  if (new Set(items).size !== items.length) {
+    return { ok: false, error: `\`${name}\` lists a value twice: list each of ${offered} once.` };
+  }
+  return { ok: true, value: items.join(",") };
+}
+function hostKinds(hosts) {
+  return (hosts ?? "secure").split(",").filter(isHostKind);
 }
 function withProviderDefaults(settings) {
   const provider = isProviderName(settings.provider) ? PROVIDERS[settings.provider] : void 0;
@@ -20684,6 +20783,13 @@ var TASK_SETTINGS = /* @__PURE__ */ new Set([
   "language",
   "gpu"
 ]);
+var FILE_SETTINGS = /* @__PURE__ */ new Set(["hosts"]);
+var INPUT_SETTINGS = [
+  "model",
+  "task-budget",
+  "monthly-budget",
+  "max-runs"
+];
 var RENAMED_TASK_SETTINGS = { "gpu-type": "gpu" };
 var ORGANIZATION_SETTINGS = /* @__PURE__ */ new Set([
   "organization-monthly-budget"
@@ -20691,7 +20797,8 @@ var ORGANIZATION_SETTINGS = /* @__PURE__ */ new Set([
 var CHOICES = {
   provider: PROVIDER_NAMES,
   engine: settingValues("engine"),
-  "pod-reuse": settingValues("pod-reuse")
+  "pod-reuse": settingValues("pod-reuse"),
+  priority: settingValues("priority")
 };
 var NAMES = [
   "model",
@@ -20727,6 +20834,7 @@ function settingKind(name) {
     return name;
   }
   if (CHOICES[name]) return "choice";
+  if (name === "hosts") return "list";
   return name === "task-budget" || name === "monthly-budget" || name === "organization-monthly-budget" ? "number" : "integer";
 }
 function isSettingName(name) {
@@ -20751,6 +20859,7 @@ function parseSetting(name, text) {
     return GPU_TYPE.test(text) ? { ok: true, value: text } : { ok: false, error: `\`${name}\` must be a GPU type, such as \`NVIDIA RTX A6000\`.` };
   }
   if (name === "endpoint") return endpointId(text);
+  if (name === "hosts") return listSetting(name, text, settingValues(name) ?? []);
   if (name === "language") {
     return text === "auto" || isLanguageTag(text) ? { ok: true, value: text } : {
       ok: false,
@@ -20890,6 +20999,12 @@ function setting(entry, what) {
       line,
       error: `a profile cannot set \`${name}\`; it sets only ${allowed.map((n) => `\`${n}\``).join(", ")}.`
     };
+  }
+  const items = value.kind === "list" && settingKind(name) === "list" ? value.items : void 0;
+  const listed = items?.flatMap((item) => item.kind === "scalar" ? [item.text] : []);
+  if (items && listed?.length === items.length) {
+    const parsed2 = parseSetting(name, listed.join(","));
+    return parsed2.ok ? parsed2 : { ok: false, line, error: parsed2.error };
   }
   if (value.kind !== "scalar") {
     return { ok: false, line, error: `the value of \`${name}\` is not a plain value.` };
@@ -21164,9 +21279,17 @@ function batchKey(settings, profile2, parallel) {
     reuse: settings["pod-reuse"] ?? null,
     ollama: sorted(settings.ollama),
     vllm: sorted(settings.vllm),
-    parallel: pod ? parallel : null
+    parallel: pod ? parallel : null,
+    // Only when they are not their provider's defaults, so that batch keys from before them stay.
+    ...nonDefault(settings, "hosts"),
+    ...nonDefault(settings, "priority")
   };
   return createHash("sha256").update(JSON.stringify(serving2)).digest("hex").slice(0, 16);
+}
+function nonDefault(settings, name) {
+  const value = settings[name];
+  const spec = PROVIDERS[settings.provider]?.settings[name];
+  return value === void 0 || value === spec?.default ? {} : { [name]: value };
 }
 function serving(layers, base) {
   let result = pick(base.settings, PROFILE_SETTINGS);
@@ -21623,7 +21746,7 @@ var OpenRouterProvider = class {
     };
   }
 };
-async function runCost(router, hash, used, wait = sleep) {
+async function runCost(router, hash, used, wait = sleep2) {
   let cost = await router.keyUsage(hash);
   for (let attempt = 0; attempt < (used ? 12 : 6); attempt++) {
     await wait(5e3);
@@ -21654,7 +21777,7 @@ function rounded(costs) {
   );
 }
 var KEY_LIFETIME_MS = 48 * 36e5;
-async function runTokens(router, hash, spent, log, wait = sleep) {
+async function runTokens(router, hash, spent, log, wait = sleep2) {
   try {
     for (let attempt = 0; ; attempt++) {
       const now = /* @__PURE__ */ new Date();
@@ -21674,7 +21797,7 @@ async function runTokens(router, hash, spent, log, wait = sleep) {
     return void 0;
   }
 }
-async function runStats(router, hash, generated, log, wait = sleep) {
+async function runStats(router, hash, generated, log, wait = sleep2) {
   try {
     for (let attempt = 0; ; attempt++) {
       const now = /* @__PURE__ */ new Date();
@@ -21693,7 +21816,7 @@ async function runStats(router, hash, generated, log, wait = sleep) {
     return void 0;
   }
 }
-function sleep(ms) {
+function sleep2(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
@@ -21708,6 +21831,15 @@ var STATUS = {
   ERROR: "failed",
   TERMINATED: "terminated"
 };
+var CLOUDS = {
+  secure: "SECURE",
+  community: "COMMUNITY"
+};
+var CLOUD_NAMES = {
+  secure: "Secure Cloud",
+  community: "Community Cloud"
+};
+var PRIORITIES = ["on-demand"];
 var Runpod = class {
   name = "runpod";
   pods;
@@ -21722,12 +21854,12 @@ var Runpod = class {
     this.#fetch = fetchFn;
     this.#now = now;
     this.pods = {
-      price: (gpuType) => this.#podPrice(gpuType),
+      price: (gpuType, host) => this.#podPrice(gpuType, host),
       memory: async (gpuType) => {
         const memory = (await this.#gpu(gpuType))?.memory;
         return typeof memory === "number" && memory > 0 ? memory : void 0;
       },
-      cudaVersions: (gpuType, min) => this.#cudaVersions(gpuType, min),
+      cudaVersions: (gpuType, min, host) => this.#cudaVersions(gpuType, min, host),
       create: (spec) => this.#createPod(spec),
       get: (id) => this.#getPod(id),
       list: (env) => this.#listPods(env),
@@ -21773,36 +21905,76 @@ var Runpod = class {
     }
     return gpu;
   }
-  async #podPrice(gpuType) {
+  async #podPrice(gpuType, host = "secure") {
     const gpu = await this.#gpu(gpuType);
     if (!gpu) {
       throw new Error(
         `Runpod has no GPU type "${gpuType}". \`gpu\` takes the GPU's ID, such as "NVIDIA RTX A6000", not its display name; see https://docs.runpod.io/references/gpu-types.`
       );
     }
-    const hourly = gpu.price?.secure;
-    if (gpu.secure === false || typeof hourly !== "number" || !(hourly > 0)) {
-      throw new Error(`Runpod does not offer ${gpuType} on Secure Cloud.`);
+    const hourly = gpu.price?.[host];
+    if (gpu[host] === false || typeof hourly !== "number" || !(hourly > 0)) {
+      throw new Error(`Runpod does not offer ${gpuType} on ${CLOUD_NAMES[host]}.`);
     }
     return hourly / 3600;
   }
   /**
-   * `GET /v2/catalog/gpus/{id}` with the pods' availability on Secure Cloud from a CUDA version
-   * (docs/web/runpod/get-a-gpu-type.md): a missing `cudaVersions` is an empty one.
+   * `GET /v2/catalog/gpus/{id}` with the pods' availability on a cloud, from a CUDA version when
+   * one is given (docs/web/runpod/get-a-gpu-type.md); undefined when Runpod has no such GPU type.
    */
-  async #cudaVersions(gpuType, min) {
-    const query = `include=AVAILABILITY&product=POD&cloud=SECURE&minCudaVersion=${encodeURIComponent(min)}`;
-    const gpu = await this.#request(
+  #availability(gpuType, host, minCudaVersion) {
+    const query = `include=AVAILABILITY&product=POD&cloud=${CLOUDS[host]}${minCudaVersion ? `&minCudaVersion=${encodeURIComponent(minCudaVersion)}` : ""}`;
+    return this.#request(
       `/catalog/gpus/${encodeURIComponent(gpuType)}?${query}`,
       "GET",
       void 0,
       [404]
     );
+  }
+  /** The CUDA versions a cloud offers from `min`: a missing `cudaVersions` is an empty one. */
+  async #cudaVersions(gpuType, min, host = "secure") {
+    const gpu = await this.#availability(gpuType, host, min);
     return (gpu?.cudaVersions ?? []).flatMap(
       ({ version, available }) => typeof version === "string" ? [{ version, available: available === true }] : []
     );
   }
+  /**
+   * Creates the pod on the first cloud of its `hosts` whose hosts have room (decision 9 of the
+   * plan for Salad pods). With one kind of host, the pod is created there without asking, as
+   * before; with several, the clouds without room, or that do not offer the GPU type, are passed
+   * over, and a creation that fails moves on to the next.
+   */
   async #createPod(spec) {
+    if (spec.priority !== void 0 && !PRIORITIES.includes(spec.priority)) {
+      throw new Error(
+        `Runpod offers no pod with the priority \`${spec.priority}\`; it offers ${PRIORITIES.map((p) => `\`${p}\``).join(", ")}.`
+      );
+    }
+    const hosts = spec.hosts ?? DEFAULT_HOSTS;
+    const [only] = hosts;
+    if (hosts.length === 1 && only) return this.#createOn(spec, only);
+    const problems = [];
+    for (const host of hosts) {
+      const gpu = await this.#availability(spec.gpuType, host, spec.minCudaVersion);
+      if (!gpu || gpu[host] === false) {
+        problems.push(`${CLOUD_NAMES[host]} does not offer it`);
+        continue;
+      }
+      if (!gpu.availability || gpu.availability === "NONE") {
+        problems.push(`${CLOUD_NAMES[host]} has no room`);
+        continue;
+      }
+      try {
+        return await this.#createOn(spec, host);
+      } catch (error3) {
+        problems.push(`${CLOUD_NAMES[host]}: ${error3 instanceof Error ? error3.message : error3}`);
+      }
+    }
+    throw new Error(
+      `Runpod created no pod with ${spec.gpuType}${spec.minCudaVersion ? ` and CUDA ${spec.minCudaVersion} or newer` : ""}: ${problems.join("; ")}.`
+    );
+  }
+  async #createOn(spec, host) {
     const pod = await this.#request("/pods", "POST", {
       name: spec.name,
       image: spec.image,
@@ -21811,13 +21983,14 @@ var Runpod = class {
         count: 1,
         ...spec.minCudaVersion ? { minCudaVersion: spec.minCudaVersion } : {}
       },
-      // Decision 6 of the self-hosted inference plan: Runpod's own data centers only.
-      cloud: "SECURE",
+      // Secure Cloud unless the settings' `hosts` allow Community Cloud (decision 1 of the plan
+      // for Salad pods, which made decision 6 of the self-hosted inference plan a default).
+      cloud: CLOUDS[host],
       env: spec.env,
       ports: [`${spec.port}/http`],
       disk: spec.diskGb
     });
-    return toPod(pod);
+    return { host, ...toPod(pod) };
   }
   async #getPod(id) {
     const pod = await this.#request(`/pods/${encodeURIComponent(id)}`, "GET", void 0, [404]);
@@ -21922,7 +22095,9 @@ function toPod(pod) {
     gpuType: pod.gpu?.id,
     createdAt: new Date(pod.createdAt),
     pricePerSecond: typeof pod.cost === "number" && pod.cost > 0 ? pod.cost / 3600 : void 0,
-    ...typeof pod.cudaVersion === "string" && pod.cudaVersion !== "" ? { cudaVersion: pod.cudaVersion } : {}
+    ...typeof pod.cudaVersion === "string" && pod.cudaVersion !== "" ? { cudaVersion: pod.cudaVersion } : {},
+    ...pod.cloud === "SECURE" ? { host: "secure" } : {},
+    ...pod.cloud === "COMMUNITY" ? { host: "community" } : {}
   };
 }
 function timestamp(date) {
@@ -22730,66 +22905,6 @@ function documentId(text) {
   if (text === "") throw new Error("A document ID may not be empty.");
   const escaped = text.replaceAll("%", "%25").replaceAll("/", "%2F");
   return escaped === "." || escaped === ".." || /^__.*__$/.test(escaped) ? `%${escaped}` : escaped;
-}
-
-// src/inference/gpu.ts
-var MAX_IDLE_TIMEOUT_SECONDS = 300;
-function endpointProblems(endpoint2) {
-  const problems = [];
-  if (endpoint2.type !== void 0 && endpoint2.type !== "QUEUE") {
-    problems.push(`it is a ${endpoint2.type} endpoint; the vLLM worker needs a queue-based one`);
-  }
-  if (endpoint2.workersMin !== 0) {
-    problems.push(
-      `it keeps ${endpoint2.workersMin} active worker(s), billed all the time; set active workers to 0`
-    );
-  }
-  if (endpoint2.workersMax === 0) {
-    problems.push(
-      "its max workers is 0, as the provider sets it after 7 days without requests; set it to 1"
-    );
-  } else if (endpoint2.workersMax !== 1) {
-    problems.push(`it may run ${endpoint2.workersMax} workers at once; set max workers to 1`);
-  }
-  const idle = endpoint2.idleTimeoutSeconds;
-  if (idle === void 0 || idle > MAX_IDLE_TIMEOUT_SECONDS) {
-    problems.push(
-      `its idle timeout is ${idle === void 0 ? "unknown" : `${idle} seconds`}; set it to ${MAX_IDLE_TIMEOUT_SECONDS} seconds or less`
-    );
-  }
-  return problems;
-}
-function podCost(start, end, pricePerSecond) {
-  return Math.max(0, end.getTime() - start.getTime()) / 1e3 * pricePerSecond;
-}
-var PodStartFailure = class extends Error {
-};
-async function waitUntilReady(host, id, ready, options) {
-  const wait = options.wait ?? sleep2;
-  const interval = options.intervalMs ?? 1e4;
-  for (let waited = 0; ; waited += interval) {
-    const pod = await host.get(id);
-    if (!pod) throw new Error(`Pod ${id} no longer exists.`);
-    if (pod.status === "failed" || pod.status === "stopped" || pod.status === "terminated") {
-      throw new Error(`Pod ${id} is ${pod.status}.`);
-    }
-    if (pod.status === "running") {
-      const served = await ready().catch((error3) => {
-        if (error3 instanceof PodStartFailure) throw error3;
-        return false;
-      });
-      if (served) return pod;
-    }
-    if (waited >= options.timeoutMs) {
-      throw new Error(
-        `Pod ${id} was not ready within ${Math.round(options.timeoutMs / 6e4)} minutes.`
-      );
-    }
-    await wait(interval);
-  }
-}
-function sleep2(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 // src/inference/huggingface.ts
@@ -23652,9 +23767,10 @@ function quotedVariables(settings) {
   return ollamaVariables(settings).map((variable) => `\`${variable}\``).join(", ");
 }
 function podSettingsKey(settings, holder) {
-  const { model, gpuType, image, reuse } = settings;
+  const { model, gpuType, image, reuse, priority } = settings;
   const ollama2 = ollamaVariables(settings);
   const vllm2 = settings.engine && onVllm({ engine: settings.engine });
+  const hosts = (settings.hosts ?? DEFAULT_HOSTS).join(",");
   const parts = [
     model,
     gpuType,
@@ -23662,7 +23778,9 @@ function podSettingsKey(settings, holder) {
     reuse,
     ...servesOneRun(image) ? [holder] : [],
     ...ollama2.length > 0 ? [`ollama ${ollama2.join(" ")}`] : [],
-    ...vllm2 ? ["engine vllm", `vllm ${vllmValues(settings).join(" ")}`] : []
+    ...vllm2 ? ["engine vllm", `vllm ${vllmValues(settings).join(" ")}`] : [],
+    ...hosts !== DEFAULT_HOSTS.join(",") ? [`hosts ${hosts}`] : [],
+    ...priority !== void 0 ? [`priority ${priority}`] : []
   ];
   return sha256(parts.join("\n")).slice(0, 16);
 }
@@ -24248,7 +24366,7 @@ var PodInference = class {
       url: target.url,
       start: startedBefore && !own ? this.#now().getTime() : created,
       created,
-      pricePerSecond: running.pricePerSecond ?? record.pricePerSecond ?? await this.#host.price(this.#settings.gpuType),
+      pricePerSecond: running.pricePerSecond ?? record.pricePerSecond ?? await this.#host.price(this.#settings.gpuType, running.host ?? this.#hosts[0]),
       limit: run2.limit,
       reuse: this.#settings.reuse,
       holder,
@@ -24271,9 +24389,10 @@ var PodInference = class {
   }
   /** Creates the pod of a creation lease, named by its nonce, with its settings in its environment. */
   async #launch(record, log) {
-    const { model, gpuType, image, engine } = this.#settings;
+    const { model, gpuType, image, engine, priority } = this.#settings;
     if (!image) throw new Error("No pod image is pinned; see docs/installation/runpod.md#pods.");
-    const listed = await this.#host.price(gpuType);
+    const hosts = this.#hosts;
+    const prices = await this.#prices(gpuType, hosts);
     const vllm2 = onVllm(this.#settings) ? await this.#prepareVllm(log) : void 0;
     const fits = !vllm2 && fitsTheGpu(image);
     const memory = fits ? await this.#host.memory?.(gpuType).catch(() => void 0) : void 0;
@@ -24303,13 +24422,39 @@ var PodInference = class {
       port: GATEWAY_PORT,
       gpuType,
       diskGb: vllm2?.diskGb ?? DISK_GB,
-      ...vllm2 ? { minCudaVersion: VLLM_MIN_CUDA } : {}
+      ...vllm2 ? { minCudaVersion: VLLM_MIN_CUDA } : {},
+      ...this.#settings.hosts ? { hosts } : {},
+      ...priority ? { priority } : {}
     });
     this.#events.push({ pod: pod.id, event: "created" });
+    const host = pod.host && prices.has(pod.host) ? pod.host : [...prices.keys()][0];
+    const listed = host && prices.get(host) || await this.#host.price(gpuType, host);
+    const on = hosts.length > 1 || hosts[0] !== "secure" ? ` on ${host ?? hosts[0]} hosts` : "";
     log.info(
-      `Created pod ${pod.id} with ${gpuType}, at ${usd(listed * 3600)} per hour; waiting for ${model}.`
+      `Created pod ${pod.id} with ${gpuType}${on}, at ${usd(listed * 3600)} per hour; waiting for ${model}.`
     );
     return { pod, listed };
+  }
+  /** The kinds of host the pod may run on, by preference. */
+  get #hosts() {
+    return this.#settings.hosts ?? DEFAULT_HOSTS;
+  }
+  /**
+   * The GPU type's price on each kind of host that offers it, in the settings' order. Throws the
+   * first kind's reason when none does, before any pod is created.
+   */
+  async #prices(gpuType, hosts) {
+    const prices = /* @__PURE__ */ new Map();
+    let first;
+    for (const host of hosts) {
+      try {
+        prices.set(host, await this.#host.price(gpuType, host));
+      } catch (error3) {
+        first ??= error3;
+      }
+    }
+    if (prices.size === 0) throw first;
+    return prices;
   }
   /**
    * Before creating a vLLM pod, at no cost: a host of the GPU type must offer vLLM's CUDA now
@@ -24319,11 +24464,17 @@ var PodInference = class {
    */
   async #prepareVllm(log) {
     const { gpuType, model } = this.#settings;
-    const versions = await this.#host.cudaVersions?.(gpuType, VLLM_MIN_CUDA);
-    if (versions && !versions.some(({ available }) => available)) {
-      throw new Error(
-        versions.length === 0 ? `Runpod offers no host with ${gpuType} and CUDA ${VLLM_MIN_CUDA} or newer, which vLLM's image needs, so no pod was created: use another GPU type, or \`engine: ollama\`.` : `No host with ${gpuType} and CUDA ${VLLM_MIN_CUDA} or newer has room now (Runpod offers ${versions.map(({ version }) => version).join(", ")}), which vLLM's image needs, so no pod was created: try again later, or use another GPU type.`
-      );
+    if (this.#host.cudaVersions) {
+      const offered = (await Promise.all(
+        this.#hosts.map((host) => this.#host.cudaVersions?.(gpuType, VLLM_MIN_CUDA, host) ?? [])
+      )).flat();
+      if (!offered.some(({ available }) => available)) {
+        const versions = [...new Set(offered.map(({ version }) => version))];
+        const on = this.#hosts.length > 1 ? ` on ${this.#hosts.join(" or ")} hosts` : "";
+        throw new Error(
+          versions.length === 0 ? `Runpod offers no host${on} with ${gpuType} and CUDA ${VLLM_MIN_CUDA} or newer, which vLLM's image needs, so no pod was created: use another GPU type, or \`engine: ollama\`.` : `No host${on} with ${gpuType} and CUDA ${VLLM_MIN_CUDA} or newer has room now (Runpod offers ${versions.join(", ")}), which vLLM's image needs, so no pod was created: try again later, or use another GPU type.`
+        );
+      }
     }
     const hub = this.#options.hub ?? new HuggingFace(this.#options.fetch);
     const draft = this.#settings.vllm?.["speculative-model"];
@@ -24723,8 +24874,18 @@ function inferenceChoice(settings, record, options = {}) {
     podReuse: settings["pod-reuse"] === "run" ? "run" : "task",
     ...settings.ollama && Object.keys(settings.ollama).length > 0 ? { ollama: settings.ollama } : {},
     ...settings.vllm && Object.keys(settings.vllm).length > 0 ? { vllm: settings.vllm } : {},
+    ...podPlacement(settings),
     ...options.parallel === void 0 ? {} : { parallel: options.parallel },
     ...options.batch === void 0 ? {} : { batch: options.batch }
+  };
+}
+function podPlacement(settings) {
+  const specs = PROVIDERS[settings.provider].settings;
+  const hosts = settings.hosts ?? specs.hosts?.default;
+  const priority = settings.priority ?? specs.priority?.default;
+  return {
+    ...hosts !== void 0 && hosts !== specs.hosts?.default ? { hosts: hostKinds(hosts) } : {},
+    ...priority !== void 0 && priority !== specs.priority?.default ? { priority } : {}
   };
 }
 function isBatchId(text) {
@@ -24762,6 +24923,14 @@ function parseInferenceChoice(text) {
   }
   if (choice.provider === "runpod-pod" && choice.batch !== void 0 && (typeof choice.batch !== "string" || !isBatchId(choice.batch))) {
     throw new Error("The inference input is not a valid choice.");
+  }
+  if (choice.provider === "runpod-pod") {
+    const { hosts, priority } = choice;
+    const listed = hosts === void 0 || Array.isArray(hosts) && hosts.length > 0 && new Set(hosts).size === hosts.length && hosts.every((host) => typeof host === "string" && isHostKind(host));
+    const values = PROVIDERS[choice.provider].settings.priority?.values ?? [];
+    if (!listed || priority !== void 0 && !values.includes(priority)) {
+      throw new Error("The inference input is not a valid choice.");
+    }
   }
   if (choice.provider === "runpod-pod" && choice.parallel !== void 0) {
     const { parallel } = choice;
@@ -24847,6 +25016,8 @@ function selfHosted(choice, repository, inputs) {
         reuse: choice.podReuse,
         ollama: ollamaEnvironment(choice.ollama),
         ...choice.engine === "vllm" ? { vllm: checkedVllm(choice.vllm) } : {},
+        ...choice.hosts ? { hosts: choice.hosts } : {},
+        ...choice.priority ? { priority: choice.priority } : {},
         parallel: choice.parallel,
         batch: choice.batch,
         ...choice.concurrency ? { concurrency: { key: choice.concurrency.key, pods: choice.concurrency.instances } } : {}
@@ -31726,6 +31897,8 @@ Tests: ${test ?? "(no report)"}`,
         return `\`set\` changes one of ${problem2.names.map((name) => `\`${name}\``).join(", ")} for this task.`;
       case "set-one-value":
         return `\`set ${problem2.name}\` needs one value.`;
+      case "set-in-files":
+        return `\`${problem2.name}\` is set only in the settings files, \`.codeman/settings.yml\` or the organization's CODEMAN_SETTINGS, not by a task: it decides whose machines get the repository's code.`;
       case "renamed-setting":
         return `\`${problem2.name}\` is now \`${problem2.now}\`: write \`set ${problem2.now}\`.`;
       case "invalid-setting":
@@ -31736,7 +31909,8 @@ Tests: ${test ?? "(no report)"}`,
           integer: `\`${problem2.name}\` must be a positive whole number.`,
           choice: `\`${problem2.name}\` must be one of ${(problem2.values ?? []).map((value) => `\`${value}\``).join(", ")}.`,
           gpu: `\`${problem2.name}\` must be a GPU type, such as \`NVIDIA RTX A6000\`.`,
-          endpoint: `\`${problem2.name}\` must be an endpoint's ID, letters and digits, or its URL on \`https://api.runpod.ai\`.`
+          endpoint: `\`${problem2.name}\` must be an endpoint's ID, letters and digits, or its URL on \`https://api.runpod.ai\`.`,
+          list: `\`${problem2.name}\` must list some of ${(problem2.values ?? []).map((value) => `\`${value}\``).join(", ")}, each once.`
         }[problem2.type];
       case "settings-rejected":
         return `The task's settings were not applied: ${problem2.error}`;
@@ -31996,6 +32170,8 @@ Testes: ${test ?? "(sem relat\xF3rio)"}`,
         return `\`set\` muda, nesta tarefa, uma destas configura\xE7\xF5es: ${problem2.names.map((name) => `\`${name}\``).join(", ")}.`;
       case "set-one-value":
         return `\`set ${problem2.name}\` precisa de um valor.`;
+      case "set-in-files":
+        return `\`${problem2.name}\` s\xF3 \xE9 definida nos arquivos de configura\xE7\xE3o, \`.codeman/settings.yml\` ou a CODEMAN_SETTINGS da organiza\xE7\xE3o, e n\xE3o por uma tarefa: ela decide em que m\xE1quinas o c\xF3digo do reposit\xF3rio roda.`;
       case "renamed-setting":
         return `\`${problem2.name}\` agora se chama \`${problem2.now}\`: escreva \`set ${problem2.now}\`.`;
       case "invalid-setting":
@@ -32006,7 +32182,8 @@ Testes: ${test ?? "(sem relat\xF3rio)"}`,
           integer: `\`${problem2.name}\` precisa ser um n\xFAmero inteiro positivo.`,
           choice: `\`${problem2.name}\` precisa ser um destes valores: ${(problem2.values ?? []).map((value) => `\`${value}\``).join(", ")}.`,
           gpu: `\`${problem2.name}\` precisa ser um tipo de GPU, como \`NVIDIA RTX A6000\`.`,
-          endpoint: `\`${problem2.name}\` precisa ser o ID de um endpoint, com letras e d\xEDgitos, ou a URL dele em \`https://api.runpod.ai\`.`
+          endpoint: `\`${problem2.name}\` precisa ser o ID de um endpoint, com letras e d\xEDgitos, ou a URL dele em \`https://api.runpod.ai\`.`,
+          list: `\`${problem2.name}\` precisa listar alguns de ${(problem2.values ?? []).map((value) => `\`${value}\``).join(", ")}, cada um uma vez.`
         }[problem2.type];
       case "settings-rejected":
         return `As configura\xE7\xF5es da tarefa n\xE3o foram aplicadas: ${problem2.error}`;
@@ -33625,6 +33802,9 @@ function parseSet(args, invalid) {
   const [name = "", ...values] = args;
   const renamed = RENAMED_TASK_SETTINGS[name];
   if (renamed) return invalid({ kind: "renamed-setting", name, now: renamed });
+  if (isSettingName(name) && FILE_SETTINGS.has(name)) {
+    return invalid({ kind: "set-in-files", name });
+  }
   if (!isSettingName(name) || !TASK_SETTINGS.has(name)) {
     return invalid({ kind: "set-which", names: [...TASK_SETTINGS] });
   }
@@ -35563,9 +35743,9 @@ function startMessage(t, task) {
 }
 function inputSettings(runtime2) {
   const settings = {};
-  for (const name of ["model", "task-budget", "monthly-budget", "max-runs"]) {
+  for (const name of INPUT_SETTINGS) {
     const text = runtime2.input(name);
-    if (text === "" || !isSettingName(name)) continue;
+    if (text === "") continue;
     const parsed = parseSetting(name, text);
     if (!parsed.ok) throw new Error(`Input ${parsed.error}`);
     Object.assign(settings, { [name]: parsed.value });

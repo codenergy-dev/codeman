@@ -11,8 +11,10 @@ import { LAYOUT, repositoryName } from "../store/layout.ts";
 import type { Store } from "../store/store.ts";
 import type { InferenceEngine } from "./engine.ts";
 import {
+  DEFAULT_HOSTS,
   endpointProblems,
   type GpuProvider,
+  type HostKind,
   type Pod,
   type PodHost,
   PodStartFailure,
@@ -104,6 +106,13 @@ export interface PodSettings extends SelfHostedSettings {
   parallel?: number | undefined;
   /** The batch the task runs in, whose pod it joins first. */
   batch?: string | undefined;
+  /**
+   * The kinds of host the pod may run on, by preference (decision 1 of the plan for Salad pods);
+   * `DEFAULT_HOSTS` when undefined.
+   */
+  hosts?: readonly HostKind[] | undefined;
+  /** The pod's priority, as its provider names it; the provider's highest when undefined. */
+  priority?: string | undefined;
   /**
    * The run's batch key, and how many live pods of it may run at once (decision 4 of the plan
    * for limiting concurrent instances of a profile); undefined: no cap.
@@ -256,16 +265,18 @@ function quotedVariables(settings: Pick<PodSettings, "ollama">): string {
  * share it by. On an image that serves one run at a time, the task is one of them: it gets a pod
  * of its own. Ollama settings are part of them, only when there are some, so pods without any
  * keep their hash (choice 9 of the Ollama settings plan); a vLLM pod's has its engine and its
- * vLLM settings (decision 9 of the plan for vLLM on pods).
+ * vLLM settings (decision 9 of the plan for vLLM on pods). Its kinds of host and its priority
+ * are part of them only when not the defaults, so pods from before them keep their hash.
  */
 export function podSettingsKey(
   settings: Pick<PodSettings, "model" | "gpuType" | "image" | "reuse" | "ollama"> &
-    Partial<Pick<PodSettings, "engine" | "vllm">>,
+    Partial<Pick<PodSettings, "engine" | "vllm" | "hosts" | "priority">>,
   holder: string,
 ): string {
-  const { model, gpuType, image, reuse } = settings;
+  const { model, gpuType, image, reuse, priority } = settings;
   const ollama = ollamaVariables(settings);
   const vllm = settings.engine && onVllm({ engine: settings.engine });
+  const hosts = (settings.hosts ?? DEFAULT_HOSTS).join(",");
   const parts = [
     model,
     gpuType,
@@ -274,6 +285,8 @@ export function podSettingsKey(
     ...(servesOneRun(image) ? [holder] : []),
     ...(ollama.length > 0 ? [`ollama ${ollama.join(" ")}`] : []),
     ...(vllm ? ["engine vllm", `vllm ${vllmValues(settings).join(" ")}`] : []),
+    ...(hosts !== DEFAULT_HOSTS.join(",") ? [`hosts ${hosts}`] : []),
+    ...(priority !== undefined ? [`priority ${priority}`] : []),
   ];
   return sha256(parts.join("\n")).slice(0, 16);
 }
@@ -1028,7 +1041,7 @@ export class PodInference implements InferenceProvider {
       pricePerSecond:
         running.pricePerSecond ??
         record.pricePerSecond ??
-        (await this.#host.price(this.#settings.gpuType)),
+        (await this.#host.price(this.#settings.gpuType, running.host ?? this.#hosts[0])),
       limit: run.limit,
       reuse: this.#settings.reuse,
       holder,
@@ -1059,9 +1072,10 @@ export class PodInference implements InferenceProvider {
 
   /** Creates the pod of a creation lease, named by its nonce, with its settings in its environment. */
   async #launch(record: RegisteredPod, log: Log): Promise<{ pod: Pod; listed: number }> {
-    const { model, gpuType, image, engine } = this.#settings;
+    const { model, gpuType, image, engine, priority } = this.#settings;
     if (!image) throw new Error("No pod image is pinned; see docs/installation/runpod.md#pods.");
-    const listed = await this.#host.price(gpuType);
+    const hosts = this.#hosts;
+    const prices = await this.#prices(gpuType, hosts);
     const vllm = onVllm(this.#settings) ? await this.#prepareVllm(log) : undefined;
     const fits = !vllm && fitsTheGpu(image);
     const memory = fits ? await this.#host.memory?.(gpuType).catch(() => undefined) : undefined;
@@ -1094,12 +1108,41 @@ export class PodInference implements InferenceProvider {
       gpuType,
       diskGb: vllm?.diskGb ?? DISK_GB,
       ...(vllm ? { minCudaVersion: VLLM_MIN_CUDA } : {}),
+      ...(this.#settings.hosts ? { hosts } : {}),
+      ...(priority ? { priority } : {}),
     });
     this.#events.push({ pod: pod.id, event: "created" });
+    // The price on the kind of host the provider placed it on; the first offered when it says none.
+    const host = pod.host && prices.has(pod.host) ? pod.host : [...prices.keys()][0];
+    const listed = (host && prices.get(host)) || (await this.#host.price(gpuType, host));
+    const on = hosts.length > 1 || hosts[0] !== "secure" ? ` on ${host ?? hosts[0]} hosts` : "";
     log.info(
-      `Created pod ${pod.id} with ${gpuType}, at ${usd(listed * 3600)} per hour; waiting for ${model}.`,
+      `Created pod ${pod.id} with ${gpuType}${on}, at ${usd(listed * 3600)} per hour; waiting for ${model}.`,
     );
     return { pod, listed };
+  }
+
+  /** The kinds of host the pod may run on, by preference. */
+  get #hosts(): readonly HostKind[] {
+    return this.#settings.hosts ?? DEFAULT_HOSTS;
+  }
+
+  /**
+   * The GPU type's price on each kind of host that offers it, in the settings' order. Throws the
+   * first kind's reason when none does, before any pod is created.
+   */
+  async #prices(gpuType: string, hosts: readonly HostKind[]): Promise<Map<HostKind, number>> {
+    const prices = new Map<HostKind, number>();
+    let first: unknown;
+    for (const host of hosts) {
+      try {
+        prices.set(host, await this.#host.price(gpuType, host));
+      } catch (error) {
+        first ??= error;
+      }
+    }
+    if (prices.size === 0) throw first;
+    return prices;
   }
 
   /**
@@ -1112,13 +1155,22 @@ export class PodInference implements InferenceProvider {
     log: Log,
   ): Promise<{ diskGb: number; cached: { contextLength: number } | undefined }> {
     const { gpuType, model } = this.#settings;
-    const versions = await this.#host.cudaVersions?.(gpuType, VLLM_MIN_CUDA);
-    if (versions && !versions.some(({ available }) => available)) {
-      throw new Error(
-        versions.length === 0
-          ? `Runpod offers no host with ${gpuType} and CUDA ${VLLM_MIN_CUDA} or newer, which vLLM's image needs, so no pod was created: use another GPU type, or \`engine: ollama\`.`
-          : `No host with ${gpuType} and CUDA ${VLLM_MIN_CUDA} or newer has room now (Runpod offers ${versions.map(({ version }) => version).join(", ")}), which vLLM's image needs, so no pod was created: try again later, or use another GPU type.`,
-      );
+    // Any kind of host the pod may run on will do: the provider places it on one with room.
+    if (this.#host.cudaVersions) {
+      const offered = (
+        await Promise.all(
+          this.#hosts.map((host) => this.#host.cudaVersions?.(gpuType, VLLM_MIN_CUDA, host) ?? []),
+        )
+      ).flat();
+      if (!offered.some(({ available }) => available)) {
+        const versions = [...new Set(offered.map(({ version }) => version))];
+        const on = this.#hosts.length > 1 ? ` on ${this.#hosts.join(" or ")} hosts` : "";
+        throw new Error(
+          versions.length === 0
+            ? `Runpod offers no host${on} with ${gpuType} and CUDA ${VLLM_MIN_CUDA} or newer, which vLLM's image needs, so no pod was created: use another GPU type, or \`engine: ollama\`.`
+            : `No host${on} with ${gpuType} and CUDA ${VLLM_MIN_CUDA} or newer has room now (Runpod offers ${versions.join(", ")}), which vLLM's image needs, so no pod was created: try again later, or use another GPU type.`,
+        );
+      }
     }
     const hub = this.#options.hub ?? new HuggingFace(this.#options.fetch);
     const draft = this.#settings.vllm?.["speculative-model"];

@@ -6,6 +6,7 @@ import {
   BLOCK_ENGINES,
   endpointId,
   isOpenRouterModel,
+  listSetting,
   PROVIDER_BLOCKS,
   PROVIDER_NAMES,
   PROVIDER_SETTINGS,
@@ -94,6 +95,13 @@ export interface Settings {
   /** `task`: a pod serves the task's next run too, while the task goes on; `run`: one run. */
   "pod-reuse"?: string | undefined;
   /**
+   * The kinds of host a pod may run on, by preference, as `secure,community`
+   * (`HOST_KINDS` in `src/inference/gpu.ts`); only the settings files set it.
+   */
+  hosts?: string | undefined;
+  /** A pod's priority, as its provider names it, such as `on-demand` on Runpod. */
+  priority?: string | undefined;
+  /**
    * The pod's Ollama settings, by key, such as `{ "num-parallel": "4" }`: each becomes a variable
    * of its Ollama server (`OLLAMA_SETTINGS` in `src/inference/ollama.ts`).
    */
@@ -172,6 +180,21 @@ export const TASK_SETTINGS: ReadonlySet<SettingName> = new Set([
   "gpu",
 ]);
 
+/**
+ * Settings only the settings files set, the repository's and the organization's, never a task's
+ * commands nor a workflow's inputs: `hosts` decides whose machines get the repository's code
+ * (decision 9 of the plan for Salad pods).
+ */
+export const FILE_SETTINGS: ReadonlySet<SettingName> = new Set(["hosts"]);
+
+/** Settings a manual run may give as workflow inputs; empty inputs fall back to the files. */
+export const INPUT_SETTINGS: readonly SettingName[] = [
+  "model",
+  "task-budget",
+  "monthly-budget",
+  "max-runs",
+];
+
 /** Settings a task could change with `/codeman set` under an older name, and their names now. */
 export const RENAMED_TASK_SETTINGS: Readonly<Record<string, SettingName>> = { "gpu-type": "gpu" };
 
@@ -188,6 +211,7 @@ export const CHOICES: Readonly<Partial<Record<SettingName, readonly string[]>>> 
   provider: PROVIDER_NAMES,
   engine: settingValues("engine"),
   "pod-reuse": settingValues("pod-reuse"),
+  priority: settingValues("priority"),
 };
 
 const NAMES: readonly SettingName[] = [
@@ -234,7 +258,8 @@ export type SettingKind =
   | "integer"
   | "choice"
   | "gpu"
-  | "endpoint";
+  | "endpoint"
+  | "list";
 
 /** What kind of value a setting takes. */
 export function settingKind(name: SettingName): SettingKind {
@@ -242,6 +267,7 @@ export function settingKind(name: SettingName): SettingKind {
     return name;
   }
   if (CHOICES[name]) return "choice";
+  if (name === "hosts") return "list";
   return name === "task-budget" ||
     name === "monthly-budget" ||
     name === "organization-monthly-budget"
@@ -279,6 +305,7 @@ export function parseSetting(name: SettingName, text: string): Parsed<string | n
       : { ok: false, error: `\`${name}\` must be a GPU type, such as \`NVIDIA RTX A6000\`.` };
   }
   if (name === "endpoint") return endpointId(text);
+  if (name === "hosts") return listSetting(name, text, settingValues(name) ?? []);
   if (name === "language") {
     return text === "auto" || isLanguageTag(text)
       ? { ok: true, value: text }
@@ -522,6 +549,13 @@ function setting(entry: YamlEntry, what: "setting" | "profile"): Read<string | n
       line,
       error: `a profile cannot set \`${name}\`; it sets only ${allowed.map((n) => `\`${n}\``).join(", ")}.`,
     };
+  }
+  // A list setting, such as `hosts: [secure, community]`, is read as `secure,community`.
+  const items = value.kind === "list" && settingKind(name) === "list" ? value.items : undefined;
+  const listed = items?.flatMap((item) => (item.kind === "scalar" ? [item.text] : []));
+  if (items && listed?.length === items.length) {
+    const parsed = parseSetting(name, listed.join(","));
+    return parsed.ok ? parsed : { ok: false, line, error: parsed.error };
   }
   if (value.kind !== "scalar") {
     return { ok: false, line, error: `the value of \`${name}\` is not a plain value.` };
@@ -967,8 +1001,18 @@ export function batchKey(
     ollama: sorted(settings.ollama),
     vllm: sorted(settings.vllm),
     parallel: pod ? parallel : null,
+    // Only when they are not their provider's defaults, so that batch keys from before them stay.
+    ...nonDefault(settings, "hosts"),
+    ...nonDefault(settings, "priority"),
   };
   return createHash("sha256").update(JSON.stringify(serving)).digest("hex").slice(0, 16);
+}
+
+/** `{ [name]: value }` when the setting is not its provider's default; `{}` otherwise. */
+function nonDefault(settings: Settings, name: "hosts" | "priority"): Partial<Settings> {
+  const value = settings[name];
+  const spec = PROVIDERS[settings.provider]?.settings[name];
+  return value === undefined || value === spec?.default ? {} : { [name]: value };
 }
 
 /** A layer of `serving`, and how its errors name it. */

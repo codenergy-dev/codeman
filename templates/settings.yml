@@ -31,6 +31,12 @@ provider: openrouter
 # gpu: "NVIDIA RTX A6000"
 # Keep the pod for the next run on its settings (task), or one pod per run (run).
 # pod-reuse: task
+# The kinds of host the pod may run on, by preference: secure (Runpod's Secure Cloud, the
+# default) and community (Community Cloud, machines third parties run, which get the
+# repository's code), such as [community, secure]. Only the settings files set it.
+# hosts: [secure]
+# The pod's priority: on-demand, the only one Runpod offers.
+# priority: on-demand
 # The engine: ollama (the default), or vllm, which serves a Hugging Face model ID, such as
 # unsloth/Qwen3.8-27B-NVFP4, and needs the model's tool-call-parser in its block below.
 # engine: ollama

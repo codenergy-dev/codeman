@@ -7,13 +7,20 @@ import { positiveNumber } from "../steps/common.ts";
 import type { Store } from "../store/store.ts";
 import type { ProviderAccounts } from "./budget.ts";
 import { ENGINES } from "./engines.ts";
-import type { GpuAccount, GpuProvider } from "./gpu.ts";
+import { type GpuAccount, type GpuProvider, type HostKind, isHostKind } from "./gpu.ts";
 import type { ModelHub } from "./huggingface.ts";
 import { podImage } from "./images.ts";
 import { type OllamaSettings, ollamaEnvironment } from "./ollama.ts";
 import { OpenRouter, OpenRouterProvider } from "./openrouter.ts";
 import type { InferenceProvider } from "./provider.ts";
-import { ACCOUNTS, accountOf, isHourlyAccount, isProviderName } from "./providers.ts";
+import {
+  ACCOUNTS,
+  accountOf,
+  hostKinds,
+  isHourlyAccount,
+  isProviderName,
+  PROVIDERS,
+} from "./providers.ts";
 import { Runpod } from "./runpod.ts";
 import { PodInference, ServerlessInference } from "./selfhosted.ts";
 import type { PodSpend } from "./spend.ts";
@@ -39,6 +46,13 @@ export type InferenceChoice = (
       ollama?: OllamaSettings | undefined;
       /** The `vllm` settings, by key; absent without any. */
       vllm?: VllmSettings | undefined;
+      /**
+       * The kinds of host the pod may run on, by preference (`hosts`); absent for the default,
+       * `[secure]`, and from older choices.
+       */
+      hosts?: HostKind[] | undefined;
+      /** The pod's priority (`priority`); absent for the provider's default, the highest. */
+      priority?: string | undefined;
       /**
        * The most tasks the run's profile serves at once, which `num-parallel` defaults to on
        * images that apply Ollama settings (choices 5 and 6 of the plan for fitting Ollama to the
@@ -150,9 +164,24 @@ export function inferenceChoice(
           ? { ollama: settings.ollama }
           : {}),
         ...(settings.vllm && Object.keys(settings.vllm).length > 0 ? { vllm: settings.vllm } : {}),
+        ...podPlacement(settings),
         ...(options.parallel === undefined ? {} : { parallel: options.parallel }),
         ...(options.batch === undefined ? {} : { batch: options.batch }),
       };
+}
+
+/**
+ * Where a pod's settings place it, when not their provider's defaults: its `hosts`, and its
+ * `priority`. Defaults are left out, so that choices, and pods' settings, stay as before them.
+ */
+function podPlacement(settings: Settings): { hosts?: HostKind[]; priority?: string } {
+  const specs = PROVIDERS[settings.provider].settings;
+  const hosts = settings.hosts ?? specs.hosts?.default;
+  const priority = settings.priority ?? specs.priority?.default;
+  return {
+    ...(hosts !== undefined && hosts !== specs.hosts?.default ? { hosts: hostKinds(hosts) } : {}),
+    ...(priority !== undefined && priority !== specs.priority?.default ? { priority } : {}),
+  };
 }
 
 /** A batch's ID: the workflow run and attempt that formed it, and its place among them. */
@@ -220,6 +249,19 @@ export function parseInferenceChoice(text: string): InferenceChoice {
     (typeof choice.batch !== "string" || !isBatchId(choice.batch))
   ) {
     throw new Error("The inference input is not a valid choice.");
+  }
+  if (choice.provider === "runpod-pod") {
+    const { hosts, priority } = choice;
+    const listed =
+      hosts === undefined ||
+      (Array.isArray(hosts) &&
+        hosts.length > 0 &&
+        new Set(hosts).size === hosts.length &&
+        hosts.every((host) => typeof host === "string" && isHostKind(host)));
+    const values = PROVIDERS[choice.provider].settings.priority?.values ?? [];
+    if (!listed || (priority !== undefined && !values.includes(priority))) {
+      throw new Error("The inference input is not a valid choice.");
+    }
   }
   if (choice.provider === "runpod-pod" && choice.parallel !== undefined) {
     const { parallel } = choice;
@@ -352,6 +394,8 @@ export function selfHosted(
         reuse: choice.podReuse,
         ollama: ollamaEnvironment(choice.ollama),
         ...(choice.engine === "vllm" ? { vllm: checkedVllm(choice.vllm) } : {}),
+        ...(choice.hosts ? { hosts: choice.hosts } : {}),
+        ...(choice.priority ? { priority: choice.priority } : {}),
         parallel: choice.parallel,
         batch: choice.batch,
         ...(choice.concurrency

@@ -5,7 +5,10 @@ import { PROVIDERS } from "./inference/providers.ts";
 import {
   agentJobMinutes,
   applies,
+  batchKey,
   DEFAULTS,
+  FILE_SETTINGS,
+  INPUT_SETTINGS,
   isSettingName,
   LIMIT_BOUNDS,
   MAX_JOB_MINUTES,
@@ -710,7 +713,7 @@ test("rejects malformed profiles, naming the line", () => {
     ["profiles:\n  - model: a/b", "line 2: a profile needs a `name`."],
     [
       "profiles:\n  - name: a\n    task-budget: 5",
-      "line 3: a profile cannot set `task-budget`; it sets only `provider`, `model`, `engine`, `gpu`, `endpoint`, `pod-reuse`, `ollama`, `vllm`, `agent-minutes`, `wrap-up-minutes`, `concurrency`.",
+      "line 3: a profile cannot set `task-budget`; it sets only `provider`, `model`, `engine`, `gpu`, `endpoint`, `pod-reuse`, `hosts`, `priority`, `ollama`, `vllm`, `agent-minutes`, `wrap-up-minutes`, `concurrency`.",
     ],
     ["profiles:\n  - name: a\n    secret: x", "line 3: unknown setting `secret`."],
     ["profiles:\n  - name: a\n    provider: spot", "line 3: `provider` must be one of"],
@@ -1746,4 +1749,72 @@ test("`pool` lists the organizations that batch together, only in the organizati
   const resolved = resolveSettings(...layers);
   assert.ok(resolved.ok && !("pool" in resolved.value));
   assert.ok(settingSources(layers).some((line) => line.includes("pool=[a, b]")));
+});
+
+describe("hosts and priority", () => {
+  const pod = "provider: runpod-pod\nmodel: qwen3-coder:30b\ngpu: GPU-A\n";
+  test("the file lists kinds of host as a list, in either form, or one kind", () => {
+    for (const [text, hosts] of [
+      ["hosts: [community, secure]", "community,secure"],
+      ["hosts:\n  - secure\n  - community", "secure,community"],
+      ["hosts: community", "community"],
+    ] as const) {
+      assert.deepEqual(parseSettings(pod + text), {
+        ok: true,
+        value: { provider: "runpod-pod", model: "qwen3-coder:30b", gpu: "GPU-A", hosts },
+      });
+    }
+    for (const [text, error] of [
+      ["hosts: [secure, datacenter]", "line 4: `hosts` must list some of `secure`, `community`"],
+      ["hosts: [secure, secure]", "line 4: `hosts` lists a value twice"],
+      ["hosts: []", "line 4: `hosts` must list some of"],
+      ["priority: spot", "line 4: `priority` must be one of `on-demand`."],
+    ] as const) {
+      const parsed = parseSettings(pod + text);
+      assert.ok(!parsed.ok && parsed.error.includes(error), parsed.ok ? text : parsed.error);
+    }
+    const profile = parseSettings(
+      "profiles:\n  - name: p\n    provider: runpod-pod\n    model: m:1\n    gpu: GPU-A\n    hosts: [community]",
+    );
+    assert.ok(profile.ok && profile.value.profiles?.[0]?.settings.hosts === "community");
+  });
+
+  test("only the settings files set `hosts`: neither a task's commands nor a manual run's inputs", () => {
+    assert.ok(FILE_SETTINGS.has("hosts"));
+    assert.ok(!TASK_SETTINGS.has("hosts"));
+    assert.ok(!INPUT_SETTINGS.includes("hosts"));
+  });
+
+  test("a provider without pods drops the `hosts` it inherits, like `gpu`", () => {
+    const file = parseSettings(
+      `${pod}hosts: [community, secure]\nprofiles:\n  - name: plan\n    stages: [plan]\n    provider: openrouter\n    model: a/b`,
+    );
+    assert.ok(file.ok);
+    const plan = resolveRun([{}, {}, file.value], { stage: "plan", tasks: 1 });
+    assert.ok(plan.ok && plan.value.settings.hosts === undefined, JSON.stringify(plan));
+    const code = resolveRun([{}, {}, file.value], { stage: "code", tasks: 1 });
+    assert.ok(code.ok && code.value.settings.hosts === "community,secure");
+    // As with `gpu`, a top level on OpenRouter cannot set it.
+    const top = resolveRun([{}, {}, { model: "a/b", hosts: "secure" }], {
+      stage: "code",
+      tasks: 1,
+    });
+    assert.ok(!top.ok && top.error.includes("`openrouter` does not accept `hosts`"));
+  });
+
+  test("the defaults leave a batch key as it was", () => {
+    const resolved = resolveSettings(
+      {},
+      {},
+      { provider: "runpod-pod", model: "m:1", gpu: "GPU-A" },
+    );
+    assert.ok(resolved.ok);
+    const { hosts: _hosts, priority: _priority, ...before } = resolved.value;
+    assert.equal(resolved.value.hosts, "secure");
+    assert.equal(batchKey(resolved.value, "p", 2), batchKey(before as Settings, "p", 2));
+    assert.notEqual(
+      batchKey({ ...resolved.value, hosts: "community" }, "p", 2),
+      batchKey(resolved.value, "p", 2),
+    );
+  });
 });

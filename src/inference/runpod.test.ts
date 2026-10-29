@@ -308,3 +308,87 @@ test("reads a GPU type's memory from the catalog, once with its price", async ()
   assert.equal(calls.length, 1, "the catalog is read once per GPU type");
   assert.equal(await runpod.pods.memory?.("Y"), undefined, "a type that does not say");
 });
+
+const spec = {
+  name: "codeman-r-7-300",
+  image: "ghcr.io/x/pod@sha256:1",
+  env: { CODEMAN_POD_SETTINGS: "s" },
+  port: 8080,
+  gpuType: "NVIDIA RTX A6000",
+  diskGb: 60,
+};
+
+test("creates a pod on Community Cloud when its hosts list only that kind", async () => {
+  const { fetch, calls } = fakeFetch([{ ...pod, cloud: "COMMUNITY" }]);
+  const created = await new Runpod("rk", fetch).pods.create({ ...spec, hosts: ["community"] });
+  assert.equal(calls.length, 1, "one kind of host: no availability read, as before");
+  assert.equal(JSON.parse(String(calls[0]?.[1].body)).cloud, "COMMUNITY");
+  assert.equal(created.host, "community");
+});
+
+test("creates a pod on the first kind of host with room, in the hosts' order", async () => {
+  const gpu = { id: "NVIDIA RTX A6000", secure: true, community: true };
+  const { fetch, calls } = fakeFetch([
+    { ...gpu, availability: "NONE" },
+    { ...gpu, availability: "LOW" },
+    { ...pod, cloud: "COMMUNITY" },
+  ]);
+  const created = await new Runpod("rk", fetch).pods.create({
+    ...spec,
+    hosts: ["secure", "community"],
+    minCudaVersion: "13.0",
+  });
+  assert.deepEqual(
+    calls.map(([url]) => url),
+    [
+      "https://api.runpod.io/v2/catalog/gpus/NVIDIA%20RTX%20A6000?include=AVAILABILITY&product=POD&cloud=SECURE&minCudaVersion=13.0",
+      "https://api.runpod.io/v2/catalog/gpus/NVIDIA%20RTX%20A6000?include=AVAILABILITY&product=POD&cloud=COMMUNITY&minCudaVersion=13.0",
+      "https://api.runpod.io/v2/pods",
+    ],
+  );
+  assert.equal(JSON.parse(String(calls[2]?.[1].body)).cloud, "COMMUNITY");
+  assert.equal(created.host, "community");
+});
+
+test("moves on to the next kind of host when a creation fails, and names each one tried", async () => {
+  const gpu = { id: "NVIDIA RTX A6000", secure: true, community: false, availability: "HIGH" };
+  const { fetch } = fakeFetch([
+    gpu,
+    new Response(JSON.stringify({ title: "No capacity" }), { status: 500 }),
+    { ...gpu, availability: "NONE" },
+  ]);
+  await assert.rejects(
+    new Runpod("rk", fetch).pods.create({ ...spec, hosts: ["secure", "community"] }),
+    {
+      message:
+        "Runpod created no pod with NVIDIA RTX A6000: Secure Cloud: Runpod POST /pods failed with 500: No capacity; Community Cloud does not offer it.",
+    },
+  );
+});
+
+test("offers pods only on demand", async () => {
+  const { fetch, calls } = fakeFetch([]);
+  await assert.rejects(new Runpod("rk", fetch).pods.create({ ...spec, priority: "spot" }), {
+    message: "Runpod offers no pod with the priority `spot`; it offers `on-demand`.",
+  });
+  assert.equal(calls.length, 0);
+});
+
+test("prices a GPU type on each kind of host, and reads CUDA versions on Community Cloud", async () => {
+  const { fetch, calls } = fakeFetch([
+    {
+      id: "NVIDIA RTX A6000",
+      secure: true,
+      community: true,
+      price: { secure: 0.72, community: 0.36 },
+    },
+    { id: "NVIDIA RTX A6000", cudaVersions: [{ version: "13.0", available: true }] },
+  ]);
+  const runpod = new Runpod("rk", fetch);
+  near(await runpod.pods.price("NVIDIA RTX A6000", "community"), 0.0001);
+  near(await runpod.pods.price("NVIDIA RTX A6000"), 0.0002);
+  assert.deepEqual(await runpod.pods.cudaVersions("NVIDIA RTX A6000", "13.0", "community"), [
+    { version: "13.0", available: true },
+  ]);
+  assert.match(calls[1]?.[0] ?? "", /cloud=COMMUNITY&minCudaVersion=13\.0$/);
+});

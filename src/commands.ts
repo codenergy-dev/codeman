@@ -1,6 +1,7 @@
 import type { CommandProblem } from "./problems.ts";
 import {
   CHOICES,
+  FILE_SETTINGS,
   isSettingName,
   parseSetting,
   RENAMED_TASK_SETTINGS,
@@ -169,6 +170,9 @@ function parseSet(args: string[], invalid: (problem: CommandProblem) => Command)
   const [name = "", ...values] = args;
   const renamed = RENAMED_TASK_SETTINGS[name];
   if (renamed) return invalid({ kind: "renamed-setting", name, now: renamed });
+  if (isSettingName(name) && FILE_SETTINGS.has(name)) {
+    return invalid({ kind: "set-in-files", name });
+  }
   if (!isSettingName(name) || !TASK_SETTINGS.has(name)) {
     return invalid({ kind: "set-which", names: [...TASK_SETTINGS] });
   }

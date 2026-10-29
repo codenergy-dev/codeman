@@ -26,6 +26,22 @@ export interface GpuAccount {
   project?: string | undefined;
 }
 
+/**
+ * The kinds of host a pod may run on (decision 1 of the plan for Salad pods): `secure`, the
+ * provider's own or contracted data centers, and `community`, machines third parties run, which
+ * the agent's prompts, the repository's code among them, reach. The `hosts` setting lists them by
+ * preference, `[secure]` by default.
+ */
+export const HOST_KINDS = ["secure", "community"] as const;
+export type HostKind = (typeof HOST_KINDS)[number];
+
+/** The kinds of host when no setting names them. */
+export const DEFAULT_HOSTS: readonly HostKind[] = ["secure"];
+
+export function isHostKind(text: string): text is HostKind {
+  return (HOST_KINDS as readonly string[]).includes(text);
+}
+
 /** What a new pod runs. */
 export interface PodSpec {
   /** For people reading the provider's console; Codeman finds its pods by `env`. */
@@ -39,6 +55,13 @@ export interface PodSpec {
   diskGb: number;
   /** The lowest CUDA version its host must offer, as `major.minor`; any when undefined. */
   minCudaVersion?: string | undefined;
+  /**
+   * The kinds of host it may run on, by preference: it runs on the first whose hosts have room.
+   * `DEFAULT_HOSTS` when undefined.
+   */
+  hosts?: readonly HostKind[] | undefined;
+  /** Its priority, as the provider names it; the provider's highest when undefined. */
+  priority?: string | undefined;
 }
 
 /** A CUDA version that hosts of a GPU type offer, and whether one of them has room now. */
@@ -61,21 +84,26 @@ export interface Pod {
   pricePerSecond: number | undefined;
   /** The CUDA version its host reports, once it has one. */
   cudaVersion?: string | undefined;
+  /** The kind of host it runs on, when the provider says. */
+  host?: HostKind | undefined;
 }
 
 export interface PodHost {
-  /** The price of one GPU of this type on a pod, in USD per second. Throws when not offered. */
-  price(gpuType: string): Promise<number>;
+  /**
+   * The price of one GPU of this type on a pod, on a kind of host (`secure` by default), in USD
+   * per second. Throws when not offered there.
+   */
+  price(gpuType: string, host?: HostKind): Promise<number>;
   /**
    * The memory of one GPU of this type, in GB, as the provider lists it; undefined when it does
    * not say. The gateway starts its search for the context that fits from it.
    */
   memory?(gpuType: string): Promise<number | undefined>;
   /**
-   * The CUDA versions, from `min` up, that the hosts of a GPU type offer pods, each with whether
-   * one has room now; empty when none does.
+   * The CUDA versions, from `min` up, that the hosts of a GPU type offer pods, on a kind of host
+   * (`secure` by default), each with whether one has room now; empty when none does.
    */
-  cudaVersions?(gpuType: string, min: string): Promise<CudaVersion[]>;
+  cudaVersions?(gpuType: string, min: string, host?: HostKind): Promise<CudaVersion[]>;
   create(spec: PodSpec): Promise<Pod>;
   /** The pod, or undefined when it does not exist (terminated pods included). */
   get(id: string): Promise<Pod | undefined>;

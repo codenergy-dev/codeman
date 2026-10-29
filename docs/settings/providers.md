@@ -37,6 +37,8 @@ A pod Codeman creates on Runpod's Secure Cloud, shared by the [pool's](../glossa
 | --- | --- | --- | --- |
 | `gpu` | none; required | A Runpod GPU ID, not its display name, such as `"NVIDIA RTX A6000"` | The pod's GPU type. Quoted or not in the file; `/codeman set gpu` takes the rest of its line |
 | `pod-reuse` | `task` | `task`, `run` | `task`: a pod is kept after a run for the next run on its settings, of any task. `run`: a pod ends with its runs |
+| `hosts` | `secure` | A list of `secure` and `community`, each once, such as `[community, secure]` | The kinds of host the pod may run on, by preference: Secure Cloud, or Community Cloud, whose machines third parties run and which get the repository's code. Set only in the settings files, not by `/codeman set` |
+| `priority` | `on-demand` | `on-demand` | The pod's priority. Runpod offers no interruptible pods, so `on-demand` is the only one |
 | `engine` | `ollama` | `ollama`, `vllm` | What serves the model. `vllm` batches requests whatever the model ([vLLM settings](vllm.md)). Naming another engine than the one inherited drops that engine's block ([the rule](provider-settings-across-layers.md#the-rule)) |
 | `ollama` | none | The keys of [Ollama settings](ollama.md) | With `engine: ollama`, the pod's Ollama settings: a block of keys, each one of the server's variables, such as `num-parallel: 4` for `OLLAMA_NUM_PARALLEL=4` |
 | `vllm` | none | The keys of [vLLM settings](vllm.md); `tool-call-parser` is required | With `engine: vllm`, the pod's vLLM settings: a block of keys, each one of `vllm serve`'s arguments, such as `max-num-seqs: 4` for `--max-num-seqs 4` |

@@ -1158,6 +1158,9 @@ function runSettings(body) {
 // src/e2e.ts
 var E2E = false ? redirects(process.env) : void 0;
 
+// src/inference/gpu.ts
+var DEFAULT_HOSTS = ["secure"];
+
 // src/inference/runpod.ts
 var API = "https://api.runpod.io/v2";
 var HOUR_MS = 36e5;
@@ -1169,6 +1172,15 @@ var STATUS = {
   ERROR: "failed",
   TERMINATED: "terminated"
 };
+var CLOUDS = {
+  secure: "SECURE",
+  community: "COMMUNITY"
+};
+var CLOUD_NAMES = {
+  secure: "Secure Cloud",
+  community: "Community Cloud"
+};
+var PRIORITIES = ["on-demand"];
 var Runpod = class {
   name = "runpod";
   pods;
@@ -1183,12 +1195,12 @@ var Runpod = class {
     this.#fetch = fetchFn;
     this.#now = now;
     this.pods = {
-      price: (gpuType) => this.#podPrice(gpuType),
+      price: (gpuType, host) => this.#podPrice(gpuType, host),
       memory: async (gpuType) => {
         const memory = (await this.#gpu(gpuType))?.memory;
         return typeof memory === "number" && memory > 0 ? memory : void 0;
       },
-      cudaVersions: (gpuType, min) => this.#cudaVersions(gpuType, min),
+      cudaVersions: (gpuType, min, host) => this.#cudaVersions(gpuType, min, host),
       create: (spec) => this.#createPod(spec),
       get: (id) => this.#getPod(id),
       list: (env) => this.#listPods(env),
@@ -1234,36 +1246,76 @@ var Runpod = class {
     }
     return gpu;
   }
-  async #podPrice(gpuType) {
+  async #podPrice(gpuType, host = "secure") {
     const gpu = await this.#gpu(gpuType);
     if (!gpu) {
       throw new Error(
         `Runpod has no GPU type "${gpuType}". \`gpu\` takes the GPU's ID, such as "NVIDIA RTX A6000", not its display name; see https://docs.runpod.io/references/gpu-types.`
       );
     }
-    const hourly = gpu.price?.secure;
-    if (gpu.secure === false || typeof hourly !== "number" || !(hourly > 0)) {
-      throw new Error(`Runpod does not offer ${gpuType} on Secure Cloud.`);
+    const hourly = gpu.price?.[host];
+    if (gpu[host] === false || typeof hourly !== "number" || !(hourly > 0)) {
+      throw new Error(`Runpod does not offer ${gpuType} on ${CLOUD_NAMES[host]}.`);
     }
     return hourly / 3600;
   }
   /**
-   * `GET /v2/catalog/gpus/{id}` with the pods' availability on Secure Cloud from a CUDA version
-   * (docs/web/runpod/get-a-gpu-type.md): a missing `cudaVersions` is an empty one.
+   * `GET /v2/catalog/gpus/{id}` with the pods' availability on a cloud, from a CUDA version when
+   * one is given (docs/web/runpod/get-a-gpu-type.md); undefined when Runpod has no such GPU type.
    */
-  async #cudaVersions(gpuType, min) {
-    const query = `include=AVAILABILITY&product=POD&cloud=SECURE&minCudaVersion=${encodeURIComponent(min)}`;
-    const gpu = await this.#request(
+  #availability(gpuType, host, minCudaVersion) {
+    const query = `include=AVAILABILITY&product=POD&cloud=${CLOUDS[host]}${minCudaVersion ? `&minCudaVersion=${encodeURIComponent(minCudaVersion)}` : ""}`;
+    return this.#request(
       `/catalog/gpus/${encodeURIComponent(gpuType)}?${query}`,
       "GET",
       void 0,
       [404]
     );
+  }
+  /** The CUDA versions a cloud offers from `min`: a missing `cudaVersions` is an empty one. */
+  async #cudaVersions(gpuType, min, host = "secure") {
+    const gpu = await this.#availability(gpuType, host, min);
     return (gpu?.cudaVersions ?? []).flatMap(
       ({ version, available }) => typeof version === "string" ? [{ version, available: available === true }] : []
     );
   }
+  /**
+   * Creates the pod on the first cloud of its `hosts` whose hosts have room (decision 9 of the
+   * plan for Salad pods). With one kind of host, the pod is created there without asking, as
+   * before; with several, the clouds without room, or that do not offer the GPU type, are passed
+   * over, and a creation that fails moves on to the next.
+   */
   async #createPod(spec) {
+    if (spec.priority !== void 0 && !PRIORITIES.includes(spec.priority)) {
+      throw new Error(
+        `Runpod offers no pod with the priority \`${spec.priority}\`; it offers ${PRIORITIES.map((p) => `\`${p}\``).join(", ")}.`
+      );
+    }
+    const hosts = spec.hosts ?? DEFAULT_HOSTS;
+    const [only] = hosts;
+    if (hosts.length === 1 && only) return this.#createOn(spec, only);
+    const problems = [];
+    for (const host of hosts) {
+      const gpu = await this.#availability(spec.gpuType, host, spec.minCudaVersion);
+      if (!gpu || gpu[host] === false) {
+        problems.push(`${CLOUD_NAMES[host]} does not offer it`);
+        continue;
+      }
+      if (!gpu.availability || gpu.availability === "NONE") {
+        problems.push(`${CLOUD_NAMES[host]} has no room`);
+        continue;
+      }
+      try {
+        return await this.#createOn(spec, host);
+      } catch (error2) {
+        problems.push(`${CLOUD_NAMES[host]}: ${error2 instanceof Error ? error2.message : error2}`);
+      }
+    }
+    throw new Error(
+      `Runpod created no pod with ${spec.gpuType}${spec.minCudaVersion ? ` and CUDA ${spec.minCudaVersion} or newer` : ""}: ${problems.join("; ")}.`
+    );
+  }
+  async #createOn(spec, host) {
     const pod = await this.#request("/pods", "POST", {
       name: spec.name,
       image: spec.image,
@@ -1272,13 +1324,14 @@ var Runpod = class {
         count: 1,
         ...spec.minCudaVersion ? { minCudaVersion: spec.minCudaVersion } : {}
       },
-      // Decision 6 of the self-hosted inference plan: Runpod's own data centers only.
-      cloud: "SECURE",
+      // Secure Cloud unless the settings' `hosts` allow Community Cloud (decision 1 of the plan
+      // for Salad pods, which made decision 6 of the self-hosted inference plan a default).
+      cloud: CLOUDS[host],
       env: spec.env,
       ports: [`${spec.port}/http`],
       disk: spec.diskGb
     });
-    return toPod(pod);
+    return { host, ...toPod(pod) };
   }
   async #getPod(id) {
     const pod = await this.#request(`/pods/${encodeURIComponent(id)}`, "GET", void 0, [404]);
@@ -1383,7 +1436,9 @@ function toPod(pod) {
     gpuType: pod.gpu?.id,
     createdAt: new Date(pod.createdAt),
     pricePerSecond: typeof pod.cost === "number" && pod.cost > 0 ? pod.cost / 3600 : void 0,
-    ...typeof pod.cudaVersion === "string" && pod.cudaVersion !== "" ? { cudaVersion: pod.cudaVersion } : {}
+    ...typeof pod.cudaVersion === "string" && pod.cudaVersion !== "" ? { cudaVersion: pod.cudaVersion } : {},
+    ...pod.cloud === "SECURE" ? { host: "secure" } : {},
+    ...pod.cloud === "COMMUNITY" ? { host: "community" } : {}
   };
 }
 function timestamp(date) {

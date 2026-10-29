@@ -28,6 +28,8 @@ export class FakeGpu implements GpuProvider {
   readonly terminated: string[] = [];
   /** USD per second, by GPU type; types not listed are not offered. */
   readonly prices: Record<string, number>;
+  /** The same on community hosts; none is offered there unless listed. */
+  readonly communityPrices: Record<string, number> = {};
   /** GB of memory, by GPU type; types not listed do not say. */
   readonly memories: Record<string, number> = { "GPU-A": 48 };
   /** The CUDA versions hosts offer, by GPU type; types not listed offer 13.0, with room. */
@@ -50,9 +52,9 @@ export class FakeGpu implements GpuProvider {
     this.prices = options.prices ?? { "GPU-A": 0.0002 };
     this.now = options.now ?? (() => new Date("2026-10-03T12:00:00Z"));
     this.pods = {
-      price: async (gpuType) => {
-        const price = this.prices[gpuType];
-        if (price === undefined) throw new Error(`No ${gpuType} on Secure Cloud.`);
+      price: async (gpuType, host = "secure") => {
+        const price = (host === "community" ? this.communityPrices : this.prices)[gpuType];
+        if (price === undefined) throw new Error(`No ${gpuType} on ${host} hosts.`);
         return price;
       },
       memory: async (gpuType) => this.memories[gpuType],
@@ -62,6 +64,14 @@ export class FakeGpu implements GpuProvider {
         ),
       create: async (spec) => {
         this.created.push(spec);
+        // On the first kind of host of its list that offers the GPU type.
+        const host =
+          (spec.hosts ?? ["secure"]).find(
+            (kind) =>
+              (kind === "community" ? this.communityPrices : this.prices)[spec.gpuType] !==
+              undefined,
+          ) ?? "secure";
+        const prices = host === "community" ? this.communityPrices : this.prices;
         const pod: Pod = {
           id: `pod${this.#next++}`,
           name: spec.name,
@@ -70,7 +80,8 @@ export class FakeGpu implements GpuProvider {
           env: { ...spec.env },
           gpuType: spec.gpuType,
           createdAt: this.now(),
-          pricePerSecond: this.prices[spec.gpuType],
+          pricePerSecond: prices[spec.gpuType],
+          host,
         };
         this.live.set(pod.id, pod);
         return { ...pod };

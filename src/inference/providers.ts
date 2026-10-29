@@ -1,5 +1,6 @@
 import { E2E } from "../e2e.ts";
 import { ENGINES } from "./engines.ts";
+import { HOST_KINDS, type HostKind, isHostKind } from "./gpu.ts";
 import { type OllamaSettings, ollamaEnvironment } from "./ollama.ts";
 import {
   isHuggingFaceId,
@@ -18,7 +19,14 @@ export const PROVIDER_NAMES = ["openrouter", "runpod-pod", "runpod-serverless"] 
 export type ProviderName = (typeof PROVIDER_NAMES)[number];
 
 /** The settings that only some providers accept; every provider takes `model`. */
-export const PROVIDER_SETTINGS = ["engine", "gpu", "endpoint", "pod-reuse"] as const;
+export const PROVIDER_SETTINGS = [
+  "engine",
+  "gpu",
+  "endpoint",
+  "pod-reuse",
+  "hosts",
+  "priority",
+] as const;
 export type ProviderSettingName = (typeof PROVIDER_SETTINGS)[number];
 
 /**
@@ -55,6 +63,11 @@ export interface ProviderSetting {
   required?: boolean;
   /** The values the provider allows; any valid value when undefined. */
   values?: readonly string[];
+  /**
+   * Whether the setting is a list of those values, each once, in an order that matters, written
+   * `a,b` (`listSetting`), such as `hosts`.
+   */
+  list?: boolean;
   /** Its value when no layer sets it. */
   default?: string;
   /** A value, for errors. */
@@ -102,6 +115,11 @@ export const PROVIDERS: Readonly<Record<ProviderName, Provider>> = {
       engine: { values: ["ollama", "vllm"], default: "ollama" },
       gpu: { required: true, example: '"NVIDIA RTX A6000"' },
       "pod-reuse": { values: ["task", "run"], default: "task" },
+      // Secure Cloud by default; Community Cloud only when the settings files allow it
+      // (decisions 1 and 9 of the plan for Salad pods).
+      hosts: { values: HOST_KINDS, default: "secure", list: true },
+      // Runpod's REST API offers no interruptible pods (decision 2 of the plan for Salad pods).
+      priority: { values: ["on-demand"], default: "on-demand" },
     },
     blocks: { ollama: { engine: "ollama" }, vllm: { engine: "vllm" } },
     model: "engine",
@@ -186,6 +204,11 @@ export function providerProblem(settings: ProviderSettings, serves = true): stri
       }
       continue;
     }
+    if (spec.list && spec.values) {
+      const parsed = listSetting(setting, value, spec.values);
+      if (!parsed.ok) return `With \`${name}\`, ${parsed.error}`;
+      continue;
+    }
     if (spec.values && !spec.values.includes(value)) {
       const offered = spec.values.map((v) => `\`${v}\``).join(", ");
       return setting === "engine"
@@ -213,6 +236,37 @@ export function providerProblem(settings: ProviderSettings, serves = true): stri
     return TOOL_CALL_PARSER_NEEDED;
   }
   return modelProblem(name, settings.model, settings.engine);
+}
+
+/**
+ * A list setting's value, from `a,b` or `[a, b]`: each of `values`, once, at least one; given
+ * back as `a,b`, the form settings keep it in.
+ */
+export function listSetting(
+  name: string,
+  text: string,
+  values: readonly string[],
+): { ok: true; value: string } | { ok: false; error: string } {
+  const items = text
+    .replace(/^\[(.*)\]$/, "$1")
+    .split(",")
+    .map((item) => item.trim());
+  const offered = values.map((value) => `\`${value}\``).join(", ");
+  if (items.some((item) => !values.includes(item))) {
+    return {
+      ok: false,
+      error: `\`${name}\` must list some of ${offered}, each once, such as \`[${values.join(", ")}]\`.`,
+    };
+  }
+  if (new Set(items).size !== items.length) {
+    return { ok: false, error: `\`${name}\` lists a value twice: list each of ${offered} once.` };
+  }
+  return { ok: true, value: items.join(",") };
+}
+
+/** The kinds of host a `hosts` value lists, by preference; the default's when undefined. */
+export function hostKinds(hosts: string | undefined): HostKind[] {
+  return (hosts ?? "secure").split(",").filter(isHostKind);
 }
 
 /** The settings with the provider's defaults for those no layer set. */
