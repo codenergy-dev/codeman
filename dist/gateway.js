@@ -2,10 +2,7 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 
 // src/gateway/main.ts
-import { spawn } from "node:child_process";
-
-// src/e2e.ts
-var E2E = false ? redirects(process.env) : void 0;
+import { execFile, spawn } from "node:child_process";
 
 // src/inference/engine.ts
 function openAiUsage(body, cachedApart = false) {
@@ -150,260 +147,6 @@ function ollamaContextLength(show) {
   return void 0;
 }
 
-// src/inference/runpod.ts
-var API = "https://api.runpod.io/v2";
-var HOUR_MS = 36e5;
-var STATUS = {
-  PROVISIONING: "starting",
-  STARTING: "starting",
-  RUNNING: "running",
-  EXITED: "stopped",
-  ERROR: "failed",
-  TERMINATED: "terminated"
-};
-var Runpod = class {
-  name = "runpod";
-  pods;
-  serverless;
-  #apiKey;
-  #fetch;
-  #now;
-  /** The catalog's GPU types, by ID, as read so far. */
-  #gpus = /* @__PURE__ */ new Map();
-  constructor(apiKey, fetchFn = fetch, now = () => /* @__PURE__ */ new Date()) {
-    this.#apiKey = apiKey;
-    this.#fetch = fetchFn;
-    this.#now = now;
-    this.pods = {
-      price: (gpuType) => this.#podPrice(gpuType),
-      memory: async (gpuType) => {
-        const memory = (await this.#gpu(gpuType))?.memory;
-        return typeof memory === "number" && memory > 0 ? memory : void 0;
-      },
-      cudaVersions: (gpuType, min) => this.#cudaVersions(gpuType, min),
-      create: (spec) => this.#createPod(spec),
-      get: (id) => this.#getPod(id),
-      list: (env) => this.#listPods(env),
-      terminate: (id) => this.#terminatePod(id),
-      url: (id, port) => `https://${id}-${port}.proxy.runpod.net`,
-      billing: (ids, since) => this.#podBilling(ids, since)
-    };
-    this.serverless = {
-      endpoint: (id) => this.#endpoint(id),
-      price: (id) => this.#serverlessPrice(id),
-      queueUrl: (id) => `https://api.runpod.ai/v2/${encodeURIComponent(id)}`
-    };
-  }
-  /**
-   * `GET /v2/billing`, by hour: the account's total for each hour from `start` (UTC). The API
-   * snaps the window to whole hours, and takes `startTime` only with `endTime`.
-   */
-  async billedHours(start, end) {
-    const from = new Date(start.getTime() - start.getTime() % HOUR_MS);
-    const to = new Date(Math.ceil(end.getTime() / HOUR_MS) * HOUR_MS);
-    const response = await this.#request(`/billing?bucketSize=hour&${window(from, to)}`);
-    const hours = /* @__PURE__ */ new Map();
-    for (const record of response.records ?? []) {
-      const at = Date.parse(record.startTime ?? "");
-      if (!Number.isFinite(at) || at < from.getTime()) continue;
-      const hour = at - at % HOUR_MS;
-      hours.set(hour, (hours.get(hour) ?? 0) + amount(record.totalAmount));
-    }
-    return hours;
-  }
-  /** A GPU type from Runpod's catalog, read once per type; undefined when Runpod has none. */
-  #gpu(gpuType) {
-    let gpu = this.#gpus.get(gpuType);
-    if (!gpu) {
-      gpu = this.#request(
-        `/catalog/gpus/${encodeURIComponent(gpuType)}`,
-        "GET",
-        void 0,
-        [404]
-      );
-      gpu.catch(() => this.#gpus.delete(gpuType));
-      this.#gpus.set(gpuType, gpu);
-    }
-    return gpu;
-  }
-  async #podPrice(gpuType) {
-    const gpu = await this.#gpu(gpuType);
-    if (!gpu) {
-      throw new Error(
-        `Runpod has no GPU type "${gpuType}". \`gpu\` takes the GPU's ID, such as "NVIDIA RTX A6000", not its display name; see https://docs.runpod.io/references/gpu-types.`
-      );
-    }
-    const hourly = gpu.price?.secure;
-    if (gpu.secure === false || typeof hourly !== "number" || !(hourly > 0)) {
-      throw new Error(`Runpod does not offer ${gpuType} on Secure Cloud.`);
-    }
-    return hourly / 3600;
-  }
-  /**
-   * `GET /v2/catalog/gpus/{id}` with the pods' availability on Secure Cloud from a CUDA version
-   * (docs/web/runpod/get-a-gpu-type.md): a missing `cudaVersions` is an empty one.
-   */
-  async #cudaVersions(gpuType, min) {
-    const query = `include=AVAILABILITY&product=POD&cloud=SECURE&minCudaVersion=${encodeURIComponent(min)}`;
-    const gpu = await this.#request(
-      `/catalog/gpus/${encodeURIComponent(gpuType)}?${query}`,
-      "GET",
-      void 0,
-      [404]
-    );
-    return (gpu?.cudaVersions ?? []).flatMap(
-      ({ version, available }) => typeof version === "string" ? [{ version, available: available === true }] : []
-    );
-  }
-  async #createPod(spec) {
-    const pod = await this.#request("/pods", "POST", {
-      name: spec.name,
-      image: spec.image,
-      gpu: {
-        id: spec.gpuType,
-        count: 1,
-        ...spec.minCudaVersion ? { minCudaVersion: spec.minCudaVersion } : {}
-      },
-      // Decision 6 of the self-hosted inference plan: Runpod's own data centers only.
-      cloud: "SECURE",
-      env: spec.env,
-      ports: [`${spec.port}/http`],
-      disk: spec.diskGb
-    });
-    return toPod(pod);
-  }
-  async #getPod(id) {
-    const pod = await this.#request(`/pods/${encodeURIComponent(id)}`, "GET", void 0, [404]);
-    return pod ? toPod(pod) : void 0;
-  }
-  async #listPods(env) {
-    const pods = [];
-    let cursor;
-    for (let page = 0; page < 100; page++) {
-      const response = await this.#request(
-        `/pods${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`
-      );
-      for (const pod of response.pods ?? []) {
-        const found = toPod(pod);
-        if (Object.entries(env).every(([name, value]) => found.env[name] === value)) {
-          pods.push(found);
-        }
-      }
-      cursor = response.pagination?.nextCursor;
-      if (!response.pagination?.hasNextPage || !cursor) return pods;
-    }
-    throw new Error("Too many Runpod pods to list.");
-  }
-  async #terminatePod(id) {
-    await this.#request(`/pods/${encodeURIComponent(id)}`, "DELETE", void 0, [404]);
-  }
-  /** `GET /v2/billing/pods`, by day, once for every pod; records are per pod per bucket. */
-  async #podBilling(ids, since) {
-    if (ids.length === 0) return {};
-    const start = new Date(
-      Date.UTC(since.getUTCFullYear(), since.getUTCMonth(), since.getUTCDate())
-    );
-    const now = this.#now();
-    const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
-    const response = await this.#request(
-      `/billing/pods?bucketSize=day&${window(start, end)}`
-    );
-    const wanted = new Set(ids);
-    const billed = {};
-    for (const record of response.records ?? []) {
-      if (!record.podId || !wanted.has(record.podId)) continue;
-      billed[record.podId] = (billed[record.podId] ?? 0) + amount(record.totalAmount);
-    }
-    return billed;
-  }
-  async #endpoint(id) {
-    const endpoint = await this.#request(
-      `/serverless/${encodeURIComponent(id)}`
-    );
-    return {
-      id: endpoint.id,
-      type: endpoint.type,
-      workersMin: endpoint.workers?.min ?? 0,
-      workersMax: endpoint.workers?.max ?? 0,
-      idleTimeoutSeconds: endpoint.workers?.idleTimeout,
-      gpuCount: endpoint.gpu?.count ?? 1,
-      env: endpoint.env ?? {}
-    };
-  }
-  /**
-   * The flex price of the endpoint's dearest GPU type, times its GPUs per worker: a worker may
-   * land on any type of its pools. Throws when no price is listed.
-   */
-  async #serverlessPrice(id) {
-    const endpoint = await this.#request(
-      `/serverless/${encodeURIComponent(id)}`
-    );
-    const pools = new Set(endpoint.gpu?.pools ?? []);
-    const excluded = new Set(endpoint.gpu?.excludedTypes ?? []);
-    const { gpus } = await this.#request("/catalog/gpus");
-    const prices = (gpus ?? []).filter((gpu) => gpu.pool && pools.has(gpu.pool) && !excluded.has(gpu.id)).map((gpu) => gpu.price?.serverless).filter((price) => typeof price === "number" && price > 0);
-    if (prices.length === 0)
-      throw new Error(`Runpod lists no Serverless price for endpoint ${id}.`);
-    return Math.max(...prices) * (endpoint.gpu?.count ?? 1) / 3600;
-  }
-  async #request(path, method = "GET", body, absent = []) {
-    const response = await this.#fetch(`${API}${path}`, {
-      method,
-      headers: {
-        Authorization: `Bearer ${this.#apiKey}`,
-        ...body === void 0 ? {} : { "Content-Type": "application/json" }
-      },
-      body: body === void 0 ? null : JSON.stringify(body)
-    });
-    if (absent.includes(response.status)) return void 0;
-    if (!response.ok) {
-      const problem = describeProblem(await response.text().catch(() => ""));
-      throw new Error(
-        `Runpod ${method} ${path.split("?")[0]} failed with ${response.status}${problem ? `: ${problem}` : "."}`
-      );
-    }
-    return response.status === 204 ? void 0 : response.json();
-  }
-};
-function toPod(pod) {
-  return {
-    id: pod.id,
-    name: pod.name,
-    status: STATUS[pod.status] ?? "starting",
-    image: pod.image ?? "",
-    env: pod.env ?? {},
-    gpuType: pod.gpu?.id,
-    createdAt: new Date(pod.createdAt),
-    pricePerSecond: typeof pod.cost === "number" && pod.cost > 0 ? pod.cost / 3600 : void 0,
-    ...typeof pod.cudaVersion === "string" && pod.cudaVersion !== "" ? { cudaVersion: pod.cudaVersion } : {}
-  };
-}
-function timestamp(date) {
-  return `${date.toISOString().slice(0, 19)}Z`;
-}
-function window(start, end) {
-  return `startTime=${encodeURIComponent(timestamp(start))}&endTime=${encodeURIComponent(timestamp(end))}`;
-}
-function describeProblem(body) {
-  let problem;
-  try {
-    problem = JSON.parse(body);
-  } catch {
-    return void 0;
-  }
-  if (typeof problem !== "object" || problem === null) return void 0;
-  const { title, detail, errors } = problem;
-  const parts = [title, detail, ...Array.isArray(errors) ? errors : []].filter(
-    (part) => typeof part === "string" && part.trim() !== ""
-  );
-  if (parts.length === 0) return void 0;
-  const text = parts.join(" \u2014 ").replace(/\s+/g, " ").trim();
-  return text.length > 500 ? `${text.slice(0, 499)}\u2026` : text;
-}
-function amount(value) {
-  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
-}
-
 // src/inference/vllm.ts
 var MODEL2 = /^[A-Za-z0-9][A-Za-z0-9._-]*(\/[A-Za-z0-9][A-Za-z0-9._-]*)?$/;
 var vllm = {
@@ -418,6 +161,7 @@ function isHuggingFaceId(text) {
   return rest.length === 0 && [namespace, name].every((part) => HUB_NAME.test(part) && !/--|\.\./.test(part));
 }
 var VLLM_VERSION = "0.31.0";
+var VLLM_MIN_CUDA = "13.0";
 var VLLM_PORT = 8e3;
 var VLLM_URL = `http://127.0.0.1:${VLLM_PORT}`;
 var VLLM_TOOL_PARSERS = [
@@ -1151,7 +895,13 @@ var Gateway = class {
         else response.end();
       });
     });
-    await new Promise((resolve) => server.listen(port, host, resolve));
+    await new Promise((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(port, host, () => {
+        server.off("error", reject);
+        resolve();
+      });
+    });
     const address = server.address();
     return { server, url: `http://${host}:${address.port}` };
   }
@@ -1405,6 +1155,282 @@ function runSettings(body) {
   };
 }
 
+// src/e2e.ts
+var E2E = false ? redirects(process.env) : void 0;
+
+// src/inference/runpod.ts
+var API = "https://api.runpod.io/v2";
+var HOUR_MS = 36e5;
+var STATUS = {
+  PROVISIONING: "starting",
+  STARTING: "starting",
+  RUNNING: "running",
+  EXITED: "stopped",
+  ERROR: "failed",
+  TERMINATED: "terminated"
+};
+var Runpod = class {
+  name = "runpod";
+  pods;
+  serverless;
+  #apiKey;
+  #fetch;
+  #now;
+  /** The catalog's GPU types, by ID, as read so far. */
+  #gpus = /* @__PURE__ */ new Map();
+  constructor(apiKey, fetchFn = fetch, now = () => /* @__PURE__ */ new Date()) {
+    this.#apiKey = apiKey;
+    this.#fetch = fetchFn;
+    this.#now = now;
+    this.pods = {
+      price: (gpuType) => this.#podPrice(gpuType),
+      memory: async (gpuType) => {
+        const memory = (await this.#gpu(gpuType))?.memory;
+        return typeof memory === "number" && memory > 0 ? memory : void 0;
+      },
+      cudaVersions: (gpuType, min) => this.#cudaVersions(gpuType, min),
+      create: (spec) => this.#createPod(spec),
+      get: (id) => this.#getPod(id),
+      list: (env) => this.#listPods(env),
+      terminate: (id) => this.#terminatePod(id),
+      url: async (id, port) => `https://${id}-${port}.proxy.runpod.net`,
+      billing: (ids, since) => this.#podBilling(ids, since)
+    };
+    this.serverless = {
+      endpoint: (id) => this.#endpoint(id),
+      price: (id) => this.#serverlessPrice(id),
+      queueUrl: (id) => `https://api.runpod.ai/v2/${encodeURIComponent(id)}`
+    };
+  }
+  /**
+   * `GET /v2/billing`, by hour: the account's total for each hour from `start` (UTC). The API
+   * snaps the window to whole hours, and takes `startTime` only with `endTime`.
+   */
+  async billedHours(start, end) {
+    const from = new Date(start.getTime() - start.getTime() % HOUR_MS);
+    const to = new Date(Math.ceil(end.getTime() / HOUR_MS) * HOUR_MS);
+    const response = await this.#request(`/billing?bucketSize=hour&${window(from, to)}`);
+    const hours = /* @__PURE__ */ new Map();
+    for (const record of response.records ?? []) {
+      const at = Date.parse(record.startTime ?? "");
+      if (!Number.isFinite(at) || at < from.getTime()) continue;
+      const hour = at - at % HOUR_MS;
+      hours.set(hour, (hours.get(hour) ?? 0) + amount(record.totalAmount));
+    }
+    return hours;
+  }
+  /** A GPU type from Runpod's catalog, read once per type; undefined when Runpod has none. */
+  #gpu(gpuType) {
+    let gpu = this.#gpus.get(gpuType);
+    if (!gpu) {
+      gpu = this.#request(
+        `/catalog/gpus/${encodeURIComponent(gpuType)}`,
+        "GET",
+        void 0,
+        [404]
+      );
+      gpu.catch(() => this.#gpus.delete(gpuType));
+      this.#gpus.set(gpuType, gpu);
+    }
+    return gpu;
+  }
+  async #podPrice(gpuType) {
+    const gpu = await this.#gpu(gpuType);
+    if (!gpu) {
+      throw new Error(
+        `Runpod has no GPU type "${gpuType}". \`gpu\` takes the GPU's ID, such as "NVIDIA RTX A6000", not its display name; see https://docs.runpod.io/references/gpu-types.`
+      );
+    }
+    const hourly = gpu.price?.secure;
+    if (gpu.secure === false || typeof hourly !== "number" || !(hourly > 0)) {
+      throw new Error(`Runpod does not offer ${gpuType} on Secure Cloud.`);
+    }
+    return hourly / 3600;
+  }
+  /**
+   * `GET /v2/catalog/gpus/{id}` with the pods' availability on Secure Cloud from a CUDA version
+   * (docs/web/runpod/get-a-gpu-type.md): a missing `cudaVersions` is an empty one.
+   */
+  async #cudaVersions(gpuType, min) {
+    const query = `include=AVAILABILITY&product=POD&cloud=SECURE&minCudaVersion=${encodeURIComponent(min)}`;
+    const gpu = await this.#request(
+      `/catalog/gpus/${encodeURIComponent(gpuType)}?${query}`,
+      "GET",
+      void 0,
+      [404]
+    );
+    return (gpu?.cudaVersions ?? []).flatMap(
+      ({ version, available }) => typeof version === "string" ? [{ version, available: available === true }] : []
+    );
+  }
+  async #createPod(spec) {
+    const pod = await this.#request("/pods", "POST", {
+      name: spec.name,
+      image: spec.image,
+      gpu: {
+        id: spec.gpuType,
+        count: 1,
+        ...spec.minCudaVersion ? { minCudaVersion: spec.minCudaVersion } : {}
+      },
+      // Decision 6 of the self-hosted inference plan: Runpod's own data centers only.
+      cloud: "SECURE",
+      env: spec.env,
+      ports: [`${spec.port}/http`],
+      disk: spec.diskGb
+    });
+    return toPod(pod);
+  }
+  async #getPod(id) {
+    const pod = await this.#request(`/pods/${encodeURIComponent(id)}`, "GET", void 0, [404]);
+    return pod ? toPod(pod) : void 0;
+  }
+  async #listPods(env) {
+    const pods = [];
+    let cursor;
+    for (let page = 0; page < 100; page++) {
+      const response = await this.#request(
+        `/pods${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`
+      );
+      for (const pod of response.pods ?? []) {
+        const found = toPod(pod);
+        if (Object.entries(env).every(([name, value]) => found.env[name] === value)) {
+          pods.push(found);
+        }
+      }
+      cursor = response.pagination?.nextCursor;
+      if (!response.pagination?.hasNextPage || !cursor) return pods;
+    }
+    throw new Error("Too many Runpod pods to list.");
+  }
+  async #terminatePod(id) {
+    await this.#request(`/pods/${encodeURIComponent(id)}`, "DELETE", void 0, [404]);
+  }
+  /** `GET /v2/billing/pods`, by day, once for every pod; records are per pod per bucket. */
+  async #podBilling(ids, since) {
+    if (ids.length === 0) return {};
+    const start = new Date(
+      Date.UTC(since.getUTCFullYear(), since.getUTCMonth(), since.getUTCDate())
+    );
+    const now = this.#now();
+    const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
+    const response = await this.#request(
+      `/billing/pods?bucketSize=day&${window(start, end)}`
+    );
+    const wanted = new Set(ids);
+    const billed = {};
+    for (const record of response.records ?? []) {
+      if (!record.podId || !wanted.has(record.podId)) continue;
+      billed[record.podId] = (billed[record.podId] ?? 0) + amount(record.totalAmount);
+    }
+    return billed;
+  }
+  async #endpoint(id) {
+    const endpoint = await this.#request(
+      `/serverless/${encodeURIComponent(id)}`
+    );
+    return {
+      id: endpoint.id,
+      type: endpoint.type,
+      workersMin: endpoint.workers?.min ?? 0,
+      workersMax: endpoint.workers?.max ?? 0,
+      idleTimeoutSeconds: endpoint.workers?.idleTimeout,
+      gpuCount: endpoint.gpu?.count ?? 1,
+      env: endpoint.env ?? {}
+    };
+  }
+  /**
+   * The flex price of the endpoint's dearest GPU type, times its GPUs per worker: a worker may
+   * land on any type of its pools. Throws when no price is listed.
+   */
+  async #serverlessPrice(id) {
+    const endpoint = await this.#request(
+      `/serverless/${encodeURIComponent(id)}`
+    );
+    const pools = new Set(endpoint.gpu?.pools ?? []);
+    const excluded = new Set(endpoint.gpu?.excludedTypes ?? []);
+    const { gpus } = await this.#request("/catalog/gpus");
+    const prices = (gpus ?? []).filter((gpu) => gpu.pool && pools.has(gpu.pool) && !excluded.has(gpu.id)).map((gpu) => gpu.price?.serverless).filter((price) => typeof price === "number" && price > 0);
+    if (prices.length === 0)
+      throw new Error(`Runpod lists no Serverless price for endpoint ${id}.`);
+    return Math.max(...prices) * (endpoint.gpu?.count ?? 1) / 3600;
+  }
+  async #request(path, method = "GET", body, absent = []) {
+    const response = await this.#fetch(`${API}${path}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${this.#apiKey}`,
+        ...body === void 0 ? {} : { "Content-Type": "application/json" }
+      },
+      body: body === void 0 ? null : JSON.stringify(body)
+    });
+    if (absent.includes(response.status)) return void 0;
+    if (!response.ok) {
+      const problem = describeProblem(await response.text().catch(() => ""));
+      throw new Error(
+        `Runpod ${method} ${path.split("?")[0]} failed with ${response.status}${problem ? `: ${problem}` : "."}`
+      );
+    }
+    return response.status === 204 ? void 0 : response.json();
+  }
+};
+function toPod(pod) {
+  return {
+    id: pod.id,
+    name: pod.name,
+    status: STATUS[pod.status] ?? "starting",
+    image: pod.image ?? "",
+    env: pod.env ?? {},
+    gpuType: pod.gpu?.id,
+    createdAt: new Date(pod.createdAt),
+    pricePerSecond: typeof pod.cost === "number" && pod.cost > 0 ? pod.cost / 3600 : void 0,
+    ...typeof pod.cudaVersion === "string" && pod.cudaVersion !== "" ? { cudaVersion: pod.cudaVersion } : {}
+  };
+}
+function timestamp(date) {
+  return `${date.toISOString().slice(0, 19)}Z`;
+}
+function window(start, end) {
+  return `startTime=${encodeURIComponent(timestamp(start))}&endTime=${encodeURIComponent(timestamp(end))}`;
+}
+function describeProblem(body) {
+  let problem;
+  try {
+    problem = JSON.parse(body);
+  } catch {
+    return void 0;
+  }
+  if (typeof problem !== "object" || problem === null) return void 0;
+  const { title, detail, errors } = problem;
+  const parts = [title, detail, ...Array.isArray(errors) ? errors : []].filter(
+    (part) => typeof part === "string" && part.trim() !== ""
+  );
+  if (parts.length === 0) return void 0;
+  const text = parts.join(" \u2014 ").replace(/\s+/g, " ").trim();
+  return text.length > 500 ? `${text.slice(0, 499)}\u2026` : text;
+}
+function amount(value) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+// src/gateway/host.ts
+function providerTermination(env, runpod = (key) => (
+  // The e2e build's pods reach the fake Runpod (src/e2e.ts); the published build, Runpod.
+  E2E ? E2E.gpu(new Runpod(key, E2E.fetch)) : new Runpod(key)
+)) {
+  const podId = env.RUNPOD_POD_ID;
+  const key = env.RUNPOD_API_KEY;
+  if (!podId || !key) return void 0;
+  return () => runpod(key).pods.terminate(podId);
+}
+async function listenEverywhere(listen) {
+  try {
+    return await listen("::");
+  } catch (error2) {
+    if (error2.code !== "EAFNOSUPPORT") throw error2;
+    return listen("0.0.0.0");
+  }
+}
+
 // src/gateway/fit.ts
 var FLOOR_CONTEXT = 64e3;
 var CONTEXT_STEP = 4096;
@@ -1531,8 +1557,6 @@ function podSettings(env) {
     imageEngine: env.CODEMAN_IMAGE_ENGINE || "ollama",
     adminSha256,
     policy: { startBy, keptIdleMs: keptIdle * 6e4, runIdleMs: runIdle * 6e4 },
-    podId: env.RUNPOD_POD_ID,
-    podKey: env.RUNPOD_API_KEY,
     ollama: parseOllamaVariables(env.CODEMAN_OLLAMA),
     vllm: parseVllmSettings(env.CODEMAN_VLLM),
     fitHint: parseFitHint(env.CODEMAN_FIT),
@@ -1804,6 +1828,31 @@ function vllmError(lines, exit) {
   const text = errors.findLast((error2) => !/root cause above|initialization failed/i.test(error2)) ?? errors.at(-1);
   return text ? text.length > 600 ? `${text.slice(0, 599)}\u2026` : text : exit;
 }
+function driverCudaVersion(output) {
+  return /CUDA Version:\s*(\d+\.\d+)/.exec(output)?.[1];
+}
+async function checkDriverCuda(read, log) {
+  const output = await read().catch((error2) => {
+    log(
+      `Could not read the driver's CUDA version (${error2 instanceof Error ? error2.message : error2}); starting vLLM anyway.`
+    );
+    return void 0;
+  });
+  if (output === void 0) return;
+  const version = driverCudaVersion(output);
+  if (!version) {
+    log("The driver reported no CUDA version; starting vLLM anyway.");
+    return;
+  }
+  const [major = 0, minor = 0] = version.split(".").map(Number);
+  const [minMajor = 0, minMinor = 0] = VLLM_MIN_CUDA.split(".").map(Number);
+  if (major < minMajor || major === minMajor && minor < minMinor) {
+    throw new Error(
+      `The host's driver supports CUDA ${version}, older than the ${VLLM_MIN_CUDA} that vLLM's image needs.`
+    );
+  }
+  log(`The host's driver supports CUDA ${version}.`);
+}
 var MAX_RESTARTS = 2;
 function nextContext(measures, n) {
   const last = measures.at(-1);
@@ -1993,14 +2042,12 @@ async function main() {
   const settings = podSettings(process.env);
   const log = (message) => console.log(`[codeman] ${message}`);
   let engineProcess;
+  const providerTerminate = providerTermination(process.env);
   const terminate = async (reason) => {
     log(`Terminating the pod: ${reason}.`);
-    if (settings.podId && settings.podKey) {
-      const runpod = E2E ? E2E.gpu(new Runpod(settings.podKey, E2E.fetch)) : new Runpod(settings.podKey);
-      await runpod.pods.terminate(settings.podId).catch((error2) => {
-        log(`Could not terminate the pod: ${error2 instanceof Error ? error2.message : error2}`);
-      });
-    }
+    await providerTerminate?.().catch((error2) => {
+      log(`Could not terminate the pod: ${error2 instanceof Error ? error2.message : error2}`);
+    });
     await stop(engineProcess);
     process.exit(0);
   };
@@ -2024,7 +2071,7 @@ async function main() {
     adminSha256: settings.adminSha256,
     log
   });
-  await gateway.listen("0.0.0.0", GATEWAY_PORT);
+  await listenEverywhere((host) => gateway.listen(host, GATEWAY_PORT));
   log(`Gateway listening on port ${GATEWAY_PORT}.`);
   setInterval(() => {
     gateway.expireRuns(settings.policy.runIdleMs);
@@ -2079,6 +2126,7 @@ async function serveVllm(settings, gateway, log, running) {
   gateway.vllm = values;
   const toolCallParser = values["tool-call-parser"];
   if (!toolCallParser) throw new Error("CODEMAN_VLLM has no `tool-call-parser`.");
+  await checkDriverCuda(nvidiaSmi, log);
   let child;
   let lines = [];
   let stopped;
@@ -2133,6 +2181,16 @@ async function serveVllm(settings, gateway, log, running) {
       toolCallParser
     }
   );
+}
+async function nvidiaSmi() {
+  const run = (file) => new Promise(
+    (resolve, reject) => execFile(
+      file,
+      { timeout: 3e4 },
+      (error2, stdout) => error2 ? reject(error2) : resolve(stdout)
+    )
+  );
+  return run("nvidia-smi").catch(() => run("/usr/lib/wsl/lib/nvidia-smi"));
 }
 function serveOllamaProcess(variables, contextLength) {
   return spawn("ollama", ["serve"], {

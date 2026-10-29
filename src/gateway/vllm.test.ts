@@ -4,6 +4,8 @@ import { podSettings } from "./pod.ts";
 import {
   autoFitModelContext,
   cacheCapacity,
+  checkDriverCuda,
+  driverCudaVersion,
   nextContext,
   prepareVllm,
   servedContext,
@@ -312,4 +314,25 @@ test("a pod reads its engine, its vLLM settings and its cached context", () => {
     false,
     "an argument Codeman sets itself",
   );
+});
+
+test("vLLM starts only on a driver with the CUDA its image needs, or one that does not say", async () => {
+  const header = (version: string) =>
+    `| NVIDIA-SMI 580.65.06   Driver Version: 580.65.06   CUDA Version: ${version}     |`;
+  assert.equal(driverCudaVersion(header("13.0")), "13.0");
+  assert.equal(driverCudaVersion("No devices were found"), undefined);
+  const logs: string[] = [];
+  const log = (message: string) => logs.push(message);
+  await checkDriverCuda(async () => header("13.1"), log);
+  await checkDriverCuda(async () => header("14.0"), log);
+  await assert.rejects(
+    checkDriverCuda(async () => header("12.8"), log),
+    /driver supports CUDA 12\.8, older than the 13\.0/,
+  );
+  await checkDriverCuda(async () => "No devices were found", log);
+  await checkDriverCuda(async () => {
+    throw new Error("spawn nvidia-smi ENOENT");
+  }, log);
+  assert.match(logs.at(-2) ?? "", /no CUDA version; starting vLLM anyway/);
+  assert.match(logs.at(-1) ?? "", /Could not read .*ENOENT.*starting vLLM anyway/);
 });

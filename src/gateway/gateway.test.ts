@@ -64,6 +64,13 @@ async function gateway(options: Partial<GatewayOptions> & { upstream: string }) 
   return { instance, url };
 }
 
+test("a gateway that cannot listen says why", async () => {
+  const { url } = await gateway({ upstream: "http://127.0.0.1:1/v1" });
+  const port = Number(new URL(url).port);
+  const second = new Gateway({ engine: fakeEngine, adminSha256: sha256("admin"), upstream: url });
+  await assert.rejects(second.listen("127.0.0.1", port), { code: "EADDRINUSE" });
+});
+
 const near = (actual: number | undefined, expected: number) =>
   assert.ok(Math.abs((actual ?? Number.NaN) - expected) < 1e-9, `${actual} is not ${expected}`);
 

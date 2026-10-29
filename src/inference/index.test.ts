@@ -242,7 +242,7 @@ test("a vLLM pod's choice reaches its pod: the vLLM image, its settings and max-
       choice,
       { owner: "o", name: "r" },
       {
-        accountKey: "k",
+        account: { key: "k" },
         image: "ghcr.io/o/codeman-vllm@sha256:2",
         usage: "",
         store: () => new MemoryStore(),

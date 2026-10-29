@@ -324,7 +324,7 @@ export async function release(services: Services): Promise<void> {
     return;
   }
   const accountKey = runtime.input("gpu-key", { required: true });
-  const gpu = gpuProvider(accountOf(choice.provider), accountKey);
+  const gpu = gpuProvider(accountOf(choice.provider), { key: accountKey });
   if (!gpu.pods) throw new Error(`${gpu.name} has no pods.`);
   const handle = runtime.input("handle", { required: true });
   const pool = choicePool(choice, runtime.repository.owner);

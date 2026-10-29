@@ -1,10 +1,9 @@
-import { type ChildProcess, spawn } from "node:child_process";
-import { E2E } from "../e2e.ts";
+import { type ChildProcess, execFile, spawn } from "node:child_process";
 import type { InferenceEngine } from "../inference/engine.ts";
 import { OLLAMA_URL, ollama } from "../inference/ollama.ts";
-import { Runpod } from "../inference/runpod.ts";
 import { VLLM_URL, vllm } from "../inference/vllm.ts";
 import { Gateway } from "./gateway.ts";
+import { listenEverywhere, providerTermination } from "./host.ts";
 import {
   expiry,
   FAILURE_GRACE_MS,
@@ -17,6 +16,7 @@ import {
   prepareOllama,
 } from "./pod.ts";
 import {
+  checkDriverCuda,
   prepareVllm,
   type VllmFitReport,
   vllmError,
@@ -41,19 +41,15 @@ async function main(): Promise<void> {
   const settings = podSettings(process.env);
   const log = (message: string) => console.log(`[codeman] ${message}`);
   let engineProcess: ChildProcess | undefined;
+  const providerTerminate = providerTermination(process.env);
   const terminate = async (reason: string): Promise<never> => {
     log(`Terminating the pod: ${reason}.`);
-    if (settings.podId && settings.podKey) {
-      // The e2e build's pods reach the fake Runpod (src/e2e.ts); the published build, Runpod.
-      const runpod = E2E
-        ? E2E.gpu(new Runpod(settings.podKey, E2E.fetch))
-        : new Runpod(settings.podKey);
-      await runpod.pods.terminate(settings.podId).catch((error: unknown) => {
-        log(`Could not terminate the pod: ${error instanceof Error ? error.message : error}`);
-      });
-    }
+    await providerTerminate?.().catch((error: unknown) => {
+      log(`Could not terminate the pod: ${error instanceof Error ? error.message : error}`);
+    });
     await stop(engineProcess);
-    // Should the provider not terminate it, the container stops when its main process exits.
+    // Should the provider not terminate it, or give it no way to, the container stops when its
+    // main process exits.
     process.exit(0);
   };
 
@@ -80,7 +76,7 @@ async function main(): Promise<void> {
     adminSha256: settings.adminSha256,
     log,
   });
-  await gateway.listen("0.0.0.0", GATEWAY_PORT);
+  await listenEverywhere((host) => gateway.listen(host, GATEWAY_PORT));
   log(`Gateway listening on port ${GATEWAY_PORT}.`);
   setInterval(() => {
     // Spent or silent runs stop, alone or all together, and take no more of the pod's time. A
@@ -157,6 +153,7 @@ async function serveVllm(
   gateway.vllm = values;
   const toolCallParser = values["tool-call-parser"];
   if (!toolCallParser) throw new Error("CODEMAN_VLLM has no `tool-call-parser`.");
+  await checkDriverCuda(nvidiaSmi, log);
   let child: ChildProcess | undefined;
   let lines: string[] = [];
   let stopped: string | undefined;
@@ -212,6 +209,19 @@ async function serveVllm(
       toolCallParser,
     },
   );
+}
+
+/**
+ * `nvidia-smi`'s output. Under WSL2, as on Salad's hosts, it may be only in `/usr/lib/wsl/lib`.
+ */
+async function nvidiaSmi(): Promise<string> {
+  const run = (file: string) =>
+    new Promise<string>((resolve, reject) =>
+      execFile(file, { timeout: 30_000 }, (error, stdout) =>
+        error ? reject(error) : resolve(stdout),
+      ),
+    );
+  return run("nvidia-smi").catch(() => run("/usr/lib/wsl/lib/nvidia-smi"));
 }
 
 /** Starts `ollama serve` on the loopback, keeping models loaded, with the pod's Ollama settings. */

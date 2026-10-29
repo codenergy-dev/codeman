@@ -11,9 +11,19 @@ export interface GpuProvider {
   readonly serverless?: ServerlessHost | undefined;
   /**
    * What the account was billed for each hour from `start` until `end`, in USD, on every kind of
-   * resource. Hours not billed yet are left out.
+   * resource. Hours not billed yet are left out. Absent when the provider has no billing API.
    */
-  billedHours(start: Date, end: Date): Promise<BilledHours>;
+  billedHours?(start: Date, end: Date): Promise<BilledHours>;
+}
+
+/**
+ * What opens a GPU account: its key, and, for a provider whose key reaches several of them, which
+ * organization and project of the account Codeman works in.
+ */
+export interface GpuAccount {
+  key: string;
+  organization?: string | undefined;
+  project?: string | undefined;
 }
 
 /** What a new pod runs. */
@@ -73,10 +83,16 @@ export interface PodHost {
   list(env: Record<string, string>): Promise<Pod[]>;
   /** Terminates the pod; one that no longer exists is not an error. */
   terminate(id: string): Promise<void>;
-  /** Where the pod's exposed `port` is reached. */
-  url(id: string, port: number): string;
-  /** What each of these pods was billed since `since`, in USD; pods without billing are left out. */
-  billing(ids: readonly string[], since: Date): Promise<Record<string, number>>;
+  /**
+   * Where the pod's exposed `port` is reached. Some providers know it only once the pod is
+   * created, so it may read the pod.
+   */
+  url(id: string, port: number): Promise<string>;
+  /**
+   * What each of these pods was billed since `since`, in USD; pods without billing are left out.
+   * Absent when the provider has no billing API.
+   */
+  billing?(ids: readonly string[], since: Date): Promise<Record<string, number>>;
 }
 
 export interface Endpoint {

@@ -68,7 +68,7 @@ export function redirects(env: NodeJS.ProcessEnv, fetchFn: Fetch = fetch): Redir
     gpu: (provider) => {
       const template = endpoints[PODS];
       if (provider.pods && template) {
-        provider.pods.url = (id, port) =>
+        provider.pods.url = async (id, port) =>
           template.replaceAll("{id}", id).replaceAll("{port}", `${port}`);
       }
       const serverless = provider.serverless;

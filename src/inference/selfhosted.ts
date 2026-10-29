@@ -661,12 +661,16 @@ export class PodInference implements InferenceProvider {
     }
   }
 
-  /** What Runpod billed for these pods; undefined when it could not be read. */
+  /**
+   * What the provider billed for these pods; undefined when it could not be read, or when the
+   * provider has no billing.
+   */
   async #billing(
     pods: readonly string[],
     now: Date,
     log: Log,
   ): Promise<Record<string, number> | undefined> {
+    if (!this.#host.billing) return undefined;
     return this.#host
       .billing([...new Set(pods)], new Date(now.getTime() - BILLING_DAYS * 86_400_000))
       .catch((error: unknown) => {
@@ -939,7 +943,8 @@ export class PodInference implements InferenceProvider {
     const { model, image } = this.#settings;
     const podId = record.pod;
     if (!podId) throw new Error("The pod registry holds no pod ID for these settings.");
-    const target: GatewayTarget = { url: this.#host.url(podId, GATEWAY_PORT), nonce: record.nonce };
+    // Read once the pod runs: some providers give its URL only after creating it.
+    const target: GatewayTarget = { url: "", nonce: record.nonce };
     const created = record.createdAt?.getTime() ?? this.#now().getTime();
     let checks = 0;
     let startedBefore = false;
@@ -947,6 +952,7 @@ export class PodInference implements InferenceProvider {
       this.#host,
       podId,
       async () => {
+        target.url ||= await this.#host.url(podId, GATEWAY_PORT);
         const response = await (this.#options.fetch ?? fetch)(`${target.url}/health`);
         const health = (response.ok ? await response.json() : {}) as {
           ready?: boolean;

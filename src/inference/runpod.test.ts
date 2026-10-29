@@ -166,8 +166,11 @@ test("terminates a pod, and a pod already gone is not an error", async () => {
   assert.equal(calls[0]?.[0], "https://api.runpod.io/v2/pods/abc123");
 });
 
-test("reaches a pod's port through Runpod's proxy", () => {
-  assert.equal(new Runpod("rk").pods.url("abc123", 8080), "https://abc123-8080.proxy.runpod.net");
+test("reaches a pod's port through Runpod's proxy", async () => {
+  assert.equal(
+    await new Runpod("rk").pods.url("abc123", 8080),
+    "https://abc123-8080.proxy.runpod.net",
+  );
 });
 
 test("adds up the billing of the given pods since the day they started", async () => {

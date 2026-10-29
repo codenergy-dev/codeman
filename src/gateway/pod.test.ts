@@ -46,13 +46,10 @@ test("reads the pod's settings from its environment", () => {
     CODEMAN_ADMIN_SHA256: "a".repeat(64),
     CODEMAN_START_BY: "2026-10-03T12:25:00Z",
     CODEMAN_KEPT_IDLE_MINUTES: "15",
-    RUNPOD_POD_ID: "abc",
-    RUNPOD_API_KEY: "pod-key",
   });
   assert.equal(settings.policy.startBy, Date.parse("2026-10-03T12:25:00Z"));
   assert.equal(settings.policy.keptIdleMs, 900_000);
   assert.equal(settings.policy.runIdleMs, 1_800_000);
-  assert.equal(settings.podId, "abc");
   assert.deepEqual(settings.ollama, { ok: true, value: {} }, "no Ollama settings");
   assert.throws(() => podSettings({ CODEMAN_MODEL: "m" }), /required/);
 });

@@ -453,7 +453,13 @@ export class Gateway {
         else response.end();
       });
     });
-    await new Promise<void>((resolve) => server.listen(port, host, resolve));
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(port, host, () => {
+        server.off("error", reject);
+        resolve();
+      });
+    });
     const address = server.address() as AddressInfo;
     return { server, url: `http://${host}:${address.port}` };
   }

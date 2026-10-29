@@ -7,7 +7,7 @@ import { positiveNumber } from "../steps/common.ts";
 import type { Store } from "../store/store.ts";
 import type { ProviderAccounts } from "./budget.ts";
 import { ENGINES } from "./engines.ts";
-import type { GpuProvider } from "./gpu.ts";
+import type { GpuAccount, GpuProvider } from "./gpu.ts";
 import type { ModelHub } from "./huggingface.ts";
 import { podImage } from "./images.ts";
 import { type OllamaSettings, ollamaEnvironment } from "./ollama.ts";
@@ -267,8 +267,9 @@ function zero(): Budgeted["recorded"] {
   return { spent: 0 };
 }
 
-/** The GPU cloud of an account that rents GPUs, with the account's key. */
-export function gpuProvider(account: string, key: string): GpuProvider {
+/** The GPU cloud of an account that rents GPUs, with what opens the account. */
+export function gpuProvider(account: string, settings: GpuAccount): GpuProvider {
+  const { key } = settings;
   if (account === "runpod") return E2E ? E2E.gpu(new Runpod(key, E2E.fetch)) : new Runpod(key);
   throw new Error(`Unknown GPU account "${account}".`);
 }
@@ -283,7 +284,7 @@ export function inferenceProvider(runtime: Runtime, store: () => Store): Inferen
     return openRouterProvider(runtime, runtime.input("management-key", { required: true }));
   }
   return selfHosted(choice, runtime.repository, {
-    accountKey: runtime.input("gpu-key", { required: true }),
+    account: { key: runtime.input("gpu-key", { required: true }) },
     image: podImage(choice.engine, runtime.input("pod-image")),
     usage: runtime.input("gateway-usage"),
     store,
@@ -314,18 +315,21 @@ export function providerAccounts(runtime: Runtime): ProviderAccounts {
       return key === "" ? undefined : openRouterProvider(runtime, key).taskCosts(task);
     },
     billedHours: async (name, start, end) => {
-      if (!isHourlyAccount(name)) throw new Error(`${name} has no hourly billing.`);
-      return gpuProvider(name, credential(name).key).billedHours(start, end);
+      const gpu = isHourlyAccount(name)
+        ? gpuProvider(name, { key: credential(name).key })
+        : undefined;
+      if (!gpu?.billedHours) throw new Error(`${name} has no hourly billing.`);
+      return gpu.billedHours(start, end);
     },
   };
 }
 
-/** Self-hosted inference for a choice, with the account key and the jobs' other inputs. */
+/** Self-hosted inference for a choice, with what opens the account and the jobs' other inputs. */
 export function selfHosted(
   choice: Exclude<InferenceChoice, { provider: "openrouter" }>,
   repository: RepositoryRef,
   inputs: {
-    accountKey: string;
+    account: GpuAccount;
     image: string;
     usage: string;
     store: () => Store;
@@ -335,7 +339,7 @@ export function selfHosted(
     hub?: ModelHub;
   },
 ): InferenceProvider {
-  const gpu = inputs.gpu ?? gpuProvider(accountOf(choice.provider), inputs.accountKey);
+  const gpu = inputs.gpu ?? gpuProvider(accountOf(choice.provider), inputs.account);
   const engine = ENGINES[choice.engine];
   if (!engine) throw new Error(`Unknown engine "${choice.engine}".`);
   const common = { model: choice.model, engine, pods: choice.pods };
@@ -357,7 +361,7 @@ export function selfHosted(
       {
         repository,
         gpu,
-        accountKey: inputs.accountKey,
+        accountKey: inputs.account.key,
         store: inputs.store(),
         pool: choicePool(choice, repository.owner),
         ...(inputs.fetch ? { fetch: inputs.fetch } : {}),

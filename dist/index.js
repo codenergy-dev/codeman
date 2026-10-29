@@ -21732,7 +21732,7 @@ var Runpod = class {
       get: (id) => this.#getPod(id),
       list: (env) => this.#listPods(env),
       terminate: (id) => this.#terminatePod(id),
-      url: (id, port) => `https://${id}-${port}.proxy.runpod.net`,
+      url: async (id, port) => `https://${id}-${port}.proxy.runpod.net`,
       billing: (ids, since) => this.#podBilling(ids, since)
     };
     this.serverless = {
@@ -22399,7 +22399,13 @@ var Gateway = class {
         else response.end();
       });
     });
-    await new Promise((resolve) => server.listen(port, host, resolve));
+    await new Promise((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(port, host, () => {
+        server.off("error", reject);
+        resolve();
+      });
+    });
     const address = server.address();
     return { server, url: `http://${host}:${address.port}` };
   }
@@ -23928,8 +23934,12 @@ var PodInference = class {
       log.info(`Pod ${handle.podId} had already left the pod registry.`);
     }
   }
-  /** What Runpod billed for these pods; undefined when it could not be read. */
+  /**
+   * What the provider billed for these pods; undefined when it could not be read, or when the
+   * provider has no billing.
+   */
   async #billing(pods, now, log) {
+    if (!this.#host.billing) return void 0;
     return this.#host.billing([...new Set(pods)], new Date(now.getTime() - BILLING_DAYS * 864e5)).catch((error3) => {
       log.warning(
         `Could not read the pods' billing: ${error3 instanceof Error ? error3.message : error3}`
@@ -24161,7 +24171,7 @@ var PodInference = class {
     const { model, image } = this.#settings;
     const podId = record.pod;
     if (!podId) throw new Error("The pod registry holds no pod ID for these settings.");
-    const target = { url: this.#host.url(podId, GATEWAY_PORT), nonce: record.nonce };
+    const target = { url: "", nonce: record.nonce };
     const created = record.createdAt?.getTime() ?? this.#now().getTime();
     let checks = 0;
     let startedBefore = false;
@@ -24169,6 +24179,7 @@ var PodInference = class {
       this.#host,
       podId,
       async () => {
+        target.url ||= await this.#host.url(podId, GATEWAY_PORT);
         const response = await (this.#options.fetch ?? fetch)(`${target.url}/health`);
         const health = response.ok ? await response.json() : {};
         if (health.failed) {
@@ -24775,7 +24786,8 @@ function validPool(value) {
 function zero() {
   return { spent: 0 };
 }
-function gpuProvider(account, key) {
+function gpuProvider(account, settings) {
+  const { key } = settings;
   if (account === "runpod") return E2E ? E2E.gpu(new Runpod(key, E2E.fetch)) : new Runpod(key);
   throw new Error(`Unknown GPU account "${account}".`);
 }
@@ -24785,7 +24797,7 @@ function inferenceProvider(runtime2, store) {
     return openRouterProvider(runtime2, runtime2.input("management-key", { required: true }));
   }
   return selfHosted(choice, runtime2.repository, {
-    accountKey: runtime2.input("gpu-key", { required: true }),
+    account: { key: runtime2.input("gpu-key", { required: true }) },
     image: podImage(choice.engine, runtime2.input("pod-image")),
     usage: runtime2.input("gateway-usage"),
     store,
@@ -24815,13 +24827,14 @@ function providerAccounts(runtime2) {
       return key === "" ? void 0 : openRouterProvider(runtime2, key).taskCosts(task);
     },
     billedHours: async (name, start, end) => {
-      if (!isHourlyAccount(name)) throw new Error(`${name} has no hourly billing.`);
-      return gpuProvider(name, credential(name).key).billedHours(start, end);
+      const gpu = isHourlyAccount(name) ? gpuProvider(name, { key: credential(name).key }) : void 0;
+      if (!gpu?.billedHours) throw new Error(`${name} has no hourly billing.`);
+      return gpu.billedHours(start, end);
     }
   };
 }
 function selfHosted(choice, repository, inputs) {
-  const gpu = inputs.gpu ?? gpuProvider(accountOf(choice.provider), inputs.accountKey);
+  const gpu = inputs.gpu ?? gpuProvider(accountOf(choice.provider), inputs.account);
   const engine = ENGINES[choice.engine];
   if (!engine) throw new Error(`Unknown engine "${choice.engine}".`);
   const common = { model: choice.model, engine, pods: choice.pods };
@@ -24841,7 +24854,7 @@ function selfHosted(choice, repository, inputs) {
       {
         repository,
         gpu,
-        accountKey: inputs.accountKey,
+        accountKey: inputs.account.key,
         store: inputs.store(),
         pool: choicePool(choice, repository.owner),
         ...inputs.fetch ? { fetch: inputs.fetch } : {},
@@ -34983,7 +34996,7 @@ async function release(services) {
     return;
   }
   const accountKey = runtime2.input("gpu-key", { required: true });
-  const gpu = gpuProvider(accountOf(choice.provider), accountKey);
+  const gpu = gpuProvider(accountOf(choice.provider), { key: accountKey });
   if (!gpu.pods) throw new Error(`${gpu.name} has no pods.`);
   const handle = runtime2.input("handle", { required: true });
   const pool2 = choicePool(choice, runtime2.repository.owner);

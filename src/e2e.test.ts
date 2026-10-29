@@ -57,14 +57,14 @@ test("Runpod's API, pods and Serverless queues go to the fakes", async () => {
   const runpod = e2e.gpu(new Runpod("key", e2e.fetch));
   await runpod.pods.get("abc");
   assert.deepEqual(urls, ["http://runpod:9000/v2/pods/abc"]);
-  assert.equal(runpod.pods.url("abc", 8000), "http://runpod:9002/pods/abc-8000");
+  assert.equal(await runpod.pods.url("abc", 8000), "http://runpod:9002/pods/abc-8000");
   assert.equal(runpod.serverless.queueUrl("e1"), "http://runpod:9001/v2/e1");
 });
 
-test("without an override, a service keeps its production URL", () => {
+test("without an override, a service keeps its production URL", async () => {
   const e2e = redirects(env({ runpod: "http://runpod:9000" }));
   const runpod = e2e.gpu(new Runpod("key", e2e.fetch));
-  assert.equal(runpod.pods.url("abc", 8000), "https://abc-8000.proxy.runpod.net");
+  assert.equal(await runpod.pods.url("abc", 8000), "https://abc-8000.proxy.runpod.net");
   assert.equal(runpod.serverless.queueUrl("e1"), "https://api.runpod.ai/v2/e1");
 });
 

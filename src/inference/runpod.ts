@@ -60,7 +60,7 @@ interface RunpodEndpoint {
  */
 export class Runpod implements GpuProvider {
   readonly name = "runpod";
-  readonly pods: PodHost;
+  readonly pods: Required<PodHost>;
   readonly serverless: ServerlessHost;
   readonly #apiKey: string;
   readonly #fetch: Fetch;
@@ -83,7 +83,7 @@ export class Runpod implements GpuProvider {
       get: (id) => this.#getPod(id),
       list: (env) => this.#listPods(env),
       terminate: (id) => this.#terminatePod(id),
-      url: (id, port) => `https://${id}-${port}.proxy.runpod.net`,
+      url: async (id, port) => `https://${id}-${port}.proxy.runpod.net`,
       billing: (ids, since) => this.#podBilling(ids, since),
     };
     this.serverless = {

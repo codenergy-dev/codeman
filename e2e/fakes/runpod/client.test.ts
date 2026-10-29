@@ -68,7 +68,7 @@ test("Codeman's client creates, finds, reaches and terminates a pod on the fake"
   assert.equal(created.status, "starting");
   assert.deepEqual(launcher.launched.at(-1)?.env, env);
 
-  const url = pods.url(created.id, 8000);
+  const url = await pods.url(created.id, 8000);
   const ready = await waitUntilReady(
     pods,
     created.id,

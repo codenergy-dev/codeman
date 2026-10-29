@@ -4,7 +4,7 @@
  * start rather than put the model or its cache off the GPU, and reports how many requests of its
  * context its cache holds (docs/web/vllm/). See docs/settings/vllm.md#memory.
  */
-import { vllmArguments } from "../inference/vllm.ts";
+import { VLLM_MIN_CUDA, vllmArguments } from "../inference/vllm.ts";
 import { CONTEXT_STEP, floorContext } from "./fit.ts";
 
 /** The model's start failed for a reason its settings can fix; `message` says how. */
@@ -163,6 +163,42 @@ export function vllmError(lines: readonly string[], exit: string): string {
     errors.findLast((error) => !/root cause above|initialization failed/i.test(error)) ??
     errors.at(-1);
   return text ? (text.length > 600 ? `${text.slice(0, 599)}…` : text) : exit;
+}
+
+/** The CUDA version the GPU's driver supports, from `nvidia-smi`'s header: `CUDA Version: 13.0`. */
+export function driverCudaVersion(output: string): string | undefined {
+  return /CUDA Version:\s*(\d+\.\d+)/.exec(output)?.[1];
+}
+
+/**
+ * Fails vLLM's start when the host's driver supports a CUDA older than vLLM's image needs: some
+ * providers cannot choose a host by its CUDA version (decision 3 of the plan for Salad pods). A
+ * version that cannot be read does not stop the start.
+ */
+export async function checkDriverCuda(
+  read: () => Promise<string>,
+  log: (message: string) => void,
+): Promise<void> {
+  const output = await read().catch((error: unknown) => {
+    log(
+      `Could not read the driver's CUDA version (${error instanceof Error ? error.message : error}); starting vLLM anyway.`,
+    );
+    return undefined;
+  });
+  if (output === undefined) return;
+  const version = driverCudaVersion(output);
+  if (!version) {
+    log("The driver reported no CUDA version; starting vLLM anyway.");
+    return;
+  }
+  const [major = 0, minor = 0] = version.split(".").map(Number);
+  const [minMajor = 0, minMinor = 0] = VLLM_MIN_CUDA.split(".").map(Number);
+  if (major < minMajor || (major === minMajor && minor < minMinor)) {
+    throw new Error(
+      `The host's driver supports CUDA ${version}, older than the ${VLLM_MIN_CUDA} that vLLM's image needs.`,
+    );
+  }
+  log(`The host's driver supports CUDA ${version}.`);
 }
 
 /**

@@ -94,7 +94,7 @@ export class FakeGpu implements GpuProvider {
         this.terminated.push(id);
         this.live.delete(id);
       },
-      url: (id, port) => `https://${id}-${port}.pods.test`,
+      url: async (id, port) => `https://${id}-${port}.pods.test`,
       billing: async (ids) => {
         const billed: Record<string, number> = {};
         for (const id of ids) {

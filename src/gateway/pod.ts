@@ -75,9 +75,6 @@ export interface PodSettings {
   imageEngine: string;
   adminSha256: string;
   policy: PodPolicy;
-  /** The provider's ID of this pod, and a key that may terminate it. */
-  podId: string | undefined;
-  podKey: string | undefined;
   /**
    * The Ollama variables of `CODEMAN_OLLAMA`, from the pod's `ollama` settings, or why they
    * cannot be read: the pod then terminates rather than serve without them.
@@ -112,8 +109,6 @@ export function podSettings(env: Record<string, string | undefined>): PodSetting
     imageEngine: env.CODEMAN_IMAGE_ENGINE || "ollama",
     adminSha256,
     policy: { startBy, keptIdleMs: keptIdle * 60_000, runIdleMs: runIdle * 60_000 },
-    podId: env.RUNPOD_POD_ID,
-    podKey: env.RUNPOD_API_KEY,
     ollama: parseOllamaVariables(env.CODEMAN_OLLAMA),
     vllm: parseVllmSettings(env.CODEMAN_VLLM),
     fitHint: parseFitHint(env.CODEMAN_FIT),
