@@ -19,4 +19,4 @@ OSV.dev's record GO-2025-3695, from the Go vulnerability database, and its alias
 | Weakness | None given | CWE-129 | `database_specific.cwe_ids` |
 
 - **What** (GHSA-wrh5-cmwx-q2qr's `details`, CVE-2025-1975): Pulling a model through `/api/pull` from a spoofed service whose manifest is crafted indexes an array out of range and crashes the server: a denial of service.
-- **For Ollama 0.35.1:** querying OSV.dev for `github.com/ollama/ollama` at 0.35.1, and at every release up to 0.40.13, returns GO-2025-3695, since its range has no end; GitHub's record ends at 0.5.11.
+- **For Ollama 0.35.1 to 0.40.13:** querying OSV.dev for `github.com/ollama/ollama` at 0.35.1, 0.40.10 or any release between them and up to 0.40.13 returns GO-2025-3695, since its range has no end; GitHub's record ends at 0.5.11.

@@ -19,4 +19,4 @@ OSV.dev's record GO-2025-3582, from the Go vulnerability database, and its alias
 | Weakness | None given | CWE-476 | `database_specific.cwe_ids` |
 
 - **What** (GHSA-p2wh-w96x-w232's `details`, CVE-2025-0312): A crafted GGUF model file, uploaded and created on the server, dereferences a null pointer and crashes it: a denial of service.
-- **For Ollama 0.35.1:** querying OSV.dev for `github.com/ollama/ollama` at 0.35.1, and at every release up to 0.40.13, returns GO-2025-3582, since its range has no end; GitHub's record ends at 0.3.14.
+- **For Ollama 0.35.1 to 0.40.13:** querying OSV.dev for `github.com/ollama/ollama` at 0.35.1, 0.40.10 or any release between them and up to 0.40.13 returns GO-2025-3582, since its range has no end; GitHub's record ends at 0.3.14.

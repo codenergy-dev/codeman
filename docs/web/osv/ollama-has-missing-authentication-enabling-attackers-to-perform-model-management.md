@@ -19,4 +19,4 @@ OSV.dev's record GO-2025-4251, from the Go vulnerability database, and its alias
 | Weakness | None given | CWE-284, CWE-306 | `database_specific.cwe_ids` |
 
 - **What** (GHSA-f6mr-38g8-39rg's `details`, CVE-2025-63389): The API's endpoints require no authentication, so anyone who reaches the server can manage its models.
-- **For Ollama 0.35.1:** querying OSV.dev for `github.com/ollama/ollama` at 0.35.1, and at every release up to 0.40.13, returns GO-2025-4251, since its range has no end; GitHub's record ends at 0.13.5.
+- **For Ollama 0.35.1 to 0.40.13:** querying OSV.dev for `github.com/ollama/ollama` at 0.35.1, 0.40.10 or any release between them and up to 0.40.13 returns GO-2025-4251, since its range has no end; GitHub's record ends at 0.13.5.

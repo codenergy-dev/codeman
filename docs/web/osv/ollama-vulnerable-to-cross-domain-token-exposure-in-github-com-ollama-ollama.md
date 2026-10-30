@@ -19,4 +19,4 @@ OSV.dev's record GO-2025-3824, from the Go vulnerability database, and its alias
 | Weakness | None given | CWE-345 | `database_specific.cwe_ids` |
 
 - **What** (GHSA-x9hg-5q6g-q3jr's `details`, CVE-2025-51471): During `/api/pull`, a malicious registry's `WWW-Authenticate` header with a crafted `realm` makes `server.auth.getAuthorizationToken` send the authentication token to another domain.
-- **For Ollama 0.35.1:** querying OSV.dev for `github.com/ollama/ollama` at 0.35.1, and at every release up to 0.40.13, returns GO-2025-3824, since its range has no end; GitHub's record ends at 0.9.6.
+- **For Ollama 0.35.1 to 0.40.13:** querying OSV.dev for `github.com/ollama/ollama` at 0.35.1, 0.40.10 or any release between them and up to 0.40.13 returns GO-2025-3824, since its range has no end; GitHub's record ends at 0.9.6.

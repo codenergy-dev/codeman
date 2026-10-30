@@ -20375,21 +20375,27 @@ var IMAGES_BEFORE_SALAD = /* @__PURE__ */ new Set([
 ]);
 var NO_MODEL_UPLOAD = "Its API listens only on the pod's loopback, and the gateway forwards only `/v1/chat/completions`, `/v1/completions` and `/v1/models` to it, so no request creates a model or uploads a blob; the gateway pulls only the settings' model, from Ollama's registry.";
 var ENGINE_RELEASES = {
-  // Ollama 0.35.1, kept: no release after it fixes any of its 9 advisories (OSV.dev and GitHub's
-  // advisory database, 2026-10-30, up to 0.40.13). Go's records have no upper bound and no
-  // severity; GitHub's, their aliases, bound each at or below 0.20.2. docs/web/osv/ollama-*.md.
+  // Ollama 0.40.10, replacing 0.35.1: the newest release at least 7 days old. Its own 9 advisories
+  // have no fix in any release up to 0.40.13 (OSV.dev, 2026-10-30): Go's records have no upper
+  // bound and no severity; GitHub's, their aliases, bound each at or below 0.20.2
+  // (docs/web/osv/ollama-*.md). Its binary moves to Go 1.26.10 and newer `golang.org/x` modules,
+  // which fix the 50 high findings Trivy reports in 0.35.1's, and it has none
+  // (docs/development/dependencies.md#audit-log). Its server variables and serial families are
+  // 0.35.1's, but its scheduler's memory estimate and llama.cpp (b11803) changed: the Ollama
+  // upgrade checklist runs before pods switch to this catalog (docs/web/ollama/ollama-v0-40-10.md).
   ollama: {
-    image: "docker.io/ollama/ollama@sha256:292ee7945dfc3d5840a181f3ab86fedb1e66703e02c8af98b50f4da56b7e278c",
+    image: "docker.io/ollama/ollama@sha256:4c5b27871a3239a717048f9b93057680a51b60c8119a7016aebb57f938e25e35",
     release: {
       name: "ollama",
-      version: "0.35.1",
-      // The image's `created`; the GitHub release is of 2026-09-29T20:14:22Z.
-      publishedAt: "2026-10-02T16:56:02Z",
+      version: "0.40.10",
+      // The image's `created`; the GitHub release is of 15:03:59Z.
+      publishedAt: "2026-10-23T16:34:45Z",
       osv: { ecosystem: "Go", package: "github.com/ollama/ollama" },
+      replaces: "0.35.1",
       provenance: {
         source: "https://github.com/ollama/ollama",
-        commit: "b0c1ca4f7549d7acdfa52a7dcffc934bc63a43ce",
-        githubReleasePublishedAt: "2026-09-29T20:14:22Z",
+        commit: "f52b9e742d8c9a308f7b23cd1f0ab52c7ddb694d",
+        githubReleasePublishedAt: "2026-10-23T15:03:59Z",
         githubReleaseImmutable: false,
         tag: "lightweight",
         commitVerified: true,
