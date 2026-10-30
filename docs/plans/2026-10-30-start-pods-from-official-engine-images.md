@@ -1,7 +1,7 @@
 ---
-status: pending
+status: in progress
 created_at: 2026-10-30T16:20:00-03:00
-updated_at: 2026-10-30T16:45:00-03:00
+updated_at: 2026-10-30T17:00:00-03:00
 commit: 0bbb10d
 ---
 
@@ -57,6 +57,8 @@ The [recommendations](2026-10-30-investigate-multi-service-pods.md#recommendatio
 A block is a mistake in the settings, not a reason to [fall back](../settings/profiles.md#fallback): the run stops with an error that names the artifact, the advisory and how to move on.
 
 ## Decisions
+
+Answered by the maintainer on 2026-10-30: each as its recommendation.
 
 1. **Engine versions.** Under the policy, vLLM 0.31.0 is blocked: it has 2 high advisories, fixed in 0.32.0 ([E3](2026-10-30-investigate-multi-service-pods.md#e3-resolving-outside-with-the-policy)). Ollama 0.35.1's own 9 advisories have no fix.
    - **Options:**
