@@ -3,7 +3,7 @@ title: "GET /v1/vulns/{id}"
 url: https://google.github.io/osv.dev/get-v1-vulns/
 created_at: 2026-10-30T11:47:44-03:00
 updated_at: 2026-10-30T11:47:44-03:00
-tool: docs/web/tools/osv.md
+tool: docs/web/tools/osv-dev.md
 license: Apache-2.0
 ---
 

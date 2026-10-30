@@ -3,7 +3,7 @@ title: "uv's bundled CA store trusts an emSign root whose intermediate CA keys a
 url: https://osv.dev/vulnerability/GHSA-hq85-5cpj-mr62
 created_at: 2026-10-30T11:50:13-03:00
 updated_at: 2026-10-30T11:50:13-03:00
-tool: docs/web/tools/osv.md
+tool: docs/web/tools/osv-dev.md
 ---
 
 # uv's bundled CA store trusts an emSign root whose intermediate CA keys are compromised

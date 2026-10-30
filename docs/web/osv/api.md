@@ -3,7 +3,7 @@ title: "API"
 url: https://google.github.io/osv.dev/api/
 created_at: 2026-10-30T16:15:25-03:00
 updated_at: 2026-10-30T16:15:25-03:00
-tool: docs/web/tools/osv.md
+tool: docs/web/tools/osv-dev.md
 license: Apache-2.0
 ---
 

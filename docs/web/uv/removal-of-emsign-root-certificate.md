@@ -8,7 +8,7 @@ tool: docs/web/tools/github-security-advisories.md
 
 # Removal of emSign root certificate
 
-`astral-sh/uv`'s own advisory GHSA-hq85-5cpj-mr62, read from `GET /repos/astral-sh/uv/security-advisories/GHSA-hq85-5cpj-mr62`. Published 2026-10-20T16:48:48Z, severity `high` here (OSV.dev's copy says CRITICAL: [its record](../osv/uv-s-bundled-ca-store-trusts-an-emsign-root-whose-intermediate-ca-keys-are-compromised.md)), no CVE.
+`astral-sh/uv`'s own advisory GHSA-hq85-5cpj-mr62, read from `GET /repos/astral-sh/uv/security-advisories/GHSA-hq85-5cpj-mr62`. Published 2026-10-20T16:48:48Z, severity `high` here (OSV.dev's copy says CRITICAL: [its record](../osv/uv-s-bundled-ca-store-trusts-an-emsign-root-whose-intermediate-ca-keys-are-compr.md)), no CVE.
 
 - **What happened:** intermediate CA certificates issued by the `emSign ECC Root CA - G3` root have compromised keys; connections that chain through them are insecure ("Summary", "Details").
 - **Scope:** the advisory calls it an ecosystem-wide incident: any software that vendors a CA bundle, such as `certifi` or `webpki-root-certs`, must be upgraded or checked ("Summary").
