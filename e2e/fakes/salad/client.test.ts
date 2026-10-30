@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import { redirects } from "../../../src/e2e.ts";
+import { podBootstrap } from "../../../src/gateway/bootstrap.ts";
 import { waitUntilReady } from "../../../src/inference/gpu.ts";
 import { Salad } from "../../../src/inference/salad.ts";
+import { TEST_BOOTSTRAP } from "../../../src/testing/fake-releases.ts";
 import { MemoryLauncher } from "../runpod/memory-launcher.ts";
 import { SaladFake } from "./salad.ts";
 
@@ -55,8 +57,11 @@ test("Codeman's client creates, finds, reaches and deletes a group on the fake",
   await assert.rejects(pods.price("RTX 4090"), /no GPU class "RTX 4090"/);
 
   const env = { CODEMAN_NONCE: "n1", CODEMAN_POOL: "acme", CODEMAN_ADMIN_SHA256: "ab".repeat(32) };
-  const created = await pods.create(spec(env));
+  const { command } = podBootstrap(TEST_BOOTSTRAP);
+  const created = await pods.create({ ...spec(env), command });
   assert.match(created.id, /^codeman-[0-9a-f]{16}$/);
+  // The bootstrap's command reaches the launcher, from Salad's `container.command`.
+  assert.deepEqual(launcher.launched.at(-1)?.command, command);
   assert.equal(created.host, "community");
   assert.equal(created.pricePerSecond, 0.44 / 3600);
 

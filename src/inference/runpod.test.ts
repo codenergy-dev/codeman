@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Fetch } from "../budget.ts";
+import { podBootstrap } from "../gateway/bootstrap.ts";
+import { TEST_BOOTSTRAP } from "../testing/fake-releases.ts";
 import { PodUnavailable } from "./gpu.ts";
 import { Runpod } from "./runpod.ts";
 
@@ -433,4 +435,26 @@ test("a cloud without room, or a creation answered with 400, makes the pod unava
     new Runpod("rk", offered.fetch).pods.create({ ...spec, hosts: ["secure", "community"] }),
     (error) => !(error instanceof PodUnavailable),
   );
+});
+
+test("the bootstrap's command replaces the image's entry point and command, in exec form", async () => {
+  const bootstrap = podBootstrap(TEST_BOOTSTRAP);
+  const { fetch, calls } = fakeFetch([pod]);
+  await new Runpod("rk", fetch).pods.create({
+    ...spec,
+    image: "docker.io/ollama/ollama@sha256:1",
+    command: bootstrap.command,
+    env: bootstrap.env,
+  });
+  const body = JSON.parse(String(calls[0]?.[1]?.body));
+  assert.deepEqual(body.entrypoint, bootstrap.entrypoint);
+  assert.deepEqual(body.cmd, bootstrap.cmd);
+  assert.deepEqual([...body.entrypoint, ...body.cmd], bootstrap.command);
+  assert.equal(body.args, undefined, "never beside entrypoint and cmd");
+  assert.deepEqual(body.env, bootstrap.env);
+  // Without a command, the image's own runs.
+  const plain = fakeFetch([pod]);
+  await new Runpod("rk", plain.fetch).pods.create(spec);
+  const without = JSON.parse(String(plain.calls[0]?.[1]?.body));
+  assert.ok(!("entrypoint" in without) && !("cmd" in without));
 });

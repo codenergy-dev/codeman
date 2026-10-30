@@ -11,6 +11,11 @@ export interface LaunchSpec {
   id: string;
   name: string;
   image: string;
+  /**
+   * What the container runs in place of the image's entry point and command, in exec form, when
+   * the create request set it: Runpod's `entrypoint` then `cmd`, Salad's `command`.
+   */
+  command?: string[] | undefined;
   /** The pod's environment, exactly as the create request sent it. */
   env: Record<string, string>;
   /** The exposed ports, from the request's `port/protocol` list. */

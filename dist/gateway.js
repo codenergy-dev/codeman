@@ -1344,6 +1344,9 @@ var Runpod = class {
     const pod = await this.#request("/pods", "POST", {
       name: spec.name,
       image: spec.image,
+      // The command in exec form, its program as the entry point
+      // (docs/web/runpod/runpod-rest-api.md#the-containers-command).
+      ...spec.command ? { entrypoint: spec.command.slice(0, 1), cmd: spec.command.slice(1) } : {},
       gpu: {
         id: spec.gpuType,
         count: 1,

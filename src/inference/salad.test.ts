@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Fetch } from "../budget.ts";
+import { podBootstrap } from "../gateway/bootstrap.ts";
+import { TEST_BOOTSTRAP } from "../testing/fake-releases.ts";
 import { memoryGb, Salad } from "./salad.ts";
 
 function near(actual: number | undefined, expected: number): void {
@@ -310,4 +312,35 @@ test("refuses an environment value longer than Salad takes", async () => {
     salad.pods.create({ ...spec, env: { CODEMAN_FIT: "x".repeat(1001) } }),
     /CODEMAN_FIT has 1001/,
   );
+});
+
+test("the bootstrap's command replaces the image's, and its environment fits Salad's values", async () => {
+  const bootstrap = podBootstrap(TEST_BOOTSTRAP);
+  const { fetch, calls } = fakeFetch([classes, group]);
+  await new Salad(ACCOUNT, fetch).pods.create({
+    ...spec,
+    command: bootstrap.command,
+    env: { ...bootstrap.env, CODEMAN_POD_SETTINGS: "s" },
+  });
+  const { container } = JSON.parse(String(calls[1]?.[1]?.body));
+  assert.deepEqual(container.command, bootstrap.command);
+  assert.deepEqual(container.environment_variables, {
+    ...bootstrap.env,
+    CODEMAN_POD_SETTINGS: "s",
+  });
+  // A gateway's URL at a long repository's commit stays far below Salad's 1,000 characters.
+  for (const value of Object.values(bootstrap.env)) assert.ok(value.length < 200, value);
+});
+
+test("refuses a command beyond Salad's items, before creating anything", async () => {
+  const cases: [string[], RegExp][] = [
+    [Array.from({ length: 101 }, () => "x"), /a command of 100 items at most; this one has 101/],
+    [["/bin/sh", "x".repeat(1001)], /items of 1 to 1,000 characters; item 1 has 1001/],
+    [["/bin/sh", ""], /item 1 has 0/],
+  ];
+  for (const [command, message] of cases) {
+    const { fetch, calls } = fakeFetch([classes]);
+    await assert.rejects(new Salad(ACCOUNT, fetch).pods.create({ ...spec, command }), message);
+    assert.equal(calls.length, 1, "only the classes were read");
+  }
 });

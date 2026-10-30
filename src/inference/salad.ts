@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type { Fetch } from "../budget.ts";
+import { SALAD_COMMAND_LIMITS } from "../gateway/bootstrap.ts";
 import {
   DEFAULT_HOSTS,
   type GpuAccount,
@@ -168,6 +169,7 @@ export class Salad implements GpuProvider {
       display_name: displayName(spec.name),
       container: {
         image: spec.image,
+        ...(spec.command ? { command: command(spec.command) } : {}),
         environment_variables: environment(spec.env),
         priority,
         resources: {
@@ -344,6 +346,28 @@ function within(value: number, min: number | undefined, max: number | undefined)
 function displayName(name: string): string {
   const shown = name.replace(/[^ ,\-.0-9A-Za-z]/g, "-").slice(0, 63);
   return shown.length >= 2 ? shown : "codeman";
+}
+
+/**
+ * The container's command, which replaces its image's entry point and command
+ * (docs/web/salad/specifying-a-command.md): Salad takes at most 100 items of 1 to 1,000
+ * characters, so a command beyond them stops the creation rather than be cut.
+ */
+function command(items: readonly string[]): string[] {
+  const { items: most, itemCharacters } = SALAD_COMMAND_LIMITS;
+  if (items.length > most) {
+    throw new Error(
+      `Salad takes a command of ${most} items at most; this one has ${items.length}.`,
+    );
+  }
+  for (const [index, item] of items.entries()) {
+    if (item.length === 0 || item.length > itemCharacters) {
+      throw new Error(
+        `Salad takes command items of 1 to ${itemCharacters.toLocaleString("en-US")} characters; item ${index} has ${item.length}.`,
+      );
+    }
+  }
+  return [...items];
 }
 
 /**

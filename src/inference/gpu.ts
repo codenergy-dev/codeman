@@ -47,6 +47,11 @@ export interface PodSpec {
   /** For people reading the provider's console; Codeman finds its pods by `env`. */
   name: string;
   image: string;
+  /**
+   * What it runs in place of the image's entry point and command, in exec form: the first item is
+   * the program, the others its arguments; the image's own when undefined.
+   */
+  command?: readonly string[] | undefined;
   env: Record<string, string>;
   /** The HTTP port the provider exposes. */
   port: number;
