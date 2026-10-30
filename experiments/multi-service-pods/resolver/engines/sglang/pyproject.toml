@@ -1,0 +1,6 @@
+# A GPU engine, SGLang, with its CUDA wheels from PyPI: what the resolver locks, not a package.
+[project]
+name = "sglang-engine"
+version = "0"
+requires-python = "==3.12.*"
+dependencies = ["sglang"]

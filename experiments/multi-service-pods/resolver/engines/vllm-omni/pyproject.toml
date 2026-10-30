@@ -1,0 +1,7 @@
+# vLLM-Omni as published on PyPI: locked only, to see what it pulls. It does not declare vLLM as
+# a dependency, so this set is not a working engine; sglang is the GPU engine resolved.
+[project]
+name = "vllm-omni-engine"
+version = "0"
+requires-python = "==3.12.*"
+dependencies = ["vllm-omni"]

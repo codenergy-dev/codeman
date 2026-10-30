@@ -1,0 +1,15 @@
+# A small CPU image-generation engine: what the resolver locks, not a package.
+[project]
+name = "diffusers-cpu"
+version = "0"
+requires-python = "==3.12.*"
+dependencies = ["diffusers", "torch", "transformers", "accelerate"]
+
+# torch's CPU build comes from PyTorch's index, and only torch.
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
