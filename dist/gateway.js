@@ -1155,6 +1155,11 @@ function runSettings(body) {
   };
 }
 
+// src/gateway/host.ts
+import { constants } from "node:fs";
+import { access } from "node:fs/promises";
+import { delimiter, join } from "node:path";
+
 // src/e2e.ts
 var PODS = { runpod: "runpodPods", salad: "saladPods" };
 var PODS_KEYS = Object.values(PODS);
@@ -1513,6 +1518,18 @@ async function listenEverywhere(listen) {
     return listen("0.0.0.0");
   }
 }
+async function findCommand(name, env) {
+  for (const directory of (env.PATH ?? "").split(delimiter)) {
+    if (directory === "") continue;
+    const file = join(directory, name);
+    if (await access(file, constants.X_OK).then(
+      () => true,
+      () => false
+    ))
+      return file;
+  }
+  return void 0;
+}
 
 // src/gateway/fit.ts
 var FLOOR_CONTEXT = 64e3;
@@ -1637,7 +1654,6 @@ function podSettings(env) {
   return {
     model,
     engine: env.CODEMAN_ENGINE || "ollama",
-    imageEngine: env.CODEMAN_IMAGE_ENGINE || "ollama",
     adminSha256,
     policy: { startBy, keptIdleMs: keptIdle * 6e4, runIdleMs: runIdle * 6e4 },
     ollama: parseOllamaVariables(env.CODEMAN_OLLAMA),
@@ -2058,7 +2074,7 @@ async function prepareVllm(server, model, log, options) {
       throw new VllmFitFailure(vllmFloorMessage(model, n, floor, measure));
     }
   }
-  await probe(server, model, options.toolCallParser, log);
+  await probe(server, model, options.toolCallParser, log, measure.contextLength);
   return {
     engine: "vllm",
     contextLength: measure.contextLength,
@@ -2073,7 +2089,11 @@ async function prepareVllm(server, model, log, options) {
   };
 }
 var PROBE_TRIES = 2;
-async function probe(server, model, parser, log) {
+var PROBE_MAX_TOKENS = 4096;
+function probeMaxTokens(contextLength) {
+  return Math.max(1, Math.min(PROBE_MAX_TOKENS, Math.floor(contextLength / 2)));
+}
+async function probe(server, model, parser, log, contextLength) {
   const fetchFn = server.fetch ?? fetch;
   let detail = "no answer";
   for (let attempt = 1; attempt <= PROBE_TRIES; attempt++) {
@@ -2095,18 +2115,25 @@ async function probe(server, model, parser, log) {
             }
           ],
           tool_choice: "auto",
-          max_tokens: 4096,
+          max_tokens: probeMaxTokens(contextLength),
           temperature: 0
         }),
         signal: AbortSignal.timeout(5 * 6e4)
       });
-      const body = await response.json().catch(() => ({}));
+      const text = await response.text();
+      const body = (() => {
+        try {
+          return JSON.parse(text);
+        } catch {
+          return {};
+        }
+      })();
       const calls = body.choices?.[0]?.message?.tool_calls ?? [];
       if (response.ok && calls.some((call) => call.function?.name === "ping")) {
         log(`vLLM returned a tool call with the parser ${parser}.`);
         return;
       }
-      detail = response.ok ? "it answered without a parsed tool call" : `it answered ${response.status}`;
+      detail = response.ok ? "it answered without a parsed tool call" : `it answered ${response.status}${text.trim() ? `: ${text.trim().slice(0, 300)}` : ""}`;
     } catch (error2) {
       detail = error2 instanceof Error ? error2.message : String(error2);
     }
@@ -2117,8 +2144,8 @@ async function probe(server, model, parser, log) {
 
 // src/gateway/main.ts
 var ENGINES = {
-  ollama: { engine: ollama, url: OLLAMA_URL },
-  vllm: { engine: vllm, url: VLLM_URL }
+  ollama: { engine: ollama, url: OLLAMA_URL, command: "ollama" },
+  vllm: { engine: vllm, url: VLLM_URL, command: "vllm" }
 };
 var KEPT_LINES = 400;
 async function main() {
@@ -2136,9 +2163,9 @@ async function main() {
   };
   if (Date.now() >= settings.policy.startBy) await terminate("it started after its start limit");
   const served = ENGINES[settings.engine];
-  if (!served || settings.engine !== settings.imageEngine) {
+  if (!served) {
     await terminate(
-      `it was created for the engine ${settings.engine}, and its image serves ${settings.imageEngine}`
+      `it was created for the engine ${settings.engine}, which the gateway does not serve`
     );
   }
   if (!settings.ollama.ok) {
@@ -2147,7 +2174,7 @@ async function main() {
   if (!settings.vllm.ok) {
     await terminate(`its vLLM settings cannot be applied: ${settings.vllm.error}`);
   }
-  const { engine, url } = served;
+  const { engine, url, command } = served;
   const gateway = new Gateway({
     upstream: `${url}/v1`,
     engine,
@@ -2162,6 +2189,11 @@ async function main() {
     if (reason) void terminate(reason);
   }, 15e3).unref();
   try {
+    if (!await findCommand(command, process.env)) {
+      throw new Error(
+        `the pod's image has no \`${command}\` command on its PATH, so it cannot serve with ${settings.engine}`
+      );
+    }
     const fit = settings.engine === "vllm" ? await serveVllm(settings, gateway, log, (child) => {
       engineProcess = child;
     }) : await serveOllama(settings, gateway, log, (child) => {
@@ -2276,10 +2308,12 @@ async function nvidiaSmi() {
   return run("nvidia-smi").catch(() => run("/usr/lib/wsl/lib/nvidia-smi"));
 }
 function serveOllamaProcess(variables, contextLength) {
-  return spawn("ollama", ["serve"], {
+  const child = spawn("ollama", ["serve"], {
     stdio: "inherit",
     env: ollamaServeEnvironment(process.env, variables, contextLength)
   });
+  child.once("error", (error2) => console.log(`[codeman] Ollama could not start: ${error2.message}`));
+  return child;
 }
 async function stop(child) {
   if (!child?.pid || child.exitCode !== null || child.signalCode !== null) return;

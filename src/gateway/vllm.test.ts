@@ -35,7 +35,7 @@ function fakeVllm(options: {
   fixed?: number;
   own?: number;
   toolCalls?: boolean;
-}): VllmServer & { starts: (number | "auto")[]; probes: number } {
+}): VllmServer & { starts: (number | "auto")[]; probes: number; maxTokens: number[] } {
   const { available, fixed = 0, own = 262_144 } = options;
   let served: { context: number; concurrency: number } | undefined;
   let reason: string | undefined;
@@ -44,6 +44,7 @@ function fakeVllm(options: {
     url: "http://127.0.0.1:8000",
     starts: [] as (number | "auto")[],
     probes: 0,
+    maxTokens: [] as number[],
     start: async (context: number | "auto") => {
       server.starts.push(context);
       served = undefined;
@@ -87,6 +88,12 @@ function fakeVllm(options: {
         const body = JSON.parse(String(init?.body));
         assert.equal(body.tools[0].function.name, "ping");
         assert.equal(body.tool_choice, "auto");
+        server.maxTokens.push(body.max_tokens);
+        // Like vLLM, it refuses a prompt, here of about 300 tokens, and max_tokens beyond the context.
+        if (body.max_tokens + 300 > served.context) {
+          const message = `This model's maximum context length is ${served.context} tokens. However, you requested ${body.max_tokens + 300} tokens.`;
+          return Response.json({ error: { message } }, { status: 400 });
+        }
         const message =
           options.toolCalls === false
             ? { content: "<tool_call>ping</tool_call>", tool_calls: [] }
@@ -284,6 +291,21 @@ test("a probe without a parsed tool call fails the start, naming the parser", as
   assert.equal(server.probes, 2);
 });
 
+test("the probe fits a small explicit context, and a refusal says why", async () => {
+  const small = fakeVllm({ available: 500_000 });
+  const fit = await prepareVllm(small, MODEL, () => {}, { ...options, configured: 4096 });
+  assert.equal(fit.contextLength, 4096);
+  assert.deepEqual(small.maxTokens, [2048], "half the context, not 4096");
+  const large = fakeVllm({ available: 1_700_000 });
+  await prepareVllm(large, MODEL, () => {}, options);
+  assert.deepEqual(large.maxTokens, [4096]);
+  const tiny = fakeVllm({ available: 500_000 });
+  await assert.rejects(
+    prepareVllm(tiny, MODEL, () => {}, { ...options, configured: 512 }),
+    /\(it answered 400: \{"error":\{"message":"This model's maximum context length is 512 tokens\./,
+  );
+});
+
 test("a pod reads its engine, its vLLM settings and its cached context", () => {
   const base = {
     CODEMAN_MODEL: MODEL,
@@ -293,12 +315,10 @@ test("a pod reads its engine, its vLLM settings and its cached context", () => {
   const settings = podSettings({
     ...base,
     CODEMAN_ENGINE: "vllm",
-    CODEMAN_IMAGE_ENGINE: "vllm",
     CODEMAN_VLLM: '{"max-num-seqs":"4","tool-call-parser":"qwen3_xml"}',
     CODEMAN_FIT: '{"contextLength":131072}',
   });
   assert.equal(settings.engine, "vllm");
-  assert.equal(settings.imageEngine, "vllm");
   assert.deepEqual(settings.vllm, {
     ok: true,
     value: { "max-num-seqs": "4", "tool-call-parser": "qwen3_xml" },
@@ -307,7 +327,6 @@ test("a pod reads its engine, its vLLM settings and its cached context", () => {
   assert.equal(settings.fitHint, undefined, "an Ollama hint needs a digest");
   const old = podSettings(base);
   assert.equal(old.engine, "ollama");
-  assert.equal(old.imageEngine, "ollama");
   assert.deepEqual(old.vllm, { ok: true, value: {} });
   assert.equal(
     podSettings({ ...base, CODEMAN_VLLM: '{"host":"0.0.0.0"}' }).vllm.ok,

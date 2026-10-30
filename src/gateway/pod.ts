@@ -69,10 +69,11 @@ export function expiry(state: PodState, policy: PodPolicy, now: number): string 
 /** The pod's settings, from the environment Codeman created it with. */
 export interface PodSettings {
   model: string;
-  /** The engine Codeman created the pod for (`CODEMAN_ENGINE`), `ollama` when unset. */
+  /**
+   * The engine Codeman created the pod for (`CODEMAN_ENGINE`), `ollama` when unset. The pod's
+   * environment names it, not its image: a pod starts from the engine's official image.
+   */
   engine: string;
-  /** The engine the pod's image serves (`CODEMAN_IMAGE_ENGINE`), `ollama` when unset. */
-  imageEngine: string;
   adminSha256: string;
   policy: PodPolicy;
   /**
@@ -106,7 +107,6 @@ export function podSettings(env: Record<string, string | undefined>): PodSetting
   return {
     model,
     engine: env.CODEMAN_ENGINE || "ollama",
-    imageEngine: env.CODEMAN_IMAGE_ENGINE || "ollama",
     adminSha256,
     policy: { startBy, keptIdleMs: keptIdle * 60_000, runIdleMs: runIdle * 60_000 },
     ollama: parseOllamaVariables(env.CODEMAN_OLLAMA),

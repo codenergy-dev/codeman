@@ -20,8 +20,20 @@ const options = {
 } as const;
 
 await build({ ...options, entryPoints: ["src/index.ts"], outfile: `${out}/index.js` });
-// The gateway, for Codeman's pod image (docker/pod/Dockerfile). It uses Node's modules only.
+// The gateway, which a pod downloads alone and runs with Node's binary only (bootstrap.ts): one
+// file that imports Node's own modules, nothing else.
 await build({ ...options, entryPoints: ["src/gateway/main.ts"], outfile: `${out}/gateway.js` });
+const imports = readFileSync(`${out}/gateway.js`, "utf8").matchAll(
+  /\bfrom\s*"([^"]+)"|\b(?:import|require)\(\s*"([^"]+)"\s*\)/g,
+);
+const outside = [...imports]
+  .map((match) => match[1] ?? match[2])
+  .filter((name) => !name?.startsWith("node:"));
+if (outside.length > 0) {
+  throw new Error(
+    `${out}/gateway.js imports more than Node's modules: ${[...new Set(outside)].join(", ")}.`,
+  );
+}
 
 // The redirects read this variable: dist/ must not name it, and the e2e bundle must.
 const variable = "CODEMAN_E2E";

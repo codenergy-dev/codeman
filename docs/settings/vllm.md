@@ -99,7 +99,7 @@ The errors that Ollama's block shares, such as an unknown key, are in [errors co
 1. **Layers.** Each key is inherited like a provider setting, as `ollama:`'s are. A layer that names another provider drops the block, and one that names another engine drops the other engine's block ([the block](pod-engines.md#the-block)).
 2. **Pods.** The engine and the settings, the derived `max-num-seqs` included, are part of the [pod settings](../glossary.md#pod-settings). So tasks with different vLLM settings never share a pod ([pods](../inference/pods.md)).
 3. **The pod.** Codeman creates it with `CODEMAN_ENGINE=vllm` and `CODEMAN_VLLM`, the settings as JSON by key, such as `{"max-num-seqs":"4","tool-call-parser":"qwen3_xml"}` ([from settings to the pod](pod-engines.md#from-settings-to-the-pod)).
-4. **The gateway.** It checks the settings against the same list, and logs them ("vLLM settings: max-num-seqs=4, tool-call-parser=qwen3_xml."). A pod whose `CODEMAN_VLLM` it cannot read, or whose image serves another engine, terminates itself, saying why.
+4. **The gateway.** It checks the settings against the same list, and logs them ("vLLM settings: max-num-seqs=4, tool-call-parser=qwen3_xml."). A pod whose `CODEMAN_VLLM` it cannot read terminates itself, saying why; one whose image has no `vllm` command fails its start, saying so.
 5. **vLLM's command.** The gateway starts vLLM on the pod's loopback, with the settings as arguments, and the context it serves ([memory](#memory)):
 
    ```text
@@ -211,8 +211,8 @@ The fit report counts vLLM's starts as `loads`, as it counts Ollama's loads. The
 Codeman's agents work through tool calls. vLLM returns them only with `--enable-auto-tool-choice` and the parser that matches the model's format ([tool calling](../web/vllm/tool-calling.md)). vLLM does not pick a parser from the model.
 
 1. **The parser is required.** So `tool-call-parser` is required, and the gateway always turns tool calls on.
-2. **The gateway probes it.** Once vLLM serves, the gateway sends a chat request offering a `ping` tool and asking for it.
-3. **Two tries.** Without a parsed tool call after two tries, the pod's start fails: "vLLM did not return a tool call with the parser `<parser>`: it may not match `<model>` (…). Set the `tool-call-parser` that the model's card or vLLM's recipe gives in the `vllm` settings."
+2. **The gateway probes it.** Once vLLM serves, the gateway sends a chat request offering a `ping` tool and asking for it. It lets the model write at most 4,096 tokens, or half the served context when that is less, since vLLM refuses a request whose prompt and `max_tokens` exceed the context.
+3. **Two tries.** Without a parsed tool call after two tries, the pod's start fails, with vLLM's answer when it refused the request: "vLLM did not return a tool call with the parser `<parser>`: it may not match `<model>` (…). Set the `tool-call-parser` that the model's card or vLLM's recipe gives in the `vllm` settings."
 
 `reasoning-parser` is optional and not probed ([reasoning outputs](../web/vllm/reasoning-outputs.md)).
 

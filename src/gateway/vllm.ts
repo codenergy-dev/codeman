@@ -394,7 +394,7 @@ export async function prepareVllm(
       throw new VllmFitFailure(vllmFloorMessage(model, n, floor, measure));
     }
   }
-  await probe(server, model, options.toolCallParser, log);
+  await probe(server, model, options.toolCallParser, log, measure.contextLength);
   return {
     engine: "vllm",
     contextLength: measure.contextLength,
@@ -412,6 +412,19 @@ export async function prepareVllm(
 /** Tries of the probe before it fails the start. */
 const PROBE_TRIES = 2;
 
+/** The most tokens the probe lets the model write: room for a reasoning model to think first. */
+const PROBE_MAX_TOKENS = 4096;
+
+/**
+ * The probe's `max_tokens` for the context vLLM serves: 4096, or half the context when that is
+ * less. vLLM refuses a request whose prompt and `max_tokens` exceed its context, so a fixed 4096
+ * failed the start of a pod whose `max-model-len` was below about 4,300 tokens, blaming the parser
+ * (E1 of the investigation of multi-service pods).
+ */
+export function probeMaxTokens(contextLength: number): number {
+  return Math.max(1, Math.min(PROBE_MAX_TOKENS, Math.floor(contextLength / 2)));
+}
+
 /**
  * Asks vLLM for a call of a `ping` tool, as an agent's request would offer one; fails the start
  * when no try returns a parsed tool call, which a parser that does not match the model gives.
@@ -421,6 +434,7 @@ export async function probe(
   model: string,
   parser: string,
   log: (message: string) => void,
+  contextLength: number,
 ): Promise<void> {
   const fetchFn = server.fetch ?? fetch;
   let detail = "no answer";
@@ -443,12 +457,19 @@ export async function probe(
             },
           ],
           tool_choice: "auto",
-          max_tokens: 4096,
+          max_tokens: probeMaxTokens(contextLength),
           temperature: 0,
         }),
         signal: AbortSignal.timeout(5 * 60_000),
       });
-      const body = (await response.json().catch(() => ({}))) as {
+      const text = await response.text();
+      const body = (() => {
+        try {
+          return JSON.parse(text);
+        } catch {
+          return {};
+        }
+      })() as {
         choices?: { message?: { tool_calls?: { function?: { name?: unknown } }[] | null } }[];
       };
       const calls = body.choices?.[0]?.message?.tool_calls ?? [];
@@ -456,9 +477,10 @@ export async function probe(
         log(`vLLM returned a tool call with the parser ${parser}.`);
         return;
       }
+      // A refusal says why, which may not be the parser.
       detail = response.ok
         ? "it answered without a parsed tool call"
-        : `it answered ${response.status}`;
+        : `it answered ${response.status}${text.trim() ? `: ${text.trim().slice(0, 300)}` : ""}`;
     } catch (error) {
       detail = error instanceof Error ? error.message : String(error);
     }

@@ -216,7 +216,7 @@ sequenceDiagram
    | `CODEMAN_GPU_MEMORY_GB` | The GPU type's memory, from Runpod's catalog or the Salad class's name; Ollama pods only | `96` |
    | `CODEMAN_FIT` | The cached context, from the cache of fits | `{"contextLength":131072}` |
 
-4. **The gateway checks them again**, against the same list of keys. A pod terminates itself, saying why, when it cannot read them, or when its image serves another engine.
+4. **The gateway checks them again**, against the same list of keys. A pod terminates itself, saying why, when it cannot read them, or when its `CODEMAN_ENGINE` names an engine the gateway does not serve. The environment, not the image, names the engine: an image without the engine's command (`ollama` or `vllm`) on its `PATH` fails the pod's start, saying so.
 5. **The gateway starts the engine** on the pod's loopback with the settings, and Codeman's own settings on top. It logs the settings, such as "Ollama settings: OLLAMA_NUM_PARALLEL=4." or "vLLM settings: max-num-seqs=4, tool-call-parser=qwen3_xml."
 6. **It fits the model** to the GPU, by each engine's rules ([Ollama](ollama.md#memory), [vLLM](vllm.md#memory)).
 7. **It reports in its status** the settings it applied and the fit. `open-key` requires both, exactly as requested, or fails the run like a pod that did not serve.
