@@ -1,7 +1,7 @@
 ---
 status: pending
 created_at: 2026-10-30T16:20:00-03:00
-updated_at: 2026-10-30T16:20:00-03:00
+updated_at: 2026-10-30T16:45:00-03:00
 commit: 0bbb10d
 ---
 
@@ -107,7 +107,16 @@ A block is a mistake in the settings, not a reason to [fall back](../settings/pr
      - (a) Keep it, now for an image the bootstrap starts in: any image with `sh` and glibc. The release policy does not check it, since the person chose it.
      - (b) Remove it.
    - **Recommendation:** (a). Removing it changes a public interface; its docs say what it no longer guarantees.
-9. **Node's own release.** Waiting for the separate check of Node 24.21.0's bundled certificate store. Its answer decides whether this plan moves to a newer Node and how Node's advisories are checked.
+9. **Node's own release.**
+   - **What was checked.**
+     - Node 24.21.0's bundled root store trusts `emSign ECC Root CA - G3` ([`node_root_certs.h` at v24.21.0](../web/nodejs/node-src-node-root-certs-h-at-955266b.md)). Eight intermediates under it had their keys compromised (GHSA-hq85-5cpj-mr62, [uv's notice](../web/uv/removal-of-emsign-root-certificate.md)).
+     - Node 24.22.1, the security release of 2026-10-21, removes that root and blocks the eight intermediates ([v24.22.1](../web/nodejs/node-v24-22-1.md), [security releases](../web/nodejs/wednesday-october-21-2026-security-releases.md)). It is the earliest fix, and older than 7 days.
+     - The action's steps run on the runner's Node, which bundles 24.22.1 from runner 2.338.1 on ([externals.sh at d1eb12d](../web/github/runner-src-misc-externals-sh-at-d1eb12d.md)).
+     - The pod images pin Node 24.21.0, and their gateway calls `api.runpod.io` with the Runpod key over TLS.
+   - **Options:**
+     - (a) This plan fetches Node 24.22.1 into pods, and Node's advisories are checked by hand when it is pinned. OSV covers no Node.js release, so its security releases are the source.
+     - (b) The same, plus a separate fix on `main` now: `node:24.22.1-bookworm-slim` in `docker/pod/Dockerfile` and `docker/runner/Dockerfile`, with the pod images published and pinned again.
+   - **Recommendation:** (b). This plan's pods take months to reach `main`, and today's pods are exposed until then. The fix on `main` upgrades a dependency, and publishing the images is the usual step of [pod images](../development/guide.md#pod-images).
 
 ## Steps
 
