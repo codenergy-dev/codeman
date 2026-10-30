@@ -20373,6 +20373,98 @@ var IMAGES_BEFORE_SALAD = /* @__PURE__ */ new Set([
   "ghcr.io/codenergy-dev/codeman-vllm@sha256:73f6419404c8c419cb8381c3cb593db0325aa6d813beb7f2a31b52923d8a0d30",
   "ghcr.io/codenergy-dev/codeman-vllm@sha256:a5b4a03205fc96f1ae3a731a03124a5a27eaf2d36450f937ff1f063112fc681e"
 ]);
+var NO_MODEL_UPLOAD = "Its API listens only on the pod's loopback, and the gateway forwards only `/v1/chat/completions`, `/v1/completions` and `/v1/models` to it, so no request creates a model or uploads a blob; the gateway pulls only the settings' model, from Ollama's registry.";
+var ENGINE_RELEASES = {
+  // Ollama 0.35.1, kept: no release after it fixes any of its 9 advisories (OSV.dev and GitHub's
+  // advisory database, 2026-10-30, up to 0.40.13). Go's records have no upper bound and no
+  // severity; GitHub's, their aliases, bound each at or below 0.20.2. docs/web/osv/ollama-*.md.
+  ollama: {
+    image: "docker.io/ollama/ollama@sha256:292ee7945dfc3d5840a181f3ab86fedb1e66703e02c8af98b50f4da56b7e278c",
+    release: {
+      name: "ollama",
+      version: "0.35.1",
+      // The image's `created`; the GitHub release is of 2026-09-29T20:14:22Z.
+      publishedAt: "2026-10-02T16:56:02Z",
+      osv: { ecosystem: "Go", package: "github.com/ollama/ollama" },
+      provenance: {
+        source: "https://github.com/ollama/ollama",
+        commit: "b0c1ca4f7549d7acdfa52a7dcffc934bc63a43ce",
+        githubReleasePublishedAt: "2026-09-29T20:14:22Z",
+        githubReleaseImmutable: false,
+        tag: "lightweight",
+        commitVerified: true,
+        attestations: false,
+        imageSignature: false,
+        imageRevisionLabel: false
+      }
+    },
+    exceptions: [
+      {
+        id: "GO-2025-3557",
+        reason: `CVE-2025-0315 (GHSA-fccc-8m69-8r78, high, up to 0.3.14): a crafted GGUF model uploaded and created exhausts memory. ${NO_MODEL_UPLOAD}`
+      },
+      {
+        id: "GO-2025-3558",
+        reason: `CVE-2024-12055 (GHSA-89qx-m49c-8crf, high, up to 0.3.14): a crafted GGUF model uploaded and created crashes the server. ${NO_MODEL_UPLOAD}`
+      },
+      {
+        id: "GO-2025-3559",
+        reason: `CVE-2025-0317 (GHSA-9gcr-28rp-cc24, high, up to 0.3.14): a crafted GGUF model uploaded and created divides by zero. ${NO_MODEL_UPLOAD}`
+      },
+      {
+        id: "GO-2025-3582",
+        reason: `CVE-2025-0312 (GHSA-p2wh-w96x-w232, high, up to 0.3.14): a crafted GGUF model uploaded and created dereferences a null pointer. ${NO_MODEL_UPLOAD}`
+      },
+      {
+        id: "GO-2025-3689",
+        reason: `CVE-2024-8063 (GHSA-2xf2-gjm6-g2c6, high, up to 0.3.3): a GGUF model imported through a crafted Modelfile divides by zero. ${NO_MODEL_UPLOAD}`
+      },
+      {
+        id: "GO-2025-3695",
+        reason: "CVE-2025-1975 (GHSA-wrh5-cmwx-q2qr, high, up to 0.5.11): a crafted manifest from a spoofed registry crashes `/api/pull`. Only the gateway calls `/api/pull`, for the settings' model on Ollama's registry over TLS; at worst the pod's start fails."
+      },
+      {
+        id: "GO-2025-3824",
+        reason: "CVE-2025-51471 (GHSA-x9hg-5q6g-q3jr, moderate, up to 0.9.6): a malicious registry's `WWW-Authenticate` realm takes the token `/api/pull` signs. Only the gateway pulls, from Ollama's registry, and the pod's Ollama holds no account: its key is generated in the pod and reaches nothing else."
+      },
+      {
+        id: "GO-2025-4251",
+        reason: "CVE-2025-63389 (GHSA-f6mr-38g8-39rg, critical, up to 0.13.5): the API has no authentication. Accepted by design: the gateway sets `OLLAMA_HOST=127.0.0.1:11434`, so only the pod's own processes reach it, and the gateway forwards only three OpenAI-compatible routes, for the runs' tokens."
+      },
+      {
+        id: "GO-2026-5750",
+        reason: "CVE-2026-7020 (GHSA-x99g-8v8j-25j2, low, up to 0.20.2): path traversal in the image generation models' transfer (`x/imagegen/transfer`). It runs only when pulling or creating a model, which only the gateway does, for the settings' model on Ollama's registry."
+      }
+    ]
+  },
+  // vLLM 0.32.0, replacing 0.31.0, whose 2 high advisories (GHSA-6757-hggm-hp2w,
+  // GHSA-h3rc-j82p-2c3h) it fixes; no advisory for it on OSV.dev or GitHub on 2026-10-30. CUDA
+  // 13.0, as 0.31.0 (`VLLM_MIN_CUDA`). docs/web/docker-hub/vllm-vllm-openai-v0-32-0.md.
+  vllm: {
+    image: "docker.io/vllm/vllm-openai@sha256:befccf0e7e4089aa23926bb6f887a85c0d46c2a99e6de5c5ffdf5cb7957c5b34",
+    release: {
+      name: "vllm",
+      version: "0.32.0",
+      // The image's `created`; the GitHub release is of 06:50:48Z, the first wheel on PyPI 10:03:29Z.
+      publishedAt: "2026-10-18T03:08:50Z",
+      osv: { ecosystem: "PyPI", package: "vllm" },
+      replaces: "0.31.0",
+      provenance: {
+        source: "https://github.com/vllm-project/vllm",
+        commit: "5df63a7203cdb9328d824a27b682e77c7b9928be",
+        imageRevisionLabel: true,
+        revisionMatchesTag: true,
+        commitVerified: false,
+        githubReleasePublishedAt: "2026-10-18T06:50:48Z",
+        githubReleaseImmutable: false,
+        pypiPublishedAt: "2026-10-18T10:03:29Z",
+        attestations: false,
+        imageSignature: false
+      }
+    },
+    exceptions: []
+  }
+};
 function podImage(engine, override = "") {
   if (engine === "ollama" && override !== "") return override;
   return POD_IMAGES[engine] ?? "";
