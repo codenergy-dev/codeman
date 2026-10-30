@@ -5,12 +5,12 @@
 # Every input is pinned by digest; apt packages come from Ubuntu's signed archive.
 
 # Only Node.js's files are used: the version of the pod images.
-FROM node:24.21.0-bookworm-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6 AS node
+FROM node:24.22.1-bookworm-slim@sha256:be8204d4bd327363357f532187b752ff62759c31bedf98e9e18fc08c9cbd605c AS node
 
 # ubuntu-latest is Ubuntu 24.04 (docs/web/github/runner-images-readme-md-at-82d1b86.md).
 FROM ubuntu:noble-20260930.1@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac
 
-ARG NODE_VERSION=24.21.0
+ARG NODE_VERSION=24.22.1
 ENV DEBIAN_FRONTEND=noninteractive
 
 # What Codeman's agent job runs (docs/plans/2026-10-19-resolve-privileged-tools-outside-the-agents-reach.md,
