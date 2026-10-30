@@ -1,7 +1,7 @@
 ---
-status: in progress
+status: completed
 created_at: 2026-10-30T11:20:00-03:00
-updated_at: 2026-10-30T15:40:00-03:00
+updated_at: 2026-10-30T15:53:00-03:00
 commit: 7f54c3c
 ---
 
@@ -67,7 +67,7 @@ Answered by the maintainer on 2026-10-30, in the conversation that led to this p
 
 ### Open decisions
 
-To be answered by the maintainer from the [findings](#findings):
+Answered by the maintainer on 2026-10-30, from the [findings](#findings): each as its [recommendation](#recommendations).
 
 - **A. Minimum age.** How many days a release must have been published, for the whole dependency tree, and how a newer release that fixes a known advisory passes.
 - **B. Advisories.** Which severities block a resolution, and where an exception is accepted (only in the settings files, as `hosts`).
@@ -91,7 +91,7 @@ Each experiment records the third-party pages it relies on in `docs/web/`, follo
 
 ## Findings
 
-Steps 1 to 6 are done, committed as `9f289c9`, `4cc2821`, `9c822d8` and `796eb82`. Each experiment's scripts say in their header how to run them again. Their downloads and generated output are git-ignored (`.work/`, `resolver/out/`). Timings are from a shared 4-core laptop CPU that was swapping, so they show behaviors, not sizes.
+Every step is done. Steps 1 to 6 are committed as `9f289c9`, `4cc2821`, `9c822d8` and `796eb82`. Each experiment's scripts say in their header how to run them again. Their downloads and generated output are git-ignored (`.work/`, `resolver/out/`). Timings are from a shared 4-core laptop CPU that was swapping, so they show behaviors, not sizes.
 
 ### E1: the gateway injected into official images
 
