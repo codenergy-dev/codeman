@@ -1,0 +1,21 @@
+{
+  "engine": "python-3.12",
+  "format": "archive",
+  "resolvedAt": "2026-10-30T14:29:37.719Z",
+  "artifacts": [
+    {
+      "name": "cpython",
+      "version": "3.12.15+20261013",
+      "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261013/cpython-3.12.15%2B20261013-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz",
+      "sha256": "178d3d83b6e8e99285a65d3fce9c16b87952cc5efdb4d1a0e3ff3be18ff0fc9c",
+      "size": 34340172,
+      "publishedAt": "2026-10-14T02:06:09Z"
+    }
+  ],
+  "checks": {
+    "sha256sums": "matches the asset's GitHub digest",
+    "releaseImmutable": true,
+    "releaseCommit": "9e40cba825ca0997a01cab9f60a0b15ffb976af2",
+    "githubAttestations": 2
+  }
+}
