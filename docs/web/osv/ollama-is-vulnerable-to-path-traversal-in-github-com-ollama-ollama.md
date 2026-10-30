@@ -3,7 +3,7 @@ title: "Ollama is Vulnerable to Path Traversal in github.com/ollama/ollama"
 url: https://osv.dev/vulnerability/GO-2026-5750
 created_at: 2026-10-30T17:40:00-03:00
 updated_at: 2026-10-30T17:40:00-03:00
-tool: docs/web/tools/osv.md
+tool: docs/web/tools/osv-dev.md
 ---
 
 # Ollama is Vulnerable to Path Traversal in github.com/ollama/ollama

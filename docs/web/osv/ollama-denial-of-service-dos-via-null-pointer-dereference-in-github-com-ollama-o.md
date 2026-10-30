@@ -3,7 +3,7 @@ title: "Ollama Denial of Service (DoS) via Null Pointer Dereference in github.co
 url: https://osv.dev/vulnerability/GO-2025-3582
 created_at: 2026-10-30T17:40:00-03:00
 updated_at: 2026-10-30T17:40:00-03:00
-tool: docs/web/tools/osv.md
+tool: docs/web/tools/osv-dev.md
 ---
 
 # Ollama Denial of Service (DoS) via Null Pointer Dereference in github.com/ollama/ollama

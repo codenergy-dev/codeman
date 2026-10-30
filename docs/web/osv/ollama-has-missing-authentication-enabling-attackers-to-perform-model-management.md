@@ -3,7 +3,7 @@ title: "Ollama has missing authentication enabling attackers to perform model ma
 url: https://osv.dev/vulnerability/GO-2025-4251
 created_at: 2026-10-30T17:40:00-03:00
 updated_at: 2026-10-30T17:40:00-03:00
-tool: docs/web/tools/osv.md
+tool: docs/web/tools/osv-dev.md
 ---
 
 # Ollama has missing authentication enabling attackers to perform model management operations in github.com/ollama/ollama
