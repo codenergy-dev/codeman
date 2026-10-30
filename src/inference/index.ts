@@ -1,3 +1,4 @@
+import { gatewayArtifact } from "../action.ts";
 import { E2E } from "../e2e.ts";
 import type { RepositoryRef } from "../platform/types.ts";
 import { isLogin, isPoolId, MAX_POOL_MEMBERS, type Pool, soloPool } from "../pool.ts";
@@ -12,6 +13,7 @@ import type { ModelHub } from "./huggingface.ts";
 import { podImage } from "./images.ts";
 import { type OllamaSettings, ollamaEnvironment } from "./ollama.ts";
 import { OpenRouter, OpenRouterProvider } from "./openrouter.ts";
+import { Osv } from "./osv.ts";
 import type { InferenceProvider } from "./provider.ts";
 import {
   ACCOUNTS,
@@ -23,6 +25,7 @@ import {
   type PodProviderName,
   PROVIDERS,
 } from "./providers.ts";
+import { type PodReleases, StoredReleaseChecks } from "./resolution.ts";
 import { Runpod } from "./runpod.ts";
 import { Salad } from "./salad.ts";
 import { PodInference, ServerlessInference } from "./selfhosted.ts";
@@ -414,6 +417,11 @@ export function selfHosted(
     /** For tests and the e2e build: the gateways' fetch, and where vLLM's models are checked. */
     fetch?: typeof fetch;
     hub?: ModelHub;
+    /**
+     * For tests: what a pod runs and how it is checked. By default, the action's gateway, OSV.dev
+     * and the release checks in Codeman's store.
+     */
+    releases?: PodReleases;
   },
 ): InferenceProvider {
   const gpu = inputs.gpu ?? gpuProvider(accountOf(choice.provider), inputs.account);
@@ -421,6 +429,7 @@ export function selfHosted(
   if (!engine) throw new Error(`Unknown engine "${choice.engine}".`);
   const common = { model: choice.model, engine, pods: choice.pods };
   if (onPod(choice)) {
+    const store = inputs.store();
     return new PodInference(
       {
         ...common,
@@ -441,10 +450,15 @@ export function selfHosted(
         repository,
         gpu,
         account: inputs.account,
-        store: inputs.store(),
+        store,
         pool: choicePool(choice, repository.owner),
         ...(inputs.fetch ? { fetch: inputs.fetch } : {}),
         ...(inputs.hub ? { hub: inputs.hub } : {}),
+        releases: inputs.releases ?? {
+          gateway: () => gatewayArtifact(),
+          osv: new Osv(inputs.fetch),
+          cache: new StoredReleaseChecks(store),
+        },
       },
     );
   }

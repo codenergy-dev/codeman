@@ -5,7 +5,8 @@ import type { RepositoryRef } from "../platform/types.ts";
  * organization, the repository's owner (a user account is its own organization), is under it:
  * its runs and events, which the budgets read. What a pool of organizations shares is under the
  * pool (decision 9 of the plan for GPU batches across repositories): the pod registry, the
- * Serverless endpoints' runs, the board and the batches. The cache of fits is shared by all.
+ * Serverless endpoints' runs, the board and the batches. The cache of fits and the release checks
+ * are shared by all.
  * Owners, repositories and pools are lowercase, as GitHub compares them.
  *
  * The budgets' queries (an organization's or a repository's runs of a month, a task's runs)
@@ -49,6 +50,14 @@ export const LAYOUT = {
    */
   contexts: () => "contexts",
   context: (key: string) => `${LAYOUT.contexts()}/${documentId(key)}`,
+  /**
+   * The release checks that passed: the release policy's result for one set of pinned releases
+   * and exceptions, named by their hash (`releaseCheckKey`), which stands in for OSV.dev when it
+   * does not answer, for 24 hours (decision 7 of the plan to start pods from official engine
+   * images). It depends on nothing an organization owns.
+   */
+  releaseChecks: () => "releaseChecks",
+  releaseCheck: (key: string) => `${LAYOUT.releaseChecks()}/${documentId(key)}`,
   /**
    * A Serverless endpoint of the pool's GPU account, by its ID; under it, each run's billed times
    * on the endpoint's worker, named by the run and its reservation, which the ledger splits among

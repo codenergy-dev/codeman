@@ -1,11 +1,12 @@
+import type { AdvisoryException, ReleaseArtifact } from "./release-policy.ts";
+
 /**
- * Codeman's pod images, one per engine, which Codeman picks by the `engine` setting: built from
- * the targets of `docker/pod/Dockerfile` by `.github/workflows/pod-image.yml`, published as
- * `ghcr.io/codenergy-dev/codeman-<engine>`, and referenced by digest (decision 8 of the plan for
- * vLLM on pods). Pin a new digest whenever the Dockerfile or `dist/gateway.js` changes: replace an
- * engine's line with `"ghcr.io/codenergy-dev/codeman-<engine>@sha256:<digest>"` in a commit of its
- * own. An empty one has no image: a run on that engine stops before any pod is created. The
- * `pod-image` input overrides the Ollama image only. See docs/settings/vllm.md#pod-images.
+ * Codeman's own pod images, one per engine, which pods ran before they started from the engines'
+ * official images (`ENGINE_RELEASES`): built from the targets of `docker/pod/Dockerfile` by
+ * `.github/workflows/pod-image.yml` and published as `ghcr.io/codenergy-dev/codeman-<engine>`. No
+ * pod is created from them any more. The images published on GHCR stay, untouched (decision 5 of
+ * the plan to start pods from official engine images), and the e2e suite's allowlist maps these
+ * until it starts pods from the official images.
  */
 export const POD_IMAGES: Readonly<Record<string, string>> = {
   // Published from ce1fed1.
@@ -19,8 +20,8 @@ export const POD_IMAGES: Readonly<Record<string, string>> = {
  * Pod images whose gateway cannot serve on Salad: from before it listened on IPv6, which Salad's
  * Container Gateway reaches pods on, and ended a pod by exiting, since Salad gives a pod no key to
  * delete itself (step 2 of the plan for Salad pods). A `salad-pod` run refuses them before
- * creating a group. Every image pinned before 4c376d5 is one: when new digests are pinned in
- * `POD_IMAGES`, the ones they replace stay here, and the new ones are not added.
+ * creating a group. Every image pinned before 4c376d5 is one; the official images of
+ * `ENGINE_RELEASES`, which the bootstrap gives the current gateway, are none.
  */
 export const IMAGES_BEFORE_SALAD: ReadonlySet<string> = new Set([
   "ghcr.io/codenergy-dev/codeman-pod@sha256:6a7617fc8772c43600349a971a424bc918982c6d38972e7d1802a1a607e76d27",
@@ -34,29 +35,6 @@ export const IMAGES_BEFORE_SALAD: ReadonlySet<string> = new Set([
   "ghcr.io/codenergy-dev/codeman-vllm@sha256:73f6419404c8c419cb8381c3cb593db0325aa6d813beb7f2a31b52923d8a0d30",
   "ghcr.io/codenergy-dev/codeman-vllm@sha256:a5b4a03205fc96f1ae3a731a03124a5a27eaf2d36450f937ff1f063112fc681e",
 ]);
-
-/**
- * A release that a pod runs, as the release policy checks it: its version and publication date
- * (the minimum age), its package on OSV.dev (advisories), the release it replaces (the security
- * fix bypass) and what its publisher offers to trace it to its source (recorded, not required).
- * The release policy module defines the same interface; a later step keeps only one.
- */
-export interface ReleaseArtifact {
-  name: string;
-  version: string;
-  /** ISO 8601. */
-  publishedAt: string;
-  osv?: { ecosystem: string; package: string };
-  /** The version this release replaces in the catalog, when it replaced one. */
-  replaces?: string;
-  provenance?: Record<string, string | boolean>;
-}
-
-/** An advisory accepted for a pinned release, by its OSV.dev ID, with why. */
-export interface AdvisoryException {
-  id: string;
-  reason: string;
-}
 
 /** An engine's official image, pinned by its index digest, with its engine's release. */
 export interface EngineRelease {
@@ -84,8 +62,8 @@ const NO_MODEL_UPLOAD =
  * for the bootstrap. Pinned and audited by hand (docs/development/dependencies.md#audit-log): the
  * release policy checks them again on every pod `open-key` creates, and an advisory it finds
  * blocks unless an exception below accepts it. Exceptions live here, reviewed in the commit that
- * pins (decision 2), and name the IDs OSV.dev returns for the release. `POD_IMAGES` stays what pods
- * run until a later step switches its consumers to this catalog.
+ * pins (decision 2), and name the IDs OSV.dev returns for the release. A pod's command is the
+ * bootstrap (src/gateway/bootstrap.ts), which downloads `NODE_RELEASE` and the gateway.
  */
 export const ENGINE_RELEASES: Readonly<Record<string, EngineRelease>> = {
   // Ollama 0.40.10, replacing 0.35.1: the newest release at least 7 days old. Its own 9 advisories
@@ -215,8 +193,25 @@ export const NODE_RELEASE: NodeRelease = {
   },
 };
 
-/** The image of an engine's pods: the `pod-image` input's for Ollama, else the pinned one. */
+/**
+ * The image of an engine's pods: the `pod-image` input's for Ollama (decision 8 of the plan to
+ * start pods from official engine images), else the catalog's official image; empty for an engine
+ * the catalog does not pin.
+ */
 export function podImage(engine: string, override = ""): string {
   if (engine === "ollama" && override !== "") return override;
-  return POD_IMAGES[engine] ?? "";
+  return ENGINE_RELEASES[engine]?.image ?? "";
+}
+
+/**
+ * The catalog's release of a pod's image: undefined for an image the `pod-image` input chose,
+ * which the release policy does not check.
+ */
+export function catalogRelease(
+  engine: string,
+  image: string,
+  catalog: Readonly<Record<string, EngineRelease>> = ENGINE_RELEASES,
+): EngineRelease | undefined {
+  const release = catalog[engine];
+  return release && release.image === image ? release : undefined;
 }

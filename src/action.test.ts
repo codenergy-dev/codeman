@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +8,7 @@ import {
   ACTION_ROOT,
   actionCommit,
   actionPathIn,
+  gatewayArtifact,
   TEMPLATE_VERSION,
   templateVersionProblem,
 } from "./action.ts";
@@ -62,6 +64,26 @@ test("the action's commit is its checkout's detached HEAD", () => {
   writeFileSync(join(root, ".git", "HEAD"), "ref: refs/heads/main\n");
   assert.equal(actionCommit(root), undefined);
   assert.equal(actionCommit(join(dir, "none")), undefined);
+});
+
+test("a pod's gateway is the action's dist/gateway.js at its commit, by its SHA-256", () => {
+  const root = join(dir, "gateway");
+  mkdirSync(join(root, ".git"), { recursive: true });
+  mkdirSync(join(root, "dist"));
+  writeFileSync(join(root, "dist", "gateway.js"), "console.log(1);\n");
+  writeFileSync(join(root, ".git", "HEAD"), `${SHA}\n`);
+  assert.deepEqual(gatewayArtifact(root), {
+    url: `https://raw.githubusercontent.com/codenergy-dev/codeman/${SHA}/dist/gateway.js`,
+    sha256: createHash("sha256").update("console.log(1);\n").digest("hex"),
+    commit: SHA,
+  });
+  // A local build, or a checkout of a branch: no pod could download its gateway.
+  writeFileSync(join(root, ".git", "HEAD"), "ref: refs/heads/main\n");
+  assert.throws(
+    () => gatewayArtifact(root),
+    /^Error: Codeman's commit is unknown: its checkout at .* is not of a full commit SHA, so a pod could not download this gateway from raw\.githubusercontent\.com, and no pod was created\./,
+  );
+  assert.throws(() => gatewayArtifact(join(dir, "none"), SHA), /has no dist\/gateway\.js/);
 });
 
 test("the action's folder is found inside the workspace, and only there", () => {

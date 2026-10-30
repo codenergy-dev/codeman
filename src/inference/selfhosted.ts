@@ -1,5 +1,6 @@
 import { createHmac, randomBytes } from "node:crypto";
 import { usd } from "../budget.ts";
+import { type BootstrapArtifacts, bootstrapCommand, podBootstrap } from "../gateway/bootstrap.ts";
 import { type EndedRun, GATEWAY_VERSION, sha256 } from "../gateway/gateway.ts";
 import { type FitReport, GATEWAY_PORT } from "../gateway/pod.ts";
 import type { GatewayUsage, Span } from "../gateway/usage.ts";
@@ -48,6 +49,7 @@ import {
   registered,
   UNAVAILABLE,
 } from "./registry.ts";
+import { type PodReleases, type Resolution, resolvePod } from "./resolution.ts";
 import { VLLM_MIN_CUDA } from "./vllm.ts";
 
 /** How long a new pod has to pull its image and model and serve it. */
@@ -98,8 +100,17 @@ export interface SelfHostedSettings {
 
 export interface PodSettings extends SelfHostedSettings {
   gpuType: string;
-  /** The pod image, by digest. */
+  /**
+   * The pod image, by digest: the engine's official one from the catalog, or the `pod-image`
+   * input's for Ollama.
+   */
   image: string;
+  /**
+   * What the pod's bootstrap downloads and runs (src/gateway/bootstrap.ts): Node.js and the
+   * gateway, by URL and SHA-256. `open` resolves it before it computes the settings key; the
+   * settings a provider is given leave it undefined.
+   */
+  bootstrap?: BootstrapArtifacts | undefined;
   /** `task`: a pod serves the next runs on its settings too; `run`: it ends with its runs. */
   reuse: "task" | "run";
   /**
@@ -280,14 +291,17 @@ function quotedVariables(settings: Pick<PodSettings, "ollama">): string {
  * of its own. Ollama settings are part of them, only when there are some, so pods without any
  * keep their hash (choice 9 of the Ollama settings plan); a vLLM pod's has its engine and its
  * vLLM settings (decision 9 of the plan for vLLM on pods). Its kinds of host and its priority
- * are part of them only when not the defaults, so pods from before them keep their hash.
+ * are part of them only when not the defaults, so pods from before them keep their hash. A pod
+ * its bootstrap starts has the gateway's SHA-256, and a hash of the bootstrap's command and the
+ * Node.js it downloads, so pods whose gateways or bootstraps differ never mix (the plan to start
+ * pods from official engine images): before it, the image's digest named the gateway.
  */
 export function podSettingsKey(
   settings: Pick<PodSettings, "model" | "gpuType" | "image" | "reuse" | "ollama"> &
-    Partial<Pick<PodSettings, "engine" | "vllm" | "hosts" | "priority">>,
+    Partial<Pick<PodSettings, "engine" | "vllm" | "hosts" | "priority" | "bootstrap">>,
   holder: string,
 ): string {
-  const { model, gpuType, image, reuse, priority } = settings;
+  const { model, gpuType, image, reuse, priority, bootstrap } = settings;
   const ollama = ollamaVariables(settings);
   const vllm = settings.engine && onVllm({ engine: settings.engine });
   const hosts = (settings.hosts ?? DEFAULT_HOSTS).join(",");
@@ -301,6 +315,12 @@ export function podSettingsKey(
     ...(vllm ? ["engine vllm", `vllm ${vllmValues(settings).join(" ")}`] : []),
     ...(hosts !== DEFAULT_HOSTS.join(",") ? [`hosts ${hosts}`] : []),
     ...(priority !== undefined ? [`priority ${priority}`] : []),
+    ...(bootstrap
+      ? [
+          `gateway ${bootstrap.gateway.sha256}`,
+          `bootstrap ${sha256(JSON.stringify([bootstrapCommand(), bootstrap.node.url, bootstrap.node.sha256]))}`,
+        ]
+      : []),
   ];
   return sha256(parts.join("\n")).slice(0, 16);
 }
@@ -430,6 +450,8 @@ export interface SelfHostedOptions {
   wait?: (ms: number) => Promise<void>;
   /** Where a vLLM pod's model is checked and sized: Hugging Face's API by default. */
   hub?: ModelHub;
+  /** What a pod runs, and how `open` checks it against the release policy before any pod. */
+  releases: PodReleases;
 }
 
 /**
@@ -492,7 +514,7 @@ export class PodInference implements InferenceProvider {
     if (onVllm(this.#settings)) {
       if (image) return;
       throw new Error(
-        "This version of Codeman pins no vLLM pod image yet (`POD_IMAGES` in src/inference/images.ts), so no pod was created: use a version that pins one, or `engine: ollama`. See docs/settings/vllm.md#pod-images.",
+        "This version of Codeman pins no vLLM pod image yet (`ENGINE_RELEASES` in src/inference/images.ts), so no pod was created: use a version that pins one, or `engine: ollama`. See docs/settings/vllm.md#pod-images.",
       );
     }
     if (fitsTheGpu(image)) return;
@@ -508,15 +530,30 @@ export class PodInference implements InferenceProvider {
     }
   }
 
+  /**
+   * Gives the run a pod of its settings. First, before any pod is swept, joined or created, it
+   * resolves what the pod runs and checks it against the release policy: a block stops the run.
+   */
   async open(run: RunRequest, log: Log): Promise<OpenedRun> {
     const token = randomBytes(32).toString("base64url");
     const holder = leaseHolder(this.#options.repository, run.task);
-    const settings = podSettingsKey(this.#settings, holder);
     let handle: PodHandle;
     try {
       this.#checkImage(log);
+      const { engine, image } = this.#settings;
+      const resolution = await resolvePod(
+        engine.name,
+        image,
+        this.#options.releases,
+        this.#now(),
+        log,
+      );
+      const settings = podSettingsKey(
+        { ...this.#settings, bootstrap: resolution.artifacts },
+        holder,
+      );
       await this.#sweep(holder, settings, log);
-      handle = await this.#claim(run, holder, settings, token, log);
+      handle = await this.#claim(run, holder, settings, token, resolution, log);
     } catch (error) {
       if (error instanceof ConcurrencyReached) throw error;
       if (error instanceof PodUnavailable) throw new ProfileUnavailable(error, this.#takeEvents());
@@ -832,6 +869,7 @@ export class PodInference implements InferenceProvider {
     holder: string,
     settings: string,
     token: string,
+    resolution: Resolution,
     log: Log,
   ): Promise<PodHandle> {
     const { model, gpuType, image, reuse } = this.#settings;
@@ -849,6 +887,7 @@ export class PodInference implements InferenceProvider {
       ...(capacity === undefined ? {} : { capacity }),
       ...(batch === undefined ? {} : { batch }),
       ...(concurrency === undefined ? {} : { key: concurrency.key }),
+      resolution: resolution.fields,
     };
     let waiting = false;
     for (let claims = 0; claims < CLAIMS; claims++) {
@@ -874,7 +913,7 @@ export class PodInference implements InferenceProvider {
         continue;
       }
       if (claim.kind === "create") {
-        const handle = await this.#create(claim.pod, run, holder, token, log);
+        const handle = await this.#create(claim.pod, run, holder, token, resolution, log);
         if (handle) return handle;
         continue;
       }
@@ -918,11 +957,12 @@ export class PodInference implements InferenceProvider {
     run: RunRequest,
     holder: string,
     token: string,
+    resolution: Resolution,
     log: Log,
   ): Promise<PodHandle | undefined> {
     let launched: { pod: Pod; listed: number };
     try {
-      launched = await this.#launch(record, log);
+      launched = await this.#launch(record, resolution, log);
     } catch (error) {
       await this.#registry.end(
         record.nonce,
@@ -1114,10 +1154,19 @@ export class PodInference implements InferenceProvider {
     return (this.#options.wait ?? ((delay) => new Promise((done) => setTimeout(done, delay))))(ms);
   }
 
-  /** Creates the pod of a creation lease, named by its nonce, with its settings in its environment. */
-  async #launch(record: RegisteredPod, log: Log): Promise<{ pod: Pod; listed: number }> {
+  /**
+   * Creates the pod of a creation lease, named by its nonce, with its settings in its environment.
+   * Its command is the bootstrap, which downloads Node.js and the gateway, checks them, and runs
+   * the gateway, which starts the image's engine.
+   */
+  async #launch(
+    record: RegisteredPod,
+    resolution: Resolution,
+    log: Log,
+  ): Promise<{ pod: Pod; listed: number }> {
     const { model, gpuType, image, engine, priority } = this.#settings;
     if (!image) throw new Error("No pod image is pinned; see docs/installation/runpod.md#pods.");
+    const bootstrap = podBootstrap(resolution.artifacts);
     const hosts = this.#hosts;
     const prices = await this.#prices(gpuType, hosts, priority);
     const vllm = onVllm(this.#settings) ? await this.#prepareVllm(log) : undefined;
@@ -1129,7 +1178,9 @@ export class PodInference implements InferenceProvider {
     const pod = await this.#host.create({
       name: `codeman-${owner}-${record.settings}`.slice(0, 100),
       image,
+      command: bootstrap.command,
       env: {
+        ...bootstrap.env,
         ...(Object.keys(this.#settings.ollama ?? {}).length > 0
           ? { CODEMAN_OLLAMA: JSON.stringify(this.#settings.ollama) }
           : {}),

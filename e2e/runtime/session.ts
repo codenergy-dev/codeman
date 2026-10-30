@@ -475,7 +475,7 @@ export class Session {
           else documents[path] = found;
         }
       }
-      for (const collection of ["contexts"]) {
+      for (const collection of ["contexts", "releaseChecks"]) {
         const found = await safely(() => store.query(collection));
         if (Array.isArray(found))
           for (const document of found) documents[document.path] = document.fields;

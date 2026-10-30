@@ -1,15 +1,10 @@
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { test } from "node:test";
-import {
-  ENGINE_RELEASES,
-  NODE_RELEASE,
-  POD_IMAGES,
-  podImage,
-  type ReleaseArtifact,
-} from "./images.ts";
+import { catalogRelease, ENGINE_RELEASES, NODE_RELEASE, POD_IMAGES, podImage } from "./images.ts";
 import { IMAGES_WITHOUT_OLLAMA_SETTINGS, OLLAMA_VERSION } from "./ollama.ts";
 import { PROVIDERS } from "./providers.ts";
+import type { ReleaseArtifact } from "./release-policy.ts";
 import { VLLM_MIN_CUDA, VLLM_VERSION } from "./vllm.ts";
 
 const dockerfile = readFileSync("docker/pod/Dockerfile", "utf8");
@@ -27,7 +22,6 @@ test("an image per engine of pods, each a target of the Dockerfile and a leg of 
   );
   for (const engine of engines) {
     const stage = dockerfile.split(`AS ${engine}\n`)[1]?.split(/^FROM /m)[0] ?? "";
-    assert.ok(stage.includes(`ENV CODEMAN_IMAGE_ENGINE=${engine}`), engine);
     assert.ok(stage.includes('ENTRYPOINT ["node", "/opt/codeman/gateway.js"]'), engine);
   }
 });
@@ -43,11 +37,15 @@ test("each pinned image is its engine's package by digest, or an older one known
   }
 });
 
-test("the `pod-image` input overrides the Ollama image only", () => {
+test("pods run the catalog's official images; the `pod-image` input overrides Ollama's only", () => {
   assert.equal(podImage("ollama", "x@sha256:1"), "x@sha256:1");
-  assert.equal(podImage("ollama"), POD_IMAGES.ollama);
-  assert.equal(podImage("vllm", "x@sha256:1"), POD_IMAGES.vllm);
+  assert.equal(podImage("ollama"), ENGINE_RELEASES.ollama?.image);
+  assert.equal(podImage("vllm", "x@sha256:1"), ENGINE_RELEASES.vllm?.image);
   assert.equal(podImage("sglang"), "");
+  // The release policy checks the catalog's images, and not one the input chose.
+  assert.equal(catalogRelease("ollama", podImage("ollama")), ENGINE_RELEASES.ollama);
+  assert.equal(catalogRelease("ollama", "x@sha256:1"), undefined);
+  assert.equal(catalogRelease("sglang", ""), undefined);
 });
 
 test("the Dockerfile pins the engines' versions by digest, and vLLM sends no usage", () => {

@@ -4392,8 +4392,8 @@ var require_util2 = __commonJS({
       if (parsedMetadata.length === 0) {
         return true;
       }
-      const strongest = getStrongestMetadata(parsedMetadata);
-      const metadata = filterMetadataListByAlgorithm(parsedMetadata, strongest);
+      const strongest2 = getStrongestMetadata(parsedMetadata);
+      const metadata = filterMetadataListByAlgorithm(parsedMetadata, strongest2);
       for (const item of metadata) {
         const algorithm = item.algo;
         const expectedValue = item.hash;
@@ -14634,11 +14634,11 @@ var require_progressevent = __commonJS({
 var require_encoding = __commonJS({
   "../../../node_modules/undici/lib/web/fileapi/encoding.js"(exports, module) {
     "use strict";
-    function getEncoding(label) {
-      if (!label) {
+    function getEncoding(label2) {
+      if (!label2) {
         return "failure";
       }
-      switch (label.trim().toLowerCase()) {
+      switch (label2.trim().toLowerCase()) {
         case "unicode-1-1-utf-8":
         case "unicode11utf8":
         case "unicode20utf8":
@@ -18282,7 +18282,7 @@ var require_eventsource_stream = __commonJS({
     var SPACE = 32;
     var DATA = Buffer.from("data");
     var EVENT = Buffer.from("event");
-    var ID = Buffer.from("id");
+    var ID2 = Buffer.from("id");
     var RETRY = Buffer.from("retry");
     function isASCIINumberBytes(buffer, start) {
       if (start >= buffer.length) {
@@ -18452,7 +18452,7 @@ ${value}`;
           }
           return;
         }
-        if (isFieldName(line, fieldLength, ID)) {
+        if (isFieldName(line, fieldLength, ID2)) {
           if (isValidLastEventIdBytes(line, valueStart)) {
             event.id = line.toString("utf8", valueStart);
           }
@@ -19740,6 +19740,7 @@ var require_lib = __commonJS({
 });
 
 // src/action.ts
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { isAbsolute, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19754,6 +19755,27 @@ function actionCommit(root = ACTION_ROOT) {
   } catch {
     return void 0;
   }
+}
+var GATEWAY_FILE = "dist/gateway.js";
+function gatewayArtifact(root = ACTION_ROOT, commit = actionCommit(root), repository = CODEMAN_REPOSITORY) {
+  if (!commit || !FULL_SHA.test(commit)) {
+    throw new Error(
+      `Codeman's commit is unknown: its checkout at ${root} is not of a full commit SHA, so a pod could not download this gateway from raw.githubusercontent.com, and no pod was created. Run Codeman from a checkout of the commit in CODEMAN_COMMIT_SHA, as the workflow templates do.`
+    );
+  }
+  let file;
+  try {
+    file = readFileSync(join(root, GATEWAY_FILE));
+  } catch (error3) {
+    throw new Error(
+      `Codeman's checkout at ${root} has no ${GATEWAY_FILE} to give a pod (${error3 instanceof Error ? error3.message : error3}), so no pod was created.`
+    );
+  }
+  return {
+    url: `https://raw.githubusercontent.com/${repository}/${commit}/${GATEWAY_FILE}`,
+    sha256: createHash("sha256").update(file).digest("hex"),
+    commit
+  };
 }
 function templateVersionProblem(given, commit) {
   const version = given.trim();
@@ -19845,7 +19867,7 @@ function agreement(pool2, owner, declarations) {
 }
 
 // src/settings.ts
-import { createHash } from "node:crypto";
+import { createHash as createHash2 } from "node:crypto";
 
 // src/inference/engine.ts
 function openAiUsage(body, cachedApart = false) {
@@ -20364,6 +20386,76 @@ var BOOTSTRAP_VARIABLES = {
   home: "CODEMAN_BOOTSTRAP_HOME"
 };
 var SALAD_COMMAND_LIMITS = { items: 100, itemCharacters: 1e3 };
+var RUNPOD_REQUEST_BYTES = 102400;
+function podBootstrap(artifacts) {
+  const command2 = bootstrapCommand();
+  const [entrypoint, ...cmd] = command2;
+  return { env: bootstrapEnvironment(artifacts), command: command2, entrypoint: [entrypoint], cmd };
+}
+function bootstrapEnvironment(artifacts) {
+  const node = checkedArtifact("Node.js", artifacts.node);
+  const gateway = checkedArtifact("The gateway", artifacts.gateway);
+  if (!NODE_TARBALL.test(new URL(node.url).pathname)) {
+    throw new Error(
+      `Node.js's URL must name a linux-x64 .tar.gz, such as node-v24.22.1-linux-x64.tar.gz: ${node.url}`
+    );
+  }
+  return {
+    [BOOTSTRAP_VARIABLES.nodeUrl]: node.url,
+    [BOOTSTRAP_VARIABLES.nodeSha256]: node.sha256,
+    [BOOTSTRAP_VARIABLES.gatewayUrl]: gateway.url,
+    [BOOTSTRAP_VARIABLES.gatewaySha256]: gateway.sha256
+  };
+}
+var NODE_TARBALL = /\/node-v\d+\.\d+\.\d+-linux-x64\.tar\.gz$/;
+function checkedArtifact(what, artifact) {
+  const sha2562 = artifact.sha256.toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(sha2562)) {
+    throw new Error(`${what}'s SHA-256 must be 64 hex digits: '${artifact.sha256}'.`);
+  }
+  let protocol;
+  try {
+    protocol = new URL(artifact.url).protocol;
+  } catch {
+    protocol = void 0;
+  }
+  if (protocol !== "https:" && protocol !== "http:" || /[^!-~]/.test(artifact.url)) {
+    throw new Error(`${what}'s URL must be HTTP or HTTPS, without spaces: '${artifact.url}'.`);
+  }
+  return { url: artifact.url, sha256: sha2562 };
+}
+function bootstrapCommand() {
+  const command2 = [
+    "/bin/sh",
+    "-c",
+    `eval "$(printf '%s\\n' "$@")"`,
+    "bootstrap",
+    ...scriptLines()
+  ];
+  const problems = commandProblems(command2);
+  if (problems.length > 0) {
+    throw new Error(
+      `The bootstrap's command breaks the providers' limits: ${problems.join("; ")}.`
+    );
+  }
+  return command2;
+}
+function commandProblems(command2) {
+  const { items, itemCharacters } = SALAD_COMMAND_LIMITS;
+  const bytes = Buffer.byteLength(
+    JSON.stringify({ entrypoint: command2.slice(0, 1), cmd: command2.slice(1) })
+  );
+  return [
+    ...command2.length > items ? [`${command2.length} items, above Salad's ${items}`] : [],
+    ...command2.flatMap(
+      (item, index) => item.length === 0 ? [`item ${index} is empty`] : item.length > itemCharacters ? [`item ${index} has ${item.length} characters, above Salad's ${itemCharacters}`] : /[\r\n]/.test(item) ? [`item ${index} spans several lines`] : []
+    ),
+    ...bytes > RUNPOD_REQUEST_BYTES ? [`${bytes} bytes, above Runpod's request of ${RUNPOD_REQUEST_BYTES}`] : []
+  ];
+}
+function scriptLines() {
+  return script().split("\n").map((line) => line.trim()).filter((line) => line !== "" && !line.startsWith("#"));
+}
 var STAGE_2 = [
   'const { createHash } = require("node:crypto");',
   'const { writeFileSync } = require("node:fs");',
@@ -20390,14 +20482,82 @@ var STAGE_2 = [
   "};",
   "download().then(run, (error) => fail(`Could not download ${url}: ${error.message}.`));"
 ];
+var STAGE_2_ITEM = 900;
+function packedStage2() {
+  if (STAGE_2.some((line) => line.includes("'"))) throw new Error("Stage 2 holds a single quote.");
+  return STAGE_2.reduce((items, line) => {
+    const last = items.at(-1);
+    if (last !== void 0 && last.length + 1 + line.length <= STAGE_2_ITEM) {
+      items[items.length - 1] = `${last} ${line}`;
+    } else items.push(line);
+    return items;
+  }, []);
+}
+function script() {
+  const v = BOOTSTRAP_VARIABLES;
+  return `
+set -eu
+home=\${${v.home}:-/tmp/codeman}
+log() { echo "[bootstrap] $*" >&2; }
+fail() { log "$*"; exit 1; }
+has() { command -v "$1" >/dev/null 2>&1; }
+
+# HTTPS with openssl alone, as Ollama's image has it: HTTP/1.0, no redirects.
+openssl_get() {
+  case $1 in https://*) ;; *) fail "Only openssl to download $1, which is not HTTPS." ;; esac
+  rest=\${1#https://}; authority=\${rest%%/*}; host=\${authority%:*}
+  case $rest in */*) path=/\${rest#*/} ;; *) path=/ ;; esac
+  case $authority in *:*) port=\${authority##*:} ;; *) port=443 ;; esac
+  printf 'GET %s HTTP/1.0\\r\\nHost: %s\\r\\nConnection: close\\r\\n\\r\\n' "$path" "$authority" | openssl s_client -quiet -verify_return_error -verify_hostname "$host" -servername "$host" -connect "$host:$port" >"$2.http" 2>/dev/null || return 1
+  # The headers' bytes, up to the empty line, and the status line, which must be 200.
+  size=0 status= cr=$(printf '\\r')
+  while IFS= read -r line; do
+    status=\${status:-$line}; size=$((size + \${#line} + 1))
+    [ "$line" = "$cr" ] && break
+  done <"$2.http"
+  case $status in "HTTP/1."?" 200 "*) ;; *) log "$1 answered '$status'."; return 1 ;; esac
+  tail -c +$((size + 1)) "$2.http" >"$2" || return 1
+  rm -f "$2.http"
+}
+
+# Downloads $1 to $2 with the first downloader the image has.
+download() {
+  if has curl; then log "Downloading $1 with curl."; curl -q -fsSL --retry 3 --connect-timeout 30 -o "$2" "$1"
+  elif has wget; then log "Downloading $1 with wget."; wget -q -T 60 -O "$2" "$1"
+  elif has python3; then log "Downloading $1 with python3."; python3 -I -c 'import shutil, sys, urllib.request as u; r = u.urlopen(sys.argv[1], timeout=60); f = open(sys.argv[2], "wb"); shutil.copyfileobj(r, f); f.close()' "$1" "$2"
+  elif has openssl; then log "Downloading $1 with openssl."; openssl_get "$1" "$2"
+  else fail "No curl, wget, python3 or openssl to download $1."
+  fi
+}
+
+node_url=\${${v.nodeUrl}:-}; want=\${${v.nodeSha256}:-}
+case $want in *[!0-9a-f]* | "") fail "${v.nodeSha256} is not a SHA-256: '$want'." ;; esac
+[ \${#want} -eq 64 ] || fail "${v.nodeSha256} is not a SHA-256: '$want'."
+name=\${node_url##*/}; name=\${name%.tar.gz}
+case $name in node-v*-linux-x64) ;; *) fail "${v.nodeUrl} does not name Node.js's linux-x64 .tar.gz: '$node_url'." ;; esac
+has tar && has gzip || fail "No tar and gzip to unpack Node.js."
+mkdir -p "$home"
+rm -rf "$home/node" "$home/unpack" "$home/node.tar.gz" "$home/gateway.mjs"
+mkdir "$home/unpack"
+download "$node_url" "$home/node.tar.gz" || fail "Could not download $node_url."
+file=$home/node.tar.gz
+if has sha256sum; then checker=sha256sum; actual=$(sha256sum "$file" | cut -d ' ' -f 1)
+elif has openssl; then checker=openssl; actual=$(openssl dgst -sha256 -r "$file" | cut -d ' ' -f 1)
+elif has python3; then checker=python3; actual=$(python3 -I -c 'import hashlib, sys; h = hashlib.sha256(); f = open(sys.argv[1], "rb"); [h.update(b) for b in iter(lambda: f.read(1 << 20), b"")]; print(h.hexdigest())' "$file")
+else fail "No sha256sum, openssl or python3 to check $node_url."
+fi
+log "Checked $node_url with $checker."
+[ "$actual" = "$want" ] || { rm -f "$file"; fail "Refused $node_url: its SHA-256 is '$actual', not $want."; }
+# Only bin/node, owned by the user unpacking it, not by the tarball's UID.
+gzip -dc "$file" | tar -xof - -C "$home/unpack" "$name/bin/node" || fail "Could not unpack $name/bin/node from $node_url."
+mv "$home/unpack/$name/bin/node" "$home/node"
+rm -rf "$home/unpack" "$file"
+"$home/node" --version >/dev/null 2>&1 || fail "Node.js does not run in this image: it needs glibc on linux-x64."
+exec "$home/node" -e '${packedStage2().join("\n")}' "$home/gateway.mjs"
+`;
+}
 
 // src/inference/images.ts
-var POD_IMAGES = {
-  // Published from ce1fed1.
-  ollama: "ghcr.io/codenergy-dev/codeman-ollama@sha256:111bab4dcb0c1d50f10dfead430325980066df0f756dfe017ce8c2f91821c83f",
-  // Published from ce1fed1: vLLM 0.31.0.
-  vllm: "ghcr.io/codenergy-dev/codeman-vllm@sha256:95e007062c15d5d7b8a73900e063efb9c9207316dd4c7fedb12a4a967eac2d6f"
-};
 var IMAGES_BEFORE_SALAD = /* @__PURE__ */ new Set([
   "ghcr.io/codenergy-dev/codeman-pod@sha256:6a7617fc8772c43600349a971a424bc918982c6d38972e7d1802a1a607e76d27",
   "ghcr.io/codenergy-dev/codeman-pod@sha256:3252d41775a230249490b5af79aec050151e49c4722bb62f9ce3d247d02f6ca3",
@@ -20508,9 +20668,29 @@ var ENGINE_RELEASES = {
     exceptions: []
   }
 };
+var NODE_RELEASE = {
+  url: "https://nodejs.org/dist/v24.22.1/node-v24.22.1-linux-x64.tar.gz",
+  sha256: "eb6728e77c576a35162c122c45ccadf224d89ff00abc8dae46cc2897c6002d7c",
+  release: {
+    name: "node",
+    version: "24.22.1",
+    publishedAt: "2026-10-21T10:38:25Z",
+    replaces: "24.21.0",
+    provenance: {
+      source: "https://github.com/nodejs/node",
+      commit: "ce7aaf1cee78b8cf0ce17364260535c418d3ed26",
+      shasumsSigned: true,
+      signingKey: "5BE8A3F6C8A5C01D106C0AD820B1A390B168D356"
+    }
+  }
+};
 function podImage(engine, override = "") {
   if (engine === "ollama" && override !== "") return override;
-  return POD_IMAGES[engine] ?? "";
+  return ENGINE_RELEASES[engine]?.image ?? "";
+}
+function catalogRelease(engine, image, catalog = ENGINE_RELEASES) {
+  const release2 = catalog[engine];
+  return release2 && release2.image === image ? release2 : void 0;
 }
 
 // src/inference/runpod.ts
@@ -20938,7 +21118,7 @@ var Salad = class {
         `A Salad container has ${MAX_DISK_GB} GB of disk at most, and this pod needs ${spec.diskGb} GB.`
       );
     }
-    const group = await this.#request(this.#containers(), "POST", {
+    const group2 = await this.#request(this.#containers(), "POST", {
       name: `codeman-${randomBytes(8).toString("hex")}`,
       display_name: displayName(spec.name),
       container: {
@@ -20970,12 +21150,12 @@ var Salad = class {
         server_response_timeout: 1e5
       }
     });
-    return this.#toPod(group);
+    return this.#toPod(group2);
   }
   async #get(id) {
-    const group = await this.#request(this.#containers(id), "GET", void 0, [404]);
-    if (!group) return void 0;
-    const pod = await this.#toPod(group);
+    const group2 = await this.#request(this.#containers(id), "GET", void 0, [404]);
+    if (!group2) return void 0;
+    const pod = await this.#toPod(group2);
     if (pod.status !== "starting") return pod;
     const allocated = await this.#allocated(id);
     return allocated === void 0 ? pod : { ...pod, allocated };
@@ -21000,7 +21180,7 @@ var Salad = class {
   /** `GET .../containers`, which returns the project's groups in one page of up to 100. */
   async #list(env) {
     const { items } = await this.#request(this.#containers());
-    const pods = await Promise.all((items ?? []).map((group) => this.#toPod(group)));
+    const pods = await Promise.all((items ?? []).map((group2) => this.#toPod(group2)));
     return pods.filter(
       (pod) => Object.entries(env).every(([name, value]) => pod.env[name] === value)
     );
@@ -21011,30 +21191,30 @@ var Salad = class {
   }
   /** The Container Gateway's address of the group, which Salad gives once it has one. */
   async #url(id) {
-    const group = await this.#request(this.#containers(id), "GET", void 0, [404]);
-    const dns = group?.networking?.dns;
+    const group2 = await this.#request(this.#containers(id), "GET", void 0, [404]);
+    const dns = group2?.networking?.dns;
     if (!dns) throw new Error(`Salad has no address for container group ${id} yet.`);
     return /^https?:\/\//.test(dns) ? dns : `https://${dns}`;
   }
-  async #toPod(group) {
-    const classId = group.container?.resources?.gpu_classes?.[0];
+  async #toPod(group2) {
+    const classId = group2.container?.resources?.gpu_classes?.[0];
     const gpu = classId ? (await this.#gpuClasses()).find((candidate) => candidate.id === classId) : void 0;
-    const status2 = STATUS2[group.current_state?.status ?? ""] ?? "starting";
-    const running = (group.current_state?.instance_status_counts?.running_count ?? 0) > 0;
+    const status2 = STATUS2[group2.current_state?.status ?? ""] ?? "starting";
+    const running = (group2.current_state?.instance_status_counts?.running_count ?? 0) > 0;
     let pricePerSecond;
     try {
-      pricePerSecond = gpu ? price(gpu, group.priority ?? "high") : void 0;
+      pricePerSecond = gpu ? price(gpu, group2.priority ?? "high") : void 0;
     } catch {
       pricePerSecond = void 0;
     }
     return {
-      id: group.name,
-      name: group.display_name ?? group.name,
+      id: group2.name,
+      name: group2.display_name ?? group2.name,
       status: status2 === "running" && !running ? "starting" : status2,
-      image: group.container?.image ?? "",
-      env: group.container?.environment_variables ?? {},
+      image: group2.container?.image ?? "",
+      env: group2.container?.environment_variables ?? {},
       gpuType: gpu?.name,
-      createdAt: new Date(group.create_time),
+      createdAt: new Date(group2.create_time),
       // Salad bills no other rate than the class's listed price at the group's priority.
       pricePerSecond,
       ...gpu ? { host: hostOf(gpu) } : {}
@@ -22061,8 +22241,8 @@ function tasksPerRun(layers) {
   let most = 1;
   for (const { conditions } of list4) {
     const { tasks, "min-tasks": min, "max-tasks": max } = conditions;
-    const named = tasks ?? max ?? (min === void 0 ? void 0 : MAX_TASKS);
-    if (named !== void 0) most = Math.max(most, named);
+    const named2 = tasks ?? max ?? (min === void 0 ? void 0 : MAX_TASKS);
+    if (named2 !== void 0) most = Math.max(most, named2);
   }
   return most;
 }
@@ -22114,7 +22294,7 @@ function batchKey(settings, profile2, parallel) {
     ...nonDefault(settings, "hosts"),
     ...nonDefault(settings, "priority")
   };
-  return createHash("sha256").update(JSON.stringify(serving2)).digest("hex").slice(0, 16);
+  return createHash2("sha256").update(JSON.stringify(serving2)).digest("hex").slice(0, 16);
 }
 function nonDefault(settings, name) {
   const value = settings[name];
@@ -22176,14 +22356,14 @@ function omit(layer, names) {
   return Object.fromEntries(Object.entries(layer).filter(([name]) => !names.includes(name)));
 }
 function settingSources(layers) {
-  const named = /* @__PURE__ */ new Set();
+  const named2 = /* @__PURE__ */ new Set();
   const show = (value) => Array.isArray(value) ? `[${value.map((item) => typeof item === "string" ? item : item.name).join(", ")}]` : typeof value === "object" && value !== null ? `{${Object.entries(value).map(([key, text]) => `${key}: ${text}`).join(", ")}}` : String(value);
   return layers.flatMap((layer, index) => {
     const values = Object.entries(layer).filter(
-      ([name, value]) => value !== void 0 && !named.has(name)
+      ([name, value]) => value !== void 0 && !named2.has(name)
     );
     if (values.length === 0) return [];
-    for (const [name] of values) named.add(name);
+    for (const [name] of values) named2.add(name);
     const source = LAYER_SOURCES[index] ?? `layer ${index + 1}`;
     return [`Settings from ${source}: ${values.map(([n, v]) => `${n}=${show(v)}`).join(", ")}.`];
   });
@@ -22272,26 +22452,26 @@ function counted(runs) {
     const key = JSON.stringify([run2.repository, run2.task, run2.pod]);
     onPods.set(key, [...onPods.get(key) ?? [], run2]);
   }
-  const pods = [...onPods.values()].map((group) => ({
-    runs: group,
+  const pods = [...onPods.values()].map((group2) => ({
+    runs: group2,
     amount: Math.max(
-      group.reduce((sum, run2) => sum + runAmount(run2), 0),
-      ...group.map((run2) => run2.podCost ?? 0)
+      group2.reduce((sum, run2) => sum + runAmount(run2), 0),
+      ...group2.map((run2) => run2.podCost ?? 0)
     )
   }));
   return [...alone, ...pods];
 }
 function spentBy(runs) {
-  return counted(runs).reduce((sum, group) => sum + group.amount, 0);
+  return counted(runs).reduce((sum, group2) => sum + group2.amount, 0);
 }
 function taskTotal(runs) {
   return spentBy(runs) + runs.reduce((sum, run2) => sum + (run2.carried ?? 0), 0);
 }
 function costsByWorkflowRun(runs) {
   const costs = {};
-  for (const group of counted(runs)) {
-    for (const run2 of group.runs) {
-      const amount2 = group.runs.length === 1 ? group.amount : runAmount(run2);
+  for (const group2 of counted(runs)) {
+    for (const run2 of group2.runs) {
+      const amount2 = group2.runs.length === 1 ? group2.amount : runAmount(run2);
       costs[run2.workflowRun] = (costs[run2.workflowRun] ?? 0) + amount2;
     }
   }
@@ -22320,21 +22500,21 @@ function reconciledMonth(runs, billed, now, pool2 = { others: [], members: 1 }) 
 function estimated(runs, billed, now) {
   let whole = 0;
   const estimates = /* @__PURE__ */ new Map();
-  for (const group of counted(runs)) {
-    const [first] = group.runs;
+  for (const group2 of counted(runs)) {
+    const [first] = group2.runs;
     const hours = first && billed.get(first.account);
-    if (!first || !hours || group.runs.some((run2) => reserving(run2, now))) {
-      whole += group.amount;
+    if (!first || !hours || group2.runs.some((run2) => reserving(run2, now))) {
+      whole += group2.amount;
       continue;
     }
-    const start = Math.min(...group.runs.map((run2) => run2.start.getTime()));
-    const end = Math.max(...group.runs.map((run2) => endOf(run2, now).getTime()));
+    const start = Math.min(...group2.runs.map((run2) => run2.start.getTime()));
+    const end = Math.max(...group2.runs.map((run2) => endOf(run2, now).getTime()));
     let estimate = estimates.get(first.account);
     if (!estimate) {
       estimate = /* @__PURE__ */ new Map();
       estimates.set(first.account, estimate);
     }
-    spread(estimate, group.amount, start, end);
+    spread(estimate, group2.amount, start, end);
   }
   return { whole, estimates };
 }
@@ -22638,11 +22818,888 @@ function sleep2(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// src/inference/osv.ts
+var OSV_API = "https://api.osv.dev";
+var OsvError = class extends Error {
+  /** The HTTP status, when OSV.dev answered one. */
+  status;
+  constructor(message, status2, options) {
+    super(message, options);
+    this.status = status2;
+  }
+};
+var OsvUnavailable = class extends OsvError {
+};
+var OsvUnusable = class extends OsvError {
+};
+var OSV_LIMITS = {
+  batchSize: 1e3,
+  maxPages: 10,
+  maxRecords: 1e3,
+  concurrency: 8,
+  timeoutMs: 3e4
+};
+var ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+function isOsvId(id) {
+  return ID.test(id);
+}
+var Osv = class {
+  #fetch;
+  #limits;
+  #api;
+  constructor(fetchFn = fetch, limits = {}, api = OSV_API) {
+    this.#fetch = fetchFn;
+    this.#limits = { ...OSV_LIMITS, ...limits };
+    this.#api = api;
+  }
+  async query(queries) {
+    const ids = [];
+    for (let start = 0; start < queries.length; start += this.#limits.batchSize) {
+      ids.push(...await this.#batch(queries.slice(start, start + this.#limits.batchSize)));
+    }
+    return ids;
+  }
+  /** One batch, following the pages of the queries that have more. */
+  async #batch(queries) {
+    const ids = queries.map(() => []);
+    let pending = queries.map((query, index) => ({ index, query, token: void 0 }));
+    for (let page = 0; pending.length > 0; page++) {
+      if (page === this.#limits.maxPages) {
+        throw new OsvUnusable(
+          `OSV.dev had more than ${this.#limits.maxPages} pages of advisories for ${pending.length} of the packages queried.`
+        );
+      }
+      const body = {
+        queries: pending.map(({ query, token }) => ({
+          package: { ecosystem: query.package.ecosystem, name: query.package.name },
+          version: query.version,
+          ...typeof token === "string" ? { page_token: token } : {}
+        }))
+      };
+      const answer2 = await this.#request("POST /v1/querybatch", `${this.#api}/v1/querybatch`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      const results = answer2?.results;
+      if (!Array.isArray(results) || results.length !== pending.length) {
+        throw new OsvUnusable(
+          `OSV.dev's querybatch answered ${Array.isArray(results) ? `${results.length} results` : "no results"} for ${pending.length} queries.`
+        );
+      }
+      const next = [];
+      for (const [i, result] of results.entries()) {
+        const item = pending[i];
+        const { vulns, next_page_token: token } = result ?? {};
+        for (const vuln of Array.isArray(vulns) ? vulns : []) {
+          const id = vuln?.id;
+          if (typeof id !== "string" || !isOsvId(id)) {
+            throw new OsvUnusable(`OSV.dev's querybatch answered an advisory without a valid ID.`);
+          }
+          const list4 = ids[item.index];
+          if (!list4.includes(id)) list4.push(id);
+        }
+        if (typeof token === "string" && token !== "") next.push({ ...item, token });
+      }
+      pending = next;
+    }
+    return ids;
+  }
+  async records(ids) {
+    const unique = [...new Set(ids)];
+    if (unique.length > this.#limits.maxRecords) {
+      throw new OsvUnusable(
+        `${unique.length} advisories to read from OSV.dev, over the cap of ${this.#limits.maxRecords}.`
+      );
+    }
+    for (const id of unique) {
+      if (!isOsvId(id)) throw new OsvUnusable(`\`${id}\` is not an advisory ID OSV.dev serves.`);
+    }
+    const records = /* @__PURE__ */ new Map();
+    let next = 0;
+    const worker = async () => {
+      while (next < unique.length) {
+        const id = unique[next++];
+        const record = await this.#request(
+          `GET /v1/vulns/${id}`,
+          `${this.#api}/v1/vulns/${encodeURIComponent(id)}`,
+          { method: "GET" },
+          true
+        );
+        if (record === null) continue;
+        if (typeof record.id !== "string") {
+          throw new OsvUnusable(`OSV.dev's record of ${id} has no ID.`);
+        }
+        records.set(id, record);
+      }
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(this.#limits.concurrency, unique.length) }, worker)
+    );
+    return records;
+  }
+  /** The JSON OSV.dev answers, or null for a 404 when `missingIsNull`. */
+  async #request(what, url, init, missingIsNull = false) {
+    let response;
+    try {
+      response = await this.#fetch(url, {
+        ...init,
+        headers: { Accept: "application/json", ...init.headers },
+        signal: AbortSignal.timeout(this.#limits.timeoutMs)
+      });
+    } catch (error3) {
+      throw new OsvUnavailable(
+        `OSV.dev did not answer ${what} (${error3 instanceof Error ? error3.message : error3}).`,
+        void 0,
+        { cause: error3 }
+      );
+    }
+    if (missingIsNull && response.status === 404) return null;
+    if (response.status === 429 || response.status >= 500) {
+      throw new OsvUnavailable(
+        `OSV.dev answered ${what} with ${response.status}.`,
+        response.status
+      );
+    }
+    if (!response.ok) {
+      throw new OsvUnusable(`OSV.dev answered ${what} with ${response.status}.`, response.status);
+    }
+    let body;
+    try {
+      body = await response.json();
+    } catch (error3) {
+      throw new OsvUnavailable(
+        `OSV.dev answered ${what} with a body that is not JSON.`,
+        response.status,
+        { cause: error3 }
+      );
+    }
+    if (typeof body !== "object" || body === null || Array.isArray(body)) {
+      throw new OsvUnusable(`OSV.dev answered ${what} with JSON that is not an object.`);
+    }
+    return body;
+  }
+};
+
+// src/store/layout.ts
+var LAYOUT = {
+  organization: (owner) => `organizations/${documentId(owner.toLowerCase())}`,
+  /** A run of a task's agent: one per task a workflow run's attempt picked for an agent. */
+  runs: (owner) => `${LAYOUT.organization(owner)}/runs`,
+  run: (owner, run2) => `${LAYOUT.runs(owner)}/${documentId(run2)}`,
+  /** What the jobs did, one document each, named after its run and what happened. */
+  events: (owner) => `${LAYOUT.organization(owner)}/events`,
+  event: (owner, event) => `${LAYOUT.events(owner)}/${documentId(event)}`,
+  /**
+   * The pod registry of an organization before pools, kept as history: the organization's month
+   * still counts the time its pods' tasks did not.
+   */
+  organizationPods: (owner) => `${LAYOUT.organization(owner)}/pods`,
+  /** A pool, by its ID: its members' logins joined by `+`. */
+  pool: (pool2) => `pools/${documentId(pool2.toLowerCase())}`,
+  /**
+   * The pod registry: a pod Codeman created, named by the nonce of its admin token, which the
+   * task that creates it draws first; with the leases of the tasks that use or keep it.
+   */
+  pods: (pool2) => `${LAYOUT.pool(pool2)}/pods`,
+  pod: (pool2, nonce) => `${LAYOUT.pods(pool2)}/${documentId(nonce)}`,
+  /**
+   * The board: each repository's ready tasks that a pod could serve, as its last `select` saw
+   * them, named by the repository (`owner/name`).
+   */
+  board: (pool2) => `${LAYOUT.pool(pool2)}/board`,
+  boardEntry: (pool2, repository) => `${LAYOUT.board(pool2)}/${documentId(repository.toLowerCase())}`,
+  /** A batch: the tasks, of any repository of the pool, that one pod serves at once. */
+  batches: (pool2) => `${LAYOUT.pool(pool2)}/batches`,
+  batch: (pool2, id) => `${LAYOUT.batches(pool2)}/${documentId(id)}`,
+  /**
+   * The cache of fits: the context a pod's model fitted its GPU with, for one combination of
+   * image, model, GPU type and engine settings, named by their hash (decision 4 of the plan for
+   * fitting Ollama to the GPU). It depends on nothing an organization owns.
+   */
+  contexts: () => "contexts",
+  context: (key) => `${LAYOUT.contexts()}/${documentId(key)}`,
+  /**
+   * The release checks that passed: the release policy's result for one set of pinned releases
+   * and exceptions, named by their hash (`releaseCheckKey`), which stands in for OSV.dev when it
+   * does not answer, for 24 hours (decision 7 of the plan to start pods from official engine
+   * images). It depends on nothing an organization owns.
+   */
+  releaseChecks: () => "releaseChecks",
+  releaseCheck: (key) => `${LAYOUT.releaseChecks()}/${documentId(key)}`,
+  /**
+   * A Serverless endpoint of the pool's GPU account, by its ID; under it, each run's billed times
+   * on the endpoint's worker, named by the run and its reservation, which the ledger splits among
+   * the runs that used the worker at once.
+   */
+  endpoint: (pool2, endpoint2) => `${LAYOUT.pool(pool2)}/endpoints/${documentId(endpoint2)}`,
+  endpointRuns: (pool2, endpoint2) => `${LAYOUT.endpoint(pool2, endpoint2)}/runs`,
+  endpointRun: (pool2, endpoint2, id) => `${LAYOUT.endpointRuns(pool2, endpoint2)}/${documentId(id)}`
+};
+function ledgerRunId(workflowRun, attempt, task) {
+  return `${workflowRun}-${attempt}-${task}`;
+}
+function ledgerMonth(date) {
+  return date.toISOString().slice(0, 7);
+}
+function isLedgerRunId(text) {
+  return /^\d+-\d+-\d+$/.test(text);
+}
+function repositoryName(repository) {
+  return `${repository.owner}/${repository.name}`.toLowerCase();
+}
+function documentId(text) {
+  if (text === "") throw new Error("A document ID may not be empty.");
+  const escaped = text.replaceAll("%", "%25").replaceAll("/", "%2F");
+  return escaped === "." || escaped === ".." || /^__.*__$/.test(escaped) ? `%${escaped}` : escaped;
+}
+
+// src/inference/release-policy.ts
+import { createHash as createHash3 } from "node:crypto";
+var MINIMUM_AGE_DAYS = 7;
+var CACHE_HOURS = 24;
+var POLICY_VERSION = 1;
+var RANK = { unknown: 0, low: 1, moderate: 2, high: 3, critical: 4 };
+function isBlocking(severity) {
+  return RANK[severity] >= RANK.high;
+}
+function releaseCheckKey(artifacts, exceptions) {
+  const canonical = {
+    policy: POLICY_VERSION,
+    artifacts: artifacts.map((a) => [
+      a.name,
+      a.version,
+      a.publishedAt,
+      a.osv?.ecosystem ?? null,
+      a.osv?.package ?? null,
+      a.replaces ?? null,
+      Object.entries(a.provenance ?? {}).sort(([x], [y]) => x < y ? -1 : x > y ? 1 : 0)
+    ]).sort((x, y) => JSON.stringify(x) < JSON.stringify(y) ? -1 : 1),
+    exceptions: exceptions.map((e) => [e.id, e.reason]).sort((x, y) => JSON.stringify(x) < JSON.stringify(y) ? -1 : 1)
+  };
+  return createHash3("sha256").update(JSON.stringify(canonical)).digest("hex");
+}
+async function checkReleases(artifacts, options) {
+  const { now, osv, cache } = options;
+  const exceptions = options.exceptions;
+  const key = releaseCheckKey(artifacts, exceptions);
+  const ages = artifacts.map((artifact) => ageDays(artifact.publishedAt, now));
+  const queries = [];
+  const seen = /* @__PURE__ */ new Map();
+  const queryOf = (pkg, version) => {
+    const query = { package: pkg, version: osvVersion(version) };
+    const id = JSON.stringify(query);
+    let index = seen.get(id);
+    if (index === void 0) {
+      index = queries.push(query) - 1;
+      seen.set(id, index);
+    }
+    return index;
+  };
+  const plans = artifacts.map((artifact, i) => {
+    if (!artifact.osv) return {};
+    const pkg = { ecosystem: artifact.osv.ecosystem, name: artifact.osv.package };
+    const young = (ages[i] ?? null) !== null && ages[i] < MINIMUM_AGE_DAYS;
+    return {
+      own: queryOf(pkg, artifact.version),
+      ...young && artifact.replaces ? { replaced: queryOf(pkg, artifact.replaces) } : {}
+    };
+  });
+  let found;
+  let failure;
+  if (queries.length > 0) {
+    try {
+      found = await lookUp(osv, queries);
+    } catch (error3) {
+      const message = error3 instanceof Error ? error3.message : String(error3);
+      if (error3 instanceof OsvUnavailable) {
+        const cached = await fresh(cache, key, now);
+        if (cached) {
+          return {
+            ...cached,
+            verdict: "warn",
+            checkedAt: now.toISOString(),
+            source: "cache",
+            cachedFrom: cached.checkedAt,
+            reasons: [
+              ...cached.reasons.filter((r) => r.level !== "note"),
+              {
+                level: "warning",
+                text: `${message} The same releases passed at ${cached.checkedAt}, within the last ${CACHE_HOURS} hours, so that result stands.`
+              },
+              ...cached.reasons.filter((r) => r.level === "note")
+            ]
+          };
+        }
+        failure = `${message} No passing check of the same releases and exceptions from the last ${CACHE_HOURS} hours is cached, so they cannot be checked; try again later.`;
+      } else {
+        failure = `OSV.dev's advisories could not be read: ${message}`;
+      }
+    }
+  }
+  const used = /* @__PURE__ */ new Set();
+  const checks = artifacts.map(
+    (artifact, i) => checkArtifact(artifact, ages[i] ?? null, plans[i] ?? {}, found, exceptions, used)
+  );
+  const general = [];
+  if (failure) general.push({ level: "block", text: failure });
+  for (const exception of exceptions) {
+    if (exception.reason.trim() === "") {
+      general.push({
+        level: "block",
+        text: `The exception for ${exception.id} gives no reason; each exception says why its advisory is accepted.`
+      });
+    } else if (!failure && !used.has(exception)) {
+      general.push({
+        level: "note",
+        text: `The exception for ${exception.id} matches no advisory of these releases, so it can go.`
+      });
+    }
+  }
+  const reasons = [
+    ...checks.flatMap(
+      (check) => check.reasons.map((r) => ({ level: r.level, text: `${label(check)}: ${r.text}` }))
+    ),
+    ...general
+  ];
+  const result = {
+    verdict: verdictOf(reasons),
+    checkedAt: now.toISOString(),
+    source: "live",
+    artifacts: checks,
+    reasons: sortReasons(reasons)
+  };
+  if (result.verdict !== "block") {
+    try {
+      await cache.set(key, result);
+    } catch (error3) {
+      result.reasons.push({
+        level: "note",
+        text: `This result could not be cached (${error3 instanceof Error ? error3.message : error3}), so it cannot stand in for OSV.dev if it does not answer later.`
+      });
+    }
+  }
+  return result;
+}
+async function fresh(cache, key, now) {
+  let cached;
+  try {
+    cached = await cache.get(key);
+  } catch {
+    return void 0;
+  }
+  if (!cached || cached.verdict === "block" || cached.source !== "live") return void 0;
+  const age = now.getTime() - Date.parse(cached.checkedAt);
+  return age >= 0 && age <= CACHE_HOURS * 36e5 ? cached : void 0;
+}
+function checkArtifact(artifact, age, plan, found, exceptions, used) {
+  const reasons = [];
+  const accepted = [];
+  let bypass;
+  if (age === null) {
+    reasons.push({
+      level: "block",
+      text: `its publication date, "${artifact.publishedAt}", cannot be read, so its age is unknown.`
+    });
+  } else if (age < MINIMUM_AGE_DAYS) {
+    const young = `it was published ${formatAge(age)} ago, under the minimum age of ${MINIMUM_AGE_DAYS} days`;
+    if (!artifact.replaces) {
+      reasons.push({
+        level: "block",
+        text: `${young}. Pin an older release, or set the release it replaces when it fixes a high or critical advisory of that release.`
+      });
+    } else if (!artifact.osv) {
+      reasons.push({
+        level: "block",
+        text: `${young}, and with no advisory database named for it, nothing shows that it fixes an advisory of ${artifact.replaces}.`
+      });
+    } else if (found && plan.replaced !== void 0) {
+      const fixes = (found[plan.replaced] ?? []).filter((a) => isBlocking(a.severity));
+      const justified = fixes.find(
+        (a) => a.fixed[0] !== void 0 && compareVersions(a.fixed[0], artifact.version) === 0
+      );
+      if (justified) {
+        bypass = { replaces: artifact.replaces, advisory: justified.id };
+        reasons.push({
+          level: "note",
+          text: `${young}, but passes: it is the earliest release that fixes ${justified.id} (${justified.severity}) of ${artifact.replaces}, which it replaces.`
+        });
+      } else {
+        const earliest = fixes.filter((a) => a.fixed[0] !== void 0).map((a) => `${a.id} is fixed first in ${a.fixed[0]}`);
+        reasons.push({
+          level: "block",
+          text: `${young}, and it is not the earliest release that fixes a high or critical advisory of ${artifact.replaces}, which it replaces: ${earliest.length > 0 ? `${earliest.join("; ")}.` : `${artifact.replaces} has none with a fix.`}`
+        });
+      }
+    } else {
+      reasons.push({
+        level: "block",
+        text: `${young}, and whether it fixes an advisory of ${artifact.replaces} could not be checked.`
+      });
+    }
+  }
+  const advisories = plan.own !== void 0 && found ? found[plan.own] ?? [] : [];
+  for (const advisory of advisories) {
+    const exception = exceptions.find((e) => e.reason.trim() !== "" && matches(e.id, advisory));
+    const named2 = `${advisory.id} (${advisory.severity === "unknown" ? "no severity" : advisory.severity}${advisory.aliases.length > 0 ? `, also ${advisory.aliases.join(", ")}` : ""})`;
+    const summary2 = advisory.summary ? `: ${advisory.summary}` : "";
+    const fix = advisory.fixed[0] !== void 0 ? `fixed in ${advisory.fixed[0]}` : "no release fixes it";
+    const remedy = advisory.fixed[0] !== void 0 ? `It is fixed in ${advisory.fixed[0]}; pin that release` : "No release fixes it; pin a release it does not affect";
+    if (exception) {
+      used.add(exception);
+      if (!accepted.includes(exception)) accepted.push(exception);
+      advisory.acceptedBecause = exception.reason;
+      reasons.push({
+        level: "note",
+        text: `${named2} is accepted by the exception for ${exception.id}: ${exception.reason}`
+      });
+    } else if (isBlocking(advisory.severity)) {
+      reasons.push({
+        level: "block",
+        text: `it has ${named2}${summary2}. ${remedy}, or add an exception for ${advisory.id} with its reason.`
+      });
+    } else if (advisory.severity === "unknown") {
+      reasons.push({
+        level: "warning",
+        text: `it has ${named2}${summary2}. ${advisory.severityFrom}, so review it by hand; ${fix}.`
+      });
+    } else {
+      reasons.push({ level: "warning", text: `it has ${named2}${summary2}; ${fix}.` });
+    }
+  }
+  if (!artifact.osv) {
+    reasons.push({
+      level: "note",
+      text: "no advisory database is named for it, so OSV.dev was not asked; its advisories are checked by hand when it is pinned."
+    });
+  } else if (!found) {
+    reasons.push({ level: "block", text: "its advisories could not be read from OSV.dev." });
+  }
+  return {
+    name: artifact.name,
+    version: artifact.version,
+    publishedAt: artifact.publishedAt,
+    ageDays: age === null ? null : Math.round(age * 100) / 100,
+    advisories,
+    exceptions: accepted,
+    ...bypass ? { bypass } : {},
+    ...artifact.provenance ? { provenance: artifact.provenance } : {},
+    verdict: verdictOf(reasons),
+    reasons: sortReasons(reasons)
+  };
+}
+function matches(id, advisory) {
+  const wanted = id.trim().toUpperCase();
+  return [advisory.id, ...advisory.aliases].some((other) => other.toUpperCase() === wanted);
+}
+function verdictOf(reasons) {
+  if (reasons.some((r) => r.level === "block")) return "block";
+  return reasons.some((r) => r.level === "warning") ? "warn" : "pass";
+}
+function sortReasons(reasons) {
+  const order = { block: 0, warning: 1, note: 2 };
+  return [...reasons].sort((a, b) => order[a.level] - order[b.level]);
+}
+function label(check) {
+  return `${check.name} ${check.version}`;
+}
+function ageDays(publishedAt, now) {
+  const published = Date.parse(publishedAt);
+  return Number.isNaN(published) ? null : (now.getTime() - published) / 864e5;
+}
+function formatAge(days) {
+  if (days < 1) {
+    const hours = Math.max(0, Math.floor(days * 24));
+    return `${hours} hour${hours === 1 ? "" : "s"}`;
+  }
+  return `${Math.floor(days * 10) / 10} days`;
+}
+function osvVersion(version) {
+  return version.replace(/^v(?=\d)/, "");
+}
+var ALIASES_READ = 4;
+async function lookUp(osv, queries) {
+  const ids = await osv.query(queries);
+  const records = await osv.records([...new Set(ids.flat())]);
+  const aliasIds = /* @__PURE__ */ new Set();
+  for (const record of records.values()) {
+    if (record.withdrawn || severityOf(record).severity !== "unknown") continue;
+    for (const alias of preferred(record.aliases ?? []).slice(0, ALIASES_READ)) {
+      if (!records.has(alias) && isOsvId(alias)) aliasIds.add(alias);
+    }
+  }
+  const aliases = aliasIds.size > 0 ? await osv.records([...aliasIds]) : /* @__PURE__ */ new Map();
+  return queries.map(
+    (query, i) => group(
+      query,
+      (ids[i] ?? []).flatMap((id) => {
+        const record = records.get(id);
+        return record && !record.withdrawn ? [record] : [];
+      }),
+      aliases
+    )
+  );
+}
+function preferred(ids) {
+  const rank = (id) => id.startsWith("GHSA-") ? 0 : id.startsWith("CVE-") ? 1 : 2;
+  return [...ids].sort((a, b) => rank(a) - rank(b));
+}
+function group(query, records, aliasRecords) {
+  const groups = [];
+  for (const record of records) {
+    const names = /* @__PURE__ */ new Set([record.id, ...record.aliases ?? []]);
+    const joined = groups.filter(
+      (g) => g.some((other) => names.has(other.id) || (other.aliases ?? []).includes(record.id))
+    );
+    const merged = [...joined.flat(), record];
+    for (const g of joined) groups.splice(groups.indexOf(g), 1);
+    groups.push(merged);
+  }
+  const advisories = groups.map((members) => {
+    const [primary] = preferred(members.map((m) => m.id));
+    const head = members.find((m) => m.id === primary);
+    const names = new Set(members.flatMap((m) => [m.id, ...m.aliases ?? []]));
+    names.delete(head.id);
+    let severity = strongest(members.map(severityOf));
+    const outside = [...names].filter((name) => !members.some((m) => m.id === name));
+    if (severity.severity === "unknown" && outside.length > 0) {
+      const fromAliases = strongest(
+        outside.flatMap((alias) => {
+          const record = aliasRecords.get(alias);
+          if (!record) return [];
+          const found = severityOf(record);
+          return found.severity === "unknown" ? [] : [{ ...found, from: `${found.from}, an alias` }];
+        })
+      );
+      severity = fromAliases.severity !== "unknown" ? fromAliases : { severity: "unknown", from: `${severity.from}, and none of its aliases has one` };
+    }
+    const fixed = [...new Set(members.flatMap((m) => fixesFor(m, query)))].sort(compareVersions);
+    return {
+      id: head.id,
+      aliases: [...names].sort(),
+      summary: firstLine(head.summary ?? members.find((m) => m.summary)?.summary ?? head.details),
+      severity: severity.severity,
+      severityFrom: severity.from,
+      fixed
+    };
+  });
+  return advisories.sort(
+    (a, b) => RANK[b.severity] - RANK[a.severity] || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
+  );
+}
+function firstLine(text) {
+  return ((text ?? "").split("\n")[0] ?? "").trim().slice(0, 200).replace(/\.$/, "");
+}
+function strongest(found) {
+  let best = { severity: "unknown", from: "It carries no severity" };
+  for (const f of found) {
+    const better = Number(f.named ?? false) - Number(best.named ?? false) || RANK[f.severity] - RANK[best.severity];
+    if (better > 0) best = f;
+    else if (best.severity === "unknown" && f.severity === "unknown" && f.from !== best.from) {
+      best = f;
+    }
+  }
+  return best;
+}
+function named(value) {
+  if (typeof value !== "string") return void 0;
+  const word = value.trim().toUpperCase();
+  if (word === "CRITICAL") return "critical";
+  if (word === "HIGH") return "high";
+  if (word === "MODERATE" || word === "MEDIUM") return "moderate";
+  if (word === "LOW") return "low";
+  return void 0;
+}
+function severityOf(record) {
+  const top = named(record.database_specific?.severity);
+  if (top) return { severity: top, from: `${record.id} database_specific`, named: true };
+  let best;
+  for (const affected of record.affected ?? []) {
+    for (const value of [
+      affected.database_specific?.severity,
+      affected.ecosystem_specific?.severity
+    ]) {
+      const severity = named(value);
+      if (severity && (!best || RANK[severity] > RANK[best.severity])) {
+        best = { severity, from: `${record.id} affected severity`, named: true };
+      }
+    }
+  }
+  if (best) return best;
+  const vectors = record.severity ?? [];
+  for (const { type, score } of vectors) {
+    if ((type === "CVSS_V3" || score?.startsWith("CVSS:3.")) && typeof score === "string") {
+      const base = cvss3(score);
+      if (base !== null) {
+        return { severity: fromScore(base), from: `${record.id} CVSS_V3 ${base.toFixed(1)}` };
+      }
+    }
+  }
+  for (const { type, score } of vectors) {
+    const severity = type === "Ubuntu" ? named(score) : void 0;
+    if (severity) return { severity, from: `${record.id} Ubuntu priority`, named: true };
+  }
+  if (vectors.length > 0) {
+    const types = [...new Set(vectors.map((v) => v.type ?? "unknown"))].join(", ");
+    return { severity: "unknown", from: `Its ${types} vector is not one Codeman scores` };
+  }
+  return { severity: "unknown", from: "It carries no severity" };
+}
+function fromScore(score) {
+  if (score >= 9) return "critical";
+  if (score >= 7) return "high";
+  if (score >= 4) return "moderate";
+  return "low";
+}
+function roundUp(value) {
+  const scaled = Math.round(value * 1e5);
+  return scaled % 1e4 === 0 ? scaled / 1e5 : (Math.floor(scaled / 1e4) + 1) / 10;
+}
+function cvss3(vector) {
+  const parts = vector.split("/");
+  if (!/^CVSS:3\.[01]$/.test(parts[0] ?? "")) return null;
+  const m = new Map(parts.slice(1).map((p) => p.split(":")));
+  const pick2 = (metric, weights) => {
+    const value = m.get(metric);
+    return value !== void 0 && value in weights ? weights[value] : void 0;
+  };
+  const scope = m.get("S");
+  if (scope !== "U" && scope !== "C") return null;
+  const changed = scope === "C";
+  const cia = { H: 0.56, L: 0.22, N: 0 };
+  const av = pick2("AV", { N: 0.85, A: 0.62, L: 0.55, P: 0.2 });
+  const ac = pick2("AC", { L: 0.77, H: 0.44 });
+  const pr = pick2("PR", { N: 0.85, L: changed ? 0.68 : 0.62, H: changed ? 0.5 : 0.27 });
+  const ui = pick2("UI", { N: 0.85, R: 0.62 });
+  const c = pick2("C", cia);
+  const i = pick2("I", cia);
+  const a = pick2("A", cia);
+  if ([av, ac, pr, ui, c, i, a].some((w) => w === void 0)) return null;
+  const iss = 1 - (1 - c) * (1 - i) * (1 - a);
+  const impact = changed ? 7.52 * (iss - 0.029) - 3.25 * (iss - 0.02) ** 15 : 6.42 * iss;
+  if (impact <= 0) return 0;
+  const exploitability = 8.22 * av * ac * pr * ui;
+  return roundUp(Math.min((changed ? 1.08 : 1) * (impact + exploitability), 10));
+}
+function pypiName(name) {
+  return name.toLowerCase().replace(/[-_.]+/g, "-");
+}
+function samePackage(affected, pkg) {
+  if (affected.ecosystem !== pkg.ecosystem || typeof affected.name !== "string") return false;
+  return pkg.ecosystem === "PyPI" ? pypiName(affected.name) === pypiName(pkg.name) : affected.name === pkg.name;
+}
+function fixesFor(record, query) {
+  const fixes = [];
+  let listed = false;
+  const above = [];
+  for (const affected of record.affected ?? []) {
+    if (!affected.package || !samePackage(affected.package, query.package)) continue;
+    if (affected.versions?.some((v) => compareVersions(v, query.version) === 0)) listed = true;
+    for (const range of affected.ranges ?? []) {
+      if (range.type === "GIT") continue;
+      const events = (range.events ?? []).flatMap((event) => eventOf(event));
+      events.sort((x, y) => compareEvent(x.at, y.at));
+      for (const event of events) {
+        if (event.kind === "fixed" && compareEvent(event.at, query.version) > 0) {
+          above.push(event.at);
+        }
+      }
+      let inside = false;
+      for (const event of events) {
+        const order = compareEvent(event.at, query.version);
+        if (order < 0 || order === 0 && event.kind !== "last_affected") {
+          if (event.kind === "introduced") inside = true;
+          else if (event.kind === "fixed" || event.kind === "last_affected") inside = false;
+          continue;
+        }
+        if (order === 0) break;
+        if (inside && event.kind === "fixed") fixes.push(event.at);
+        if (event.kind !== "limit") break;
+      }
+    }
+  }
+  const all = fixes.length > 0 ? fixes : listed ? above : [];
+  return [...new Set(all)].sort(compareVersions);
+}
+function eventOf(event) {
+  return ["introduced", "fixed", "last_affected", "limit"].flatMap(
+    (kind) => typeof event[kind] === "string" ? [{ kind, at: event[kind] }] : []
+  );
+}
+function compareEvent(a, b) {
+  if (a === "0" || b === "0") return a === b ? 0 : a === "0" ? -1 : 1;
+  return compareVersions(a, b);
+}
+function parseVersion(version) {
+  const v = version.trim().toLowerCase().replace(/^v/, "").split("+")[0] ?? "";
+  const m = v.match(
+    /^(?:(\d+)!)?(\d+(?:\.\d+)*)(?:[-_.]?(a|b|c|rc|alpha|beta|pre|preview)[-_.]?(\d*))?(?:[-_.]?(?:post|rev|r)[-_.]?(\d*))?(?:[-_.]?dev[-_.]?(\d*))?$/
+  );
+  if (!m) return null;
+  const pre = m[3] ? { a: 0, alpha: 0, b: 1, beta: 1 }[m[3]] ?? 2 : 3;
+  return {
+    epoch: Number(m[1] ?? 0),
+    release: (m[2] ?? "0").split(".").map(Number),
+    // A dev release without a pre release comes before the pre releases.
+    pre: m[3] ? [pre, Number(m[4] || 0)] : m[6] !== void 0 && m[5] === void 0 ? [-1, 0] : [3, 0],
+    post: m[5] !== void 0 ? Number(m[5] || 0) : -1,
+    dev: m[6] !== void 0 ? Number(m[6] || 0) : Number.POSITIVE_INFINITY
+  };
+}
+function compareVersions(a, b) {
+  const x = parseVersion(a);
+  const y = parseVersion(b);
+  if (!x || !y) return a.localeCompare(b, void 0, { numeric: true });
+  if (x.epoch !== y.epoch) return x.epoch - y.epoch;
+  const n = Math.max(x.release.length, y.release.length);
+  for (let i = 0; i < n; i++) {
+    const d = (x.release[i] ?? 0) - (y.release[i] ?? 0);
+    if (d) return d;
+  }
+  const pairs = [
+    [x.pre[0] ?? 0, y.pre[0] ?? 0],
+    [x.pre[1] ?? 0, y.pre[1] ?? 0],
+    [x.post, y.post],
+    [x.dev, y.dev]
+  ];
+  for (const [p, q] of pairs) if (p !== q) return p < q ? -1 : 1;
+  return 0;
+}
+
+// src/inference/resolution.ts
+var ReleaseBlocked = class extends Error {
+  check;
+  constructor(message, check) {
+    super(message);
+    this.check = check;
+  }
+};
+async function resolvePod(engine, image, releases, now, log) {
+  const gateway = releases.gateway();
+  const node = releases.node ?? NODE_RELEASE;
+  const pinned = catalogRelease(engine, image, releases.engines ?? ENGINE_RELEASES);
+  if (!pinned) {
+    log.info(
+      `The pod image ${image} is not the one Codeman pins for ${engine}, as when the \`pod-image\` input chooses it: the release policy checks Node.js only.`
+    );
+  }
+  const artifacts = [...pinned ? [pinned.release] : [], node.release];
+  let unreadable = false;
+  const failed2 = (error3) => {
+    unreadable = true;
+    throw error3;
+  };
+  const osv = {
+    query: (queries) => releases.osv.query(queries).catch(failed2),
+    records: (ids) => releases.osv.records(ids).catch(failed2)
+  };
+  const check = await checkReleases(artifacts, {
+    now,
+    exceptions: pinned?.exceptions ?? [],
+    osv,
+    cache: releases.cache
+  });
+  const names = artifacts.map((artifact) => `${artifact.name} ${artifact.version}`).join(" and ");
+  if (check.verdict === "block") {
+    const reasons = check.reasons.filter((reason) => reason.level === "block");
+    for (const reason of reasons) log.error(`Release policy: ${reason.text}`);
+    const text = reasons.map((reason) => reason.text).join(" ");
+    throw new ReleaseBlocked(
+      unreadable ? `The release policy could not check ${names}, so no pod was created and the run stops: ${text}` : `The release policy blocks ${names}, so no pod was created, and the run stops rather than fall back to another profile: ${text} Codeman pins these releases (\`ENGINE_RELEASES\` and \`NODE_RELEASE\` in src/inference/images.ts): set CODEMAN_COMMIT_SHA to a commit of Codeman whose releases pass, or, for Ollama, choose an image with the \`pod-image\` input, which the policy does not check.`,
+      check
+    );
+  }
+  const from = check.source === "cache" ? `, from its check at ${check.cachedFrom}` : "";
+  const verdict = check.verdict === "warn" ? "passes, with warnings," : "passes";
+  log.info(`The release policy ${verdict} ${names}${from}.`);
+  for (const reason of check.reasons) {
+    if (reason.level === "warning") log.warning(`Release policy: ${reason.text}`);
+    else log.info(`Release policy: ${reason.text}`);
+  }
+  const bootstrap = {
+    node: { url: node.url, sha256: node.sha256 },
+    gateway: { url: gateway.url, sha256: gateway.sha256 }
+  };
+  const found = (name) => check.artifacts.find((one) => one.name === name);
+  return {
+    artifacts: bootstrap,
+    check,
+    fields: resolutionFields(check, {
+      image: { reference: image, ...pinned ? { check: found(pinned.release.name) } : {} },
+      node: { url: node.url, sha256: node.sha256, check: found(node.release.name) },
+      gateway
+    })
+  };
+}
+function resolutionFields(check, artifacts) {
+  const { image, node, gateway } = artifacts;
+  const digest = /@(sha256:[0-9a-f]{64})$/.exec(image.reference)?.[1];
+  const plain = JSON.parse(
+    JSON.stringify({
+      verdict: check.verdict,
+      source: check.source,
+      ...check.cachedFrom ? { cachedFrom: check.cachedFrom } : {},
+      image: {
+        reference: image.reference,
+        ...digest ? { digest } : {},
+        // An image the `pod-image` input chose is not checked.
+        checked: image.check !== void 0,
+        ...image.check ? released(image.check) : {}
+      },
+      node: {
+        url: node.url,
+        sha256: node.sha256,
+        ...node.check ? released(node.check) : {}
+      },
+      gateway: { url: gateway.url, sha256: gateway.sha256, commit: gateway.commit },
+      reasons: check.reasons
+    })
+  );
+  return { ...plain, checkedAt: new Date(check.checkedAt) };
+}
+function released(check) {
+  return {
+    name: check.name,
+    version: check.version,
+    publishedAt: check.publishedAt,
+    ageDays: check.ageDays,
+    verdict: check.verdict,
+    advisories: check.advisories,
+    exceptions: check.exceptions,
+    ...check.bypass ? { bypass: check.bypass } : {},
+    ...check.provenance ? { provenance: check.provenance } : {}
+  };
+}
+var StoredReleaseChecks = class {
+  #store;
+  constructor(store) {
+    this.#store = store;
+  }
+  async get(key) {
+    const result = (await this.#store.get(LAYOUT.releaseCheck(key)))?.fields.result;
+    return typeof result === "string" ? JSON.parse(result) : void 0;
+  }
+  async set(key, result) {
+    await this.#store.write([
+      {
+        op: "set",
+        path: LAYOUT.releaseCheck(key),
+        fields: {
+          releases: result.artifacts.map((artifact) => `${artifact.name} ${artifact.version}`),
+          verdict: result.verdict,
+          checkedAt: new Date(result.checkedAt),
+          result: JSON.stringify(result)
+        }
+      }
+    ]);
+  }
+};
+
 // src/inference/selfhosted.ts
 import { createHmac, randomBytes as randomBytes3 } from "node:crypto";
 
 // src/gateway/gateway.ts
-import { createHash as createHash2, timingSafeEqual } from "node:crypto";
+import { createHash as createHash4, timingSafeEqual } from "node:crypto";
 import {
   createServer,
   request as httpRequest
@@ -22811,9 +23868,9 @@ var GROUP = /^[\w.-]{1,100}$/;
 var MAX_BODY_BYTES = 32 * 1024 * 1024;
 var KEEP_ALIVE_MS = 2e4;
 function sha256(text) {
-  return createHash2("sha256").update(text).digest("hex");
+  return createHash4("sha256").update(text).digest("hex");
 }
-function matches(token, hash) {
+function matches2(token, hash) {
   if (!token || !hash) return false;
   const given = Buffer.from(sha256(token), "hex");
   const expected = Buffer.from(hash, "hex");
@@ -23106,7 +24163,7 @@ var Gateway = class {
       return this.#admin(route, request2, response);
     if (!ROUTES.has(route)) return send(response, 404, error("Not found."));
     const token = bearer(request2);
-    const run2 = this.#runs.findLast((one) => matches(token, one.tokenSha256));
+    const run2 = this.#runs.findLast((one) => matches2(token, one.tokenSha256));
     if (run2?.stopped) return answer(response, run2.stopped);
     if (!run2?.active) return send(response, 401, error("Invalid token."));
     this.lastActivity = run2.lastActivity = this.#now();
@@ -23115,7 +24172,7 @@ var Gateway = class {
     await this.#forward(run2, request2, response, path);
   }
   async #admin(route, request2, response) {
-    if (!matches(bearer(request2), this.#options.adminSha256)) {
+    if (!matches2(bearer(request2), this.#options.adminSha256)) {
       return send(response, 401, error("Invalid token."));
     }
     if (route === "GET /usage") return send(response, 200, this.usage() ?? null);
@@ -23324,15 +24381,15 @@ function parseJson(text) {
 }
 function runSettings(body) {
   if (typeof body !== "object" || body === null) return void 0;
-  const { tokenSha256, limit, start, pricePerSecond, idleSeconds, task, group } = body;
+  const { tokenSha256, limit, start, pricePerSecond, idleSeconds, task, group: group2 } = body;
   const positive = (value) => typeof value === "number" && Number.isFinite(value) && value > 0;
   if (typeof tokenSha256 !== "string" || !/^[0-9a-f]{64}$/.test(tokenSha256)) return void 0;
   if (!positive(limit) || !positive(start) || !positive(pricePerSecond)) return void 0;
   if (task !== void 0 && (typeof task !== "string" || !TASK.test(task))) return void 0;
-  if (group !== void 0 && (typeof group !== "string" || !GROUP.test(group))) return void 0;
-  const named = { ...task ? { task } : {}, ...group ? { group } : {} };
+  if (group2 !== void 0 && (typeof group2 !== "string" || !GROUP.test(group2))) return void 0;
+  const named2 = { ...task ? { task } : {}, ...group2 ? { group: group2 } : {} };
   if (idleSeconds === void 0) {
-    return { tokenSha256, limit, start, meter: { kind: "time", pricePerSecond }, ...named };
+    return { tokenSha256, limit, start, meter: { kind: "time", pricePerSecond }, ...named2 };
   }
   if (typeof idleSeconds !== "number" || !Number.isFinite(idleSeconds) || idleSeconds < 0) {
     return void 0;
@@ -23342,7 +24399,7 @@ function runSettings(body) {
     limit,
     start,
     meter: { kind: "busy", pricePerSecond, idleMs: idleSeconds * 1e3 },
-    ...named
+    ...named2
   };
 }
 
@@ -23353,71 +24410,6 @@ var KV_BYTES = { f16: 2, q8_0: 34 / 32, q4_0: 18 / 32 };
 // src/gateway/pod.ts
 var GATEWAY_PORT = 8080;
 var FAILURE_GRACE_MS = 2 * 6e4;
-
-// src/store/layout.ts
-var LAYOUT = {
-  organization: (owner) => `organizations/${documentId(owner.toLowerCase())}`,
-  /** A run of a task's agent: one per task a workflow run's attempt picked for an agent. */
-  runs: (owner) => `${LAYOUT.organization(owner)}/runs`,
-  run: (owner, run2) => `${LAYOUT.runs(owner)}/${documentId(run2)}`,
-  /** What the jobs did, one document each, named after its run and what happened. */
-  events: (owner) => `${LAYOUT.organization(owner)}/events`,
-  event: (owner, event) => `${LAYOUT.events(owner)}/${documentId(event)}`,
-  /**
-   * The pod registry of an organization before pools, kept as history: the organization's month
-   * still counts the time its pods' tasks did not.
-   */
-  organizationPods: (owner) => `${LAYOUT.organization(owner)}/pods`,
-  /** A pool, by its ID: its members' logins joined by `+`. */
-  pool: (pool2) => `pools/${documentId(pool2.toLowerCase())}`,
-  /**
-   * The pod registry: a pod Codeman created, named by the nonce of its admin token, which the
-   * task that creates it draws first; with the leases of the tasks that use or keep it.
-   */
-  pods: (pool2) => `${LAYOUT.pool(pool2)}/pods`,
-  pod: (pool2, nonce) => `${LAYOUT.pods(pool2)}/${documentId(nonce)}`,
-  /**
-   * The board: each repository's ready tasks that a pod could serve, as its last `select` saw
-   * them, named by the repository (`owner/name`).
-   */
-  board: (pool2) => `${LAYOUT.pool(pool2)}/board`,
-  boardEntry: (pool2, repository) => `${LAYOUT.board(pool2)}/${documentId(repository.toLowerCase())}`,
-  /** A batch: the tasks, of any repository of the pool, that one pod serves at once. */
-  batches: (pool2) => `${LAYOUT.pool(pool2)}/batches`,
-  batch: (pool2, id) => `${LAYOUT.batches(pool2)}/${documentId(id)}`,
-  /**
-   * The cache of fits: the context a pod's model fitted its GPU with, for one combination of
-   * image, model, GPU type and engine settings, named by their hash (decision 4 of the plan for
-   * fitting Ollama to the GPU). It depends on nothing an organization owns.
-   */
-  contexts: () => "contexts",
-  context: (key) => `${LAYOUT.contexts()}/${documentId(key)}`,
-  /**
-   * A Serverless endpoint of the pool's GPU account, by its ID; under it, each run's billed times
-   * on the endpoint's worker, named by the run and its reservation, which the ledger splits among
-   * the runs that used the worker at once.
-   */
-  endpoint: (pool2, endpoint2) => `${LAYOUT.pool(pool2)}/endpoints/${documentId(endpoint2)}`,
-  endpointRuns: (pool2, endpoint2) => `${LAYOUT.endpoint(pool2, endpoint2)}/runs`,
-  endpointRun: (pool2, endpoint2, id) => `${LAYOUT.endpointRuns(pool2, endpoint2)}/${documentId(id)}`
-};
-function ledgerRunId(workflowRun, attempt, task) {
-  return `${workflowRun}-${attempt}-${task}`;
-}
-function ledgerMonth(date) {
-  return date.toISOString().slice(0, 7);
-}
-function isLedgerRunId(text) {
-  return /^\d+-\d+-\d+$/.test(text);
-}
-function repositoryName(repository) {
-  return `${repository.owner}/${repository.name}`.toLowerCase();
-}
-function documentId(text) {
-  if (text === "") throw new Error("A document ID may not be empty.");
-  const escaped = text.replaceAll("%", "%25").replaceAll("/", "%2F");
-  return escaped === "." || escaped === ".." || /^__.*__$/.test(escaped) ? `%${escaped}` : escaped;
-}
 
 // src/inference/huggingface.ts
 var HUB = "https://huggingface.co";
@@ -23750,12 +24742,12 @@ function exchange(store, input) {
         ...input.unavailable ? { unavailable: input.unavailable } : {}
       });
       const formed = [];
-      const named = [];
+      const named2 = [];
       const targets = /* @__PURE__ */ new Map();
       let index = 0;
       for (const batch of formation.batches) {
         const id = batch.pod ? `${input.run.id}-${input.run.attempt}-${index++}` : void 0;
-        named.push({ ...batch, id });
+        named2.push({ ...batch, id });
         for (const task of batch.tasks) {
           if (task.repository === repository) {
             formed.push({
@@ -23826,7 +24818,7 @@ function exchange(store, input) {
         honored,
         formed,
         dropped,
-        batches: named,
+        batches: named2,
         waiting: formation.waiting,
         unserved: formation.unserved,
         dispatches
@@ -24309,7 +25301,7 @@ function quotedVariables(settings) {
   return ollamaVariables(settings).map((variable) => `\`${variable}\``).join(", ");
 }
 function podSettingsKey(settings, holder) {
-  const { model, gpuType, image, reuse, priority } = settings;
+  const { model, gpuType, image, reuse, priority, bootstrap } = settings;
   const ollama2 = ollamaVariables(settings);
   const vllm2 = settings.engine && onVllm({ engine: settings.engine });
   const hosts = (settings.hosts ?? DEFAULT_HOSTS).join(",");
@@ -24322,7 +25314,11 @@ function podSettingsKey(settings, holder) {
     ...ollama2.length > 0 ? [`ollama ${ollama2.join(" ")}`] : [],
     ...vllm2 ? ["engine vllm", `vllm ${vllmValues(settings).join(" ")}`] : [],
     ...hosts !== DEFAULT_HOSTS.join(",") ? [`hosts ${hosts}`] : [],
-    ...priority !== void 0 ? [`priority ${priority}`] : []
+    ...priority !== void 0 ? [`priority ${priority}`] : [],
+    ...bootstrap ? [
+      `gateway ${bootstrap.gateway.sha256}`,
+      `bootstrap ${sha256(JSON.stringify([bootstrapCommand(), bootstrap.node.url, bootstrap.node.sha256]))}`
+    ] : []
   ];
   return sha256(parts.join("\n")).slice(0, 16);
 }
@@ -24331,13 +25327,13 @@ function ofOrganization(pod, owner) {
   return organization !== void 0 && organization.toLowerCase() === owner.toLowerCase();
 }
 function ofPool(pod, pool2, owner) {
-  const named = pod.env.CODEMAN_POOL;
-  return named ? named.toLowerCase() === pool2.toLowerCase() : ofOrganization(pod, owner);
+  const named2 = pod.env.CODEMAN_POOL;
+  return named2 ? named2.toLowerCase() === pool2.toLowerCase() : ofOrganization(pod, owner);
 }
 function otherPoolOf(pod, pool2, owner) {
-  const named = pod.env.CODEMAN_POOL?.toLowerCase();
-  if (!named || named === pool2.toLowerCase()) return void 0;
-  return pod.env.CODEMAN_ORGANIZATION?.toLowerCase() === owner.toLowerCase() ? named : void 0;
+  const named2 = pod.env.CODEMAN_POOL?.toLowerCase();
+  if (!named2 || named2 === pool2.toLowerCase()) return void 0;
+  return pod.env.CODEMAN_ORGANIZATION?.toLowerCase() === owner.toLowerCase() ? named2 : void 0;
 }
 function accountFingerprint(account) {
   const scope = account.organization !== void 0 || account.project !== void 0 ? `:${account.organization ?? ""}/${account.project ?? ""}` : "";
@@ -24412,7 +25408,7 @@ var PodInference = class {
     if (onVllm(this.#settings)) {
       if (image) return;
       throw new Error(
-        "This version of Codeman pins no vLLM pod image yet (`POD_IMAGES` in src/inference/images.ts), so no pod was created: use a version that pins one, or `engine: ollama`. See docs/settings/vllm.md#pod-images."
+        "This version of Codeman pins no vLLM pod image yet (`ENGINE_RELEASES` in src/inference/images.ts), so no pod was created: use a version that pins one, or `engine: ollama`. See docs/settings/vllm.md#pod-images."
       );
     }
     if (fitsTheGpu(image)) return;
@@ -24427,15 +25423,30 @@ var PodInference = class {
       );
     }
   }
+  /**
+   * Gives the run a pod of its settings. First, before any pod is swept, joined or created, it
+   * resolves what the pod runs and checks it against the release policy: a block stops the run.
+   */
   async open(run2, log) {
     const token = randomBytes3(32).toString("base64url");
     const holder = leaseHolder(this.#options.repository, run2.task);
-    const settings = podSettingsKey(this.#settings, holder);
     let handle;
     try {
       this.#checkImage(log);
+      const { engine, image } = this.#settings;
+      const resolution = await resolvePod(
+        engine.name,
+        image,
+        this.#options.releases,
+        this.#now(),
+        log
+      );
+      const settings = podSettingsKey(
+        { ...this.#settings, bootstrap: resolution.artifacts },
+        holder
+      );
       await this.#sweep(holder, settings, log);
-      handle = await this.#claim(run2, holder, settings, token, log);
+      handle = await this.#claim(run2, holder, settings, token, resolution, log);
     } catch (error3) {
       if (error3 instanceof ConcurrencyReached) throw error3;
       if (error3 instanceof PodUnavailable) throw new ProfileUnavailable(error3, this.#takeEvents());
@@ -24709,7 +25720,7 @@ var PodInference = class {
    * while another task creates it. A pod the task cannot join takes no other task, and the task
    * claims again, which creates another.
    */
-  async #claim(run2, holder, settings, token, log) {
+  async #claim(run2, holder, settings, token, resolution, log) {
     const { model, gpuType, image, reuse } = this.#settings;
     const capacity = podCapacity(this.#settings);
     const { batch, concurrency } = this.#settings;
@@ -24724,7 +25735,8 @@ var PodInference = class {
       organization: this.#options.repository.owner.toLowerCase(),
       ...capacity === void 0 ? {} : { capacity },
       ...batch === void 0 ? {} : { batch },
-      ...concurrency === void 0 ? {} : { key: concurrency.key }
+      ...concurrency === void 0 ? {} : { key: concurrency.key },
+      resolution: resolution.fields
     };
     let waiting = false;
     for (let claims = 0; claims < CLAIMS; claims++) {
@@ -24750,7 +25762,7 @@ var PodInference = class {
         continue;
       }
       if (claim.kind === "create") {
-        const handle = await this.#create(claim.pod, run2, holder, token, log);
+        const handle = await this.#create(claim.pod, run2, holder, token, resolution, log);
         if (handle) return handle;
         continue;
       }
@@ -24785,10 +25797,10 @@ var PodInference = class {
    * serves the model. Undefined when another task took the lease meanwhile: the pod is then
    * terminated, and the task claims again.
    */
-  async #create(record, run2, holder, token, log) {
+  async #create(record, run2, holder, token, resolution, log) {
     let launched;
     try {
-      launched = await this.#launch(record, log);
+      launched = await this.#launch(record, resolution, log);
     } catch (error3) {
       await this.#registry.end(
         record.nonce,
@@ -24948,10 +25960,15 @@ var PodInference = class {
   #wait(ms) {
     return (this.#options.wait ?? ((delay) => new Promise((done) => setTimeout(done, delay))))(ms);
   }
-  /** Creates the pod of a creation lease, named by its nonce, with its settings in its environment. */
-  async #launch(record, log) {
+  /**
+   * Creates the pod of a creation lease, named by its nonce, with its settings in its environment.
+   * Its command is the bootstrap, which downloads Node.js and the gateway, checks them, and runs
+   * the gateway, which starts the image's engine.
+   */
+  async #launch(record, resolution, log) {
     const { model, gpuType, image, engine, priority } = this.#settings;
     if (!image) throw new Error("No pod image is pinned; see docs/installation/runpod.md#pods.");
+    const bootstrap = podBootstrap(resolution.artifacts);
     const hosts = this.#hosts;
     const prices = await this.#prices(gpuType, hosts, priority);
     const vllm2 = onVllm(this.#settings) ? await this.#prepareVllm(log) : void 0;
@@ -24963,7 +25980,9 @@ var PodInference = class {
     const pod = await this.#host.create({
       name: `codeman-${owner}-${record.settings}`.slice(0, 100),
       image,
+      command: bootstrap.command,
       env: {
+        ...bootstrap.env,
         ...Object.keys(this.#settings.ollama ?? {}).length > 0 ? { CODEMAN_OLLAMA: JSON.stringify(this.#settings.ollama) } : {},
         ...vllm2 ? { CODEMAN_VLLM: JSON.stringify(this.#settings.vllm) } : {},
         ...memory ? { CODEMAN_GPU_MEMORY_GB: String(memory) } : {},
@@ -25608,6 +26627,7 @@ function selfHosted(choice, repository, inputs) {
   if (!engine) throw new Error(`Unknown engine "${choice.engine}".`);
   const common = { model: choice.model, engine, pods: choice.pods };
   if (onPod(choice)) {
+    const store = inputs.store();
     return new PodInference(
       {
         ...common,
@@ -25626,10 +26646,15 @@ function selfHosted(choice, repository, inputs) {
         repository,
         gpu,
         account: inputs.account,
-        store: inputs.store(),
+        store,
         pool: choicePool(choice, repository.owner),
         ...inputs.fetch ? { fetch: inputs.fetch } : {},
-        ...inputs.hub ? { hub: inputs.hub } : {}
+        ...inputs.hub ? { hub: inputs.hub } : {},
+        releases: inputs.releases ?? {
+          gateway: () => gatewayArtifact(),
+          osv: new Osv(inputs.fetch),
+          cache: new StoredReleaseChecks(store)
+        }
       }
     );
   }
@@ -25714,7 +26739,7 @@ function neutralize(text, dialect) {
   return breakMatches(
     text.replace(
       /!?\[([^\]]*)\]\(\s*<?([^)\s>]*)>?(?:\s+[^)]*)?\)/g,
-      (_, label, url) => url ? `${label} (${url})` : label
+      (_, label2, url) => url ? `${label2} (${url})` : label2
     ).replace(/[<[\]]/g, (char) => `\\${char}`),
     dialect.references
   );
@@ -26824,11 +27849,11 @@ function removeNonChars(variableName) {
   return variableName.replace(/(?:^\W+)|(?:(?<!\W)\W+$)/g, "").split(/,/);
 }
 function extractUrlVariableNames(url) {
-  const matches2 = url.match(urlVariableRegex);
-  if (!matches2) {
+  const matches3 = url.match(urlVariableRegex);
+  if (!matches3) {
     return [];
   }
-  return matches2.map(removeNonChars).reduce((a, b) => a.concat(b), []);
+  return matches3.map(removeNonChars).reduce((a, b) => a.concat(b), []);
 }
 function omit2(object, keysToOmit) {
   const result = { __proto__: null };
@@ -27684,8 +28709,8 @@ async function fetchWrapper(requestOptions) {
     data: ""
   };
   if ("deprecation" in responseHeaders) {
-    const matches2 = responseHeaders.link && responseHeaders.link.match(/<([^<>]+)>; rel="deprecation"/);
-    const deprecationLink = matches2 && matches2.pop();
+    const matches3 = responseHeaders.link && responseHeaders.link.match(/<([^<>]+)>; rel="deprecation"/);
+    const deprecationLink = matches3 && matches3.pop();
     log.warn(
       `[@octokit/request] "${requestOptions.method} ${requestOptions.url}" is deprecated. It is scheduled to be removed on ${responseHeaders.sunset}${deprecationLink ? `. See ${deprecationLink}` : ""}`
     );
@@ -30746,7 +31771,7 @@ function toReviewComment(comment) {
   };
 }
 function labelNames(labels) {
-  return labels.map((label) => typeof label === "string" ? label : label.name ?? "").filter((name) => name !== "");
+  return labels.map((label2) => typeof label2 === "string" ? label2 : label2.name ?? "").filter((name) => name !== "");
 }
 var MAINTAINER_PERMISSIONS = /* @__PURE__ */ new Set(["admin", "write"]);
 var GitHubPlatform = class {
@@ -30777,17 +31802,17 @@ var GitHubPlatform = class {
   }
   async currentLabels(issue2) {
     const { data } = await this.#octokit.rest.issues.get({ ...this.#scope, issue_number: issue2 });
-    return data.labels.map((label) => typeof label === "string" ? label : label.name ?? "");
+    return data.labels.map((label2) => typeof label2 === "string" ? label2 : label2.name ?? "");
   }
   async setState(issue2, labels, state) {
     for (const other of STATES) {
-      const label = stateLabel(other);
-      if (other !== state && labels.includes(label)) {
+      const label2 = stateLabel(other);
+      if (other !== state && labels.includes(label2)) {
         try {
           await this.#octokit.rest.issues.removeLabel({
             ...this.#scope,
             issue_number: issue2,
-            name: label
+            name: label2
           });
         } catch (error3) {
           if (status(error3) !== 404) throw error3;
@@ -31583,7 +32608,7 @@ function deriveKey(secret, salt) {
 
 // src/harness/opencode.ts
 import { spawnSync as spawnSync3 } from "node:child_process";
-import { createHash as createHash3 } from "node:crypto";
+import { createHash as createHash5 } from "node:crypto";
 import { chmodSync, mkdirSync as mkdirSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import { join as join4 } from "node:path";
 var OPENCODE_VERSION = "1.18.32";
@@ -31651,7 +32676,7 @@ async function downloadOpenCode(pkg, fetchFn) {
   const response = await fetchFn(url);
   if (!response.ok) throw new Error(`Downloading ${url} failed with ${response.status}.`);
   const tarball = Buffer.from(await response.arrayBuffer());
-  const integrity = `sha512-${createHash3("sha512").update(tarball).digest("base64")}`;
+  const integrity = `sha512-${createHash5("sha512").update(tarball).digest("base64")}`;
   if (integrity !== pkg.integrity) {
     throw new Error(`${pkg.name}@${OPENCODE_VERSION} does not match its pinned integrity.`);
   }
@@ -32222,9 +33247,9 @@ function parseDecision(item, index, id, limits, cuts) {
     if (!isObject(option) || option.key !== key) {
       return { ok: false, error: `${where}.options[${index2}].key must be "${key}".` };
     }
-    const label = string(option.label, `${where}.options[${index2}].label`, limits.label, cuts);
-    if (!label.ok) return label;
-    options.push({ key, label: label.value });
+    const label2 = string(option.label, `${where}.options[${index2}].label`, limits.label, cuts);
+    if (!label2.ok) return label2;
+    options.push({ key, label: label2.value });
   }
   if (!options.some((option) => option.key === item.recommendation)) {
     return { ok: false, error: `${where}.recommendation must be one of the option keys.` };
@@ -33331,7 +34356,7 @@ Start no new work, and run no long command, such as the whole test suite.`;
 }
 function quoter() {
   const nonce = randomBytes5(6).toString("hex");
-  return (label, text) => [`<<<${label} ${nonce}`, text.trim() || "(empty)", `>>>${label} ${nonce}`].join("\n");
+  return (label2, text) => [`<<<${label2} ${nonce}`, text.trim() || "(empty)", `>>>${label2} ${nonce}`].join("\n");
 }
 function issueSection(task, quote) {
   const comments = task.comments.length === 0 ? "(none)" : task.comments.map((comment) => quote(`COMMENT by ${comment.author}`, comment.body)).join("\n\n");
@@ -34802,8 +35827,8 @@ async function applyStage(task, io) {
     outputLimits(task.settings),
     io.conventions.workflows
   ) : { ok: false, error: "The agent did not write output.json." };
-  const fresh = task.resume || task.record.stage !== stage;
-  const runs = (fresh ? 0 : task.record.runs ?? 0) + 1;
+  const fresh2 = task.resume || task.record.stage !== stage;
+  const runs = (fresh2 ? 0 : task.record.runs ?? 0) + 1;
   const maxRuns = task.settings["max-runs"];
   const reached = (count3) => count3 >= maxRuns;
   const requested = task.requests.length > 0;
@@ -36234,9 +37259,9 @@ async function select(services) {
     const { task, talk, record } = work;
     const profile2 = waiting.profile ?? "";
     const { ready: ready2, repositories, busy, unavailableUntil } = waiting;
-    const named = waiting.profile === void 0 ? "the top-level settings" : `profile \`${profile2}\``;
+    const named2 = waiting.profile === void 0 ? "the top-level settings" : `profile \`${profile2}\``;
     runtime2.info(
-      unavailableUntil ? `#${task.number} ${oneLine(task.title)}: waits; the provider of ${named} had no room for a pod, and is set aside until ${unavailableUntil.toISOString()}.` : busy === void 0 ? `#${task.number} ${oneLine(task.title)}: waits for ${waiting.tasks} tasks ready for profile \`${profile2}\`; ${ready2} ${ready2 === 1 ? "is" : "are"}, in ${repositories} ${repositories === 1 ? "repository" : "repositories"}.` : `#${task.number} ${oneLine(task.title)}: waits for a seat; the ${busy} instance(s) of ${named} that its \`concurrency\` allows are busy.`
+      unavailableUntil ? `#${task.number} ${oneLine(task.title)}: waits; the provider of ${named2} had no room for a pod, and is set aside until ${unavailableUntil.toISOString()}.` : busy === void 0 ? `#${task.number} ${oneLine(task.title)}: waits for ${waiting.tasks} tasks ready for profile \`${profile2}\`; ${ready2} ${ready2 === 1 ? "is" : "are"}, in ${repositories} ${repositories === 1 ? "repository" : "repositories"}.` : `#${task.number} ${oneLine(task.title)}: waits for a seat; the ${busy} instance(s) of ${named2} that its \`concurrency\` allows are busy.`
     );
     if (waiting.others) {
       runtime2.info(
@@ -37982,8 +39007,8 @@ var Summary = class {
    *
    * @returns {Summary} summary instance
    */
-  addDetails(label, content) {
-    const element = this.wrap("details", this.wrap("summary", label) + content);
+  addDetails(label2, content) {
+    const element = this.wrap("details", this.wrap("summary", label2) + content);
     return this.addRaw(element).addEOL();
   }
   /**

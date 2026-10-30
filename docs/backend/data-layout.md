@@ -4,7 +4,7 @@ This page lists the documents Codeman keeps in its [backend](../glossary.md#back
 
 - What belongs to an organization, the repositories' owner, is under it: its runs and events, which the budgets read. A user account is its own organization.
 - What a [pool](../glossary.md#pool-of-organizations) shares is under the pool, named by its ID ([pools](../runs/batches.md#pools)): the pod registry, the Serverless endpoints' runs, the board and the batches.
-- The [cache of fits](../glossary.md#cache-of-fits) depends on no organization.
+- The [cache of fits](../glossary.md#cache-of-fits) and the release checks depend on no organization.
 - One project can serve several organizations and pools.
 - Owners, repositories and pools are lowercase, as GitHub compares them.
 
@@ -24,6 +24,7 @@ pools/{pool}
 └── endpoints/{endpoint}/runs/{run}-{reservation}
                                              Serverless runs' billed times
 contexts/{key}                               the cache of fits
+releaseChecks/{key}                          release checks that passed
 ```
 
 ## Collections
@@ -39,6 +40,7 @@ contexts/{key}                               the cache of fits
 | `pools/{pool}/batches/{run}-{attempt}-{n}` | `select` | `select`; `open-key`, for a pod's room | Read until `expiresAt`, 30 minutes after it forms; kept as history |
 | `pools/{pool}/endpoints/{endpoint}/runs/…` | `close-key` | `close-key`, for the split | Kept |
 | `contexts/{key}` | The `open-key` that created a pod, once the pod serves with a context it searched for | The `open-key` that creates a pod | Replaced on each search |
+| `releaseChecks/{key}` | `open-key`, when the release policy passes a pod's releases against OSV.dev | `open-key`, when OSV.dev does not answer | Replaced on each passing check; read only for 24 hours after it |
 
 ## Fields
 
@@ -102,9 +104,25 @@ Only a refresh of an OpenRouter run's cost from its key writes `expired`. Other 
 | `claimedAt`, `claimedBy`, `creatingUntil` | The creation lease |
 | `leases` | Each with `holder` (`owner/name#task`), `run`, `kind` (`run` or `keep`) and `until` |
 | `seats` | The holders, by [seat](../glossary.md#seat) |
+| `resolution` | What the pod runs and the release policy's check of it, written with the creation lease; see [below](#resolution). Absent from older pods |
 | `pod`, `createdAt`, `pricePerSecond` | Once the pod exists |
 | `endedAt`, `reason` | Once it ends. For a failed start, `its start failed: ` and the gateway's reason, which the tasks that joined the pod fail with. For a provider without room, `unavailable: ` and why: `select` creates no pod of its `key` for 15 minutes after `endedAt` ([no room](../inference/pods.md#no-room)) |
 | `terminatedAt`, `month`, `lifeCost`, `counted`, `untracked`, `untrackedBy` | When a job terminated it: its [untracked time](../glossary.md#untracked-time), and each organization's share of it |
+
+#### Resolution
+
+The `resolution` of a pod's document records, for audits, what its bootstrap downloads and what the release policy found when the pod's creator checked it ([`src/inference/resolution.ts`](../../src/inference/resolution.ts)). No job reads it back.
+
+| Field | Value |
+| --- | --- |
+| `verdict` | `pass` or `warn`: a blocked run creates no pod |
+| `source`, `cachedFrom` | `live`, or `cache` when OSV.dev did not answer and the check of `cachedFrom` stood in |
+| `checkedAt` | When the policy ran |
+| `image` | `reference` (the image by digest), `digest`, and `checked`: false for an image the `pod-image` input chose, which has nothing more |
+| `node` | `url` and `sha256` of Node.js's tarball |
+| `image`, `node` when checked | `name`, `version`, `publishedAt`, `ageDays`, `verdict`; `advisories`, each with `id`, `aliases`, `summary`, `severity`, `severityFrom`, `fixed` and, when an exception accepted it, `acceptedBecause`; `exceptions` used, each with `id` and `reason`; `bypass`, when the security fix bypass admitted a young release; `provenance` |
+| `gateway` | `url` (raw.githubusercontent.com at the action's commit), `sha256`, `commit` |
+| `reasons` | The policy's reasons, each with `level` (`warning` or `note`) and `text` |
 
 ### Board
 
@@ -143,6 +161,17 @@ Only a refresh of an OpenRouter run's cost from its key writes `expired`. Other 
 | `vllm` | No | Its settings, without `max-model-len` |
 | `concurrency`, `cacheTokens` | No | The requests of the context, and the tokens its K/V cache holds ([vLLM's memory](../settings/vllm.md#memory)) |
 | `loads` | Ollama's loads | vLLM's starts |
+
+### Release checks
+
+`releaseChecks/{key}`: one release check that passed, for one set of pinned releases and exceptions, by their hash with the policy's version (`releaseCheckKey` in [`src/inference/release-policy.ts`](../../src/inference/release-policy.ts)). When OSV.dev does not answer, a check of the last 24 hours stands, with a warning; an older one does not, and the run stops (decision 7 of the [plan to start pods from official engine images](../plans/2026-10-30-start-pods-from-official-engine-images.md)). It holds no secret.
+
+| Field | Value |
+| --- | --- |
+| `releases` | The releases checked, such as `ollama 0.40.10` and `node 24.22.1` |
+| `verdict` | `pass` or `warn` |
+| `checkedAt` | When it was checked against OSV.dev |
+| `result` | The whole check, as JSON text, as the policy reads it back |
 
 ### Serverless endpoint runs
 

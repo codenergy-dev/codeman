@@ -1,10 +1,16 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { after, test } from "node:test";
+import { gatewayArtifact } from "../action.ts";
 import { decrypt } from "../crypto.ts";
+import { ollama } from "../inference/ollama.ts";
 import { ConcurrencyReached, OpenFailure, ProfileUnavailable } from "../inference/provider.ts";
+import { MemoryReleaseCheckCache } from "../inference/release-policy.ts";
+import { PodInference } from "../inference/selfhosted.ts";
 import { MemoryStore } from "../store/memory.ts";
+import { FakeGateways, FakeGpu } from "../testing/fake-gpu.ts";
 import { FakeAccounts, FakeInference } from "../testing/fake-inference.ts";
 import { FakePlatform, fakeServices } from "../testing/fake-platform.ts";
+import { FakeOsv, fakeReleases, TEST_ENGINES } from "../testing/fake-releases.ts";
 import { FakeRuntime } from "../testing/fake-runtime.ts";
 import { seedRuns } from "../testing/ledger-runs.ts";
 import { closeKey, openKey, release } from "./keys.ts";
@@ -597,4 +603,133 @@ test("release-pod opens the account of the run's pod provider, and nothing for o
     run({ inference: salad, "salad-key": "sk", "salad-project": "codeman" }).done,
     /needs `CODEMAN_SALAD_ORGANIZATION`/,
   );
+});
+
+/**
+ * A run on a pod of a fake GPU cloud, from the catalog's Ollama image: `open-key` resolves its
+ * releases and checks them before any pod.
+ */
+async function openOnPod(
+  store: MemoryStore,
+  releases: ReturnType<typeof fakeReleases>,
+  now = new Date("2026-10-03T12:00:00Z"),
+) {
+  await seedRuns(store, { "300-1-7": {} });
+  const gpu = new FakeGpu({ now: () => now });
+  const gateways = new FakeGateways(gpu, { real: true });
+  after(() => gateways.close());
+  const inference = new PodInference(
+    {
+      model: "qwen3-coder:30b",
+      engine: ollama,
+      pods: [],
+      gpuType: "GPU-A",
+      image: TEST_ENGINES.ollama?.image ?? "",
+      reuse: "task",
+    },
+    {
+      repository: { owner: "o", name: "r" },
+      gpu,
+      account: { key: "account-key" },
+      store,
+      now: () => now,
+      fetch: gateways.fetch,
+      wait: async () => undefined,
+      releases,
+    },
+  );
+  const runtime = new FakeRuntime({
+    inputs: openInputs({ inference: POD_CHOICE, "gpu-key": "k" }),
+    runId: "300",
+  });
+  const services = fakeServices(
+    new FakePlatform(),
+    runtime,
+    undefined,
+    inference,
+    undefined,
+    store,
+  );
+  const opened = await openKey(services).then(
+    () => undefined,
+    (error: unknown) => error,
+  );
+  return { runtime, gpu, error: opened, ledger: await run(store, "300-1-7") };
+}
+
+test("a pod whose releases pass the policy opens the run, and the step logs the verdict", async () => {
+  const { runtime, gpu, error, ledger } = await openOnPod(new MemoryStore(), fakeReleases());
+  assert.equal(error, undefined);
+  assert.equal(runtime.outputs.status, "opened");
+  assert.equal(ledger?.status, "open");
+  assert.equal(gpu.created.length, 1);
+  assert.ok(
+    runtime.logged("info").includes("The release policy passes ollama 0.40.10 and node 24.22.1."),
+  );
+});
+
+test("a release the policy blocks fails the run at no cost, with the policy's reason, and falls back to nothing", async () => {
+  const osv = new FakeOsv();
+  osv.advise("Go", "github.com/ollama/ollama", "0.40.10", { id: "GHSA-aaaa-bbbb-cccc" });
+  const store = new MemoryStore();
+  const { runtime, gpu, error, ledger } = await openOnPod(store, fakeReleases({ osv }));
+  assert.ok(error instanceof Error);
+  assert.match(error.message, /^The release policy blocks ollama 0\.40\.10 and node 24\.22\.1/);
+  assert.equal(runtime.outputs.status, undefined, "neither refused nor unavailable");
+  assert.deepEqual([ledger?.status, ledger?.cost], ["failed", 0]);
+  assert.match(String(ledger?.reason), /GHSA-aaaa-bbbb-cccc \(high\)/);
+  assert.ok(await store.get("organizations/o/events/300-1-7-key-failed"));
+  assert.deepEqual(gpu.created, []);
+});
+
+test("an exception the catalog gives an advisory lets the run open", async () => {
+  const osv = new FakeOsv();
+  osv.advise("Go", "github.com/ollama/ollama", "0.40.10", { id: "GHSA-aaaa-bbbb-cccc" });
+  const ollamaRelease = TEST_ENGINES.ollama as NonNullable<typeof TEST_ENGINES.ollama>;
+  const engines = {
+    ...TEST_ENGINES,
+    ollama: {
+      ...ollamaRelease,
+      exceptions: [{ id: "GHSA-aaaa-bbbb-cccc", reason: "It does not reach the pod's Ollama." }],
+    },
+  };
+  const { runtime, error } = await openOnPod(new MemoryStore(), fakeReleases({ osv, engines }));
+  assert.equal(error, undefined);
+  assert.equal(runtime.outputs.status, "opened");
+});
+
+test("when OSV.dev does not answer, a check of the last 24 hours opens the run with a warning; none fails it", async () => {
+  const cache = new MemoryReleaseCheckCache();
+  const first = await openOnPod(new MemoryStore(), fakeReleases({ cache }));
+  assert.equal(first.error, undefined);
+  const osv = new FakeOsv();
+  osv.down = true;
+  const later = await openOnPod(
+    new MemoryStore(),
+    fakeReleases({ osv, cache }),
+    new Date("2026-10-04T11:00:00Z"),
+  );
+  assert.equal(later.error, undefined);
+  assert.equal(later.runtime.outputs.status, "opened");
+  assert.ok(
+    later.runtime
+      .logged("warning")
+      .some((line) => line.startsWith("Release policy: OSV.dev could not be reached")),
+  );
+  const none = await openOnPod(new MemoryStore(), fakeReleases({ osv }));
+  assert.ok(none.error instanceof Error);
+  assert.match(none.error.message, /^The release policy could not check/);
+  assert.deepEqual([none.ledger?.status, none.ledger?.cost], ["failed", 0]);
+});
+
+test("a run whose Codeman commit is unknown fails before any pod, at no cost", async () => {
+  const releases = fakeReleases({
+    gateway: () => gatewayArtifact("/nowhere", undefined),
+  });
+  const { error, gpu, ledger } = await openOnPod(new MemoryStore(), releases);
+  assert.ok(error instanceof Error);
+  assert.match(error.message, /^Codeman's commit is unknown/);
+  assert.deepEqual([ledger?.status, ledger?.cost], ["failed", 0]);
+  assert.deepEqual(gpu.created, []);
+  assert.deepEqual(releases.osv.asked, []);
 });

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { isAbsolute, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -29,6 +30,48 @@ export function actionCommit(root = ACTION_ROOT): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+/** The gateway's bundle in the action's checkout, which `npm run build` writes and commits. */
+export const GATEWAY_FILE = "dist/gateway.js";
+
+/** The gateway a pod downloads: where, and the SHA-256 it must have. */
+export interface GatewayArtifact {
+  url: string;
+  sha256: string;
+  /** The commit of Codeman it is from. */
+  commit: string;
+}
+
+/**
+ * The gateway a pod's bootstrap downloads (decision 3 of the plan to start pods from official
+ * engine images): `dist/gateway.js` on raw.githubusercontent.com at the commit the action runs
+ * from, and the SHA-256 of the action's own copy, which is that commit's file. Throws, before any
+ * pod is created, when the commit is unknown, such as in a local build, or the file is missing.
+ */
+export function gatewayArtifact(
+  root = ACTION_ROOT,
+  commit = actionCommit(root),
+  repository = CODEMAN_REPOSITORY,
+): GatewayArtifact {
+  if (!commit || !FULL_SHA.test(commit)) {
+    throw new Error(
+      `Codeman's commit is unknown: its checkout at ${root} is not of a full commit SHA, so a pod could not download this gateway from raw.githubusercontent.com, and no pod was created. Run Codeman from a checkout of the commit in CODEMAN_COMMIT_SHA, as the workflow templates do.`,
+    );
+  }
+  let file: Buffer;
+  try {
+    file = readFileSync(join(root, GATEWAY_FILE));
+  } catch (error) {
+    throw new Error(
+      `Codeman's checkout at ${root} has no ${GATEWAY_FILE} to give a pod (${error instanceof Error ? error.message : error}), so no pod was created.`,
+    );
+  }
+  return {
+    url: `https://raw.githubusercontent.com/${repository}/${commit}/${GATEWAY_FILE}`,
+    sha256: createHash("sha256").update(file).digest("hex"),
+    commit,
+  };
 }
 
 /**
