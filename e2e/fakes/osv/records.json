@@ -1,0 +1,380 @@
+{
+  "GO-2025-3558": {
+    "id": "GO-2025-3558",
+    "summary": "Ollama Allows Out-of-Bounds Read in github.com/ollama/ollama",
+    "aliases": ["CVE-2024-12055", "GHSA-89qx-m49c-8crf"],
+    "published": "2025-03-31T00:00:00Z",
+    "affected": [
+      {
+        "package": {
+          "ecosystem": "Go",
+          "name": "github.com/ollama/ollama"
+        },
+        "ranges": [
+          {
+            "type": "SEMVER",
+            "events": [
+              {
+                "introduced": "0"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "GHSA-89qx-m49c-8crf": {
+    "id": "GHSA-89qx-m49c-8crf",
+    "summary": "Ollama Allows Out-of-Bounds Read in github.com/ollama/ollama",
+    "aliases": ["CVE-2024-12055", "GO-2025-3558"],
+    "published": "2025-03-20T00:00:00Z",
+    "database_specific": {
+      "severity": "HIGH"
+    },
+    "affected": [
+      {
+        "package": {
+          "ecosystem": "Go",
+          "name": "github.com/ollama/ollama"
+        },
+        "ranges": [
+          {
+            "type": "ECOSYSTEM",
+            "events": [
+              {
+                "introduced": "0"
+              },
+              {
+                "last_affected": "0.3.14"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "GO-2025-3582": {
+    "id": "GO-2025-3582",
+    "summary": "Ollama Denial of Service (DoS) via Null Pointer Dereference in github.com/ollama/ollama",
+    "aliases": ["CVE-2025-0312", "GHSA-p2wh-w96x-w232"],
+    "published": "2025-04-01T00:00:00Z",
+    "affected": [
+      {
+        "package": {
+          "ecosystem": "Go",
+          "name": "github.com/ollama/ollama"
+        },
+        "ranges": [
+          {
+            "type": "SEMVER",
+            "events": [
+              {
+                "introduced": "0"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "GHSA-p2wh-w96x-w232": {
+    "id": "GHSA-p2wh-w96x-w232",
+    "summary": "Ollama Denial of Service (DoS) via Null Pointer Dereference in github.com/ollama/ollama",
+    "aliases": ["CVE-2025-0312", "GO-2025-3582"],
+    "published": "2025-03-20T00:00:00Z",
+    "database_specific": {
+      "severity": "HIGH"
+    },
+    "affected": [
+      {
+        "package": {
+          "ecosystem": "Go",
+          "name": "github.com/ollama/ollama"
+        },
+        "ranges": [
+          {
+            "type": "ECOSYSTEM",
+            "events": [
+              {
+                "introduced": "0"
+              },
+              {
+                "last_affected": "0.3.14"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "GO-2025-3559": {
+    "id": "GO-2025-3559",
+    "summary": "Ollama Divide By Zero vulnerability in github.com/ollama/ollama, GO-2025-3559",
+    "aliases": ["CVE-2025-0317", "GHSA-9gcr-28rp-cc24"],
+    "published": "2025-03-31T00:00:00Z",
+    "affected": [
+      {
+        "package": {
+          "ecosystem": "Go",
+          "name": "github.com/ollama/ollama"
+        },
+        "ranges": [
+          {
+            "type": "SEMVER",
+            "events": [
+              {
+                "introduced": "0"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "GHSA-9gcr-28rp-cc24": {
+    "id": "GHSA-9gcr-28rp-cc24",
+    "summary": "Ollama Divide By Zero vulnerability in github.com/ollama/ollama, GO-2025-3559",
+    "aliases": ["CVE-2025-0317", "GO-2025-3559"],
+    "published": "2025-03-20T00:00:00Z",
+    "database_specific": {
+      "severity": "HIGH"
+    },
+    "affected": [
+      {
+        "package": {
+          "ecosystem": "Go",
+          "name": "github.com/ollama/ollama"
+        },
+        "ranges": [
+          {
+            "type": "ECOSYSTEM",
+            "events": [
+              {
+                "introduced": "0"
+              },
+              {
+                "last_affected": "0.3.14"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "GO-2025-3689": {
+    "id": "GO-2025-3689",
+    "summary": "Ollama Divide by Zero Vulnerability in github.com/ollama/ollama, GO-2025-3689",
+    "aliases": ["CVE-2024-8063", "GHSA-2xf2-gjm6-g2c6"],
+    "published": "2025-05-15T00:00:00Z",
+    "affected": [
+      {
+        "package": {
+          "ecosystem": "Go",
+          "name": "github.com/ollama/ollama"
+        },
+        "ranges": [
+          {
+            "type": "SEMVER",
+            "events": [
+              {
+                "introduced": "0"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "GHSA-2xf2-gjm6-g2c6": {
+    "id": "GHSA-2xf2-gjm6-g2c6",
+    "summary": "Ollama Divide by Zero Vulnerability in github.com/ollama/ollama, GO-2025-3689",
+    "aliases": ["CVE-2024-8063", "GO-2025-3689"],
+    "published": "2025-03-20T00:00:00Z",
+    "database_specific": {
+      "severity": "HIGH"
+    },
+    "affected": [
+      {
+        "package": {
+          "ecosystem": "Go",
+          "name": "github.com/ollama/ollama"
+        },
+        "ranges": [
+          {
+            "type": "ECOSYSTEM",
+            "events": [
+              {
+                "introduced": "0"
+              },
+              {
+                "last_affected": "0.3.3"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "GO-2026-5750": {
+    "id": "GO-2026-5750",
+    "summary": "Ollama is Vulnerable to Path Traversal in github.com/ollama/ollama",
+    "aliases": ["CVE-2026-7020", "GHSA-x99g-8v8j-25j2"],
+    "published": "2026-07-27T00:00:00Z",
+    "affected": [
+      {
+        "package": {
+          "ecosystem": "Go",
+          "name": "github.com/ollama/ollama"
+        },
+        "ranges": [
+          {
+            "type": "SEMVER",
+            "events": [
+              {
+                "introduced": "0"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "GHSA-x99g-8v8j-25j2": {
+    "id": "GHSA-x99g-8v8j-25j2",
+    "summary": "Ollama is Vulnerable to Path Traversal in github.com/ollama/ollama",
+    "aliases": ["CVE-2026-7020", "GO-2026-5750"],
+    "published": "2026-04-26T00:00:00Z",
+    "database_specific": {
+      "severity": "LOW"
+    },
+    "affected": [
+      {
+        "package": {
+          "ecosystem": "Go",
+          "name": "github.com/ollama/ollama"
+        },
+        "ranges": [
+          {
+            "type": "ECOSYSTEM",
+            "events": [
+              {
+                "introduced": "0"
+              },
+              {
+                "last_affected": "0.20.2"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "GO-2025-3695": {
+    "id": "GO-2025-3695",
+    "summary": "Ollama Server Vulnerable to Denial of Service (DoS) Attack in github.com/ollama/ollama",
+    "aliases": ["CVE-2025-1975", "GHSA-wrh5-cmwx-q2qr"],
+    "published": "2025-05-22T00:00:00Z",
+    "affected": [
+      {
+        "package": {
+          "ecosystem": "Go",
+          "name": "github.com/ollama/ollama"
+        },
+        "ranges": [
+          {
+            "type": "SEMVER",
+            "events": [
+              {
+                "introduced": "0"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "GHSA-wrh5-cmwx-q2qr": {
+    "id": "GHSA-wrh5-cmwx-q2qr",
+    "summary": "Ollama Server Vulnerable to Denial of Service (DoS) Attack in github.com/ollama/ollama",
+    "aliases": ["CVE-2025-1975", "GO-2025-3695"],
+    "published": "2025-05-16T00:00:00Z",
+    "database_specific": {
+      "severity": "HIGH"
+    },
+    "affected": [
+      {
+        "package": {
+          "ecosystem": "Go",
+          "name": "github.com/ollama/ollama"
+        },
+        "ranges": [
+          {
+            "type": "ECOSYSTEM",
+            "events": [
+              {
+                "introduced": "0"
+              },
+              {
+                "last_affected": "0.5.11"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "GO-2025-3824": {
+    "id": "GO-2025-3824",
+    "summary": "Ollama vulnerable to Cross-Domain Token Exposure in github.com/ollama/ollama",
+    "aliases": ["CVE-2025-51471", "GHSA-x9hg-5q6g-q3jr"],
+    "published": "2025-07-30T00:00:00Z",
+    "affected": [
+      {
+        "package": {
+          "ecosystem": "Go",
+          "name": "github.com/ollama/ollama"
+        },
+        "ranges": [
+          {
+            "type": "SEMVER",
+            "events": [
+              {
+                "introduced": "0"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "GHSA-x9hg-5q6g-q3jr": {
+    "id": "GHSA-x9hg-5q6g-q3jr",
+    "summary": "Ollama vulnerable to Cross-Domain Token Exposure in github.com/ollama/ollama",
+    "aliases": ["CVE-2025-51471", "GO-2025-3824"],
+    "published": "2025-07-22T00:00:00Z",
+    "database_specific": {
+      "severity": "MODERATE"
+    },
+    "affected": [
+      {
+        "package": {
+          "ecosystem": "Go",
+          "name": "github.com/ollama/ollama"
+        },
+        "ranges": [
+          {
+            "type": "ECOSYSTEM",
+            "events": [
+              {
+                "introduced": "0"
+              },
+              {
+                "last_affected": "0.9.6"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
