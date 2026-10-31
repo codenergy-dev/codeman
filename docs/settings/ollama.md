@@ -17,7 +17,7 @@ The choices were made in the [Ollama settings plan](../plans/2026-10-08-ollama-s
 
 ## Accepted keys
 
-Only these keys, taken from the server of Ollama 0.35.1, the version in Codeman's pod image ([`envconfig/config.go` at v0.35.1](../web/ollama/envconfig-config-go-at-v0-35-1.md), and the [FAQ](../web/ollama/faq.md)). `src/inference/ollama.test.ts` checks this table against `OLLAMA_SETTINGS` in [`src/inference/ollama.ts`](../../src/inference/ollama.ts).
+Only these keys, taken from the server of Ollama 0.40.10, the version pods run ([`envconfig/config.go` at v0.40.10](../web/ollama/envconfig-config-go-at-v0-40-10.md), and the [FAQ](../web/ollama/faq.md)). `src/inference/ollama.test.ts` checks this table against `OLLAMA_SETTINGS` in [`src/inference/ollama.ts`](../../src/inference/ollama.ts).
 
 | Key | Variable | Value | Ollama's default | Without the key | Meaning |
 | --- | --- | --- | --- | --- | --- |
@@ -61,7 +61,7 @@ Without `num-parallel`, a pod's Ollama serves as many requests at once as the mo
 
 ### Families served one request at a time
 
-Ollama 0.35.1 serves some model families one request at a time, whatever `num-parallel` says ([server/sched.go](../web/ollama/server-sched-go-at-v0-35-1.md#parallel-requests); `OLLAMA_SERIAL_FAMILIES` in [`src/inference/ollama.ts`](../../src/inference/ollama.ts)):
+Ollama 0.40.10 serves some model families one request at a time, whatever `num-parallel` says ([server/sched.go](../web/ollama/server-sched-go-at-v0-40-10.md#parallel-requests); `OLLAMA_SERIAL_FAMILIES` in [`src/inference/ollama.ts`](../../src/inference/ollama.ts)):
 
 - `qwen35`, `qwen35moe` and `qwen3next`;
 - `qwen3vl` and `qwen3vlmoe`;
@@ -69,14 +69,14 @@ Ollama 0.35.1 serves some model families one request at a time, whatever `num-pa
 - `lfm2` and `lfm2moe`;
 - `nemotron_h`, `nemotron_h_moe` and `nemotron_h_omni`.
 
-The gateway fits such a model for one request. `open-key` warns that the runs on the pod wait for each other's requests: "Ollama 0.35.1 serves `<model>`'s family (`<family>`) one request at a time, whatever num-parallel says: the runs that share pod `<id>` wait for each other's requests." [vLLM](vllm.md) batches every family.
+The gateway fits such a model for one request. `open-key` warns that the runs on the pod wait for each other's requests: "Ollama 0.40.10 serves `<model>`'s family (`<family>`) one request at a time, whatever num-parallel says: the runs that share pod `<id>` wait for each other's requests." [vLLM](vllm.md) batches every family.
 
 ## Memory
 
 Ollama's K/V cache grows with `num-parallel` × `context-length`, beside the model ([FAQ](../web/ollama/faq.md#how-does-ollama-handle-concurrent-requests)).
 
 > [!WARNING]
-> When the model and its cache do not fit the GPU, Ollama does not fail: it puts part of the model on the CPU, which runs much slower ([server/sched.go](../web/ollama/server-sched-go-at-v0-35-1.md#loading), [common/fit.cpp](../web/llama-cpp/common-fit-cpp-at-b11232.md)).
+> When the model and its cache do not fit the GPU, Ollama does not fail: it puts part of the model on the CPU, which runs much slower ([server/sched.go](../web/ollama/server-sched-go-at-v0-40-10.md#loading), [common/fit.cpp](../web/llama-cpp/common-fit-cpp-at-b11803.md)).
 
 So the pod's gateway checks every load, and computes the context when the settings give none ([`src/gateway/fit.ts`](../../src/gateway/fit.ts)). The floor, the candidates and what a failed start does are in [context and the GPU](pod-engines.md#context-and-the-gpu).
 
@@ -101,7 +101,7 @@ flowchart TD
 
 After each load, the gateway reads `GET /api/ps`. A model wholly on the GPU has `size_vram` equal to `size` ([list running models](../web/ollama/list-running-models.md)). The pod serves only such a model, with an explicit `context-length` too.
 
-llama.cpp, which Ollama runs, leaves 1024 MiB of each GPU free when it decides what goes on it ([common/common.h](../web/llama-cpp/common-common-h-at-b11232.md)). A model wholly on the GPU therefore leaves that much for what grows while it runs.
+llama.cpp, which Ollama runs, leaves 1024 MiB of each GPU free when it decides what goes on it ([common/common.h](../web/llama-cpp/common-common-h-at-b11803.md)). A model wholly on the GPU therefore leaves that much for what grows while it runs.
 
 ### The computed context
 

@@ -22,8 +22,11 @@ export const IMAGES_WITHOUT_OLLAMA_SETTINGS: ReadonlySet<string> = new Set([
 /** Where Ollama listens inside the pod: its loopback, behind the gateway. */
 export const OLLAMA_URL = "http://127.0.0.1:11434";
 
-/** The Ollama of the pod image (`docker/pod/Dockerfile`), whose variables `OLLAMA_SETTINGS` lists. */
-export const OLLAMA_VERSION = "0.35.1";
+/**
+ * The Ollama of the catalog's official image (`ENGINE_RELEASES.ollama` in `images.ts`), whose
+ * variables `OLLAMA_SETTINGS` lists. A test compares them.
+ */
+export const OLLAMA_VERSION = "0.40.10";
 
 /**
  * Model families that `OLLAMA_VERSION` serves one request at a time, whatever

@@ -8,7 +8,7 @@ A [pod](../glossary.md#pod) serves its model with an [engine](../glossary.md#eng
 | --- | --- | --- |
 | `model` | An Ollama name, such as `qwen3-coder:30b` | A Hugging Face ID of a public model, not gated, with safetensors weights, such as `unsloth/Qwen3.8-27B-NVFP4` |
 | Block | `ollama:`, optional | `vllm:`, required for its `tool-call-parser` |
-| Engine version | Ollama 0.35.1 | vLLM 0.31.0 |
+| Engine version | Ollama 0.40.10 | vLLM 0.32.0 |
 | Parallel requests | `num-parallel`; some model families are served one request at a time | `max-num-seqs`; every family is batched |
 | Context key | `context-length` | `max-model-len` |
 | Host | Any CUDA version | CUDA 13.0 or newer |
@@ -144,7 +144,7 @@ Codeman checks each key and value before any pod is created, and stops the run n
 | An unknown key, a typo or another of the engine's options | "`ollama` does not accept `num-paralel`; it takes `context-length`, `num-parallel`, … and `load-timeout` (docs/settings/ollama.md)." | "`vllm` does not accept `max-num-seq`; it takes `max-model-len`, `max-num-seqs`, … and `async-scheduling` (docs/settings/vllm.md)." |
 | A key written as the variable or the argument | "`ollama` takes its keys in kebab-case, without `OLLAMA_`: write `num-parallel`, not `OLLAMA_NUM_PARALLEL`." The same for `num_parallel` | "`vllm` takes its keys in kebab-case, without `--`: write `max-num-seqs`, not `max_num_seqs`." |
 | A refused key | "`ollama` cannot set `host`: Codeman runs Ollama on the pod's loopback, where only its gateway reaches it." | "`vllm` cannot set `host`: Codeman serves the run's model on the pod's loopback, behind its gateway." |
-| A value of the wrong type | "`ollama`'s `num-parallel` must be a whole number, at least 1." | "`vllm`'s `tool-call-parser` must be one of vLLM 0.31.0's, such as `qwen3_xml`, not `qwen4` (docs/settings/vllm.md)." |
+| A value of the wrong type | "`ollama`'s `num-parallel` must be a whole number, at least 1." | "`vllm`'s `tool-call-parser` must be one of vLLM 0.32.0's, such as `qwen3_xml`, not `qwen4` (docs/settings/vllm.md)." |
 | Another engine | "With `runpod-pod`, `ollama` configures the engine `ollama`, not `vllm`." | The same, with `vllm` |
 | Another provider | "`runpod-serverless` does not accept `ollama`; besides `model`, it takes `engine` and `endpoint`." | "`runpod-serverless` does not accept `vllm`; …" |
 

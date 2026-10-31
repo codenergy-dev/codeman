@@ -71,9 +71,10 @@ export const ENGINE_RELEASES: Readonly<Record<string, EngineRelease>> = {
   // bound and no severity; GitHub's, their aliases, bound each at or below 0.20.2
   // (docs/web/osv/ollama-*.md). Its binary moves to Go 1.26.10 and newer `golang.org/x` modules,
   // which fix the 50 high findings Trivy reports in 0.35.1's, and it has none
-  // (docs/development/dependencies.md#audit-log). Its server variables and serial families are
-  // 0.35.1's, but its scheduler's memory estimate and llama.cpp (b11803) changed: the Ollama
-  // upgrade checklist runs before pods switch to this catalog (docs/web/ollama/ollama-v0-40-10.md).
+  // (docs/development/dependencies.md#audit-log). Its upgrade checklist found nothing Codeman relies
+  // on changed: its server variables, serial families, llama.cpp's fit (b11803) and what `/api/ps`
+  // reports are 0.35.1's; its batch allowance and decision models changed
+  // (docs/development/dependencies.md#ollama, docs/web/ollama/ollama-v0-40-10.md).
   ollama: {
     image:
       "docker.io/ollama/ollama@sha256:4c5b27871a3239a717048f9b93057680a51b60c8119a7016aebb57f938e25e35",
@@ -141,7 +142,9 @@ export const ENGINE_RELEASES: Readonly<Record<string, EngineRelease>> = {
   },
   // vLLM 0.32.0, replacing 0.31.0, whose 2 high advisories (GHSA-6757-hggm-hp2w,
   // GHSA-h3rc-j82p-2c3h) it fixes; no advisory for it on OSV.dev or GitHub on 2026-10-30. CUDA
-  // 13.0, as 0.31.0 (`VLLM_MIN_CUDA`). docs/web/docker-hub/vllm-vllm-openai-v0-32-0.md.
+  // 13.0, as 0.31.0 (`VLLM_MIN_CUDA`). docs/web/docker-hub/vllm-vllm-openai-v0-32-0.md. Its
+  // upgrade checklist added parsers and changed the end of the auto-fit lines
+  // (docs/development/dependencies.md#vllm-in-codemans-vllm-pod-image).
   vllm: {
     image:
       "docker.io/vllm/vllm-openai@sha256:befccf0e7e4089aa23926bb6f887a85c0d46c2a99e6de5c5ffdf5cb7957c5b34",

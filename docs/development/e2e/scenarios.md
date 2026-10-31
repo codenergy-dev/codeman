@@ -342,7 +342,7 @@ The pod's ref must be defined by an earlier action: put the check in an `expect`
 
 ### vLLM's metrics
 
-`engine.vllm.metrics` holds vLLM's `/metrics`, one key per sample of a `vllm:` metric ([metrics](../../web/vllm/vllm-v1-metrics-loggers-py-at-v0-31-0.md)):
+`engine.vllm.metrics` holds vLLM's `/metrics`, one key per sample of a `vllm:` metric ([metrics](../../web/vllm/vllm-v1-metrics-loggers-py-at-v0-32-0.md)):
 
 - The key is the metric's name, with its labels other than `model_name` and `engine` in braces. Quote it in YAML.
 - An info gauge, such as `vllm:cache_config_info`, gives its labels instead of its value, 1.

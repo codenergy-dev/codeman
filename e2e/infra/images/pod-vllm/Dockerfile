@@ -9,7 +9,7 @@
 FROM node:24.21.0-bookworm-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6 AS node
 
 # docs/development/dependencies.md#vllms-cpu-image.
-FROM vllm/vllm-openai-cpu:v0.31.0@sha256:495c84fe30f3572b83a78100a1e8ba423dbb77fc532ecefebe114e6b77327bd9
+FROM vllm/vllm-openai-cpu:v0.32.0@sha256:ffaba3989b9b96d95a576143c872a4110ce9800f5199b6a36eb27bdff1cbbe05
 COPY --from=node /usr/local/bin/node /usr/local/bin/node
 COPY --from=fakes /opt/codeman /opt/codeman-e2e
 

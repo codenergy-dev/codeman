@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { test } from "node:test";
+import { ENGINE_RELEASES } from "./images.ts";
 import {
   OLLAMA_SERIAL_FAMILIES,
   OLLAMA_SETTINGS,
@@ -101,8 +102,7 @@ test("the docs list the accepted and refused keys of the code, for the pod image
     assert.ok(docs.includes(why.charAt(0).toUpperCase() + why.slice(1)), key);
   }
   assert.ok(section("Accepted keys").includes(`Ollama ${OLLAMA_VERSION}`));
-  const dockerfile = readFileSync("docker/pod/Dockerfile", "utf8");
-  assert.ok(dockerfile.includes(`FROM ollama/ollama:${OLLAMA_VERSION}@`), "the pod image's Ollama");
+  assert.equal(ENGINE_RELEASES.ollama?.release.version, OLLAMA_VERSION, "the catalog's Ollama");
   assert.ok(
     existsSync(`docs/web/ollama/envconfig-config-go-at-v${OLLAMA_VERSION.replaceAll(".", "-")}.md`),
   );

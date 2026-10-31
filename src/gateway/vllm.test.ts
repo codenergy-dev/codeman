@@ -61,8 +61,8 @@ function fakeVllm(options: {
         }
         output.push(
           length === own
-            ? `INFO Auto-fit max_model_len: full model context length ${own} fits in available GPU memory`
-            : `INFO Auto-fit max_model_len: reduced from ${own} to ${length} to fit in available GPU memory (9.5 GiB available for KV cache)`,
+            ? `INFO Auto-fit max_model_len: full model context length ${own} fits in available KV cache memory (9.5 GiB GPU)`
+            : `INFO Auto-fit max_model_len: reduced from ${own} to ${length} to fit in available KV cache memory (9.5 GiB GPU)`,
         );
       } else if (!fits(context)) {
         reason = `ValueError: To serve at least one request with the model's max seq len (${context}), (8.50 GiB KV cache is needed, which is larger than the available KV cache memory (4.0 GiB). Based on the available memory, the estimated maximum model length is ${available - fixed}.`;
@@ -161,9 +161,22 @@ test("reads vLLM's served context, its cache's capacity, its auto-fit and its er
   assert.equal(cacheCapacity('vllm:cache_config_info{kv_cache_size_tokens="None"} 1.0'), undefined);
   assert.equal(servedContext({ data: [{ id: MODEL, max_model_len: 131072 }] }, MODEL), 131072);
   assert.equal(servedContext({ data: [] }, MODEL), undefined);
+  // vLLM 0.32.0's lines, then 0.31.0's, whose ends differ.
   assert.equal(
     autoFitModelContext([
-      "INFO Auto-fit max_model_len: reduced from 262144 to 190000 to fit in available GPU memory",
+      "INFO Auto-fit max_model_len: reduced from 262144 to 190000 to fit in available KV cache memory (61.2 GiB GPU)",
+    ]),
+    262144,
+  );
+  assert.equal(
+    autoFitModelContext([
+      "INFO Auto-fit max_model_len: full model context length 32768 fits in available KV cache memory (1.0 GiB CPU)",
+    ]),
+    32768,
+  );
+  assert.equal(
+    autoFitModelContext([
+      "INFO Auto-fit max_model_len: reduced from 262144 to 190000 to fit in available GPU memory (61.2 GiB available for KV cache)",
     ]),
     262144,
   );

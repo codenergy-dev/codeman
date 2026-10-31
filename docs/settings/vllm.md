@@ -24,7 +24,7 @@ The choices were made in the [plan for vLLM on pods](../plans/2026-10-13-vllm-on
 
 ## Accepted keys
 
-Only these keys, taken from `vllm serve` of vLLM 0.31.0, the version in Codeman's vLLM pod image ([arg_utils.py](../web/vllm/vllm-engine-arg-utils-py-at-v0-31-0.md), [cli_args.py](../web/vllm/vllm-entrypoints-launchers-cli-args-py-at-v0-31-0.md), [cache.py](../web/vllm/vllm-config-cache-py-at-v0-31-0.md), [speculative.py](../web/vllm/vllm-config-speculative-py-at-v0-31-0.md)). `src/inference/vllm.test.ts` checks this table against `VLLM_SETTINGS` in [`src/inference/vllm.ts`](../../src/inference/vllm.ts).
+Only these keys, taken from `vllm serve` of vLLM 0.32.0, the version pods run ([arg_utils.py](../web/vllm/vllm-engine-arg-utils-py-at-v0-32-0.md), [cli_args.py](../web/vllm/vllm-entrypoints-launchers-cli-args-py-at-v0-32-0.md), [cache.py](../web/vllm/vllm-config-cache-py-at-v0-32-0.md), [speculative.py](../web/vllm/vllm-config-speculative-py-at-v0-32-0.md)). `src/inference/vllm.test.ts` checks this table against `VLLM_SETTINGS` in [`src/inference/vllm.ts`](../../src/inference/vllm.ts).
 
 | Key | Argument | Value | vLLM's default | Without the key |
 | --- | --- | --- | --- | --- |
@@ -34,8 +34,8 @@ Only these keys, taken from `vllm serve` of vLLM 0.31.0, the version in Codeman'
 | `kv-cache-dtype` | `--kv-cache-dtype` | `auto`, `bfloat16`, `float16`, `fp8`, `fp8_e4m3` or `fp8_e5m2` | `auto`, the model's | vLLM's; `fp8` halves the cache's memory ([quantized K/V cache](../web/vllm/quantized-kv-cache.md)) |
 | `enable-prefix-caching` | `--enable-prefix-caching` | `true` or `false` | `true` | vLLM's: reuses the cache of a prompt's prefix across requests |
 | `max-num-batched-tokens` | `--max-num-batched-tokens` | Whole number, at least 1 | 2048 to 16384, by the GPU's memory | vLLM's |
-| `tool-call-parser` | `--tool-call-parser` | One of vLLM 0.31.0's tool call parsers | None | Required ([tool calls](#tool-calls)) |
-| `reasoning-parser` | `--reasoning-parser` | One of vLLM 0.31.0's reasoning parsers | None | None: the model's reasoning stays in its answer |
+| `tool-call-parser` | `--tool-call-parser` | One of vLLM 0.32.0's tool call parsers | None | Required ([tool calls](#tool-calls)) |
+| `reasoning-parser` | `--reasoning-parser` | One of vLLM 0.32.0's reasoning parsers | None | None: the model's reasoning stays in its answer |
 | `speculative-method` | `--speculative-config` | `mtp`, `ngram`, `eagle3`, `dflash`, `dspark` or `draft_model` | None | No speculative decoding |
 | `speculative-tokens` | `--speculative-config` | Whole number, at least 1 | None | Required with `speculative-method` |
 | `speculative-model` | `--speculative-config` | A Hugging Face model ID | None | Required with `eagle3`, `dflash`, `dspark` and `draft_model`, refused with `mtp` and `ngram` |
@@ -56,7 +56,7 @@ The settings file holds no JSON, so the three `speculative-*` keys make one `--s
 
 ### Parsers
 
-`VLLM_TOOL_PARSERS` and `VLLM_REASONING_PARSERS` list those of vLLM 0.31.0 ([tool parsers](../web/vllm/vllm-tool-parsers-init-py-at-v0-31-0.md), [reasoning parsers](../web/vllm/vllm-reasoning-init-py-at-v0-31-0.md)). A test checks them against the recorded source.
+`VLLM_TOOL_PARSERS` and `VLLM_REASONING_PARSERS` list those of vLLM 0.32.0 ([tool parsers](../web/vllm/vllm-tool-parsers-init-py-at-v0-32-0.md), [reasoning parsers](../web/vllm/vllm-reasoning-init-py-at-v0-32-0.md)). A test checks them against the recorded source.
 
 > [!NOTE]
 > For Qwen3 models, use `tool-call-parser: qwen3_xml`, which is the same as `qwen3_coder`, and `reasoning-parser: qwen3`.
@@ -107,7 +107,7 @@ The errors that Ollama's block shares, such as an unknown key, are in [errors co
      --enable-auto-tool-choice <the settings as arguments> --max-model-len <context, or auto>
    ```
 
-6. **vLLM's environment.** It has `VLLM_NO_USAGE_STATS=1` and `DO_NOT_TRACK=1`, and not the pod's Runpod key. `CUDA_VISIBLE_DEVICES` becomes `0` when it held a MIG partition's UUID, on which vLLM 0.31.0 fails to start.
+6. **vLLM's environment.** It has `VLLM_NO_USAGE_STATS=1` and `DO_NOT_TRACK=1`, and not the pod's Runpod key. `CUDA_VISIBLE_DEVICES` becomes `0` when it held a MIG partition's UUID, on which vLLM 0.31.0 fails to start; 0.32.0's release notes name no fix.
 7. **The status.** The gateway reports the settings it applied (`vllm`) and how it served the model (`fit`). `open-key` requires both, exactly as requested, or fails the run like a pod that did not serve.
 
 ## Parallel requests
@@ -119,8 +119,8 @@ Without `max-num-seqs`, a pod's vLLM serves as many requests at once as the most
 At its start, vLLM sizes its K/V cache from the GPU's memory left after the model, within `gpu-memory-utilization`.
 
 - **It refuses to start**, naming the largest context that would fit, when the cache cannot hold **one** request of `max-model-len` tokens.
-- **It never moves the model or its cache to the CPU** unless told to, which Codeman refuses ([kv_cache_utils.py](../web/vllm/vllm-v1-core-kv-cache-utils-py-at-v0-31-0.md)).
-- **It reports what its cache holds.** On `/metrics`, it gives the cache's tokens and how many requests of `max-model-len` it holds at once ([loggers.py](../web/vllm/vllm-v1-metrics-loggers-py-at-v0-31-0.md)).
+- **It never moves the model or its cache to the CPU** unless told to, which Codeman refuses ([kv_cache_utils.py](../web/vllm/vllm-v1-core-kv-cache-utils-py-at-v0-32-0.md)).
+- **It reports what its cache holds.** On `/metrics`, it gives the cache's tokens and how many requests of `max-model-len` it holds at once ([loggers.py](../web/vllm/vllm-v1-metrics-loggers-py-at-v0-32-0.md)).
 
 The gateway reads these, with the served context from `GET /v1/models` ([`src/gateway/vllm.ts`](../../src/gateway/vllm.ts)). The context it serves is the one vLLM reports. The floor and what a failed start does are in [context and the GPU](pod-engines.md#context-and-the-gpu).
 
@@ -210,8 +210,8 @@ The fit report counts vLLM's starts as `loads`, as it counts Ollama's loads. The
 
 Codeman's agents work through tool calls. vLLM returns them only with `--enable-auto-tool-choice` and the parser that matches the model's format ([tool calling](../web/vllm/tool-calling.md)). vLLM does not pick a parser from the model.
 
-1. **The parser is required.** So `tool-call-parser` is required, and the gateway always turns tool calls on.
-2. **The gateway probes it.** Once vLLM serves, the gateway sends a chat request offering a `ping` tool and asking for it. It lets the model write at most 4,096 tokens, or half the served context when that is less, since vLLM refuses a request whose prompt and `max_tokens` exceed the context.
+1. **The parser is required.** So `tool-call-parser` is required, and the gateway always turns tool calls on. vLLM 0.32.0 checks at its start that the parser suits the model, so a parser that does not may fail the start, with vLLM's own error, before the probe ([v0.32.0](../web/vllm/v0-32-0.md#breaking-changes-that-touch-codemans-use)).
+2. **The gateway probes it.** Once vLLM serves, the gateway sends a chat request offering a `ping` tool and asking for it. It lets the model write at most 4,096 tokens, or half the served context when that is less: vLLM 0.31.0 refused a request whose prompt and `max_tokens` exceeded the context, and 0.32.0 takes `max_tokens` as an upper bound only.
 3. **Two tries.** Without a parsed tool call after two tries, the pod's start fails, with vLLM's answer when it refused the request: "vLLM did not return a tool call with the parser `<parser>`: it may not match `<model>` (…). Set the `tool-call-parser` that the model's card or vLLM's recipe gives in the `vllm` settings."
 
 `reasoning-parser` is optional and not probed ([reasoning outputs](../web/vllm/reasoning-outputs.md)).
@@ -222,7 +222,7 @@ Before creating a vLLM pod, `open-key` checks the GPU's hosts, then the model. E
 
 ### CUDA
 
-vLLM 0.31.0's image is built with CUDA 13.0, and fails on a host whose driver is older (CUDA's error 804). How a pod gets a newer one depends on the provider.
+vLLM 0.32.0's image is built with CUDA 13.0, and fails on a host whose driver is older (CUDA's error 804). How a pod gets a newer one depends on the provider.
 
 **On Runpod,** a vLLM pod is created with `minCudaVersion` 13.0 (`VLLM_MIN_CUDA`). Before creating it, `open-key` reads which CUDA versions the GPU type's hosts offer pods, on the clouds `hosts` allows, and whether they have room ([get a GPU type](../web/runpod/get-a-gpu-type.md)). This check runs before the [model's](#the-model).
 

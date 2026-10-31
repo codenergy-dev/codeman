@@ -639,7 +639,7 @@ export function teeStatus(
   };
 }
 
-/** The labels every vLLM metric has (docs/web/vllm/vllm-v1-metrics-loggers-py-at-v0-31-0.md). */
+/** The labels every vLLM metric has (docs/web/vllm/vllm-v1-metrics-loggers-py-at-v0-32-0.md). */
 const VLLM_LABELS = new Set(["model_name", "engine"]);
 
 /**

@@ -92,7 +92,7 @@ const MIG_UUID = /^MIG-/;
 /**
  * The environment of `vllm serve`: the gateway's, without the pod's Runpod key, never reporting
  * usage, and with the GPU by index when it is a MIG partition's UUID, on which vLLM 0.31.0 fails
- * to start (docs/plans/2026-10-13-vllm-on-pods.md, MIG).
+ * to start (docs/plans/2026-10-13-vllm-on-pods.md, MIG); 0.32.0's release notes name no fix.
  */
 export function vllmServeEnvironment(
   base: Readonly<Record<string, string | undefined>>,
@@ -139,7 +139,8 @@ export function servedContext(models: unknown, model: string): number | undefine
 
 /**
  * The model's own context, from vLLM's auto-fit lines: "full model context length N fits", or
- * "reduced from N to M" (docs/web/vllm/vllm-v1-core-kv-cache-utils-py-at-v0-31-0.md).
+ * "reduced from N to M", whose ends changed in vLLM 0.32.0
+ * (docs/web/vllm/vllm-v1-core-kv-cache-utils-py-at-v0-32-0.md).
  */
 export function autoFitModelContext(lines: readonly string[]): number | undefined {
   for (const line of [...lines].reverse()) {
@@ -417,9 +418,10 @@ const PROBE_MAX_TOKENS = 4096;
 
 /**
  * The probe's `max_tokens` for the context vLLM serves: 4096, or half the context when that is
- * less. vLLM refuses a request whose prompt and `max_tokens` exceed its context, so a fixed 4096
- * failed the start of a pod whose `max-model-len` was below about 4,300 tokens, blaming the parser
- * (E1 of the investigation of multi-service pods).
+ * less. vLLM 0.31.0 refused a request whose prompt and `max_tokens` exceed its context, so a fixed
+ * 4096 failed the start of a pod whose `max-model-len` was below about 4,300 tokens, blaming the
+ * parser (E1 of the investigation of multi-service pods). vLLM 0.32.0 takes `max_tokens` as an
+ * upper bound only (docs/web/vllm/v0-32-0.md); the cap stays, and costs nothing.
  */
 export function probeMaxTokens(contextLength: number): number {
   return Math.max(1, Math.min(PROBE_MAX_TOKENS, Math.floor(contextLength / 2)));

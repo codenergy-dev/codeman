@@ -11,7 +11,7 @@ Codeman's bundles of the [e2e build](../guide.md#the-e2e-build) run the template
 - **The agent:** OpenCode itself, downloaded from a local npm cache and checked against its pinned integrity. A scripted model gives its replies.
 - **GitHub:** every App token's permissions and every user's collaborator role, enforced. A token the fake did not give fails the scenario. The fake lists each token with the template job that asked for it, so a scenario checks that each job's token holds only what the template declares (`security/token-permissions`).
 - **Google:** the OIDC, STS and IAM Credentials path, with its signature, audience and [attribute condition](../../glossary.md#attribute-condition). Firestore's emulator runs Codeman's security rules.
-- **Pods:** the [gateway](../../glossary.md#gateway) as a process, in front of real Ollama 0.35.1 or vLLM 0.31.0 on the CPU, with the same tiny model on both.
+- **Pods:** the [gateway](../../glossary.md#gateway) as a process, in front of real Ollama 0.35.1 or vLLM 0.32.0 on the CPU, with the same tiny model on both.
 
 Each scenario is a YAML file under [`e2e/scenarios/`](../../../e2e/scenarios/happy-path/openrouter-plan-only.yaml), by subject: `happy-path/`, `pods/`, `serverless/`, `parallel/`, `pools/`, `budgets/`, `failures/`, `commands/`, `profiles/` and `security/` today. The catalogue is phase 5 of the [plan](../../plans/2026-10-20-end-to-end-test-suite.md#phase-5-the-scenario-catalogue).
 
@@ -59,7 +59,7 @@ The first run with both profiles downloads about 6.4 GB and stores about 17 GB o
 | --- | --- | --- |
 | The fakes', emulator's and job images' bases, the emulator's jar, `gh`, OpenCode | Every scenario | Not measured apart |
 | `ollama/ollama:0.35.1` and `qwen2.5:0.5b` | The `ollama` profile | 9.37 GB of image, 35 minutes to pull; 398 MB of model |
-| `vllm/vllm-openai-cpu:v0.31.0` and `Qwen/Qwen2.5-0.5B-Instruct` | The `vllm` profile | 6.73 GB of image, 25 minutes to pull; 1.0 GB of model |
+| `vllm/vllm-openai-cpu:v0.32.0` and `Qwen/Qwen2.5-0.5B-Instruct` | The `vllm` profile | v0.31.0's image: 6.73 GB, 25 minutes to pull (v0.32.0 is 1.72 GB compressed, against 1.57 GB); 1.0 GB of model |
 
 > [!NOTE]
 > Large pulls can fail midway, with `unexpected EOF`. Run the command again: the seeds retry and resume, and Docker keeps the layers it has.

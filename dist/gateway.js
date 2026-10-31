@@ -29,7 +29,7 @@ var IMAGES_WITHOUT_OLLAMA_SETTINGS = /* @__PURE__ */ new Set([
   "ghcr.io/codenergy-dev/codeman-pod@sha256:3252d41775a230249490b5af79aec050151e49c4722bb62f9ce3d247d02f6ca3"
 ]);
 var OLLAMA_URL = "http://127.0.0.1:11434";
-var OLLAMA_VERSION = "0.35.1";
+var OLLAMA_VERSION = "0.40.10";
 var OLLAMA_SERIAL_FAMILIES = /* @__PURE__ */ new Set([
   "mllama",
   "qwen3vl",
@@ -160,7 +160,7 @@ function isHuggingFaceId(text) {
   const [namespace = "", name = "", ...rest] = text.split("/");
   return rest.length === 0 && [namespace, name].every((part) => HUB_NAME.test(part) && !/--|\.\./.test(part));
 }
-var VLLM_VERSION = "0.31.0";
+var VLLM_VERSION = "0.32.0";
 var VLLM_MIN_CUDA = "13.0";
 var VLLM_PORT = 8e3;
 var VLLM_URL = `http://127.0.0.1:${VLLM_PORT}`;
@@ -181,6 +181,7 @@ var VLLM_TOOL_PARSERS = [
   "granite",
   "granite4",
   "hermes",
+  "hf",
   "poolside_v1",
   "hunyuan_a13b",
   "hy_v3",
@@ -201,11 +202,13 @@ var VLLM_TOOL_PARSERS = [
   "minicpm5",
   "mistral",
   "olmo3",
+  "plamo3",
   "muse_glimmer",
   "openai",
   "phi4_mini_json",
   "pythonic",
   "qwen3_coder",
+  "qwen3_json",
   "qwen3_xml",
   "seed_oss",
   "step3",
@@ -233,6 +236,7 @@ var VLLM_REASONING_PARSERS = [
   "openai_gptoss",
   "granite",
   "granite_thinking_parser",
+  "hf",
   "holo2",
   "hunyuan_a13b",
   "hy_v3",
@@ -241,12 +245,14 @@ var VLLM_REASONING_PARSERS = [
   "kimi_k3",
   "k2_horizon",
   "mimo",
+  "minicpmv",
   "minimax_m2",
   "minimax_m2_append_think",
   "minimax_m3",
   "mistral",
   "nemotron_v3",
   "olmo3",
+  "plamo3",
   "muse_glimmer",
   "qwen3",
   "seed_oss",

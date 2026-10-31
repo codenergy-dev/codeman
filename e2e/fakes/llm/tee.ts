@@ -118,7 +118,7 @@ export interface TeeRunner {
   parallel?: number;
 }
 
-/** The programs that serve an engine's requests in a pod: Ollama 0.35.1's runner. */
+/** The programs that serve an engine's requests in a pod: Ollama's, from 0.35.1 to 0.40.10. */
 const RUNNERS = new Set(["llama-server"]);
 
 /** What the tee saw of one chat request. */
@@ -376,7 +376,7 @@ export class Tee {
 
   /**
    * vLLM's requests running and waiting now, from its `/metrics`
-   * (docs/web/vllm/vllm-v1-metrics-loggers-py-at-v0-31-0.md); none on a failure.
+   * (docs/web/vllm/vllm-v1-metrics-loggers-py-at-v0-32-0.md); none on a failure.
    */
   async #gauges(): Promise<{ running: number; waiting: number }> {
     try {

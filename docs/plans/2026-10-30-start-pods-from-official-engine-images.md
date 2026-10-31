@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-10-30T16:20:00-03:00
-updated_at: 2026-10-30T17:00:00-03:00
+updated_at: 2026-10-30T21:30:00-03:00
 commit: 0bbb10d
 ---
 
@@ -127,6 +127,7 @@ The steps start once the decisions are answered. Subagents carry them out, one s
 1. **Record what is missing in `docs/web/`.** Node's download page and `SHASUMS256.txt`, and how `raw.githubusercontent.com` serves a file. Done when each page the steps rely on is recorded.
 2. **The release policy** (`src/inference/release-policy.ts`, with OSV in `src/inference/osv.ts` on `fetch`). The minimum age with the bypass, severities and exceptions, the provenance recorded, and the 24-hour rule of decision 7. Done when unit tests cover each rule with fixtures, E3's cases included.
 3. **The catalog of pinned artifacts** (`src/inference/images.ts`): official images by digest, each with its engine's coordinates, version and publication date, plus Node's tarball by URL and SHA-256. The gateway's URL and SHA-256 are computed at run time. Done when the tests read the catalog and the engines of decision 1 are pinned.
+   - The engines' upgrade checklists ran for both pins: `OLLAMA_VERSION` and `VLLM_VERSION` follow the catalog, a test compares them, and the e2e suite's vLLM CPU image moves to `v0.32.0` ([dependencies](../development/dependencies.md#ollama)).
 4. **The bootstrap** (`src/gateway/bootstrap.ts`). It builds the two-stage command as provider command lines.
    - Unit tests check:
      - Salad's limits;

@@ -237,7 +237,7 @@ services:
   seed-hf:
     <<: *hardening
     profiles: [vllm]
-    image: vllm/vllm-openai-cpu:v0.31.0@sha256:495c84fe30f3572b83a78100a1e8ba423dbb77fc532ecefebe114e6b77327bd9
+    image: vllm/vllm-openai-cpu:v0.32.0@sha256:ffaba3989b9b96d95a576143c872a4110ce9800f5199b6a36eb27bdff1cbbe05
     entrypoint: [/bin/sh, /seeds/hf.sh]
     command: []
     environment:

@@ -48,21 +48,17 @@ test("pods run the catalog's official images; the `pod-image` input overrides Ol
   assert.equal(catalogRelease("sglang", ""), undefined);
 });
 
-test("the Dockerfile pins the engines' versions by digest, and vLLM sends no usage", () => {
-  assert.ok(dockerfile.includes(`FROM ollama/ollama:${OLLAMA_VERSION}@sha256:`));
-  assert.ok(dockerfile.includes(`FROM vllm/vllm-openai:v${VLLM_VERSION}@sha256:`));
+test("the Dockerfile pins every base by digest, and vLLM sends no usage", () => {
   for (const from of dockerfile.matchAll(/^FROM (\S+)/gm)) {
     assert.match(from[1] ?? "", /@sha256:[0-9a-f]{64}$/, "every base by digest");
   }
   const vllm = dockerfile.split("AS vllm\n")[1]?.split(/^FROM /m)[0] ?? "";
   assert.ok(vllm.includes("VLLM_NO_USAGE_STATS=1") && vllm.includes("DO_NOT_TRACK=1"));
-  const image = readFileSync(
-    `docs/web/docker-hub/vllm-vllm-openai-v${VLLM_VERSION.replaceAll(".", "-")}.md`,
-    "utf8",
-  );
-  assert.ok(image.includes(`\`CUDA_VERSION=${VLLM_MIN_CUDA}.`), "the image's CUDA is the floor");
-  const pinned = /^FROM vllm\/vllm-openai:\S+@(sha256:[0-9a-f]{64})/m.exec(dockerfile)?.[1];
-  assert.ok(pinned && image.includes(pinned), "the recorded index digest");
+});
+
+test("the engines' versions that settings and messages name are the catalog's", () => {
+  assert.equal(ENGINE_RELEASES.ollama?.release.version, OLLAMA_VERSION);
+  assert.equal(ENGINE_RELEASES.vllm?.release.version, VLLM_VERSION);
 });
 
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
