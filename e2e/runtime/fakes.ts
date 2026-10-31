@@ -150,6 +150,8 @@ export interface Fakes {
   salad: FakeClient;
   npm: FakeClient;
   huggingface: FakeClient;
+  osv: FakeClient;
+  nodejs: FakeClient;
   /** The emulator's origin from the host, such as `http://127.0.0.1:41234`. */
   firestore: string;
 }
@@ -163,6 +165,8 @@ export const FAKE_NAMES: readonly FakeName[] = [
   "llm",
   "npm",
   "huggingface",
+  "osv",
+  "nodejs",
 ];
 
 /** The services' origins as jobs and pods reach them on the jobs network (compose.yaml). */
@@ -175,6 +179,8 @@ export const INTERNAL = {
   salad: "http://salad:8080",
   npm: "http://npm:8080",
   huggingface: "http://huggingface:8080",
+  osv: "http://osv:8080",
+  nodejs: "https://nodejs.org",
   firestore: "http://firestore:8080",
 } as const;
 
@@ -192,6 +198,7 @@ export function bundleEndpoints(internal: typeof INTERNAL = INTERNAL): Record<st
     saladPods: `${internal.salad}/pods/{id}/{port}`,
     npm: internal.npm,
     huggingFace: internal.huggingface,
+    osv: internal.osv,
     googleSts: internal.google,
     googleIamCredentials: internal.google,
     firestore: internal.firestore,

@@ -277,8 +277,10 @@ export async function stopStep(
 const POLL_MS = 250;
 
 /**
- * Codeman's action: its bundle copied into the job's checkout of Codeman (`GITHUB_ACTION_PATH`),
+ * Codeman's action: its bundles copied into the job's checkout of Codeman (`GITHUB_ACTION_PATH`),
  * as `actions/checkout` of Codeman leaves it there on GitHub, then run with the runner's Node.
+ * `dist/gateway.js` is the file whose SHA-256 a pod checks, and the fake GitHub serves the same
+ * file at the checkout's commit, whose `.git/HEAD` the emulated checkout wrote.
  */
 export function actionArgv(actionPath: string | undefined): string[] {
   if (!actionPath) return [ACTION_NODE, `${BUNDLE_ROOT}/dist/index.js`];
@@ -287,6 +289,7 @@ export function actionArgv(actionPath: string | undefined): string[] {
     'a="$1"',
     'mkdir -p "$a/dist" "$a/docs/web/tools"',
     `cp ${BUNDLE_ROOT}/dist/index.js "$a/dist/index.js"`,
+    `cp ${BUNDLE_ROOT}/dist/gateway.js "$a/dist/gateway.js"`,
     `cp ${BUNDLE_ROOT}/AGENTS.md "$a/AGENTS.md"`,
     `cp ${BUNDLE_ROOT}/docs/web/tools/fetch-markdown.md "$a/docs/web/tools/fetch-markdown.md"`,
     `exec ${ACTION_NODE} "$a/dist/index.js"`,

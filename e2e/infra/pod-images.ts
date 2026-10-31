@@ -1,13 +1,16 @@
-import { POD_IMAGES } from "../../src/inference/images.ts";
+import { ENGINE_RELEASES } from "../../src/inference/images.ts";
 
 /**
- * The local e2e pod image that stands in for each of Codeman's pinned pod images, for the
- * host-side orchestrator (decision 2 of docs/plans/2026-10-20-end-to-end-test-suite.md): the fake
- * Runpod passes it the image a pod was created with, and it runs the local image this allowlist
- * maps it to, or refuses. Codeman asks Runpod for `POD_IMAGES` (src/inference/images.ts) by
- * digest; e2e/infra/compose.yaml's `images` profile builds the local images: the Ollama one on the
- * production target built from dist/, both with the gateway's e2e bundle, e2e/.build/gateway.js
- * (decision 11).
+ * The local e2e pod image that stands in for each engine's official image, for the host-side
+ * orchestrator (decision 2 of docs/plans/2026-10-20-end-to-end-test-suite.md): the fake Runpod or
+ * Salad passes it the image a pod was created with, and it runs the local image this allowlist
+ * maps it to, or refuses. Codeman asks for the official images of `ENGINE_RELEASES`
+ * (src/inference/images.ts) by digest, and starts them with the bootstrap as their command.
+ *
+ * e2e/infra/compose.yaml's `images` profile builds the local images: Ollama's from the catalog's
+ * own image, vLLM's from its CPU image of the same release, since the catalog's is for CUDA. Each
+ * adds only the tee, the wrappers that move the engine one port up, and a Node.js of its own for
+ * the tee: the bootstrap downloads the pod's Node.js and gateway, as on a real pod.
  */
 export const LOCAL_POD_IMAGES: Readonly<Record<string, string>> = {
   ollama: "codeman-e2e-pod-ollama:local",
@@ -16,9 +19,9 @@ export const LOCAL_POD_IMAGES: Readonly<Record<string, string>> = {
 
 /** Each pinned image, by its full reference with the digest, and the local image for it. */
 export const POD_IMAGE_ALLOWLIST: ReadonlyMap<string, string> = new Map(
-  Object.entries(POD_IMAGES).flatMap(([engine, image]) => {
+  Object.entries(ENGINE_RELEASES).flatMap(([engine, release]) => {
     const local = LOCAL_POD_IMAGES[engine];
-    return image && local ? [[image, local] as const] : [];
+    return local ? [[release.image, local] as const] : [];
   }),
 );
 

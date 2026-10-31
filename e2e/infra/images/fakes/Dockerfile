@@ -21,8 +21,8 @@ COPY e2e/fakes/ e2e/fakes/
 COPY e2e/infra/certificates.ts e2e/infra/
 
 # The volumes' mount points, owned by the fakes' user, so new named volumes start writable for it.
-RUN mkdir -p /e2e/ca /e2e/tls /e2e/npm \
- && chown node:node /e2e/ca /e2e/tls /e2e/npm \
+RUN mkdir -p /e2e/ca /e2e/tls /e2e/npm /e2e/node \
+ && chown node:node /e2e/ca /e2e/tls /e2e/npm /e2e/node \
  && git --version && openssl version && node --version
 
 # The base image's unprivileged user, uid 1000. Docker lets it bind ports below 1024

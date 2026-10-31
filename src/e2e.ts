@@ -18,6 +18,7 @@ const ORIGINS = {
   googleSts: "https://sts.googleapis.com",
   googleIamCredentials: "https://iamcredentials.googleapis.com",
   firestore: "https://firestore.googleapis.com",
+  osv: "https://api.osv.dev",
 } as const;
 
 /**

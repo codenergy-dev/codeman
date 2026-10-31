@@ -49,6 +49,26 @@ export interface World {
   app: App;
   runpod: RunpodWorld | undefined;
   openrouter: OpenRouterWorld | undefined;
+  osv: OsvWorld | undefined;
+}
+
+/** Advisories the fake OSV.dev adds to its default records, for the scenario. */
+export interface OsvWorld {
+  advisories: OsvAdvisory[];
+}
+
+/**
+ * An advisory as GitHub's database gives OSV.dev one: a severity of its own, and a range of the
+ * package's versions from `introduced` up to `fixed`, when one fixes it.
+ */
+export interface OsvAdvisory {
+  id: string;
+  ecosystem: string;
+  package: string;
+  severity: "critical" | "high" | "moderate" | "low";
+  summary: string | undefined;
+  introduced: string;
+  fixed: string | undefined;
 }
 
 /** The provider secrets the templates pass, by their short name in the scenario. */
@@ -346,6 +366,8 @@ export const FAKES = [
   "llm",
   "npm",
   "huggingface",
+  "osv",
+  "nodejs",
 ] as const;
 export type FakeName = (typeof FAKES)[number];
 
@@ -526,6 +548,8 @@ export const FAKE_LISTS: Readonly<Record<FakeName, readonly string[]>> = {
   llm: ["turns", "violations", "requests"],
   npm: ["requests"],
   huggingface: ["requests"],
+  osv: ["requests"],
+  nodejs: ["requests"],
 };
 
 export interface FakeMatch {

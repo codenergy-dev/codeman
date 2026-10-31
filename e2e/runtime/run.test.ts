@@ -9,6 +9,7 @@ import { GoogleFake } from "../fakes/google/google.ts";
 import { FakeServer } from "../fakes/http.ts";
 import { LlmFake } from "../fakes/llm/llm.ts";
 import { OpenRouterFake } from "../fakes/openrouter/openrouter.ts";
+import { OsvFake } from "../fakes/osv/osv.ts";
 import { RunpodFake } from "../fakes/runpod/runpod.ts";
 import { SaladFake } from "../fakes/salad/salad.ts";
 import { FakeClient, type Fakes } from "./fakes.ts";
@@ -61,6 +62,8 @@ before(async () => {
     salad: await listen("salad", new SaladFake().server),
     npm: await listen("npm", new FakeServer("npm")),
     huggingface: await listen("huggingface", new FakeServer("huggingface")),
+    osv: await listen("osv", new OsvFake().server),
+    nodejs: await listen("nodejs", new FakeServer("nodejs")),
     firestore: "http://127.0.0.1:1",
   };
   github = new RemoteGitHub(fakes.github, { server: fakes.github.origin });

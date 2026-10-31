@@ -84,7 +84,7 @@ actions:
 
 ## The world
 
-`world` takes `repositories`, required, and `users`, `organizations`, `app`, `runpod` and `openrouter`. Every user named anywhere in it is created.
+`world` takes `repositories`, required, and `users`, `organizations`, `app`, `runpod`, `openrouter` and `osv`. Every user named anywhere in it is created.
 
 ### Organizations and repositories
 
@@ -116,6 +116,7 @@ A repository whose owner is no organization of the world belongs to a user accou
 | `openrouter.prices` | `{ prompt, completion }`, USD per token | The fake's |
 | `openrouter.lags` | `{ usage, analytics }`: a duration, or `hold` until settled | None |
 | `openrouter.credits` | The account's credits, in USD | 100 |
+| `osv.advisories` | Advisories the [fake OSV.dev](fakes.md#the-services) adds to its records, each as GitHub's database gives one: `{ id, ecosystem, package, severity, summary, introduced, fixed }`, with `severity` one of `critical`, `high`, `moderate`, `low`, and the versions from `introduced` (`"0"` by default) up to `fixed`, excluded, when one fixes it. A high or critical one that affects a pinned release, such as `{ id: GHSA-e2e0-test-0001, ecosystem: Go, package: github.com/ollama/ollama, severity: critical }`, blocks it at `open-key` | None: the catalog's releases pass |
 
 > [!NOTE]
 > A pod run's cost counts from the pod's creation ([the budget cut-off](../../inference/self-hosted.md#the-budget-cut-off)), and no action moves that clock. A scenario that spends a run's budget on a pod, through a high `runpod.catalog` price, must leave the agent time to start first: its first request came 59 seconds after the pod's creation on a loaded machine. `budgets/spent-run-gets-402` gives it 180 seconds.
@@ -223,7 +224,7 @@ In `seed`'s `data`, `now`, `now-45m` and `now+1h` are times relative to when it 
 
 | Key | Value | Effect |
 | --- | --- | --- |
-| `github`, `openrouter`, `runpod`, `google`, `llm`, `npm`, `huggingface` | `{ path, method, status, body, delay, drop, times }`, `path` required | An HTTP fault on the fake's routes that `path` matches, such as `/v1/token`. One of `status`, `delay` or `drop` is required. `times` limits it |
+| `github`, `openrouter`, `runpod`, `salad`, `google`, `llm`, `npm`, `huggingface`, `osv`, `nodejs` | `{ path, method, status, body, delay, drop, times }`, `path` required | An HTTP fault on the fake's routes that `path` matches, such as `/v1/token`. One of `status`, `delay` or `drop` is required. `times` limits it |
 | `runpod` | `{ pod-start, low-balance, hold-queues, pod-age }` | `pod-start: never` makes a pod that never serves, `fail` one that fails to start. `low-balance: true` makes each valid pod creation answer 402, as Runpod does for an account short of credit. `hold-queues` holds the Serverless queues: `true` or endpoint IDs. `pod-age`, a duration, dates the pods created from then on that far back, as Runpod reports and bills them: the seeded past of the timers that count from a pod's creation, such as `open-key`'s 25 minutes |
 | `google` | `{ refuse-repositories, disabled-accounts, expiry }` | Refuses those repositories' tokens or those service accounts, or shortens the tokens' expiry |
 | `openrouter` | `{ lags: { usage, analytics } }` | Changes the lags from now on |
@@ -298,7 +299,7 @@ Every scenario also ends with an implicit `violations: none`.
 | `openrouter` | `keys`, `generations`, `requests` |
 | `runpod` | `jobs`, `requests` |
 | `salad` | `groups`, `requests` |
-| `google`, `npm`, `huggingface` | `requests` |
+| `google`, `npm`, `huggingface`, `osv`, `nodejs` | `requests` |
 | `llm` | `turns`, `violations`, `requests` |
 
 What each list holds is in [the e2e fakes](fakes.md#control-routes).

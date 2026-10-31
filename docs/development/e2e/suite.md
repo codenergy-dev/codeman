@@ -4,14 +4,15 @@ This page is for whoever changes Codeman and wants to see a [task](../../glossar
 
 ## What it covers
 
-Codeman's bundles of the [e2e build](../guide.md#the-e2e-build) run the templates' jobs, one container per job, against local fakes of GitHub, OpenRouter, Runpod, Google and Hugging Face's Hub. The bugs it is for showed only on real repositories; the [plan](../../plans/2026-10-20-end-to-end-test-suite.md#context) lists them.
+Codeman's bundles of the [e2e build](../guide.md#the-e2e-build) run the templates' jobs, one container per job, against local fakes of GitHub, OpenRouter, Runpod, Salad, Google, Hugging Face's Hub, OSV.dev and nodejs.org. The bugs it is for showed only on real repositories; the [plan](../../plans/2026-10-20-end-to-end-test-suite.md#context) lists them.
 
 - **The workflows:** the job order, `if:` rules, matrices and the reusable workflow, read from `templates/codeman.yml` and `codeman-task.yml`. Real outputs and artifacts cross the jobs.
 - **The jobs:** in the local runner image, plus `gh`, with the agent's [jail](../../runs/agent.md#the-jail).
 - **The agent:** OpenCode itself, downloaded from a local npm cache and checked against its pinned integrity. A scripted model gives its replies.
 - **GitHub:** every App token's permissions and every user's collaborator role, enforced. A token the fake did not give fails the scenario. The fake lists each token with the template job that asked for it, so a scenario checks that each job's token holds only what the template declares (`security/token-permissions`).
 - **Google:** the OIDC, STS and IAM Credentials path, with its signature, audience and [attribute condition](../../glossary.md#attribute-condition). Firestore's emulator runs Codeman's security rules.
-- **Pods:** the [gateway](../../glossary.md#gateway) as a process, in front of real Ollama 0.35.1 or vLLM 0.32.0 on the CPU, with the same tiny model on both.
+- **Pods:** the engines' official images, Ollama 0.40.10's and vLLM 0.32.0's CPU image, started by Codeman's bootstrap as on a real pod: it downloads Node.js and the e2e [gateway](../../glossary.md#gateway) from the fakes, checks their SHA-256, and runs the gateway, in front of the real engine on the CPU, with the same tiny model on both.
+- **The release policy:** `open-key` checks the pinned releases against the fake OSV.dev before any pod, with the catalog's exceptions; `failures/release-blocked` adds an advisory that blocks.
 
 Each scenario is a YAML file under [`e2e/scenarios/`](../../../e2e/scenarios/happy-path/openrouter-plan-only.yaml), by subject: `happy-path/`, `pods/`, `serverless/`, `parallel/`, `pools/`, `budgets/`, `failures/`, `commands/`, `profiles/` and `security/` today. The catalogue is phase 5 of the [plan](../../plans/2026-10-20-end-to-end-test-suite.md#phase-5-the-scenario-catalogue).
 
@@ -32,14 +33,16 @@ The suite replaces some parts of the real path. What each replacement hides, no 
 
 | Seam | Replaces | Hides |
 | --- | --- | --- |
-| The [e2e build's](../guide.md#the-e2e-build) redirects | The hosts of OpenRouter, Runpod, Google's STS, IAM Credentials and Firestore, Hugging Face's Hub, and npm, by the fakes' origins | The real services' TLS, DNS and behavior: the fakes follow `docs/web/`, which does not prove the services agree. The published `dist/` differs from the e2e bundle in its wiring |
+| The [e2e build's](../guide.md#the-e2e-build) redirects | The hosts of OpenRouter, Runpod, Salad, Google's STS, IAM Credentials and Firestore, Hugging Face's Hub, npm and OSV.dev, by the fakes' origins | The real services' TLS, DNS and behavior: the fakes follow `docs/web/`, which does not prove the services agree. The published `dist/` differs from the e2e bundle in its wiring |
 | The fake Hub | Hugging Face's model information, from the `vllm` profile's model volume | Other models, and private, gated or disabled ones: the fake serves only what the volume holds, as public |
 | The fake GitHub | GitHub's API, under `/api/v3` and `/api/graphql` as on GitHub Enterprise Server | github.com's own behavior where it differs from the fake |
 | The simulator's emulated actions | `actions/checkout`, `create-github-app-token`, `upload-artifact` and `download-artifact` | The actions' own code, and GitHub's runner. An input the emulation lacks stops the run |
 | act, for the scenarios [under act](#under-act) | GitHub's runner, with the actions' own code | What [act's limits](#acts-limits) list |
 | The tee, in each pod | The agent's chat to the engine | The engine reads a short fixed prompt, not the agent's: real prefill, real context use and parsing of the agent's tool calls go untested |
 | The tee's `/api/ps` and pull | Ollama's `size_vram`, and its registry pull | A real GPU's memory, and a pull from the registry |
-| The pod launcher | Runpod's and Salad's machines, and Codeman's pinned pod images | The published images: the e2e images are built locally, with the e2e gateway |
+| The jobs network's aliases | `nodejs.org` and `raw.githubusercontent.com`, which a pod's bootstrap downloads from, by the fake nodejs.org and the fake GitHub, with the session's test CA, which the e2e pod images add to their system's store | Those hosts' real TLS, CDN and answers. The fake GitHub serves the e2e bundle's gateway, not the published `dist/gateway.js` |
+| The fake OSV.dev | OSV.dev's advisories, from records it holds: those OSV.dev gave on 2026-10-30, and the scenario's | Advisories published since: a scenario passes even when the real database would block a pinned release |
+| The pod launcher | Runpod's and Salad's machines | The official images with the tee added, and vLLM's CPU image in place of its CUDA one. The pod's command runs as the arguments of the e2e image's entry point, which starts the tee first, not in place of the image's entry point |
 | The simulator's masks | GitHub's runner's, which hide each secret a step registers and skip each job output holding one | The fake Google's access token, `owner`, the one the Firestore emulator takes as an admin: Codeman masks it, but the simulator does not, since a real token is random and a common word would hide every output with it, such as `select`'s `dispatches`. A log that printed the token would not show it masked |
 
 ## Before you run it
@@ -58,7 +61,8 @@ The first run with both profiles downloads about 6.4 GB and stores about 17 GB o
 | Input | Needed by | Measured on the plan's machine |
 | --- | --- | --- |
 | The fakes', emulator's and job images' bases, the emulator's jar, `gh`, OpenCode | Every scenario | Not measured apart |
-| `ollama/ollama:0.35.1` and `qwen2.5:0.5b` | The `ollama` profile | 9.37 GB of image, 35 minutes to pull; 398 MB of model |
+| `ollama/ollama:0.40.10` and `qwen2.5:0.5b` | The `ollama` profile | 3.37 GB of image (0.35.1's was 9.37 GB, 35 minutes to pull); 398 MB of model |
+| Node.js 24.22.1's linux-x64 tarball | Both pod profiles | 58 MB, from nodejs.org, checked against `NODE_RELEASE`'s SHA-256 |
 | `vllm/vllm-openai-cpu:v0.32.0` and `Qwen/Qwen2.5-0.5B-Instruct` | The `vllm` profile | v0.31.0's image: 6.73 GB, 25 minutes to pull (v0.32.0 is 1.72 GB compressed, against 1.57 GB); 1.0 GB of model |
 
 > [!NOTE]
@@ -110,7 +114,7 @@ The command exits 1 when a scenario fails or is not run, or when a [known bug's]
 An argument that matches no scenario is an error, so a typo runs nothing.
 
 > [!NOTE]
-> The pod images hold the e2e gateway. With `--no-build`, they keep the gateway of their last build, even after a change to `src/gateway/`.
+> The pod images hold the tee, from the fakes' sources. With `--no-build`, they keep the tee of their last build. The gateway is the e2e bundle's of the run, which each pod downloads.
 
 - **Services stay up** between runs, so the next run starts in seconds. Compose recreates only what changed.
 - **Each scenario starts fresh:** every fake is reset, the store is a new Firestore project, and the runtime removes the scenario's containers when it ends. A scenario fails at once if anything of an earlier one is left.
@@ -247,7 +251,7 @@ flowchart LR
 2. The session ([`session.ts`](../../../e2e/runtime/session.ts)) builds the images, runs `docker compose up --wait` with the profiles, and opens the pod launcher.
 3. For each scenario, it builds the world on the fakes: users, repositories with the templates, the App, the Google side and the agent's script.
 4. The scenario's actions run in order ([`run.ts`](../../../e2e/runtime/run.ts)). A `run` or an `advance` hands an event to the workflow simulator, or to act's driver ([under act](#under-act)), which runs each job in its own container on the internal jobs network. A cancelled or timed-out step's processes get SIGINT, then SIGTERM after 7.5 seconds, then SIGKILL 2.5 seconds later, as GitHub's runner sends them; the container stays, so the job's `always()` steps run.
-5. A pod the fake Runpod creates goes to the launcher, which runs the local image its allowlist maps the pinned image to.
+5. A pod the fake Runpod or Salad creates goes to the launcher, which runs the local image its allowlist maps the official image to, with the pod's command, the bootstrap.
 6. `expect`, `wait` and `advance` read the fakes and the store ([`expect.ts`](../../../e2e/runtime/expect.ts)). At the end, any violation fails the scenario, and a failure writes the report ([`report.ts`](../../../e2e/runtime/report.ts)).
 
 Each job container gets `--init`, `SYS_ADMIN`, unconfined seccomp and AppArmor, as the [local runner](../local-actions.md#run-the-tests) does, and 3 GiB of memory. The fakes get 192 MiB each, the fake GitHub 384 MiB, and the emulator 1 GiB. No container gets the Docker socket.

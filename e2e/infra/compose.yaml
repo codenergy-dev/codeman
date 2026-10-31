@@ -30,6 +30,10 @@ name: codeman-e2e
 # git in the job image reaches the fake by this address (its http.curloptResolve).
 x-github-address: &github-address 10.250.0.10
 x-github-host: &github-host github-e2e.localhost
+# The hosts a pod's bootstrap downloads from (src/gateway/bootstrap.ts): the jobs network gives
+# them to the fakes as aliases, and the session's certificate names them.
+x-raw-host: &raw-host raw.githubusercontent.com
+x-nodejs-host: &nodejs-host nodejs.org
 
 x-hardening: &hardening
   cap_drop: [ALL]
@@ -69,8 +73,9 @@ x-fake: &fake
     start_interval: 1s
 
 services:
-  # The session's test CA and the fake GitHub's certificate, made once and kept in volumes while
-  # valid (e2e/infra/certificates.ts). Jobs and pods mount only `ca`; only the fake GitHub, `tls`.
+  # The session's test CA and the HTTPS fakes' certificate, made once and kept in volumes while
+  # valid (e2e/infra/certificates.ts). Jobs and pods mount only `ca`; only the fake GitHub and the
+  # fake nodejs.org, `tls`.
   certificates:
     <<: *fakes-image
     command:
@@ -81,6 +86,8 @@ services:
       - *github-host
       - github
       - *github-address
+      - *raw-host
+      - *nodejs-host
       - localhost
       - 127.0.0.1
     network_mode: none
@@ -89,7 +96,8 @@ services:
 
   # HTTPS on 443 under a `*.localhost` name, which @actions/artifact requires (spike 0.2, 2c):
   # https://github-e2e.localhost, with /api/v3 and /api/graphql. gh, as for GitHub Enterprise
-  # Server, takes GH_HOST=github-e2e.localhost and its token from GH_ENTERPRISE_TOKEN.
+  # Server, takes GH_HOST=github-e2e.localhost and its token from GH_ENTERPRISE_TOKEN. Also
+  # raw.githubusercontent.com, for the gateway a pod's bootstrap downloads (e2e/fakes/github/raw.ts).
   github:
     <<: *fake
     command: [node, e2e/fakes/main.ts, github]
@@ -105,7 +113,7 @@ services:
     networks:
       jobs:
         ipv4_address: *github-address
-        aliases: [*github-host]
+        aliases: [*github-host, *raw-host]
       control: {}
     ports: ["127.0.0.1::443"]
     # git http-backend, a process per clone or push.
@@ -188,6 +196,46 @@ services:
     depends_on:
       seed-hf: { condition: service_completed_successfully, required: false }
 
+  # OSV.dev's API, for open-key's release policy (e2e/fakes/osv/): the advisories of its default
+  # records, and those a scenario adds.
+  osv:
+    <<: *fake
+    command: [node, e2e/fakes/main.ts, osv]
+
+  # nodejs.org's download server, for a pod's bootstrap: HTTPS on 443 under nodejs.org, which the
+  # jobs network sends here, with NODE_RELEASE's tarball from the volume seed-node fills. Without a
+  # pod profile the volume is empty, and the file answers 404.
+  nodejs:
+    <<: *fake
+    command: [node, e2e/fakes/main.ts, nodejs]
+    environment:
+      <<: *fake-environment
+      PORT: "443"
+      FAKE_TLS_KEY: /e2e/tls/server.key
+      FAKE_TLS_CERT: /e2e/tls/server.crt
+      FAKE_NODEJS_CACHE: /e2e/node
+    volumes: [tls:/e2e/tls:ro, node:/e2e/node:ro]
+    depends_on:
+      certificates: { condition: service_completed_successfully }
+      seed-node: { condition: service_completed_successfully, required: false }
+    networks:
+      jobs:
+        aliases: [*nodejs-host]
+      control: {}
+    ports: ["127.0.0.1::443"]
+
+  # NODE_RELEASE's tarball (src/inference/images.ts), checked against its pinned SHA-256
+  # (e2e/fakes/nodejs/fill.ts), for the pod profiles: a filled volume makes no request.
+  seed-node:
+    <<: *fakes-image
+    profiles: [ollama, vllm]
+    command: [node, e2e/fakes/nodejs/fill.ts, /e2e/node]
+    volumes: [node:/e2e/node]
+    networks: [egress]
+    restart: "no"
+    mem_limit: 768m
+    memswap_limit: 768m
+
   # In the default profile, unlike the models: every agent job downloads OpenCode, whatever its
   # provider. fill.ts keeps a tarball that matches its pinned integrity, so a filled volume makes no
   # request. Its platform is this machine's, as the job image's is.
@@ -223,7 +271,7 @@ services:
   seed-ollama:
     <<: *hardening
     profiles: [ollama]
-    image: ollama/ollama:0.35.1@sha256:292ee7945dfc3d5840a181f3ab86fedb1e66703e02c8af98b50f4da56b7e278c
+    image: ollama/ollama:0.40.10@sha256:4c5b27871a3239a717048f9b93057680a51b60c8119a7016aebb57f938e25e35
     entrypoint: [/bin/sh, /seeds/ollama.sh]
     command: []
     volumes: [ollama:/root/.ollama/models, ./seeds:/seeds:ro]
@@ -249,20 +297,14 @@ services:
     mem_limit: 1g
     memswap_limit: 1g
 
-  # The pod images (e2e/infra/images/pod-ollama/, pod-vllm/), which stand in for Codeman's pinned
-  # ones (e2e/infra/pod-images.ts). Never started here: the host-side orchestrator runs each pod the
-  # fake Runpod creates (decision 2), with `docker run --init` on the jobs network, the pod's env,
-  # the tee's variables, and the `ollama` volume on /root/.ollama/models or the `hf` volume on
-  # /root/.cache/huggingface, read-only. Both run the gateway's e2e bundle (decision 11): run
-  # `npm run build:e2e` before building them. pod-ollama-base is the production target, from dist/.
-  # The images set CODEMAN_E2E_ENDPOINTS to the fake Runpod's origin below; a launcher may replace it.
-  pod-ollama-base:
-    profiles: [images]
-    image: codeman-pod-ollama:local
-    build:
-      context: ../../dist
-      dockerfile: ../docker/pod/Dockerfile
-      target: ollama
+  # The pod images (e2e/infra/images/pod-ollama/, pod-vllm/), which stand in for the engines'
+  # official images (e2e/infra/pod-images.ts): those images, or vLLM's CPU one, with the tee. Never
+  # started here: the host-side orchestrator runs each pod the fake Runpod or Salad creates
+  # (decision 2), with `docker run --init` on the jobs network, the pod's env and command, the
+  # tee's variables, the `ca` volume, and the `ollama` volume on /root/.ollama/models or the `hf`
+  # volume on /root/.cache/huggingface, read-only. The pod's command, the bootstrap, downloads the
+  # gateway's e2e bundle from the fake GitHub and Node.js from the fake nodejs.org. The images set
+  # CODEMAN_E2E_ENDPOINTS to the fake Runpod's origin below; a launcher may replace it.
   pod-ollama:
     profiles: [images]
     image: codeman-e2e-pod-ollama:local
@@ -270,10 +312,8 @@ services:
       context: images
       dockerfile: pod-ollama/Dockerfile
       additional_contexts:
-        base: service:pod-ollama-base
         # The fakes image, which the fakes' services build.
         fakes: service:llm
-        e2e-build: ../.build
   pod-vllm:
     profiles: [images]
     image: codeman-e2e-pod-vllm:local
@@ -282,7 +322,6 @@ services:
       context: images
       dockerfile: pod-vllm/Dockerfile
       additional_contexts:
-        e2e-build: ../.build
         fakes: service:llm
 
   # The job image (e2e/infra/images/runner/): the local runner image, built here as runner-base,
@@ -328,3 +367,5 @@ volumes:
     name: codeman-e2e-ollama
   hf:
     name: codeman-e2e-hf
+  node:
+    name: codeman-e2e-node

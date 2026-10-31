@@ -32,6 +32,8 @@ import {
   type LedgerMatch,
   type OpenRouterWorld,
   type Organization,
+  type OsvAdvisory,
+  type OsvWorld,
   type Pattern,
   type PodMatch,
   PROFILES,
@@ -185,6 +187,7 @@ function worldOf(value: unknown, path: Path, options: ValidateOptions): World {
     "app",
     "runpod",
     "openrouter",
+    "osv",
   ]);
   required(fields, path, ["repositories"]);
   const users = new Map<string, string>();
@@ -292,6 +295,7 @@ function worldOf(value: unknown, path: Path, options: ValidateOptions): World {
       fields.openrouter === undefined
         ? undefined
         : openRouterOf(fields.openrouter, [...path, "openrouter"]),
+    osv: fields.osv === undefined ? undefined : osvOf(fields.osv, [...path, "osv"]),
   };
   if (fields.app !== undefined) world.app = appOf(fields.app, [...path, "app"], world);
   return world;
@@ -463,6 +467,45 @@ function openRouterOf(value: unknown, path: Path): OpenRouterWorld {
     lags: fields.lags === undefined ? undefined : lagsOf(fields.lags, [...path, "lags"]),
   };
 }
+
+/** The fake OSV.dev's added advisories. */
+function osvOf(value: unknown, path: Path): OsvWorld {
+  const fields = record(value, path, ["advisories"]);
+  required(fields, path, ["advisories"]);
+  const ids = new Set<string>();
+  const advisories = list(fields.advisories, [...path, "advisories"], (item, at) => {
+    const advisory = record(item, at, [
+      "id",
+      "ecosystem",
+      "package",
+      "severity",
+      "summary",
+      "introduced",
+      "fixed",
+    ]);
+    required(advisory, at, ["id", "ecosystem", "package", "severity"]);
+    const id = text(advisory.id, [...at, "id"]);
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(id)) {
+      fail([...at, "id"], "expected an advisory ID, such as GHSA-xxxx-xxxx-xxxx");
+    }
+    if (ids.has(id)) fail([...at, "id"], `${id} is declared twice`);
+    ids.add(id);
+    return {
+      id,
+      ecosystem: text(advisory.ecosystem, [...at, "ecosystem"]),
+      package: text(advisory.package, [...at, "package"]),
+      severity: choice(advisory.severity, [...at, "severity"], OSV_SEVERITIES),
+      summary:
+        advisory.summary === undefined ? undefined : text(advisory.summary, [...at, "summary"]),
+      introduced:
+        advisory.introduced === undefined ? "0" : text(advisory.introduced, [...at, "introduced"]),
+      fixed: advisory.fixed === undefined ? undefined : text(advisory.fixed, [...at, "fixed"]),
+    } satisfies OsvAdvisory;
+  });
+  return { advisories };
+}
+
+const OSV_SEVERITIES = ["critical", "high", "moderate", "low"] as const;
 
 /** `usage` and `analytics`: a duration, or `hold` until settled. */
 function lagsOf(value: unknown, path: Path): Lags {
@@ -1255,6 +1298,7 @@ const STORE_DOCS = [
   LAYOUT.batch("*", "*"),
   LAYOUT.endpointRun("*", "*", "*"),
   LAYOUT.context("*"),
+  LAYOUT.releaseCheck("*"),
 ].map((pattern) => pattern.split("/"));
 const STORE_COLLECTIONS = STORE_DOCS.map((segments) => segments.slice(0, -1));
 

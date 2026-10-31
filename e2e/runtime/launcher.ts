@@ -158,31 +158,45 @@ export class Launcher {
   }
 }
 
-/** The pod's container: `docker run --init` on the jobs network, with the pod's env. */
+/**
+ * The pod's container: `docker run --init` on the jobs network, with the pod's env, and its
+ * command, Runpod's `entrypoint` and `cmd` or Salad's `command`, as the arguments of the e2e
+ * image's entry point, which starts the tee and then runs that command (e2e/infra/images/).
+ */
 export function podRunner(network: string): PodRunner {
   return async (spec, plan, labels) => {
-    const name = `codeman-e2e-pod-${spec.id}`.toLowerCase();
-    const passed = envArgs({ ...spec.env, ...plan.env });
-    await docker(["rm", "-f", name]);
-    await dockerOk(
-      [
-        "run",
-        "--detach",
-        "--init",
-        "--name",
-        name,
-        ...Object.entries(labels).flatMap(([key, value]) => ["--label", `${key}=${value}`]),
-        "--network",
-        network,
-        ...plan.volumes.flatMap((volume) => ["--volume", volume]),
-        ...(plan.shm ? ["--shm-size", plan.shm] : []),
-        ...passed.args,
-        plan.image,
-      ],
-      { env: passed.env },
-    );
-    return name;
+    const run = podRunArgs(spec, plan, labels, network);
+    await docker(["rm", "-f", run.name]);
+    await dockerOk(run.args, { env: run.env });
+    return run.name;
   };
+}
+
+/** The container's name, and the `docker run` arguments and environment that start it. */
+export function podRunArgs(
+  spec: LaunchSpec,
+  plan: PodPlan,
+  labels: Record<string, string>,
+  network: string,
+): { name: string; args: string[]; env: Record<string, string> } {
+  const name = `codeman-e2e-pod-${spec.id}`.toLowerCase();
+  const passed = envArgs({ ...spec.env, ...plan.env });
+  const args = [
+    "run",
+    "--detach",
+    "--init",
+    "--name",
+    name,
+    ...Object.entries(labels).flatMap(([key, value]) => ["--label", `${key}=${value}`]),
+    "--network",
+    network,
+    ...plan.volumes.flatMap((volume) => ["--volume", volume]),
+    ...(plan.shm ? ["--shm-size", plan.shm] : []),
+    ...passed.args,
+    plan.image,
+    ...(spec.command ?? []),
+  ];
+  return { name, args, env: passed.env };
 }
 
 const runPod: PodRunner = podRunner("codeman-e2e-jobs");

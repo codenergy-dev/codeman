@@ -104,6 +104,10 @@ export const checkout: EmulatedAction = async (context) => {
     // Codeman's own checkout: the simulator runs the e2e bundle for `uses:` of this path.
     job.codeman.paths.add(target);
     writeFileSync(join(host, ".codeman-e2e"), `${inputs.ref ?? ""}\n`);
+    // The detached HEAD that actions/checkout of a commit leaves, which Codeman reads its own
+    // commit from (`actionCommit`), as the gateway's URL a pod downloads names it.
+    mkdirSync(join(host, ".git"));
+    writeFileSync(join(host, ".git", "HEAD"), `${inputs.ref ?? ""}\n`);
     context.log(`Codeman's action, as the e2e bundle, at ${target}`);
     return { outputs: { ref: inputs.ref ?? "", commit: inputs.ref ?? "" } };
   }

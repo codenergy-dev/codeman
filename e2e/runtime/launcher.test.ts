@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
-import { POD_IMAGES } from "../../src/inference/images.ts";
+import { ENGINE_RELEASES } from "../../src/inference/images.ts";
 import { httpLauncher, isFailure, type LaunchSpec } from "../fakes/runpod/launcher.ts";
-import { allowlistPlan, Launcher, type PodPlan, teeEnv } from "./launcher.ts";
+import { allowlistPlan, Launcher, type PodPlan, podRunArgs, teeEnv } from "./launcher.ts";
+
+const OLLAMA_IMAGE = ENGINE_RELEASES.ollama?.image ?? "";
+const VLLM_IMAGE = ENGINE_RELEASES.vllm?.image ?? "";
 
 /** The launcher behind its token, with a runner that records instead of calling Docker. */
 
@@ -50,9 +53,7 @@ function spec(image: string, id = "pod1"): LaunchSpec {
 }
 
 test("a pinned pod image runs as its local e2e image, with its model volume", async () => {
-  const result = await httpLauncher(base, { token: TOKEN }).launch(
-    spec(POD_IMAGES.ollama as string),
-  );
+  const result = await httpLauncher(base, { token: TOKEN }).launch(spec(OLLAMA_IMAGE));
   assert.ok(!isFailure(result));
   assert.equal(result.urlForPort(8080), "http://codeman-e2e-pod-pod1:8080");
   const [launched] = ran;
@@ -71,7 +72,7 @@ test("a pinned pod image runs as its local e2e image, with its model volume", as
 
 test("any other image is refused, and no container starts", async () => {
   const before = ran.length;
-  const repository = (POD_IMAGES.ollama as string).split("@")[0] as string;
+  const repository = OLLAMA_IMAGE.split("@")[0] as string;
   for (const image of [`${repository}:latest`, repository, "ollama/ollama:0.35.1", "alpine"]) {
     const result = await httpLauncher(base, { token: TOKEN }).launch(spec(image, "pod2"));
     assert.ok(isFailure(result), image);
@@ -82,9 +83,7 @@ test("any other image is refused, and no container starts", async () => {
 
 test("the launcher needs its token", async () => {
   const before = ran.length;
-  const result = await httpLauncher(base, { token: "wrong" }).launch(
-    spec(POD_IMAGES.vllm as string),
-  );
+  const result = await httpLauncher(base, { token: "wrong" }).launch(spec(VLLM_IMAGE));
   assert.ok(isFailure(result));
   assert.match(result.failure, /401/);
   const anonymous = await fetch(`${base}/pods/pod1`, { method: "DELETE" });
@@ -102,15 +101,13 @@ test("terminating a pod it never started answers 404, which the fake takes as go
 });
 
 test("a pod ID that is not a plain name is refused", async () => {
-  const result = await httpLauncher(base, { token: TOKEN }).launch(
-    spec(POD_IMAGES.ollama as string, "../x"),
-  );
+  const result = await httpLauncher(base, { token: TOKEN }).launch(spec(OLLAMA_IMAGE, "../x"));
   assert.ok(isFailure(result));
   assert.match(result.failure, /400/);
 });
 
 test("a vLLM pod gets its model's cache and 1 GiB of shared memory, which vLLM's CPU engine needs", async () => {
-  const plan = await allowlistPlan(spec(POD_IMAGES.vllm as string, "pod9"), {
+  const plan = await allowlistPlan(spec(VLLM_IMAGE, "pod9"), {
     model: "http://llm:8080",
     controlToken: "control",
   });
@@ -123,7 +120,7 @@ test("a scenario's tee options reach its pods' environment, and the tee's own va
   const env = teeEnv({ meet: { issues: 2, timeoutMs: 90_000 } });
   assert.deepEqual(env, { TEE_MEET_ISSUES: "2", TEE_MEET_TIMEOUT_MS: "90000" });
   assert.deepEqual(teeEnv(undefined), {});
-  const plan = await allowlistPlan(spec(POD_IMAGES.ollama as string, "pod8"), {
+  const plan = await allowlistPlan(spec(OLLAMA_IMAGE, "pod8"), {
     model: "http://llm:8080",
     controlToken: "control",
     env: { ...env, TEE_MODEL: "http://elsewhere" },
@@ -134,4 +131,21 @@ test("a scenario's tee options reach its pods' environment, and the tee's own va
     TEE_MODEL: "http://llm:8080",
     FAKE_CONTROL_TOKEN: "control",
   });
+});
+
+test("the pod's command runs as the image's arguments, after it, and its env goes by name", async () => {
+  const command = ["/bin/sh", "-c", 'eval "$(printf \'%s\\n\' "$@")"', "bootstrap", "set -eu"];
+  const pod = { ...spec(OLLAMA_IMAGE, "Pod7"), command };
+  const plan = await allowlistPlan(pod, { model: "http://llm:8080", controlToken: "control" });
+  const run = podRunArgs(pod, plan, { scenario: "unit" }, "codeman-e2e-jobs");
+  assert.equal(run.name, "codeman-e2e-pod-pod7");
+  const at = run.args.indexOf("codeman-e2e-pod-ollama:local");
+  assert.deepEqual(run.args.slice(at + 1), command);
+  // Values never reach the arguments: docker reads them from its own environment.
+  assert.ok(run.args.includes("CODEMAN_ADMIN_SHA256"));
+  assert.ok(!run.args.some((arg) => arg.includes("a".repeat(64))));
+  assert.equal(run.env.CODEMAN_ADMIN_SHA256, "a".repeat(64));
+  // Without a command, the image's own runs.
+  const own = podRunArgs(spec(OLLAMA_IMAGE), plan, {}, "n");
+  assert.equal(own.args.at(-1), "codeman-e2e-pod-ollama:local");
 });
