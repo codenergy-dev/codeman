@@ -126,12 +126,12 @@ export class Session {
       { service: "runner", image: RUNNER_IMAGE },
       ...options.profiles.map((profile) => POD_IMAGES[profile]),
     ];
-    // The pod images hold the e2e bundle's gateway (decision 11): built again each session, from
-    // the cache when nothing changed. The job image only when missing.
+    // The pod images hold the e2e bundle's gateway (decision 11), and the job image the runner's
+    // Node: each is built again every session, from the cache when nothing changed, so a changed
+    // Dockerfile never leaves a stale image behind.
     const missing: string[] = [];
     for (const { service, image } of images) {
-      if ((options.build && service !== "runner") || !(await imageExists(image)))
-        missing.push(service);
+      if (options.build || !(await imageExists(image))) missing.push(service);
     }
     if (missing.length > 0) {
       options.log(`Building the images of ${missing.join(", ")}.`);
