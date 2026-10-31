@@ -2,7 +2,7 @@
 title: src/huggingface_hub/utils/_http.py at v2.2.0
 url: https://github.com/huggingface/huggingface_hub/blob/v2.2.0/src/huggingface_hub/utils/_http.py
 created_at: 2026-10-13T21:31:58-03:00
-updated_at: 2026-10-13T21:31:58-03:00
+updated_at: 2026-10-31T09:30:24-03:00
 tool: docs/web/tools/hugging-face.md
 ---
 
@@ -19,3 +19,9 @@ What Codeman relies on, in its own words: the file is larger than the repository
 - `RevisionNotFound` and `EntryNotFound`: a revision or a file that does not exist in a repository that does.
 - `X-Error-Message` "Access to this resource is disabled.": a disabled repository.
 - Any other `400` or `403` is a bad request or a refusal, with `X-Error-Message` as the reason.
+
+## The HTTP client
+
+- `default_client_factory` makes the `httpx2.Client` that every call of the library shares (`get_session`), with `follow_redirects=True` and no timeout. It passes neither `verify` nor `trust_env`, so [httpx2's defaults](../httpx2/httpx2-src-httpx2-httpx2-config-py-at-d91c9f4.md) choose its CA certificates: `SSL_CERT_FILE` when set.
+- `default_async_client_factory` makes each `httpx2.AsyncClient` the same way.
+- The module imports `httpx2`, not `requests` or `httpx`.
