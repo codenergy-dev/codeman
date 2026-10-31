@@ -167,7 +167,6 @@ The gateway has its own entry point, [`src/gateway/main.ts`](../../src/gateway/m
 | `dist/` | The bundled action and gateway |
 | `templates/` | The files that target repositories copy; see [template version](#template-version) |
 | `firebase/firestore.rules` | The backend's security rules, which deny every client. [Installation](../installation/setup.md#4-set-up-the-backend) publishes them |
-| `docker/pod/` | Codeman's pod images, one target per engine; see [pod images](#pod-images) |
 | `docker/runner/`, `scripts/runner.sh` | A local stand-in for GitHub's `ubuntu-latest` runner, and the script that runs a command in it; see [running Actions locally](local-actions.md) |
 | `e2e/` | The [end-to-end suite](e2e/suite.md): its fakes, runtime, infrastructure, fixtures and scenarios. `e2e/.build/` and `e2e/.out/` are ignored |
 | `docs/web/` | The documentation of the third-party services Codeman uses |
@@ -230,62 +229,21 @@ flowchart TD
 
 ## Pod images
 
-[Pods](../glossary.md#pod) run one of Codeman's images, one per engine. Each is the engine's official image, plus Node's binary and the gateway, `dist/gateway.js`. [`docker/pod/Dockerfile`](../../docker/pod/Dockerfile) has a target per engine.
+[Pods](../glossary.md#pod) start from each engine's official image, pinned by its index digest in `ENGINE_RELEASES` in [`src/inference/images.ts`](../../src/inference/images.ts). Their command is the bootstrap ([`src/gateway/bootstrap.ts`](../../src/gateway/bootstrap.ts)): it downloads Node.js (`NODE_RELEASE`) and the gateway, `dist/gateway.js` at the action's commit on `raw.githubusercontent.com`, checks each one's SHA-256, then runs the gateway ([the plan](../plans/2026-10-30-start-pods-from-official-engine-images.md)).
 
-| Engine | Dockerfile target | Package |
-| --- | --- | --- |
-| Ollama | `ollama` | `ghcr.io/<owner>/codeman-ollama` |
-| vLLM | `vllm` | `ghcr.io/<owner>/codeman-vllm` |
+Codeman no longer builds or publishes images of its own. The ones it published, `ghcr.io/<owner>/codeman-<engine>`, stay on GHCR, untouched: pods created from them may still run.
 
 > [!IMPORTANT]
-> Pods run the images pinned in `POD_IMAGES`, not the latest build. A change to `docker/pod/` or to `dist/gateway.js`, the gateway included, reaches pods only once the new digests are pinned, in a commit after the one the images were built from.
-
-```mermaid
-sequenceDiagram
-  actor M as Maintainer
-  participant WF as pod-image.yml, one leg per engine
-  participant R as GitHub container registry
-  participant S as src/inference/images.ts
-  M->>WF: Push to main that changes the image or the gateway, or run it by hand
-  WF->>WF: Free the disk, vLLM only, then build the engine's target
-  WF->>R: Push the image, tagged with the commit
-  WF-->>M: The run's summary lists the digests
-  opt First publish of a package
-    M->>R: Make the package public
-    M->>R: Pull it by digest while logged out
-  end
-  M->>S: Pin each digest in POD_IMAGES, in a commit of its own
-  Note over M,S: Until then, new pods run the image pinned before, and its gateway
-```
-
-### Publish
-
-[`.github/workflows/pod-image.yml`](../../.github/workflows/pod-image.yml) builds and publishes both images, one leg per engine:
-
-- **When:** a push to `main` that changes `docker/pod/`, `dist/gateway.js` or the workflow, or a manual run.
-- **Where:** GitHub's container registry, as `ghcr.io/<owner>/codeman-<engine>:<commit>`.
-- **Output:** the run's summary lists both digests.
-- **Time:** the vLLM leg first frees the runner's disk. It may take most of its 60 minutes the first time, while GHCR has none of vLLM's layers.
-
-### Make a new package public, once
-
-A package that GHCR creates is private. Runpod and Salad pull images without credentials, so a pod on a private image never starts.
-
-After the first publish of `codeman-ollama` and of `codeman-vllm`:
-
-1. On GitHub, open the owner's **Packages** tab, then the package.
-2. Go to **Package settings** › **Danger Zone** › **Change visibility** › **Public**, and type the package's name to confirm. The package is public.
-3. While logged out, run `docker pull ghcr.io/<owner>/codeman-<engine>@sha256:<digest>`. The pull succeeds.
-
-An organization must allow public packages: organization **Settings** › **Packages** › **Package creation**.
+> A change to `dist/gateway.js` reaches new pods with the commit the action runs from: there is no image to publish. A new engine release reaches them once it is pinned.
 
 ### Pin the digests
 
-1. Check that each image's tag is the commit it was built from.
-2. In [`src/inference/images.ts`](../../src/inference/images.ts), set the engine's line of `POD_IMAGES`, such as `vllm: "ghcr.io/codenergy-dev/codeman-vllm@sha256:<digest>"`.
-3. Commit it on its own, after the commit the images were built from.
+1. Choose a release the release policy admits: at least 7 days old, and without a high or critical advisory, unless an exception gives its reason.
+2. Scan its image with `scripts/scan-image.sh`, and record the result in the [audit log](dependencies.md#audit-log).
+3. In `ENGINE_RELEASES`, set the engine's `image`, by its index digest, its `release` and its `exceptions`. Record the image's page in `docs/web/docker-hub/`.
+4. Commit it, with the engine's upgrade checklist in [dependencies](dependencies.md).
 
-A test checks that each pinned image is its engine's package, by digest. The pinned digest is what the glossary calls a [pinned pod image](../glossary.md#pinned-pod-image).
+A test checks that each image is pinned by its index digest, and that the digest is the recorded one.
 
 ### Keep older images listed
 

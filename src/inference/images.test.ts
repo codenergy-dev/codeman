@@ -1,41 +1,11 @@
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { test } from "node:test";
-import { catalogRelease, ENGINE_RELEASES, NODE_RELEASE, POD_IMAGES, podImage } from "./images.ts";
-import { IMAGES_WITHOUT_OLLAMA_SETTINGS, OLLAMA_VERSION } from "./ollama.ts";
+import { catalogRelease, ENGINE_RELEASES, NODE_RELEASE, podImage } from "./images.ts";
+import { OLLAMA_VERSION } from "./ollama.ts";
 import { PROVIDERS } from "./providers.ts";
 import type { ReleaseArtifact } from "./release-policy.ts";
 import { VLLM_MIN_CUDA, VLLM_VERSION } from "./vllm.ts";
-
-const dockerfile = readFileSync("docker/pod/Dockerfile", "utf8");
-const workflow = readFileSync(".github/workflows/pod-image.yml", "utf8");
-
-test("an image per engine of pods, each a target of the Dockerfile and a leg of the workflow", () => {
-  const engines = PROVIDERS["runpod-pod"].settings.engine?.values ?? [];
-  assert.deepEqual(Object.keys(POD_IMAGES).sort(), [...engines].sort());
-  const targets = [...dockerfile.matchAll(/^FROM \S+ AS ([a-z]+)$/gm)].map((match) => match[1]);
-  assert.deepEqual(targets.filter((target) => target !== "node").sort(), [...engines].sort());
-  assert.ok(workflow.includes(`engine: [${engines.join(", ")}]`));
-  assert.match(
-    workflow,
-    /IMAGE: ghcr\.io\/\$\{\{ github\.repository_owner \}\}\/codeman-\$\{\{ matrix\.engine \}\}/,
-  );
-  for (const engine of engines) {
-    const stage = dockerfile.split(`AS ${engine}\n`)[1]?.split(/^FROM /m)[0] ?? "";
-    assert.ok(stage.includes('ENTRYPOINT ["node", "/opt/codeman/gateway.js"]'), engine);
-  }
-});
-
-test("each pinned image is its engine's package by digest, or an older one known as such", () => {
-  for (const [engine, image] of Object.entries(POD_IMAGES)) {
-    if (image === "") continue;
-    const own = new RegExp(`^ghcr\\.io/codenergy-dev/codeman-${engine}@sha256:[0-9a-f]{64}$`);
-    assert.ok(
-      own.test(image) || (engine === "ollama" && IMAGES_WITHOUT_OLLAMA_SETTINGS.has(image)),
-      `${engine}: ${image}`,
-    );
-  }
-});
 
 test("pods run the catalog's official images; the `pod-image` input overrides Ollama's only", () => {
   assert.equal(podImage("ollama", "x@sha256:1"), "x@sha256:1");
@@ -46,14 +16,6 @@ test("pods run the catalog's official images; the `pod-image` input overrides Ol
   assert.equal(catalogRelease("ollama", podImage("ollama")), ENGINE_RELEASES.ollama);
   assert.equal(catalogRelease("ollama", "x@sha256:1"), undefined);
   assert.equal(catalogRelease("sglang", ""), undefined);
-});
-
-test("the Dockerfile pins every base by digest, and vLLM sends no usage", () => {
-  for (const from of dockerfile.matchAll(/^FROM (\S+)/gm)) {
-    assert.match(from[1] ?? "", /@sha256:[0-9a-f]{64}$/, "every base by digest");
-  }
-  const vllm = dockerfile.split("AS vllm\n")[1]?.split(/^FROM /m)[0] ?? "";
-  assert.ok(vllm.includes("VLLM_NO_USAGE_STATS=1") && vllm.includes("DO_NOT_TRACK=1"));
 });
 
 test("the engines' versions that settings and messages name are the catalog's", () => {

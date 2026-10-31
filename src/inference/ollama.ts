@@ -3,7 +3,7 @@ import { type InferenceEngine, openAiUsage } from "./engine.ts";
 /**
  * Pod images whose gateway serves one run at a time, as before parallel tasks: Codeman gives each
  * task a pod of its own on them, instead of sharing one. Keep each image pinned before, in the
- * `codeman-pod` package of the images before one per engine (`POD_IMAGES` in `images.ts`).
+ * `codeman-pod` package of the images before one per engine.
  */
 export const SINGLE_RUN_IMAGES: ReadonlySet<string> = new Set([
   "ghcr.io/codenergy-dev/codeman-pod@sha256:6a7617fc8772c43600349a971a424bc918982c6d38972e7d1802a1a607e76d27",

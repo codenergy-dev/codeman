@@ -13,18 +13,18 @@ Every dependency is audited before it is added (see `AGENTS.md`). This page reco
 | `esbuild` | npm, development | 0.28.2 | Bundles the action and the gateway | 2026-09-23 | None reported by `npm audit` | [Development](#development) |
 | `@biomejs/biome` | npm, development | 2.5.14 | Lint and format | 2026-09-23 | None reported by `npm audit` | [Development](#development) |
 | `yaml` | npm, development | 2.9.1 | Parses the e2e suite's scenarios and the templates, in `e2e/` only | 2026-10-20 | One maintainer, no provenance attestation, accepted | [Development](#development) |
-| GitHub Actions, 5 | Actions | Full commit SHA | CI, the pod images, the target repository's workflow | Not recorded | None recorded | [GitHub Actions](#github-actions) |
+| GitHub Actions, 5 | Actions | Full commit SHA | CI, the target repository's workflow | Not recorded | None recorded | [GitHub Actions](#github-actions) |
 | GitHub, OpenRouter, npm registry and the other APIs | Services | Not pinned | What Codeman calls with `fetch` or the packages | Not recorded | None recorded | [External services](#external-services) |
 | OpenCode | Harness, downloaded | 1.18.32, by npm integrity | Runs the agent | Advisories checked 2026-09-24 | CVE-2026-88624, accepted | [Agent harness](#agent-harness-opencode) |
 | Runpod REST API v2 | Service | v2 | The GPUs of pods and Serverless | 2026-10-03 | Keys never expire and have no spending limit | [Runpod](#runpod) |
 | SaladCloud API | Service | `https://api.salad.com/api/public`, not versioned | The GPUs of Salad pods | 2026-10-29 | The key is a user's, reaching all their organizations; hosts are third parties' PCs; no billing API | [Salad](#salad) |
-| Ollama | Engine, its official image in the catalog | 0.40.10, by index digest; 0.35.1 in the retiring pod image and the e2e Ollama pod | Serves models on Ollama pods | 2026-10-30 | 9 without a fix, each an exception with its reason: loopback only. 0.35.1's binary: 50 high, fixed in 0.40.10 | [Ollama](#ollama) |
-| vLLM | Engine, its official image in the catalog | 0.32.0, by index digest; 0.31.0 in the retiring pod image | Batches requests whatever the model | 2026-10-30 | 0.31.0: 2 high, fixed in 0.32.0. 0.32.0: no advisory; its image's 22 high or critical OS and Python findings accepted, off the pod's path; its `certifi`'s trust in the compromised emSign root mitigated: vLLM starts on Node.js's roots | [vLLM](#vllm-in-codemans-vllm-pod-image) |
+| Ollama | Engine, its official image in the catalog | 0.40.10, by index digest; 0.35.1 in Codeman's retired pod image | Serves models on Ollama pods | 2026-10-30 | 9 without a fix, each an exception with its reason: loopback only. 0.35.1's binary: 50 high, fixed in 0.40.10 | [Ollama](#ollama) |
+| vLLM | Engine, its official image in the catalog | 0.32.0, by index digest; 0.31.0 in Codeman's retired pod image | Batches requests whatever the model | 2026-10-30 | 0.31.0: 2 high, fixed in 0.32.0. 0.32.0: no advisory; its image's 22 high or critical OS and Python findings accepted, off the pod's path; its `certifi`'s trust in the compromised emSign root mitigated: vLLM starts on Node.js's roots | [vLLM](#vllm-in-codemans-vllm-pod-image) |
 | Node.js for pods | Runtime, downloaded by the bootstrap | 24.22.1, linux-x64 tarball by SHA-256, in the catalog | Runs the gateway in pods started from official images | 2026-10-30 | None: the release removes the compromised emSign root | [Node.js for pods](#nodejs-for-pods) |
 | Trivy | Maintainer tool, in a container | 0.76.1, by index digest | Scans an image's packages before it is pinned (`scripts/scan-image.sh`) | 2026-10-30 | None for 0.76.1 | [Trivy](#trivy) |
 | Hugging Face Hub API | Service | One route | Checks a vLLM pod's model | 2026-10-13 | None recorded | [Hugging Face](#hugging-face) |
 | Runpod's vLLM worker | Image, chosen by a maintainer | `runpod/worker-v1-vllm:<version>` | Serverless endpoints | 2026-10-03 | None recorded | [Runpod's vLLM worker](#runpods-vllm-worker) |
-| Codeman's pod images, on `node:24.21.0-bookworm-slim` | Images, Codeman's own | By digest, published from `ce1fed1` | What pods run | 2026-10-29 | None recorded | [Codeman's pod images](#codemans-pod-images) |
+| Codeman's pod images, on `node:24.21.0-bookworm-slim` | Images, Codeman's own, retired | The last published from `ce1fed1`, no longer built | What pods ran before the official images | 2026-10-29 | None recorded | [Codeman's pod images](#codemans-pod-images) |
 | Cloud Firestore, STS, IAM Credentials | Services | REST API v1 | The backend | 2026-10-07 | None recorded | [Cloud Firestore](#cloud-firestore-in-a-firebase-project) |
 | Firestore's emulator | Test tool, in the e2e emulator image | v1.22.0 by SHA-256, on `eclipse-temurin:21.0.12_8-jre-noble` by digest | The store's tests and the e2e suite | 2026-10-20 | None recorded | [Firestore's emulator](#firestores-emulator) |
 | The local runner image, on `ubuntu:noble-20260930.1` | Image, Codeman's own, local only | Base images by digest; Ubuntu's packages not pinned | Runs the tests that need GitHub's runner on a developer's machine | 2026-10-19 | None recorded | [The local runner image](#the-local-runner-image) |
@@ -137,7 +137,7 @@ Pinned to full commit SHAs.
 
 | Action | Version | Used in |
 | --- | --- | --- |
-| `actions/checkout` | v7.0.1 | CI, pod image, target repository workflow (the repository in `agent`, and Codeman at `CODEMAN_COMMIT_SHA` in each job that runs it) |
+| `actions/checkout` | v7.0.1 | CI, target repository workflow (the repository in `agent`, and Codeman at `CODEMAN_COMMIT_SHA` in each job that runs it) |
 | `actions/setup-node` | v7.0.0 | CI |
 | `actions/create-github-app-token` | v3.2.0 | Target repository workflow |
 | `actions/upload-artifact` | v7.0.1 | Target repository workflow |
@@ -226,7 +226,7 @@ Audited on 2026-10-03 for the [self-hosted inference plan](../plans/2026-10-02-s
   - The server variables that the [Ollama settings](../settings/ollama.md) give it come from this version's source ([`envconfig/config.go` at v0.40.10](../web/ollama/envconfig-config-go-at-v0-40-10.md)).
   - It runs `llama-server` at the tag it pins, `b11803` ([LLAMA_CPP_VERSION at v0.40.10](../web/ollama/llama-cpp-version-at-v0-40-10.md)).
   - How both fit a model to the GPU was recorded for 0.35.1 and b11232 ([fitting Ollama to the GPU](../plans/2026-10-13-fit-ollama-to-the-gpu.md#context)), and checked again for 0.40.10 (**Upgrade from 0.35.1**, below).
-  - 0.35.1, `ollama/ollama` by its index digest `sha256:292ee7945dfc3d5840a181f3ab86fedb1e66703e02c8af98b50f4da56b7e278c`, stays in [`docker/pod/Dockerfile`](../../docker/pod/Dockerfile)'s retiring image and in the e2e suite's Ollama pod until they move to the catalog.
+  - 0.35.1, `ollama/ollama` by its index digest `sha256:292ee7945dfc3d5840a181f3ab86fedb1e66703e02c8af98b50f4da56b7e278c`, was in Codeman's own Ollama pod image, which is no longer built ([Codeman's pod images](#codemans-pod-images)). The e2e suite's Ollama pod moved to 0.40.10.
 - **License and maintenance:** MIT, [ollama/ollama](https://github.com/ollama/ollama), very active, with releases every few days.
 - **Known vulnerabilities** (OSV, 2026-10-03):
   - path traversal: CVE-2024-37032, fixed in 0.1.34; CVE-2026-7020, reported up to 0.20.2;
@@ -268,7 +268,7 @@ Audited on 2026-10-13 for the [plan for vLLM on pods](../plans/2026-10-13-vllm-o
 - **Version and pin:** 0.32.0, in the catalog (`ENGINE_RELEASES.vllm`; **In the catalog**, below).
   - Its CUDA needs hosts whose driver supports CUDA 13.0, which Codeman requires when it creates a vLLM pod (`VLLM_MIN_CUDA`).
   - The [vLLM settings](../settings/vllm.md) and the parsers come from this version's source.
-  - 0.31.0, `vllm/vllm-openai:v0.31.0` by its index digest `sha256:c1c9f6fd5c109ba7f0546a59f5b2f15fb87f64c77782e90a27b648b42a8e67c3`, 9.04 GB compressed for linux/amd64 ([the image](../web/docker-hub/vllm-vllm-openai-v0-31-0.md)), stays in [`docker/pod/Dockerfile`](../../docker/pod/Dockerfile)'s retiring image, which runs as root with the gateway as its entry point.
+  - 0.31.0, `vllm/vllm-openai:v0.31.0` by its index digest `sha256:c1c9f6fd5c109ba7f0546a59f5b2f15fb87f64c77782e90a27b648b42a8e67c3`, 9.04 GB compressed for linux/amd64 ([the image](../web/docker-hub/vllm-vllm-openai-v0-31-0.md)), was in Codeman's own vLLM pod image, which is no longer built ([Codeman's pod images](#codemans-pod-images)).
 - **In the catalog:** 0.32.0, its official image `vllm/vllm-openai:v0.32.0` by the index's digest `sha256:befccf0e7e4089aa23926bb6f887a85c0d46c2a99e6de5c5ffdf5cb7957c5b34`, created on 2026-10-18 ([the image](../web/docker-hub/vllm-vllm-openai-v0-32-0.md), `ENGINE_RELEASES.vllm`).
   - It fixes 0.31.0's 16 OSV.dev records, 2 of them high (GHSA-6757-hggm-hp2w, GHSA-h3rc-j82p-2c3h), and has none of its own on 2026-10-30.
   - CUDA 13.0, as 0.31.0's, so `VLLM_MIN_CUDA` does not change.
@@ -334,16 +334,9 @@ Audited on 2026-10-13 for the [plan for vLLM on pods](../plans/2026-10-13-vllm-o
 
 ### Codeman's pod images
 
-- **What:** one image per [engine](../glossary.md#engine), the targets of [`docker/pod/Dockerfile`](../../docker/pod/Dockerfile): Ollama's image or vLLM's, each with Node's binary and the gateway, `dist/gateway.js`. Each image is labeled with Codeman's repository as its source, replacing the base image's.
-- **Why one per engine:** each new pod pulls its image, which Runpod bills. vLLM and later engines pin conflicting PyTorch and CUDA versions. And the newest engine would raise the CUDA floor for all ([plan for vLLM on pods](../plans/2026-10-13-vllm-on-pods.md), decision 8).
-- **Version and pin:**
-  - The `node` binary comes from `node:24.21.0-bookworm-slim`, pinned by digest: `sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6`.
-  - The images are published to GitHub's container registry as `ghcr.io/<owner>/codeman-ollama` and `ghcr.io/<owner>/codeman-vllm`, each public.
-  - They are referenced by digest in `POD_IMAGES` in [`src/inference/images.ts`](../../src/inference/images.ts), by a reviewed commit, never by tag. Publishing and pinning are in [pod images](guide.md#pod-images).
-- **Transitive code:** the gateway is bundled from [`src/gateway/`](../../src/gateway/) with Node's modules only. CI checks that `dist/` matches the source, so the images need no npm install.
-- **Permissions:** [`.github/workflows/pod-image.yml`](../../.github/workflows/pod-image.yml) builds them, one leg per engine, when the Dockerfile, the workflow or `dist/gateway.js` changes.
-  - It uses only `actions/checkout` (pinned) and the runner's `docker`, with `packages: write` and `contents: read`.
-  - It removes preinstalled toolchains with `rm`, to make room for vLLM's image.
+- **What:** one image per [engine](../glossary.md#engine), which pods ran before they started from the engines' official images: Ollama's image or vLLM's, each with Node's binary (from `node:24.21.0-bookworm-slim`) and the gateway, `dist/gateway.js`.
+- **Status:** retired by the [plan to start pods from official engine images](../plans/2026-10-30-start-pods-from-official-engine-images.md) (decision 5). Their Dockerfile and the workflow that published them are gone: nothing builds them.
+- **What stays:** the images published to GitHub's container registry, `ghcr.io/<owner>/codeman-ollama` and `ghcr.io/<owner>/codeman-vllm`, untouched, since pods created from them may still run. The last pinned were published from `ce1fed1` ([audit log](#audit-log)). The lists of older images in `src/inference/` still tell them apart ([keep older images listed](guide.md#keep-older-images-listed)).
 
 ### Node.js for pods
 
@@ -418,7 +411,7 @@ Audited on 2026-10-19 for the [plan to run Actions locally](../plans/2026-10-19-
 
 ## The end-to-end test suite
 
-Audited on 2026-10-20 for the [end-to-end test suite plan](../plans/2026-10-20-end-to-end-test-suite.md#audit). What it adds runs only on a developer's machine, under `e2e/`: none of it reaches `dist/`, the pod images or a target repository. Firestore's emulator image is under [Firestore's emulator](#firestores-emulator), and `yaml` under [Development](#development). Already audited and reused: `ollama/ollama:0.35.1`, `node:24.21.0-bookworm-slim` and `ubuntu:noble-20260930.1`.
+Audited on 2026-10-20 for the [end-to-end test suite plan](../plans/2026-10-20-end-to-end-test-suite.md#audit). What it adds runs only on a developer's machine, under `e2e/`: none of it reaches `dist/`, the pod images or a target repository. Firestore's emulator image is under [Firestore's emulator](#firestores-emulator), and `yaml` under [Development](#development). Already audited and reused: the catalog's `ollama/ollama:0.40.10`, `node:24.21.0-bookworm-slim` and `ubuntu:noble-20260930.1`. The e2e pods download the catalog's Node.js, 24.22.1, from the suite's fake nodejs.org, which `seed-node` fills from nodejs.org once, checked against its SHA-256.
 
 ### act
 
@@ -448,7 +441,7 @@ Other limits, from the plan's [spike 0.2](../plans/2026-10-20-end-to-end-test-su
   - On x86 it chooses AVX-512 or AVX2 kernels at run time ([platform](../web/vllm/vllm-platforms-cpu-py-at-v0-32-0.md)).
   - Its K/V cache's size is set by `VLLM_CPU_KVCACHE_SPACE`; otherwise it takes a fraction of the container's memory ([CPU](../web/vllm/cpu.md), [worker](../web/vllm/vllm-v1-worker-cpu-worker-py-at-v0-32-0.md), [memory](../web/vllm/vllm-utils-cpu-resource-utils-py-at-v0-32-0.md)).
 - **License and maintenance:** Apache-2.0, from [vllm-project/vllm](https://github.com/vllm-project/vllm)'s build, as the [GPU image](#vllm-in-codemans-vllm-pod-image).
-- **Transitive code:** PyTorch for CPU, Ubuntu 22.04's packages, tcmalloc and Intel's OpenMP runtime, and gcc 15, from vLLM's build. The e2e image adds Node's binary from the pod images' pinned input, `dist/gateway.js`, and the suite's tee.
+- **Transitive code:** PyTorch for CPU, Ubuntu 22.04's packages, tcmalloc and Intel's OpenMP runtime, and gcc 15, from vLLM's build. The e2e image adds the suite's tee and a Node.js binary for it, `node:24.21.0-bookworm-slim`'s, off the `PATH`; the pod's bootstrap downloads its own Node.js and the gateway.
 - **Known vulnerabilities:** those of vLLM 0.32.0, [above](#vllm-in-codemans-vllm-pod-image): none on OSV.dev on 2026-10-30. It serves only the e2e suite's Compose network.
 - **Permissions:** it runs as root in its container. With `HF_HUB_OFFLINE=1`, it reads the model from a volume filled once.
 
