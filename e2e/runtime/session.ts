@@ -555,7 +555,14 @@ export class Session {
       // The token goes through the environment, so no command line holds it.
       const script = `fetch(${JSON.stringify(url)}, { headers: process.env.E2E_ADMIN ? { authorization: "Bearer " + process.env.E2E_ADMIN } : {} }).then((r) => r.text()).then((t) => process.stdout.write(t), (e) => { process.stderr.write(String(e)); process.exit(1); })`;
       const result = await docker(
-        ["exec", ...(token ? ["-e", "E2E_ADMIN"] : []), container, "node", "-e", script],
+        [
+          "exec",
+          ...(token ? ["-e", "E2E_ADMIN"] : []),
+          container,
+          "/opt/codeman-e2e/node",
+          "-e",
+          script,
+        ],
         { timeoutMs: 20_000, ...(token ? { env: { E2E_ADMIN: token } } : {}) },
       );
       return result.exitCode === 0 ? result.stdout : undefined;

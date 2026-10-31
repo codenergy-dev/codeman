@@ -21,15 +21,27 @@ check() {
   done
 }
 
+# Ollama pulls through its server, on the loopback of this container only. Its first listing
+# writes what Ollama 0.40 adds to the volume's layout, `manifests-v2/` and `metadata/`: the pods
+# mount it read-only, and their Ollama answers 500 to `/api/tags` while it cannot write them.
+serve() {
+  export OLLAMA_HOST=127.0.0.1:11434
+  ollama serve >/tmp/ollama.log 2>&1 &
+  for _ in $(seq 60); do ollama list >/dev/null 2>&1 && return 0; sleep 1; done
+  echo "Ollama did not list the models in $models." >&2
+  exit 1
+}
+
 if check; then
+  if [ ! -d "$models/manifests-v2" ]; then
+    serve
+    echo "Listed $models with this Ollama, which wrote its layout."
+  fi
   echo "$model is present, manifest sha256:$digest."
   exit 0
 fi
 
-# Ollama pulls through its server, on the loopback of this container only.
-export OLLAMA_HOST=127.0.0.1:11434
-ollama serve >/tmp/ollama.log 2>&1 &
-for _ in $(seq 60); do ollama list >/dev/null 2>&1 && break; sleep 1; done
+serve
 
 # Pulls can fail midway (the plan's spike 0.1): retry, and Ollama resumes from the blobs it has.
 for attempt in 1 2 3 4 5; do

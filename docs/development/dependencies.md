@@ -456,6 +456,7 @@ The same model on both engines: Qwen2.5 0.5B Instruct, small enough for a CPU, w
 
 - **Why:** 24 layers with 2 K/V heads of size 64 make 12 KB of K/V per token, so a 32,768-token context fits several seats in the VM's memory. `qwen3:0.6b` (112 KB per token) and `smollm2:135m` (no tool-call template) were not chosen.
 - **Pin:** a tag or `main` can move. The one-shot seed services of the Compose file check the manifest's digest and the Hugging Face commit before any scenario runs.
+- **Ollama's layout:** Ollama 0.40.10 adds `manifests-v2/` and `metadata/` to its models directory on its first listing, and answers `/api/tags` with 500 while it cannot write them. The pods mount the volume read-only, so `seed-ollama` lists it once with the catalog's Ollama.
 - **Data:** the downloads are public and unauthenticated, from `registry.ollama.ai` and the Hugging Face Hub, once per machine. Neither model is gated.
 
 ### Docker Compose
