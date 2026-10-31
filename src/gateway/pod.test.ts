@@ -13,6 +13,15 @@ import {
   podSettings,
   prepareOllama,
 } from "./pod.ts";
+import type { RootsEnvironment } from "./roots.ts";
+
+/** The gateway's roots, as roots.ts points an engine at them. */
+const ROOTS: RootsEnvironment = {
+  SSL_CERT_FILE: "/tmp/codeman/roots/roots.pem",
+  SSL_CERT_DIR: "/tmp/codeman/roots",
+  REQUESTS_CA_BUNDLE: "/tmp/codeman/roots/roots.pem",
+  CURL_CA_BUNDLE: "/tmp/codeman/roots/roots.pem",
+};
 
 const policy: PodPolicy = { startBy: 1_000_000, keptIdleMs: 900_000, runIdleMs: 1_800_000 };
 
@@ -76,6 +85,7 @@ test("reads the pod's Ollama settings, and never lets one replace the gateway's 
     { PATH: "/bin", OLLAMA_HOST: "0.0.0.0:11434" },
     { OLLAMA_NUM_PARALLEL: "4", OLLAMA_KEEP_ALIVE: "5m", OLLAMA_CONTEXT_LENGTH: "65536" },
     undefined,
+    ROOTS,
   );
   assert.deepEqual(serve, {
     PATH: "/bin",
@@ -83,9 +93,10 @@ test("reads the pod's Ollama settings, and never lets one replace the gateway's 
     OLLAMA_KEEP_ALIVE: "-1",
     OLLAMA_NUM_PARALLEL: "4",
     OLLAMA_CONTEXT_LENGTH: "65536",
+    ...ROOTS,
   });
   assert.equal(
-    ollamaServeEnvironment({}, {}, 262144).OLLAMA_CONTEXT_LENGTH,
+    ollamaServeEnvironment({}, {}, 262144, ROOTS).OLLAMA_CONTEXT_LENGTH,
     "262144",
     "the model's own, when restarted with it",
   );

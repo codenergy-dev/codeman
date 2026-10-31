@@ -6,6 +6,7 @@
  */
 import { VLLM_MIN_CUDA, vllmArguments } from "../inference/vllm.ts";
 import { CONTEXT_STEP, floorContext } from "./fit.ts";
+import type { RootsEnvironment } from "./roots.ts";
 
 /** The model's start failed for a reason its settings can fix; `message` says how. */
 export class VllmFitFailure extends Error {}
@@ -91,17 +92,20 @@ const MIG_UUID = /^MIG-/;
 
 /**
  * The environment of `vllm serve`: the gateway's, without the pod's Runpod key, never reporting
- * usage, and with the GPU by index when it is a MIG partition's UUID, on which vLLM 0.31.0 fails
- * to start (docs/plans/2026-10-13-vllm-on-pods.md, MIG); 0.32.0's release notes name no fix.
+ * usage, with the gateway's roots for the TLS of its downloads (roots.ts), and with the GPU by
+ * index when it is a MIG partition's UUID, on which vLLM 0.31.0 fails to start
+ * (docs/plans/2026-10-13-vllm-on-pods.md, MIG); 0.32.0's release notes name no fix.
  */
 export function vllmServeEnvironment(
   base: Readonly<Record<string, string | undefined>>,
+  roots: RootsEnvironment,
 ): Record<string, string | undefined> {
   const { RUNPOD_API_KEY: _, ...rest } = base;
   return {
     ...rest,
     VLLM_NO_USAGE_STATS: "1",
     DO_NOT_TRACK: "1",
+    ...roots,
     ...(MIG_UUID.test(base.CUDA_VISIBLE_DEVICES ?? "") ? { CUDA_VISIBLE_DEVICES: "0" } : {}),
   };
 }

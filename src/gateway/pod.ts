@@ -15,6 +15,7 @@ import {
   placementOf,
   searchContext,
 } from "./fit.ts";
+import type { RootsEnvironment } from "./roots.ts";
 
 /** The port a pod exposes, to the gateway; Ollama's own port stays on the pod's loopback. */
 export const GATEWAY_PORT = 8080;
@@ -175,12 +176,14 @@ export function fitOptions(
 /**
  * The environment of `ollama serve`: the gateway's, then the variables of the pod's Ollama
  * settings, then those the gateway sets itself, which always win: Ollama on the pod's loopback,
- * the model kept loaded, and the context length it was restarted with.
+ * the model kept loaded, the context length it was restarted with, and the gateway's roots for
+ * the registry's TLS (roots.ts).
  */
 export function ollamaServeEnvironment(
   base: Readonly<Record<string, string | undefined>>,
   variables: Readonly<Record<string, string>>,
   contextLength: number | undefined,
+  roots: RootsEnvironment,
 ): Record<string, string | undefined> {
   return {
     ...base,
@@ -188,6 +191,7 @@ export function ollamaServeEnvironment(
     OLLAMA_HOST: "127.0.0.1:11434",
     OLLAMA_KEEP_ALIVE: "-1",
     ...(contextLength ? { OLLAMA_CONTEXT_LENGTH: String(contextLength) } : {}),
+    ...roots,
   };
 }
 

@@ -3,6 +3,7 @@ const require = createRequire(import.meta.url);
 
 // src/gateway/main.ts
 import { execFile, spawn } from "node:child_process";
+import { rootCertificates as rootCertificates2 } from "node:tls";
 
 // src/inference/engine.ts
 function openAiUsage(body, cachedApart = false) {
@@ -1703,13 +1704,14 @@ function fitOptions(variables, settings) {
     hint: settings.fitHint
   };
 }
-function ollamaServeEnvironment(base, variables, contextLength) {
+function ollamaServeEnvironment(base, variables, contextLength, roots) {
   return {
     ...base,
     ...variables,
     OLLAMA_HOST: "127.0.0.1:11434",
     OLLAMA_KEEP_ALIVE: "-1",
-    ...contextLength ? { OLLAMA_CONTEXT_LENGTH: String(contextLength) } : {}
+    ...contextLength ? { OLLAMA_CONTEXT_LENGTH: String(contextLength) } : {},
+    ...roots
   };
 }
 var FitFailure = class extends Error {
@@ -1871,6 +1873,42 @@ async function untilUp(server) {
   throw new Error("Ollama did not start.");
 }
 
+// src/gateway/roots.ts
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import { join as join2 } from "node:path";
+import { rootCertificates } from "node:tls";
+var ROOTS_VARIABLES = [
+  "SSL_CERT_FILE",
+  "SSL_CERT_DIR",
+  "REQUESTS_CA_BUNDLE",
+  "CURL_CA_BUNDLE"
+];
+function rootsPem(roots = rootCertificates) {
+  return roots.map((root) => `${root}
+`).join("");
+}
+var HOME_VARIABLE = "CODEMAN_BOOTSTRAP_HOME";
+function rootsDirectory(env) {
+  return join2(env[HOME_VARIABLE] || "/tmp/codeman", "roots");
+}
+async function writeRoots(directory, roots = rootCertificates) {
+  await rm(directory, { recursive: true, force: true });
+  await mkdir(directory, { recursive: true, mode: 493 });
+  const file = join2(directory, "roots.pem");
+  await writeFile(file, rootsPem(roots), { mode: 420 });
+  return {
+    SSL_CERT_FILE: file,
+    SSL_CERT_DIR: directory,
+    REQUESTS_CA_BUNDLE: file,
+    CURL_CA_BUNDLE: file
+  };
+}
+function replacedRoots(base, roots) {
+  return ROOTS_VARIABLES.filter((name) => base[name] && base[name] !== roots[name]).map(
+    (name) => `${name}=${base[name]}`
+  );
+}
+
 // src/gateway/vllm.ts
 var VllmFitFailure = class extends Error {
 };
@@ -1894,12 +1932,13 @@ function vllmServeArguments(model, settings, maxModelLen) {
   ];
 }
 var MIG_UUID = /^MIG-/;
-function vllmServeEnvironment(base) {
+function vllmServeEnvironment(base, roots) {
   const { RUNPOD_API_KEY: _, ...rest } = base;
   return {
     ...rest,
     VLLM_NO_USAGE_STATS: "1",
     DO_NOT_TRACK: "1",
+    ...roots,
     ...MIG_UUID.test(base.CUDA_VISIBLE_DEVICES ?? "") ? { CUDA_VISIBLE_DEVICES: "0" } : {}
   };
 }
@@ -2203,9 +2242,13 @@ async function main() {
         `the pod's image has no \`${command}\` command on its PATH, so it cannot serve with ${settings.engine}`
       );
     }
-    const fit = settings.engine === "vllm" ? await serveVllm(settings, gateway, log, (child) => {
+    const roots = await writeRoots(rootsDirectory(process.env));
+    const replaced = replacedRoots(process.env, roots);
+    if (replaced.length > 0) log(`The engine's roots replace the image's ${replaced.join(", ")}.`);
+    log(`The engine trusts Node.js's ${rootCertificates2.length} roots, in ${roots.SSL_CERT_FILE}.`);
+    const fit = settings.engine === "vllm" ? await serveVllm(settings, gateway, log, roots, (child) => {
       engineProcess = child;
-    }) : await serveOllama(settings, gateway, log, (child) => {
+    }) : await serveOllama(settings, gateway, log, roots, (child) => {
       engineProcess = child;
     });
     gateway.fit = fit;
@@ -2222,19 +2265,19 @@ async function main() {
     await terminate(reason);
   }
 }
-async function serveOllama(settings, gateway, log, running) {
+async function serveOllama(settings, gateway, log, roots, running) {
   const variables = settings.ollama.ok ? settings.ollama.value : {};
   const names = Object.entries(variables).map(([name, value]) => `${name}=${value}`);
   if (names.length > 0) log(`Ollama settings: ${names.join(", ")}.`);
   gateway.ollama = variables;
-  let child = serveOllamaProcess(variables, void 0);
+  let child = serveOllamaProcess(variables, void 0, roots);
   running(child);
   return prepareOllama(
     {
       url: OLLAMA_URL,
       restart: async (contextLength) => {
         await stop(child);
-        child = serveOllamaProcess(variables, contextLength);
+        child = serveOllamaProcess(variables, contextLength, roots);
         running(child);
       }
     },
@@ -2243,7 +2286,7 @@ async function serveOllama(settings, gateway, log, running) {
     fitOptions(variables, settings)
   );
 }
-async function serveVllm(settings, gateway, log, running) {
+async function serveVllm(settings, gateway, log, roots, running) {
   const values = settings.vllm.ok ? settings.vllm.value : {};
   const names = Object.entries(values).map(([key, value]) => `${key}=${value}`);
   log(`vLLM settings: ${names.join(", ")}.`);
@@ -2263,7 +2306,7 @@ async function serveVllm(settings, gateway, log, running) {
         lines = [];
         stopped = void 0;
         const started = spawn("vllm", vllmServeArguments(settings.model, values, maxModelLen), {
-          env: vllmServeEnvironment(process.env),
+          env: vllmServeEnvironment(process.env, roots),
           stdio: ["ignore", "pipe", "pipe"],
           // Its own process group, so stopping it stops the engine's processes too.
           detached: true
@@ -2316,10 +2359,10 @@ async function nvidiaSmi() {
   );
   return run("nvidia-smi").catch(() => run("/usr/lib/wsl/lib/nvidia-smi"));
 }
-function serveOllamaProcess(variables, contextLength) {
+function serveOllamaProcess(variables, contextLength, roots) {
   const child = spawn("ollama", ["serve"], {
     stdio: "inherit",
-    env: ollamaServeEnvironment(process.env, variables, contextLength)
+    env: ollamaServeEnvironment(process.env, variables, contextLength, roots)
   });
   child.once("error", (error2) => console.log(`[codeman] Ollama could not start: ${error2.message}`));
   return child;

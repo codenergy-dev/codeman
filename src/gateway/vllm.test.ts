@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { podSettings } from "./pod.ts";
+import type { RootsEnvironment } from "./roots.ts";
 import {
   autoFitModelContext,
   cacheCapacity,
@@ -17,6 +18,14 @@ import {
 } from "./vllm.ts";
 
 const MODEL = "unsloth/Qwen3.8-27B-NVFP4";
+
+/** The gateway's roots, as roots.ts points an engine at them. */
+const ROOTS: RootsEnvironment = {
+  SSL_CERT_FILE: "/tmp/codeman/roots/roots.pem",
+  SSL_CERT_DIR: "/tmp/codeman/roots",
+  REQUESTS_CA_BUNDLE: "/tmp/codeman/roots/roots.pem",
+  CURL_CA_BUNDLE: "/tmp/codeman/roots/roots.pem",
+};
 const metrics = (tokens: number, concurrency: number) =>
   [
     "# HELP vllm:cache_config_info Information of the LLMEngine CacheConfig",
@@ -138,18 +147,25 @@ test("vLLM serves on the loopback, under the run's model, with tool calls and th
     ],
   );
   assert.throws(() => vllmServeArguments(MODEL, { host: "0.0.0.0" }, 4096), /cannot set `host`/);
-  const env = vllmServeEnvironment({
-    PATH: "/bin",
-    RUNPOD_API_KEY: "secret",
-    CUDA_VISIBLE_DEVICES: "MIG-1b2c3d4e-0000-1111-2222-333344445555",
-  });
+  const env = vllmServeEnvironment(
+    {
+      PATH: "/bin",
+      RUNPOD_API_KEY: "secret",
+      CUDA_VISIBLE_DEVICES: "MIG-1b2c3d4e-0000-1111-2222-333344445555",
+    },
+    ROOTS,
+  );
   assert.deepEqual(env, {
     PATH: "/bin",
     CUDA_VISIBLE_DEVICES: "0",
     VLLM_NO_USAGE_STATS: "1",
     DO_NOT_TRACK: "1",
+    ...ROOTS,
   });
-  assert.equal(vllmServeEnvironment({ CUDA_VISIBLE_DEVICES: "1" }).CUDA_VISIBLE_DEVICES, "1");
+  assert.equal(
+    vllmServeEnvironment({ CUDA_VISIBLE_DEVICES: "1" }, ROOTS).CUDA_VISIBLE_DEVICES,
+    "1",
+  );
 });
 
 test("reads vLLM's served context, its cache's capacity, its auto-fit and its errors", () => {

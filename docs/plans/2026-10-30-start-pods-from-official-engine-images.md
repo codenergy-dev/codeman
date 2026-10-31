@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-10-30T16:20:00-03:00
-updated_at: 2026-10-31T08:00:00-03:00
+updated_at: 2026-10-31T09:30:24-03:00
 commit: 0bbb10d
 ---
 
@@ -128,6 +128,7 @@ Answered by the maintainer on 2026-10-30: each as its recommendation.
      - (b) Accept all 23.
      - (c) Keep vLLM 0.31.0 until a newer vLLM.
    - **Recommendation:** (a). It adds no dependency, and the engines then trust exactly what the pod's Node trusts.
+   - **Done on 2026-10-31,** with a fourth variable, `SSL_CERT_DIR`, pointing at the file's directory: Go and OpenSSL add every root of `/etc/ssl/certs` to `SSL_CERT_FILE`'s, and vLLM's system store still trusts the emSign root too. The four replace the image's values ([the engines' trusted roots](../development/dependencies.md#the-engines-trusted-roots)).
 
 ## Steps
 

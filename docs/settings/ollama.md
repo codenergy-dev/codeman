@@ -52,7 +52,7 @@ Ollama ignores a variable it does not know. So Codeman checks each key and value
 1. **Layers.** Each key is inherited like a provider setting, and a layer that names another provider drops the block ([the block](pod-engines.md#the-block)).
 2. **Pods.** The settings are part of the [pod settings](../glossary.md#pod-settings), so tasks with different Ollama settings never share a pod ([pods](../inference/pods.md)).
 3. **The pod.** Codeman creates it with `CODEMAN_OLLAMA`, the variables as JSON, such as `{"OLLAMA_NUM_PARALLEL":"4"}`, the derived `num-parallel` included ([from settings to the pod](pod-engines.md#from-settings-to-the-pod)).
-4. **The gateway.** It checks the variables against the same list, and gives them to Ollama with its own `OLLAMA_HOST` and `OLLAMA_KEEP_ALIVE` on top. It logs them ("Ollama settings: OLLAMA_NUM_PARALLEL=4.") and reports them in its status. A pod whose `CODEMAN_OLLAMA` it cannot read terminates itself, saying why.
+4. **The gateway.** It checks the variables against the same list, and gives them to Ollama with its own `OLLAMA_HOST` and `OLLAMA_KEEP_ALIVE` on top, and the variables that make Ollama trust the gateway's Node.js roots ([the engines' trusted roots](../development/dependencies.md#the-engines-trusted-roots)). It logs them ("Ollama settings: OLLAMA_NUM_PARALLEL=4.") and reports them in its status. A pod whose `CODEMAN_OLLAMA` it cannot read terminates itself, saying why.
 5. **The context length.** With `context-length`, Ollama keeps it, and the gateway only checks that the model fits the GPU with it. Without it, the gateway computes one ([memory](#memory)). Either is the context length `open-key` reports and the agent is told.
 
 ## Parallel requests

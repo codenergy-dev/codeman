@@ -1,4 +1,5 @@
 import { type ChildProcess, execFile, spawn } from "node:child_process";
+import { rootCertificates } from "node:tls";
 import type { InferenceEngine } from "../inference/engine.ts";
 import { OLLAMA_URL, ollama } from "../inference/ollama.ts";
 import { VLLM_URL, vllm } from "../inference/vllm.ts";
@@ -15,6 +16,7 @@ import {
   podSettings,
   prepareOllama,
 } from "./pod.ts";
+import { type RootsEnvironment, replacedRoots, rootsDirectory, writeRoots } from "./roots.ts";
 import {
   checkDriverCuda,
   prepareVllm,
@@ -95,12 +97,17 @@ async function main(): Promise<void> {
         `the pod's image has no \`${command}\` command on its PATH, so it cannot serve with ${settings.engine}`,
       );
     }
+    // Before the engine starts, so that it never trusts its image's roots.
+    const roots = await writeRoots(rootsDirectory(process.env));
+    const replaced = replacedRoots(process.env, roots);
+    if (replaced.length > 0) log(`The engine's roots replace the image's ${replaced.join(", ")}.`);
+    log(`The engine trusts Node.js's ${rootCertificates.length} roots, in ${roots.SSL_CERT_FILE}.`);
     const fit =
       settings.engine === "vllm"
-        ? await serveVllm(settings, gateway, log, (child) => {
+        ? await serveVllm(settings, gateway, log, roots, (child) => {
             engineProcess = child;
           })
-        : await serveOllama(settings, gateway, log, (child) => {
+        : await serveOllama(settings, gateway, log, roots, (child) => {
             engineProcess = child;
           });
     gateway.fit = fit;
@@ -125,20 +132,21 @@ async function serveOllama(
   settings: PodSettings,
   gateway: Gateway,
   log: (message: string) => void,
+  roots: RootsEnvironment,
   running: (child: ChildProcess) => void,
 ): Promise<FitReport> {
   const variables = settings.ollama.ok ? settings.ollama.value : {};
   const names = Object.entries(variables).map(([name, value]) => `${name}=${value}`);
   if (names.length > 0) log(`Ollama settings: ${names.join(", ")}.`);
   gateway.ollama = variables;
-  let child = serveOllamaProcess(variables, undefined);
+  let child = serveOllamaProcess(variables, undefined, roots);
   running(child);
   return prepareOllama(
     {
       url: OLLAMA_URL,
       restart: async (contextLength) => {
         await stop(child);
-        child = serveOllamaProcess(variables, contextLength);
+        child = serveOllamaProcess(variables, contextLength, roots);
         running(child);
       },
     },
@@ -153,6 +161,7 @@ async function serveVllm(
   settings: PodSettings,
   gateway: Gateway,
   log: (message: string) => void,
+  roots: RootsEnvironment,
   running: (child: ChildProcess) => void,
 ): Promise<VllmFitReport> {
   const values = settings.vllm.ok ? settings.vllm.value : {};
@@ -174,7 +183,7 @@ async function serveVllm(
         lines = [];
         stopped = undefined;
         const started = spawn("vllm", vllmServeArguments(settings.model, values, maxModelLen), {
-          env: vllmServeEnvironment(process.env),
+          env: vllmServeEnvironment(process.env, roots),
           stdio: ["ignore", "pipe", "pipe"],
           // Its own process group, so stopping it stops the engine's processes too.
           detached: true,
@@ -236,10 +245,11 @@ async function nvidiaSmi(): Promise<string> {
 function serveOllamaProcess(
   variables: Readonly<Record<string, string>>,
   contextLength: number | undefined,
+  roots: RootsEnvironment,
 ): ChildProcess {
   const child = spawn("ollama", ["serve"], {
     stdio: "inherit",
-    env: ollamaServeEnvironment(process.env, variables, contextLength),
+    env: ollamaServeEnvironment(process.env, variables, contextLength, roots),
   });
   // Unhandled, a failed spawn would stop the gateway; Ollama's start then times out with a reason.
   child.once("error", (error) => console.log(`[codeman] Ollama could not start: ${error.message}`));

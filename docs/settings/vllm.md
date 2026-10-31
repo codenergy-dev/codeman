@@ -107,7 +107,7 @@ The errors that Ollama's block shares, such as an unknown key, are in [errors co
      --enable-auto-tool-choice <the settings as arguments> --max-model-len <context, or auto>
    ```
 
-6. **vLLM's environment.** It has `VLLM_NO_USAGE_STATS=1` and `DO_NOT_TRACK=1`, and not the pod's Runpod key. `CUDA_VISIBLE_DEVICES` becomes `0` when it held a MIG partition's UUID, on which vLLM 0.31.0 fails to start; 0.32.0's release notes name no fix.
+6. **vLLM's environment.** It has `VLLM_NO_USAGE_STATS=1` and `DO_NOT_TRACK=1`, and not the pod's Runpod key. `SSL_CERT_FILE`, `SSL_CERT_DIR`, `REQUESTS_CA_BUNDLE` and `CURL_CA_BUNDLE` point at the gateway's Node.js roots, so the model's download does not trust the image's `certifi` ([the engines' trusted roots](../development/dependencies.md#the-engines-trusted-roots)). `CUDA_VISIBLE_DEVICES` becomes `0` when it held a MIG partition's UUID, on which vLLM 0.31.0 fails to start; 0.32.0's release notes name no fix.
 7. **The status.** The gateway reports the settings it applied (`vllm`) and how it served the model (`fit`). `open-key` requires both, exactly as requested, or fails the run like a pod that did not serve.
 
 ## Parallel requests
