@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-10-30T16:20:00-03:00
-updated_at: 2026-10-30T21:30:00-03:00
+updated_at: 2026-10-31T08:00:00-03:00
 commit: 0bbb10d
 ---
 
@@ -119,6 +119,15 @@ Answered by the maintainer on 2026-10-30: each as its recommendation.
      - (a) This plan fetches Node 24.22.1 into pods, and Node's advisories are checked by hand when it is pinned. OSV covers no Node.js release, so its security releases are the source.
      - (b) The same, plus a separate fix on `main` now: `node:24.22.1-bookworm-slim` in `docker/pod/Dockerfile` and `docker/runner/Dockerfile`, with the pod images published and pinned again.
    - **Recommendation:** (b). This plan's pods take months to reach `main`, and today's pods are exposed until then. The fix on `main` upgrades a dependency, and publishing the images is the usual step of [pod images](../development/guide.md#pod-images).
+10. **vLLM 0.32.0's scan.** Added on 2026-10-30 by step 9, answered on 2026-10-31: as recommended.
+   - **What was found.** Trivy found 23 high or critical findings with a fix in the image, and there is no newer vLLM.
+     - 22 are in packages that Codeman's path through the pod does not run: GnuPG, OpenSSL's PKCS7 and DTLS, `uv`, `setuptools`, `msgpack`, `urllib3`, Brotli.
+     - The 23rd is `certifi` (GHSA-6q48-6c7w-9gw2). It trusts the same compromised emSign root, and vLLM downloads the model's weights from Hugging Face over TLS with it. Ollama, a Go program, reads the image's system store instead.
+   - **Options:**
+     - (a) Accept the 22 with their reasons in the audit log. For the 23rd, the gateway writes the roots of its own Node 24.22.1 (`tls.rootCertificates`) to a file, and points its engine at it with `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE` and `CURL_CA_BUNDLE`, for both engines.
+     - (b) Accept all 23.
+     - (c) Keep vLLM 0.31.0 until a newer vLLM.
+   - **Recommendation:** (a). It adds no dependency, and the engines then trust exactly what the pod's Node trusts.
 
 ## Steps
 
