@@ -2137,16 +2137,23 @@ async function prepareVllm(server, model, log, options) {
   };
 }
 var PROBE_TRIES = 2;
+var PROBE_TRY_MS = 10 * 6e4;
+var postPatiently = async (url, init) => {
+  const answer2 = await forward(url, init);
+  const chunks = [];
+  for await (const chunk of answer2) chunks.push(chunk);
+  return new Response(Buffer.concat(chunks), { status: answer2.statusCode ?? 502 });
+};
 var PROBE_MAX_TOKENS = 4096;
 function probeMaxTokens(contextLength) {
   return Math.max(1, Math.min(PROBE_MAX_TOKENS, Math.floor(contextLength / 2)));
 }
 async function probe(server, model, parser, log, contextLength) {
-  const fetchFn = server.fetch ?? fetch;
+  const post = server.fetch ?? postPatiently;
   let detail = "no answer";
   for (let attempt = 1; attempt <= PROBE_TRIES; attempt++) {
     try {
-      const response = await fetchFn(`${server.url}/v1/chat/completions`, {
+      const response = await post(`${server.url}/v1/chat/completions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -2166,7 +2173,7 @@ async function probe(server, model, parser, log, contextLength) {
           max_tokens: probeMaxTokens(contextLength),
           temperature: 0
         }),
-        signal: AbortSignal.timeout(5 * 6e4)
+        signal: AbortSignal.timeout(PROBE_TRY_MS)
       });
       const text = await response.text();
       const body = (() => {

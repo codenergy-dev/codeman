@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { test } from "node:test";
 import { podSettings } from "./pod.ts";
 import type { RootsEnvironment } from "./roots.ts";
@@ -9,6 +11,7 @@ import {
   driverCudaVersion,
   nextContext,
   prepareVllm,
+  probe,
   servedContext,
   VllmFitFailure,
   type VllmServer,
@@ -333,6 +336,43 @@ test("the probe fits a small explicit context, and a refusal says why", async ()
     prepareVllm(tiny, MODEL, () => {}, { ...options, configured: 512 }),
     /\(it answered 400: \{"error":\{"message":"This model's maximum context length is 512 tokens\./,
   );
+});
+
+test("the probe does not use fetch, which gives up on an answer that takes 5 minutes to start", async (t) => {
+  const fetchSpy = t.mock.method(globalThis, "fetch", async () => {
+    throw new Error("The probe must not use fetch.");
+  });
+  const answers = [
+    { status: 500, body: { error: { message: "Not yet." } } },
+    {
+      status: 200,
+      body: { choices: [{ message: { tool_calls: [{ function: { name: "ping" } }] } }] },
+    },
+  ];
+  const engine = createServer((request, response) => {
+    request.resume();
+    const answer = answers.shift();
+    response.writeHead(answer?.status ?? 500, { "Content-Type": "application/json" });
+    response.end(JSON.stringify(answer?.body ?? {}));
+  });
+  await new Promise<void>((listening) => engine.listen(0, "127.0.0.1", listening));
+  t.after(() => engine.close());
+  const { port } = engine.address() as AddressInfo;
+
+  const lines: string[] = [];
+  await probe(
+    { url: `http://127.0.0.1:${port}` },
+    MODEL,
+    "hermes",
+    (line) => lines.push(line),
+    8192,
+  );
+
+  assert.equal(fetchSpy.mock.callCount(), 0);
+  assert.deepEqual(lines, [
+    'The probe of tool calls failed (try 1 of 2): it answered 500: {"error":{"message":"Not yet."}}.',
+    "vLLM returned a tool call with the parser hermes.",
+  ]);
 });
 
 test("a pod reads its engine, its vLLM settings and its cached context", () => {

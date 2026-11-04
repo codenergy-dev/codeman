@@ -212,7 +212,7 @@ Codeman's agents work through tool calls. vLLM returns them only with `--enable-
 
 1. **The parser is required.** So `tool-call-parser` is required, and the gateway always turns tool calls on. vLLM 0.32.0 checks at its start that the parser suits the model, so a parser that does not may fail the start, with vLLM's own error, before the probe ([v0.32.0](../web/vllm/v0-32-0.md#breaking-changes-that-touch-codemans-use)).
 2. **The gateway probes it.** Once vLLM serves, the gateway sends a chat request offering a `ping` tool and asking for it. It lets the model write at most 4,096 tokens, or half the served context when that is less: vLLM 0.31.0 refused a request whose prompt and `max_tokens` exceeded the context, and 0.32.0 takes `max_tokens` as an upper bound only.
-3. **Two tries.** Without a parsed tool call after two tries, the pod's start fails, with vLLM's answer when it refused the request: "vLLM did not return a tool call with the parser `<parser>`: it may not match `<model>` (…). Set the `tool-call-parser` that the model's card or vLLM's recipe gives in the `vllm` settings."
+3. **Two tries, of up to 10 minutes each.** The probe is the engine's first request, its slowest: a shorter try would fail while the engine still works on its answer. Without a parsed tool call after two tries, the pod's start fails, with vLLM's answer when it refused the request: "vLLM did not return a tool call with the parser `<parser>`: it may not match `<model>` (…). Set the `tool-call-parser` that the model's card or vLLM's recipe gives in the `vllm` settings."
 
 `reasoning-parser` is optional and not probed ([reasoning outputs](../web/vllm/reasoning-outputs.md)).
 

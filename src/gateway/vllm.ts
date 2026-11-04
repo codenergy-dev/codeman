@@ -6,6 +6,7 @@
  */
 import { VLLM_MIN_CUDA, vllmArguments } from "../inference/vllm.ts";
 import { CONTEXT_STEP, floorContext } from "./fit.ts";
+import { forward } from "./gateway.ts";
 import type { RootsEnvironment } from "./roots.ts";
 
 /** The model's start failed for a reason its settings can fix; `message` says how. */
@@ -417,6 +418,35 @@ export async function prepareVllm(
 /** Tries of the probe before it fails the start. */
 const PROBE_TRIES = 2;
 
+/**
+ * How long a try waits for vLLM's answer. The probe is the engine's first request, the slowest it
+ * serves: on the e2e suite's CPU, 176 to 233 s on vLLM 0.31.0 and about 6 minutes on 0.32.0. A try
+ * that ends before it does counts as a failed try, though the engine still works on the answer.
+ */
+const PROBE_TRY_MS = 10 * 60_000;
+
+/** The probe's request, whose answer is read whole. */
+type ProbePost = (
+  url: string,
+  init: {
+    method: string;
+    headers: Record<string, string>;
+    body: string;
+    signal: AbortSignal;
+  },
+) => Promise<Response>;
+
+/**
+ * Posts with `node:http`: `fetch` gives up on an answer whose headers take 5 minutes, whatever the
+ * request's signal says, and vLLM sends a whole answer's headers with its end.
+ */
+const postPatiently: ProbePost = async (url, init) => {
+  const answer = await forward(url, init);
+  const chunks: Buffer[] = [];
+  for await (const chunk of answer as AsyncIterable<Buffer>) chunks.push(chunk);
+  return new Response(Buffer.concat(chunks), { status: answer.statusCode ?? 502 });
+};
+
 /** The most tokens the probe lets the model write: room for a reasoning model to think first. */
 const PROBE_MAX_TOKENS = 4096;
 
@@ -442,11 +472,11 @@ export async function probe(
   log: (message: string) => void,
   contextLength: number,
 ): Promise<void> {
-  const fetchFn = server.fetch ?? fetch;
+  const post: ProbePost = server.fetch ?? postPatiently;
   let detail = "no answer";
   for (let attempt = 1; attempt <= PROBE_TRIES; attempt++) {
     try {
-      const response = await fetchFn(`${server.url}/v1/chat/completions`, {
+      const response = await post(`${server.url}/v1/chat/completions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -466,7 +496,7 @@ export async function probe(
           max_tokens: probeMaxTokens(contextLength),
           temperature: 0,
         }),
-        signal: AbortSignal.timeout(5 * 60_000),
+        signal: AbortSignal.timeout(PROBE_TRY_MS),
       });
       const text = await response.text();
       const body = (() => {

@@ -2,8 +2,8 @@
 # profile's count (docs/settings/pod-engines.md, "Parallel requests"). The context is set, as
 # spike 0.1 of the e2e plan ran vLLM on a CPU: max-model-len 8192, enforce-eager, the hermes
 # parser, and the e2e image's VLLM_CPU_KVCACHE_SPACE of 1 GiB, whose cache holds 87296 tokens:
-# 10.65625 requests of 8192. A vLLM pod takes about 5 minutes to serve on a CPU, and peaks at about
-# 5.5 GiB: the vllm profile needs 8 GiB of Docker memory.
+# 10.65625 requests of 8192. A vLLM pod takes about 7.5 minutes to serve on a CPU, and peaks at
+# about 5.5 GiB: the vllm profile needs 8 GiB of Docker memory.
 name: Two tasks share one vLLM pod, two parallel requests of 8192 tokens
 tags: [parallel, vllm, pods]
 runner: simulator

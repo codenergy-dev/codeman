@@ -87,7 +87,7 @@ The largest `ollama` scenario, `parallel/four-tasks-one-pod`, peaks at about 5.6
 > [!IMPORTANT]
 > For the `vllm` profile, set Docker Desktop's memory to 10 GB or more (Settings, Resources). Otherwise a run that selects a vLLM scenario, such as `npm run test:e2e -- parallel`, stops before it starts anything: "Docker has 7.7 GiB of memory, too little for a scenario: parallel/vllm-two-seats needs about 8.0 GiB, with the vllm profile. …". Select the other scenarios by name or tag to run them.
 
-A vLLM pod takes 5 to 6 minutes to serve on a CPU. Scenarios run one at a time.
+A vLLM pod takes about 7.5 minutes to serve on a CPU: about 1.5 to start, and about 6 for its first request, the gateway's tool-call probe. Scenarios run one at a time.
 
 ## Run it
 

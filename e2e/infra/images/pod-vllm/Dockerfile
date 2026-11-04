@@ -33,8 +33,8 @@ RUN command -v vllm | grep -qx /opt/codeman-e2e/bin/vllm \
  && ! command -v node \
  && /opt/codeman-e2e/node --version
 
-# The gateway's port. Healthy once the gateway serves the model: 5 to 6 minutes on a CPU, with the
-# probe's first request (spike 0.1).
+# The gateway's port. Healthy once the gateway serves the model: about 7.5 minutes on a CPU, with
+# the probe's first request (docs/development/e2e/suite.md#profiles-and-memory).
 EXPOSE 8080
 HEALTHCHECK --interval=10s --timeout=5s --start-period=15m --start-interval=5s \
   CMD ["/opt/codeman-e2e/node", "-e", "fetch('http://127.0.0.1:8080/health').then(r => r.json()).then(b => process.exit(b.ready ? 0 : 1), () => process.exit(1))"]

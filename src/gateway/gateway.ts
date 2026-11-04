@@ -658,7 +658,7 @@ export class Gateway {
  * Sends a request to the engine with `node:http`, which, unlike `fetch`, does not give up on a
  * response that takes minutes to start, such as a long prompt or a worker's cold start.
  */
-function forward(
+export function forward(
   url: string,
   options: {
     method: string;
