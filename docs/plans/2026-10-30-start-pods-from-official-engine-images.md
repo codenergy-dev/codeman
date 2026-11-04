@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-10-30T16:20:00-03:00
-updated_at: 2026-11-04T18:00:00-03:00
+updated_at: 2026-11-04T17:47:00-03:00
 commit: 0bbb10d
 ---
 
@@ -187,7 +187,7 @@ The live test of part 2 adds the GPU measurements listed in the [investigation](
 
 ## Progress
 
-As of 2026-11-04.
+As of 2026-11-04. The work is paused until the maintainer says to continue, and these decisions wait for them: the 4 `pyasn1` findings, a way past the minimum age for an urgent Node.js fix, the minimum age covering only the image and Node.js, `undici`'s advisory, advisories with only a CVSS 2 or 4 score, and the five of the [plan for GitHub's runners](2026-11-04-run-e2e-on-github-runners.md#decisions).
 
 ### Done on `features/multi-service-pods`
 
@@ -207,7 +207,7 @@ Its first e2e run failed every scenario on a stale job image, which `3dc42ad` fi
 
 ### Next
 
-1. Finish the e2e run on `fixes/node-24-22-1`. Then hand it to the maintainer to merge, push, publish the pod images and pin their digests.
+1. Run the e2e suite on `fixes/node-24-22-1`: the maintainer cancelled the run of 2026-11-04 after its first scenarios. Then hand it to the maintainer to merge, push, publish the pod images and pin their digests.
 2. The maintainer decides on the 4 `pyasn1` findings of the scan of 2026-11-04, in the [audit log](../development/dependencies.md#audit-log).
 3. The audit gaps step 11 found: OSV.dev has no audit log row, and `docs/web/` has no page on how raw.githubusercontent.com serves a file.
 4. The comment in `docker/runner/Dockerfile` about "the version of the pod images" goes stale here: fix it after the Node branch, which changes the next line, is merged.
