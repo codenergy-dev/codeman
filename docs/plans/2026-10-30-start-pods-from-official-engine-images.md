@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-10-30T16:20:00-03:00
-updated_at: 2026-11-04T17:40:00-03:00
+updated_at: 2026-11-04T18:00:00-03:00
 commit: 0bbb10d
 ---
 
@@ -191,7 +191,7 @@ As of 2026-11-04.
 
 ### Done on `features/multi-service-pods`
 
-- Steps 2 to 10.
+- Steps 2 to 11.
 - Ollama 0.40.10's and vLLM 0.32.0's upgrade checklists.
 - Decision 10: the engines trust the gateway's Node roots.
 - `8b3ae41`: vLLM's tool-call probe outlasts a cold engine's first request, which caused the extra request in `parallel/vllm-two-seats`.
@@ -207,9 +207,10 @@ Its first e2e run failed every scenario on a stale job image, which `3dc42ad` fi
 
 ### Next
 
-1. Scan vLLM 0.32.0 again with `scripts/scan-image.sh`, to name the eighth Python finding that its audit row lacks.
-2. Run the e2e suite on `fixes/node-24-22-1`. Then hand it to the maintainer to merge, push, publish the pod images and pin their digests.
-3. Step 11, the docs.
-4. Step 12: `npm run check` (with `biome ci` on the repository's directories, not `.`, while worktrees live under `.claude/`) and `npm run test:e2e`.
-5. Remove the agents' worktrees and branches (`git worktree remove`).
-6. Hand over to the live test, then write part 2's plan.
+1. Finish the e2e run on `fixes/node-24-22-1`. Then hand it to the maintainer to merge, push, publish the pod images and pin their digests.
+2. The maintainer decides on the 4 `pyasn1` findings of the scan of 2026-11-04, in the [audit log](../development/dependencies.md#audit-log).
+3. The audit gaps step 11 found: OSV.dev has no audit log row, and `docs/web/` has no page on how raw.githubusercontent.com serves a file.
+4. The comment in `docker/runner/Dockerfile` about "the version of the pod images" goes stale here: fix it after the Node branch, which changes the next line, is merged.
+5. Step 12: `npm run check` (with `biome ci` on the repository's directories, not `.`, while worktrees live under `.claude/`). The e2e suite last passed at 8b3ae41; later commits change only docs and an input's description.
+6. Remove the agents' worktrees and branches (`git worktree remove`).
+7. Hand over to the live test, then write part 2's plan.

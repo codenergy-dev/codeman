@@ -1,7 +1,7 @@
 ---
 status: pending
 created_at: 2026-11-04T14:47:33-03:00
-updated_at: 2026-11-04T17:40:00-03:00
+updated_at: 2026-11-04T18:00:00-03:00
 commit: 1492654
 ---
 
@@ -33,7 +33,7 @@ Sources, read on 2026-11-04, to be saved in step 1: [larger runners](https://doc
 - Whether GitHub's Ubuntu image for the GPU size has NVIDIA's driver and Docker's NVIDIA runtime. The pages do not say. A partner image, "NVIDIA GPU-Optimized VMI", exists. Step 3 finds out.
 - Whether larger runners on a public repository draw from the plan's $18 of included compute. The billing pages say such use is billed per minute, and do not say whether it draws from that amount.
 - Whether the suite fits a standard runner's disk. The two pod images alone take about 16 GB locally, against the documented 14 GB. Step 4 measures it.
-- How long the full suite takes on 4 vCPU. It takes 134 minutes on this repository's reference machine, with 8 CPUs, so a run on 4 vCPU may approach the 6-hour limit. On the GPU runner, 134 minutes would cost about $7.
+- How long the full suite takes on 4 vCPU. It takes 134 minutes on the maintainer's machine, with 8 CPUs, so a run on 4 vCPU may approach the 6-hour limit. On the GPU runner, 134 minutes would cost about $7.
 
 ### Risk: forks on a public repository
 
