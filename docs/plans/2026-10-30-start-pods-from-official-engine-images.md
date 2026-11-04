@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-10-30T16:20:00-03:00
-updated_at: 2026-10-31T09:30:24-03:00
+updated_at: 2026-11-04T17:40:00-03:00
 commit: 0bbb10d
 ---
 
@@ -187,36 +187,29 @@ The live test of part 2 adds the GPU measurements listed in the [investigation](
 
 ## Progress
 
-As of 2026-11-01, the work stopped for the account's usage limit. Every change is committed; nothing waits in `/tmp`.
+As of 2026-11-04.
 
 ### Done on `features/multi-service-pods`
 
-- Steps 2 to 7 and 9.
+- Steps 2 to 10.
 - Ollama 0.40.10's and vLLM 0.32.0's upgrade checklists.
 - Decision 10: the engines trust the gateway's Node roots.
-- Checks at 0698253: lint, typecheck, 1,071 unit tests and build pass.
+- `8b3ae41`: vLLM's tool-call probe outlasts a cold engine's first request, which caused the extra request in `parallel/vllm-two-seats`.
+- At 8b3ae41: lint, typecheck, build and unit tests pass (1,081 passed, 6 skipped), and the e2e suite passes, 49 of 49, in 134 minutes.
 
-### Done elsewhere, not yet on this branch
+### Done elsewhere, not yet merged
 
-- **Steps 8 and 10,** on the branch `worktree-agent-aff003c3b8c3e8259`, in the worktree `.claude/worktrees/agent-aff003c3b8c3e8259`, based on 342264c. Its commits:
-  - `c552eb8`: fakes for OSV.dev, nodejs.org and raw.githubusercontent.com;
-  - `a29e364`: e2e pods from the official images through the bootstrap;
-  - `fe028fb`: Codeman's pod images, workflow and `POD_IMAGES` removed;
-  - `2e2580b`: an e2e fix for Ollama pods.
-- **Their last e2e run:** 48 scenarios pass and 1 fails. `parallel/vllm-two-seats` sees 16 requests on the pod's tee where it expects 15, both in the full run and when run alone.
-- **The fix for Node on `main`,** on the branch `fixes/node-24-22-1`, in the worktree `../codeman-node-fix`:
-  - `0d8ab87`: Node 24.21.0 → 24.22.1;
-  - `3dc42ad`: the e2e job image is built again every session.
-  - Its first e2e run failed every scenario on a stale job image, which `3dc42ad` fixes. It has not run again since.
+The fix for Node on `main`, on the branch `fixes/node-24-22-1`, in the worktree `../codeman-node-fix`:
+- `0d8ab87`: Node 24.21.0 → 24.22.1;
+- `3dc42ad`: the e2e job image is built again every session.
+
+Its first e2e run failed every scenario on a stale job image, which `3dc42ad` fixes. It has not run again since.
 
 ### Next
 
-1. Cherry-pick the four commits of steps 8 and 10 onto this branch, after 0698253. Rebuild `dist/` from the main checkout, since a worktree's build names `../../../node_modules`.
-2. Find the extra request in `parallel/vllm-two-seats`. Likely suspects: the gateway's tool-call probe, now capped at half the context, and vLLM 0.32.0. Fix the code, or the scenario's count if the request is expected.
-3. Run `npm run test:e2e` on this branch until every scenario passes.
-4. Run the e2e suite on `fixes/node-24-22-1`, after this branch's run, since both use the same Compose project. Then hand it to the maintainer to merge, push, publish the pod images and pin their digests.
-5. Scan vLLM 0.32.0 again with `scripts/scan-image.sh`, to name the eighth Python finding that its audit row lacks.
-6. Step 11, the docs. The steps-8-and-10 agent was to list the pages it left to rewrite: check its commits.
-7. Step 12: `npm run check` (with `biome ci` on the repository's directories, not `.`, while worktrees live under `.claude/`) and `npm run test:e2e`.
-8. Remove the agents' worktrees and branches (`git worktree remove`) once their commits are on this branch.
-9. Hand over to the live test, then write part 2's plan.
+1. Scan vLLM 0.32.0 again with `scripts/scan-image.sh`, to name the eighth Python finding that its audit row lacks.
+2. Run the e2e suite on `fixes/node-24-22-1`. Then hand it to the maintainer to merge, push, publish the pod images and pin their digests.
+3. Step 11, the docs.
+4. Step 12: `npm run check` (with `biome ci` on the repository's directories, not `.`, while worktrees live under `.claude/`) and `npm run test:e2e`.
+5. Remove the agents' worktrees and branches (`git worktree remove`).
+6. Hand over to the live test, then write part 2's plan.
