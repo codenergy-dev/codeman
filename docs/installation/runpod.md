@@ -62,9 +62,10 @@ OpenRouter's management key is not needed then, unless a [profile](mixing-provid
 
    Only the documented keys are accepted. A typo, or a key Codeman controls such as `host`, stops the run with an error before any pod is created. With vLLM, Codeman also stops the run before creating a pod when Runpod offers no host of the GPU type with CUDA 13.0 or newer, or none has room ([CUDA](../settings/vllm.md#cuda)).
 
-3. **Pod images: nothing to set up.** Codeman runs its own images, one per engine, public and pinned by digest in the version you use ([pod images](../settings/pod-engines.md#pod-images)).
-   - To run an Ollama image of your own, set `pod-image: <image>@sha256:<digest>` on the `open-key` step. It must serve several runs at once and apply Ollama settings ([older images](../inference/pods.md#shared-pods), [Ollama's pod images](../settings/ollama.md#pod-images)).
-   - vLLM pods always run Codeman's image.
+3. **Pod images: nothing to set up.** Codeman runs each engine's official image, pinned by digest in the version you use, and gives it its gateway when the pod starts ([pod images](../settings/pod-engines.md#pod-images)).
+   - `open-key` checks the pinned releases before any pod is created, and a block stops the run ([release policy](../security/release-policy.md)).
+   - To run an Ollama image of your own, set `pod-image: <image>@sha256:<digest>` on the `open-key` step ([an image of your own](../settings/pod-engines.md#an-image-of-your-own)).
+   - vLLM pods always run the pinned image.
    - A version that pins no image for an engine stops that engine's runs before any pod is created.
 
 4. **Keep the account's other pods apart.** Codeman keeps its pods in the backend's registry, and terminates as orphans the account's pods of its pool that the registry does not hold ([pods](../inference/pods.md)).
@@ -113,6 +114,8 @@ Codeman checks the endpoint before each run, and reports what to change. How a r
 | --- | --- | --- |
 | "No pod image is pinned; see docs/installation/runpod.md#pods." | The version of Codeman pins no Ollama image, and the `open-key` step has no `pod-image` | Use a version of Codeman that pins one, or set `pod-image` ([pod images](../settings/pod-engines.md#pod-images)) |
 | "This version of Codeman pins no vLLM pod image yet …" | The version pins no vLLM image | Use a version that pins one, or `engine: ollama` ([vLLM's pod images](../settings/vllm.md#pod-images)) |
+| "The release policy blocks …", or "The release policy could not check …" | A pinned release has a blocking advisory, or OSV.dev did not answer | Follow the error ([what a blocked run shows](../security/release-policy.md#what-a-blocked-run-shows)) |
+| "Codeman's commit is unknown …" | Codeman's checkout is not of a full commit SHA, as in a local build, so a pod could not download its gateway | Run it from a checkout of the commit in `CODEMAN_COMMIT_SHA`, as the workflow templates do |
 | "Runpod offers no host with `<gpu>` and CUDA 13.0 or newer …", or "No host … has room now …" | vLLM needs CUDA 13.0 or newer | Use another GPU type, try again later, or use `engine: ollama` ([CUDA](../settings/vllm.md#cuda)) |
 | "`<model>` does not fit the GPU …" | The model and its cache do not fit wholly on the GPU | Fewer parallel requests, a quantized cache, or a GPU with more memory ([context and the GPU](../settings/pod-engines.md#context-and-the-gpu)) |
 | Every pod stops | The account's balance reached US$ 0 | Add credits |

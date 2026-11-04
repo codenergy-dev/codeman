@@ -256,11 +256,11 @@ The 40 GB are for vLLM's image, unpacked, and its caches.
 
 ## Pod images
 
-vLLM pods always run the vLLM image pinned in `POD_IMAGES`; the `pod-image` input overrides the Ollama image only ([pod images](pod-engines.md#pod-images)). A version of Codeman that pins no vLLM image stops runs with `engine: vllm` in `open-key`, before any pod is created, at no cost:
+vLLM pods always run vLLM's official image, pinned in `ENGINE_RELEASES`; the `pod-image` input overrides the Ollama image only ([pod images](pod-engines.md#pod-images)). A version of Codeman that pins no vLLM image stops runs with `engine: vllm` in `open-key`, before any pod is created, at no cost:
 
-> "This version of Codeman pins no vLLM pod image yet (`POD_IMAGES` in src/inference/images.ts), so no pod was created: use a version that pins one, or `engine: ollama`."
+> "This version of Codeman pins no vLLM pod image yet (`ENGINE_RELEASES` in src/inference/images.ts), so no pod was created: use a version that pins one, or `engine: ollama`."
 
-Publishing and pinning are in [development](../development/guide.md#pod-images).
+Pinning is in [the release policy](../security/release-policy.md#pin-a-new-engine-version).
 
 ## Starting
 

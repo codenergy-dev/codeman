@@ -166,11 +166,11 @@ To serve a larger context, lower `num-parallel`, set `kv-cache-type: q8_0`, or u
 
 ## Pod images
 
-The Ollama image is the `ollama` entry of `POD_IMAGES`, or the `pod-image` input's ([pod images](pod-engines.md#pod-images)). Applying the settings, and fitting the model to the GPU, need an image whose gateway does both. A requested setting is never dropped:
+The Ollama image is the `ollama` entry of `ENGINE_RELEASES`, or the `pod-image` input's ([pod images](pod-engines.md#pod-images)). The gateway applies the settings and fits the model to the GPU, and the [bootstrap](../glossary.md#bootstrap) gives every pod the gateway of Codeman's commit. Older images stay listed by digest. A requested setting is never dropped:
 
 | Image | With `ollama:` settings | Without them |
 | --- | --- | --- |
-| Codeman's pinned image | Applied and checked | The derived `num-parallel` and the computed context |
+| The pinned image | Applied and checked | The derived `num-parallel` and the computed context |
 | Listed in `IMAGES_WITHOUT_OLLAMA_SETTINGS` | The run stops in `open-key`, before any pod is created | Served without the derived `num-parallel`, with the model's own context length, and no check of the GPU |
 | Any other, such as a `pod-image` input's | It must report exactly the requested variables and a fit, or the run fails | It must report a fit, or the run fails |
 

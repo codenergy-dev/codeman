@@ -82,6 +82,7 @@ flowchart TD
 | 2026-10-29 | [One instance of a profile at a time](#one-instance-of-a-profile-at-a-time) | `447fd2d` | Profiles that ran several pods, or several batches, at once | Set `concurrency` to keep them | No: tasks wait instead |
 | 2026-10-29 | [Salad pods, and the hosts of a pod](#salad-pods-and-the-hosts-of-a-pod) | `190f93f`, `cff2d2a` | Every installation | Copy both templates; for Salad, add its secret and variables | Yes: template version 3 |
 | 2026-10-29 | [Profiles fall back in the list's order](#profiles-fall-back-in-the-lists-order) | `3a0ac54` to `79859a4` | Settings where several profiles, or a profile and a top-level `model`, serve one stage | Reorder the profiles if needed | No: tasks may run on a later profile instead of waiting |
+| 2026-10-30 | [Pods start from official images](#pods-start-from-official-images) | `07994f0` to `9e1182e` | Pod profiles, and a `pod-image` input | Check three things | No |
 
 The [older versions](#older-versions) entries say what Codeman does with tasks, pod images and records from before some of these changes.
 
@@ -509,7 +510,7 @@ A pod can serve a Hugging Face model with vLLM (`engine: vllm`, [vLLM settings](
 
 Check three things:
 
-- **Pod images.** Codeman's images are now one per engine, `codeman-ollama` and `codeman-vllm`, pinned in `POD_IMAGES` (`src/inference/images.ts`) instead of `POD_IMAGE`. A version that pins no vLLM image yet, before `df7b528`, stops runs with `engine: vllm` before any pod is created. A `pod-image` input still overrides the Ollama image only.
+- **Pod images.** Codeman's images are now one per engine, `codeman-ollama` and `codeman-vllm`, pinned in `POD_IMAGES` (`src/inference/images.ts`) instead of `POD_IMAGE`. A version that pins no vLLM image yet, before `df7b528`, stops runs with `engine: vllm` before any pod is created. A `pod-image` input still overrides the Ollama image only. Since [official images](#pods-start-from-official-images), `ENGINE_RELEASES` pins the engines' official images instead.
 - **Layers that change engine.** A layer or profile that names another `engine` leaves out the block of the engine it inherits, as one that names another provider leaves out its settings ([provider settings across layers](../settings/provider-settings-across-layers.md)).
 - **The model.** With `engine: vllm`, `model` is a Hugging Face ID of a public model, not gated, with safetensors weights, such as `unsloth/Qwen3.8-27B-NVFP4`, not an Ollama name. The `vllm` block needs the model's `tool-call-parser`.
 
@@ -536,6 +537,36 @@ Nothing.
 #### How to verify
 
 Your commit includes `c69ea45`, as in [find your version](#find-your-version).
+
+### Pods start from official images
+
+- **Since:** 2026-10-30 to 2026-10-31, `07994f0` to `9e1182e` ([plan to start pods from official engine images](../plans/2026-10-30-start-pods-from-official-engine-images.md)).
+- **Who is affected:** pod profiles, and a `pod-image` input.
+- **Breaking:** no. Settings and workflow files need no change, and the template version stays.
+
+Codeman no longer publishes images of its own ([pod images](../settings/pod-engines.md#pod-images)).
+
+| | Before | Now |
+| --- | --- | --- |
+| A pod's image | `codeman-ollama` or `codeman-vllm`, by digest | `ollama/ollama` or `vllm/vllm-openai`, by digest |
+| Engines | Ollama 0.35.1, vLLM 0.31.0 | Ollama 0.40.10, vLLM 0.32.0 |
+| Its gateway | In the image | Downloaded at start, from the commit of the `open-key` that creates the pod, and checked by SHA-256 |
+| Before any pod | Nothing | The [release policy](../security/release-policy.md): a block stops the run |
+| Pod settings | Without the gateway | With its SHA-256, so a commit with another gateway gets new pods |
+
+The backend gains `releaseChecks/` and the pods' `resolution` ([data layout](../backend/data-layout.md)), with nothing to set up. Pods from before end as usual. New tasks do not join them, since their pod settings differ.
+
+#### What to do
+
+Check three things:
+
+- **Outbound hosts.** If you restrict them, let the key jobs reach `api.osv.dev`, and pods reach `nodejs.org` and `raw.githubusercontent.com` ([what a pod starts from](../security/risks.md#what-a-pod-starts-from)).
+- **A `pod-image` input.** It now starts through the bootstrap, so the image must have what that needs, and the release policy does not check it ([an image of your own](../settings/pod-engines.md#an-image-of-your-own)).
+- **Codeman's checkout.** A run on a pod must come from a checkout of a full commit SHA, as the templates do. A local build stops before creating a pod.
+
+#### How to verify
+
+A run on a pod logs `The release policy passes ollama 0.40.10 and node 24.22.1.` in `open-key`, and `[bootstrap] Starting the gateway.` in the pod's log.
 
 ## Older versions
 
@@ -582,6 +613,7 @@ Versions before `df7b528` pin `ghcr.io/codenergy-dev/codeman-pod`, the images pu
 - **The gateway's version.** The gateway reports its API `version` with its state: 2 serves several runs, and an older gateway reports none ([the gateway](../inference/self-hosted.md#the-gateway)). The error says: `Pod <ID>'s gateway serves one run at a time: list its image in SINGLE_RUN_IMAGES (src/inference/ollama.ts) to give each task a pod of its own on it.`
 - **Sharing and splitting.** Tasks share a pod and split its cost by the second only on an image that serves several runs.
 - **Capacity.** A pod's [capacity](../glossary.md#capacity) is its `OLLAMA_NUM_PARALLEL` or its `max-num-seqs`. A pod that gets neither, on an older image, has no limit.
+- **Codeman's images per engine.** `codeman-ollama` and `codeman-vllm` are no longer built, and stay on GHCR ([dependencies](../development/dependencies.md#codemans-pod-images)). Versions that pin them keep running them.
 - **Runs that name no task.** A run that names no task replaces every run on the gateway. Serverless runs start that way, and so did Codeman before shared pods (`154c895`, 2026-10-06).
 
 Which images stay listed, and why, is in [pod images](../development/guide.md#pod-images).
@@ -592,7 +624,7 @@ Nothing. To get shared pods, Ollama settings and the fit, run a version at or af
 
 #### How to verify
 
-`POD_IMAGES` at your commit names `codeman-ollama` and `codeman-vllm` ([`src/inference/images.ts`](../../src/inference/images.ts)).
+[`src/inference/images.ts`](../../src/inference/images.ts) at your commit names `codeman-ollama` and `codeman-vllm` in `POD_IMAGES`, or the official images in `ENGINE_RELEASES`.
 
 ### Older ledger records
 

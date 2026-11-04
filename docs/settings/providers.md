@@ -61,7 +61,7 @@ The model ID depends on the engine:
 
 - **Secrets:** `CODEMAN_RUNPOD_API_KEY`, in the key jobs.
 - **Cost:** the pod's time at its price, split among the runs on it ([spend](../budget/spend.md#self-hosted-runs)).
-- **Pod image:** Codeman picks it by `engine`, one per engine ([vLLM settings](vllm.md#pod-images)). Ollama settings, and fitting the model to the GPU, need an image whose gateway does both. A run with Ollama settings on an image that cannot stops before any pod is created ([Ollama settings](ollama.md#pod-images)).
+- **Pod image:** the official image of the `engine`, pinned by digest ([pod images](pod-engines.md#pod-images)). `open-key` checks its release first, and a block stops the run ([release policy](../security/release-policy.md)). A run with Ollama settings on an older image that cannot apply them stops before any pod is created ([Ollama settings](ollama.md#pod-images)).
 
 ## `runpod-serverless`
 
@@ -95,7 +95,7 @@ The model ID depends on the engine, as on `runpod-pod`.
 - **Secrets:** `CODEMAN_SALAD_API_KEY`, in the key jobs. The key is its user's, and reaches every organization and project the user belongs to.
 - **Variables:** `CODEMAN_SALAD_ORGANIZATION` and `CODEMAN_SALAD_PROJECT`, in the key jobs: where Codeman creates its container groups.
 - **Cost:** an estimate: the pod's time at the listed price of its GPU class and priority, the image's download included, which Salad does not bill. It is split among the runs on the pod as on Runpod, and never reconciled, since Salad has no billing API ([spend](../budget/spend.md#self-hosted-runs)).
-- **Pod image:** Codeman's, by `engine`, as on `runpod-pod`. A run on an image whose gateway cannot serve on Salad stops before any group is created ([pod images](../development/guide.md#pod-images)).
+- **Pod image:** as on `runpod-pod`. A run on an older image whose gateway cannot serve on Salad stops before any group is created ([Salad's pod images](../installation/salad.md#pod-images)).
 
 ## Hosts
 

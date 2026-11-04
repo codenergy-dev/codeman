@@ -8,7 +8,7 @@ The choice was made in the [self-hosted inference plan](../plans/2026-10-02-self
 
 | Provider | GPU | [Engine](../glossary.md#engine) | Billed | Start |
 | --- | --- | --- | --- | --- |
-| `runpod-pod` | A [pod](../glossary.md#pod) Codeman creates, with the task's `gpu`, on Secure Cloud unless `hosts` allows Community Cloud | Ollama or vLLM (`engine`), each in a pod image of Codeman's | Every second the pod exists, from its creation | Minutes (more for vLLM), unless the task's pod was kept |
+| `runpod-pod` | A [pod](../glossary.md#pod) Codeman creates, with the task's `gpu`, on Secure Cloud unless `hosts` allows Community Cloud | Ollama or vLLM (`engine`), each from its official image | Every second the pod exists, from its creation | Minutes (more for vLLM), unless the task's pod was kept |
 | `runpod-serverless` | The workers of an endpoint a maintainer created ([installation](../installation/runpod.md)) | Runpod's vLLM worker | Every second a worker runs, its model's load and idle timeout included | Minutes, while vLLM prepares the model, unless a worker is still up; a run with no worker for 25 minutes fails |
 | `salad-pod` | A pod Codeman creates, a container group of one replica on the task's GPU class, on Community hosts: consumer PCs ([installation](../installation/salad.md)) | Ollama or vLLM, as on Runpod | Every second the container runs, at the price of its GPU class and priority; the image's download is free | Minutes, more on a slow home connection, unless the task's pod was kept |
 

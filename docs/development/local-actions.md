@@ -10,7 +10,7 @@ This page is for whoever changes code that depends on GitHub's `ubuntu-latest` r
 | --- | --- | --- |
 | The system | Ubuntu 24.04, by digest | `ubuntu-latest` is Ubuntu 24.04 on x64 ([runner-images README](../web/github/runner-images-readme-md-at-82d1b86.md)) |
 | The runner's user | `runner`, uid 1001, with passwordless `sudo` | [Administrative privileges](../web/github/github-hosted-runners-reference.md#administrative-privileges) |
-| Node.js | 24.21.0, in `/opt/hostedtoolcache/node/24.21.0/x64`, marked complete, where `actions/setup-node` finds a cached version | `.nvmrc`, and the version of the [pod images](dependencies.md#codemans-pod-images) |
+| Node.js | 24.21.0, in `/opt/hostedtoolcache/node/24.21.0/x64`, marked complete, where `actions/setup-node` finds a cached version | `.nvmrc`, and the version of Codeman's [retired pod images](dependencies.md#codemans-pod-images) |
 | World-writable trees | `/opt` and `/usr/share`, recursively, with `/opt/pipx_bin` and the tool cache; `/usr/local/bin`, `/usr/local/lib/node_modules` and `/usr/local/.ghcup` | [`configure-system.sh`](../web/github/runner-images-configure-system-sh-at-82d1b86.md), [`install-nodejs.sh`](../web/github/runner-images-install-nodejs-sh-at-82d1b86.md), [`install-haskell.sh`](../web/github/runner-images-install-haskell-sh-at-82d1b86.md) |
 | The job's `PATH` | x64's, in GitHub's order, after setup-node's tool-cache directory | [Issue 11414](../web/github/path-is-different-on-ubuntu-24-04-arm-compared-to-ubuntu-24-04.md) |
 | The programs Codeman runs | `git`, `sudo`, `procps` (`pkill`, `pgrep`), `unzip`, and Ubuntu's base | Ubuntu's packages |
@@ -58,7 +58,7 @@ This image runs one job's code. Codeman's real templates, job after job, run und
 ## Update the image
 
 - **Ubuntu:** change the `FROM ubuntu:noble-<date>@sha256:<digest>` line, and record the new tag's page in `docs/web/docker-hub/` ([Docker Hub tool](../web/tools/docker-hub.md)).
-- **Node.js:** change the `FROM node:<version>-bookworm-slim@sha256:<digest>` line and `NODE_VERSION` together, with the pod images' ([dependencies](dependencies.md#the-local-runner-image)).
+- **Node.js:** change the `FROM node:<version>-bookworm-slim@sha256:<digest>` line and `NODE_VERSION` together ([dependencies](dependencies.md#the-local-runner-image)).
 - **GitHub's image:** when `actions/runner-images` changes the permissions or the `PATH` this page cites, record the new files in `docs/web/github/` and change the Dockerfile with them.
 
 The image's audit is in [dependencies](dependencies.md#the-local-runner-image).

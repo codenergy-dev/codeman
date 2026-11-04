@@ -12,10 +12,10 @@ A [pod](../glossary.md#pod) serves its model with an [engine](../glossary.md#eng
 | Parallel requests | `num-parallel`; some model families are served one request at a time | `max-num-seqs`; every family is batched |
 | Context key | `context-length` | `max-model-len` |
 | Host | Any CUDA version | CUDA 13.0 or newer |
-| Checks before the pod is created | The pod image | The pod image, a host with CUDA 13.0 or newer with room, and the model on Hugging Face |
+| Checks before the pod is created | The pod image and the [release policy](../security/release-policy.md) | The pod image, the release policy, a host with CUDA 13.0 or newer with room, and the model on Hugging Face |
 | Container disk | 80 GB | The model's weights with a quarter more, plus 40 GB; 80 GB at least |
 | Start of a new pod | 2 to 4 minutes | About 6 to 9 minutes for a 27B model, and 2 to 3 more for each restart of the fit |
-| Image | `codeman-ollama`, or the `pod-image` input's | `codeman-vllm`, always the pinned one |
+| Image | The official `ollama/ollama`, or the `pod-image` input's | The official `vllm/vllm-openai`, always the pinned one |
 
 Choose vLLM when several tasks share a pod and the model belongs to a family that Ollama serves one request at a time ([Ollama's parallel requests](ollama.md#parallel-requests)). Choose Ollama for faster starts and any host. [Self-hosted inference](../inference/self-hosted.md#choosing) compares pods with OpenRouter and Serverless.
 
@@ -130,7 +130,7 @@ Otherwise the model reads text only: OpenCode replaces each image with an error 
 
 - **Why not always.** An image sent to a model that cannot read it would make the engine refuse the whole request.
 - **When Codeman cannot tell,** such as when Hugging Face does not answer, the model reads text only and the run goes on.
-- **Older gateways.** The gateways of pod images pinned before 2026-10-28, and of an older image given with the `pod-image` input, do not report it, so their Ollama models read text only. vLLM pods do not depend on the image.
+- **Older gateways.** The gateways of Codeman's images pinned before 2026-10-28 do not report it, so the Ollama models of versions that pin them read text only. vLLM pods do not depend on the image.
 
 > [!NOTE]
 > Models on [Serverless](../inference/serverless.md) read text only: nothing tells whether an endpoint's worker serves its model's vision tower.
@@ -152,18 +152,32 @@ Serverless endpoints keep their worker's own settings ([Serverless](../inference
 
 ## Pod images
 
-Codeman picks a pod's image by its engine: one image per engine, built from the same Dockerfile and gateway.
+A pod starts from its engine's official image, which Codeman picks by the engine. Its command is the [bootstrap](../glossary.md#bootstrap), which gives the image Codeman's gateway ([starting](../inference/pods.md#starting-1)).
 
 | Engine | Image | Size, compressed | `pod-image` input |
 | --- | --- | --- | --- |
-| Ollama | `ghcr.io/codenergy-dev/codeman-ollama` | 3.8 GB | Replaces it |
-| vLLM | `ghcr.io/codenergy-dev/codeman-vllm` | 9.1 GB | Ignored: vLLM pods always run the pinned image |
+| Ollama | `docker.io/ollama/ollama` | 3.37 GB | Replaces it |
+| vLLM | `docker.io/vllm/vllm-openai` | 9.21 GB | Ignored: vLLM pods always run the pinned image |
 
-- **Pinned.** Pods run the image pinned by digest in `POD_IMAGES` in [`src/inference/images.ts`](../../src/inference/images.ts), not the latest build ([pinned pod image](../glossary.md#pinned-pod-image)). Publishing and pinning are in [development](../development/guide.md#pod-images), and the images' contents in [dependencies](../development/dependencies.md#codemans-pod-images).
+- **Pinned.** Pods run the image pinned by its index digest in `ENGINE_RELEASES` in [`src/inference/images.ts`](../../src/inference/images.ts), not the latest release ([pinned pod image](../glossary.md#pinned-pod-image)). Pinning is in [the release policy](../security/release-policy.md#pin-a-new-engine-version), and the engines' versions in [dependencies](../development/dependencies.md#ollama).
+- **Checked.** `open-key` checks each pinned release before any pod is swept, joined or created, and a block stops the run ([release policy](../security/release-policy.md)).
 - **Pulled by each pod.** Each new pod pulls its own image. Runpod bills the pull; Salad does not, but Codeman counts it ([spend](../budget/spend.md#the-months)).
-- **Serving on Salad.** Salad pods need images whose gateway listens on IPv6 and ends the pod by exiting. `IMAGES_BEFORE_SALAD` lists the pinned images that cannot, which `salad-pod` refuses before any group is created ([Salad's pod images](../installation/salad.md#pod-images)).
-- **No pinned image.** A version of Codeman whose `POD_IMAGES` has no image for an engine stops that engine's runs in `open-key`, before any pod is created, at no cost ([vLLM's pod images](vllm.md#pod-images)). With `engine: ollama` and no `pod-image` input, a task that would create a pod stops with "No pod image is pinned; see docs/installation/runpod.md#pods."
+- **Serving on Salad.** Salad pods need a gateway that listens on IPv6 and ends the pod by exiting. `IMAGES_BEFORE_SALAD` lists Codeman's older images, which `salad-pod` refuses before any group is created ([Salad's pod images](../installation/salad.md#pod-images)).
+- **No pinned image.** A version of Codeman whose `ENGINE_RELEASES` has no image for an engine stops that engine's runs in `open-key`, before any pod is created, at no cost ([vLLM's pod images](vllm.md#pod-images)). With `engine: ollama` and no `pod-image` input, a task that would create a pod stops with "No pod image is pinned; see docs/installation/runpod.md#pods."
 - **Images that cannot apply Ollama settings** are in [Ollama's pod images](ollama.md#pod-images).
+
+### An image of your own
+
+The `pod-image` input on the `open-key` step, `<image>@sha256:<digest>`, replaces the Ollama image. The bootstrap starts in it as in the official one, so the image needs:
+
+| For | The image needs |
+| --- | --- |
+| Running the bootstrap and Node.js | `sh`, `tar` and `gzip`, on linux-x64 with glibc |
+| Downloading | One of `curl`, `wget`, `python3` or `openssl` |
+| Checking a SHA-256 | One of `sha256sum`, `openssl` or `python3` |
+| Serving | `ollama` on its `PATH`, or the pod's start fails, saying so |
+
+Codeman guarantees nothing else of it. The [release policy](../security/release-policy.md#an-image-of-your-own) does not check it, and nothing compares its contents with an audit.
 
 ## The cache of fits
 
@@ -190,9 +204,10 @@ sequenceDiagram
   participant G as Pod gateway
   participant E as Engine
   O->>O: Check the block, derive the parallel requests
+  O->>O: Check the releases against the release policy
   O->>B: Read the cache of fits
   O->>R: Create the pod with the settings in its environment
-  R->>G: Start the container
+  R->>G: Start the container: its bootstrap downloads, checks and runs the gateway
   G->>G: Check the settings again
   loop Until a context fits
     G->>E: Start or load with a context
@@ -204,9 +219,9 @@ sequenceDiagram
   O->>O: Log it, and give the agent the context
 ```
 
-1. **`open-key` resolves the block.** It checks every key, derives the parallel requests, and hashes the pod settings ([pods](../inference/pods.md)).
+1. **`open-key` resolves the block.** It checks every key, derives the parallel requests, checks the pod's releases against the [release policy](../security/release-policy.md), and hashes the pod settings ([pods](../inference/pods.md)).
 2. **It reads the cache of fits**, when the task creates the pod.
-3. **It creates the pod** with the settings in its environment:
+3. **It creates the pod**, with the [bootstrap](../glossary.md#bootstrap) as its command, and the settings in its environment:
 
    | Variable | Holds | Example |
    | --- | --- | --- |

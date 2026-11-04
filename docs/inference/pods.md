@@ -119,6 +119,7 @@ sequenceDiagram
   participant R as Runpod or Salad
   participant P as Pod registry
   participant G as Pod gateway
+  K->>K: Check the pod's releases: a block stops the run
   K->>R: List the account's pods
   K->>P: Read the pool's live pods
   K->>R: Terminate the orphans
@@ -163,6 +164,7 @@ Each termination is logged with its reason, and recorded as a `pod-terminated` e
 In one store transaction, `open-key` reads the live pods of its pod settings on its GPU account. The settings are a hash of:
 
 - the model, GPU type, image and `pod-reuse`;
+- the gateway's SHA-256, the bootstrap's command and Node.js's tarball, so pods with different gateways never mix;
 - `hosts` and `priority`, only when they differ from the provider's defaults, so pods from before them keep their hash;
 - for an Ollama pod, the [Ollama settings](../settings/ollama.md) when there are some, the derived `num-parallel` included;
 - for a vLLM pod, the engine and its [vLLM settings](../settings/vllm.md), the derived `max-num-seqs` included.
@@ -180,14 +182,14 @@ A task claims 40 times at most, counting its waits and the pods it could not cre
 
 #### Creating
 
-The pod runs Codeman's image for its [engine](../glossary.md#engine), pinned by digest, on a [kind of host](../settings/providers.md#hosts) that `hosts` allows:
+The pod runs the official image of its [engine](../glossary.md#engine), pinned by digest, or the `pod-image` input's for Ollama ([pod images](../settings/pod-engines.md#pod-images)), on a [kind of host](../settings/providers.md#hosts) that `hosts` allows:
 
 | Provider | Where |
 | --- | --- |
 | `runpod-pod` | The first cloud of `hosts`, Secure or Community, that offers the GPU and has room. With one kind, the pod is created there without asking |
 | `salad-pod` | A container group of one replica, in the account's organization and project, on the GPU class `gpu` names, at the settings' `priority`. Its restart policy is `never`, and its Container Gateway, without Salad's authentication, reaches the gateway, which the run tokens guard |
 
-Its environment holds:
+Its command, in place of the image's, is the [bootstrap](../glossary.md#bootstrap). Its environment holds:
 
 | Variable | Value |
 | --- | --- |
@@ -201,6 +203,8 @@ Its environment holds:
 | `CODEMAN_ORGANIZATION`, `CODEMAN_POOL` | The creating organization and its pool |
 | `CODEMAN_ACCOUNT` | The account's fingerprint, never the key |
 | `CODEMAN_POD_SETTINGS`, `CODEMAN_NONCE` | The settings' hash and the document's nonce |
+| `CODEMAN_BOOTSTRAP_NODE_URL`, `CODEMAN_BOOTSTRAP_NODE_SHA256` | Node.js's tarball, and the SHA-256 it must have |
+| `CODEMAN_BOOTSTRAP_GATEWAY_URL`, `CODEMAN_BOOTSTRAP_GATEWAY_SHA256` | `dist/gateway.js` on `raw.githubusercontent.com`, at the commit of the `open-key` that creates the pod, and the SHA-256 it must have |
 
 A vLLM pod also gets a container disk sized for its model, and `open-key` checks that Hugging Face serves the model publicly. Its host's CUDA must be 13.0 or newer ([vLLM settings](../settings/vllm.md#cuda)):
 
@@ -229,6 +233,13 @@ When the provider has no room for the pod now, `open-key` refuses the run as `pr
 - For 15 minutes after such an end, `select` creates no other pod of the batch key: its live pods keep their free seats, and its other tasks go to the next profile.
 
 #### Starting
+
+The pod's command, the bootstrap ([`bootstrap.ts`](../../src/gateway/bootstrap.ts)), has two stages:
+
+1. **The shell** downloads Node.js's tarball with the first of `curl`, `wget`, `python3` or `openssl s_client` the image has. It checks the SHA-256 with `sha256sum`, `openssl` or Python, and unpacks only `bin/node`.
+2. **Node.js** downloads the gateway, following redirects, checks its SHA-256, and runs it.
+
+A failed download, or a SHA-256 that differs, exits with a `[bootstrap]` message in the pod's log before anything downloaded runs. That pod never serves, so `open-key` ends it, as any other.
 
 In the pod, the gateway starts the engine with the pod's settings, finds the largest context that fits the GPU, and reports that [fit](../glossary.md#fit) in its status. How it fits is in [context and the GPU](../settings/pod-engines.md#context-and-the-gpu), and in [Ollama's memory](../settings/ollama.md#memory) and [vLLM's](../settings/vllm.md#memory).
 

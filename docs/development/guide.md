@@ -76,7 +76,7 @@ Tests sit next to the code they test, as `*.test.ts`. Most run everywhere. These
 7. `npm run build`.
 8. Fail when `dist/` differs from what the build wrote: "dist/ is out of date. Run 'npm run build' and commit the result."
 
-CI has no Firestore emulator, so the emulator's tests are skipped there. The pod images have a workflow of their own; see [pod images](#pod-images).
+CI has no Firestore emulator, so the emulator's tests are skipped there.
 
 ## Source layout
 
@@ -110,7 +110,7 @@ Each step takes `Services` ([`src/services.ts`](../../src/services.ts)), which h
 | `store()` | The store of the [backend](../glossary.md#backend) |
 | `ledger(job, pool)` | The job's [ledger](../glossary.md#ledger) |
 
-The gateway has its own entry point, [`src/gateway/main.ts`](../../src/gateway/main.ts), bundled into `dist/gateway.js`. It runs in Codeman's pod images and in the agent job, and uses Node's modules only.
+The gateway has its own entry point, [`src/gateway/main.ts`](../../src/gateway/main.ts), bundled into `dist/gateway.js`. It runs in each pod, which downloads it at start ([pod images](#pod-images)), and in the agent job, and uses Node's modules only.
 
 ### Interfaces and adapters
 
@@ -133,7 +133,9 @@ The gateway has its own entry point, [`src/gateway/main.ts`](../../src/gateway/m
 | --- | --- | --- |
 | Providers and their settings | `src/inference/providers.ts` | [Providers](../settings/providers.md) |
 | Pod engines' settings | `src/inference/ollama.ts`, `src/inference/vllm.ts` | [Ollama settings](../settings/ollama.md), [vLLM settings](../settings/vllm.md) |
-| Pod images by [engine](../glossary.md#engine) | `src/inference/images.ts` | [Pod images](#pod-images) |
+| What pods run, by [engine](../glossary.md#engine): the catalog | `src/inference/images.ts` | [Pod images](#pod-images) |
+| The release policy, and what a pod's record holds of it | `src/inference/release-policy.ts`, `src/inference/osv.ts`, `src/inference/resolution.ts` | [Release policy](../security/release-policy.md) |
+| A pod's command, the [bootstrap](../glossary.md#bootstrap) | `src/gateway/bootstrap.ts` | [Starting](../inference/pods.md#starting-1) |
 | A vLLM pod's model on Hugging Face | `src/inference/huggingface.ts` | [The model](../settings/vllm.md#the-model) |
 | The [pod registry](../glossary.md#pod-registry) | `src/inference/registry.ts` | [Pods](../inference/pods.md) |
 | The gateway | `src/gateway/` | [The gateway](../inference/self-hosted.md#the-gateway) |
@@ -167,6 +169,7 @@ The gateway has its own entry point, [`src/gateway/main.ts`](../../src/gateway/m
 | `dist/` | The bundled action and gateway |
 | `templates/` | The files that target repositories copy; see [template version](#template-version) |
 | `firebase/firestore.rules` | The backend's security rules, which deny every client. [Installation](../installation/setup.md#4-set-up-the-backend) publishes them |
+| `scripts/scan-image.sh` | Scans an image with Trivy before it is pinned; see [pin a new engine version](../security/release-policy.md#pin-a-new-engine-version) |
 | `docker/runner/`, `scripts/runner.sh` | A local stand-in for GitHub's `ubuntu-latest` runner, and the script that runs a command in it; see [running Actions locally](local-actions.md) |
 | `e2e/` | The [end-to-end suite](e2e/suite.md): its fakes, runtime, infrastructure, fixtures and scenarios. `e2e/.build/` and `e2e/.out/` are ignored |
 | `docs/web/` | The documentation of the third-party services Codeman uses |
@@ -189,7 +192,7 @@ Codeman has no tags or packages: every commit of `main` is a version that reposi
 - **Merging to `main` releases.** Each repository runs the commit that its `CODEMAN_COMMIT_SHA` variable names, its [Codeman's commit](../glossary.md#codemans-commit). It moves to a new one only when that variable changes ([installation](../installation/setup.md#5-add-the-workflow-and-settings)).
 - **A user-facing change** goes in [upgrading](../installation/upgrading.md): what changed, and what to do.
 - **A change the templates must follow** bumps the [template version](#template-version).
-- **A change to the gateway or the pod images** reaches pods only after a re-pin; see [pod images](#pod-images).
+- **A change to the gateway** reaches new pods with the commit a repository runs. **A new engine or Node.js release** reaches them once it is pinned; see [pod images](#pod-images).
 
 ## Template version
 
@@ -238,12 +241,7 @@ Codeman no longer builds or publishes images of its own. The ones it published, 
 
 ### Pin the digests
 
-1. Choose a release the release policy admits: at least 7 days old, and without a high or critical advisory, unless an exception gives its reason.
-2. Scan its image with `scripts/scan-image.sh`, and record the result in the [audit log](dependencies.md#audit-log).
-3. In `ENGINE_RELEASES`, set the engine's `image`, by its index digest, its `release` and its `exceptions`. Record the image's page in `docs/web/docker-hub/`.
-4. Commit it, with the engine's upgrade checklist in [dependencies](dependencies.md).
-
-A test checks that each image is pinned by its index digest, and that the digest is the recorded one.
+How to choose, scan, record and pin a release is in [pin a new engine version](../security/release-policy.md#pin-a-new-engine-version).
 
 ### Keep older images listed
 
@@ -259,7 +257,7 @@ Pods on an image pinned before may still exist. Codeman must know what their gat
 - When the Ollama image changes, the image it replaces stays in the lists where it belongs.
 - When new digests are pinned, the ones they replace stay in `IMAGES_BEFORE_SALAD`, and the new ones are not added: they serve on Salad.
 - Both lists hold `ghcr.io/codenergy-dev/codeman-pod` digests, pinned before the images per engine.
-- An image built from the current code needs neither list.
+- The official images of `ENGINE_RELEASES` need neither list.
 
 ## Firestore's emulator
 

@@ -65,9 +65,9 @@ The tasks with the same [pod settings](../glossary.md#pod-settings), in any repo
 ## Pod images
 
 > [!IMPORTANT]
-> A Salad pod needs a pod image whose gateway listens on IPv6 and ends the pod by exiting. Images built before Codeman supported Salad cannot, so a run on one stops before any group is created: "The pod image … cannot serve on Salad, so no pod was created …". Use a version of Codeman that pins images built after it ([pod images](../development/guide.md#pod-images)).
+> A Salad pod needs a gateway that listens on IPv6 and ends the pod by exiting. Codeman's images from before it supported Salad cannot, so a run on one stops before any group is created: "The pod image … cannot serve on Salad, so no pod was created …". Use a version of Codeman that pins newer images ([pod images](../settings/pod-engines.md#pod-images)).
 
-A `pod-image` of your own, on the `open-key` step, must do both too.
+The official images get that gateway through the [bootstrap](../glossary.md#bootstrap). So does a `pod-image` of your own, on the `open-key` step, unless it is one of those older images ([an image of your own](../settings/pod-engines.md#an-image-of-your-own)).
 
 ## Troubleshooting
 

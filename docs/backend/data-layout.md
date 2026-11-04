@@ -111,7 +111,7 @@ Only a refresh of an OpenRouter run's cost from its key writes `expired`. Other 
 
 #### Resolution
 
-The `resolution` of a pod's document records, for audits, what its bootstrap downloads and what the release policy found when the pod's creator checked it ([`src/inference/resolution.ts`](../../src/inference/resolution.ts)). No job reads it back.
+The `resolution` of a pod's document records, for audits, what its [bootstrap](../glossary.md#bootstrap) downloads and what the [release policy](../security/release-policy.md) found when the pod's creator checked it ([`src/inference/resolution.ts`](../../src/inference/resolution.ts)). No job reads it back.
 
 | Field | Value |
 | --- | --- |
@@ -164,7 +164,7 @@ The `resolution` of a pod's document records, for audits, what its bootstrap dow
 
 ### Release checks
 
-`releaseChecks/{key}`: one release check that passed, for one set of pinned releases and exceptions, by their hash with the policy's version (`releaseCheckKey` in [`src/inference/release-policy.ts`](../../src/inference/release-policy.ts)). When OSV.dev does not answer, a check of the last 24 hours stands, with a warning; an older one does not, and the run stops (decision 7 of the [plan to start pods from official engine images](../plans/2026-10-30-start-pods-from-official-engine-images.md)). It holds no secret.
+`releaseChecks/{key}`: one release check that passed, for one set of pinned releases and exceptions, by their hash with the policy's version (`releaseCheckKey` in [`src/inference/release-policy.ts`](../../src/inference/release-policy.ts)). When OSV.dev does not answer, a check of the last 24 hours stands, with a warning; an older one does not, and the run stops ([when OSV.dev does not answer](../security/release-policy.md#when-osvdev-does-not-answer)). It holds no secret.
 
 | Field | Value |
 | --- | --- |
