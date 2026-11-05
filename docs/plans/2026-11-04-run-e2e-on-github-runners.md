@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-11-04T14:47:33-03:00
-updated_at: 2026-11-05T13:00:00-03:00
+updated_at: 2026-11-05T13:30:00-03:00
 commit: e1c1411
 ---
 
@@ -58,7 +58,7 @@ What each check needs to see, and nothing else:
 
 | Check | Secret | Variable |
 | --- | --- | --- |
-| The suite on `ubuntu-latest` | None: every key is a fake's, made for the session | None |
+| The suite on `ubuntu-latest` | None: every key is a fake's | None |
 | Real pod, on Runpod | `CODEMAN_RUNPOD_API_KEY`, in the `e2e-live` environment | None: the GPU type and model are the workflow's inputs |
 | Real pod, on Salad, later | `CODEMAN_SALAD_API_KEY`, in `e2e-live` | `CODEMAN_SALAD_ORGANIZATION` and `CODEMAN_SALAD_PROJECT`, in `e2e-live` |
 
@@ -74,7 +74,7 @@ Rules for the workflow, each checked by a test or by reading the file in step 2:
 - **The secret's reach:** the environment on the one job that needs it, and the secret in the `env` of the one step that uses it. The suite's job names no environment, so it cannot read it.
 - **Inputs:** read through `env`, never interpolated in a script. GPU type and model are validated against a pattern.
 - **Output of the pod check:** prints only values on an allowlist (times, memory, status, GPU type), never a pod's URL, ID, environment or a response's headers; no `set -x`; no artifact; no cache.
-- **Artifacts of the suite:** only its job uploads, `retention-days: 1`. It holds no real key, so a leak of its fakes' tokens ends with the session.
+- **Artifacts of the suite:** only its job uploads, `retention-days: 1`. It holds no real key: the job has no secret, and its keys are the fakes' constants and the session's random tokens.
 - **Actions:** pinned by full commit SHA, as `ci.yml` is.
 - **A forgotten pod:** a last step, `if: always()`, terminates the run's pods, and the pod's own `CODEMAN_START_BY` and the job's `timeout-minutes` bound the rest.
 
@@ -113,3 +113,13 @@ Part 2's measurements (sleep mode, NVML, a CUDA context's release, load and swap
 - Scripted scenarios on a GPU: they test Codeman's logic, which a GPU does not change.
 - Replacing the live test: the whole path with a real agent, a real repository and real GitHub App stays with the maintainer.
 - Models that need more memory than the chosen GPU has.
+
+## Progress
+
+As of 2026-11-05, steps 1 and 2's workflow and docs are on the branch `features/e2e-on-github-actions`, in the worktree `../codeman-e2e-actions`, from `fixes/node-24-22-1`. Not pushed, and not yet run. This plan stays on `features/multi-service-pods`, since its links reach files only that branch has.
+
+- `351aa5f`: the workflow's sources.
+- `f6aa0f1`: `--profile=none|ollama|vllm` selects a group from each scenario's `profiles:`.
+- `4d89540`: `.github/workflows/e2e.yml` and its docs.
+
+Next: the maintainer pushes and merges it, then dispatches it on `main`. Record each group's time and peak disk here.
