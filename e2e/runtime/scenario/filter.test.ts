@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { runnerProblem, selectScenarios } from "./filter.ts";
+import { inProfileGroup, isProfileGroup, runnerProblem, selectScenarios } from "./filter.ts";
 import { loadScenarios } from "./load.ts";
 
 /** Three scenarios under a scratch root: two in `pods/`, one in `budgets/`. */
@@ -52,6 +52,43 @@ test("an argument that matches no scenario is an error", () => {
     () => selectScenarios(scenarios, ["pods/missing.yaml"], { cwd: root, root }),
     /pods\/missing\.yaml/,
   );
+});
+
+test("a profile group is a profile's scenarios, or those with no profile", () => {
+  const { root } = suite();
+  const write = (name: string, profiles: string) => {
+    writeFileSync(
+      join(root, `${name}.yaml`),
+      `name: ${name}
+${profiles}
+world:
+  repositories: [{ name: acme/app, fixture: node-small, maintainers: [alice] }]
+actions:
+  - run: { event: schedule }
+`,
+    );
+  };
+  write("no-pod", "");
+  write("empty", "profiles: []");
+  write("on-ollama", "profiles: [ollama]");
+  write("on-vllm", "profiles: [vllm]");
+  const scenarios = loadScenarios(root);
+  const ids = (group: Parameters<typeof inProfileGroup>[1], from = scenarios) =>
+    inProfileGroup(from, group).map((scenario) => scenario.id);
+  // The suite's three others name no profile: their tags are only tags.
+  assert.deepEqual(ids("none"), [
+    "budgets/monthly",
+    "empty",
+    "no-pod",
+    "pods/keep",
+    "pods/vllm-seats",
+  ]);
+  assert.deepEqual(ids("ollama"), ["on-ollama"]);
+  assert.deepEqual(ids("vllm"), ["on-vllm"]);
+  const without = scenarios.filter((scenario) => scenario.id !== "on-vllm");
+  assert.throws(() => ids("vllm", without), /No selected scenario is in --profile=vllm\./);
+  assert.ok(isProfileGroup("none") && isProfileGroup("ollama") && isProfileGroup("vllm"));
+  assert.ok(!isProfileGroup("") && !isProfileGroup("images"));
 });
 
 test("a scenario under act may not fault a job or apply: act runs success paths only", () => {

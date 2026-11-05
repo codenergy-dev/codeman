@@ -2,7 +2,7 @@
 title: Contexts reference
 url: https://docs.github.com/en/actions/reference/workflows-and-actions/contexts
 created_at: 2026-10-13T20:48:00-03:00
-updated_at: 2026-10-28T19:48:51-03:00
+updated_at: 2026-11-05T12:55:38-03:00
 tool: docs/web/tools/github.md
 ---
 
@@ -19,6 +19,7 @@ Each workflow key may use only some contexts:
 | `concurrency` (the workflow's) | `github`, `inputs`, `vars` | None |
 | `jobs.<job_id>.concurrency` | `github`, `needs`, `strategy`, `matrix`, `inputs`, `vars` | None |
 | `jobs.<job_id>.if` | `github`, `needs`, `vars`, `inputs` | `always`, `cancelled`, `success`, `failure` |
+| `jobs.<job_id>.strategy` | `github`, `needs`, `vars`, `inputs` | None |
 | `jobs.<job_id>.steps.env`, `jobs.<job_id>.steps.run`, `jobs.<job_id>.steps.with` | `github`, `needs`, `strategy`, `matrix`, `job`, `runner`, `env`, `vars`, `secrets`, `steps`, `inputs` | `hashFiles` |
 | `jobs.<job_id>.timeout-minutes` | `github`, `needs`, `strategy`, `matrix`, `vars`, `inputs` | None |
 

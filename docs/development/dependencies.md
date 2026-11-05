@@ -22,11 +22,11 @@ Every dependency is audited before it is added (see `AGENTS.md`). This page reco
 | vLLM | Engine, in a pod image | 0.31.0, by digest | Batches requests whatever the model | 2026-10-13 | Over 100 advisories, each fixed at or before 0.31.0 | [vLLM](#vllm-in-codemans-vllm-pod-image) |
 | Hugging Face Hub API | Service | One route | Checks a vLLM pod's model | 2026-10-13 | None recorded | [Hugging Face](#hugging-face) |
 | Runpod's vLLM worker | Image, chosen by a maintainer | `runpod/worker-v1-vllm:<version>` | Serverless endpoints | 2026-10-03 | None recorded | [Runpod's vLLM worker](#runpods-vllm-worker) |
-| Codeman's pod images, on `node:24.21.0-bookworm-slim` | Images, Codeman's own | By digest, published from `ce1fed1` | What pods run | 2026-10-29 | None recorded | [Codeman's pod images](#codemans-pod-images) |
+| Codeman's pod images, on `node:24.22.1-bookworm-slim` | Images, Codeman's own | By digest, published from `ce1fed1` | What pods run | 2026-10-30 | Those pinned bundle Node 24.21.0, with the emSign root, until republished | [Codeman's pod images](#codemans-pod-images) |
 | Cloud Firestore, STS, IAM Credentials | Services | REST API v1 | The backend | 2026-10-07 | None recorded | [Cloud Firestore](#cloud-firestore-in-a-firebase-project) |
 | Firestore's emulator | Test tool, in the e2e emulator image | v1.22.0 by SHA-256, on `eclipse-temurin:21.0.12_8-jre-noble` by digest | The store's tests and the e2e suite | 2026-10-20 | None recorded | [Firestore's emulator](#firestores-emulator) |
 | The local runner image, on `ubuntu:noble-20260930.1` | Image, Codeman's own, local only | Base images by digest; Ubuntu's packages not pinned | Runs the tests that need GitHub's runner on a developer's machine | 2026-10-19 | None recorded | [The local runner image](#the-local-runner-image) |
-| act | Test tool, on the developer's machine | 0.2.89, Homebrew's bottle | Runs the real templates for the e2e smoke scenarios | 2026-10-20 | Injects the host's `gh` token when given no `GITHUB_TOKEN` secret; the driver always passes a fake one | [act](#act) |
+| act | Test tool, on the developer's machine and the e2e workflow's runner | 0.2.89, Homebrew's bottle; on the runner, the release's file by SHA-256 | Runs the real templates for the e2e smoke scenarios | 2026-10-20 | Injects the host's `gh` token when given no `GITHUB_TOKEN` secret; the driver always passes a fake one | [act](#act) |
 | vLLM's CPU image | Image, e2e only | `vllm/vllm-openai-cpu:v0.31.0`, by index digest | vLLM on CPU in the e2e vLLM pod | 2026-10-20 | vLLM 0.31.0's, as above | [vLLM's CPU image](#vllms-cpu-image) |
 | `qwen2.5:0.5b` and `Qwen/Qwen2.5-0.5B-Instruct` | Models, e2e only | Ollama manifest digest; Hugging Face commit | The same tiny model on both e2e engines | 2026-10-20 | None recorded | [The e2e models](#the-e2e-models) |
 | Docker Compose | Tool, bundled with Docker Desktop | v5.1.0 on the machine of the audit, not pinned | Starts the e2e suite's infrastructure | 2026-10-20 | None for v5.1.0 | [Docker Compose](#docker-compose) |
@@ -56,6 +56,7 @@ Every dependency is audited before it is added (see `AGENTS.md`). This page reco
 | 2026-10-28 | Codeman's pod images published from `8c611a4`, whose gateway reports whether an Ollama model reads images | [Let self-hosted models read images](../plans/2026-10-28-let-self-hosted-models-read-images.md#out-of-scope) | Pinned `codeman-ollama@sha256:98c454e3…` and `codeman-vllm@sha256:a5b4a032…`. Each pulls without credentials, its tag and `org.opencontainers.image.revision` are `8c611a4`, its base layers are the pinned Ollama 0.35.1 or vLLM 0.31.0 image's (4 of 7 and 40 of 43), and its `/opt/codeman/gateway.js` is byte for byte `dist/gateway.js`. No dependency changed |
 | 2026-10-29 | Codeman's pod images published from `4c376d5`, whose gateway serves on Salad | [Add Salad pods](../plans/2026-10-29-add-salad-pods.md#handover) | Pinned `codeman-ollama@sha256:80d94429…` and `codeman-vllm@sha256:34759041…`. Each pulls without credentials, its tag and `org.opencontainers.image.revision` are `4c376d5`, its base layers are the pinned Ollama 0.35.1 or vLLM 0.31.0 image's (4 of 7 and 40 of 43), and its `/opt/codeman/gateway.js` is byte for byte `dist/gateway.js`. No dependency changed |
 | 2026-10-29 | Codeman's pod images published from `ce1fed1`, whose bundled Runpod adapter tells no room from a failure | [Fall back to the next profile](../plans/2026-10-29-fall-back-to-the-next-profile.md#steps) | Pinned `codeman-ollama@sha256:111bab4d…` and `codeman-vllm@sha256:95e00706…`. Each pulls without credentials, its tag and `org.opencontainers.image.revision` are `ce1fed1`, its base layers are the pinned Ollama 0.35.1 or vLLM 0.31.0 image's (4 of 7 and 40 of 43), and its `/opt/codeman/gateway.js` is byte for byte `dist/gateway.js`. The gateway behaves as before. No dependency changed |
+| 2026-10-30 | Node.js 24.22.1, for the pod images, the local runner image and the e2e images | Not recorded | Node 24.21.0's bundled root store trusts `emSign ECC Root CA - G3`, whose intermediates' keys are compromised ([GHSA-hq85-5cpj-mr62](../web/uv/removal-of-emsign-root-certificate.md)). 24.22.1, the security release of 2026-10-21, removes the root and rejects chains with the intermediates' keys ([v24.22.1](../web/nodejs/node-v24-22-1.md), [blocklist](../web/nodejs/tls-reject-chains-containing-blocked-public-keys.md)): the earliest fix, 9 days old, past a 7-day minimum age. `node:24.22.1-bookworm-slim` pinned by index digest `sha256:be8204d4…` ([the image](../web/docker-hub/node-24-22-1-bookworm-slim.md)). The action's own steps run on the runner's Node, not the images': it bundles 24.22.1 from runner 2.338.1 (24.21.0 at [v2.338.0](../web/github/runner-src-misc-externals-sh-at-197ca02.md), 24.22.1 at [v2.338.2](../web/github/runner-src-misc-externals-sh-at-d1eb12d.md)). The pinned pod images keep Node 24.21.0 until republished from this change |
 
 ## Where each dependency runs
 
@@ -129,10 +130,10 @@ Pinned to full commit SHAs.
 
 | Action | Version | Used in |
 | --- | --- | --- |
-| `actions/checkout` | v7.0.1 | CI, pod image, target repository workflow (the repository in `agent`, and Codeman at `CODEMAN_COMMIT_SHA` in each job that runs it) |
-| `actions/setup-node` | v7.0.0 | CI |
+| `actions/checkout` | v7.0.1 | CI, pod image, e2e suite, target repository workflow (the repository in `agent`, and Codeman at `CODEMAN_COMMIT_SHA` in each job that runs it) |
+| `actions/setup-node` | v7.0.0 | CI, e2e suite |
 | `actions/create-github-app-token` | v3.2.0 | Target repository workflow |
-| `actions/upload-artifact` | v7.0.1 | Target repository workflow |
+| `actions/upload-artifact` | v7.0.1 | E2e suite, target repository workflow |
 | `actions/download-artifact` | v8.0.1 | Target repository workflow |
 
 ## External services
@@ -305,7 +306,7 @@ Audited on 2026-10-13 for the [plan for vLLM on pods](../plans/2026-10-13-vllm-o
 - **What:** one image per [engine](../glossary.md#engine), the targets of [`docker/pod/Dockerfile`](../../docker/pod/Dockerfile): Ollama's image or vLLM's, each with Node's binary and the gateway, `dist/gateway.js`. Each image is labeled with Codeman's repository as its source, replacing the base image's.
 - **Why one per engine:** each new pod pulls its image, which Runpod bills. vLLM and later engines pin conflicting PyTorch and CUDA versions. And the newest engine would raise the CUDA floor for all ([plan for vLLM on pods](../plans/2026-10-13-vllm-on-pods.md), decision 8).
 - **Version and pin:**
-  - The `node` binary comes from `node:24.21.0-bookworm-slim`, pinned by digest: `sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6`.
+  - The `node` binary comes from `node:24.22.1-bookworm-slim`, pinned by its index digest: `sha256:be8204d4bd327363357f532187b752ff62759c31bedf98e9e18fc08c9cbd605c` ([the image](../web/docker-hub/node-24-22-1-bookworm-slim.md)). 24.22.1 is the first 24.x release without the `emSign ECC Root CA - G3` root ([v24.22.1](../web/nodejs/node-v24-22-1.md)).
   - The images are published to GitHub's container registry as `ghcr.io/<owner>/codeman-ollama` and `ghcr.io/<owner>/codeman-vllm`, each public.
   - They are referenced by digest in `POD_IMAGES` in [`src/inference/images.ts`](../../src/inference/images.ts), by a reviewed commit, never by tag. Publishing and pinning are in [pod images](guide.md#pod-images).
 - **Transitive code:** the gateway is bundled from [`src/gateway/`](../../src/gateway/) with Node's modules only. CI checks that `dist/` matches the source, so the images need no npm install.
@@ -317,24 +318,24 @@ Audited on 2026-10-13 for the [plan for vLLM on pods](../plans/2026-10-13-vllm-o
 
 Audited on 2026-10-19 for the [plan to run Actions locally](../plans/2026-10-19-run-github-actions-locally.md#audit).
 
-- **What:** [`docker/runner/Dockerfile`](../../docker/runner/Dockerfile), a stand-in for GitHub's `ubuntu-latest` runner, built and run by `scripts/runner.sh` ([running Actions locally](local-actions.md)). It is never published, and CI does not use it.
+- **What:** [`docker/runner/Dockerfile`](../../docker/runner/Dockerfile), a stand-in for GitHub's `ubuntu-24.04` runner, built and run by `scripts/runner.sh` ([running Actions locally](local-actions.md)). It is never published, and CI does not use it.
 - **Why:** the [sandbox](../glossary.md#sandbox) test needs Linux, a runner user with passwordless `sudo`, and the image's permissions and `PATH`. A plain image with `docker run` reproduces them; act, `actions/runner` and `github/local-action` were not adopted (see the plan's audit).
 - **Version and pin:**
   - `ubuntu:noble-20260930.1`, by its index digest `sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac` ([the image](../web/docker-hub/ubuntu-noble-20260930-1.md)).
-  - Node.js and npm come from `node:24.21.0-bookworm-slim`, the pod images' pinned digest.
+  - Node.js and npm come from `node:24.22.1-bookworm-slim`, the pod images' pinned digest.
   - `ca-certificates`, `git`, `sudo`, `procps` and `unzip` come from Ubuntu's archive at build time, not pinned: apt checks them against the archive's signed indexes.
 - **Transitive code:** the packages' dependencies, from Ubuntu. No npm package is added: the container runs `npm ci` from `package-lock.json`, with the repository's `.npmrc`.
 - **Permissions:** the container gets the working tree read-only, which it copies, and the network, for `npm ci`. It gets no Docker socket. It gets `SYS_ADMIN` and no seccomp or AppArmor profile, which the agent's jail needs to create namespaces and mount ([running Actions locally](local-actions.md#run-the-tests)). It needs a Docker daemon on the developer's machine: Docker Engine is Apache-2.0, and Docker Desktop's subscription terms apply to the developer's organization.
 
 ## The end-to-end test suite
 
-Audited on 2026-10-20 for the [end-to-end test suite plan](../plans/2026-10-20-end-to-end-test-suite.md#audit). What it adds runs only on a developer's machine, under `e2e/`: none of it reaches `dist/`, the pod images or a target repository. Firestore's emulator image is under [Firestore's emulator](#firestores-emulator), and `yaml` under [Development](#development). Already audited and reused: `ollama/ollama:0.35.1`, `node:24.21.0-bookworm-slim` and `ubuntu:noble-20260930.1`.
+Audited on 2026-10-20 for the [end-to-end test suite plan](../plans/2026-10-20-end-to-end-test-suite.md#audit). What it adds runs only on a developer's machine, or on [GitHub's runner when the maintainer starts it](e2e/suite.md#on-github-actions), under `e2e/`: none of it reaches `dist/`, the pod images or a target repository. Firestore's emulator image is under [Firestore's emulator](#firestores-emulator), and `yaml` under [Development](#development). Already audited and reused: `ollama/ollama:0.35.1`, `node:24.22.1-bookworm-slim` (`node:24.21.0-bookworm-slim` at the audit) and `ubuntu:noble-20260930.1`.
 
 ### act
 
 - **What:** [nektos/act](https://github.com/nektos/act), which reads `.github/workflows/` and runs each job in a Docker container.
 - **Why:** the e2e suite's smoke scenarios, `pods/ollama-keep-and-release.act` and `security/set-env-in-agent-output.act`, run the real templates under it, on success paths only (decision 10). The other scenarios run on the suite's own workflow simulator. This reverses decision 1 of [Run GitHub Actions locally](../plans/2026-10-19-run-github-actions-locally.md#decisions) for those scenarios only. How the driver runs it: [under act](e2e/suite.md#under-act).
-- **Version and pin:** 0.2.89, the latest release (2026-06-01), installed from Homebrew's bottle, whose SHA-256 the formula records ([formula](../web/homebrew/formula-act.md)). Its source was read at the tag's commit `4f41128` ([cmd/root.go](../web/nektos/act-cmd-root-go-at-4f41128.md), [run_context.go](../web/nektos/act-pkg-runner-run-context-go-at-4f41128.md), [gh.go](../web/nektos/act-pkg-gh-gh-go-at-4f41128.md)).
+- **Version and pin:** 0.2.89, the latest release (2026-06-01), installed from Homebrew's bottle, whose SHA-256 the formula records ([formula](../web/homebrew/formula-act.md)). The [e2e workflow](../../.github/workflows/e2e.yml) installs the same release's Linux file, checked against its SHA-256 ([the release](../web/nektos/act-v0-2-89.md)). Its source was read at the tag's commit `4f41128` ([cmd/root.go](../web/nektos/act-cmd-root-go-at-4f41128.md), [run_context.go](../web/nektos/act-pkg-runner-run-context-go-at-4f41128.md), [gh.go](../web/nektos/act-pkg-gh-gh-go-at-4f41128.md)).
 - **License and maintenance:** MIT, community maintained. No commit on `master` since 2026-06-01.
 - **Transitive code:** one Go binary, with 38 direct and 61 indirect modules ([audit of 2026-10-19](../plans/2026-10-19-run-github-actions-locally.md#audit)).
 - **Known vulnerabilities:** CVE-2026-34041 (`::set-env::` and `::add-path::` processed from any step's output, [advisory](../web/nektos/set-env-and-add-path-workflow-commands-unconditionally-processed.md)) and CVE-2026-34042 (an unauthenticated cache server on every interface, [advisory](../web/nektos/remote-code-execution-possible-actions-cache-server-allows-malicious-cache-injec.md)), both fixed in 0.2.86.
@@ -378,7 +379,7 @@ The same model on both engines: Qwen2.5 0.5B Instruct, small enough for a CPU, w
 ### Docker Compose
 
 - **What:** Docker's tool that starts a set of containers, networks and volumes from one file. The e2e suite uses its profiles, health checks with `up --wait`, named volumes, memory limits and an internal network ([services](../web/docker/define-services-in-docker-compose.md), [networks](../web/docker/define-and-manage-networks-in-docker-compose.md), [volumes](../web/docker/define-and-manage-volumes-in-docker-compose.md), [deploy](../web/docker/compose-deploy-specification.md), [profiles](../web/docker/learn-how-to-use-profiles-in-docker-compose.md), [`up`](../web/docker/docker-compose-up.md)).
-- **Version and pin:** not pinned: it comes with the developer's Docker. The audit's machine has v5.1.0, bundled with Docker Desktop 4.66.1 ([release](../web/docker/compose-v5-1-0.md)).
+- **Version and pin:** not pinned: it comes with the developer's Docker, or on GitHub's runner with its image. The audit's machine has v5.1.0, bundled with Docker Desktop 4.66.1 ([release](../web/docker/compose-v5-1-0.md)).
 - **License and maintenance:** Apache-2.0, [docker/compose](https://github.com/docker/compose), maintained by Docker, with a release every few weeks.
 - **Known vulnerabilities:** one published advisory, CVE-2025-62725 (high), fixed in v2.40.2.
 - **Permissions:** it runs as the developer and drives the Docker daemon, as `docker` does. No container of the suite gets the Docker socket (decision 2).

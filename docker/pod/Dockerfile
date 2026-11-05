@@ -5,7 +5,7 @@
 # in src/inference/images.ts. See docs/development/dependencies.md#codemans-pod-images.
 
 # Only its node binary is used.
-FROM node:24.21.0-bookworm-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6 AS node
+FROM node:24.22.1-bookworm-slim@sha256:be8204d4bd327363357f532187b752ff62759c31bedf98e9e18fc08c9cbd605c AS node
 
 # vLLM 0.31.0, CUDA 13.0: its hosts need a driver for CUDA 13.0 or newer (VLLM_MIN_CUDA).
 FROM vllm/vllm-openai:v0.31.0@sha256:c1c9f6fd5c109ba7f0546a59f5b2f15fb87f64c77782e90a27b648b42a8e67c3 AS vllm

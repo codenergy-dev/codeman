@@ -65,7 +65,7 @@ Tests sit next to the code they test, as `*.test.ts`. Most run everywhere. These
 
 ## What CI checks
 
-[`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) runs on every push to `main` and every pull request. Its one job, `check`, has `contents: read` and 10 minutes, on `ubuntu-latest`:
+[`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) runs on every push to `main` and every pull request. Its one job, `check`, has `contents: read` and 10 minutes, on `ubuntu-24.04`:
 
 1. Check out the repository, without keeping its credentials.
 2. Set up the Node.js version of `.nvmrc`, with no package cache.
@@ -168,7 +168,7 @@ The gateway has its own entry point, [`src/gateway/main.ts`](../../src/gateway/m
 | `templates/` | The files that target repositories copy; see [template version](#template-version) |
 | `firebase/firestore.rules` | The backend's security rules, which deny every client. [Installation](../installation/setup.md#4-set-up-the-backend) publishes them |
 | `docker/pod/` | Codeman's pod images, one target per engine; see [pod images](#pod-images) |
-| `docker/runner/`, `scripts/runner.sh` | A local stand-in for GitHub's `ubuntu-latest` runner, and the script that runs a command in it; see [running Actions locally](local-actions.md) |
+| `docker/runner/`, `scripts/runner.sh` | A local stand-in for GitHub's `ubuntu-24.04` runner, and the script that runs a command in it; see [running Actions locally](local-actions.md) |
 | `e2e/` | The [end-to-end suite](e2e/suite.md): its fakes, runtime, infrastructure, fixtures and scenarios. `e2e/.build/` and `e2e/.out/` are ignored |
 | `docs/web/` | The documentation of the third-party services Codeman uses |
 
@@ -238,7 +238,7 @@ flowchart TD
 | vLLM | `vllm` | `ghcr.io/<owner>/codeman-vllm` |
 
 > [!IMPORTANT]
-> Pods run the images pinned in `POD_IMAGES`, not the latest build. A change to `docker/pod/` or to `dist/gateway.js`, the gateway included, reaches pods only once the new digests are pinned, in a commit after the one the images were built from.
+> Pods run the images pinned in `POD_IMAGES`, not the latest build. A change to `docker/pod/`, such as a base image's digest, or to `dist/gateway.js` reaches pods only once the new digests are pinned, in a commit after the one the images were built from.
 
 ```mermaid
 sequenceDiagram
@@ -284,6 +284,7 @@ An organization must allow public packages: organization **Settings** › **Pack
 1. Check that each image's tag is the commit it was built from.
 2. In [`src/inference/images.ts`](../../src/inference/images.ts), set the engine's line of `POD_IMAGES`, such as `vllm: "ghcr.io/codenergy-dev/codeman-vllm@sha256:<digest>"`.
 3. Commit it on its own, after the commit the images were built from.
+4. Add a row to the [audit log](dependencies.md#audit-log): the commit the images were built from, the digests, and what changed in them.
 
 A test checks that each pinned image is its engine's package, by digest. The pinned digest is what the glossary calls a [pinned pod image](../glossary.md#pinned-pod-image).
 

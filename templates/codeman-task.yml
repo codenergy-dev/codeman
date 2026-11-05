@@ -76,7 +76,7 @@ jobs:
   open-key:
     name: Open key
     if: inputs.needs-agent == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # A new pod may take up to 25 minutes to serve its model.
     timeout-minutes: 35
     permissions:
@@ -148,7 +148,7 @@ jobs:
     name: Agent (${{ inputs.stage }})
     needs: open-key
     if: needs.open-key.outputs.status == 'opened'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # The settings' agent-minutes and wrap-up-minutes, and 10 minutes for the job's own steps.
     timeout-minutes: ${{ fromJSON(inputs.agent-job-minutes) }}
     permissions:
@@ -228,7 +228,7 @@ jobs:
     name: Close key
     needs: [open-key, agent]
     if: always() && (needs.open-key.outputs.handle != '' || needs.open-key.outputs.key-hash != '')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       # Records the run's cost in Codeman's store.
@@ -295,7 +295,7 @@ jobs:
     needs: [open-key, agent, close-key]
     # always(): a run that only records answers has no key or agent.
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
       chain: ${{ steps.codeman.outputs.chain }}
@@ -392,7 +392,7 @@ jobs:
     name: Release pod
     needs: [open-key, close-key, apply]
     if: always() && needs.close-key.outputs.kept-pod != '' && needs.apply.outputs.continues != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       # Releases the pod in Codeman's pod registry, and records its end.

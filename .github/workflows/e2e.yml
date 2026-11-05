@@ -1,0 +1,99 @@
+# The end-to-end suite on GitHub's standard runners, started only by hand. Every key in it is a
+# fake's: it needs no secret, variable or environment, and must stay so.
+# See docs/development/e2e/suite.md#on-github-actions.
+name: E2E
+
+on:
+  workflow_dispatch:
+    inputs:
+      selectors:
+        description: Scenarios to run in one job, as paths or tags separated by a space. Empty runs every scenario, one job per Docker profile.
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  suite:
+    name: Suite (${{ matrix.group }})
+    runs-on: ubuntu-24.04
+    # Under GitHub's limit of 6 hours, and above the suite's step, so its report still uploads.
+    timeout-minutes: 330
+    strategy:
+      # One group's failure does not cancel the others' runs.
+      fail-fast: false
+      matrix:
+        # One group per job, since a runner's disk is short of both profiles' images. A new profile
+        # in e2e/runtime/scenario/schema.ts needs its group here.
+        group: ${{ fromJSON(inputs.selectors == '' && '["none","ollama","vllm"]' || '["selected"]') }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+      - run: npm ci
+      # The scenarios under act need the audited release and the actions the templates pin.
+      - name: Install act
+        env:
+          ACT_VERSION: 0.2.89
+          ACT_SHA256: 0191d6f1f3b716b5c55820032605d05fc3c1cdbf581ebeff655019e5dd1524c0
+        run: |
+          mkdir "$RUNNER_TEMP/act"
+          curl -fsSL -o "$RUNNER_TEMP/act/act.tar.gz" \
+            "https://github.com/nektos/act/releases/download/v$ACT_VERSION/act_Linux_x86_64.tar.gz"
+          echo "$ACT_SHA256  $RUNNER_TEMP/act/act.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/act/act.tar.gz" -C "$RUNNER_TEMP/act" act
+          echo "CODEMAN_E2E_ACT=$RUNNER_TEMP/act/act" >> "$GITHUB_ENV"
+      - run: node e2e/runtime/act/fill-cache.ts
+      # On Linux, host.docker.internal is the default bridge's address, not the host's loopback,
+      # where the pod launcher listens by default. A job's internal network has no route to it.
+      - name: Listen for pods on the default bridge
+        run: |
+          bridge="$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}')"
+          test -n "$bridge"
+          echo "CODEMAN_E2E_LAUNCHER_HOST=$bridge" >> "$GITHUB_ENV"
+      - name: Disk before the suite
+        run: |
+          df -h
+          docker system df
+      - name: Run the suite
+        timeout-minutes: 300
+        env:
+          GROUP: ${{ matrix.group }}
+          SELECTORS: ${{ inputs.selectors }}
+        run: |
+          if [ "$GROUP" != selected ]; then
+            npm run test:e2e -- "--profile=$GROUP"
+            exit
+          fi
+          # Words of letters, digits, '.', '_', '/' and '-', each starting with a letter or a digit
+          # so that none is an option, separated by one space.
+          word='[A-Za-z0-9][A-Za-z0-9._/-]*'
+          if [[ ! "$SELECTORS" =~ ^$word(\ $word)*$ || "$SELECTORS" == *..* ]]; then
+            echo "::error::The selectors must be paths or tags, separated by one space."
+            exit 2
+          fi
+          read -r -a selectors <<< "$SELECTORS"
+          npm run test:e2e -- "${selectors[@]}"
+      - name: Disk after the suite
+        if: always()
+        run: |
+          df -h
+          docker system df
+      # Every key in the report is a fake's. session.json, the fakes' control tokens, and act's
+      # home and clones are not the report. e2e/.out is a hidden directory to this action.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: failure()
+        with:
+          name: e2e-report-${{ matrix.group }}
+          path: |
+            e2e/.out/
+            !e2e/.out/session.json
+            !e2e/.out/act/**
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 1

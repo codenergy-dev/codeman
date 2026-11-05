@@ -81,7 +81,7 @@ jobs:
         github.event.review.state == 'changes_requested' ||
         contains(github.event.review.body, '/codeman')
       )
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       actions: write
@@ -117,7 +117,7 @@ jobs:
           )
         )
       )
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       # GitHub's OIDC token, which Codeman exchanges for access to its store (Firestore) as the
@@ -202,7 +202,7 @@ jobs:
     name: Wake ${{ matrix.owner }}/${{ matrix.repository }}
     needs: select
     if: needs.select.outputs.dispatches != '' && needs.select.outputs.dispatches != '[]'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions: {}
     strategy:
@@ -285,7 +285,7 @@ jobs:
     needs: [select, task]
     # always(): the run goes on when a task failed, or only recorded answers.
     if: always() && needs.select.result == 'success' && needs.select.outputs.action != 'none'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       actions: write

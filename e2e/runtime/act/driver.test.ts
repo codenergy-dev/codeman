@@ -79,7 +79,7 @@ test("act's command passes the fake token, its own three files, offline and hard
   assert.deepEqual(values(command.argv, "--container-daemon-socket"), ["-"]);
   assert.deepEqual(values(command.argv, "--action-cache-path"), [given.actionCache]);
   assert.deepEqual(values(command.argv, "--network"), ["codeman-e2e-jobs"]);
-  assert.deepEqual(values(command.argv, "--platform"), ["ubuntu-latest=codeman-e2e-runner:local"]);
+  assert.deepEqual(values(command.argv, "--platform"), ["ubuntu-24.04=codeman-e2e-runner:local"]);
   assert.deepEqual(values(command.argv, "--artifact-server-addr"), ["127.0.0.1"]);
   assert.deepEqual(values(command.argv, "--cache-server-addr"), ["127.0.0.1"]);
   // act's own artifact server never starts, and no other GitHub host is named.

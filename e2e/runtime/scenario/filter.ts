@@ -1,9 +1,29 @@
 import { existsSync } from "node:fs";
 import { resolve, sep } from "node:path";
-import type { Action, Scenario } from "./schema.ts";
+import { type Action, PROFILES, type Scenario } from "./schema.ts";
 
 /** A bare word: a tag, or a directory or file directly under `e2e/scenarios/`. */
 const TAG = /^[a-z0-9][a-z0-9-]*$/;
+
+/** What `--profile=` takes: a Compose profile, or `none` for the scenarios that name none. */
+export const PROFILE_GROUPS = ["none", ...PROFILES] as const;
+export type ProfileGroup = (typeof PROFILE_GROUPS)[number];
+
+export function isProfileGroup(value: string): value is ProfileGroup {
+  return (PROFILE_GROUPS as readonly string[]).includes(value);
+}
+
+/**
+ * The scenarios of a profile group, so a machine holds one group's images at a time. A group with
+ * no scenario is an error, as a selector that matches nothing is.
+ */
+export function inProfileGroup(scenarios: readonly Scenario[], group: ProfileGroup): Scenario[] {
+  const chosen = scenarios.filter((scenario) =>
+    group === "none" ? scenario.profiles.length === 0 : scenario.profiles.includes(group),
+  );
+  if (chosen.length === 0) throw new Error(`No selected scenario is in --profile=${group}.`);
+  return chosen;
+}
 
 /**
  * The scenarios `npm run test:e2e -- <paths or tags>` runs: those under any path given, or with

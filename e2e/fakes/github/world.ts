@@ -1893,7 +1893,7 @@ export function jobJson(world: World, run: Run, job: Job): Record<string, unknow
     started_at: job.startedAt,
     completed_at: job.completedAt,
     steps: [],
-    labels: ["ubuntu-latest"],
+    labels: ["ubuntu-24.04"],
     url: `${api(world)}/repos/${run.repository.fullName}/actions/jobs/${job.id}`,
     html_url: `${world.serverUrl}/${run.repository.fullName}/actions/runs/${run.id}/job/${job.id}`,
   };
