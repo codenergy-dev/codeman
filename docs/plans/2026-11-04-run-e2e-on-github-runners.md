@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-11-04T14:47:33-03:00
-updated_at: 2026-11-05T17:40:00-03:00
+updated_at: 2026-11-05T19:19:00-03:00
 commit: e1c1411
 ---
 
@@ -130,4 +130,18 @@ On 2026-11-05 the maintainer pushed it and opened its pull request. CI failed in
 
 On `ubuntu-24.04`, CI first failed in another sandbox test, `the agent is contained and its changes are collected safely`. It was stopped at its 120-second limit after 163 seconds, and `npm test` took 189 seconds where `main`'s last pass took 29. A re-run of the failed job passed, on image `ubuntu24/20261025.353`, so it is taken as intermittent. A limit reached that late means a synchronous call held the process past 120 seconds. Those calls come after the agent ends: `sealAgentSandbox`, whose `loginctl` calls have no time limit, is the likeliest. If it fails again, a test-only commit times each phase before `src/sandbox.ts` changes.
 
-Next: the maintainer merges once CI passes, then dispatches it on `main`. Record each group's time and peak disk here.
+The maintainer merged it into `main` (`f00d362`) and dispatched it on 2026-11-05. The runner had a 145 GB disk with 86 GB free, not the 14 GB documented, and every image and volume stayed on it: the logs show disk before and after each group, not its peak.
+
+| Group | Scenarios | Result | Job | Disk used, before → after | Docker, after |
+| --- | --- | --- | --- | --- | --- |
+| `none` | 30 | 30 passed | 53 min 56 s | 59 → 61 GB | 3.7 GB of images, 60 MB of volumes |
+| `ollama` | 16 | 16 passed | 23 min 49 s | 59 → 66 GB | 9.4 GB of images, 458 MB of volumes |
+| `vllm` | 2 | 2 failed | 18 min 14 s | 59 → 67 GB | 8.8 GB of images, 1.06 GB of volumes |
+
+So the Node fix passed all 46 scenarios on Ollama and without an engine.
+
+Both vLLM scenarios failed for the same reason: vLLM found no snapshot of the model, offline (`LocalEntryNotFoundError`). The gateway runs `vllm serve` with the model's name and no revision, so huggingface_hub reads the commit from `refs/main`. `seed-hf` downloads by commit, and a download by commit writes no ref (`_cache_commit_hash_for_specific_revision` in huggingface_hub 1.33.0's `file_download.py`). Local runs passed because their volume kept the `refs/main` of spike 0.1's download. `fit-vllm-explicit` failed on vLLM's message, and `vllm-two-seats` waited 900 seconds for a gateway that never became ready.
+
+- `608bf60`, on `fixes/e2e-hf-refs-main` from `main`: `seed-hf` writes `refs/main`. Whether the 10-minute probe fits 4 vCPUs is still unmeasured.
+
+Next: the maintainer pushes it and dispatches the two vLLM scenarios on that branch. Record their time here.
