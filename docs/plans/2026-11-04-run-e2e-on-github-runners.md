@@ -1,7 +1,7 @@
 ---
-status: pending
+status: in progress
 created_at: 2026-11-04T14:47:33-03:00
-updated_at: 2026-11-05T12:35:44-03:00
+updated_at: 2026-11-05T13:00:00-03:00
 commit: e1c1411
 ---
 
@@ -47,18 +47,10 @@ Answered by the maintainer on 2026-11-05:
 4. **The care with secrets is the same as Codeman's own on any repository:** no secret reaches a log, an artifact or a step that does not need it. The organization keeps logs and artifacts for one day, to limit the damage in the worst case.
 5. **AGENTS.md gains a rule, if this works:** running the e2e suite is first asked of the person responsible, who decides whether and where it runs (step 7).
 
-Open:
+Also answered on 2026-11-05:
 
-6. **Which Runpod account holds the key.** Pods need a key with **All** permissions, since a restricted key only narrows Serverless endpoints, and [no key expires or has a spending limit](../web/runpod/manage-credentials.md). A leaked key reaches everything in its account.
-   - a) A separate account, only for this check, with a small prepaid balance and no automatic top-up. A leak costs at most that balance, and touches no other pod. [Pods stop when the balance reaches $0](https://docs.runpod.io/pods/pricing).
-   - b) The account already in use. Nothing new to manage, but a leak reaches every pod and the whole balance.
-
-   **Recommendation: a), with $10.**
-7. **How the first workflow reaches `main`.** `workflow_dispatch` runs only for a workflow that exists on the default branch, and every commit on the branches here is unpublished.
-   - a) A branch from `fixes/node-24-22-1` with the workflow. The maintainer pushes it and merges it. The first dispatch on that branch's commit then also gives the Node fix its e2e run, without a 2-hour local one.
-   - b) Run the Node fix's e2e locally first, then do the same on a branch from `main`.
-
-   **Recommendation: a).** The maintainer does each push and merge.
+6. **The Runpod account already in use holds the key,** not a separate one. A key that manages pods needs **All** permissions, [expires never and has no spending limit](../web/runpod/manage-credentials.md), so a leak reaches every pod of the account. The maintainer keeps the prepaid balance low, watches the spending, and revokes the key if needed.
+7. **The workflow reaches `main` on a branch from `fixes/node-24-22-1`.** `workflow_dispatch` runs only for a workflow on the default branch. The maintainer pushes and merges it, and the first dispatch gives the Node fix its e2e run, on `main`. Exceptionally, the fix reaches `main` before that run: the maintainer is Codeman's only real user, and the project is still experimental.
 
 ## Secrets and what a public repository shows
 
