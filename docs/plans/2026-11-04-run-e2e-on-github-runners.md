@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-11-04T14:47:33-03:00
-updated_at: 2026-11-05T19:19:00-03:00
+updated_at: 2026-11-05T19:41:00-03:00
 commit: e1c1411
 ---
 
@@ -144,4 +144,8 @@ Both vLLM scenarios failed for the same reason: vLLM found no snapshot of the mo
 
 - `608bf60`, on `fixes/e2e-hf-refs-main` from `main`: `seed-hf` writes `refs/main`. Whether the 10-minute probe fits 4 vCPUs is still unmeasured.
 
-Next: the maintainer pushes it and dispatches the two vLLM scenarios on that branch. Record their time here.
+The maintainer dispatched the two vLLM scenarios on that branch. No scenario ran: `seed-hf` exited with 1, and `compose up --detach` showed none of its output. The job took 4 min 51 s. The first `vllm` job took about 2 min 15 s besides its scenarios, so the seed ran about 2.5 minutes longer. That matches its five failed downloads with their 150 seconds of pauses, more than a failure of `refs/main` right after a download. So the Hub probably refused or failed the download, which the plan listed as a risk for anonymous downloads. Not confirmed.
+
+- `dcae7e2`: when `compose up` fails, the suite prints the last 50 lines of each service that exited with an error.
+
+Next: the maintainer pushes it and dispatches the two vLLM scenarios again. Record their time here, or the seed's error.
