@@ -1,95 +1,123 @@
 ---
 status: pending
 created_at: 2026-11-04T14:47:33-03:00
-updated_at: 2026-11-04T17:47:00-03:00
-commit: 1492654
+updated_at: 2026-11-05T12:35:44-03:00
+commit: e1c1411
 ---
 
-# Run the e2e suite on GitHub's runners
+# Run the e2e suite on GitHub's runners, and check pods on real GPUs
 
 ## Goal
 
-The maintainer starts the e2e suite by hand on GitHub's runners, so it no longer takes over a developer's machine, and a part of it runs on a real GPU, so problems that only a GPU shows appear before a live test on a provider.
+The maintainer starts two checks by hand from Codeman's public repository. The e2e suite runs on GitHub's free runners, so it no longer takes over a developer's machine. A second, short check starts a real pod on a real GPU, which shows what the fakes and the CPU hide before a live test.
 
 ## Context
 
-- The suite runs only on a developer's machine ([decision 6 of the e2e plan](2026-10-20-end-to-end-test-suite.md), which left CI to its own plan). A session takes most of a 10 GB Docker VM.
-- Its pods run the real engines on the CPU, with a tiny model. [The suite's page](../development/e2e/suite.md#what-it-does-not-cover) lists vLLM on a GPU and the production vLLM image as not covered, and the tee fakes Ollama's `size_vram`.
+- The suite runs only on a developer's machine ([decision 6 of the e2e plan](2026-10-20-end-to-end-test-suite.md), which left CI to its own plan). A full run took 134 minutes on 8 CPUs, and most of a 10 GB Docker VM.
+- Its pods run the real engines on the CPU with a tiny model. [The suite's page](../development/e2e/suite.md#what-it-does-not-cover) lists vLLM on a GPU, the production vLLM image and the proxy's 100-second cut as not covered.
 - [Part 2](2026-10-30-start-pods-from-official-engine-images.md#handover) needs [measurements only a GPU gives](2026-10-30-investigate-multi-service-pods.md#what-only-a-gpu-can-tell).
 
-The two goals need different runners. Freeing the machine needs no GPU:
+### Why not GitHub's GPU runner
 
-| | Standard (`ubuntu-latest`) | GPU-powered larger runner |
+An earlier version of this plan proposed it. It costs far more per hour, and it tests less:
+
+| | Per hour | 30 minutes |
 | --- | --- | --- |
-| Hardware | 4 vCPU, 16 GB RAM, 14 GB SSD | 4 vCPU, 28 GB RAM, 176 GB SSD, Tesla T4 with 16 GB |
-| Price on a public repository | Free, unlimited | $0.052 per minute, Linux; about $1.56 for 30 minutes |
-| Available on GitHub Team | Yes | Yes; needs a payment method and a spending limit above zero |
-| Maximum job | 6 hours | 6 hours |
+| GitHub, Tesla T4, 16 GB | $3.12 | $1.56 |
+| Runpod Secure Cloud, RTX A5000, 24 GB | $0.27 | $0.135 |
+| Salad High priority, RTX 5060 Ti, 16 GB | $0.155 | $0.08 |
 
-Sources, read on 2026-11-04, to be saved in step 1: [larger runners](https://docs.github.com/en/actions/reference/runners/larger-runners), [runner pricing](https://docs.github.com/en/billing/reference/actions-runner-pricing), [GitHub-hosted runners](https://docs.github.com/en/actions/reference/runners/github-hosted-runners), [billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions), [access control](https://docs.github.com/en/actions/how-tos/manage-runners/larger-runners/control-access).
+Prices were read on 2026-11-05 from [GitHub](https://docs.github.com/en/billing/reference/actions-runner-pricing), [Runpod](https://www.runpod.io/pricing) and [Salad](https://salad.com/pricing/), and may change. The real API, proxy and downloads are reachable only on a provider.
 
-### What is not known yet
+### Why the suite does not run in a pod
 
-- Whether GitHub's Ubuntu image for the GPU size has NVIDIA's driver and Docker's NVIDIA runtime. The pages do not say. A partner image, "NVIDIA GPU-Optimized VMI", exists. Step 3 finds out.
-- Whether larger runners on a public repository draw from the plan's $18 of included compute. The billing pages say such use is billed per minute, and do not say whether it draws from that amount.
-- Whether the suite fits a standard runner's disk. The two pod images alone take about 16 GB locally, against the documented 14 GB. Step 4 measures it.
-- How long the full suite takes on 4 vCPU. It takes 134 minutes on the maintainer's machine, with 8 CPUs, so a run on 4 vCPU may approach the 6-hour limit. On the GPU runner, 134 minutes would cost about $7.
+The suite needs Docker Compose, a container per job, and `SYS_ADMIN` for the agent's jail.
+- Runpod: ["you cannot spin up your own Docker instance or use Docker Compose on Pods"](https://docs.runpod.io/pods/overview).
+- Salad: ["Containers can't run in privileged mode"](../web/salad/salad-container-engine-overview-how-saladcloud-works.md), and a node can go offline, its replacement starting with an empty disk.
 
-### Risk: forks on a public repository
-
-A pull request from a fork runs the workflows as the pull request changed them, so it could name the GPU runner in `runs-on` and spend on it. GitHub's warning about this is attached to fixed IP ranges; that the mechanism applies without one is this plan's reading, not a statement of the pages. A `workflow_dispatch` trigger on our own workflow does not close it. Decision 1 does.
-
-### What a GPU runner does not replace
-
-The [live test](2026-10-30-start-pods-from-official-engine-images.md#handover) stays:
-- Runpod's and Salad's real APIs, workers, proxy and billing;
-- the real `nodejs.org` and `raw.githubusercontent.com` downloads, and GitHub's real App and OIDC;
-- GPUs of other models and sizes: a T4 is one old card with 16 GB, so a model or a fit that needs more waits for the live test.
+So the suite runs on a runner, and a GPU check runs a pod from a runner.
 
 ## Decisions
 
-1. **Where the GPU workflow lives.**
-   - a) A small private repository of the organization, whose workflow checks out Codeman at a given ref. No fork can reach the runner, the runner group's default (private repositories only) holds, and the workflow needs no commit on Codeman's `main`. It is one more repository to keep.
-   - b) Codeman's public repository. One place, but the runner group must allow public repositories, and the fork risk needs approval for every outside contributor's workflows.
+Answered by the maintainer on 2026-11-05:
 
-   **Recommendation: a).** No workflow setting then stands between a fork and the organization's bill.
-2. **Where the CPU suite runs.**
-   - a) `ubuntu-latest`, on Codeman's repository: free, and what frees the machine.
-   - b) The GPU runner, for everything: one workflow and enough disk, at $0.052 for every minute.
+1. **Two checks,** the suite on `ubuntu-latest` and a real pod for the GPU, instead of GitHub's GPU runner.
+2. **Both in Codeman's public repository.** A second, private repository is not used. The fork risk is handled in [secrets](#secrets-and-what-a-public-repository-shows).
+3. **Started by hand only,** with `workflow_dispatch`. Never on a push, pull request or schedule.
+4. **The care with secrets is the same as Codeman's own on any repository:** no secret reaches a log, an artifact or a step that does not need it. The organization keeps logs and artifacts for one day, to limit the damage in the worst case.
+5. **AGENTS.md gains a rule, if this works:** running the e2e suite is first asked of the person responsible, who decides whether and where it runs (step 7).
 
-   **Recommendation: a),** unless step 4 shows the disk does not fit and cannot be freed.
-3. **What runs on the GPU.**
-   - a) A subset, the scenarios tagged `gpu`: the production images, the real fit, and a start that fails on real memory.
-   - b) The whole suite.
+Open:
 
-   **Recommendation: a).** The other scenarios test Codeman's logic, which a GPU does not change, and each minute costs.
-4. **The cost limit.** A budget on the organization's Actions that stops at a fixed amount per month. **Recommendation: $20 per month,** with `timeout-minutes: 60` on the job, raised when a measurement asks for it.
-5. **Publishing the branches.** Runners need the code on GitHub, and nothing of `features/multi-service-pods` is pushed.
-   - a) Push it once part 1's suite passes locally.
-   - b) Push it now.
+6. **Which Runpod account holds the key.** Pods need a key with **All** permissions, since a restricted key only narrows Serverless endpoints, and [no key expires or has a spending limit](../web/runpod/manage-credentials.md). A leaked key reaches everything in its account.
+   - a) A separate account, only for this check, with a small prepaid balance and no automatic top-up. A leak costs at most that balance, and touches no other pod. [Pods stop when the balance reaches $0](https://docs.runpod.io/pods/pricing).
+   - b) The account already in use. Nothing new to manage, but a leak reaches every pod and the whole balance.
 
-   **Recommendation: a).** This plan starts after part 1's local run, which does not wait for it.
+   **Recommendation: a), with $10.**
+7. **How the first workflow reaches `main`.** `workflow_dispatch` runs only for a workflow that exists on the default branch, and every commit on the branches here is unpublished.
+   - a) A branch from `fixes/node-24-22-1` with the workflow. The maintainer pushes it and merges it. The first dispatch on that branch's commit then also gives the Node fix its e2e run, without a 2-hour local one.
+   - b) Run the Node fix's e2e locally first, then do the same on a branch from `main`.
+
+   **Recommendation: a).** The maintainer does each push and merge.
+
+## Secrets and what a public repository shows
+
+What each check needs to see, and nothing else:
+
+| Check | Secret | Variable |
+| --- | --- | --- |
+| The suite on `ubuntu-latest` | None: every key is a fake's, made for the session | None |
+| Real pod, on Runpod | `CODEMAN_RUNPOD_API_KEY`, in the `e2e-live` environment | None: the GPU type and model are the workflow's inputs |
+| Real pod, on Salad, later | `CODEMAN_SALAD_API_KEY`, in `e2e-live` | `CODEMAN_SALAD_ORGANIZATION` and `CODEMAN_SALAD_PROJECT`, in `e2e-live` |
+
+The names are those of [the templates](../../templates/codeman-task.yml). The `e2e-live` environment admits only the branches `main`, `features/*` and `fixes/*`. Other keys the check uses, such as the encryption secret and the gateway's tokens, are made for the run and registered as masks.
+
+> [!WARNING]
+> A public repository's logs can be read by anyone while they are kept. GitHub masks a secret's exact value only, not what is derived from it, and a gateway's [admin token](../../src/inference/selfhosted.ts) is derived from the account key.
+
+Rules for the workflow, each checked by a test or by reading the file in step 2:
+
+- **Triggers:** `workflow_dispatch` only; never `pull_request_target`. A fork's pull request gets no secret (to confirm from GitHub's page, in step 1).
+- **Permissions:** `permissions: contents: read`, and `persist-credentials: false` on checkout.
+- **The secret's reach:** the environment on the one job that needs it, and the secret in the `env` of the one step that uses it. The suite's job names no environment, so it cannot read it.
+- **Inputs:** read through `env`, never interpolated in a script. GPU type and model are validated against a pattern.
+- **Output of the pod check:** prints only values on an allowlist (times, memory, status, GPU type), never a pod's URL, ID, environment or a response's headers; no `set -x`; no artifact; no cache.
+- **Artifacts of the suite:** only its job uploads, `retention-days: 1`. It holds no real key, so a leak of its fakes' tokens ends with the session.
+- **Actions:** pinned by full commit SHA, as `ci.yml` is.
+- **A forgotten pod:** a last step, `if: always()`, terminates the run's pods, and the pod's own `CODEMAN_START_BY` and the job's `timeout-minutes` bound the rest.
 
 ## Steps
 
-1. **Save the sources.** GitHub's pages above, and `workflow_dispatch`'s, under `docs/web/github/`. Done when the web documentation's tests pass.
-2. **Create the runner (maintainer).** GPU-powered, one at most at a time, in a group limited to the repository of decision 1, with the budget of decision 4. Done when the runner shows as ready.
-3. **Smoke test the GPU runner.** A one-job workflow, started by hand: `nvidia-smi`, `df -h`, `free -h`, `docker run --gpus all` with the catalog's vLLM image by digest, and one request to a tiny model. Done when this plan records the driver, the runtime, the disk and the minutes it took, and which image to use.
-4. **The CPU lane.** `.github/workflows/e2e.yml`, on `workflow_dispatch` only:
-   - an input of scenario selectors, read through `env`, never interpolated in a script;
-   - `permissions: contents: read`, no secrets, actions pinned by SHA;
-   - the suite's report uploaded as an artifact, after checking that it holds no token that outlives the session.
+1. **Save the sources.** GitHub's pages on larger runners, runner pricing, billing, `workflow_dispatch`, environments, and secrets on forks' pull requests, under `docs/web/github/`; Runpod's on pods and pricing; Salad's on pricing. Done when the web documentation's tests pass, and these pages confirm or correct this plan.
+2. **The suite on `ubuntu-latest`.** `.github/workflows/e2e.yml`, by the rules above, with an input of scenario selectors:
+   - one job per group, by profile: scenarios with neither `ollama` nor `vllm`, `ollama`, `vllm`. It lowers the time and each job's disk: both profiles take about 17 GB of images, and a standard runner [documents 14 GB](https://docs.github.com/en/actions/reference/runners/github-hosted-runners). Each job's models and images download again, since no cache is kept.
+   - the suite's report uploaded on failure.
 
-   Done when every scenario passes on `ubuntu-latest`, and this plan records the time and the peak disk.
-5. **A GPU mode in the e2e runtime.** The launcher adds `--gpus all`, the allowlist maps to the production images, the tee stops rewriting `size_vram`, and the fake catalog offers the runner's GPU. Done when the unit tests show the default mode unchanged, and `failures` and `pods` scenarios tagged `gpu` start in the mode.
-6. **The GPU scenarios.** Tagged `gpu`: a vLLM and an Ollama pod from the production images serving an agent, the fit against real memory, and a model that does not fit. Done when they pass on the runner.
-7. **Docs.** [The suite's page](../development/e2e/suite.md) says how to start each lane, what each costs, and drops what the lanes now cover from what it does not cover. Done when the docs tests pass.
+   Done when the maintainer's dispatch passes every scenario, and this plan records each group's time and peak disk.
 
-Part 2's measurements (sleep mode, NVML, a CUDA context's release, load and swap times) can then use this runner. Its plan decides that.
+   **What may not work, to measure:** a vLLM request's first answer takes about 6 minutes on 8 CPUs, and the probe waits for 10; a runner's 4 vCPUs may exceed it. Docker Hub may limit anonymous pulls. If the `vllm` group does not fit, ask before using a larger runner (`linux_8_core`, $0.022 per minute): a cost this plan does not include.
+3. **A pod check, from the sources.** A script, `e2e/live/pod.ts` for instance, run with Node, not the e2e build, so no redirect applies. It builds `PodInference` with the real `Runpod`, and a store local to the run. It starts a pod on Ollama, then one on vLLM, each from the catalog's official image through the bootstrap, with the real release policy and a tiny public model, and:
+   - checks that the bootstrap verified Node.js and the gateway, from the real `nodejs.org` and `raw.githubusercontent.com` at the run's commit;
+   - checks `/health`, and one chat answer through Runpod's proxy;
+   - checks the fit against the real GPU memory;
+   - prints the times, and terminates the pod.
+
+   Done when unit tests cover the script's allowlisted output and its cleanup, with a fake `fetch`, and a dispatch passes on Runpod for less than $1, recorded here.
+4. **Failures on a real pod.** A model that does not fit fails with the fit's message, and a release that is blocked starts no pod. Done when both are in the dispatch.
+5. **Salad.** The same check, with the group's replicas and the Container Gateway. A node's interruption fails the run as "infrastructure", not as a Codeman failure. Done when a dispatch passes. Asks first whether the user's key, which reaches all of their organizations, is acceptable here.
+6. **Docs.** [The suite's page](../development/e2e/suite.md) says how to start each check and what each costs, and [dependencies](../development/dependencies.md) records the workflow's actions. Done when the docs tests pass.
+7. **The rule in AGENTS.md,** once steps 2 and 3 work. Its sections also reach the repositories Codeman runs on, so it must hold for any of them. A bullet under "Ask before critical decisions":
+
+   > Running end-to-end tests, or any other slow or costly suite: the person responsible decides whether it runs, and where.
+
+   Done when the maintainer has approved the text.
+
+Part 2's measurements (sleep mode, NVML, a CUDA context's release, load and swap times) can then use the pod check. Its plan decides that.
 
 ## Out of scope
 
-- Running the suite on every push, pull request or schedule: it stays manual, as the maintainer asked.
-- Replacing the live test on a provider.
-- Self-hosted runners and Windows.
-- Models that need more than 16 GB.
+- Running either check on every push, pull request or schedule.
+- GitHub's GPU runner, and VMs with a GPU from other providers.
+- Scripted scenarios on a GPU: they test Codeman's logic, which a GPU does not change.
+- Replacing the live test: the whole path with a real agent, a real repository and real GitHub App stays with the maintainer.
+- Models that need more memory than the chosen GPU has.
