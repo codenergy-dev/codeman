@@ -26,7 +26,7 @@ Every dependency is audited before it is added (see `AGENTS.md`). This page reco
 | Cloud Firestore, STS, IAM Credentials | Services | REST API v1 | The backend | 2026-10-07 | None recorded | [Cloud Firestore](#cloud-firestore-in-a-firebase-project) |
 | Firestore's emulator | Test tool, in the e2e emulator image | v1.22.0 by SHA-256, on `eclipse-temurin:21.0.12_8-jre-noble` by digest | The store's tests and the e2e suite | 2026-10-20 | None recorded | [Firestore's emulator](#firestores-emulator) |
 | The local runner image, on `ubuntu:noble-20260930.1` | Image, Codeman's own, local only | Base images by digest; Ubuntu's packages not pinned | Runs the tests that need GitHub's runner on a developer's machine | 2026-10-19 | None recorded | [The local runner image](#the-local-runner-image) |
-| act | Test tool, on the developer's machine | 0.2.89, Homebrew's bottle | Runs the real templates for the e2e smoke scenarios | 2026-10-20 | Injects the host's `gh` token when given no `GITHUB_TOKEN` secret; the driver always passes a fake one | [act](#act) |
+| act | Test tool, on the developer's machine and the e2e workflow's runner | 0.2.89, Homebrew's bottle; on the runner, the release's file by SHA-256 | Runs the real templates for the e2e smoke scenarios | 2026-10-20 | Injects the host's `gh` token when given no `GITHUB_TOKEN` secret; the driver always passes a fake one | [act](#act) |
 | vLLM's CPU image | Image, e2e only | `vllm/vllm-openai-cpu:v0.31.0`, by index digest | vLLM on CPU in the e2e vLLM pod | 2026-10-20 | vLLM 0.31.0's, as above | [vLLM's CPU image](#vllms-cpu-image) |
 | `qwen2.5:0.5b` and `Qwen/Qwen2.5-0.5B-Instruct` | Models, e2e only | Ollama manifest digest; Hugging Face commit | The same tiny model on both e2e engines | 2026-10-20 | None recorded | [The e2e models](#the-e2e-models) |
 | Docker Compose | Tool, bundled with Docker Desktop | v5.1.0 on the machine of the audit, not pinned | Starts the e2e suite's infrastructure | 2026-10-20 | None for v5.1.0 | [Docker Compose](#docker-compose) |
@@ -130,10 +130,10 @@ Pinned to full commit SHAs.
 
 | Action | Version | Used in |
 | --- | --- | --- |
-| `actions/checkout` | v7.0.1 | CI, pod image, target repository workflow (the repository in `agent`, and Codeman at `CODEMAN_COMMIT_SHA` in each job that runs it) |
-| `actions/setup-node` | v7.0.0 | CI |
+| `actions/checkout` | v7.0.1 | CI, pod image, e2e suite, target repository workflow (the repository in `agent`, and Codeman at `CODEMAN_COMMIT_SHA` in each job that runs it) |
+| `actions/setup-node` | v7.0.0 | CI, e2e suite |
 | `actions/create-github-app-token` | v3.2.0 | Target repository workflow |
-| `actions/upload-artifact` | v7.0.1 | Target repository workflow |
+| `actions/upload-artifact` | v7.0.1 | E2e suite, target repository workflow |
 | `actions/download-artifact` | v8.0.1 | Target repository workflow |
 
 ## External services
@@ -329,13 +329,13 @@ Audited on 2026-10-19 for the [plan to run Actions locally](../plans/2026-10-19-
 
 ## The end-to-end test suite
 
-Audited on 2026-10-20 for the [end-to-end test suite plan](../plans/2026-10-20-end-to-end-test-suite.md#audit). What it adds runs only on a developer's machine, under `e2e/`: none of it reaches `dist/`, the pod images or a target repository. Firestore's emulator image is under [Firestore's emulator](#firestores-emulator), and `yaml` under [Development](#development). Already audited and reused: `ollama/ollama:0.35.1`, `node:24.22.1-bookworm-slim` (`node:24.21.0-bookworm-slim` at the audit) and `ubuntu:noble-20260930.1`.
+Audited on 2026-10-20 for the [end-to-end test suite plan](../plans/2026-10-20-end-to-end-test-suite.md#audit). What it adds runs only on a developer's machine, or on [GitHub's runner when the maintainer starts it](e2e/suite.md#on-github-actions), under `e2e/`: none of it reaches `dist/`, the pod images or a target repository. Firestore's emulator image is under [Firestore's emulator](#firestores-emulator), and `yaml` under [Development](#development). Already audited and reused: `ollama/ollama:0.35.1`, `node:24.22.1-bookworm-slim` (`node:24.21.0-bookworm-slim` at the audit) and `ubuntu:noble-20260930.1`.
 
 ### act
 
 - **What:** [nektos/act](https://github.com/nektos/act), which reads `.github/workflows/` and runs each job in a Docker container.
 - **Why:** the e2e suite's smoke scenarios, `pods/ollama-keep-and-release.act` and `security/set-env-in-agent-output.act`, run the real templates under it, on success paths only (decision 10). The other scenarios run on the suite's own workflow simulator. This reverses decision 1 of [Run GitHub Actions locally](../plans/2026-10-19-run-github-actions-locally.md#decisions) for those scenarios only. How the driver runs it: [under act](e2e/suite.md#under-act).
-- **Version and pin:** 0.2.89, the latest release (2026-06-01), installed from Homebrew's bottle, whose SHA-256 the formula records ([formula](../web/homebrew/formula-act.md)). Its source was read at the tag's commit `4f41128` ([cmd/root.go](../web/nektos/act-cmd-root-go-at-4f41128.md), [run_context.go](../web/nektos/act-pkg-runner-run-context-go-at-4f41128.md), [gh.go](../web/nektos/act-pkg-gh-gh-go-at-4f41128.md)).
+- **Version and pin:** 0.2.89, the latest release (2026-06-01), installed from Homebrew's bottle, whose SHA-256 the formula records ([formula](../web/homebrew/formula-act.md)). The [e2e workflow](../../.github/workflows/e2e.yml) installs the same release's Linux file, checked against its SHA-256 ([the release](../web/nektos/act-v0-2-89.md)). Its source was read at the tag's commit `4f41128` ([cmd/root.go](../web/nektos/act-cmd-root-go-at-4f41128.md), [run_context.go](../web/nektos/act-pkg-runner-run-context-go-at-4f41128.md), [gh.go](../web/nektos/act-pkg-gh-gh-go-at-4f41128.md)).
 - **License and maintenance:** MIT, community maintained. No commit on `master` since 2026-06-01.
 - **Transitive code:** one Go binary, with 38 direct and 61 indirect modules ([audit of 2026-10-19](../plans/2026-10-19-run-github-actions-locally.md#audit)).
 - **Known vulnerabilities:** CVE-2026-34041 (`::set-env::` and `::add-path::` processed from any step's output, [advisory](../web/nektos/set-env-and-add-path-workflow-commands-unconditionally-processed.md)) and CVE-2026-34042 (an unauthenticated cache server on every interface, [advisory](../web/nektos/remote-code-execution-possible-actions-cache-server-allows-malicious-cache-injec.md)), both fixed in 0.2.86.
@@ -379,7 +379,7 @@ The same model on both engines: Qwen2.5 0.5B Instruct, small enough for a CPU, w
 ### Docker Compose
 
 - **What:** Docker's tool that starts a set of containers, networks and volumes from one file. The e2e suite uses its profiles, health checks with `up --wait`, named volumes, memory limits and an internal network ([services](../web/docker/define-services-in-docker-compose.md), [networks](../web/docker/define-and-manage-networks-in-docker-compose.md), [volumes](../web/docker/define-and-manage-volumes-in-docker-compose.md), [deploy](../web/docker/compose-deploy-specification.md), [profiles](../web/docker/learn-how-to-use-profiles-in-docker-compose.md), [`up`](../web/docker/docker-compose-up.md)).
-- **Version and pin:** not pinned: it comes with the developer's Docker. The audit's machine has v5.1.0, bundled with Docker Desktop 4.66.1 ([release](../web/docker/compose-v5-1-0.md)).
+- **Version and pin:** not pinned: it comes with the developer's Docker, or on GitHub's runner with its image. The audit's machine has v5.1.0, bundled with Docker Desktop 4.66.1 ([release](../web/docker/compose-v5-1-0.md)).
 - **License and maintenance:** Apache-2.0, [docker/compose](https://github.com/docker/compose), maintained by Docker, with a release every few weeks.
 - **Known vulnerabilities:** one published advisory, CVE-2025-62725 (high), fixed in v2.40.2.
 - **Permissions:** it runs as the developer and drives the Docker daemon, as `docker` does. No container of the suite gets the Docker socket (decision 2).

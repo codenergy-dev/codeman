@@ -22,7 +22,7 @@ Each scenario is a YAML file under [`e2e/scenarios/`](../../../e2e/scenarios/hap
 - The model's quality: replies are scripted.
 - Real throughput, the proxy's 100-second cut, Runpod's real worker states and billing, and Workload Identity Federation's real behavior.
 - arm64 hosts and AVX-512 paths.
-- CI: the suite runs only on a developer's machine, with `npm run test:e2e`.
+- Pushes and pull requests: CI never runs the suite, and [the maintainer starts it by hand](#on-github-actions).
 
 The [plan's out of scope](../../plans/2026-10-20-end-to-end-test-suite.md#out-of-scope) has the reasons.
 
@@ -115,8 +115,24 @@ An argument that matches no scenario is an error, so a typo runs nothing.
 
 - **Services stay up** between runs, so the next run starts in seconds. Compose recreates only what changed.
 - **Each scenario starts fresh:** every fake is reset, the store is a new Firestore project, and the runtime removes the scenario's containers when it ends. A scenario fails at once if anything of an earlier one is left.
-- **The pod launcher** listens on `127.0.0.1`, which Docker Desktop's `host.docker.internal` reaches. `CODEMAN_E2E_LAUNCHER_HOST` sets another address.
+- **The pod launcher** listens on `127.0.0.1`, which Docker Desktop's `host.docker.internal` reaches. `CODEMAN_E2E_LAUNCHER_HOST` sets another address: on Linux, the default bridge's, which is what `host.docker.internal` [resolves to there](../../web/docker/dockerd.md#host-gateway).
 - **`e2e/.out/session.json`** keeps the session's control tokens, so the running services stay usable. Both `e2e/.build/` and `e2e/.out/` are ignored by git.
+
+## On GitHub Actions
+
+The maintainer starts the suite by hand, on GitHub's standard runners, with [`.github/workflows/e2e.yml`](../../../.github/workflows/e2e.yml). It never runs on a push, pull request or schedule.
+
+- **Start it:** on GitHub, **Actions**, **E2E**, **Run workflow**, or with `gh`. This needs [write access, and the workflow on the default branch](../../web/github/manually-running-a-workflow.md).
+
+  ```sh
+  gh workflow run e2e.yml
+  gh workflow run e2e.yml -f selectors="pods/ollama-keep-and-release budgets"
+  ```
+
+- **What runs:** with no selectors, one job per `--profile=` group, so no runner holds both profiles' images, and one group's failure does not stop the others. With selectors, those scenarios in one job. Each job downloads its images and models again: there is no cache.
+- **What it costs:** nothing on a public repository, whose [standard runners are free](../../web/github/github-hosted-runners-reference.md#standard-github-hosted-runners-for-public-repositories).
+- **What it can reach:** only `contents: read`, and no secret, variable or environment: every key in a run is a fake's: random for the session, or a constant of the suite's code.
+- **On a failure:** download the job's `e2e-report-<group>` artifact, kept one day, then [read the failure](#read-a-failure). The logs show `df -h` and `docker system df` before and after the suite.
 
 ## Read a failure
 
