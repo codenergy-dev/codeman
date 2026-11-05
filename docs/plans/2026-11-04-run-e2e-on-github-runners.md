@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-11-04T14:47:33-03:00
-updated_at: 2026-11-05T13:30:00-03:00
+updated_at: 2026-11-05T16:24:00-03:00
 commit: e1c1411
 ---
 
@@ -51,6 +51,7 @@ Also answered on 2026-11-05:
 
 6. **The Runpod account already in use holds the key,** not a separate one. A key that manages pods needs **All** permissions, [expires never and has no spending limit](../web/runpod/manage-credentials.md), so a leak reaches every pod of the account. The maintainer keeps the prepaid balance low, watches the spending, and revokes the key if needed.
 7. **The workflow reaches `main` on a branch from `fixes/node-24-22-1`.** `workflow_dispatch` runs only for a workflow on the default branch. The maintainer pushes and merges it, and the first dispatch gives the Node fix its e2e run, on `main`. Exceptionally, the fix reaches `main` before that run: the maintainer is Codeman's only real user, and the project is still experimental.
+8. **The workflow downloads `act` 0.2.89's Linux release** from GitHub, checked by SHA-256. The audit covered Homebrew's bottle of the same version; two scenarios need it, and the job has no secret.
 
 ## Secrets and what a public repository shows
 
@@ -122,4 +123,6 @@ As of 2026-11-05, steps 1 and 2's workflow and docs are on the branch `features/
 - `f6aa0f1`: `--profile=none|ollama|vllm` selects a group from each scenario's `profiles:`.
 - `4d89540`: `.github/workflows/e2e.yml` and its docs.
 
-Next: the maintainer pushes and merges it, then dispatches it on `main`. Record each group's time and peak disk here.
+On 2026-11-05 the maintainer pushed it and opened its pull request. CI failed in one test, unrelated to the branch: `ubuntu-latest` is moving to Ubuntu 26.04 until 2026-11-19 ([announcement](https://github.com/actions/runner-images/issues/14748)), and its `systemd-udevd` 259 binds an abstract socket that the sandbox test has not reviewed. Codeman's sandbox was reviewed on Ubuntu 24.04 only. Waits for the maintainer's decision.
+
+Next: the maintainer merges it, then dispatches it on `main`. Record each group's time and peak disk here.
