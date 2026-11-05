@@ -1,4 +1,4 @@
-# A local stand-in for GitHub's ubuntu-latest runner: only what Codeman's runner-dependent code
+# A local stand-in for GitHub's ubuntu-24.04 runner: only what Codeman's runner-dependent code
 # sees there. The user `runner` (uid 1001) with passwordless sudo, Node.js where setup-node puts it,
 # the image's world-writable trees, and the job's PATH in GitHub's order.
 # See docs/development/local-actions.md.
@@ -7,7 +7,7 @@
 # Only Node.js's files are used: the version of the pod images.
 FROM node:24.22.1-bookworm-slim@sha256:be8204d4bd327363357f532187b752ff62759c31bedf98e9e18fc08c9cbd605c AS node
 
-# ubuntu-latest is Ubuntu 24.04 (docs/web/github/runner-images-readme-md-at-82d1b86.md).
+# The templates and CI run on ubuntu-24.04 (docs/installation/setup.md).
 FROM ubuntu:noble-20260930.1@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac
 
 ARG NODE_VERSION=24.22.1

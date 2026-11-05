@@ -1,14 +1,14 @@
 # Running Actions locally
 
-This page is for whoever changes code that depends on GitHub's `ubuntu-latest` runner, such as the [sandbox](../glossary.md#sandbox). It shows how to run that code on your machine, in a small image that reproduces what it depends on, and how far that image is from GitHub's.
+This page is for whoever changes code that depends on GitHub's `ubuntu-24.04` runner, such as the [sandbox](../glossary.md#sandbox). It shows how to run that code on your machine, in a small image that reproduces what it depends on, and how far that image is from GitHub's.
 
 ## What the image reproduces
 
-[`docker/runner/Dockerfile`](../../docker/runner/Dockerfile) builds `codeman-runner:local`. It reproduces only what Codeman's runner-dependent code sees on `ubuntu-latest`:
+[`docker/runner/Dockerfile`](../../docker/runner/Dockerfile) builds `codeman-runner:local`. It reproduces only what Codeman's runner-dependent code sees on `ubuntu-24.04`:
 
 | What | In the image | Source |
 | --- | --- | --- |
-| The system | Ubuntu 24.04, by digest | `ubuntu-latest` is Ubuntu 24.04 on x64 ([runner-images README](../web/github/runner-images-readme-md-at-82d1b86.md)) |
+| The system | Ubuntu 24.04, by digest | The templates and CI run on `ubuntu-24.04` ([setup](../installation/setup.md#what-you-need)) |
 | The runner's user | `runner`, uid 1001, with passwordless `sudo` | [Administrative privileges](../web/github/github-hosted-runners-reference.md#administrative-privileges) |
 | Node.js | 24.22.1, in `/opt/hostedtoolcache/node/24.22.1/x64`, marked complete, where `actions/setup-node` finds a cached version | `.nvmrc`, and the version of the [pod images](dependencies.md#codemans-pod-images) |
 | World-writable trees | `/opt` and `/usr/share`, recursively, with `/opt/pipx_bin` and the tool cache; `/usr/local/bin`, `/usr/local/lib/node_modules` and `/usr/local/.ghcup` | [`configure-system.sh`](../web/github/runner-images-configure-system-sh-at-82d1b86.md), [`install-nodejs.sh`](../web/github/runner-images-install-nodejs-sh-at-82d1b86.md), [`install-haskell.sh`](../web/github/runner-images-install-haskell-sh-at-82d1b86.md) |
@@ -37,7 +37,7 @@ You need Docker. The first run builds the image, in a few minutes.
 
 ## How far it is from GitHub's runner
 
-| | GitHub's `ubuntu-latest` | The local image |
+| | GitHub's `ubuntu-24.04` | The local image |
 | --- | --- | --- |
 | Machine | A VM per job, with systemd | A container, with `tini` as PID 1 and no systemd: `loginctl`, lingering and user services are not tested. No `sshd`, `cron`, `atd` or system bus either: the sandbox test of the system's services finds each route missing |
 | Root file system | ext4 | overlayfs. Docker mounts `/etc/hosts` and `/etc/resolv.conf` apart, so `find -xdev` stops there |

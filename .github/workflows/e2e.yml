@@ -17,7 +17,7 @@ permissions:
 jobs:
   suite:
     name: Suite (${{ matrix.group }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Under GitHub's limit of 6 hours, and above the suite's step, so its report still uploads.
     timeout-minutes: 330
     strategy:

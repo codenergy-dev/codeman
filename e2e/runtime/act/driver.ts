@@ -38,8 +38,8 @@ export const ACT_STATE = {
   actions: join(ACT_ROOT, "actions"),
 };
 
-/** The image act runs `ubuntu-latest` jobs in. */
-const PLATFORM = "ubuntu-latest";
+/** The runner label act maps to the job image: the templates' (docs/installation/setup.md). */
+const PLATFORM = "ubuntu-24.04";
 
 /** Names the working directory may hold: act copies it into each job. */
 const WORKDIR_ENTRIES = [".github"];

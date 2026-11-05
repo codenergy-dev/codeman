@@ -217,7 +217,7 @@ Each event, schedule and dispatch is one `act <event> --eventpath <payload>` inv
 | OIDC | `ACTIONS_ID_TOKEN_REQUEST_URL`, and a request token per invocation, with the run's claims |
 | Actions | `--action-cache-path e2e/.out/act/actions/ --action-offline-mode`, every pin checked first; `--no-skip-checkout`, so `actions/checkout` runs against the fake |
 | Codeman's action | The e2e bundle, `action.yml` and the files beside it are Codeman's repository on the fake GitHub, at `CODEMAN_COMMIT_SHA`: the templates' own checkout then `uses: ./.codeman/action` run it. `--local-repository` would not apply: it replaces `uses: <owner>/<repo>@<ref>` actions, and the templates check Codeman out instead |
-| The jobs | `-P ubuntu-latest=codeman-e2e-runner:local --pull=false --rm`, the jobs network, `--container-daemon-socket -`, and `--container-options` with `--init`, `SYS_ADMIN`, seccomp and AppArmor unconfined, the CA's volume, 3 GiB and the scenario's labels |
+| The jobs | `-P ubuntu-24.04=codeman-e2e-runner:local --pull=false --rm`, the jobs network, `--container-daemon-socket -`, and `--container-options` with `--init`, `SYS_ADMIN`, seccomp and AppArmor unconfined, the CA's volume, 3 GiB and the scenario's labels |
 | The CA | act replaces the image's entry point, which installs the CA: `GIT_SSL_CAINFO` for git and `SSL_CERT_DIR` for `gh`; Node has `NODE_EXTRA_CA_CERTS` from the image |
 | `RUNNER_TEMP` | `/tmp`, which `${{ runner.temp }}` is under act whatever `RUNNER_TEMP` says, so the templates' artifact paths and Codeman's agree |
 | One at a time | Invocations queue, so per repository too: act ignores `concurrency`. Before each, the driver makes a new `act-toolcache` volume, labeled as its own |

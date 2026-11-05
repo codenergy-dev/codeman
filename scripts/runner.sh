@@ -1,5 +1,5 @@
 #!/bin/sh
-# Runs a command in a local stand-in for GitHub's ubuntu-latest runner (docker/runner/Dockerfile),
+# Runs a command in a local stand-in for GitHub's ubuntu-24.04 runner (docker/runner/Dockerfile),
 # as `runner`, on a copy of this working tree at the workspace's path. With no command, it runs what
 # CI's tests run: `npm ci`, then `npm test` with the sandbox test.
 # See docs/development/local-actions.md.

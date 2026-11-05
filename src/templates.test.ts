@@ -398,6 +398,23 @@ test("no other job runs Codeman, and no commit is written in the files", () => {
   assert.match(readFileSync("action.yml", "utf8"), /^ {2}template-version:$/m);
 });
 
+// The sandbox was reviewed on Ubuntu 24.04 only; ubuntu-latest moves to 26.04 in November 2026.
+// See docs/plans/2026-11-05-review-codeman-on-ubuntu-26-04.md.
+test("the templates and the workflows that test the sandbox run on Ubuntu 24.04", () => {
+  for (const file of [
+    "templates/codeman.yml",
+    "templates/codeman-task.yml",
+    ".github/workflows/ci.yml",
+    ".github/workflows/e2e.yml",
+  ]) {
+    const labels = [...readFileSync(file, "utf8").matchAll(/^\s*runs-on:\s*(.+)$/gm)].map(
+      (match) => match[1],
+    );
+    assert.ok(labels.length > 0, file);
+    for (const label of labels) assert.equal(label, "ubuntu-24.04", file);
+  }
+});
+
 test("checking Codeman out changes no job's permissions", () => {
   const permissions = (text: string, job: string) => {
     const inline = entries(text, ["jobs", job]).get("permissions");

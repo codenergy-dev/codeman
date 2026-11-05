@@ -59,7 +59,10 @@ flowchart TD
 | A [Runpod](https://www.runpod.io) account | Serving models on your own GPUs ([Runpod setup](runpod.md)) | Yes |
 | A [Salad](https://salad.com) user and organization | Serving models on consumer GPUs that third parties own ([Salad setup](salad.md)) | Yes |
 
-The `agent` job needs a Linux runner, x64 or arm64. The templates use `ubuntu-latest`.
+The `agent` job needs a Linux runner, x64 or arm64. The templates use `ubuntu-24.04`; on arm64, use `ubuntu-24.04-arm`.
+
+> [!WARNING]
+> Codeman's sandbox has been reviewed on Ubuntu 24.04 only. Keep that label rather than `ubuntu-latest`, which GitHub moves to Ubuntu 26.04 in November 2026 ([review of Ubuntu 26.04](../plans/2026-11-05-review-codeman-on-ubuntu-26-04.md)).
 
 Before the first task, go through the [security checklist](../security/overview.md#checklist).
 
