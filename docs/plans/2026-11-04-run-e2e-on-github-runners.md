@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-11-04T14:47:33-03:00
-updated_at: 2026-11-05T16:41:00-03:00
+updated_at: 2026-11-05T17:40:00-03:00
 commit: e1c1411
 ---
 
@@ -128,4 +128,6 @@ On 2026-11-05 the maintainer pushed it and opened its pull request. CI failed in
 - `f54a771`: the templates, CI and this workflow on `ubuntu-24.04`, with a test, and the plan for Ubuntu 26.04.
 - `e5a52fe`: the upgrade guide's entry names it.
 
-Next: the maintainer pushes them, merges once CI passes, then dispatches it on `main`. Record each group's time and peak disk here.
+On `ubuntu-24.04`, CI first failed in another sandbox test, `the agent is contained and its changes are collected safely`. It was stopped at its 120-second limit after 163 seconds, and `npm test` took 189 seconds where `main`'s last pass took 29. A re-run of the failed job passed, on image `ubuntu24/20261025.353`, so it is taken as intermittent. A limit reached that late means a synchronous call held the process past 120 seconds. Those calls come after the agent ends: `sealAgentSandbox`, whose `loginctl` calls have no time limit, is the likeliest. If it fails again, a test-only commit times each phase before `src/sandbox.ts` changes.
+
+Next: the maintainer merges once CI passes, then dispatches it on `main`. Record each group's time and peak disk here.
