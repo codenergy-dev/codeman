@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-11-04T14:47:33-03:00
-updated_at: 2026-11-05T16:24:00-03:00
+updated_at: 2026-11-05T16:41:00-03:00
 commit: e1c1411
 ---
 
@@ -123,6 +123,9 @@ As of 2026-11-05, steps 1 and 2's workflow and docs are on the branch `features/
 - `f6aa0f1`: `--profile=none|ollama|vllm` selects a group from each scenario's `profiles:`.
 - `4d89540`: `.github/workflows/e2e.yml` and its docs.
 
-On 2026-11-05 the maintainer pushed it and opened its pull request. CI failed in one test, unrelated to the branch: `ubuntu-latest` is moving to Ubuntu 26.04 until 2026-11-19 ([announcement](https://github.com/actions/runner-images/issues/14748)), and its `systemd-udevd` 259 binds an abstract socket that the sandbox test has not reviewed. Codeman's sandbox was reviewed on Ubuntu 24.04 only. Waits for the maintainer's decision.
+On 2026-11-05 the maintainer pushed it and opened its pull request. CI failed in one test, unrelated to the branch: `ubuntu-latest` is moving to Ubuntu 26.04 until 2026-11-19 ([announcement](https://github.com/actions/runner-images/issues/14748)), and its `systemd-udevd` 259 binds an abstract socket that the sandbox test has not reviewed. Codeman's sandbox was reviewed on Ubuntu 24.04 only. The maintainer chose to pin `ubuntu-24.04`, and to leave Ubuntu 26.04 to its own plan, `docs/plans/2026-11-05-review-codeman-on-ubuntu-26-04.md` on that branch:
 
-Next: the maintainer merges it, then dispatches it on `main`. Record each group's time and peak disk here.
+- `f54a771`: the templates, CI and this workflow on `ubuntu-24.04`, with a test, and the plan for Ubuntu 26.04.
+- `e5a52fe`: the upgrade guide's entry names it.
+
+Next: the maintainer pushes them, merges once CI passes, then dispatches it on `main`. Record each group's time and peak disk here.
