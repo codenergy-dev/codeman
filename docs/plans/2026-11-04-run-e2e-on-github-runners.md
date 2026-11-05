@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-11-04T14:47:33-03:00
-updated_at: 2026-11-05T19:41:00-03:00
+updated_at: 2026-11-05T20:14:00-03:00
 commit: e1c1411
 ---
 
@@ -148,4 +148,8 @@ The maintainer dispatched the two vLLM scenarios on that branch. No scenario ran
 
 - `dcae7e2`: when `compose up` fails, the suite prints the last 50 lines of each service that exited with an error.
 
-Next: the maintainer pushes it and dispatches the two vLLM scenarios again. Record their time here, or the seed's error.
+A third dispatch on that branch passed both, in a job of 8 min 1 s: `fit-vllm-explicit` in 69.3 s, `vllm-two-seats` in 298.5 s. The seed downloaded the model this time, so the second run's failure is taken as the Hub's, and passing; the diagnostic stays for the next one. A vLLM pod's first answers fit the 10-minute probe on 4 vCPUs, so the `vllm` group needs no larger runner.
+
+So every one of the 48 scenarios has passed on `ubuntu-24.04`, across these dispatches. Peak disk is not measured, only before and after, and the runner's 86 GB free leave room for all three groups. Step 2 is done once `fixes/e2e-hf-refs-main` reaches `main`.
+
+Next: the maintainer merges `fixes/e2e-hf-refs-main`. Then step 3, which needs the `e2e-live` environment and its secret.
