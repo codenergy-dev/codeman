@@ -9,7 +9,8 @@ repo=Qwen/Qwen2.5-0.5B-Instruct
 revision=7ae557604adf67be50417f59c2c2f167def9a775
 weights=fdf756fa7fcbe7404d5c60e26bff1a0c8b8aa1f72ced49e7dd0210fe288fb7fe
 cache=${HF_HOME:-/root/.cache/huggingface}/hub
-snapshot=$cache/models--Qwen--Qwen2.5-0.5B-Instruct/snapshots/$revision
+storage=$cache/models--Qwen--Qwen2.5-0.5B-Instruct
+snapshot=$storage/snapshots/$revision
 files="config.json generation_config.json tokenizer.json tokenizer_config.json vocab.json merges.txt model.safetensors"
 
 check() {
@@ -17,7 +18,17 @@ check() {
   [ "$(sha256sum "$snapshot/model.safetensors" | cut -d ' ' -f 1)" = "$weights" ]
 }
 
+# The pod's gateway runs `vllm serve` with the model's name and no revision, offline, so the Hub's
+# library reads the commit from refs/main. A download by commit writes no ref
+# (_cache_commit_hash_for_specific_revision in huggingface_hub's file_download.py), so it is
+# written here, without a newline, as the library writes it.
+pin_main() {
+  mkdir -p "$storage/refs"
+  printf %s "$revision" > "$storage/refs/main"
+}
+
 if check; then
+  pin_main
   echo "$repo is present at $revision."
   exit 0
 fi
@@ -33,4 +44,5 @@ if ! check; then
   echo "$repo at $revision is incomplete, or its weights are not sha256:$weights." >&2
   exit 1
 fi
+pin_main
 echo "Downloaded $repo at $revision."
