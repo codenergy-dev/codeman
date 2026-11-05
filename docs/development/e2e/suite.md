@@ -104,6 +104,7 @@ The command exits 1 when a scenario fails or is not run, or when a [known bug's]
 | None | Every scenario |
 | A bare word, such as `happy-path` | The scenarios with that tag, and those under `e2e/scenarios/<word>/` |
 | A path | That file or directory, from the working directory, else from `e2e/scenarios/`; or a scenario's ID, its path there without `.yaml` |
+| `--profile=<group>` | Of those, the scenarios of one [profile](#profiles-and-memory): `ollama`, `vllm`, or `none` for those that name no profile |
 | `--down` | Stops the services after the run |
 | `--no-build` | Starts Compose without rebuilding; builds only the missing images |
 
