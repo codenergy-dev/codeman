@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-11-04T14:47:33-03:00
-updated_at: 2026-11-06T18:15:00-03:00
+updated_at: 2026-11-06T19:05:00-03:00
 commit: e1c1411
 ---
 
@@ -208,4 +208,16 @@ Next: `vllm` and `unfit` again, when a GPU type of the list has room with CUDA 1
 
 Decisions 11 and 12 are in `d93b1aa`: with `--gpu=auto`, the default, each check reads the catalog of 8 GPU types of 16 to 24 GB on Secure Cloud and, by default, Community Cloud, and takes the cheapest with room, trying up to 3. The cap of $1 holds for the whole run, counting the pods still running. `b002870` and `d25cba5` give the workflow the `community` input and the same GPU types. Only `NVIDIA GeForce RTX 4090` and `NVIDIA RTX A5000` are known to Runpod's catalog; a wrong ID is skipped.
 
-Next: dispatch `vllm,unfit` with the defaults.
+The dispatch of `vllm,unfit` with the defaults, at `5620131`, passed both, in 27 minutes, for about $0.12:
+
+| Check | GPU, cloud, price | Result |
+| --- | --- | --- |
+| `vllm` | RTX A5000, Secure, $0.27/h, after 11 of 16 candidates had no room and 2 were unknown | Created in 2.1 s, serving 470.6 s later. Bootstrap verified Node.js 24.22.1 and the gateway at the commit. Fit: K/V cache of 1,775,312 tokens, 54 requests of 32,768 tokens. Chat through the proxy in 0.1 s. $0.035 |
+| `unfit` | RTX A4000, Secure, $0.25/h | Failed with the fit's message: the K/V cache holds 33.59 of the 256 requests. 1,147 s from the start to the failure, about $0.08 |
+
+So steps 3 and 4 are done. Two measurements for part 2 and the live test:
+
+- **A vLLM pod's start takes about 8 minutes** on a fresh host, image and model included, against about 1 minute for Ollama.
+- **A vLLM pod that does not fit fails only after vLLM starts:** about 19 minutes here, billed. A check of the fit before creating the pod would save it.
+
+Next: step 5, Salad, which first asks whether the user's Salad key, which reaches all of their organizations, is acceptable in the `E2E` environment.
