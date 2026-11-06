@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-11-04T14:47:33-03:00
-updated_at: 2026-11-06T16:27:00-03:00
+updated_at: 2026-11-06T16:41:00-03:00
 commit: e1c1411
 ---
 
@@ -172,3 +172,7 @@ The maintainer approved a direct proof of what the bootstrap checked:
 
 - `ff84219`: a pod's gateway reports `node` (`process.version`) and `gatewaySha256` (its own file, hashed once at its start) in `/admin/status`. `GATEWAY_VERSION` stays 2: the fields are optional, and `open-key` compares the version to tell gateways that serve one run at a time. `dist/` is rebuilt.
 - `049f22b`: the pod check requires `NODE_RELEASE`'s version and the gateway's SHA-256 at the run's commit, besides the pod's spec.
+
+The maintainer's first dispatch of the pod check, on `NVIDIA RTX A5000` with `ollama` at `6e4496b`, ended in 4.4 s: `ollama.start result=unavailable`, no pod created, cleanup passed. With one kind of host, the adapter takes any 400 for no room, and Runpod answers 400 to a request that breaks a rule too ([create a pod](../web/runpod/create-a-pod.md#errors)); the bootstrap's pod spec had never been created on Runpod. So the output could not tell them apart.
+
+- `9cad27d`: the start line gives the catalog's availability before each pod, and Runpod's message cleaned of hidden values and URLs; a 400 while the catalog lists room is `fail`, not `unavailable`.
