@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-11-04T14:47:33-03:00
-updated_at: 2026-11-06T14:48:00-03:00
+updated_at: 2026-11-06T15:36:00-03:00
 commit: e1c1411
 ---
 
@@ -159,3 +159,11 @@ On 2026-11-06:
 - Step 7: the maintainer approved the rule's text, and asked for it before step 3. `7590efa`, on `main`, adds it to `AGENTS.md`, not yet pushed.
 
 Next: the maintainer merges `fixes/e2e-hf-refs-main` and pushes `main`, then gives the digests of the pod images built from the Node fix, which a commit on `main` pins. Then step 3.
+
+Step 3's script and unit tests, on `features/multi-service-pods`, not yet run on Runpod and with no workflow yet:
+
+- `0586808`: the check's report: allowlisted fields only, and `::add-mask::` for each secret and identifier as soon as the run has it.
+- `74e26ce`: `e2e/live/pod.ts`, with step 4 as two more checks, `blocked` and `unfit`; a run costs at most 1 USD at the GPU's listed price for its max minutes.
+- `5e88b85`: [the pod check's section](../development/e2e/suite.md#the-pod-check).
+
+Open for the workflow: where it lives, and its `concurrency`, since a run terminates another's pods. Nothing reports the bootstrap's checks themselves: the check infers them from the pod's command and environment and a gateway that answers.
