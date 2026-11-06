@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-11-04T14:47:33-03:00
-updated_at: 2026-11-06T17:49:00-03:00
+updated_at: 2026-11-06T18:03:00-03:00
 commit: e1c1411
 ---
 
@@ -52,6 +52,13 @@ Also answered on 2026-11-05:
 6. **The Runpod account already in use holds the key,** not a separate one. A key that manages pods needs **All** permissions, [expires never and has no spending limit](../web/runpod/manage-credentials.md), so a leak reaches every pod of the account. The maintainer keeps the prepaid balance low, watches the spending, and revokes the key if needed.
 7. **The workflow reaches `main` on a branch from `fixes/node-24-22-1`.** `workflow_dispatch` runs only for a workflow on the default branch. The maintainer pushes and merges it, and the first dispatch gives the Node fix its e2e run, on `main`. Exceptionally, the fix reaches `main` before that run: the maintainer is Codeman's only real user, and the project is still experimental.
 8. **The workflow downloads `act` 0.2.89's Linux release** from GitHub, checked by SHA-256. The audit covered Homebrew's bottle of the same version; two scenarios need it, and the job has no secret.
+
+Answered on 2026-11-06, after the first dispatches of the pod check:
+
+9. **The pod check is a job of `e2e.yml`,** chosen by a `check` input, rather than a workflow of its own: `e2e.yml` is already on `main`, so it can be dispatched on a branch, and only its `pod` job names the `E2E` environment.
+10. **The gateway reports its Node.js version and its own SHA-256 in `/admin/status`,** so the pod check proves what the bootstrap verified, instead of inferring it.
+11. **The pod check picks its GPU itself,** cheapest first, under the $1 cap for the whole run, from a list of GPU types per check that fit its needs: enough memory for its model and engine, not much more. An explicit GPU type stays possible.
+12. **It may use Runpod's Community Cloud,** through a workflow input on by default. A pod there receives Runpod's pod-scoped key, not the account's, and the check's model is public. The pod check on Salad (step 5) runs on community hosts anyway, since Salad's secure hosts need a contract.
 
 ## Secrets and what a public repository shows
 
