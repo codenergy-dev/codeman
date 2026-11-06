@@ -20356,10 +20356,10 @@ import { randomBytes } from "node:crypto";
 
 // src/inference/images.ts
 var POD_IMAGES = {
-  // Published from ce1fed1.
-  ollama: "ghcr.io/codenergy-dev/codeman-ollama@sha256:111bab4dcb0c1d50f10dfead430325980066df0f756dfe017ce8c2f91821c83f",
-  // Published from ce1fed1: vLLM 0.31.0.
-  vllm: "ghcr.io/codenergy-dev/codeman-vllm@sha256:95e007062c15d5d7b8a73900e063efb9c9207316dd4c7fedb12a4a967eac2d6f"
+  // Published from f00d362: Node.js 24.22.1.
+  ollama: "ghcr.io/codenergy-dev/codeman-ollama@sha256:1c1771d22e238d9dbcba398ec2c0d248044be7accd9a4aeebe66ec522806f970",
+  // Published from f00d362: vLLM 0.31.0, Node.js 24.22.1.
+  vllm: "ghcr.io/codenergy-dev/codeman-vllm@sha256:330e23c032e5ff40d622df7aca5690d2f4922d771dd351daa07aa8a5c659b942"
 };
 var IMAGES_BEFORE_SALAD = /* @__PURE__ */ new Set([
   "ghcr.io/codenergy-dev/codeman-pod@sha256:6a7617fc8772c43600349a971a424bc918982c6d38972e7d1802a1a607e76d27",

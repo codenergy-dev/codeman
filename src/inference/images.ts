@@ -8,11 +8,11 @@
  * `pod-image` input overrides the Ollama image only. See docs/settings/vllm.md#pod-images.
  */
 export const POD_IMAGES: Readonly<Record<string, string>> = {
-  // Published from ce1fed1.
+  // Published from f00d362: Node.js 24.22.1.
   ollama:
-    "ghcr.io/codenergy-dev/codeman-ollama@sha256:111bab4dcb0c1d50f10dfead430325980066df0f756dfe017ce8c2f91821c83f",
-  // Published from ce1fed1: vLLM 0.31.0.
-  vllm: "ghcr.io/codenergy-dev/codeman-vllm@sha256:95e007062c15d5d7b8a73900e063efb9c9207316dd4c7fedb12a4a967eac2d6f",
+    "ghcr.io/codenergy-dev/codeman-ollama@sha256:1c1771d22e238d9dbcba398ec2c0d248044be7accd9a4aeebe66ec522806f970",
+  // Published from f00d362: vLLM 0.31.0, Node.js 24.22.1.
+  vllm: "ghcr.io/codenergy-dev/codeman-vllm@sha256:330e23c032e5ff40d622df7aca5690d2f4922d771dd351daa07aa8a5c659b942",
 };
 
 /**
