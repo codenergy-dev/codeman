@@ -46,6 +46,23 @@ export function memoryProblem(
   return `Docker has ${gib(total)} of memory, too little for ${short.length === 1 ? "a scenario" : `${short.length} scenarios`}: ${each.join("; ")}. Raise Docker Desktop's memory (Settings, Resources) to 10 GB or more, or select scenarios without ${short.length === 1 ? "it" : "them"}.`;
 }
 
+/**
+ * The services that exited with an error, from `docker compose ps --all --format json`: one JSON
+ * object per line, or one array in older versions of Compose.
+ */
+export function failedServices(listing: string): string[] {
+  const text = listing.trim();
+  if (!text) return [];
+  const entries: unknown[] = text.startsWith("[")
+    ? (JSON.parse(text) as unknown[])
+    : text.split("\n").map((line) => JSON.parse(line) as unknown);
+  const failed = entries.flatMap((entry) => {
+    const { Service, State, ExitCode } = entry as Record<string, unknown>;
+    return typeof Service === "string" && State === "exited" && ExitCode !== 0 ? [Service] : [];
+  });
+  return [...new Set(failed)];
+}
+
 export class Compose {
   readonly file: string;
   readonly env: Record<string, string>;
@@ -63,13 +80,33 @@ export class Compose {
       await dockerMemory(),
     );
     if (problem) throw new Error(problem);
-    await this.#run([
-      ...profiles.flatMap((profile) => ["--profile", profile]),
-      "up",
-      "--wait",
-      "--detach",
-      ...(options.build === false ? [] : ["--build"]),
-    ]);
+    const selected = profiles.flatMap((profile) => ["--profile", profile]);
+    try {
+      await this.#run([
+        ...selected,
+        "up",
+        "--wait",
+        "--detach",
+        ...(options.build === false ? [] : ["--build"]),
+      ]);
+    } catch (error) {
+      await this.#showFailed(selected);
+      throw error;
+    }
+  }
+
+  /** Prints the last lines of each service that exited with an error: `up --detach` shows none. */
+  async #showFailed(selected: string[]): Promise<void> {
+    const base = ["compose", "-f", this.file, ...selected];
+    const listed = await docker([...base, "ps", "--all", "--format", "json"], { env: this.env });
+    for (const service of failedServices(listed.stdout)) {
+      const logs = await docker([...base, "logs", "--no-color", "--tail", "50", service], {
+        env: this.env,
+      });
+      console.error(
+        `[e2e] ${service} exited with an error. Its last lines:\n${`${logs.stdout}${logs.stderr}`.trim()}`,
+      );
+    }
   }
 
   /** Builds the images of the `images` profile's services that are missing, or all with `force`. */

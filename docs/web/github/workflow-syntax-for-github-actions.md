@@ -2,7 +2,7 @@
 title: Workflow syntax for GitHub Actions
 url: https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax
 created_at: 2026-10-07T21:03:01-03:00
-updated_at: 2026-10-19T13:29:35-03:00
+updated_at: 2026-11-05T12:55:38-03:00
 tool: docs/web/tools/github.md
 ---
 
@@ -30,3 +30,11 @@ GitHub's reference of the workflow syntax is too large to keep here (about 230 K
 - `{owner}/{repo}@{ref}` runs an action of a public repository at a branch, tag or SHA; a commit SHA is the safest for stability and security (the section's opening list, "Example: Using a public action").
 - `./path/to/dir` runs the action in that directory of the runner's workspace, relative to the default working directory (`github.workspace`, `$GITHUB_WORKSPACE`), not of the workflow's repository: something must put it there first, such as `actions/checkout` ("Example: Using an action in the same repository as the workflow", and the table before it).
 - `$/path/to/action` runs an action of the workflow's own repository at the running commit, without a checkout; it always resolves to the repository of the file it appears in ("Example: Using an action in the same repository as the workflow at the running commit"). Not available on GitHub Enterprise Server.
+
+## `jobs.<job_id>.timeout-minutes`
+
+- The most minutes a job may run before GitHub cancels it; the default is 360. A longer value still ends at the runner's execution time limit (the section's first paragraphs), which is [6 hours on GitHub's runners](actions-limits.md).
+
+## `jobs.<job_id>.steps[*].timeout-minutes`
+
+- The most minutes a step may run before its process is killed: a positive integer, at most 360 (the section's text).

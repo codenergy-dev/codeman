@@ -2,16 +2,23 @@ import { spawnSync } from "node:child_process";
 import { relative } from "node:path";
 import { memoryProblem } from "./compose.ts";
 import { dockerMemory } from "./docker.ts";
-import { runnerProblem, selectScenarios } from "./scenario/filter.ts";
+import {
+  inProfileGroup,
+  isProfileGroup,
+  PROFILE_GROUPS,
+  runnerProblem,
+  selectScenarios,
+} from "./scenario/filter.ts";
 import { loadScenarios, SCENARIOS_ROOT } from "./scenario/load.ts";
 import type { Profile, Scenario } from "./scenario/schema.ts";
 import { ROOT, type ScenarioResult, Session } from "./session.ts";
 
 /**
- * `npm run test:e2e [-- <paths or tags>] [--down] [--no-build]`: builds the e2e bundle, starts
- * the suite's services with Compose (or reuses them), runs the selected scenarios one at a time,
- * and prints a summary. `--down` stops the services afterwards; `--no-build` keeps the images
- * Compose has. Exits 1 when a scenario fails.
+ * `npm run test:e2e [-- <paths or tags>] [--profile=<group>] [--down] [--no-build]`: builds the
+ * e2e bundle, starts the suite's services with Compose (or reuses them), runs the selected
+ * scenarios one at a time, and prints a summary. `--profile=` keeps those of a group: `ollama`,
+ * `vllm`, or `none` for those that name no profile. `--down` stops the services afterwards;
+ * `--no-build` keeps the images Compose has. Exits 1 when a scenario fails.
  *
  * A scenario tagged `known-bug` reproduces a bug of Codeman not fixed yet: it is expected to
  * fail, and its result is reported apart. Its failure does not fail the suite; its pass does, so
@@ -19,19 +26,27 @@ import { ROOT, type ScenarioResult, Session } from "./session.ts";
  */
 
 const args = process.argv.slice(2);
+const PROFILE_FLAG = "--profile=";
 const flags = new Set(args.filter((arg) => arg.startsWith("--")));
-const unknown = [...flags].filter((flag) => !["--down", "--no-build"].includes(flag));
-if (unknown.length > 0) {
-  console.error(`Unknown option ${unknown.join(", ")}; the options are --down and --no-build.`);
+const groups = [...flags].filter((flag) => flag.startsWith(PROFILE_FLAG));
+const unknown = [...flags].filter(
+  (flag) => !["--down", "--no-build"].includes(flag) && !flag.startsWith(PROFILE_FLAG),
+);
+const group = groups[0]?.slice(PROFILE_FLAG.length);
+if (unknown.length > 0 || groups.length > 1 || (group !== undefined && !isProfileGroup(group))) {
+  console.error(
+    `Unknown options in ${[...flags].join(", ")}; the options are --down, --no-build and one ${PROFILE_FLAG}${PROFILE_GROUPS.join("|")}.`,
+  );
   process.exit(2);
 }
 const selectors = args.filter((arg) => !arg.startsWith("--"));
 const log = (text: string) => console.log(`[e2e] ${text}`);
 
-const scenarios = selectScenarios(loadScenarios(), selectors, {
+const selected = selectScenarios(loadScenarios(), selectors, {
   cwd: process.cwd(),
   root: SCENARIOS_ROOT,
 });
+const scenarios = group === undefined ? selected : inProfileGroup(selected, group);
 const profiles = [...new Set(scenarios.flatMap((scenario) => scenario.profiles))] as Profile[];
 log(
   `${scenarios.length} scenario${scenarios.length === 1 ? "" : "s"}: ${scenarios.map((one) => one.id).join(", ")}.`,

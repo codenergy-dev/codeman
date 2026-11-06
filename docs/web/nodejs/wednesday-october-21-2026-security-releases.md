@@ -127,9 +127,9 @@ Thank you, to 0xoroot for reporting this vulnerability and thank you RafaelGSS f
 
 ## Downloads and release details
 
-- [Node.js v22.23.4](/blog/release/v22.23.4/)
-- [Node.js v24.22.1](/blog/release/v24.22.1/)
-- [Node.js v26.12.1](/blog/release/v26.12.1/)
+- [Node.js v22.23.4](https://nodejs.org/en/blog/release/v22.23.4/)
+- [Node.js v24.22.1](https://nodejs.org/en/blog/release/v24.22.1/)
+- [Node.js v26.12.1](https://nodejs.org/en/blog/release/v26.12.1/)
 
 # Summary
 

@@ -73,7 +73,7 @@ test("Codeman's action copies the bundle into its checkout and runs the runner's
   assert.equal(argv[0], "bash");
   assert.match(
     argv[2] ?? "",
-    /exec \/opt\/hostedtoolcache\/node\/24\.21\.0\/x64\/bin\/node "\$a\/dist\/index\.js"/,
+    /exec \/opt\/hostedtoolcache\/node\/24\.22\.1\/x64\/bin\/node "\$a\/dist\/index\.js"/,
   );
   // The gateway a pod downloads, whose SHA-256 Codeman takes from its checkout.
   assert.match(argv[2] ?? "", /cp \/opt\/codeman-e2e\/dist\/gateway\.js "\$a\/dist\/gateway\.js"/);

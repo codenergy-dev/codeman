@@ -67,7 +67,7 @@ on:
 permissions: {}
 jobs:
   select:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions: { id-token: write, actions: read }
     steps:
       - uses: acme/hello@${sha}
@@ -78,12 +78,12 @@ jobs:
     ".github/workflows/codeman-task.yml": `on: workflow_call
 jobs:
   agent:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions: { contents: read, actions: read }
     steps:
       - run: echo ok
   next:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions: { actions: write }
     steps:
       - run: echo ok

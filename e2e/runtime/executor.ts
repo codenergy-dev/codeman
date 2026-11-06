@@ -26,7 +26,7 @@ export const JOB_ROOT = "/home/runner/work";
 /** Where the bundle's files are mounted, read-only. */
 export const BUNDLE_ROOT = "/opt/codeman-e2e";
 /** The runner's Node, as GitHub runs JavaScript actions with its own, not the job's `PATH`'s. */
-const ACTION_NODE = "/opt/hostedtoolcache/node/24.21.0/x64/bin/node";
+const ACTION_NODE = "/opt/hostedtoolcache/node/24.22.1/x64/bin/node";
 
 export interface DockerExecutorOptions {
   image: string;

@@ -3,9 +3,10 @@ import type { AdvisoryException, ReleaseArtifact } from "./release-policy.ts";
 /*
  * Codeman's own pod images, `ghcr.io/codenergy-dev/codeman-<engine>`, which pods ran before they
  * started from the engines' official images (`ENGINE_RELEASES`), are no longer built. The last
- * ones pinned were published from ce1fed1 (docs/development/dependencies.md#audit-log). The images
- * published on GHCR stay, untouched, since pods created from them may still run (decision 5 of the
- * plan to start pods from official engine images); the lists of older images tell them apart.
+ * ones pinned were published from f00d362, on Node.js 24.22.1
+ * (docs/development/dependencies.md#audit-log). The images published on GHCR stay, untouched,
+ * since pods created from them may still run (decision 5 of the plan to start pods from official
+ * engine images); the lists of older images tell them apart.
  */
 
 /**

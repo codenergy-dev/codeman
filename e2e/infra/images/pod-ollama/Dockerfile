@@ -8,7 +8,7 @@
 # Every input is pinned by digest.
 
 # Only its node binary is used, for the tee: the fakes image's Node.js.
-FROM node:24.21.0-bookworm-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6 AS node
+FROM node:24.22.1-bookworm-slim@sha256:be8204d4bd327363357f532187b752ff62759c31bedf98e9e18fc08c9cbd605c AS node
 
 FROM ollama/ollama:0.40.10@sha256:4c5b27871a3239a717048f9b93057680a51b60c8119a7016aebb57f938e25e35
 COPY --from=node /usr/local/bin/node /opt/codeman-e2e/node

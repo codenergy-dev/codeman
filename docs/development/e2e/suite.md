@@ -23,7 +23,7 @@ Each scenario is a YAML file under [`e2e/scenarios/`](../../../e2e/scenarios/hap
 - The model's quality: replies are scripted.
 - Real throughput, the proxy's 100-second cut, Runpod's real worker states and billing, and Workload Identity Federation's real behavior.
 - arm64 hosts and AVX-512 paths.
-- CI: the suite runs only on a developer's machine, with `npm run test:e2e`.
+- Pushes and pull requests: CI never runs the suite, and [the maintainer starts it by hand](#on-github-actions).
 
 The [plan's out of scope](../../plans/2026-10-20-end-to-end-test-suite.md#out-of-scope) has the reasons.
 
@@ -108,6 +108,7 @@ The command exits 1 when a scenario fails or is not run, or when a [known bug's]
 | None | Every scenario |
 | A bare word, such as `happy-path` | The scenarios with that tag, and those under `e2e/scenarios/<word>/` |
 | A path | That file or directory, from the working directory, else from `e2e/scenarios/`; or a scenario's ID, its path there without `.yaml` |
+| `--profile=<group>` | Of those, the scenarios of one [profile](#profiles-and-memory): `ollama`, `vllm`, or `none` for those that name no profile |
 | `--down` | Stops the services after the run |
 | `--no-build` | Starts Compose without rebuilding; builds only the missing images |
 
@@ -118,8 +119,24 @@ An argument that matches no scenario is an error, so a typo runs nothing.
 
 - **Services stay up** between runs, so the next run starts in seconds. Compose recreates only what changed.
 - **Each scenario starts fresh:** every fake is reset, the store is a new Firestore project, and the runtime removes the scenario's containers when it ends. A scenario fails at once if anything of an earlier one is left.
-- **The pod launcher** listens on `127.0.0.1`, which Docker Desktop's `host.docker.internal` reaches. `CODEMAN_E2E_LAUNCHER_HOST` sets another address.
+- **The pod launcher** listens on `127.0.0.1`, which Docker Desktop's `host.docker.internal` reaches. `CODEMAN_E2E_LAUNCHER_HOST` sets another address: on Linux, the default bridge's, which is what `host.docker.internal` [resolves to there](../../web/docker/dockerd.md#host-gateway).
 - **`e2e/.out/session.json`** keeps the session's control tokens, so the running services stay usable. Both `e2e/.build/` and `e2e/.out/` are ignored by git.
+
+## On GitHub Actions
+
+The maintainer starts the suite by hand, on GitHub's standard runners, with [`.github/workflows/e2e.yml`](../../../.github/workflows/e2e.yml). It never runs on a push, pull request or schedule.
+
+- **Start it:** on GitHub, **Actions**, **E2E**, **Run workflow**, or with `gh`. This needs [write access, and the workflow on the default branch](../../web/github/manually-running-a-workflow.md).
+
+  ```sh
+  gh workflow run e2e.yml
+  gh workflow run e2e.yml -f selectors="pods/ollama-keep-and-release budgets"
+  ```
+
+- **What runs:** with no selectors, one job per `--profile=` group, so no runner holds both profiles' images, and one group's failure does not stop the others. With selectors, those scenarios in one job. Each job downloads its images and models again: there is no cache.
+- **What it costs:** nothing on a public repository, whose [standard runners are free](../../web/github/github-hosted-runners-reference.md#standard-github-hosted-runners-for-public-repositories).
+- **What it can reach:** only `contents: read`, and no secret, variable or environment: every key in a run is a fake's: random for the session, or a constant of the suite's code.
+- **On a failure:** download the job's `e2e-report-<group>` artifact, kept one day, then [read the failure](#read-a-failure). The logs show `df -h` and `docker system df` before and after the suite.
 
 ## Read a failure
 
@@ -204,7 +221,7 @@ Each event, schedule and dispatch is one `act <event> --eventpath <payload>` inv
 | OIDC | `ACTIONS_ID_TOKEN_REQUEST_URL`, and a request token per invocation, with the run's claims |
 | Actions | `--action-cache-path e2e/.out/act/actions/ --action-offline-mode`, every pin checked first; `--no-skip-checkout`, so `actions/checkout` runs against the fake |
 | Codeman's action | The e2e bundle, `action.yml` and the files beside it are Codeman's repository on the fake GitHub, at `CODEMAN_COMMIT_SHA`: the templates' own checkout then `uses: ./.codeman/action` run it. `--local-repository` would not apply: it replaces `uses: <owner>/<repo>@<ref>` actions, and the templates check Codeman out instead |
-| The jobs | `-P ubuntu-latest=codeman-e2e-runner:local --pull=false --rm`, the jobs network, `--container-daemon-socket -`, and `--container-options` with `--init`, `SYS_ADMIN`, seccomp and AppArmor unconfined, the CA's volume, 3 GiB and the scenario's labels |
+| The jobs | `-P ubuntu-24.04=codeman-e2e-runner:local --pull=false --rm`, the jobs network, `--container-daemon-socket -`, and `--container-options` with `--init`, `SYS_ADMIN`, seccomp and AppArmor unconfined, the CA's volume, 3 GiB and the scenario's labels |
 | The CA | act replaces the image's entry point, which installs the CA: `GIT_SSL_CAINFO` for git and `SSL_CERT_DIR` for `gh`; Node has `NODE_EXTRA_CA_CERTS` from the image |
 | `RUNNER_TEMP` | `/tmp`, which `${{ runner.temp }}` is under act whatever `RUNNER_TEMP` says, so the templates' artifact paths and Codeman's agree |
 | One at a time | Invocations queue, so per repository too: act ignores `concurrency`. Before each, the driver makes a new `act-toolcache` volume, labeled as its own |

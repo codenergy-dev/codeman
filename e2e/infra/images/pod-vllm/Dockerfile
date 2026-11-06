@@ -8,7 +8,7 @@
 # Every input is pinned by digest. vLLM's CPU image is built for linux/amd64.
 
 # Only its node binary is used, for the tee: the fakes image's Node.js.
-FROM node:24.21.0-bookworm-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6 AS node
+FROM node:24.22.1-bookworm-slim@sha256:be8204d4bd327363357f532187b752ff62759c31bedf98e9e18fc08c9cbd605c AS node
 
 # docs/development/dependencies.md#vllms-cpu-image.
 FROM vllm/vllm-openai-cpu:v0.32.0@sha256:ffaba3989b9b96d95a576143c872a4110ce9800f5199b6a36eb27bdff1cbbe05

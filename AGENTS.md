@@ -114,6 +114,7 @@ Stop and ask before:
 - Deleting files or data, or doing anything that cannot be easily undone.
 - Changing security settings, permissions, secrets or CI/CD.
 - Anything that incurs cost or uses paid resources.
+- Running end-to-end tests, or any other slow or costly suite: the person responsible decides whether it runs, and where.
 - Deviating from an approved plan.
 
 When asking, give the options, their trade-offs and your recommendation. If something is unclear, ask rather than assume.
