@@ -70,7 +70,7 @@ function assertNothingLeaks(lines: readonly string[], runpod: FakeRunpod, action
     assert.equal(lines[0], `::add-mask::${KEY}`);
   }
   for (const line of lines) {
-    assert.match(line, /^(::add-mask::\S+|\[pod-check\] [a-z.-]+( [a-z_]+=("[^"]*"|\S+))*)$/);
+    assert.match(line, /^(::add-mask::\S+|\[pod-check\] [a-z.-]+( [a-z0-9_]+=("[^"]*"|\S+))*)$/);
   }
 }
 
@@ -104,7 +104,7 @@ describe("the pod check", () => {
     assert.match(line(lines, "gateway"), new RegExp(`result=pass commit=${TEST_COMMIT}`));
     assert.match(
       line(lines, "ollama.bootstrap"),
-      /command=true image=true node=true gateway=true gateway_answered=true gateway_version=2/,
+      /result=pass node=v24\.22\.1 node_match=true gateway_sha256_match=true command=true image=true node_spec=true gateway_spec=true gateway_answered=true gateway_version=2/,
     );
     assert.match(line(lines, "ollama.fit"), /gpu_memory_gb=24 size_gb=1.2 vram_gb=1.2/);
     assert.match(line(lines, "vllm.fit"), /cache_tokens=1717000 concurrency=52.4/);
@@ -122,6 +122,21 @@ describe("the pod check", () => {
       `https://raw.githubusercontent.com/codenergy-dev/codeman/${TEST_COMMIT}/dist/gateway.js`,
     );
     assert.equal(pod?.env.CODEMAN_ORGANIZATION, OWNER);
+  });
+
+  test("fails the bootstrap when the gateway runs on another Node.js or another file", async () => {
+    for (const [fake, field] of [
+      [{ node: "v24.21.0" }, /node=v24\.21\.0 node_match=false gateway_sha256_match=true/],
+      [{ gatewaySha256: "b".repeat(64) }, /node_match=true gateway_sha256_match=false/],
+    ] as const) {
+      const { code, lines, runpod } = await run(["--checks=ollama"], fake);
+      assert.equal(code, 1);
+      const bootstrap = line(lines, "ollama.bootstrap");
+      assert.match(bootstrap, /result=fail/);
+      assert.match(bootstrap, field);
+      assertAllTerminated(runpod);
+      assertNothingLeaks(lines, runpod);
+    }
   });
 
   test("prints no mask outside GitHub Actions, and no secret either", async () => {

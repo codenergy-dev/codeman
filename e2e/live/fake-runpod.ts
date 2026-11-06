@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { ACTION_ROOT } from "../../src/action.ts";
+import { NODE_RELEASE } from "../../src/inference/images.ts";
 
 /**
  * Everything the pod check reaches, in memory, for its unit tests: Runpod's API and proxy with a
@@ -32,9 +33,13 @@ export interface FakeOptions {
   ollamaAdvisory?: string;
   /** The GPU's price per hour. */
   hourly?: number;
+  /** What the gateway reports it runs on: `NODE_RELEASE`'s version, and the file served. */
+  node?: string;
+  gatewaySha256?: string;
 }
 
 const GATEWAY = readFileSync(join(ACTION_ROOT, "dist/gateway.js"));
+const GATEWAY_SHA256 = createHash("sha256").update(GATEWAY).digest("hex");
 
 export class FakeRunpod {
   readonly pods = new Map<string, FakePod>();
@@ -158,6 +163,8 @@ export class FakeRunpod {
       return json(200, {
         version: 2,
         engine,
+        node: this.options.node ?? `v${NODE_RELEASE.release.version}`,
+        gatewaySha256: this.options.gatewaySha256 ?? GATEWAY_SHA256,
         ready: !failure,
         failure,
         ollama: JSON.parse(pod.env.CODEMAN_OLLAMA ?? "{}"),

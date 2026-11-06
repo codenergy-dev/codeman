@@ -155,12 +155,12 @@ The suite runs no engine on a GPU. The pod check does: [`e2e/live/pod.ts`](../..
 
 | Check | Starts | Passes when |
 | --- | --- | --- |
-| `ollama`, `vllm` | A pod from the catalog's official image through the bootstrap, with `qwen2.5:0.5b` or `Qwen/Qwen2.5-0.5B-Instruct` | The pod got the bootstrap as its command, with `NODE_RELEASE` and the gateway at the commit, and its gateway answers `/admin/status`; `/health` is ready; the fit is wholly on the GPU; one chat completion answers through Runpod's proxy; Codeman ends the run |
+| `ollama`, `vllm` | A pod from the catalog's official image through the bootstrap, with `qwen2.5:0.5b` or `Qwen/Qwen2.5-0.5B-Instruct` | The gateway's `/admin/status` reports `NODE_RELEASE`'s Node.js version and the SHA-256 of the gateway at the commit, and the pod got the bootstrap as its command with both; `/health` is ready; the fit is wholly on the GPU; one chat completion answers through Runpod's proxy; Codeman ends the run |
 | `blocked` | No pod: Ollama's pinned release without its exceptions | The release policy blocks it, from OSV.dev's advisories, and no pod is created |
 | `unfit` | A vLLM pod with `max-model-len: 32768` and `max-num-seqs: 256`, which no listed GPU holds | The pod's start fails with the fit's message |
 
 > [!NOTE]
-> Nothing reports the bootstrap's checks themselves. Its shell and Node.js stages exit before running anything whose SHA-256 differs, so a gateway that answers proves both passed.
+> The bootstrap runs nothing whose SHA-256 differs from its pod's environment. So the Node.js version and the gateway's SHA-256 that the gateway reports ([routes](../../inference/self-hosted.md#routes)) prove what it checked: `node` and `gateway_sha256_match` in the output.
 
 ### Run it
 
@@ -201,7 +201,7 @@ In GitHub Actions (`GITHUB_ACTIONS=true`), each secret and identifier is masked 
 [pod-check] gateway result=pass commit=0123456789abcdef0123456789abcdef01234567
 [pod-check] gpu result=pass gpu="NVIDIA RTX A5000" memory_gb=24 price_per_hour_usd=0.27 worst_case_usd=0.27
 [pod-check] ollama.start result=pass engine=ollama model=qwen2.5:0.5b create_s=2.1 serve_s=214.6
-[pod-check] ollama.bootstrap result=pass command=true image=true node=true gateway=true gateway_answered=true gateway_version=2
+[pod-check] ollama.bootstrap result=pass node=v24.22.1 node_match=true gateway_sha256_match=true command=true image=true node_spec=true gateway_spec=true gateway_answered=true gateway_version=2
 [pod-check] ollama.health result=pass http_status=200 ready=true
 [pod-check] ollama.fit result=pass gpu_memory_gb=24 size_gb=1.2 vram_gb=1.2 context=32768 parallel=1 requested_parallel=1 source=search loads=1
 [pod-check] ollama.chat result=pass http_status=200 answered=true completion_tokens=2 chat_s=0.6

@@ -576,6 +576,9 @@ interface GatewayStatus {
   version?: unknown;
   engine?: unknown;
   ready?: unknown;
+  /** The Node.js the gateway runs on, and its own file's SHA-256: from pod gateways that say. */
+  node?: unknown;
+  gatewaySha256?: unknown;
   fit?: FitReport | VllmFitReport;
 }
 
@@ -593,11 +596,12 @@ async function adminStatus(context: Context, handle: PodHandle): Promise<Gateway
 }
 
 /**
- * That the bootstrap verified Node.js and the gateway. Nothing reports the checks themselves: the
- * pod's command is the bootstrap, which exits before running anything whose SHA-256 differs, so
- * a gateway that answers its admin route proves both passed. Checked here: the pod was created
- * with the bootstrap as its command, on the catalog's image, with `NODE_RELEASE`'s URL and SHA-256
- * and the gateway's at the run's commit; and the gateway answers, with its version and engine.
+ * That the bootstrap verified Node.js and the gateway: the gateway reports the Node.js it runs on
+ * and its own file's SHA-256 (`gatewayBuild` in src/gateway/gateway.ts), which must be
+ * `NODE_RELEASE`'s version and the gateway's at the run's commit. The bootstrap runs nothing
+ * whose SHA-256 differs, so they prove what it checked. Also checked: the pod was created with
+ * the bootstrap as its command, on the catalog's image, with `NODE_RELEASE`'s URL and SHA-256 and
+ * the gateway's at the run's commit; and the gateway answers with its version and engine.
  */
 function bootstrapFields(
   context: Context,
@@ -609,19 +613,26 @@ function bootstrapFields(
   const env = spec?.env ?? {};
   const command = JSON.stringify(spec?.command) === JSON.stringify(bootstrapCommand());
   const image = spec?.image === podImage(engine);
-  const node =
+  const nodeSpec =
     env[BOOTSTRAP_VARIABLES.nodeUrl] === NODE_RELEASE.url &&
     env[BOOTSTRAP_VARIABLES.nodeSha256] === NODE_RELEASE.sha256;
-  const gateway =
+  const gatewaySpec =
     env[BOOTSTRAP_VARIABLES.gatewayUrl] === context.gateway.url &&
     env[BOOTSTRAP_VARIABLES.gatewaySha256] === context.gateway.sha256;
   const answered = status?.version === GATEWAY_VERSION && status.engine === engine;
+  const node = typeof status?.node === "string" ? status.node : undefined;
+  const nodeMatch = node === `v${NODE_RELEASE.release.version}`;
+  const gatewayMatch = status?.gatewaySha256 === context.gateway.sha256;
+  const passed = command && image && nodeSpec && gatewaySpec && answered && nodeMatch;
   return {
-    result: command && image && node && gateway && answered ? "pass" : "fail",
+    result: passed && gatewayMatch ? "pass" : "fail",
+    node,
+    node_match: nodeMatch,
+    gateway_sha256_match: gatewayMatch,
     command,
     image,
-    node,
-    gateway,
+    node_spec: nodeSpec,
+    gateway_spec: gatewaySpec,
     gateway_answered: answered,
     gateway_version: typeof status?.version === "number" ? status.version : undefined,
   };

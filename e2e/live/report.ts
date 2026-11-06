@@ -21,6 +21,8 @@ const TEXT_FIELDS: Readonly<Record<string, RegExp>> = {
   gpu: /^[A-Za-z0-9][A-Za-z0-9 .-]{0,63}$/,
   model: /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/,
   commit: /^[0-9a-f]{40}$/,
+  /** A Node.js version, as `process.version` gives it. */
+  node: /^v\d{1,3}\.\d{1,3}\.\d{1,3}$/,
   source: /^(settings|cache|search)$/,
   error: /^[A-Za-z]{1,40}$/,
   advisories: /^[A-Za-z0-9-]{1,40}(,[A-Za-z0-9-]{1,40}){0,19}$/,
