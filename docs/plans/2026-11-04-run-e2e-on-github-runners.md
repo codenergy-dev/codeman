@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-11-04T14:47:33-03:00
-updated_at: 2026-11-06T17:24:00-03:00
+updated_at: 2026-11-06T17:49:00-03:00
 commit: e1c1411
 ---
 
@@ -189,4 +189,12 @@ The next dispatch, at `98c0c18`, showed `NVIDIA RTX A5000` with `availability=NO
 | Chat through Runpod's proxy | 200, answered in 27.4 s, the model's first load |
 | Cost | $0.021, 88.9 s in all; cleanup terminated the 1 pod, and the workflow's last step found none |
 
-Next: `vllm` on the same GPU, which needs a host with CUDA 13.0; then `blocked` and `unfit`. Step 3 is done when `vllm` passes.
+A dispatch of `vllm,blocked,unfit` on the RTX 4090, at `9021375`, ended in 4.2 s with no pod created:
+
+- `vllm`: the catalog listed room with CUDA 13.0 or newer (`availability=LOW`, 1 data center), then the creation answered 400, "There are no longer any instances available with the requested specifications." The check called it a request problem; it was the room going in between. `4bac7bd` takes Runpod's no-instances message as no room.
+- `blocked`: passed. The real OSV.dev blocked Ollama 0.40.10 without its exceptions, on 7 Go advisories, GO-2025-4251 first, and no pod was created.
+- `unfit`: 0.7 s later, `availability=NONE`: Runpod offered the RTX 4090 only with CUDA 13.2, and no host had room.
+
+So vLLM 0.32.0's CUDA 13.0 floor narrows the hosts a vLLM pod can start on, on Secure Cloud. The live test and part 2 should expect it.
+
+Next: `vllm` and `unfit` again, when a GPU type of the list has room with CUDA 13.0. Step 3 is done when `vllm` passes; step 4 when `unfit` does.
