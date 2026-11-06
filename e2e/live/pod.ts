@@ -3,8 +3,9 @@ import { ACTION_ROOT } from "../../src/action.ts";
 import { podCheck } from "./check.ts";
 
 /**
- * `node e2e/live/pod.ts [--gpu=<id>] [--checks=ollama,vllm,blocked,unfit] [--ollama-model=<name>]
- * [--vllm-model=<id>] [--max-minutes=<n>] [--cleanup]`, with the Runpod key in
+ * `node e2e/live/pod.ts [--gpu=auto|<id>] [--community=true|false]
+ * [--checks=ollama,vllm,blocked,unfit] [--ollama-model=<name>] [--vllm-model=<id>]
+ * [--max-minutes=<n>] [--cleanup]`, with the Runpod key in
  * `CODEMAN_RUNPOD_API_KEY`: starts real pods on Runpod, which costs money. Each option may come
  * from its environment variable instead (`CODEMAN_POD_CHECK_GPU`, ...). See
  * docs/development/e2e/suite.md#the-pod-check.

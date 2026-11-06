@@ -2,7 +2,16 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { adminToken } from "../../src/inference/selfhosted.ts";
 import { TEST_COMMIT } from "../../src/testing/fake-releases.ts";
-import { type CheckOptions, OWNER, parseInputs, podCheck, runCommit } from "./check.ts";
+import {
+  CANDIDATES,
+  type CheckOptions,
+  GPU_MEMORY_GB,
+  OWNER,
+  parseInputs,
+  podCheck,
+  runCommit,
+  UNFIT_KV_GB,
+} from "./check.ts";
 import { type FakeOptions, FakeRunpod } from "./fake-runpod.ts";
 
 const KEY = "rpa_TESTKEY0123456789abcdefghijklmnop";
@@ -167,26 +176,157 @@ describe("the pod check", () => {
     assertNothingLeaks(lines, runpod);
   });
 
-  test("prints the catalog's availability before each pod", async () => {
+  test("prints the GPU it chose, and the catalog's availability, before each pod", async () => {
     const { lines } = await run([]);
     assert.match(
-      line(lines, "ollama.start"),
-      /result=pass engine=ollama model=qwen2.5:0.5b availability=HIGH data_centers=2 data_centers_with_room=1 create_s=/,
+      line(lines, "ollama.gpu"),
+      /^\[pod-check\] ollama.gpu result=pass gpu="NVIDIA RTX A4000" cloud=secure price_per_hour_usd=0.27 memory_gb=24 availability=HIGH data_centers=2 data_centers_with_room=1 candidates=16 eligible=16 no_room=0 missing=0 over_cap=0$/,
     );
-    assert.match(line(lines, "vllm.start"), /availability=HIGH data_centers=2/);
+    assert.match(
+      line(lines, "ollama.start"),
+      /result=pass engine=ollama model=qwen2.5:0.5b attempt=1 gpu="NVIDIA RTX A4000" cloud=secure price_per_hour_usd=0.27 memory_gb=24 availability=HIGH data_centers=2 data_centers_with_room=1 create_s=/,
+    );
+    assert.match(line(lines, "vllm.start"), /attempt=1 gpu="NVIDIA RTX A4000" cloud=secure/);
   });
 
-  test("a 400 while the catalog lists no room is unavailable, with Runpod's detail", async () => {
+  test("takes the cheapest GPU type with room, across both clouds", async () => {
     const { code, lines, runpod } = await run(["--checks=ollama"], {
-      availability: "NONE",
-      createError: () => ({ status: 400, detail: "There are no instances available." }),
+      catalog: {
+        "NVIDIA RTX A4000": {
+          secure: { price: 0.25, availability: "HIGH" },
+          community: { price: 0.17, availability: "LOW" },
+        },
+        "NVIDIA RTX A5000": {
+          secure: { price: 0.27, availability: "HIGH" },
+          community: { price: 0.16, availability: "MEDIUM" },
+        },
+      },
     });
+    assert.equal(code, 0, lines.join("\n"));
+    const [pod] = runpod.pods.values();
+    assert.equal(pod?.gpu, "NVIDIA RTX A5000");
+    assert.equal(pod?.cloud, "community");
+    assert.match(
+      line(lines, "ollama.gpu"),
+      /gpu="NVIDIA RTX A5000" cloud=community price_per_hour_usd=0.16 .*candidates=16 eligible=4 no_room=0 missing=12 over_cap=0/,
+    );
+    assert.match(line(lines, "ollama.start"), /result=pass .*cloud=community/);
+    assertNothingLeaks(lines, runpod);
+  });
+
+  test("skips GPU types without room, unknown to the catalog, or over the cost cap", async () => {
+    const { code, lines, runpod } = await run(["--checks=ollama"], {
+      catalog: {
+        "NVIDIA RTX A4000": { secure: { price: 0.2, availability: "NONE" }, community: null },
+        "NVIDIA RTX A4500": { secure: { price: 1.5, availability: "HIGH" }, community: null },
+        "NVIDIA L4": {
+          secure: { price: 0.4, availability: "HIGH" },
+          community: { price: 0.3, availability: "HIGH" },
+        },
+      },
+    });
+    assert.equal(code, 0, lines.join("\n"));
+    assert.match(
+      line(lines, "ollama.gpu"),
+      /result=pass gpu="NVIDIA L4" cloud=community price_per_hour_usd=0.3 .*candidates=16 eligible=2 no_room=1 missing=12 over_cap=1/,
+    );
+    assert.equal([...runpod.pods.values()][0]?.gpu, "NVIDIA L4");
+  });
+
+  test("creates nothing when no GPU type has room", async () => {
+    const { code, lines, runpod } = await run(["--checks=ollama"], { availability: "NONE" });
     assert.equal(code, 1);
     assert.equal(runpod.pods.size, 0);
     assert.match(
-      line(lines, "ollama.start"),
-      /result=unavailable error=PodUnavailable http_status=400 message="Runpod created no pod with NVIDIA GeForce RTX 4090: Secure Cloud: Runpod POST \/pods failed with 400: Bad Request There are no instances available\..*availability=NONE/,
+      line(lines, "ollama.gpu"),
+      /result=unavailable candidates=16 eligible=0 no_room=16 missing=0 over_cap=0 reason="No GPU type of the list has room now."/,
     );
+    assert.ok(!lines.some((one) => one.startsWith("[pod-check] ollama.start")));
+  });
+
+  test("tries the next GPU type when Runpod has no room after all", async () => {
+    const { code, lines, runpod } = await run(["--checks=ollama", "--community=false"], {
+      catalog: {
+        "NVIDIA RTX A4000": { secure: { price: 0.2, availability: "HIGH" } },
+        "NVIDIA RTX A5000": { secure: { price: 0.3, availability: "HIGH" } },
+      },
+      createError: ({ gpu }) =>
+        gpu === "NVIDIA RTX A4000"
+          ? { status: 400, detail: "There are no longer any instances available." }
+          : undefined,
+    });
+    assert.equal(code, 0, lines.join("\n"));
+    const starts = lines.filter((one) => one.startsWith("[pod-check] ollama.start "));
+    assert.equal(starts.length, 2);
+    assert.match(
+      starts[0] ?? "",
+      /result=unavailable error=PodUnavailable http_status=400 message=".*no longer any instances available.*" engine=ollama attempt=1 gpu="NVIDIA RTX A4000" cloud=secure/,
+    );
+    assert.match(starts[1] ?? "", /result=pass .*attempt=2 gpu="NVIDIA RTX A5000" cloud=secure/);
+    assert.equal(runpod.pods.size, 1);
+    assertAllTerminated(runpod);
+    assertNothingLeaks(lines, runpod);
+  });
+
+  test("gives up after a few GPU types without room, and an explicit one gets no other", async () => {
+    const noRoom = () => ({ status: 400, detail: "There are no instances available." });
+    const auto = await run(["--checks=ollama"], { createError: noRoom });
+    assert.equal(auto.code, 1);
+    const starts = auto.lines.filter((one) => one.startsWith("[pod-check] ollama.start "));
+    assert.equal(starts.length, 3);
+    assert.match(starts[2] ?? "", /result=unavailable .*attempt=3/);
+    const explicit = await run(["--checks=ollama", "--gpu=NVIDIA L4"], { createError: noRoom });
+    assert.equal(explicit.code, 1);
+    const one = explicit.lines.filter((line) => line.startsWith("[pod-check] ollama.start "));
+    assert.equal(one.length, 1);
+    assert.match(one[0] ?? "", /attempt=1 gpu="NVIDIA L4" cloud=secure/);
+    assert.match(line(explicit.lines, "ollama.gpu"), /candidates=2 eligible=2/);
+  });
+
+  test("limits the candidates to Secure Cloud without community", async () => {
+    const { code, lines, runpod } = await run(["--checks=ollama", "--community=false"], {
+      catalog: {
+        "NVIDIA RTX A4000": {
+          secure: { price: 0.25, availability: "HIGH" },
+          community: { price: 0.1, availability: "HIGH" },
+        },
+      },
+    });
+    assert.equal(code, 0, lines.join("\n"));
+    assert.ok(runpod.catalogReads.every((read) => read.endsWith(" secure")));
+    assert.equal([...runpod.pods.values()][0]?.cloud, "secure");
+    assert.match(line(lines, "ollama.gpu"), /cloud=secure .*candidates=8 eligible=1/);
+    assert.match(line(lines, "inputs"), /community=false/);
+  });
+
+  test("keeps the whole run under its cost cap, counting a pod that still runs", async () => {
+    // At 0.6 USD an hour, one pod for the run's hour fits; two at once do not.
+    const { code, lines, runpod } = await run([], { hourly: 0.6, terminateFails: true });
+    assert.equal(code, 1);
+    assert.match(line(lines, "ollama.start"), /result=pass/);
+    assert.match(
+      line(lines, "vllm.gpu"),
+      /result=fail .*eligible=0 no_room=0 missing=0 over_cap=16/,
+    );
+    assert.equal(runpod.pods.size, 1);
+    assert.match(line(lines, "cleanup"), /result=fail/);
+  });
+
+  test("unfit: takes only GPU types far below the K/V cache it asks", async () => {
+    for (const gpu of CANDIDATES.unfit) {
+      assert.ok((GPU_MEMORY_GB[gpu] ?? Infinity) * 2 < UNFIT_KV_GB, gpu);
+    }
+    const { code, lines, runpod } = await run(["--checks=unfit"], {
+      catalog: {
+        "NVIDIA RTX A4000": { memory: 80, secure: { price: 0.1, availability: "HIGH" } },
+        "NVIDIA L4": { memory: 24, secure: { price: 0.4, availability: "HIGH" } },
+      },
+      startFailure: "`Qwen/Qwen2.5-0.5B-Instruct` does not fit the GPU with 256 parallel requests.",
+    });
+    assert.equal(code, 0, lines.join("\n"));
+    assert.match(line(lines, "unfit.gpu"), /gpu="NVIDIA L4" .*eligible=1 .*too_large=1/);
+    assert.equal([...runpod.pods.values()][0]?.gpu, "NVIDIA L4");
+    assert.match(line(lines, "unfit"), /result=pass .*attempt=1 gpu="NVIDIA L4"/);
   });
 
   test("a 400 while the catalog lists room fails the start, with Runpod's detail cleaned", async () => {
@@ -308,11 +448,14 @@ describe("the pod check", () => {
     assertNothingLeaks(lines, runpod);
   });
 
-  test("refuses a GPU above the cost bound before any pod", async () => {
-    const { code, lines, runpod } = await run([], { hourly: 1.5 });
+  test("refuses GPU types above the cost cap before any pod", async () => {
+    const { code, lines, runpod } = await run(["--checks=ollama"], { hourly: 1.5 });
     assert.equal(code, 1);
     assert.equal(runpod.pods.size, 0);
-    assert.match(line(lines, "gpu"), /result=fail .*price_per_hour_usd=1.5 worst_case_usd=1.5/);
+    assert.match(
+      line(lines, "ollama.gpu"),
+      /result=fail candidates=16 eligible=0 no_room=0 missing=0 over_cap=16 reason="No GPU type with room fits the run's cost cap of 1 USD: lower the max minutes."/,
+    );
   });
 
   test("refuses a wrong input before any request, without repeating it", async () => {
@@ -320,7 +463,7 @@ describe("the pod check", () => {
     assert.equal(code, 2);
     assert.equal(runpod.bearers.length, 0);
     assert.ok(!lines.join("\n").includes("set-env"));
-    assert.match(line(lines, "inputs"), /result=fail reason="The GPU type must be one of/);
+    assert.match(line(lines, "inputs"), /result=fail reason="The GPU type must be auto, or one of/);
   });
 
   test("--cleanup terminates every pod of the check, and no other", async () => {
@@ -352,6 +495,7 @@ describe("parseInputs", () => {
     assert.deepEqual(parsed, {
       inputs: {
         gpu: "NVIDIA L4",
+        community: true,
         checks: ["vllm", "blocked"],
         ollamaModel: "qwen2.5:0.5b",
         vllmModel: "Qwen/Qwen2.5-0.5B-Instruct",
@@ -365,6 +509,7 @@ describe("parseInputs", () => {
     for (const argv of [
       ["--gpu=NVIDIA H100 80GB HBM3"],
       ["--checks=ollama,ollama"],
+      ["--community=yes"],
       ["--checks=all"],
       ["--ollama-model=Qwen2.5;rm"],
       ["--vllm-model=../etc/passwd"],

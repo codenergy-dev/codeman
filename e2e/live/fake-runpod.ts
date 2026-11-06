@@ -3,14 +3,25 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { ACTION_ROOT } from "../../src/action.ts";
 import { NODE_RELEASE } from "../../src/inference/images.ts";
+import { type Cloud, GPU_TYPES } from "./check.ts";
 
 /**
  * Everything the pod check reaches, in memory, for its unit tests: Runpod's API and proxy with a
  * gateway on each pod, OSV.dev, Hugging Face's Hub and raw.githubusercontent.com. No network.
  */
 
+/** A GPU type on each cloud: its price per hour and availability; null where not offered. */
+export interface FakeGpu {
+  memory?: number;
+  secure?: { price: number; availability: string } | null;
+  community?: { price: number; availability: string } | null;
+}
+
 export interface FakePod {
   id: string;
+  gpu: string;
+  cloud: Cloud;
+  hourly: number;
   image: string;
   command: string[];
   env: Record<string, string>;
@@ -25,18 +36,29 @@ export interface FakeOptions {
   startFailure?: string;
   /** Runpod says every pod failed once created. */
   podsFail?: boolean;
+  /** Runpod refuses every termination with 500. */
+  terminateFails?: boolean;
   /** Runpod creates the pod, but its answer is lost: the request fails. */
   loseCreateAnswer?: boolean;
   /** Called once a pod is created, before Runpod answers. */
   onCreate?: (pod: FakePod) => void;
   /** An advisory OSV.dev gives Ollama's release, high. */
   ollamaAdvisory?: string;
-  /** The GPU's price per hour. */
+  /**
+   * The catalog, by GPU ID; a GPU type it does not name answers 404. By default, every one of
+   * `GPU_TYPES`, on both clouds, at `hourly` and `availability`.
+   */
+  catalog?: Readonly<Record<string, FakeGpu>>;
+  /** The default catalog's price per hour, 0.27 USD. */
   hourly?: number;
-  /** The catalog's availability of the GPU type, `HIGH` by default. */
+  /** The default catalog's availability, `HIGH`. */
   availability?: string;
-  /** Runpod refuses each creation with this status and problem `detail`, made from the spec. */
-  createError?: (spec: { env: Record<string, string> }) => { status: number; detail: string };
+  /** Runpod refuses a creation with this status and problem `detail`, made from the request. */
+  createError?: (spec: {
+    env: Record<string, string>;
+    gpu: string;
+    cloud: Cloud;
+  }) => { status: number; detail: string } | undefined;
   /** What the gateway reports it runs on: `NODE_RELEASE`'s version, and the file served. */
   node?: string;
   gatewaySha256?: string;
@@ -51,6 +73,8 @@ export class FakeRunpod {
   readonly bearers: { token: string; printed: readonly string[] }[] = [];
   /** Requests the fake did not expect. */
   readonly unexpected: string[] = [];
+  /** Each catalog read, as `<GPU ID> <cloud>`. */
+  readonly catalogReads: string[] = [];
   readonly options: FakeOptions;
   readonly #lines: readonly string[];
   #next = 1;
@@ -65,6 +89,9 @@ export class FakeRunpod {
   addPod(env: Record<string, string>): FakePod {
     const pod: FakePod = {
       id: this.#podId(),
+      gpu: "NVIDIA RTX A5000",
+      cloud: "secure",
+      hourly: 0.27,
       image: "docker.io/ollama/ollama@sha256:0",
       command: [],
       env,
@@ -101,23 +128,29 @@ export class FakeRunpod {
   #runpod(method: string, url: URL, body: Record<string, unknown> | undefined): Response {
     const path = url.pathname.replace(/^\/v2/, "");
     if (method === "GET" && path.startsWith("/catalog/gpus/")) {
-      const hourly = this.options.hourly ?? 0.27;
+      const id = decodeURIComponent(path.slice("/catalog/gpus/".length));
+      const gpu = this.#gpu(id);
+      if (!gpu) return json(404, { title: "Not Found", status: 404, detail: "No such GPU type." });
+      const cloud = (url.searchParams.get("cloud") ?? "SECURE").toLowerCase() as Cloud;
+      const offer = gpu[cloud];
+      const level = offer?.availability ?? "NONE";
+      this.catalogReads.push(`${id} ${cloud}`);
       return json(200, {
-        id: decodeURIComponent(path.slice("/catalog/gpus/".length)),
-        memory: 24,
-        secure: true,
-        community: true,
-        price: { secure: hourly, community: hourly },
-        availability: this.options.availability ?? "HIGH",
+        id,
+        memory: gpu.memory ?? 24,
+        secure: gpu.secure !== null && gpu.secure !== undefined,
+        community: gpu.community !== null && gpu.community !== undefined,
+        price: { secure: gpu.secure?.price, community: gpu.community?.price },
         ...(url.searchParams.get("include") === "AVAILABILITY"
           ? {
+              availability: level,
               dataCenters: [
-                { id: "EU-RO-1", availability: this.options.availability ?? "HIGH" },
+                { id: "EU-RO-1", availability: level },
                 { id: "US-TX-3", availability: "NONE" },
               ],
+              cudaVersions: [{ version: "13.0", available: level !== "NONE" }],
             }
           : {}),
-        cudaVersions: [{ version: "13.0", available: true }],
       });
     }
     if (method === "GET" && path === "/pods") {
@@ -130,8 +163,12 @@ export class FakeRunpod {
     if (method === "POST" && path === "/pods") {
       const spec = body as { image: string; entrypoint: string[]; cmd: string[] } & {
         env: Record<string, string>;
+        gpu: { id: string };
+        cloud: string;
       };
-      const refused = this.options.createError?.(spec);
+      const gpu = spec.gpu.id;
+      const cloud = spec.cloud.toLowerCase() as Cloud;
+      const refused = this.options.createError?.({ env: spec.env, gpu, cloud });
       if (refused) {
         return new Response(
           JSON.stringify({ title: "Bad Request", status: refused.status, detail: refused.detail }),
@@ -140,6 +177,9 @@ export class FakeRunpod {
       }
       const pod: FakePod = {
         id: this.#podId(),
+        gpu,
+        cloud,
+        hourly: this.#gpu(gpu)?.[cloud]?.price ?? 0,
         image: spec.image,
         command: [...spec.entrypoint, ...spec.cmd],
         env: spec.env,
@@ -158,12 +198,24 @@ export class FakeRunpod {
     }
     if (path.startsWith("/pods/") && method === "DELETE") {
       if (!pod) return json(404, {});
+      if (this.options.terminateFails) return json(500, { title: "Internal Server Error" });
       pod.status = "TERMINATED";
       return new Response(null, { status: 204 });
     }
     if (method === "GET" && path === "/billing/pods") return json(200, { records: [] });
     this.unexpected.push(`${method} runpod ${path}`);
     return json(404, {});
+  }
+
+  /** A GPU type of the catalog. */
+  #gpu(id: string): FakeGpu | undefined {
+    if (this.options.catalog) return this.options.catalog[id];
+    if (!GPU_TYPES.includes(id)) return undefined;
+    const offer = {
+      price: this.options.hourly ?? 0.27,
+      availability: this.options.availability ?? "HIGH",
+    };
+    return { secure: offer, community: offer };
   }
 
   #gateway(id: string, method: string, path: string, auth: string | null): Response {
@@ -275,11 +327,11 @@ function runpodPod(pod: FakePod, failed = false) {
     status: failed && pod.status === "RUNNING" ? "ERROR" : pod.status,
     image: pod.image,
     env: pod.env,
-    gpu: { id: "NVIDIA RTX A5000", count: 1 },
-    cost: 0.27,
+    gpu: { id: pod.gpu, count: 1 },
+    cost: pod.hourly,
     createdAt: pod.createdAt,
     cudaVersion: "13.0",
-    cloud: "SECURE",
+    cloud: pod.cloud.toUpperCase(),
   };
 }
 

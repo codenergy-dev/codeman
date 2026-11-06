@@ -46,25 +46,67 @@ import { type Fields, Report } from "./report.ts";
  */
 export const OWNER = "codeman-pod-check";
 
+/** Runpod's clouds a pod may run on: Codeman's kinds of host (src/inference/gpu.ts). */
+export type Cloud = "secure" | "community";
+
 /**
- * The GPU types the check may use: small, cheap ones, which hold the tiny models. Runpod's IDs
- * (docs/web/runpod/gpu-types.md).
+ * The VRAM of each GPU type the check may use, in GB, by Runpod's GPU ID
+ * (docs/web/runpod/gpu-types.md): 16 to 24 GB, Ampere or Ada, enough for a 0.5B model and not
+ * much more; none of 48 GB or more. An ID Runpod's catalog does not know answers 404, and is
+ * skipped. Only `NVIDIA GeForce RTX 4090` is in docs/web/runpod/; `NVIDIA RTX A5000` answered the
+ * catalog in a dispatch; the others follow Runpod's naming, unconfirmed.
  */
-export const GPU_TYPES: readonly string[] = [
-  "NVIDIA RTX A4000",
-  "NVIDIA RTX A4500",
-  "NVIDIA RTX A5000",
-  "NVIDIA GeForce RTX 3090",
-  "NVIDIA GeForce RTX 4090",
-  "NVIDIA L4",
-  "NVIDIA RTX 4000 Ada Generation",
-];
-export const DEFAULT_GPU = "NVIDIA GeForce RTX 4090";
+export const GPU_MEMORY_GB: Readonly<Record<string, number>> = {
+  "NVIDIA RTX A4000": 16,
+  "NVIDIA RTX 2000 Ada Generation": 16,
+  "NVIDIA RTX A4500": 20,
+  "NVIDIA RTX 4000 Ada Generation": 20,
+  "NVIDIA RTX A5000": 24,
+  "NVIDIA GeForce RTX 3090": 24,
+  "NVIDIA L4": 24,
+  "NVIDIA GeForce RTX 4090": 24,
+};
+const SMALL_GPUS = Object.keys(GPU_MEMORY_GB);
+
+/**
+ * About the K/V cache `UNFIT_VLLM` asks, in GB: 256 requests of 32,768 tokens, at Qwen2.5-0.5B's
+ * 12,288 bytes per token (24 layers, 2 K/V heads of 64 dimensions, 2 bytes each, keys and values).
+ */
+export const UNFIT_KV_GB = (256 * 32_768 * 12_288) / 1e9;
+/**
+ * The most VRAM the `unfit` check takes, in GB: below half of `UNFIT_KV_GB`, so the overload
+ * surely does not fit. A GPU type the catalog lists with more is skipped.
+ */
+export const UNFIT_MAX_GB = 48;
+
+/**
+ * The GPU types each check that creates a pod tries with `--gpu=auto`, cheapest with room first,
+ * on Secure Cloud, or Community Cloud too.
+ */
+export const CANDIDATES: Readonly<Record<"ollama" | "vllm" | "unfit", readonly string[]>> = {
+  // qwen2.5:0.5b with its 32,768-token context uses about 1.2 GB: any of them holds it.
+  ollama: SMALL_GPUS,
+  // Qwen/Qwen2.5-0.5B-Instruct's 1 GB of weights, and vLLM's K/V cache in 90% of the rest: any of
+  // them. Their hosts must offer CUDA 13.0 (`VLLM_MIN_CUDA`), which the catalog read filters on.
+  vllm: SMALL_GPUS,
+  // 24 GB at most, against about 103 GB of K/V cache asked: a 24 GB GPU holds about 52 of the 256
+  // requests, so the fit surely fails. Same CUDA floor as `vllm`.
+  unfit: SMALL_GPUS.filter((gpu) => (GPU_MEMORY_GB[gpu] ?? Infinity) < UNFIT_MAX_GB),
+};
+
+/** The GPU types `--gpu=<id>` may name: those of the lists. */
+export const GPU_TYPES: readonly string[] = [...new Set(Object.values(CANDIDATES).flat())];
+export const DEFAULT_GPU = "auto";
+/** With `--gpu=auto`, the GPU types a check tries before it gives up for lack of room. */
+export const MAX_ATTEMPTS = 3;
 
 /** Runpod's REST API, as the adapter calls it (src/inference/runpod.ts). */
 const RUNPOD_API = "https://api.runpod.io/v2";
 
-/** The most one run may cost, in USD: the GPU's price for the run's whole time, pods one at a time. */
+/**
+ * The most one run may cost, in USD: what its pods cost so far, and the GPUs' prices of the pods
+ * running and the next one for the run's remaining time.
+ */
 export const MAX_RUN_USD = 1;
 /** The run's time bound, in minutes: when reached, it stops and terminates its pods. */
 export const DEFAULT_MINUTES = 60;
@@ -83,8 +125,8 @@ export const DEFAULT_MODELS = { ollama: "qwen2.5:0.5b", vllm: "Qwen/Qwen2.5-0.5B
 /** vLLM's tool call parser for Qwen2.5, as the e2e suite's vLLM scenarios set it. */
 const TOOL_CALL_PARSER = "hermes";
 /**
- * vLLM settings no GPU of `GPU_TYPES` holds: 256 requests of 32,768 tokens of Qwen2.5-0.5B's
- * K/V cache, at 12 KiB per token, are about 100 GB. vLLM starts, and the gateway's fit refuses.
+ * vLLM settings no GPU of `CANDIDATES.unfit` holds: about `UNFIT_KV_GB` of K/V cache. vLLM starts,
+ * and the gateway's fit refuses.
  */
 const UNFIT_VLLM = { "max-model-len": "32768", "max-num-seqs": "256" };
 
@@ -102,11 +144,15 @@ const OPTIONS = {
   "ollama-model": "CODEMAN_POD_CHECK_OLLAMA_MODEL",
   "vllm-model": "CODEMAN_POD_CHECK_VLLM_MODEL",
   "max-minutes": "CODEMAN_POD_CHECK_MAX_MINUTES",
+  community: "CODEMAN_POD_CHECK_COMMUNITY",
 } as const;
 type Option = keyof typeof OPTIONS;
 
 export interface Inputs {
+  /** `auto`, or one GPU type of `GPU_TYPES`. */
   gpu: string;
+  /** Whether pods may run on Runpod's Community Cloud too. */
+  community: boolean;
   checks: CheckName[];
   ollamaModel: string;
   vllmModel: string;
@@ -146,8 +192,12 @@ export function parseInputs(
     return text === undefined || text.trim() === "" ? undefined : text.trim();
   };
   const gpu = value("gpu") ?? DEFAULT_GPU;
-  if (!GPU_TYPES.includes(gpu)) {
-    return { problem: `The GPU type must be one of: ${GPU_TYPES.join(", ")}.` };
+  if (gpu !== "auto" && !GPU_TYPES.includes(gpu)) {
+    return { problem: `The GPU type must be auto, or one of: ${GPU_TYPES.join(", ")}.` };
+  }
+  const community = value("community") ?? "true";
+  if (community !== "true" && community !== "false") {
+    return { problem: "Community must be true or false." };
   }
   const listed = value("checks")
     ?.split(",")
@@ -177,7 +227,15 @@ export function parseInputs(
     };
   }
   return {
-    inputs: { gpu, checks: listed as CheckName[], ollamaModel, vllmModel, maxMinutes, cleanup },
+    inputs: {
+      gpu,
+      community: community === "true",
+      checks: listed as CheckName[],
+      ollamaModel,
+      vllmModel,
+      maxMinutes,
+      cleanup,
+    },
   };
 }
 
@@ -245,6 +303,7 @@ export async function podCheck(options: CheckOptions): Promise<number> {
   report.line("inputs", {
     result: "pass",
     gpu: inputs.gpu,
+    community: inputs.community,
     checks: inputs.checks.join(","),
     max_minutes: inputs.maxMinutes,
   });
@@ -262,28 +321,6 @@ export async function podCheck(options: CheckOptions): Promise<number> {
   if (!gateway.ok) return 1;
 
   const started = now().getTime();
-  let memoryGb: number | undefined;
-  try {
-    const hourly = (await runpod.pods.price(inputs.gpu, "secure")) * 3600;
-    memoryGb = await runpod.pods.memory(inputs.gpu);
-    const worst = (hourly * inputs.maxMinutes) / 60;
-    const within = worst <= MAX_RUN_USD;
-    report.line("gpu", {
-      result: within ? "pass" : "fail",
-      gpu: inputs.gpu,
-      memory_gb: memoryGb,
-      price_per_hour_usd: hourly,
-      worst_case_usd: worst,
-      reason: within
-        ? undefined
-        : `Its price for the run's max minutes is above ${MAX_RUN_USD} USD: lower the max minutes, or choose a cheaper GPU type.`,
-    });
-    if (!within) return 1;
-  } catch (error) {
-    report.line("gpu", { result: "fail", gpu: inputs.gpu, ...failure(report, error) });
-    return 1;
-  }
-
   const deadline = new AbortController();
   const timer = setTimeout(() => deadline.abort(), inputs.maxMinutes * 60_000);
   const signal = options.signal
@@ -310,7 +347,7 @@ export async function podCheck(options: CheckOptions): Promise<number> {
     fetch: fetchFn,
     now,
     wait: options.wait,
-    memoryGb,
+    deadlineAt: started + inputs.maxMinutes * 60_000,
     runId: tag,
   };
   const results: boolean[] = [];
@@ -366,7 +403,8 @@ interface Context {
   fetch: typeof fetch;
   now: () => Date;
   wait: ((ms: number) => Promise<void>) | undefined;
-  memoryGb: number | undefined;
+  /** When the run stops at its max minutes. */
+  deadlineAt: number;
   runId: string;
 }
 
@@ -399,6 +437,7 @@ function runRequest(context: Context) {
 function podInference(
   context: Context,
   engine: "ollama" | "vllm",
+  on: { gpu: string; cloud: Cloud },
   vllm: Record<string, string> = {},
   releases: PodReleases = context.releases,
 ): PodInference {
@@ -406,10 +445,12 @@ function podInference(
     model: engine === "ollama" ? context.inputs.ollamaModel : context.inputs.vllmModel,
     engine: ENGINES[engine] as InferenceEngine,
     pods: [],
-    gpuType: context.inputs.gpu,
+    gpuType: on.gpu,
     image: podImage(engine),
     reuse: "run",
     parallel: 1,
+    // Codeman's `hosts` setting: Runpod creates the pod on that cloud alone.
+    hosts: [on.cloud],
     ...(engine === "vllm"
       ? { vllm: checkedVllm({ "tool-call-parser": TOOL_CALL_PARSER, ...vllm }) }
       : {}),
@@ -434,25 +475,21 @@ function podInference(
 async function serveCheck(context: Context, engine: "ollama" | "vllm"): Promise<boolean> {
   const { say } = context;
   const model = engine === "ollama" ? context.inputs.ollamaModel : context.inputs.vllmModel;
-  const inference = podInference(context, engine);
-  const room = await availability(context, engine);
-  const start = context.now().getTime();
-  context.pods.allowCreate = true;
-  let opened: OpenedRun;
-  try {
-    opened = await inference.open(runRequest(context), SILENT);
-  } catch (error) {
+  const started = await startPod(context, engine, engine);
+  if (started.kind === "none") return false;
+  const { candidate, start, attempt } = started;
+  if (started.kind === "failed") {
     say(`${engine}.start`, {
-      ...startFailure(context.report, error, room),
+      ...startFailure(context.report, started.error, candidateFields(candidate)),
       engine,
       model,
-      ...room,
+      attempt,
+      ...candidateFields(candidate),
       pods: context.pods.count,
     });
     return false;
-  } finally {
-    context.pods.allowCreate = false;
   }
+  const { opened, inference } = started;
   context.report.hide(opened.credential);
   const handle = JSON.parse(opened.handle) as PodHandle;
   context.report.hide(handle.podId);
@@ -464,7 +501,8 @@ async function serveCheck(context: Context, engine: "ollama" | "vllm"): Promise<
     result: "pass",
     engine,
     model,
-    ...room,
+    attempt,
+    ...candidateFields(candidate),
     create_s: seconds(start, created),
     serve_s: seconds(created, serving),
   });
@@ -477,7 +515,7 @@ async function serveCheck(context: Context, engine: "ollama" | "vllm"): Promise<
     const health = await healthFields(context, handle);
     say(`${engine}.health`, health);
     results.push(health.result === "pass");
-    const fit = fitFields(context, engine, status);
+    const fit = fitFields(engine, status, candidate.memoryGb);
     say(`${engine}.fit`, fit);
     results.push(fit.result === "pass");
     const chat = await chatFields(context, opened, model);
@@ -508,9 +546,11 @@ async function blockedCheck(context: Context): Promise<boolean> {
   const ollama = ENGINE_RELEASES.ollama;
   if (!ollama) throw new Error("The catalog pins no Ollama release.");
   const before = context.pods.count;
+  // The policy blocks before anything reads the GPU type, which is any.
   const inference = podInference(
     context,
     "ollama",
+    { gpu: CANDIDATES.ollama[0] as string, cloud: "secure" },
     {},
     {
       ...context.releases,
@@ -545,18 +585,14 @@ async function blockedCheck(context: Context): Promise<boolean> {
  */
 async function unfitCheck(context: Context): Promise<boolean> {
   const before = context.pods.count;
-  const inference = podInference(context, "vllm", UNFIT_VLLM);
-  const room = await availability(context, "vllm");
-  const start = context.now().getTime();
-  context.pods.allowCreate = true;
+  const started = await startPod(context, "unfit", "vllm", UNFIT_VLLM);
+  if (started.kind === "none") return false;
+  const { candidate, start, attempt } = started;
   let error: unknown;
-  try {
-    const opened = await inference.open(runRequest(context), SILENT);
-    await inference.close(opened.handle, SILENT).catch(() => undefined);
-  } catch (caught) {
-    error = caught;
-  } finally {
-    context.pods.allowCreate = false;
+  if (started.kind === "opened") {
+    await started.inference.close(started.opened.handle, SILENT).catch(() => undefined);
+  } else {
+    error = started.error;
   }
   const cause = causeOf(error);
   const fit =
@@ -566,17 +602,166 @@ async function unfitCheck(context: Context): Promise<boolean> {
   const { result: _, ...found } =
     error === undefined
       ? { result: "", reason: "The pod served the model, which should not fit." }
-      : startFailure(context.report, error, room);
+      : startFailure(context.report, error, candidateFields(candidate));
   context.say("unfit", {
     result: passed ? "pass" : "fail",
     engine: "vllm",
     model: context.inputs.vllmModel,
     ...found,
-    ...room,
+    attempt,
+    ...candidateFields(candidate),
     pods: created,
     total_s: seconds(start, context.now().getTime()),
   });
   return passed;
+}
+
+/** A GPU type on a cloud, as Runpod's catalog gives it now. */
+interface Candidate {
+  gpu: string;
+  cloud: Cloud;
+  /** USD per hour for one GPU. */
+  hourly: number;
+  memoryGb: number | undefined;
+  /** `NONE`, `LOW`, `MEDIUM`, `HIGH`, or `unknown`. */
+  availability: string;
+  dataCenters: number | undefined;
+  withRoom: number | undefined;
+}
+
+function candidateFields(candidate: Candidate): Fields {
+  return {
+    gpu: candidate.gpu,
+    cloud: candidate.cloud,
+    price_per_hour_usd: candidate.hourly,
+    memory_gb: candidate.memoryGb,
+    availability: candidate.availability,
+    data_centers: candidate.dataCenters,
+    data_centers_with_room: candidate.withRoom,
+  };
+}
+
+/** What `startPod` gives: a pod that serves, a start that failed, or no GPU to try. */
+type Started =
+  | {
+      kind: "opened";
+      opened: OpenedRun;
+      inference: PodInference;
+      candidate: Candidate;
+      start: number;
+      attempt: number;
+    }
+  | { kind: "failed"; error: unknown; candidate: Candidate; start: number; attempt: number }
+  | { kind: "none" };
+
+/**
+ * Starts the check's pod on the cheapest GPU type and cloud with room within the run's cost cap,
+ * and, with `--gpu=auto`, on the next ones when Runpod has no room after all, `MAX_ATTEMPTS` at
+ * most. Prints the choice, and each attempt that found no room; the caller prints the last one.
+ */
+async function startPod(
+  context: Context,
+  check: "ollama" | "vllm" | "unfit",
+  engine: "ollama" | "vllm",
+  vllm: Record<string, string> = {},
+): Promise<Started> {
+  const { say } = context;
+  const ranked = await rankedCandidates(context, check, engine);
+  const attempts = context.inputs.gpu === "auto" ? MAX_ATTEMPTS : 1;
+  let attempt = 0;
+  for (const candidate of ranked) {
+    if (attempt >= attempts) break;
+    if (!withinCap(context, candidate.hourly)) continue;
+    attempt++;
+    const inference = podInference(context, engine, candidate, vllm);
+    const start = context.now().getTime();
+    context.pods.allowCreate = true;
+    context.pods.pendingHourly = candidate.hourly;
+    try {
+      const opened = await inference.open(runRequest(context), SILENT);
+      return { kind: "opened", opened, inference, candidate, start, attempt };
+    } catch (error) {
+      const found = startFailure(context.report, error, candidateFields(candidate));
+      if (found.result !== "unavailable") {
+        return { kind: "failed", error, candidate, start, attempt };
+      }
+      say(`${check}.start`, {
+        ...found,
+        engine,
+        attempt,
+        ...candidateFields(candidate),
+        pods: context.pods.count,
+      });
+    } finally {
+      context.pods.allowCreate = false;
+    }
+  }
+  if (attempt === 0 && ranked.length > 0) {
+    say(`${check}.start`, {
+      result: "fail",
+      reason: `No GPU type with room fits the run's cost cap of ${MAX_RUN_USD} USD any more.`,
+    });
+  }
+  return { kind: "none" };
+}
+
+/**
+ * The check's GPU types on each allowed cloud, read from Runpod's catalog: those with room within
+ * the run's cost cap, cheapest first, ties in the list's order. Prints the cheapest, and how many
+ * were considered and skipped, on `<check>.gpu`.
+ */
+async function rankedCandidates(
+  context: Context,
+  check: "ollama" | "vllm" | "unfit",
+  engine: "ollama" | "vllm",
+): Promise<Candidate[]> {
+  const gpus = context.inputs.gpu === "auto" ? CANDIDATES[check] : [context.inputs.gpu];
+  const clouds: Cloud[] = context.inputs.community ? ["secure", "community"] : ["secure"];
+  let missing = 0;
+  let noRoom = 0;
+  let overCap = 0;
+  let tooLarge = 0;
+  const eligible: Candidate[] = [];
+  for (const gpu of gpus) {
+    for (const cloud of clouds) {
+      const candidate = await catalogRead(context, gpu, cloud, engine);
+      if (!candidate) missing++;
+      else if (check === "unfit" && !((candidate.memoryGb ?? Infinity) < UNFIT_MAX_GB)) tooLarge++;
+      else if (!/^(LOW|MEDIUM|HIGH)$/.test(candidate.availability)) noRoom++;
+      else if (!withinCap(context, candidate.hourly)) overCap++;
+      else eligible.push(candidate);
+    }
+  }
+  // Stable: ties keep the list's order, Secure Cloud first.
+  eligible.sort((a, b) => a.hourly - b.hourly);
+  const [first] = eligible;
+  context.say(`${check}.gpu`, {
+    result: first ? "pass" : overCap > 0 ? "fail" : "unavailable",
+    ...(first ? candidateFields(first) : {}),
+    candidates: gpus.length * clouds.length,
+    eligible: eligible.length,
+    no_room: noRoom,
+    missing,
+    over_cap: overCap,
+    too_large: check === "unfit" ? tooLarge : undefined,
+    reason: first
+      ? undefined
+      : overCap > 0
+        ? `No GPU type with room fits the run's cost cap of ${MAX_RUN_USD} USD: lower the max minutes.`
+        : "No GPU type of the list has room now.",
+  });
+  return eligible;
+}
+
+/**
+ * Whether a pod at `hourly` keeps the run within `MAX_RUN_USD`: what its pods cost so far, and
+ * the pods still running and this one for the run's remaining time, its worst case.
+ */
+function withinCap(context: Context, hourly: number): boolean {
+  const now = context.now().getTime();
+  const hours = Math.max(0, context.deadlineAt - now) / 3_600_000;
+  const worst = context.pods.spentUsd(now) + (context.pods.runningHourly() + hourly) * hours;
+  return worst <= MAX_RUN_USD + 1e-9;
 }
 
 /** What the gateway says of itself, from `/admin/status` (src/gateway/gateway.ts). */
@@ -666,12 +851,11 @@ async function healthFields(context: Context, handle: PodHandle): Promise<Fields
  * tokens its K/V cache holds.
  */
 function fitFields(
-  context: Context,
   engine: "ollama" | "vllm",
   status: GatewayStatus | undefined,
+  gpu: number | undefined,
 ): Fields {
   const fit = status?.fit;
-  const gpu = context.memoryGb;
   if (engine === "ollama") {
     if (!fit || fit.engine !== undefined) {
       return { result: "fail", reason: "The gateway reported no fit.", gpu_memory_gb: gpu };
@@ -804,6 +988,10 @@ class TrackedPods {
   readonly provider: GpuProvider;
   /** Whether a check may create a pod now. */
   allowCreate = false;
+  /** The listed price of the GPU the next pod is created on, in USD per hour. */
+  pendingHourly = 0;
+  /** Each pod this run created: its price per hour, and when it started and ended. */
+  readonly #costs = new Map<string, { hourly: number; from: number; to?: number }>();
   readonly #host: Required<Omit<PodHost, "unservedImages">>;
   readonly #report: Report;
   readonly #key: string;
@@ -839,7 +1027,7 @@ class TrackedPods {
         terminate: async (id) => {
           this.#report.hide(id);
           if (![...this.#created.values()].some((pod) => pod.id === id)) this.#leftovers.add(id);
-          await host.terminate(id);
+          await this.#terminate(id);
         },
         url: async (id, port) => {
           const url = await host.url(id, port);
@@ -872,14 +1060,56 @@ class TrackedPods {
     this.#report.hide(adminToken(this.#key, nonce));
     this.#report.hide(nonce);
     this.#specs.set(nonce, spec);
-    const pod = await this.#host.create(spec);
+    // Counted from before its creation: it may be billed even when the answer is lost.
+    const from = this.#now().getTime();
+    const pending = `pending:${nonce}`;
+    this.#costs.set(pending, { hourly: this.pendingHourly, from });
+    let pod: Pod;
+    try {
+      pod = await this.#host.create(spec);
+    } catch (error) {
+      // Refused (4xx): no pod. Another failure, such as a lost answer, may hide one, whose cost
+      // then counts until the run's end.
+      if (error instanceof Error && /failed with 4\d\d/.test(error.message)) {
+        this.#costs.delete(pending);
+      }
+      throw error;
+    }
+    this.#costs.delete(pending);
+    this.#costs.set(pod.id, {
+      hourly: pod.pricePerSecond ? pod.pricePerSecond * 3600 : this.pendingHourly,
+      from,
+    });
     this.#report.hide(pod.id);
     this.#created.set(nonce, { id: pod.id, at: this.#now().getTime() });
     if (this.#closed || this.#signal.aborted) {
-      await this.#host.terminate(pod.id).catch(() => undefined);
+      await this.#terminate(pod.id).catch(() => undefined);
       throw new Error("The pod check stopped.");
     }
     return pod;
+  }
+
+  /** What this run's pods cost so far, at their prices, in USD. */
+  spentUsd(now: number): number {
+    let spent = 0;
+    for (const { hourly, from, to } of this.#costs.values()) {
+      spent += (hourly * Math.max(0, (to ?? now) - from)) / 3_600_000;
+    }
+    return spent;
+  }
+
+  /** The prices per hour of this run's pods still running, or maybe running. */
+  runningHourly(): number {
+    let hourly = 0;
+    for (const cost of this.#costs.values()) if (cost.to === undefined) hourly += cost.hourly;
+    return hourly;
+  }
+
+  /** Terminates a pod, and stops counting its cost. */
+  async #terminate(id: string): Promise<void> {
+    await this.#host.terminate(id);
+    const cost = this.#costs.get(id);
+    if (cost && cost.to === undefined) cost.to = this.#now().getTime();
   }
 
   /**
@@ -903,7 +1133,7 @@ class TrackedPods {
     }
     for (const id of ids) {
       try {
-        await this.#host.terminate(id);
+        await this.#terminate(id);
       } catch {
         ok = false;
       }
@@ -979,40 +1209,59 @@ function causeOf(error: unknown): unknown {
 const AVAILABILITY = new Set(["NONE", "LOW", "MEDIUM", "HIGH"]);
 
 /**
- * The GPU type's room for one pod on Secure Cloud now, from Runpod's catalog, with vLLM's CUDA for
- * a vLLM pod: the request the adapter makes before a creation on several clouds
- * (`#availability` in src/inference/runpod.ts), private there, so repeated here
- * (docs/web/runpod/get-a-gpu-type.md). Prints the level, and how many data centers have room;
- * `unknown` when the catalog does not say.
+ * A GPU type on a cloud, from Runpod's catalog: its price there, its memory and its room for one
+ * pod now, with vLLM's CUDA for a vLLM pod. The request the adapter makes before a creation on
+ * several clouds (`#availability` in src/inference/runpod.ts), private there, so repeated here
+ * (docs/web/runpod/get-a-gpu-type.md). Undefined when the catalog does not know the GPU type
+ * (404), does not offer it on that cloud, or cannot be read.
  */
-async function availability(context: Context, engine: "ollama" | "vllm"): Promise<Fields> {
+async function catalogRead(
+  context: Context,
+  gpu: string,
+  cloud: Cloud,
+  engine: "ollama" | "vllm",
+): Promise<Candidate | undefined> {
   const cuda = engine === "vllm" ? `&minCudaVersion=${encodeURIComponent(VLLM_MIN_CUDA)}` : "";
   try {
     const response = await context.fetch(
-      `${RUNPOD_API}/catalog/gpus/${encodeURIComponent(context.inputs.gpu)}?include=AVAILABILITY&product=POD&cloud=SECURE${cuda}`,
+      `${RUNPOD_API}/catalog/gpus/${encodeURIComponent(gpu)}?include=AVAILABILITY&product=POD&cloud=${cloud.toUpperCase()}${cuda}`,
       {
         headers: { Authorization: `Bearer ${context.key}` },
         signal: AbortSignal.timeout(30_000),
       },
     );
-    const body = await jsonBody<{ availability?: unknown; dataCenters?: unknown }>(response);
-    const level = typeof body?.availability === "string" ? body.availability : "";
-    const centers = body?.dataCenters;
+    const body = await jsonBody<{
+      memory?: unknown;
+      secure?: unknown;
+      community?: unknown;
+      price?: { secure?: unknown; community?: unknown };
+      availability?: unknown;
+      dataCenters?: unknown;
+    }>(response);
+    const hourly = body?.price?.[cloud];
+    if (!body || body[cloud] === false || typeof hourly !== "number" || !(hourly > 0)) {
+      return undefined;
+    }
+    const level = typeof body.availability === "string" ? body.availability : "";
+    const centers = body.dataCenters;
+    const known = centers !== undefined && centers !== null && typeof centers === "object";
     const levels = (Array.isArray(centers) ? centers : Object.values(centers ?? {})).map((one) =>
       typeof one === "string" ? one : (one as { availability?: unknown } | null)?.availability,
     );
-    const known = centers !== undefined && centers !== null && typeof centers === "object";
     return {
+      gpu,
+      cloud,
+      hourly,
+      memoryGb: typeof body.memory === "number" && body.memory > 0 ? body.memory : undefined,
       availability: AVAILABILITY.has(level) ? level : "unknown",
-      availability_http_status: response.ok ? undefined : response.status,
-      data_centers: known ? levels.length : undefined,
-      data_centers_with_room: known
+      dataCenters: known ? levels.length : undefined,
+      withRoom: known
         ? levels.filter((one) => typeof one === "string" && one !== "NONE" && AVAILABILITY.has(one))
             .length
         : undefined,
     };
   } catch {
-    return { availability: "unknown" };
+    return undefined;
   }
 }
 
