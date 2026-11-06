@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-10-30T16:20:00-03:00
-updated_at: 2026-11-05T13:00:00-03:00
+updated_at: 2026-11-06T15:08:00-03:00
 commit: 0bbb10d
 ---
 
@@ -207,7 +207,7 @@ Its first e2e run failed every scenario on a stale job image, which `3dc42ad` fi
 
 ### Next
 
-1. `fixes/node-24-22-1` reaches `main` with the [workflow that runs the e2e suite](2026-11-04-run-e2e-on-github-runners.md#decisions), decision 7, and gets its e2e run there. The maintainer then publishes the pod images and pins their digests.
+1. Done on 2026-11-06. `fixes/node-24-22-1` reached `main` with the [workflow that runs the e2e suite](2026-11-04-run-e2e-on-github-runners.md#decisions) (`f00d362`), and all 48 scenarios passed on GitHub's runner. `0f9bb8c`, on `main`, pins the pod images published from `f00d362`. Next, merge `main` into this branch: expect conflicts in `docs/development/dependencies.md` and `docs/development/e2e/suite.md`.
 2. The maintainer decides on the 4 `pyasn1` findings of the scan of 2026-11-04, in the [audit log](../development/dependencies.md#audit-log).
 3. The audit gaps step 11 found: OSV.dev has no audit log row, and `docs/web/` has no page on how raw.githubusercontent.com serves a file.
 4. The comment in `docker/runner/Dockerfile` about "the version of the pod images" goes stale here: fix it after the Node branch, which changes the next line, is merged.
