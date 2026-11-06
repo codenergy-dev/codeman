@@ -1,15 +1,39 @@
-# The end-to-end suite on GitHub's standard runners, started only by hand. Every key in it is a
-# fake's: it needs no secret, variable or environment, and must stay so.
+# Started only by hand, for one of two checks:
+# - `suite`: the end-to-end suite on GitHub's standard runners. Every key in it is a fake's: its job
+#   names no environment, so it reads no secret, and must stay so.
+# - `pod`: real pods on Runpod (e2e/live/pod.ts), which cost money. Only its job names the `E2E`
+#   environment, and only its two steps that call Runpod get the key.
 # See docs/development/e2e/suite.md#on-github-actions.
 name: E2E
 
 on:
   workflow_dispatch:
     inputs:
+      check:
+        description: Which check to run.
+        type: choice
+        options: [suite, pod]
+        default: suite
       selectors:
         description: Scenarios to run in one job, as paths or tags separated by a space. Empty runs every scenario, one job per Docker profile.
         type: string
         required: false
+      gpu:
+        description: The pod check's GPU type.
+        type: choice
+        options:
+          - NVIDIA RTX A4000
+          - NVIDIA RTX A4500
+          - NVIDIA RTX A5000
+          - NVIDIA GeForce RTX 3090
+          - NVIDIA GeForce RTX 4090
+          - NVIDIA L4
+          - NVIDIA RTX 4000 Ada Generation
+        default: NVIDIA RTX A5000
+      pod-checks:
+        description: The pod check's checks, separated by commas, from ollama, vllm, blocked and unfit.
+        type: string
+        default: ollama
 
 permissions:
   contents: read
@@ -17,6 +41,7 @@ permissions:
 jobs:
   suite:
     name: Suite (${{ matrix.group }})
+    if: inputs.check == 'suite'
     runs-on: ubuntu-24.04
     # Under GitHub's limit of 6 hours, and above the suite's step, so its report still uploads.
     timeout-minutes: 330
@@ -97,3 +122,41 @@ jobs:
           include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 1
+
+  pod:
+    name: Pod check
+    if: inputs.check == 'pod'
+    runs-on: ubuntu-24.04
+    environment: E2E
+    # One at a time: a run's cleanup terminates every pod the check tagged, another run's too.
+    concurrency:
+      group: pod-check
+      cancel-in-progress: false
+    # Above the script's own limit of 60 minutes, so its cleanup still runs.
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+      # Without the key: install scripts never see it.
+      - run: npm ci
+      # The script checks each input against a pattern, never repeats one, and prints only an
+      # allowlist of values; it masks the key and every token it makes before using them.
+      - name: Run the pod check
+        timeout-minutes: 65
+        env:
+          CODEMAN_RUNPOD_API_KEY: ${{ secrets.CODEMAN_RUNPOD_API_KEY }}
+          CODEMAN_POD_CHECK_GPU: ${{ inputs.gpu }}
+          CODEMAN_POD_CHECK_CHECKS: ${{ inputs.pod-checks }}
+        run: node e2e/live/pod.ts
+      # Terminates every pod the check tagged, whatever happened above.
+      - name: Terminate the check's pods
+        if: always()
+        timeout-minutes: 5
+        env:
+          CODEMAN_RUNPOD_API_KEY: ${{ secrets.CODEMAN_RUNPOD_API_KEY }}
+        run: node e2e/live/pod.ts --cleanup
