@@ -1016,6 +1016,9 @@ async function availability(context: Context, engine: "ollama" | "vllm"): Promis
   }
 }
 
+/** Runpod's detail when it has no room: "There are no [longer any] instances available …". */
+const NO_INSTANCES = /\bno (longer any )?instances available\b/i;
+
 /**
  * A start's failure, as `failure` gives it, but a creation Runpod refused with 400 while its
  * catalog listed room is a failure, not a lack of room: Runpod gives no capacity no code of its
@@ -1026,6 +1029,9 @@ function startFailure(report: Report, error: unknown, room: Fields): Fields {
   const listed =
     typeof room.availability === "string" && /^(LOW|MEDIUM|HIGH)$/.test(room.availability);
   if (found.result !== "unavailable" || !listed || found.http_status !== 400) return found;
+  // Runpod's own words for no room, which can follow a catalog read that listed it, as on
+  // 2026-11-06: "There are no longer any instances available with the requested specifications."
+  if (typeof found.message === "string" && NO_INSTANCES.test(found.message)) return found;
   return {
     ...found,
     result: "fail",

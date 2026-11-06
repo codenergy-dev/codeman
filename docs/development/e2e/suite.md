@@ -210,7 +210,7 @@ Only allowlisted values: times, memory, prices, statuses, the GPU type, engine, 
 
 - **Before each pod,** the start line gives the catalog's `availability` on Secure Cloud (`NONE`, `LOW`, `MEDIUM` or `HIGH`, with vLLM's CUDA for a vLLM pod) and how many data centers have room ([get a GPU type](../../web/runpod/get-a-gpu-type.md)).
 - **A failure** prints its kind and an HTTP status. A pod's start failure, such as the fit's, and Runpod's own message, such as a refused creation's `detail`, print cleaned of every hidden value and URL, cut to 400 characters.
-- **A creation refused with 400** is `unavailable` when the catalog listed no room, and `fail` when it listed some: Runpod gives no capacity no code of its own, and a request that breaks a rule is a 400 too ([create a pod](../../web/runpod/create-a-pod.md#errors)).
+- **A creation refused with 400** is `unavailable` when the catalog listed no room, and `fail` when it listed some: Runpod gives no capacity no code of its own, and a request that breaks a rule is a 400 too ([create a pod](../../web/runpod/create-a-pod.md#errors)). Runpod's own words for no room, "no instances available" or "no longer any instances available", stay `unavailable`: room can go between the catalog's answer and the creation.
 
 In GitHub Actions (`GITHUB_ACTIONS=true`), each secret and identifier is masked with `::add-mask::` as soon as the run has it: the key first, each gateway's admin token before its pod is created, the run's token once Codeman gives it. A line that would show one is withheld whole.
 

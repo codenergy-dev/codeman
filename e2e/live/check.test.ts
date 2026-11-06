@@ -214,6 +214,22 @@ describe("the pod check", () => {
     assertNothingLeaks(lines, runpod);
   });
 
+  test("Runpod's own words for no room stay unavailable, though the catalog listed room", async () => {
+    const { code, lines, runpod } = await run(["--checks=ollama"], {
+      createError: () => ({
+        status: 400,
+        detail:
+          "There are no longer any instances available with the requested specifications. Please refresh and try again.",
+      }),
+    });
+    assert.equal(code, 1);
+    assert.equal(runpod.pods.size, 0);
+    const start = line(lines, "ollama.start");
+    assert.match(start, /result=unavailable error=PodUnavailable http_status=400/);
+    assert.match(start, /availability=HIGH/);
+    assert.ok(!start.includes("reason="));
+  });
+
   test("terminates a pod whose creation's answer was lost, from its pool", async () => {
     const { code, lines, runpod } = await run(["--checks=ollama"], { loseCreateAnswer: true });
     assert.equal(code, 1);
