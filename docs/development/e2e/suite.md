@@ -19,7 +19,7 @@ Each scenario is a YAML file under [`e2e/scenarios/`](../../../e2e/scenarios/hap
 ## What it does not cover
 
 - Real OpenRouter, Runpod, Google or GitHub accounts, and anything that costs money.
-- vLLM on a GPU, and the production `vllm` image: the e2e vLLM pod uses vLLM's CPU image.
+- vLLM on a GPU, and the production `vllm` image: the e2e vLLM pod uses vLLM's CPU image. [The pod check](#the-pod-check) starts them on a real GPU.
 - The model's quality: replies are scripted.
 - Real throughput, the proxy's 100-second cut, Runpod's real worker states and billing, and Workload Identity Federation's real behavior.
 - arm64 hosts and AVX-512 paths.
@@ -137,6 +137,81 @@ The maintainer starts the suite by hand, on GitHub's standard runners, with [`.g
 - **What it costs:** nothing on a public repository, whose [standard runners are free](../../web/github/github-hosted-runners-reference.md#standard-github-hosted-runners-for-public-repositories).
 - **What it can reach:** only `contents: read`, and no secret, variable or environment: every key in a run is a fake's: random for the session, or a constant of the suite's code.
 - **On a failure:** download the job's `e2e-report-<group>` artifact, kept one day, then [read the failure](#read-a-failure). The logs show `df -h` and `docker system df` before and after the suite.
+
+## The pod check
+
+The suite runs no engine on a GPU. The pod check does: [`e2e/live/pod.ts`](../../../e2e/live/pod.ts) starts real pods on Runpod, from the sources, so no redirect of the [e2e build](../guide.md#the-e2e-build) applies.
+
+> [!WARNING]
+> It costs money: each pod is billed while it runs. Ask the maintainer before running it; they decide whether and where it runs. No workflow starts it yet.
+
+### What it does
+
+1. Checks its inputs, each against a strict pattern, and never repeats a wrong one.
+2. Checks the gateway the pods will download: `dist/gateway.js` on raw.githubusercontent.com at the run's commit must have the checkout's SHA-256. The commit is `GITHUB_SHA` in GitHub Actions, the one `actions/checkout` checks out and so the one `open-key` gives pods; else `git rev-parse HEAD`. It must be pushed.
+3. Reads the GPU type's price, and refuses one whose price for the run's max minutes is above 1 USD.
+4. Runs each check with Codeman's own path: `PodInference`, the real `Runpod`, the real release policy with OSV.dev, and a pod registry in memory. Its pods carry `CODEMAN_ORGANIZATION=codeman-pod-check`, and a pool of their own run.
+5. Terminates every pod it created, and any other of its pool, then checks with Runpod that each is gone: on success, on a failure, at its max minutes, and on SIGINT or SIGTERM.
+
+| Check | Starts | Passes when |
+| --- | --- | --- |
+| `ollama`, `vllm` | A pod from the catalog's official image through the bootstrap, with `qwen2.5:0.5b` or `Qwen/Qwen2.5-0.5B-Instruct` | The pod got the bootstrap as its command, with `NODE_RELEASE` and the gateway at the commit, and its gateway answers `/admin/status`; `/health` is ready; the fit is wholly on the GPU; one chat completion answers through Runpod's proxy; Codeman ends the run |
+| `blocked` | No pod: Ollama's pinned release without its exceptions | The release policy blocks it, from OSV.dev's advisories, and no pod is created |
+| `unfit` | A vLLM pod with `max-model-len: 32768` and `max-num-seqs: 256`, which no listed GPU holds | The pod's start fails with the fit's message |
+
+> [!NOTE]
+> Nothing reports the bootstrap's checks themselves. Its shell and Node.js stages exit before running anything whose SHA-256 differs, so a gateway that answers proves both passed.
+
+### Run it
+
+1. Put the Runpod key in the environment, without it reaching the shell's history:
+
+   ```sh
+   read -rs CODEMAN_RUNPOD_API_KEY && export CODEMAN_RUNPOD_API_KEY
+   ```
+
+2. Run the checks, from a clean checkout of a pushed commit:
+
+   ```sh
+   node e2e/live/pod.ts --gpu="NVIDIA RTX A5000" --checks=ollama,vllm,blocked,unfit
+   ```
+
+| Option | Environment variable | Default |
+| --- | --- | --- |
+| `--gpu=<id>` | `CODEMAN_POD_CHECK_GPU` | `NVIDIA RTX A5000`; one of the IDs in `GPU_TYPES` ([`check.ts`](../../../e2e/live/check.ts)) |
+| `--checks=<list>` | `CODEMAN_POD_CHECK_CHECKS` | `ollama,vllm` |
+| `--ollama-model=<name>` | `CODEMAN_POD_CHECK_OLLAMA_MODEL` | `qwen2.5:0.5b` |
+| `--vllm-model=<id>` | `CODEMAN_POD_CHECK_VLLM_MODEL` | `Qwen/Qwen2.5-0.5B-Instruct` |
+| `--max-minutes=<n>` | `CODEMAN_POD_CHECK_MAX_MINUTES` | `60`, from 15 to 60: the run stops there, and terminates its pods |
+| `--cleanup` | – | Off. Only terminates every pod that carries `CODEMAN_ORGANIZATION=codeman-pod-check`, as a workflow's last step would |
+
+It exits 0 when every check and the cleanup pass, 1 otherwise, and 2 on a wrong input.
+
+> [!CAUTION]
+> Run one at a time. Codeman's sweep terminates the pods of `codeman-pod-check` that its pool does not hold, so a run terminates another's. That also ends an earlier run's leftovers, which the output counts.
+
+### What it prints
+
+Only allowlisted values: times, memory, prices, statuses, the GPU type, engine, model, commit, and pass or fail per check. Never a pod's ID, URL or environment, a token, a key, or a response's headers or body. A failure prints its kind and an HTTP status; a pod's start failure, such as the fit's, prints its message cleaned of every hidden value and URL. Codeman's own log lines name pods, so none is printed.
+
+In GitHub Actions (`GITHUB_ACTIONS=true`), each secret and identifier is masked with `::add-mask::` as soon as the run has it: the key first, each gateway's admin token before its pod is created, the run's token once Codeman gives it. A line that would show one is withheld whole.
+
+```text
+[pod-check] inputs result=pass gpu="NVIDIA RTX A5000" checks=ollama,vllm max_minutes=60
+[pod-check] gateway result=pass commit=0123456789abcdef0123456789abcdef01234567
+[pod-check] gpu result=pass gpu="NVIDIA RTX A5000" memory_gb=24 price_per_hour_usd=0.27 worst_case_usd=0.27
+[pod-check] ollama.start result=pass engine=ollama model=qwen2.5:0.5b create_s=2.1 serve_s=214.6
+[pod-check] ollama.bootstrap result=pass command=true image=true node=true gateway=true gateway_answered=true gateway_version=2
+[pod-check] ollama.health result=pass http_status=200 ready=true
+[pod-check] ollama.fit result=pass gpu_memory_gb=24 size_gb=1.2 vram_gb=1.2 context=32768 parallel=1 requested_parallel=1 source=search loads=1
+[pod-check] ollama.chat result=pass http_status=200 answered=true completion_tokens=2 chat_s=0.6
+[pod-check] ollama.end result=pass cost_usd=0.017 total_s=231.4
+[pod-check] vllm.start ...
+[pod-check] cleanup result=pass pods=2 leftover_pods=0
+[pod-check] done result=pass total_s=812.9
+```
+
+The figures above are an example, not a measure.
 
 ## Read a failure
 
