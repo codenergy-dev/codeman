@@ -19,9 +19,9 @@ check() {
 }
 
 # The pod's gateway runs `vllm serve` with the model's name and no revision, offline, so the Hub's
-# library reads the commit from refs/main. A download by commit writes no ref
-# (_cache_commit_hash_for_specific_revision in huggingface_hub's file_download.py), so it is
-# written here, without a newline, as the library writes it.
+# library reads the commit from refs/main. A download by commit writes no ref, so it is written
+# here, without a newline, as the library writes it
+# (docs/web/hugging-face/src-huggingface-hub-file-download-py-at-v1-33-0.md).
 pin_main() {
   mkdir -p "$storage/refs"
   printf %s "$revision" > "$storage/refs/main"
