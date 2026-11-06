@@ -241,6 +241,8 @@ The pod's command, the bootstrap ([`bootstrap.ts`](../../src/gateway/bootstrap.t
 
 A failed download, or a SHA-256 that differs, exits with a `[bootstrap]` message in the pod's log before anything downloaded runs. That pod never serves, so `open-key` ends it, as any other.
 
+The gateway then reports, in its status, the Node.js version it runs on and its own file's SHA-256 ([routes](self-hosted.md#routes)): what the bootstrap checked, which [the pod check](../development/e2e/suite.md#the-pod-check) compares with the pinned ones.
+
 In the pod, the gateway starts the engine with the pod's settings, finds the largest context that fits the GPU, and reports that [fit](../glossary.md#fit) in its status. How it fits is in [context and the GPU](../settings/pod-engines.md#context-and-the-gpu), and in [Ollama's memory](../settings/ollama.md#memory) and [vLLM's](../settings/vllm.md#memory).
 
 `open-key` logs the fit and gives the agent its context length, and whether its model reads images ([images](../settings/pod-engines.md#images)). For a pod the task created after a search, it records the fit in the cache of fits. A start that fails is reported in the status for 2 minutes, then the pod terminates itself.

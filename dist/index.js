@@ -24128,6 +24128,8 @@ var Gateway = class {
     return {
       version: GATEWAY_VERSION,
       engine: this.#options.engine.name,
+      // Optional fields: Codeman reads neither, so older gateways' lack of them changes nothing.
+      ...this.#options.build ? { node: this.#options.build.node, gatewaySha256: this.#options.build.sha256 } : {},
       ready: this.ready,
       contextLength: this.contextLength,
       ollama: this.ollama,

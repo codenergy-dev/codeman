@@ -1,4 +1,5 @@
 import { createHash, timingSafeEqual } from "node:crypto";
+import { readFileSync } from "node:fs";
 import {
   createServer,
   request as httpRequest,
@@ -37,6 +38,27 @@ const KEEP_ALIVE_MS = 20_000;
 
 export function sha256(text: string): string {
   return createHash("sha256").update(text).digest("hex");
+}
+
+/**
+ * What a pod's gateway runs as, which `/admin/status` reports: the Node.js version it runs on,
+ * and the SHA-256 of the file it was started from. They prove what the bootstrap checked: Node.js
+ * against `NODE_RELEASE`, and the gateway against its commit's (src/gateway/bootstrap.ts).
+ */
+export interface GatewayBuild {
+  /** `process.version`, such as `v24.22.1`. */
+  node: string;
+  /** In hex; undefined when the file could not be read. */
+  sha256: string | undefined;
+}
+
+/** The build of the gateway in `file`, hashed once, on Node.js `node`. */
+export function gatewayBuild(file: string, node: string = process.version): GatewayBuild {
+  try {
+    return { node, sha256: createHash("sha256").update(readFileSync(file)).digest("hex") };
+  } catch {
+    return { node, sha256: undefined };
+  }
 }
 
 /** Whether `token` hashes to `hash`, in constant time. */
@@ -91,6 +113,8 @@ export interface GatewayOptions {
   engine: InferenceEngine;
   /** SHA-256, in hex, of the token that may manage runs over HTTP; none disables those routes. */
   adminSha256?: string | undefined;
+  /** What a pod's gateway runs as, which the status reports; none outside a pod. */
+  build?: GatewayBuild | undefined;
   /**
    * With worker samples: how long a request may wait while no worker starts or runs before
    * the run stops. Without it, a request waits as long as it takes.
@@ -428,6 +452,10 @@ export class Gateway {
     return {
       version: GATEWAY_VERSION,
       engine: this.#options.engine.name,
+      // Optional fields: Codeman reads neither, so older gateways' lack of them changes nothing.
+      ...(this.#options.build
+        ? { node: this.#options.build.node, gatewaySha256: this.#options.build.sha256 }
+        : {}),
       ready: this.ready,
       contextLength: this.contextLength,
       ollama: this.ollama,

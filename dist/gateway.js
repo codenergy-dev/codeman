@@ -4,6 +4,7 @@ const require = createRequire(import.meta.url);
 // src/gateway/main.ts
 import { execFile, spawn } from "node:child_process";
 import { rootCertificates as rootCertificates2 } from "node:tls";
+import { fileURLToPath } from "node:url";
 
 // src/inference/engine.ts
 function openAiUsage(body, cachedApart = false) {
@@ -485,6 +486,7 @@ function list2(items) {
 
 // src/gateway/gateway.ts
 import { createHash, timingSafeEqual } from "node:crypto";
+import { readFileSync } from "node:fs";
 import {
   createServer,
   request as httpRequest
@@ -628,6 +630,13 @@ var MAX_BODY_BYTES = 32 * 1024 * 1024;
 var KEEP_ALIVE_MS = 2e4;
 function sha256(text) {
   return createHash("sha256").update(text).digest("hex");
+}
+function gatewayBuild(file, node = process.version) {
+  try {
+    return { node, sha256: createHash("sha256").update(readFileSync(file)).digest("hex") };
+  } catch {
+    return { node, sha256: void 0 };
+  }
 }
 function matches(token, hash) {
   if (!token || !hash) return false;
@@ -878,6 +887,8 @@ var Gateway = class {
     return {
       version: GATEWAY_VERSION,
       engine: this.#options.engine.name,
+      // Optional fields: Codeman reads neither, so older gateways' lack of them changes nothing.
+      ...this.#options.build ? { node: this.#options.build.node, gatewaySha256: this.#options.build.sha256 } : {},
       ready: this.ready,
       contextLength: this.contextLength,
       ollama: this.ollama,
@@ -2234,6 +2245,8 @@ async function main() {
     upstream: `${url}/v1`,
     engine,
     adminSha256: settings.adminSha256,
+    // The bundle's own file: the bootstrap runs it as `node <file>`, which is this module's URL.
+    build: gatewayBuild(fileURLToPath(import.meta.url)),
     log
   });
   await listenEverywhere((host) => gateway.listen(host, GATEWAY_PORT));

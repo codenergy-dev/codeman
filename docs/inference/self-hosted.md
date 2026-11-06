@@ -74,6 +74,7 @@ The [gateway](../glossary.md#gateway) serves several [gateway runs](../glossary.
 - Only `POST /v1/chat/completions`, `POST /v1/completions` and `GET /v1/models` reach the engine.
 - Streamed requests ask the engine for usage in their last chunk.
 - `GET /usage` and the `/admin/` routes take an admin token ([the admin token](#the-admin-token)). The `/admin/` routes start, end and release runs, and report the gateway's state, with its API `version`: 2 serves several runs.
+- A pod's gateway also reports, in `/admin/status`, the Node.js it runs on (`node`, such as `v24.22.1`) and the SHA-256 of its own file (`gatewaySha256`), hashed once at its start. They show what the pod's [bootstrap](pods.md#starting) checked. Codeman's jobs do not read them, so gateways without them work as before.
 
 #### Usage
 

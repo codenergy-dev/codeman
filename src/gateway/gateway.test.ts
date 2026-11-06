@@ -1,9 +1,20 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { after, test } from "node:test";
 import { fakeEngine } from "../testing/fake-gpu.ts";
-import { Gateway, type GatewayOptions, runSettings, sha256, type Upstream } from "./gateway.ts";
+import {
+  Gateway,
+  type GatewayOptions,
+  gatewayBuild,
+  runSettings,
+  sha256,
+  type Upstream,
+} from "./gateway.ts";
 import { expiry, type PodPolicy } from "./pod.ts";
 
 /**
@@ -332,6 +343,35 @@ test("reports usage and manages runs only with the admin token", async () => {
   assert.equal(ended.outputTokens, 30);
   assert.equal((await call(url, "t")).status, 401);
   assert.deepEqual(await (await fetch(`${url}/health`)).json(), { ready: true });
+});
+
+test("a pod's gateway reports its Node.js and its own file's SHA-256 on the admin route", async () => {
+  const file = join(mkdtempSync(join(tmpdir(), "gateway-")), "gateway.mjs");
+  writeFileSync(file, "console.log('the gateway');\n");
+  const build = gatewayBuild(file, "v24.22.1");
+  assert.deepEqual(build, {
+    node: "v24.22.1",
+    sha256: createHash("sha256").update("console.log('the gateway');\n").digest("hex"),
+  });
+  assert.equal(gatewayBuild(file).node, process.version);
+  assert.deepEqual(gatewayBuild(join(file, "missing")), {
+    node: process.version,
+    sha256: undefined,
+  });
+
+  const upstream = await engine(() => ({ chunks: [JSON.stringify(completion)] }));
+  const { url } = await gateway({ upstream: upstream.url, build });
+  const status = (await (
+    await fetch(`${url}/admin/status`, { headers: { Authorization: "Bearer admin" } })
+  ).json()) as Record<string, unknown>;
+  assert.equal(status.node, "v24.22.1");
+  assert.equal(status.gatewaySha256, build.sha256);
+  assert.equal(status.version, 2);
+  // Only the admin route says it: `/health` takes no token.
+  assert.deepEqual(await (await fetch(`${url}/health`)).json(), { ready: true });
+  // A gateway outside a pod, as a Serverless agent job's, has neither.
+  const { instance } = await gateway({ upstream: upstream.url });
+  assert.ok(!("node" in instance.status()) && !("gatewaySha256" in instance.status()));
 });
 
 test("reads a run from the admin route only with every field in range", () => {

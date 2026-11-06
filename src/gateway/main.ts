@@ -1,9 +1,10 @@
 import { type ChildProcess, execFile, spawn } from "node:child_process";
 import { rootCertificates } from "node:tls";
+import { fileURLToPath } from "node:url";
 import type { InferenceEngine } from "../inference/engine.ts";
 import { OLLAMA_URL, ollama } from "../inference/ollama.ts";
 import { VLLM_URL, vllm } from "../inference/vllm.ts";
-import { Gateway } from "./gateway.ts";
+import { Gateway, gatewayBuild } from "./gateway.ts";
 import { findCommand, listenEverywhere, providerTermination } from "./host.ts";
 import {
   expiry,
@@ -78,6 +79,8 @@ async function main(): Promise<void> {
     upstream: `${url}/v1`,
     engine,
     adminSha256: settings.adminSha256,
+    // The bundle's own file: the bootstrap runs it as `node <file>`, which is this module's URL.
+    build: gatewayBuild(fileURLToPath(import.meta.url)),
     log,
   });
   await listenEverywhere((host) => gateway.listen(host, GATEWAY_PORT));
