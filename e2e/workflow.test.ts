@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { parse } from "yaml";
+import { GPU_TYPES } from "./live/check.ts";
 
 /**
  * The rules of the e2e workflow (docs/plans/2026-11-04-run-e2e-on-github-runners.md, "Secrets and
@@ -21,7 +22,7 @@ interface Job {
   steps: Step[];
 }
 const workflow = parse(text) as {
-  on: Record<string, unknown>;
+  on: { workflow_dispatch: { inputs: Record<string, { options?: string[]; default?: unknown }> } };
   permissions: Record<string, string>;
   jobs: Record<string, Job>;
 };
@@ -65,4 +66,11 @@ test("only the pod job names the environment, and only its Runpod steps get the 
     for (const step of job.steps) assert.ok(!step.run?.includes("${{"), step.run);
   }
   assert.ok(!pod.steps.some((step) => step.uses?.startsWith("actions/upload-artifact@")));
+});
+
+test("the workflow's GPU types are the pod check's, after auto", () => {
+  const { gpu, community } = workflow.on.workflow_dispatch.inputs;
+  assert.deepEqual(gpu?.options, ["auto", ...GPU_TYPES]);
+  assert.equal(gpu?.default, "auto");
+  assert.equal(community?.default, true);
 });
