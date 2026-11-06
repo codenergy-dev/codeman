@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-11-04T14:47:33-03:00
-updated_at: 2026-11-06T18:03:00-03:00
+updated_at: 2026-11-06T18:15:00-03:00
 commit: e1c1411
 ---
 
@@ -205,3 +205,7 @@ A dispatch of `vllm,blocked,unfit` on the RTX 4090, at `9021375`, ended in 4.2 s
 So vLLM 0.32.0's CUDA 13.0 floor narrows the hosts a vLLM pod can start on, on Secure Cloud. The live test and part 2 should expect it.
 
 Next: `vllm` and `unfit` again, when a GPU type of the list has room with CUDA 13.0. Step 3 is done when `vllm` passes; step 4 when `unfit` does.
+
+Decisions 11 and 12 are in `d93b1aa`: with `--gpu=auto`, the default, each check reads the catalog of 8 GPU types of 16 to 24 GB on Secure Cloud and, by default, Community Cloud, and takes the cheapest with room, trying up to 3. The cap of $1 holds for the whole run, counting the pods still running. `b002870` and `d25cba5` give the workflow the `community` input and the same GPU types. Only `NVIDIA GeForce RTX 4090` and `NVIDIA RTX A5000` are known to Runpod's catalog; a wrong ID is skipped.
+
+Next: dispatch `vllm,unfit` with the defaults.
