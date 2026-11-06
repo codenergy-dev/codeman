@@ -29,7 +29,7 @@ on:
           - NVIDIA GeForce RTX 4090
           - NVIDIA L4
           - NVIDIA RTX 4000 Ada Generation
-        default: NVIDIA RTX A5000
+        default: NVIDIA GeForce RTX 4090
       pod-checks:
         description: The pod check's checks, separated by commas, from ollama, vllm, blocked and unfit.
         type: string

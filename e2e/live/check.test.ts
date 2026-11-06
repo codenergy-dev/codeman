@@ -185,7 +185,7 @@ describe("the pod check", () => {
     assert.equal(runpod.pods.size, 0);
     assert.match(
       line(lines, "ollama.start"),
-      /result=unavailable error=PodUnavailable http_status=400 message="Runpod created no pod with NVIDIA RTX A5000: Secure Cloud: Runpod POST \/pods failed with 400: Bad Request There are no instances available\..*availability=NONE/,
+      /result=unavailable error=PodUnavailable http_status=400 message="Runpod created no pod with NVIDIA GeForce RTX 4090: Secure Cloud: Runpod POST \/pods failed with 400: Bad Request There are no instances available\..*availability=NONE/,
     );
   });
 

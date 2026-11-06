@@ -59,7 +59,7 @@ export const GPU_TYPES: readonly string[] = [
   "NVIDIA L4",
   "NVIDIA RTX 4000 Ada Generation",
 ];
-export const DEFAULT_GPU = "NVIDIA RTX A5000";
+export const DEFAULT_GPU = "NVIDIA GeForce RTX 4090";
 
 /** Runpod's REST API, as the adapter calls it (src/inference/runpod.ts). */
 const RUNPOD_API = "https://api.runpod.io/v2";

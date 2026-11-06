@@ -173,12 +173,12 @@ The suite runs no engine on a GPU. The pod check does: [`e2e/live/pod.ts`](../..
 2. Run the checks, from a clean checkout of a pushed commit:
 
    ```sh
-   node e2e/live/pod.ts --gpu="NVIDIA RTX A5000" --checks=ollama,vllm,blocked,unfit
+   node e2e/live/pod.ts --gpu="NVIDIA GeForce RTX 4090" --checks=ollama,vllm,blocked,unfit
    ```
 
 | Option | Environment variable | Default |
 | --- | --- | --- |
-| `--gpu=<id>` | `CODEMAN_POD_CHECK_GPU` | `NVIDIA RTX A5000`; one of the IDs in `GPU_TYPES` ([`check.ts`](../../../e2e/live/check.ts)) |
+| `--gpu=<id>` | `CODEMAN_POD_CHECK_GPU` | `NVIDIA GeForce RTX 4090`, which had room when `NVIDIA RTX A5000` had none (2026-11-06); one of the IDs in `GPU_TYPES` ([`check.ts`](../../../e2e/live/check.ts)) |
 | `--checks=<list>` | `CODEMAN_POD_CHECK_CHECKS` | `ollama,vllm` |
 | `--ollama-model=<name>` | `CODEMAN_POD_CHECK_OLLAMA_MODEL` | `qwen2.5:0.5b` |
 | `--vllm-model=<id>` | `CODEMAN_POD_CHECK_VLLM_MODEL` | `Qwen/Qwen2.5-0.5B-Instruct` |
@@ -195,10 +195,10 @@ It exits 0 when every check and the cleanup pass, 1 otherwise, and 2 on a wrong 
 The same workflow runs it, with the input `check` set to `pod`, on the branch to check. The run's commit must hold the `dist/gateway.js` the check expects.
 
 ```sh
-gh workflow run e2e.yml --ref features/multi-service-pods -f check=pod -f gpu="NVIDIA RTX A5000" -f pod-checks=ollama
+gh workflow run e2e.yml --ref features/multi-service-pods -f check=pod -f gpu="NVIDIA GeForce RTX 4090" -f pod-checks=ollama
 ```
 
-- **Inputs:** `gpu`, a choice of the IDs in `GPU_TYPES`, `NVIDIA RTX A5000` by default; `pod-checks`, `ollama` by default. The models and the max minutes keep the script's defaults.
+- **Inputs:** `gpu`, a choice of the IDs in `GPU_TYPES`, `NVIDIA GeForce RTX 4090` by default; `pod-checks`, `ollama` by default. The models and the max minutes keep the script's defaults.
 - **The key:** the secret `CODEMAN_RUNPOD_API_KEY` of the `E2E` environment, which admits only `main`, `features/*` and `fixes/*`. Only the pod job names the environment, and only its two steps that call Runpod get the key; `npm ci` runs before, without it.
 - **One at a time:** the job's `concurrency` group is `pod-check`, and a second run waits.
 - **Cleanup:** a last step, `if: always()`, runs `--cleanup`. The job stops at 75 minutes, after the script's own 60.
@@ -215,9 +215,9 @@ Only allowlisted values: times, memory, prices, statuses, the GPU type, engine, 
 In GitHub Actions (`GITHUB_ACTIONS=true`), each secret and identifier is masked with `::add-mask::` as soon as the run has it: the key first, each gateway's admin token before its pod is created, the run's token once Codeman gives it. A line that would show one is withheld whole.
 
 ```text
-[pod-check] inputs result=pass gpu="NVIDIA RTX A5000" checks=ollama,vllm max_minutes=60
+[pod-check] inputs result=pass gpu="NVIDIA GeForce RTX 4090" checks=ollama,vllm max_minutes=60
 [pod-check] gateway result=pass commit=0123456789abcdef0123456789abcdef01234567
-[pod-check] gpu result=pass gpu="NVIDIA RTX A5000" memory_gb=24 price_per_hour_usd=0.27 worst_case_usd=0.27
+[pod-check] gpu result=pass gpu="NVIDIA GeForce RTX 4090" memory_gb=24 price_per_hour_usd=0.89 worst_case_usd=0.89
 [pod-check] ollama.start result=pass engine=ollama model=qwen2.5:0.5b availability=HIGH data_centers=4 data_centers_with_room=3 create_s=2.1 serve_s=214.6
 [pod-check] ollama.bootstrap result=pass node=v24.22.1 node_match=true gateway_sha256_match=true command=true image=true node_spec=true gateway_spec=true gateway_answered=true gateway_version=2
 [pod-check] ollama.health result=pass http_status=200 ready=true
