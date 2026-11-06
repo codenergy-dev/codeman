@@ -135,7 +135,7 @@ The maintainer starts the suite by hand, on GitHub's standard runners, with [`.g
 
 - **What runs:** with no selectors, one job per `--profile=` group, so no runner holds both profiles' images, and one group's failure does not stop the others. With selectors, those scenarios in one job. Each job downloads its images and models again: there is no cache.
 - **What it costs:** nothing on a public repository, whose [standard runners are free](../../web/github/github-hosted-runners-reference.md#standard-github-hosted-runners-for-public-repositories).
-- **What it can reach:** only `contents: read`, and no secret, variable or environment: every key in a run is a fake's: random for the session, or a constant of the suite's code.
+- **What it can reach:** only `contents: read`, and no secret, variable or environment: every key in a run is a fake's: random for the session, or a constant of the suite's code. The same workflow's `pod` check is the only job with a secret ([below](#from-the-workflow)).
 - **On a failure:** download the job's `e2e-report-<group>` artifact, kept one day, then [read the failure](#read-a-failure). The logs show `df -h` and `docker system df` before and after the suite.
 
 ## The pod check
@@ -143,7 +143,7 @@ The maintainer starts the suite by hand, on GitHub's standard runners, with [`.g
 The suite runs no engine on a GPU. The pod check does: [`e2e/live/pod.ts`](../../../e2e/live/pod.ts) starts real pods on Runpod, from the sources, so no redirect of the [e2e build](../guide.md#the-e2e-build) applies.
 
 > [!WARNING]
-> It costs money: each pod is billed while it runs. Ask the maintainer before running it; they decide whether and where it runs. No workflow starts it yet.
+> It costs money: each pod is billed while it runs. Ask the maintainer before running it; they decide whether and where it runs.
 
 ### What it does
 
@@ -189,6 +189,20 @@ It exits 0 when every check and the cleanup pass, 1 otherwise, and 2 on a wrong 
 
 > [!CAUTION]
 > Run one at a time. Codeman's sweep terminates the pods of `codeman-pod-check` that its pool does not hold, so a run terminates another's. That also ends an earlier run's leftovers, which the output counts.
+
+### From the workflow
+
+The same workflow runs it, with the input `check` set to `pod`, on the branch to check. The run's commit must hold the `dist/gateway.js` the check expects.
+
+```sh
+gh workflow run e2e.yml --ref features/multi-service-pods -f check=pod -f gpu="NVIDIA RTX A5000" -f pod-checks=ollama
+```
+
+- **Inputs:** `gpu`, a choice of the IDs in `GPU_TYPES`, `NVIDIA RTX A5000` by default; `pod-checks`, `ollama` by default. The models and the max minutes keep the script's defaults.
+- **The key:** the secret `CODEMAN_RUNPOD_API_KEY` of the `E2E` environment, which admits only `main`, `features/*` and `fixes/*`. Only the pod job names the environment, and only its two steps that call Runpod get the key; `npm ci` runs before, without it.
+- **One at a time:** the job's `concurrency` group is `pod-check`, and a second run waits.
+- **Cleanup:** a last step, `if: always()`, runs `--cleanup`. The job stops at 75 minutes, after the script's own 60.
+- **Output:** only the [allowlisted lines](#what-it-prints), and no artifact. [`e2e/workflow.test.ts`](../../../e2e/workflow.test.ts) holds these rules.
 
 ### What it prints
 
