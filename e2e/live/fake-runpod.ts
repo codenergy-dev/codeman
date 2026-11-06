@@ -33,6 +33,10 @@ export interface FakeOptions {
   ollamaAdvisory?: string;
   /** The GPU's price per hour. */
   hourly?: number;
+  /** The catalog's availability of the GPU type, `HIGH` by default. */
+  availability?: string;
+  /** Runpod refuses each creation with this status and problem `detail`, made from the spec. */
+  createError?: (spec: { env: Record<string, string> }) => { status: number; detail: string };
   /** What the gateway reports it runs on: `NODE_RELEASE`'s version, and the file served. */
   node?: string;
   gatewaySha256?: string;
@@ -104,7 +108,15 @@ export class FakeRunpod {
         secure: true,
         community: true,
         price: { secure: hourly, community: hourly },
-        availability: "HIGH",
+        availability: this.options.availability ?? "HIGH",
+        ...(url.searchParams.get("include") === "AVAILABILITY"
+          ? {
+              dataCenters: [
+                { id: "EU-RO-1", availability: this.options.availability ?? "HIGH" },
+                { id: "US-TX-3", availability: "NONE" },
+              ],
+            }
+          : {}),
         cudaVersions: [{ version: "13.0", available: true }],
       });
     }
@@ -119,6 +131,13 @@ export class FakeRunpod {
       const spec = body as { image: string; entrypoint: string[]; cmd: string[] } & {
         env: Record<string, string>;
       };
+      const refused = this.options.createError?.(spec);
+      if (refused) {
+        return new Response(
+          JSON.stringify({ title: "Bad Request", status: refused.status, detail: refused.detail }),
+          { status: refused.status, headers: { "Content-Type": "application/problem+json" } },
+        );
+      }
       const pod: FakePod = {
         id: this.#podId(),
         image: spec.image,

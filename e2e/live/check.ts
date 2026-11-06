@@ -26,7 +26,7 @@ import {
   PodInference,
   type PodSettings,
 } from "../../src/inference/selfhosted.ts";
-import { checkedVllm, isHuggingFaceId } from "../../src/inference/vllm.ts";
+import { checkedVllm, isHuggingFaceId, VLLM_MIN_CUDA } from "../../src/inference/vllm.ts";
 import type { Pool } from "../../src/pool.ts";
 import type { Log } from "../../src/runtime/runtime.ts";
 import { MemoryStore } from "../../src/store/memory.ts";
@@ -60,6 +60,9 @@ export const GPU_TYPES: readonly string[] = [
   "NVIDIA RTX 4000 Ada Generation",
 ];
 export const DEFAULT_GPU = "NVIDIA RTX A5000";
+
+/** Runpod's REST API, as the adapter calls it (src/inference/runpod.ts). */
+const RUNPOD_API = "https://api.runpod.io/v2";
 
 /** The most one run may cost, in USD: the GPU's price for the run's whole time, pods one at a time. */
 export const MAX_RUN_USD = 1;
@@ -432,6 +435,7 @@ async function serveCheck(context: Context, engine: "ollama" | "vllm"): Promise<
   const { say } = context;
   const model = engine === "ollama" ? context.inputs.ollamaModel : context.inputs.vllmModel;
   const inference = podInference(context, engine);
+  const room = await availability(context, engine);
   const start = context.now().getTime();
   context.pods.allowCreate = true;
   let opened: OpenedRun;
@@ -439,9 +443,10 @@ async function serveCheck(context: Context, engine: "ollama" | "vllm"): Promise<
     opened = await inference.open(runRequest(context), SILENT);
   } catch (error) {
     say(`${engine}.start`, {
-      ...failure(context.report, error),
+      ...startFailure(context.report, error, room),
       engine,
       model,
+      ...room,
       pods: context.pods.count,
     });
     return false;
@@ -459,6 +464,7 @@ async function serveCheck(context: Context, engine: "ollama" | "vllm"): Promise<
     result: "pass",
     engine,
     model,
+    ...room,
     create_s: seconds(start, created),
     serve_s: seconds(created, serving),
   });
@@ -540,6 +546,7 @@ async function blockedCheck(context: Context): Promise<boolean> {
 async function unfitCheck(context: Context): Promise<boolean> {
   const before = context.pods.count;
   const inference = podInference(context, "vllm", UNFIT_VLLM);
+  const room = await availability(context, "vllm");
   const start = context.now().getTime();
   context.pods.allowCreate = true;
   let error: unknown;
@@ -559,12 +566,13 @@ async function unfitCheck(context: Context): Promise<boolean> {
   const { result: _, ...found } =
     error === undefined
       ? { result: "", reason: "The pod served the model, which should not fit." }
-      : failure(context.report, error);
+      : startFailure(context.report, error, room);
   context.say("unfit", {
     result: passed ? "pass" : "fail",
     engine: "vllm",
     model: context.inputs.vllmModel,
     ...found,
+    ...room,
     pods: created,
     total_s: seconds(start, context.now().getTime()),
   });
@@ -967,6 +975,65 @@ function causeOf(error: unknown): unknown {
   return error instanceof OpenFailure && error.cause !== undefined ? error.cause : error;
 }
 
+/** The levels of Runpod's availability; all but `NONE` mean some room. */
+const AVAILABILITY = new Set(["NONE", "LOW", "MEDIUM", "HIGH"]);
+
+/**
+ * The GPU type's room for one pod on Secure Cloud now, from Runpod's catalog, with vLLM's CUDA for
+ * a vLLM pod: the request the adapter makes before a creation on several clouds
+ * (`#availability` in src/inference/runpod.ts), private there, so repeated here
+ * (docs/web/runpod/get-a-gpu-type.md). Prints the level, and how many data centers have room;
+ * `unknown` when the catalog does not say.
+ */
+async function availability(context: Context, engine: "ollama" | "vllm"): Promise<Fields> {
+  const cuda = engine === "vllm" ? `&minCudaVersion=${encodeURIComponent(VLLM_MIN_CUDA)}` : "";
+  try {
+    const response = await context.fetch(
+      `${RUNPOD_API}/catalog/gpus/${encodeURIComponent(context.inputs.gpu)}?include=AVAILABILITY&product=POD&cloud=SECURE${cuda}`,
+      {
+        headers: { Authorization: `Bearer ${context.key}` },
+        signal: AbortSignal.timeout(30_000),
+      },
+    );
+    const body = await jsonBody<{ availability?: unknown; dataCenters?: unknown }>(response);
+    const level = typeof body?.availability === "string" ? body.availability : "";
+    const centers = body?.dataCenters;
+    const levels = (Array.isArray(centers) ? centers : Object.values(centers ?? {})).map((one) =>
+      typeof one === "string" ? one : (one as { availability?: unknown } | null)?.availability,
+    );
+    const known = centers !== undefined && centers !== null && typeof centers === "object";
+    return {
+      availability: AVAILABILITY.has(level) ? level : "unknown",
+      availability_http_status: response.ok ? undefined : response.status,
+      data_centers: known ? levels.length : undefined,
+      data_centers_with_room: known
+        ? levels.filter((one) => typeof one === "string" && one !== "NONE" && AVAILABILITY.has(one))
+            .length
+        : undefined,
+    };
+  } catch {
+    return { availability: "unknown" };
+  }
+}
+
+/**
+ * A start's failure, as `failure` gives it, but a creation Runpod refused with 400 while its
+ * catalog listed room is a failure, not a lack of room: Runpod gives no capacity no code of its
+ * own, and a request that breaks a rule answers 400 too (docs/web/runpod/create-a-pod.md#errors).
+ */
+function startFailure(report: Report, error: unknown, room: Fields): Fields {
+  const found = failure(report, error);
+  const listed =
+    typeof room.availability === "string" && /^(LOW|MEDIUM|HIGH)$/.test(room.availability);
+  if (found.result !== "unavailable" || !listed || found.http_status !== 400) return found;
+  return {
+    ...found,
+    result: "fail",
+    reason:
+      "Runpod refused the creation with 400 while its catalog listed room: likely a problem with the request.",
+  };
+}
+
 /**
  * What a failure may print: its kind, an HTTP status it names, the fit's or the pod's start
  * failure cleaned of every hidden value, and a few known reasons. Never another message: it may
@@ -977,10 +1044,16 @@ function failure(report: Report, error: unknown): Fields {
   if (cause instanceof ReleaseBlocked) {
     return { result: "blocked", error: "ReleaseBlocked", advisories: blockingAdvisories(cause) };
   }
-  if (cause instanceof PodUnavailable || error instanceof ProfileUnavailable) {
-    return { result: "unavailable", error: "PodUnavailable" };
-  }
   const message = cause instanceof Error ? cause.message : String(cause);
+  const status = /\b(?:failed with|answered) (\d{3})\b/.exec(message)?.[1];
+  if (cause instanceof PodUnavailable || error instanceof ProfileUnavailable) {
+    return {
+      result: "unavailable",
+      error: "PodUnavailable",
+      http_status: status === undefined ? undefined : Number(status),
+      message: report.cleanMessage(message),
+    };
+  }
   if (cause instanceof PodStartFailure) {
     return {
       result: "fail",
@@ -988,7 +1061,6 @@ function failure(report: Report, error: unknown): Fields {
       message: report.cleanMessage(message.replace(/^Pod \S+ did not serve \S+: /, "")),
     };
   }
-  const status = /\b(?:failed with|answered) (\d{3})\b/.exec(message)?.[1];
   const minutes = /was not ready within (\d+) minutes/.exec(message)?.[1];
   const state = /^Pod \S+ is (failed|stopped|terminated)\.$/.exec(message)?.[1];
   const name = cause instanceof Error ? cause.constructor.name : "Error";
@@ -996,6 +1068,8 @@ function failure(report: Report, error: unknown): Fields {
     result: "fail",
     error: /^[A-Za-z]{1,40}$/.test(name) ? name : "Error",
     http_status: status === undefined ? undefined : Number(status),
+    // Runpod's own text about a request, such as a 400's `detail`: cleaned of every hidden value.
+    message: /^Runpod /.test(message) ? report.cleanMessage(message) : undefined,
     reason: minutes
       ? `The pod did not serve within ${minutes} minutes.`
       : state

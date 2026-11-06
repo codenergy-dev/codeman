@@ -24,6 +24,7 @@ const TEXT_FIELDS: Readonly<Record<string, RegExp>> = {
   /** A Node.js version, as `process.version` gives it. */
   node: /^v\d{1,3}\.\d{1,3}\.\d{1,3}$/,
   source: /^(settings|cache|search)$/,
+  availability: /^(NONE|LOW|MEDIUM|HIGH|unknown)$/,
   error: /^[A-Za-z]{1,40}$/,
   advisories: /^[A-Za-z0-9-]{1,40}(,[A-Za-z0-9-]{1,40}){0,19}$/,
   /** Codeman's own sentences only, cleaned by `cleanMessage`. */

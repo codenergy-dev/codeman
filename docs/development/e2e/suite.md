@@ -206,7 +206,11 @@ gh workflow run e2e.yml --ref features/multi-service-pods -f check=pod -f gpu="N
 
 ### What it prints
 
-Only allowlisted values: times, memory, prices, statuses, the GPU type, engine, model, commit, and pass or fail per check. Never a pod's ID, URL or environment, a token, a key, or a response's headers or body. A failure prints its kind and an HTTP status; a pod's start failure, such as the fit's, prints its message cleaned of every hidden value and URL. Codeman's own log lines name pods, so none is printed.
+Only allowlisted values: times, memory, prices, statuses, the GPU type, engine, model, commit, the GPU type's availability, and pass or fail per check. Never a pod's ID, URL or environment, a token, a key, or a response's headers or body. Codeman's own log lines name pods, so none is printed.
+
+- **Before each pod,** the start line gives the catalog's `availability` on Secure Cloud (`NONE`, `LOW`, `MEDIUM` or `HIGH`, with vLLM's CUDA for a vLLM pod) and how many data centers have room ([get a GPU type](../../web/runpod/get-a-gpu-type.md)).
+- **A failure** prints its kind and an HTTP status. A pod's start failure, such as the fit's, and Runpod's own message, such as a refused creation's `detail`, print cleaned of every hidden value and URL, cut to 400 characters.
+- **A creation refused with 400** is `unavailable` when the catalog listed no room, and `fail` when it listed some: Runpod gives no capacity no code of its own, and a request that breaks a rule is a 400 too ([create a pod](../../web/runpod/create-a-pod.md#errors)).
 
 In GitHub Actions (`GITHUB_ACTIONS=true`), each secret and identifier is masked with `::add-mask::` as soon as the run has it: the key first, each gateway's admin token before its pod is created, the run's token once Codeman gives it. A line that would show one is withheld whole.
 
@@ -214,7 +218,7 @@ In GitHub Actions (`GITHUB_ACTIONS=true`), each secret and identifier is masked 
 [pod-check] inputs result=pass gpu="NVIDIA RTX A5000" checks=ollama,vllm max_minutes=60
 [pod-check] gateway result=pass commit=0123456789abcdef0123456789abcdef01234567
 [pod-check] gpu result=pass gpu="NVIDIA RTX A5000" memory_gb=24 price_per_hour_usd=0.27 worst_case_usd=0.27
-[pod-check] ollama.start result=pass engine=ollama model=qwen2.5:0.5b create_s=2.1 serve_s=214.6
+[pod-check] ollama.start result=pass engine=ollama model=qwen2.5:0.5b availability=HIGH data_centers=4 data_centers_with_room=3 create_s=2.1 serve_s=214.6
 [pod-check] ollama.bootstrap result=pass node=v24.22.1 node_match=true gateway_sha256_match=true command=true image=true node_spec=true gateway_spec=true gateway_answered=true gateway_version=2
 [pod-check] ollama.health result=pass http_status=200 ready=true
 [pod-check] ollama.fit result=pass gpu_memory_gb=24 size_gb=1.2 vram_gb=1.2 context=32768 parallel=1 requested_parallel=1 source=search loads=1

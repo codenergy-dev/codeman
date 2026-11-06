@@ -167,6 +167,53 @@ describe("the pod check", () => {
     assertNothingLeaks(lines, runpod);
   });
 
+  test("prints the catalog's availability before each pod", async () => {
+    const { lines } = await run([]);
+    assert.match(
+      line(lines, "ollama.start"),
+      /result=pass engine=ollama model=qwen2.5:0.5b availability=HIGH data_centers=2 data_centers_with_room=1 create_s=/,
+    );
+    assert.match(line(lines, "vllm.start"), /availability=HIGH data_centers=2/);
+  });
+
+  test("a 400 while the catalog lists no room is unavailable, with Runpod's detail", async () => {
+    const { code, lines, runpod } = await run(["--checks=ollama"], {
+      availability: "NONE",
+      createError: () => ({ status: 400, detail: "There are no instances available." }),
+    });
+    assert.equal(code, 1);
+    assert.equal(runpod.pods.size, 0);
+    assert.match(
+      line(lines, "ollama.start"),
+      /result=unavailable error=PodUnavailable http_status=400 message="Runpod created no pod with NVIDIA RTX A5000: Secure Cloud: Runpod POST \/pods failed with 400: Bad Request There are no instances available\..*availability=NONE/,
+    );
+  });
+
+  test("a 400 while the catalog lists room fails the start, with Runpod's detail cleaned", async () => {
+    const { code, lines, runpod } = await run(["--checks=ollama"], {
+      createError: (spec) => {
+        const nonce = spec.env.CODEMAN_NONCE ?? "";
+        return {
+          status: 400,
+          detail: `env refused: ${KEY} ${adminToken(KEY, nonce)} ${nonce} at https://example.com/x`,
+        };
+      },
+    });
+    assert.equal(code, 1);
+    const start = line(lines, "ollama.start");
+    assert.match(
+      start,
+      /^\[pod-check\] ollama.start result=fail error=PodUnavailable http_status=400/,
+    );
+    assert.match(start, /env refused: \[hidden\] \[hidden\] \[hidden\] at \[url\]/);
+    assert.match(
+      start,
+      /reason="Runpod refused the creation with 400 while its catalog listed room/,
+    );
+    assert.ok(!start.includes(KEY));
+    assertNothingLeaks(lines, runpod);
+  });
+
   test("terminates a pod whose creation's answer was lost, from its pool", async () => {
     const { code, lines, runpod } = await run(["--checks=ollama"], { loseCreateAnswer: true });
     assert.equal(code, 1);
