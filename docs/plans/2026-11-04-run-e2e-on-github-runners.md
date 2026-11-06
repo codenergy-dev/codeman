@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-11-04T14:47:33-03:00
-updated_at: 2026-11-06T16:41:00-03:00
+updated_at: 2026-11-06T17:24:00-03:00
 commit: e1c1411
 ---
 
@@ -176,3 +176,17 @@ The maintainer approved a direct proof of what the bootstrap checked:
 The maintainer's first dispatch of the pod check, on `NVIDIA RTX A5000` with `ollama` at `6e4496b`, ended in 4.4 s: `ollama.start result=unavailable`, no pod created, cleanup passed. With one kind of host, the adapter takes any 400 for no room, and Runpod answers 400 to a request that breaks a rule too ([create a pod](../web/runpod/create-a-pod.md#errors)); the bootstrap's pod spec had never been created on Runpod. So the output could not tell them apart.
 
 - `9cad27d`: the start line gives the catalog's availability before each pod, and Runpod's message cleaned of hidden values and URLs; a 400 while the catalog lists room is `fail`, not `unavailable`.
+
+The next dispatch, at `98c0c18`, showed `NVIDIA RTX A5000` with `availability=NONE`: no room, not a bad request. On `NVIDIA GeForce RTX 4090` ($0.89 per hour), `ollama` passed, the first pod started from an official engine image through the bootstrap on a real GPU:
+
+| Phase | Result |
+| --- | --- |
+| Creation | 3.7 s, with `availability=LOW` in 1 data center |
+| Serving | 56.3 s after creation |
+| Bootstrap | `node=v24.22.1`, `node_match=true`, `gateway_sha256_match=true`: the pod verified and ran Node.js 24.22.1 and the gateway at the commit |
+| `/health` | 200, ready |
+| Fit | 0.936 GB, wholly on the GPU's 24 GB, context 32,768, 1 parallel request |
+| Chat through Runpod's proxy | 200, answered in 27.4 s, the model's first load |
+| Cost | $0.021, 88.9 s in all; cleanup terminated the 1 pod, and the workflow's last step found none |
+
+Next: `vllm` on the same GPU, which needs a host with CUDA 13.0; then `blocked` and `unfit`. Step 3 is done when `vllm` passes.
