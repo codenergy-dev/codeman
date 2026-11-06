@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-11-04T14:47:33-03:00
-updated_at: 2026-11-05T20:14:00-03:00
+updated_at: 2026-11-06T14:48:00-03:00
 commit: e1c1411
 ---
 
@@ -60,10 +60,10 @@ What each check needs to see, and nothing else:
 | Check | Secret | Variable |
 | --- | --- | --- |
 | The suite on `ubuntu-latest` | None: every key is a fake's | None |
-| Real pod, on Runpod | `CODEMAN_RUNPOD_API_KEY`, in the `e2e-live` environment | None: the GPU type and model are the workflow's inputs |
-| Real pod, on Salad, later | `CODEMAN_SALAD_API_KEY`, in `e2e-live` | `CODEMAN_SALAD_ORGANIZATION` and `CODEMAN_SALAD_PROJECT`, in `e2e-live` |
+| Real pod, on Runpod | `CODEMAN_RUNPOD_API_KEY`, in the `E2E` environment | None: the GPU type and model are the workflow's inputs |
+| Real pod, on Salad, later | `CODEMAN_SALAD_API_KEY`, in `E2E` | `CODEMAN_SALAD_ORGANIZATION` and `CODEMAN_SALAD_PROJECT`, in `E2E` |
 
-The names are those of [the templates](../../templates/codeman-task.yml). The `e2e-live` environment admits only the branches `main`, `features/*` and `fixes/*`. Other keys the check uses, such as the encryption secret and the gateway's tokens, are made for the run and registered as masks.
+The names are those of [the templates](../../templates/codeman-task.yml). The `E2E` environment admits only the branches `main`, `features/*` and `fixes/*`. Other keys the check uses, such as the encryption secret and the gateway's tokens, are made for the run and registered as masks.
 
 > [!WARNING]
 > A public repository's logs can be read by anyone while they are kept. GitHub masks a secret's exact value only, not what is derived from it, and a gateway's [admin token](../../src/inference/selfhosted.ts) is derived from the account key.
@@ -152,4 +152,10 @@ A third dispatch on that branch passed both, in a job of 8 min 1 s: `fit-vllm-ex
 
 So every one of the 48 scenarios has passed on `ubuntu-24.04`, across these dispatches. Peak disk is not measured, only before and after, and the runner's 86 GB free leave room for all three groups. Step 2 is done once `fixes/e2e-hf-refs-main` reaches `main`.
 
-Next: the maintainer merges `fixes/e2e-hf-refs-main`. Then step 3, which needs the `e2e-live` environment and its secret.
+On 2026-11-06:
+
+- `5097df4`, on `fixes/e2e-hf-refs-main`: its own plan, `docs/plans/2026-11-06-seed-the-e2e-vllm-model-with-refs-main.md`, completed, which the maintainer uses as the pull request's description, and the two `huggingface_hub` sources it relies on.
+- The maintainer created the environment as `E2E`, not `e2e-live`, for the branches `main`, `features/*` and `fixes/*`, with the secret `CODEMAN_RUNPOD_API_KEY`.
+- Step 7: the maintainer approved the rule's text, and asked for it before step 3. `7590efa`, on `main`, adds it to `AGENTS.md`, not yet pushed.
+
+Next: the maintainer merges `fixes/e2e-hf-refs-main` and pushes `main`, then gives the digests of the pod images built from the Node fix, which a commit on `main` pins. Then step 3.
