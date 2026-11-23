@@ -15,10 +15,12 @@ export type Fields = Record<string, string | number | boolean | undefined>;
 
 /** The texts each field may hold. A key that is not here takes numbers and booleans only. */
 const TEXT_FIELDS: Readonly<Record<string, RegExp>> = {
-  result: /^(pass|fail|stopped|unavailable|blocked)$/,
+  result: /^(pass|fail|stopped|unavailable|blocked|infrastructure)$/,
+  provider: /^(runpod|salad)$/,
   checks: /^(ollama|vllm|blocked|unfit)(,(ollama|vllm|blocked|unfit)){0,3}$/,
   engine: /^(ollama|vllm)$/,
-  gpu: /^[A-Za-z0-9][A-Za-z0-9 .-]{0,63}$/,
+  /** A Runpod GPU ID, or a Salad GPU class's name, such as `RTX 3090 (24 GB)`. */
+  gpu: /^[A-Za-z0-9][A-Za-z0-9 .()-]{0,63}$/,
   model: /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/,
   commit: /^[0-9a-f]{40}$/,
   /** A Node.js version, as `process.version` gives it. */

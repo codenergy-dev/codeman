@@ -3,12 +3,12 @@ import { ACTION_ROOT } from "../../src/action.ts";
 import { podCheck } from "./check.ts";
 
 /**
- * `node e2e/live/pod.ts [--gpu=auto|<id>] [--community=true|false]
+ * `node e2e/live/pod.ts [--provider=runpod|salad] [--gpu=auto|<id>] [--community=true|false]
  * [--checks=ollama,vllm,blocked,unfit] [--ollama-model=<name>] [--vllm-model=<id>]
- * [--max-minutes=<n>] [--cleanup]`, with the Runpod key in
- * `CODEMAN_RUNPOD_API_KEY`: starts real pods on Runpod, which costs money. Each option may come
- * from its environment variable instead (`CODEMAN_POD_CHECK_GPU`, ...). See
- * docs/development/e2e/suite.md#the-pod-check.
+ * [--max-minutes=<n>] [--cleanup]`, with the Runpod key in `CODEMAN_RUNPOD_API_KEY`, or Salad's
+ * in `CODEMAN_SALAD_API_KEY` beside `CODEMAN_SALAD_ORGANIZATION` and `CODEMAN_SALAD_PROJECT`:
+ * starts real pods, which costs money. Each option may come from its environment variable instead
+ * (`CODEMAN_POD_CHECK_PROVIDER`, ...). See docs/development/e2e/suite.md#the-pod-check.
  *
  * SIGINT and SIGTERM stop the check, which terminates its pods before it exits; so do its max
  * minutes. Exits 0 when every check and the cleanup pass, 1 otherwise, 2 on a wrong input.

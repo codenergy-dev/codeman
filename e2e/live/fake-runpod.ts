@@ -6,8 +6,9 @@ import { NODE_RELEASE } from "../../src/inference/images.ts";
 import { type Cloud, GPU_TYPES } from "./check.ts";
 
 /**
- * Everything the pod check reaches, in memory, for its unit tests: Runpod's API and proxy with a
- * gateway on each pod, OSV.dev, Hugging Face's Hub and raw.githubusercontent.com. No network.
+ * Everything the pod check reaches, in memory, for its unit tests: Runpod's API and proxy, and
+ * Salad's API and Container Gateway, with a gateway on each pod; OSV.dev, Hugging Face's Hub and
+ * raw.githubusercontent.com. No network.
  */
 
 /** A GPU type on each cloud: its price per hour and availability; null where not offered. */
@@ -27,6 +28,49 @@ export interface FakePod {
   env: Record<string, string>;
   status: "RUNNING" | "TERMINATED";
   createdAt: string;
+  /** A Salad container group's: its priority, and the machines its instance ran on, in order. */
+  salad?: { priority: string; machines: string[] };
+}
+
+/** A Salad GPU class, as `GET .../gpu-classes` lists it. */
+export interface FakeGpuClass {
+  id: string;
+  name: string;
+  gpu_class_type?: string;
+  prices: { priority: string; price: string }[];
+}
+
+/** The Salad account the fake answers for. */
+export const SALAD_ORGANIZATION = "acme-pod-check-org";
+export const SALAD_PROJECT = "acme-pod-check-project";
+
+/** Salad's classes by default: two that fit the check, and three it must skip. */
+export const SALAD_CLASSES: readonly FakeGpuClass[] = [
+  saladClass("a1", "RTX 4090 (24 GB)", 0.44),
+  saladClass("b2", "RTX 3090 (24 GB)", 0.2),
+  saladClass("c3", "RTX 5090 (32 GB)", 0.6),
+  saladClass("d4", "RTX 3060 (12 GB)", 0.1),
+  saladClass("e5", "Radeon RX 7900 XTX (24 GB)", 0.15),
+];
+
+function saladClass(id: string, name: string, high: number): FakeGpuClass {
+  return {
+    id: `0000${id}-0000-4000-8000-000000000000`,
+    name,
+    gpu_class_type: "community",
+    prices: [
+      { priority: "high", price: high.toFixed(3) },
+      { priority: "batch", price: (high / 2).toFixed(3) },
+    ],
+  };
+}
+
+export interface FakeSaladOptions {
+  classes?: readonly FakeGpuClass[];
+  /** The nodes available at High priority, by class name; 5 for a class it does not name. */
+  available?: Readonly<Record<string, number>>;
+  /** Salad moves each pod's instance to another node at its first chat, which then fails. */
+  moveAtChat?: boolean;
 }
 
 export interface FakeOptions {
@@ -62,6 +106,7 @@ export interface FakeOptions {
   /** What the gateway reports it runs on: `NODE_RELEASE`'s version, and the file served. */
   node?: string;
   gatewaySha256?: string;
+  salad?: FakeSaladOptions;
 }
 
 const GATEWAY = readFileSync(join(ACTION_ROOT, "dist/gateway.js"));
@@ -75,6 +120,8 @@ export class FakeRunpod {
   readonly unexpected: string[] = [];
   /** Each catalog read, as `<GPU ID> <cloud>`. */
   readonly catalogReads: string[] = [];
+  /** Each Salad availability read, by class ID. */
+  readonly availabilityReads: string[] = [];
   readonly options: FakeOptions;
   readonly #lines: readonly string[];
   #next = 1;
@@ -110,12 +157,18 @@ export class FakeRunpod {
   readonly fetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const url = new URL(input instanceof Request ? input.url : String(input));
     const method = (init?.method ?? "GET").toUpperCase();
-    const auth = new Headers(init?.headers).get("authorization");
+    const headers = new Headers(init?.headers);
+    const auth = headers.get("authorization");
     if (auth?.startsWith("Bearer ")) {
       this.bearers.push({ token: auth.slice(7), printed: [...this.#lines] });
     }
+    const saladKey = headers.get("salad-api-key");
+    if (saladKey) this.bearers.push({ token: saladKey, printed: [...this.#lines] });
     const body = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
     if (url.hostname === "api.runpod.io") return this.#runpod(method, url, body);
+    if (url.hostname === "api.salad.com") return this.#salad(method, url.pathname, body);
+    const gateway = /^(.+)\.salad\.cloud$/.exec(url.hostname);
+    if (gateway) return this.#gateway(gateway[1] as string, method, url.pathname, auth);
     const proxy = /^(.+)-8080\.proxy\.runpod\.net$/.exec(url.hostname);
     if (proxy) return this.#gateway(proxy[1] as string, method, url.pathname, auth);
     if (url.hostname === "api.osv.dev") return this.#osv(url.pathname, body);
@@ -207,6 +260,123 @@ export class FakeRunpod {
     return json(404, {});
   }
 
+  #salad(method: string, path: string, body: Record<string, unknown> | undefined): Response {
+    const organization = `/api/public/organizations/${SALAD_ORGANIZATION}`;
+    const containers = `${organization}/projects/${SALAD_PROJECT}/containers`;
+    const classes = this.options.salad?.classes ?? SALAD_CLASSES;
+    if (method === "GET" && path === `${organization}/gpu-classes`) {
+      return json(200, { items: classes });
+    }
+    if (method === "POST" && path === `${organization}/availability/sce-gpu-availability`) {
+      const [id] = (body?.gpu_classes as string[] | undefined) ?? [];
+      const gpu = classes.find((one) => one.id === id);
+      if (!gpu) return json(400, { title: "Bad Request", status: 400 });
+      this.availabilityReads.push(gpu.id);
+      const high = this.options.salad?.available?.[gpu.name] ?? 5;
+      return json(200, {
+        available_gpu_high: high,
+        available_gpu_medium: high,
+        available_gpu_low: high,
+        available_gpu_batch: high,
+        on_call_gpu: 0,
+      });
+    }
+    if (method === "POST" && path === containers) {
+      const spec = body as {
+        name: string;
+        container: {
+          image: string;
+          command?: string[];
+          environment_variables: Record<string, string>;
+          priority: string;
+          resources: { gpu_classes: string[] };
+        };
+      };
+      const gpu = classes.find((one) => one.id === spec.container.resources.gpu_classes[0]);
+      const pod: FakePod = {
+        id: spec.name,
+        gpu: gpu?.name ?? "",
+        cloud: "community",
+        hourly: Number(
+          gpu?.prices.find((one) => one.priority === spec.container.priority)?.price ?? 0,
+        ),
+        image: spec.container.image,
+        command: spec.container.command ?? [],
+        env: spec.container.environment_variables,
+        status: "RUNNING",
+        createdAt: new Date().toISOString(),
+        salad: { priority: spec.container.priority, machines: [this.#machine()] },
+      };
+      this.pods.set(pod.id, pod);
+      this.options.onCreate?.(pod);
+      return json(201, this.#group(pod, gpu));
+    }
+    if (method === "GET" && path === containers) {
+      const live = [...this.pods.values()].filter(
+        (pod) => pod.salad && pod.status !== "TERMINATED",
+      );
+      return json(200, {
+        items: live.map((pod) =>
+          this.#group(
+            pod,
+            classes.find((one) => one.name === pod.gpu),
+          ),
+        ),
+      });
+    }
+    const match = new RegExp(`^${containers}/([^/]+)(/instances)?$`).exec(path);
+    const pod = match ? this.pods.get(decodeURIComponent(match[1] as string)) : undefined;
+    if (match && (!pod?.salad || pod.status === "TERMINATED")) return json(404, {});
+    if (pod?.salad && method === "GET" && match?.[2]) {
+      const machine = pod.salad.machines.at(-1) as string;
+      return json(200, {
+        instances: [{ id: "i-1", machine_id: machine, state: "running", ready: true }],
+      });
+    }
+    if (pod?.salad && method === "GET") {
+      return json(
+        200,
+        this.#group(
+          pod,
+          classes.find((one) => one.name === pod.gpu),
+        ),
+      );
+    }
+    if (pod?.salad && method === "DELETE") {
+      if (this.options.terminateFails) return json(500, { title: "Internal Server Error" });
+      pod.status = "TERMINATED";
+      return new Response(null, { status: 202 });
+    }
+    this.unexpected.push(`${method} salad ${path}`);
+    return json(404, {});
+  }
+
+  /** A Salad container group, as Salad gives it. */
+  #group(pod: FakePod, gpu: FakeGpuClass | undefined) {
+    return {
+      name: pod.id,
+      display_name: "codeman-pod",
+      create_time: pod.createdAt,
+      priority: pod.salad?.priority,
+      container: {
+        image: pod.image,
+        command: pod.command,
+        environment_variables: pod.env,
+        priority: pod.salad?.priority,
+        resources: { gpu_classes: gpu ? [gpu.id] : [] },
+      },
+      current_state: {
+        status: this.options.podsFail ? "failed" : "running",
+        instance_status_counts: { running_count: 1 },
+      },
+      networking: { dns: `${pod.id}.salad.cloud` },
+    };
+  }
+
+  #machine(): string {
+    return `machine-${String(this.#next++).padStart(4, "0")}-x9k`;
+  }
+
   /** A GPU type of the catalog. */
   #gpu(id: string): FakeGpu | undefined {
     if (this.options.catalog) return this.options.catalog[id];
@@ -271,6 +441,10 @@ export class FakeRunpod {
       });
     }
     if (method === "POST" && path === "/v1/chat/completions") {
+      if (pod.salad && this.options.salad?.moveAtChat) {
+        pod.salad.machines.push(this.#machine());
+        return json(502, {});
+      }
       const status = this.options.chatStatus ?? 200;
       return status === 200
         ? json(200, {
