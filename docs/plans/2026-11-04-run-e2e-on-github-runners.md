@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-11-04T14:47:33-03:00
-updated_at: 2026-11-23T14:07:00-03:00
+updated_at: 2026-11-23T15:10:00-03:00
 commit: e1c1411
 ---
 
@@ -229,4 +229,12 @@ So steps 3 and 4 are done. Two measurements for part 2 and the live test:
 - **A vLLM pod's start takes about 8 minutes** on a fresh host, image and model included, against about 1 minute for Ollama.
 - **A vLLM pod that does not fit fails only after vLLM starts:** about 19 minutes here, billed. A check of the fit before creating the pod would save it.
 
-Next: step 5, Salad, with decisions 13 to 16, answered on 2026-11-23.
+Step 5's code, with decisions 13 to 16, answered on 2026-11-23:
+
+- `0b19255`: Salad's Get GPU Availability page, in `docs/web/salad/`.
+- `eac971a`: `--provider=salad` runs the four checks through Codeman's Salad adapter, at High priority, on the cheapest NVIDIA class of 16 to 24 GB with nodes available at High, under the same cap. A check that fails after Salad moved its pod to another machine prints `result=infrastructure`; `done` gives `pods_cost_usd`, the pods at their listed prices, since Salad has no billing API. Unit tests on a fake Salad.
+- `9b0368a`: the workflow's `provider` input; each provider's account reaches the two steps only when the run chose it.
+
+Not verified before a dispatch: the real shape of Salad's availability answer, which the OpenAPI excerpt alone describes; and whether a group with `restart_policy: never` stays on its machine when its container exits, which the infrastructure call relies on (risk 1 of the plan for Salad pods).
+
+Next: the maintainer's dispatch of `ollama` on Salad, `-f check=pod -f provider=salad`. Step 5 is done when it passes.
