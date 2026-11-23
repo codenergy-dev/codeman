@@ -292,4 +292,8 @@ The probe's third round targets it, in at most 50 creations, each stopped and de
 
 Each refusal also prints the problem's `traceId`, which Salad's support can look up. The summary line gives `refused_items`, `refused_tokens` and `refused_words`.
 
-Next: the maintainer's dispatch of the probe again, `-f check=pod -f provider=salad -f pod-checks=probe`.
+Before that dispatch, Salad's own page answered: [Specifying a command](../web/salad/specifying-a-command.md#commands-security-filters-can-reject), updated on 2026-11-13 and refreshed here, says that security filters refuse a command where `curl`, `wget` or `perl` comes right after `;`, `|` or `||`. The bootstrap had exactly two such items, `; curl` (item 25) and `; wget` (item 26); the copy saved on 2026-10-30 predates that section.
+
+So the bootstrap's `download` puts `curl` and `wget` on their own lines, as the page advises, and `commandProblems` refuses a command that breaks the rule, with a test, before any pod. The probe's third round then serves as the confirmation: with the fix, Salad should accept `full` and every item.
+
+Next: the maintainer's dispatch of the probe, `-f check=pod -f provider=salad -f pod-checks=probe`, then of `ollama` on Salad.

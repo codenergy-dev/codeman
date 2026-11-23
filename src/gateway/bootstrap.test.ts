@@ -240,6 +240,32 @@ test("a command beyond Salad's limits is refused, naming each problem", () => {
   assert.match(large.at(-1) ?? "", /^\d+ bytes, above Runpod's request of 102400$/);
 });
 
+test("a command that Salad's security filters refuse is refused", () => {
+  const refused = [
+    'if has curl; then log "x"; curl -o "$2" "$1"',
+    "apt-get update;wget https://example.com",
+    "printf x | perl -e 1",
+    "false || /usr/bin/curl -O https://example.com",
+  ];
+  assert.deepEqual(
+    commandProblems(["sh", ...refused]),
+    refused.map(
+      (_, index) =>
+        `item ${index + 1} runs curl, wget or perl after ;, | or ||, which Salad refuses`,
+    ),
+  );
+  assert.deepEqual(
+    commandProblems([
+      "if has curl; then",
+      'curl -q -o "$2" "$1"',
+      'log "Downloading with curl."',
+      "a && curl -O https://example.com",
+      "x; curly",
+    ]),
+    [],
+  );
+});
+
 test("an artifact that is not usable is refused before any pod", () => {
   const node = {
     url: `https://nodejs.org/dist/v24.0.0/${NODE_NAME}.tar.gz`,

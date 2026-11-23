@@ -752,7 +752,7 @@ describe("the pod check on Salad", () => {
     assert.ok(items.length >= 6, items.join(","));
     const tried = lines.filter((one) => one.startsWith("[pod-check] probe.item "));
     assert.equal(tried.length, items.length);
-    const curl = command.findIndex((item) => item.startsWith("if has curl;"));
+    const curl = command.findIndex((item) => item.startsWith("curl -q "));
     assert.ok(items.includes(curl));
     assert.ok(
       tried.some((one) =>
@@ -764,12 +764,12 @@ describe("the pod check on Salad", () => {
       line(lines, "probe.full"),
       / trace_id=00-0123456789abcdef0123456789abcdef-0123456789abcdef-00 /,
     );
-    // The curl item's tokens, printed by index and length only: `curl;`, `curl.";` and `curl`.
+    // The curl item's tokens, printed by index and length only: `curl` alone.
     const tokens = tokensOf(command[curl] ?? "");
     const refusedTokens = tokens.flatMap((token, index) =>
       /\bcurl\b/.test(`x ${token} x`) ? [index] : [],
     );
-    assert.deepEqual(refusedTokens.length, 3);
+    assert.deepEqual(refusedTokens, [0]);
     assert.equal(
       lines.filter((one) => one.startsWith("[pod-check] probe.token ")).length,
       tokens.length,
@@ -796,7 +796,7 @@ describe("the pod check on Salad", () => {
       refusing((command) => command.some((item) => item.includes('-o "$2"'))),
     );
     const command = commandOf(salad.saladBodies[0] ?? {}) ?? [];
-    const curl = command.findIndex((item) => item.startsWith("if has curl;"));
+    const curl = command.findIndex((item) => item.startsWith("curl -q "));
     const tokens = tokensOf(command[curl] ?? "");
     const at = tokens.indexOf("-o");
     assert.equal(lines.filter((one) => / probe.token result=fail /.test(one)).length, 0);

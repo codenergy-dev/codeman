@@ -45,6 +45,13 @@ export const BOOTSTRAP_VARIABLES = {
  */
 export const SALAD_COMMAND_LIMITS = { items: 100, itemCharacters: 1000 } as const;
 
+/**
+ * What Salad's security filters refuse in a command: `curl`, `wget` or `perl` right after `;`,
+ * `|` or `||`, even by a path (docs/web/salad/specifying-a-command.md#commands-security-filters-can-reject).
+ * A path avoids the filter by Salad's page, but is refused here too, to stay clear of it.
+ */
+const SALAD_FILTERED = /(?:;|\|\|?)\s*(?:\S*\/)?(?:curl|wget|perl)\b/;
+
 /** Runpod's whole create request, the command included (docs/web/runpod/runpod-rest-api.md). */
 export const RUNPOD_REQUEST_BYTES = 102_400;
 
@@ -147,7 +154,9 @@ export function commandProblems(command: readonly string[]): string[] {
           ? [`item ${index} has ${item.length} characters, above Salad's ${itemCharacters}`]
           : /[\r\n]/.test(item)
             ? [`item ${index} spans several lines`]
-            : [],
+            : SALAD_FILTERED.test(item)
+              ? [`item ${index} runs curl, wget or perl after ;, | or ||, which Salad refuses`]
+              : [],
     ),
     ...(bytes > RUNPOD_REQUEST_BYTES
       ? [`${bytes} bytes, above Runpod's request of ${RUNPOD_REQUEST_BYTES}`]
@@ -245,10 +254,15 @@ openssl_get() {
   rm -f "$2.http"
 }
 
-# Downloads $1 to $2 with the first downloader the image has.
+# Downloads $1 to $2 with the first downloader the image has. curl and wget start their own
+# lines: Salad refuses a command where they follow ;, | or || (docs/web/salad/specifying-a-command.md).
 download() {
-  if has curl; then log "Downloading $1 with curl."; curl -q -fsSL --retry 3 --connect-timeout 30 -o "$2" "$1"
-  elif has wget; then log "Downloading $1 with wget."; wget -q -T 60 -O "$2" "$1"
+  if has curl; then
+    log "Downloading $1 with curl."
+    curl -q -fsSL --retry 3 --connect-timeout 30 -o "$2" "$1"
+  elif has wget; then
+    log "Downloading $1 with wget."
+    wget -q -T 60 -O "$2" "$1"
   elif has python3; then log "Downloading $1 with python3."; python3 -I -c 'import shutil, sys, urllib.request as u; r = u.urlopen(sys.argv[1], timeout=60); f = open(sys.argv[2], "wb"); shutil.copyfileobj(r, f); f.close()' "$1" "$2"
   elif has openssl; then log "Downloading $1 with openssl."; openssl_get "$1" "$2"
   else fail "No curl, wget, python3 or openssl to download $1."
