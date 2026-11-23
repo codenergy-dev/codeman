@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-11-04T14:47:33-03:00
-updated_at: 2026-11-23T17:30:00-03:00
+updated_at: 2026-11-23T18:10:00-03:00
 commit: e1c1411
 ---
 
@@ -296,4 +296,17 @@ Before that dispatch, Salad's own page answered: [Specifying a command](../web/s
 
 So the bootstrap's `download` puts `curl` and `wget` on their own lines, as the page advises, and `commandProblems` refuses a command that breaks the rule, with a test, before any pod. The probe's third round then serves as the confirmation: with the fix, Salad should accept `full` and every item.
 
-Next: the maintainer's dispatch of the probe, `-f check=pod -f provider=salad -f pod-checks=probe`, then of `ollama` on Salad.
+The dispatch of `ollama` on Salad with the defaults, at `f01aa55`, passed, for about $0.016:
+
+| Step | Result |
+| --- | --- |
+| GPU | RTX 3080 Ti Laptop (16 GB), community, $0.10 per hour at High, 3 nodes available, the cheapest of 14 eligible classes |
+| Start | Created in 9.9 s, serving 521.4 s later: Salad's allocation and image download, which it does not bill, then the bootstrap |
+| Bootstrap | Node.js v24.22.1 and the gateway at the commit, both matching; the pod's command, image and environment as expected; gateway version 2 |
+| Health and fit | `/health` ready; 0.936 GB, wholly on the GPU's 16 GB, context 32,768, 1 parallel request |
+| Chat through the Container Gateway | 200, answered in 27.7 s, the model's first load |
+| Cost | $0.016 at the listed price over the pod's whole life, 561.4 s, an upper bound since Salad does not bill the download; cleanup deleted the 1 group |
+
+So step 5 is done. The probe stays as a free diagnostic for the next refusal Salad does not explain. A Salad pod's start took about 9 minutes for Ollama, against about 1 minute on Runpod, mostly before the container runs.
+
+Next: step 6, the docs.
