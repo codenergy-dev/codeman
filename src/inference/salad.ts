@@ -41,7 +41,7 @@ const STATUS: Record<string, PodStatus> = {
 };
 
 /** The fields of Salad's `GpuClass` that Codeman reads. See docs/web/salad/list-the-gpu-classes.md. */
-interface SaladGpuClass {
+export interface SaladGpuClass {
   id: string;
   name: string;
   gpu_class_type?: string;
@@ -151,51 +151,11 @@ export class Salad implements GpuProvider {
     return found;
   }
 
-  /**
-   * `POST .../containers`: a group of one replica that starts at once, never restarts its
-   * container, and is reached through the Container Gateway, which the gateway's run tokens guard.
-   */
+  /** `POST .../containers`, with `containerGroupRequest`'s body. */
   async #create(spec: PodSpec): Promise<Pod> {
-    const priority = spec.priority ?? "high";
     const gpu = await this.#class(spec.gpuType, spec.hosts ?? DEFAULT_HOSTS);
-    price(gpu, priority);
-    if (spec.diskGb > MAX_DISK_GB) {
-      throw new Error(
-        `A Salad container has ${MAX_DISK_GB} GB of disk at most, and this pod needs ${spec.diskGb} GB.`,
-      );
-    }
-    const group = (await this.#request(this.#containers(), "POST", {
-      name: `codeman-${randomBytes(8).toString("hex")}`,
-      display_name: displayName(spec.name),
-      container: {
-        image: spec.image,
-        ...(spec.command ? { command: command(spec.command) } : {}),
-        environment_variables: environment(spec.env),
-        priority,
-        resources: {
-          cpu: within(VCPU, gpu.min_vcpu, gpu.max_vcpu),
-          memory: within(MEMORY_MB, gpu.min_ram, gpu.max_ram),
-          gpu_classes: [gpu.id],
-          storage_amount: within(spec.diskGb * GB, gpu.min_storage, gpu.max_storage),
-          ...(spec.sharedMemoryGb ? { shm_size: spec.sharedMemoryGb * 1024 } : {}),
-        },
-      },
-      replicas: 1,
-      // A pod that exits is done: Salad must not start it again, here or on another node.
-      restart_policy: "never",
-      autostart_policy: true,
-      networking: {
-        protocol: "http",
-        port: spec.port,
-        // The Container Gateway's own authentication takes the account key; the gateway's run
-        // tokens guard the pod instead.
-        auth: false,
-        load_balancer: "least_number_of_connections",
-        single_connection_limit: false,
-        client_request_timeout: 100_000,
-        server_response_timeout: 100_000,
-      },
-    })) as SaladGroup;
+    const body = containerGroupRequest(spec, gpu, `codeman-${randomBytes(8).toString("hex")}`);
+    const group = (await this.#request(this.#containers(), "POST", body)) as SaladGroup;
     return this.#toPod(group);
   }
 
@@ -309,6 +269,58 @@ export class Salad implements GpuProvider {
     }
     return text.trim() === "" ? undefined : JSON.parse(text);
   }
+}
+
+/**
+ * `POST .../containers`'s body for a pod on a GPU class: a group of one replica that starts at
+ * once, never restarts its container, and is reached through the Container Gateway, which the
+ * gateway's run tokens guard (docs/web/salad/create-container-group.md). Throws when the class
+ * lists no price at the pod's priority, or the pod needs more disk than a container has.
+ */
+export function containerGroupRequest(
+  spec: PodSpec,
+  gpu: SaladGpuClass,
+  name: string,
+): Record<string, unknown> {
+  const priority = spec.priority ?? "high";
+  price(gpu, priority);
+  if (spec.diskGb > MAX_DISK_GB) {
+    throw new Error(
+      `A Salad container has ${MAX_DISK_GB} GB of disk at most, and this pod needs ${spec.diskGb} GB.`,
+    );
+  }
+  return {
+    name,
+    display_name: displayName(spec.name),
+    container: {
+      image: spec.image,
+      ...(spec.command ? { command: command(spec.command) } : {}),
+      environment_variables: environment(spec.env),
+      priority,
+      resources: {
+        cpu: within(VCPU, gpu.min_vcpu, gpu.max_vcpu),
+        memory: within(MEMORY_MB, gpu.min_ram, gpu.max_ram),
+        gpu_classes: [gpu.id],
+        storage_amount: within(spec.diskGb * GB, gpu.min_storage, gpu.max_storage),
+        ...(spec.sharedMemoryGb ? { shm_size: spec.sharedMemoryGb * 1024 } : {}),
+      },
+    },
+    replicas: 1,
+    // A pod that exits is done: Salad must not start it again, here or on another node.
+    restart_policy: "never",
+    autostart_policy: true,
+    networking: {
+      protocol: "http",
+      port: spec.port,
+      // The Container Gateway's own authentication takes the account key; the gateway's run
+      // tokens guard the pod instead.
+      auth: false,
+      load_balancer: "least_number_of_connections",
+      single_connection_limit: false,
+      client_request_timeout: 100_000,
+      server_response_timeout: 100_000,
+    },
+  };
 }
 
 /** The kind of host of a GPU class; a class that does not say counts as community, the least trusted. */
