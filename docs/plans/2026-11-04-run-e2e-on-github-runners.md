@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-11-04T14:47:33-03:00
-updated_at: 2026-11-23T16:20:00-03:00
+updated_at: 2026-11-23T17:30:00-03:00
 commit: e1c1411
 ---
 
@@ -272,5 +272,24 @@ The probe's next round finds what in the command (`probeCommand` in `e2e/live/sa
 4. That prefix's last item alone after `/bin/sh -c :`. Refused, its content: then 29 characters and sequences of the script, one at a time, printed by name. Taken, a size: 60 items, an item of 1,000 characters, then a total of 5,000 characters searched down by 100.
 
 Its summary line names the cause: `none`, `any-command`, `character`, `item-content`, `item-count`, `item-length`, `total-chars` with its range, `throttled` or `unknown`.
+
+The probe's second dispatch, at `a01f4e6`, on the same class, in 202 s, with 39 creations, no cost and no group left:
+
+- The whole body was refused; without a command, and with `/bin/sh -c :`, taken.
+- The binary search over prefixes took 25 items (1,054 characters) and refused 26 (1,162): item 25 is the first refused.
+- Item 25 alone after `/bin/sh -c :`, 108 characters, was refused: `if has curl; then log "Downloading $1 with curl."; curl -q -fsSL --retry 3 --connect-timeout 30 -o "$2" "$1"`, the bootstrap's download with curl.
+- Each of the 29 characters and sequences alone, `$`, quotes, backslash, braces, `$(`, `%s` and the others, was taken.
+
+So Salad refuses that item's content, not a character or a size. Every refusal was the same bare problem, with no text but its title.
+
+The probe's third round targets it, in at most 50 creations, each stopped and deleted, 300 ms apart, stopping at a 429:
+
+1. The controls and `/bin/sh -c :`, as before.
+2. Each item that runs a tool that downloads or checks a download alone (`curl`, `wget`, `python3` or `openssl` with an option, `s_client` or `dgst`), and the command's last two, which start the gateway.
+3. The first item refused, token by token, each as `x <token> x`; when no token alone is refused, the shortest run of adjacent tokens refused, by binary search.
+4. Single words, by name: `curl`, `wget`, `curl -o f u`, `curl https://example.com`, `wget https://example.com`, `python3 -c x`, `openssl s_client`, `base64 -d`, `eval`.
+5. When no item of step 2 is refused, the prefix search and sizes of the second round.
+
+Each refusal also prints the problem's `traceId`, which Salad's support can look up. The summary line gives `refused_items`, `refused_tokens` and `refused_words`.
 
 Next: the maintainer's dispatch of the probe again, `-f check=pod -f provider=salad -f pod-checks=probe`.
