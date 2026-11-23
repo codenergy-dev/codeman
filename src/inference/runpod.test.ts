@@ -4,7 +4,7 @@ import type { Fetch } from "../budget.ts";
 import { podBootstrap } from "../gateway/bootstrap.ts";
 import { TEST_BOOTSTRAP } from "../testing/fake-releases.ts";
 import { PodUnavailable } from "./gpu.ts";
-import { Runpod } from "./runpod.ts";
+import { describeProblem, Runpod } from "./runpod.ts";
 
 function near(actual: number | undefined, expected: number): void {
   assert.ok(actual !== undefined && Math.abs(actual - expected) < 1e-12, `${actual} ≉ ${expected}`);
@@ -457,4 +457,23 @@ test("the bootstrap's command replaces the image's entry point and command, in e
   await new Runpod("rk", plain.fetch).pods.create(spec);
   const without = JSON.parse(String(plain.calls[0]?.[1]?.body));
   assert.ok(!("entrypoint" in without) && !("cmd" in without));
+});
+
+test("a problem's validation errors are read as a list or by field", () => {
+  assert.equal(
+    describeProblem(JSON.stringify({ title: "Bad Request", errors: ["The image is not valid."] })),
+    "Bad Request — The image is not valid.",
+  );
+  assert.equal(
+    describeProblem(
+      JSON.stringify({
+        title: "One or more validation errors occurred.",
+        status: 400,
+        errors: { "container.image": ["Too long.", "Not valid."], "": ["Unreadable body."] },
+      }),
+    ),
+    "One or more validation errors occurred. — container.image: Too long. — container.image: Not valid. — Unreadable body.",
+  );
+  assert.equal(describeProblem(JSON.stringify({ errors: { replicas: 3 } })), undefined);
+  assert.equal(describeProblem("<html>Bad Request</html>"), undefined);
 });

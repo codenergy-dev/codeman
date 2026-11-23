@@ -237,4 +237,11 @@ Step 5's code, with decisions 13 to 16, answered on 2026-11-23:
 
 Not verified before a dispatch: the real shape of Salad's availability answer, which the OpenAPI excerpt alone describes; and whether a group with `restart_policy: never` stays on its machine when its container exits, which the infrastructure call relies on (risk 1 of the plan for Salad pods).
 
-Next: the maintainer's dispatch of `ollama` on Salad, `-f check=pod -f provider=salad`. Step 5 is done when it passes.
+The first dispatch of `ollama` on Salad, at `f07de21`, ended in 23.1 s with no group created, and no cost:
+
+- The availability read worked: 14 NVIDIA classes of 16 to 24 GB were eligible, none without room or over the cap. The cheapest, RTX 3080 Ti Laptop (16 GB), $0.10 per hour at High, had 3 nodes available.
+- The creation answered 400 with only its title, "Bad Request". Its body's validation errors, which a .NET API gives as messages by field rather than a list, were dropped by `describeProblem`, so the reason is unknown. The body Codeman sends matches the documented schema.
+
+`describeProblem` now reads validation errors by field too, for Runpod, Salad and the pod check alike.
+
+Next: the same dispatch again, to read the reason.
