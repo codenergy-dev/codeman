@@ -658,6 +658,93 @@ describe("the pod check on Salad", () => {
     }
   });
 
+  test("probe: posts the creation's variants stopped, deletes each group, starts no pod", async () => {
+    const { code, lines, salad } = await saladRun(["--checks=probe"]);
+    assert.equal(code, 0, lines.join("\n"));
+    assert.deepEqual(salad.unexpected, []);
+    const variants = [
+      "full",
+      "no-networking",
+      "no-command",
+      "tags-only-env",
+      "restart-always",
+      "basic-resources",
+      "small-resources",
+      "minimal",
+    ];
+    assert.equal(salad.saladBodies.length, variants.length);
+    for (const body of salad.saladBodies) {
+      assert.equal(body.autostart_policy, false);
+      const container = body.container as { environment_variables: Record<string, string> };
+      assert.equal(container.environment_variables.CODEMAN_ORGANIZATION, OWNER);
+      assert.match(container.environment_variables.CODEMAN_POOL ?? "", /^codeman-pod-check-/);
+    }
+    assert.equal(new Set(salad.saladBodies.map((body) => body.name)).size, variants.length);
+    // The whole body is the adapter's, as the ollama check would send it.
+    const [full] = salad.saladBodies as [Record<string, unknown>];
+    const fullContainer = full.container as Record<string, unknown>;
+    assert.equal(fullContainer.priority, "high");
+    assert.ok(Array.isArray(fullContainer.command) && fullContainer.command.length > 1);
+    assert.equal((full.networking as { port: number }).port, 8080);
+    assert.deepEqual(Object.keys(salad.saladBodies.at(-1) ?? {}).sort(), [
+      "autostart_policy",
+      "container",
+      "name",
+      "replicas",
+      "restart_policy",
+    ]);
+    for (const pod of salad.pods.values()) {
+      assert.equal(pod.salad?.started, false);
+      assert.equal(pod.status, "TERMINATED");
+    }
+    assert.match(line(lines, "probe.gpu"), /result=pass gpu="RTX 3090 \(24 GB\)"/);
+    for (const variant of variants) {
+      assert.match(line(lines, `probe.${variant}`), / result=pass http_status=201 deleted=true$/);
+    }
+    assert.match(line(lines, "probe"), /result=pass accepted=8 refused=0 undeleted=0$/);
+    assert.match(line(lines, "cleanup"), /result=pass pods=0 leftover_pods=0/);
+    assert.match(line(lines, "done"), /result=pass total_s=\S+ pods_cost_usd=0$/);
+    assertNothingLeaksOnSalad(lines, salad);
+  });
+
+  test("probe: prints a refusal's problem, field by field, and never its other values", async () => {
+    const { code, lines, salad } = await saladRun(["--checks=probe"], {
+      salad: {
+        refuse: (body) => Array.isArray((body.container as { command?: unknown }).command),
+      },
+    });
+    assert.equal(code, 1);
+    // Only the variants without a command were created: no-command and minimal.
+    assert.equal(salad.pods.size, 2);
+    assert.match(
+      line(lines, "probe.full"),
+      /^\[pod-check\] probe.full result=fail http_status=400 message="One or more validation errors occurred. container.command: The command is not valid." keys=type,title,status,instance,errors,traceId type=https:\/\/tools.ietf.org\/html\/rfc9110#section-15.5.1 content_type=application\/json body_bytes=\d+$/,
+    );
+    assert.match(line(lines, "probe.no-command"), / result=pass http_status=201 deleted=true$/);
+    assert.match(line(lines, "probe"), /result=fail accepted=2 refused=6 undeleted=0 reason=/);
+    assert.ok(!lines.some((one) => one.includes('traceId"') || one.includes("00-fake-trace")));
+    assertNothingLeaksOnSalad(lines, salad);
+  });
+
+  test("probe runs on Salad only", async () => {
+    assert.match(
+      (parseInputs(["--checks=probe"], {}) as { problem: string }).problem,
+      /The probe check runs on Salad only/,
+    );
+    assert.ok("inputs" in parseInputs(["--provider=salad", "--checks=ollama,probe"], {}));
+    const lines: string[] = [];
+    const runpod = new FakeRunpod(lines);
+    const code = await podCheck({
+      argv: ["--checks=probe"],
+      env: { CODEMAN_RUNPOD_API_KEY: KEY, GITHUB_SHA: TEST_COMMIT },
+      write: (one) => lines.push(one),
+      git: () => "",
+      fetch: runpod.fetch,
+    });
+    assert.equal(code, 2);
+    assert.equal(runpod.bearers.length, 0);
+  });
+
   test("--cleanup deletes every container group of the check, and no other", async () => {
     const lines: string[] = [];
     const salad = new FakeRunpod(lines);

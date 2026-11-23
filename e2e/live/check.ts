@@ -20,7 +20,7 @@ import { Osv } from "../../src/inference/osv.ts";
 import { type OpenedRun, OpenFailure, ProfileUnavailable } from "../../src/inference/provider.ts";
 import { isBlocking, MemoryReleaseCheckCache } from "../../src/inference/release-policy.ts";
 import { type PodReleases, ReleaseBlocked } from "../../src/inference/resolution.ts";
-import { Runpod } from "../../src/inference/runpod.ts";
+import { describeProblem, Runpod } from "../../src/inference/runpod.ts";
 import {
   adminToken,
   type PodHandle,
@@ -32,7 +32,7 @@ import type { Pool } from "../../src/pool.ts";
 import type { Log } from "../../src/runtime/runtime.ts";
 import { MemoryStore } from "../../src/store/memory.ts";
 import { type Fields, Report } from "./report.ts";
-import { SALAD_NAME, saladProvider } from "./salad.ts";
+import { type ProbeAnswer, SALAD_NAME, saladProvider } from "./salad.ts";
 
 /**
  * The pod check (steps 3 to 5 of the plan to run the e2e suite on GitHub's runners): Codeman's real
@@ -121,9 +121,10 @@ const MIN_MINUTES = 15;
 
 /**
  * What the check can run: a pod that serves on Ollama, one on vLLM, a release the policy blocks
- * (no pod), and a vLLM pod whose model does not fit the GPU (step 4 of the plan).
+ * (no pod), a vLLM pod whose model does not fit the GPU (step 4 of the plan), and, on Salad only,
+ * a probe of what its API refuses in the Ollama pod's creation, which starts no instance.
  */
-export const CHECKS = ["ollama", "vllm", "blocked", "unfit"] as const;
+export const CHECKS = ["ollama", "vllm", "blocked", "unfit", "probe"] as const;
 export type CheckName = (typeof CHECKS)[number];
 export const DEFAULT_CHECKS: readonly CheckName[] = ["ollama", "vllm"];
 
@@ -228,6 +229,9 @@ export function parseInputs(
   ) {
     return { problem: `The checks must be a list of ${CHECKS.join(", ")}, each once.` };
   }
+  if (listed.includes("probe") && provider !== "salad") {
+    return { problem: "The probe check runs on Salad only." };
+  }
   const ollamaModel = value("ollama-model") ?? DEFAULT_MODELS.ollama;
   if (!OLLAMA_MODEL.test(ollamaModel)) {
     return { problem: "The Ollama model must be an Ollama name, such as qwen2.5:0.5b." };
@@ -330,6 +334,11 @@ export interface CheckProvider {
   observe?(id: string): Promise<void>;
   /** Whether a pod moved to another node while the check watched it: the provider lost its node. */
   moved?(id: string): Promise<boolean>;
+  /**
+   * Sends variants of the creation's body for this pod, each stopped so that nothing is billed,
+   * and deletes each group created: Salad's alone.
+   */
+  probe?(spec: PodSpec, hide: (value: string) => void): Promise<ProbeAnswer[]>;
 }
 
 /** How a check ended: `infrastructure` when the provider lost the pod's node, not Codeman. */
@@ -536,6 +545,8 @@ function runCheck(context: Context, check: CheckName): Promise<Outcome> {
       return blockedCheck(context);
     case "unfit":
       return unfitCheck(context);
+    case "probe":
+      return probeCheck(context);
   }
 }
 
@@ -559,6 +570,7 @@ function podInference(
   on: { gpu: string; cloud: Cloud },
   vllm: Record<string, string> = {},
   releases: PodReleases = context.releases,
+  gpu: GpuProvider = context.pods.provider,
 ): PodInference {
   const settings: PodSettings = {
     model: engine === "ollama" ? context.inputs.ollamaModel : context.inputs.vllmModel,
@@ -577,7 +589,7 @@ function podInference(
   };
   return new PodInference(settings, {
     repository: { owner: OWNER, name: "pod-check" },
-    gpu: context.pods.provider,
+    gpu,
     account: context.provider.account,
     store: context.store,
     pool: context.pool,
@@ -768,6 +780,107 @@ async function unfitCheck(context: Context): Promise<Outcome> {
   return interrupted(context, "unfit", context.pods.idsSince(before));
 }
 
+/** The pod's spec reached the provider's `create`, which the probe stops there. */
+class SpecCaught extends Error {}
+
+/**
+ * Salad's probe: the Ollama pod's spec as Codeman makes it, on the GPU class the `ollama` check
+ * would take, stopped before its creation; then the variants of its body (`probeBodies` in
+ * e2e/live/salad.ts), each stopped and deleted, with what Salad answered to each. Passes when
+ * Salad accepts the whole body.
+ */
+async function probeCheck(context: Context): Promise<Outcome> {
+  const { say, provider } = context;
+  if (!provider.probe) throw new Error("The probe check runs on Salad only.");
+  const [candidate] = await rankedCandidates(context, "ollama", "ollama", "probe");
+  if (!candidate) return "fail";
+  let caught: PodSpec | undefined;
+  const catching: GpuProvider = {
+    name: provider.name,
+    pods: {
+      ...(context.pods.provider.pods as PodHost),
+      create: async (spec) => {
+        const nonce = spec.env.CODEMAN_NONCE ?? "";
+        context.report.hide(adminToken(context.key, nonce));
+        context.report.hide(nonce);
+        caught = spec;
+        throw new SpecCaught("The probe stops before the creation.");
+      },
+    },
+  };
+  const inference = podInference(context, "ollama", candidate, {}, context.releases, catching);
+  try {
+    await inference.open(runRequest(context), SILENT);
+  } catch (error) {
+    if (!caught) {
+      say("probe.spec", { result: "fail", ...failure(context.report, error) });
+      return "fail";
+    }
+  }
+  if (!caught) throw new Error("The probe's pod was created.");
+  const answers = await provider.probe(caught, (value) => context.report.hide(value));
+  for (const answer of answers) say(`probe.${answer.variant}`, probeFields(context.report, answer));
+  const accepted = answers.filter((answer) => isAccepted(answer.status)).length;
+  const leftovers = answers.filter((answer) => answer.deleted === false).length;
+  const full = answers.find((answer) => answer.variant === "full");
+  const passed = isAccepted(full?.status) && leftovers === 0;
+  say("probe", {
+    result: passed ? "pass" : "fail",
+    accepted,
+    refused: answers.length - accepted,
+    undeleted: leftovers,
+    reason: passed
+      ? undefined
+      : leftovers > 0
+        ? "A probe's group could not be deleted: the cleanup deletes it."
+        : "Salad refused the creation's whole body.",
+  });
+  return passed ? "pass" : "fail";
+}
+
+function isAccepted(status: number | undefined): boolean {
+  return status !== undefined && status >= 200 && status < 300;
+}
+
+/** A top-level key of a problem's body: a name, never a value. */
+const PROBLEM_KEY = /^[A-Za-z_][A-Za-z0-9_-]{0,40}$/;
+
+/**
+ * What a probe's answer may print: its status, the problem's text as `describeProblem` reads it,
+ * cleaned, the names of the body's top-level keys, its `type` when that is a URL, its media type
+ * and size. Never another value of the body: `instance`, for one, names the organization and the
+ * project.
+ */
+function probeFields(report: Report, answer: ProbeAnswer): Fields {
+  if (answer.status === undefined) {
+    return { result: "fail", error: "Error", reason: "The request failed before an answer." };
+  }
+  if (isAccepted(answer.status)) {
+    return { result: "pass", http_status: answer.status, deleted: answer.deleted };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(answer.body);
+  } catch {
+    parsed = undefined;
+  }
+  const problem =
+    typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : undefined;
+  const described = describeProblem(answer.body);
+  const keys = problem ? Object.keys(problem).filter((key) => PROBLEM_KEY.test(key)) : [];
+  return {
+    result: "fail",
+    http_status: answer.status,
+    message: described ? report.cleanMessage(described) : undefined,
+    keys: keys.length > 0 ? keys.slice(0, 20).join(",") : undefined,
+    type: typeof problem?.type === "string" ? problem.type : undefined,
+    content_type: answer.contentType?.split(";")[0]?.trim().toLowerCase(),
+    body_bytes: Buffer.byteLength(answer.body),
+  };
+}
+
 function candidateFields(candidate: Candidate): Fields {
   return {
     gpu: candidate.gpu,
@@ -851,12 +964,13 @@ async function rankedCandidates(
   context: Context,
   check: "ollama" | "vllm" | "unfit",
   engine: "ollama" | "vllm",
+  label: string = check,
 ): Promise<Candidate[]> {
   let read: (Candidate | undefined)[];
   try {
     read = await context.provider.read(check, engine);
   } catch (error) {
-    context.say(`${check}.gpu`, { ...failure(context.report, error), result: "fail" });
+    context.say(`${label}.gpu`, { ...failure(context.report, error), result: "fail" });
     return [];
   }
   let missing = 0;
@@ -874,7 +988,7 @@ async function rankedCandidates(
   // Stable: ties keep the list's order, Secure Cloud first.
   eligible.sort((a, b) => a.hourly - b.hourly);
   const [first] = eligible;
-  context.say(`${check}.gpu`, {
+  context.say(`${label}.gpu`, {
     result: first ? "pass" : overCap > 0 ? "fail" : "unavailable",
     ...(first ? candidateFields(first) : {}),
     candidates: read.length,

@@ -17,7 +17,7 @@ export type Fields = Record<string, string | number | boolean | undefined>;
 const TEXT_FIELDS: Readonly<Record<string, RegExp>> = {
   result: /^(pass|fail|stopped|unavailable|blocked|infrastructure)$/,
   provider: /^(runpod|salad)$/,
-  checks: /^(ollama|vllm|blocked|unfit)(,(ollama|vllm|blocked|unfit)){0,3}$/,
+  checks: /^(ollama|vllm|blocked|unfit|probe)(,(ollama|vllm|blocked|unfit|probe)){0,4}$/,
   engine: /^(ollama|vllm)$/,
   /** A Runpod GPU ID, or a Salad GPU class's name, such as `RTX 3090 (24 GB)`. */
   gpu: /^[A-Za-z0-9][A-Za-z0-9 .()-]{0,63}$/,
@@ -32,6 +32,12 @@ const TEXT_FIELDS: Readonly<Record<string, RegExp>> = {
   advisories: /^[A-Za-z0-9-]{1,40}(,[A-Za-z0-9-]{1,40}){0,19}$/,
   /** Codeman's own sentences only, cleaned by `cleanMessage`. */
   message: /^[\x20-\x7e]{1,400}$/,
+  /** The names of a problem body's top-level keys, never their values. */
+  keys: /^[A-Za-z_][A-Za-z0-9_-]{0,40}(,[A-Za-z_][A-Za-z0-9_-]{0,40}){0,19}$/,
+  /** A problem's `type`: a URL of a host and a path, with no query. */
+  type: /^https?:\/\/[A-Za-z0-9.-]{1,100}(\/[A-Za-z0-9._~/#-]{0,200})?$/,
+  /** A media type, without its parameters. */
+  content_type: /^[a-z0-9.+-]{1,40}\/[a-z0-9.+-]{1,60}$/,
   /** The check's own sentences, from its code. */
   reason: /^[A-Za-z][A-Za-z0-9 ,.;:()`'_/-]{0,300}$/,
 };

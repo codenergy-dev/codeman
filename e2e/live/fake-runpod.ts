@@ -28,8 +28,11 @@ export interface FakePod {
   env: Record<string, string>;
   status: "RUNNING" | "TERMINATED";
   createdAt: string;
-  /** A Salad container group's: its priority, and the machines its instance ran on, in order. */
-  salad?: { priority: string; machines: string[] };
+  /**
+   * A Salad container group's: its priority, the machines its instance ran on, in order, and
+   * whether it started when created.
+   */
+  salad?: { priority: string; machines: string[]; started?: boolean };
 }
 
 /** A Salad GPU class, as `GET .../gpu-classes` lists it. */
@@ -71,6 +74,8 @@ export interface FakeSaladOptions {
   available?: Readonly<Record<string, number>>;
   /** Salad moves each pod's instance to another node at its first chat, which then fails. */
   moveAtChat?: boolean;
+  /** Salad refuses a creation whose body this accepts with 400 and validation errors by field. */
+  refuse?: (body: Record<string, unknown>) => boolean;
 }
 
 export interface FakeOptions {
@@ -122,6 +127,8 @@ export class FakeRunpod {
   readonly catalogReads: string[] = [];
   /** Each Salad availability read, by class ID. */
   readonly availabilityReads: string[] = [];
+  /** Each body of a Salad container group's creation, in order. */
+  readonly saladBodies: Record<string, unknown>[] = [];
   readonly options: FakeOptions;
   readonly #lines: readonly string[];
   #next = 1;
@@ -282,6 +289,17 @@ export class FakeRunpod {
       });
     }
     if (method === "POST" && path === containers) {
+      this.saladBodies.push(body ?? {});
+      if (body && this.options.salad?.refuse?.(body)) {
+        return json(400, {
+          type: "https://tools.ietf.org/html/rfc9110#section-15.5.1",
+          title: "One or more validation errors occurred.",
+          status: 400,
+          instance: `${containers}`,
+          errors: { "container.command": ["The command is not valid."] },
+          traceId: "00-fake-trace-00",
+        });
+      }
       const spec = body as {
         name: string;
         container: {
@@ -305,7 +323,11 @@ export class FakeRunpod {
         env: spec.container.environment_variables,
         status: "RUNNING",
         createdAt: new Date().toISOString(),
-        salad: { priority: spec.container.priority, machines: [this.#machine()] },
+        salad: {
+          priority: spec.container.priority,
+          machines: [this.#machine()],
+          started: (body as { autostart_policy?: boolean }).autostart_policy !== false,
+        },
       };
       this.pods.set(pod.id, pod);
       this.options.onCreate?.(pod);
@@ -365,10 +387,13 @@ export class FakeRunpod {
         priority: pod.salad?.priority,
         resources: { gpu_classes: gpu ? [gpu.id] : [] },
       },
-      current_state: {
-        status: this.options.podsFail ? "failed" : "running",
-        instance_status_counts: { running_count: 1 },
-      },
+      current_state:
+        pod.salad?.started === false
+          ? { status: "stopped", instance_status_counts: { running_count: 0 } }
+          : {
+              status: this.options.podsFail ? "failed" : "running",
+              instance_status_counts: { running_count: 1 },
+            },
       networking: { dns: `${pod.id}.salad.cloud` },
     };
   }

@@ -1,6 +1,12 @@
+import { randomBytes } from "node:crypto";
 import type { Fetch } from "../../src/budget.ts";
-import { type GpuAccount, isHostKind } from "../../src/inference/gpu.ts";
-import { memoryGb, Salad } from "../../src/inference/salad.ts";
+import { type GpuAccount, isHostKind, type PodSpec } from "../../src/inference/gpu.ts";
+import {
+  containerGroupRequest,
+  memoryGb,
+  Salad,
+  type SaladGpuClass,
+} from "../../src/inference/salad.ts";
 import type { Candidate, CheckProvider } from "./check.ts";
 
 /**
@@ -122,7 +128,145 @@ export function saladProvider(account: Required<GpuAccount>, fetchFn: Fetch): Ch
       nodes.record(id, await instances(request, containers, id).catch(() => []));
       return nodes.moved(id);
     },
+    async probe(spec: PodSpec, hide: (value: string) => void): Promise<ProbeAnswer[]> {
+      const listed = (await request(`${organization}/gpu-classes`)) as {
+        items?: SaladGpuClass[];
+      };
+      const gpu = (listed.items ?? []).find((one) => one.name === spec.gpuType);
+      if (!gpu) throw new Error("Salad no longer lists the probe's GPU class.");
+      const full = containerGroupRequest(spec, gpu, groupName());
+      const tags = Object.fromEntries(
+        TAGS.flatMap((name) => (spec.env[name] ? [[name, spec.env[name]]] : [])),
+      );
+      const answers: ProbeAnswer[] = [];
+      for (const { variant, body } of probeBodies(full, tags)) {
+        hide(String(body.name));
+        answers.push(await probeOne(fetchFn, account.key, containers, variant, body));
+      }
+      return answers;
+    },
   };
+}
+
+/** The variables the check's cleanup lists its groups by, which every variant keeps. */
+const TAGS = ["CODEMAN_ORGANIZATION", "CODEMAN_POOL"] as const;
+
+/** A container group's name, as the adapter makes one. */
+function groupName(): string {
+  return `codeman-${randomBytes(8).toString("hex")}`;
+}
+
+/** What Salad answered to one variant of the creation's body. */
+export interface ProbeAnswer {
+  variant: string;
+  /** The HTTP status, or undefined when the request itself failed. */
+  status: number | undefined;
+  /** The answer's body, up to 8 KB, for a refusal; never printed as such. */
+  body: string;
+  contentType: string | undefined;
+  /** For a group Salad created: whether the probe deleted it. */
+  deleted?: boolean;
+}
+
+/**
+ * The variants of the adapter's body that the `probe` check sends, to find what Salad refuses:
+ * each one stopped (`autostart_policy: false`), so no instance starts and nothing is billed, under
+ * a name of its own, and with the variables the cleanup lists its groups by. In order: the whole
+ * body, then without one part each, then smaller resources, then the least Salad requires.
+ */
+export function probeBodies(
+  full: Record<string, unknown>,
+  tags: Record<string, string>,
+): { variant: string; body: Record<string, unknown> }[] {
+  const container = full.container as Record<string, unknown>;
+  const resources = container.resources as Record<string, unknown>;
+  const basic = {
+    cpu: resources.cpu,
+    memory: resources.memory,
+    gpu_classes: resources.gpu_classes,
+  };
+  const variant = (
+    name: string,
+    change: (body: Record<string, unknown>, container: Record<string, unknown>) => void,
+  ) => {
+    const body = structuredClone(full);
+    change(body, body.container as Record<string, unknown>);
+    body.name = groupName();
+    body.autostart_policy = false;
+    return { variant: name, body };
+  };
+  return [
+    variant("full", () => {}),
+    variant("no-networking", (body) => {
+      delete body.networking;
+    }),
+    variant("no-command", (_, inner) => {
+      delete inner.command;
+    }),
+    variant("tags-only-env", (_, inner) => {
+      inner.environment_variables = { ...tags };
+    }),
+    variant("restart-always", (body) => {
+      body.restart_policy = "always";
+    }),
+    variant("basic-resources", (_, inner) => {
+      inner.resources = { ...basic };
+    }),
+    variant("small-resources", (_, inner) => {
+      inner.resources = { ...(inner.resources as object), cpu: 4, memory: 16_384 };
+    }),
+    variant("minimal", (body, inner) => {
+      for (const key of Object.keys(body)) {
+        if (!["name", "container", "replicas", "restart_policy"].includes(key)) delete body[key];
+      }
+      for (const key of Object.keys(inner)) {
+        if (key !== "image") delete inner[key];
+      }
+      inner.environment_variables = { ...tags };
+      inner.resources = { ...basic };
+    }),
+  ];
+}
+
+/** Sends one variant; deletes the group when Salad created it. */
+async function probeOne(
+  fetchFn: Fetch,
+  key: string,
+  containers: string,
+  variant: string,
+  body: Record<string, unknown>,
+): Promise<ProbeAnswer> {
+  const headers = { "Salad-Api-Key": key, "Content-Type": "application/json" };
+  let response: Response;
+  try {
+    response = await fetchFn(`${API}${containers}`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch {
+    return { variant, status: undefined, body: "", contentType: undefined };
+  }
+  const contentType = response.headers.get("content-type") ?? undefined;
+  if (!response.ok) {
+    const text = (await response.text().catch(() => "")).slice(0, 8_192);
+    return { variant, status: response.status, body: text, contentType };
+  }
+  await response.body?.cancel();
+  let deleted = false;
+  try {
+    const gone = await fetchFn(`${API}${containers}/${encodeURIComponent(String(body.name))}`, {
+      method: "DELETE",
+      headers: { "Salad-Api-Key": key },
+      signal: AbortSignal.timeout(30_000),
+    });
+    await gone.body?.cancel();
+    deleted = gone.ok || gone.status === 404;
+  } catch {
+    deleted = false;
+  }
+  return { variant, status: response.status, body: "", contentType, deleted };
 }
 
 /** A group's instances, as the machine each is on and its state; none when Salad lists none. */
