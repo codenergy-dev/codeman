@@ -2,14 +2,14 @@
 title: Specifying a command
 url: https://docs.salad.com/container-engine/how-to-guides/specifying-a-command
 created_at: 2026-10-30T12:09:07-03:00
-updated_at: 2026-10-30T12:09:07-03:00
+updated_at: 2026-11-23T17:11:17-03:00
 tool: docs/web/tools/salad.md
 license: CC-BY-4.0
 ---
 
 # Specifying a command
 
-*Last Updated: April 10, 2025*
+*Last Updated: November 13, 2026*
 
 > 🚧 Caution
 >
@@ -36,6 +36,24 @@ SaladCloud command of
 **Note:** in the portal, you should not include include quotes around arguments. To reproduce the docker command line
 `docker run --entrypoint /bin/bash my-docker/my-container:latest -c "python server.py"`, you would enter `/bin/bash` as
 the command, `-c` as a first argument, and `python server.py` as a second argument, without quotes.
+
+## Commands Security Filters Can Reject
+
+> [!WARNING]
+>
+> Security filters can reject a command or argument where `curl`, `wget`, or `perl` comes right after `;`, `|`, or `||`,
+> such as `apt-get update; curl -O https://example.com/model.bin`. If you change a container group's command to one like
+> this, the group can get stuck on its previous version: the Portal shows the new command, but instances keep running
+> the old one. Until you change the command to one of the forms below, changes to the group may not take effect.
+
+To avoid the filters, use one of these instead:
+
+* `&&` in place of `;`, as in `apt-get update && curl -O https://example.com/model.bin`.
+* A new line before `curl`, `wget`, or `perl`.
+* The full path to the program, as in `apt-get update; /usr/bin/curl -O https://example.com/model.bin`. Run `which curl`
+  in your image to find the path.
+
+After `|` or `||`, use the full path. Replacing those operators with `&&` or a new line changes what the command does.
 
 
 This documentation is built and hosted on [Mintlify](https://mintlify.com), a developer documentation platform.
