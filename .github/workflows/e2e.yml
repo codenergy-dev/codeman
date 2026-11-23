@@ -1,8 +1,9 @@
 # Started only by hand, for one of two checks:
 # - `suite`: the end-to-end suite on GitHub's standard runners. Every key in it is a fake's: its job
 #   names no environment, so it reads no secret, and must stay so.
-# - `pod`: real pods on Runpod (e2e/live/pod.ts), which cost money. Only its job names the `E2E`
-#   environment, and only its two steps that call Runpod get the key.
+# - `pod`: real pods on Runpod or Salad (e2e/live/pod.ts), which cost money. Only its job names the
+#   `E2E` environment, and only its two steps that call the provider get its key, and only the
+#   chosen provider's.
 # See docs/development/e2e/suite.md#on-github-actions.
 name: E2E
 
@@ -14,12 +15,17 @@ on:
         type: choice
         options: [suite, pod]
         default: suite
+      provider:
+        description: The pod check's GPU cloud.
+        type: choice
+        options: [runpod, salad]
+        default: runpod
       selectors:
         description: Scenarios to run in one job, as paths or tags separated by a space. Empty runs every scenario, one job per Docker profile.
         type: string
         required: false
       gpu:
-        description: The pod check's GPU type; auto takes the cheapest with room for each check, under its cost cap.
+        description: The pod check's GPU type on Runpod; auto takes the cheapest with room for each check, under its cost cap. On Salad, always auto.
         type: choice
         options:
           - auto
@@ -37,7 +43,7 @@ on:
         type: string
         default: ollama
       community:
-        description: Let the pod check use Runpod's Community Cloud too, where hosts are third parties' machines.
+        description: Let the pod check use Runpod's Community Cloud too, where hosts are third parties' machines. Salad's hosts are all community ones, so Salad needs it.
         type: boolean
         default: true
 
@@ -151,19 +157,28 @@ jobs:
       # Without the key: install scripts never see it.
       - run: npm ci
       # The script checks each input against a pattern, never repeats one, and prints only an
-      # allowlist of values; it masks the key and every token it makes before using them.
+      # allowlist of values; it masks the key and every token it makes before using them. Each
+      # provider's key, and Salad's organization and project, reach it only for that provider.
       - name: Run the pod check
         timeout-minutes: 65
         env:
-          CODEMAN_RUNPOD_API_KEY: ${{ secrets.CODEMAN_RUNPOD_API_KEY }}
+          CODEMAN_RUNPOD_API_KEY: ${{ inputs.provider == 'runpod' && secrets.CODEMAN_RUNPOD_API_KEY || '' }}
+          CODEMAN_SALAD_API_KEY: ${{ inputs.provider == 'salad' && secrets.CODEMAN_SALAD_API_KEY || '' }}
+          CODEMAN_SALAD_ORGANIZATION: ${{ inputs.provider == 'salad' && vars.CODEMAN_SALAD_ORGANIZATION || '' }}
+          CODEMAN_SALAD_PROJECT: ${{ inputs.provider == 'salad' && vars.CODEMAN_SALAD_PROJECT || '' }}
+          CODEMAN_POD_CHECK_PROVIDER: ${{ inputs.provider }}
           CODEMAN_POD_CHECK_GPU: ${{ inputs.gpu }}
           CODEMAN_POD_CHECK_CHECKS: ${{ inputs.pod-checks }}
           CODEMAN_POD_CHECK_COMMUNITY: ${{ inputs.community }}
         run: node e2e/live/pod.ts
-      # Terminates every pod the check tagged, whatever happened above.
+      # Terminates every pod the check tagged on the provider, whatever happened above.
       - name: Terminate the check's pods
         if: always()
         timeout-minutes: 5
         env:
-          CODEMAN_RUNPOD_API_KEY: ${{ secrets.CODEMAN_RUNPOD_API_KEY }}
+          CODEMAN_RUNPOD_API_KEY: ${{ inputs.provider == 'runpod' && secrets.CODEMAN_RUNPOD_API_KEY || '' }}
+          CODEMAN_SALAD_API_KEY: ${{ inputs.provider == 'salad' && secrets.CODEMAN_SALAD_API_KEY || '' }}
+          CODEMAN_SALAD_ORGANIZATION: ${{ inputs.provider == 'salad' && vars.CODEMAN_SALAD_ORGANIZATION || '' }}
+          CODEMAN_SALAD_PROJECT: ${{ inputs.provider == 'salad' && vars.CODEMAN_SALAD_PROJECT || '' }}
+          CODEMAN_POD_CHECK_PROVIDER: ${{ inputs.provider }}
         run: node e2e/live/pod.ts --cleanup

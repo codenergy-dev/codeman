@@ -2,12 +2,13 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { parse } from "yaml";
-import { GPU_TYPES } from "./live/check.ts";
+import { DEFAULT_PROVIDER, GPU_TYPES, PROVIDERS } from "./live/check.ts";
 
 /**
  * The rules of the e2e workflow (docs/plans/2026-11-04-run-e2e-on-github-runners.md, "Secrets and
- * what a public repository shows"): started by hand only, read-only, and the Runpod key only in
- * the pod job's steps that call Runpod, under the `E2E` environment.
+ * what a public repository shows"): started by hand only, read-only, and each provider's key, and
+ * Salad's organization and project, only in the pod job's steps that call the provider, under the
+ * `E2E` environment, and only when the run chose that provider.
  */
 const text = readFileSync(".github/workflows/e2e.yml", "utf8");
 interface Step {
@@ -42,24 +43,41 @@ test("the e2e workflow is started by hand only, and reads the repository only", 
   }
 });
 
-test("only the pod job names the environment, and only its Runpod steps get the key", () => {
+/** Each value of the environment's, the provider whose steps get it, and its context. */
+const ACCOUNT = {
+  CODEMAN_RUNPOD_API_KEY: ["runpod", "secrets"],
+  CODEMAN_SALAD_API_KEY: ["salad", "secrets"],
+  CODEMAN_SALAD_ORGANIZATION: ["salad", "vars"],
+  CODEMAN_SALAD_PROJECT: ["salad", "vars"],
+} as const;
+
+test("only the pod job names the environment, and only its provider steps get the account", () => {
   const { suite, pod } = workflow.jobs;
   assert.ok(suite && pod);
   assert.equal(suite.environment, undefined);
   assert.equal(suite.if, "inputs.check == 'suite'");
   assert.equal(pod.environment, "E2E");
   assert.equal(pod.if, "inputs.check == 'pod'");
-  assert.equal([...text.matchAll(/secrets\./g)].length, 2, "the key, in two steps only");
-  const keyed = pod.steps.filter((step) => step.env?.CODEMAN_RUNPOD_API_KEY !== undefined);
+  const names = Object.keys(ACCOUNT);
+  assert.equal(
+    [...text.matchAll(/\b(secrets|vars)\./g)].length,
+    names.length * 2,
+    "the account, in two steps only",
+  );
+  const keyed = pod.steps.filter((step) => names.some((name) => step.env?.[name] !== undefined));
   assert.deepEqual(
     keyed.map((step) => step.run),
     ["node e2e/live/pod.ts", "node e2e/live/pod.ts --cleanup"],
   );
   for (const step of keyed) {
-    assert.match(
-      step.env?.CODEMAN_RUNPOD_API_KEY ?? "",
-      /^\$\{\{ secrets\.CODEMAN_RUNPOD_API_KEY \}\}$/,
-    );
+    for (const [name, [provider, context]] of Object.entries(ACCOUNT)) {
+      assert.equal(
+        step.env?.[name],
+        `\${{ inputs.provider == '${provider}' && ${context}.${name} || '' }}`,
+        name,
+      );
+    }
+    assert.equal(step.env?.CODEMAN_POD_CHECK_PROVIDER, `\${{ inputs.provider }}`);
   }
   // Inputs reach scripts through the environment, never inside a script.
   for (const job of Object.values(workflow.jobs)) {
@@ -68,8 +86,10 @@ test("only the pod job names the environment, and only its Runpod steps get the 
   assert.ok(!pod.steps.some((step) => step.uses?.startsWith("actions/upload-artifact@")));
 });
 
-test("the workflow's GPU types are the pod check's, after auto", () => {
-  const { gpu, community } = workflow.on.workflow_dispatch.inputs;
+test("the workflow's providers and GPU types are the pod check's, after auto", () => {
+  const { provider, gpu, community } = workflow.on.workflow_dispatch.inputs;
+  assert.deepEqual(provider?.options, [...PROVIDERS]);
+  assert.equal(provider?.default, DEFAULT_PROVIDER);
   assert.deepEqual(gpu?.options, ["auto", ...GPU_TYPES]);
   assert.equal(gpu?.default, "auto");
   assert.equal(community?.default, true);

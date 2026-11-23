@@ -140,7 +140,7 @@ The maintainer starts the suite by hand, on GitHub's standard runners, with [`.g
 
 ## The pod check
 
-The suite runs no engine on a GPU. The pod check does: [`e2e/live/pod.ts`](../../../e2e/live/pod.ts) starts real pods on Runpod, from the sources, so no redirect of the [e2e build](../guide.md#the-e2e-build) applies.
+The suite runs no engine on a GPU. The pod check does: [`e2e/live/pod.ts`](../../../e2e/live/pod.ts) starts real pods on Runpod or [Salad](#on-salad), from the sources, so no redirect of the [e2e build](../guide.md#the-e2e-build) applies.
 
 > [!WARNING]
 > It costs money: each pod is billed while it runs. Ask the maintainer before running it; they decide whether and where it runs.
@@ -150,12 +150,12 @@ The suite runs no engine on a GPU. The pod check does: [`e2e/live/pod.ts`](../..
 1. Checks its inputs, each against a strict pattern, and never repeats a wrong one.
 2. Checks the gateway the pods will download: `dist/gateway.js` on raw.githubusercontent.com at the run's commit must have the checkout's SHA-256. The commit is `GITHUB_SHA` in GitHub Actions, the one `actions/checkout` checks out and so the one `open-key` gives pods; else `git rev-parse HEAD`. It must be pushed.
 3. For each check that creates a pod, [chooses its GPU](#how-it-chooses-the-gpu): the cheapest with room, under the run's cost cap of 1 USD.
-4. Runs each check with Codeman's own path: `PodInference`, the real `Runpod`, the real release policy with OSV.dev, and a pod registry in memory. Its pods carry `CODEMAN_ORGANIZATION=codeman-pod-check`, and a pool of their own run.
-5. Terminates every pod it created, and any other of its pool, then checks with Runpod that each is gone: on success, on a failure, at its max minutes, and on SIGINT or SIGTERM.
+4. Runs each check with Codeman's own path: `PodInference`, the real `Runpod` or `Salad`, the real release policy with OSV.dev, and a pod registry in memory. Its pods carry `CODEMAN_ORGANIZATION=codeman-pod-check`, and a pool of their own run.
+5. Terminates every pod it created, and any other of its pool, then checks with the provider that each is gone: on success, on a failure, at its max minutes, and on SIGINT or SIGTERM.
 
 | Check | Starts | Passes when |
 | --- | --- | --- |
-| `ollama`, `vllm` | A pod from the catalog's official image through the bootstrap, with `qwen2.5:0.5b` or `Qwen/Qwen2.5-0.5B-Instruct` | The gateway's `/admin/status` reports `NODE_RELEASE`'s Node.js version and the SHA-256 of the gateway at the commit, and the pod got the bootstrap as its command with both; `/health` is ready; the fit is wholly on the GPU; one chat completion answers through Runpod's proxy; Codeman ends the run |
+| `ollama`, `vllm` | A pod from the catalog's official image through the bootstrap, with `qwen2.5:0.5b` or `Qwen/Qwen2.5-0.5B-Instruct` | The gateway's `/admin/status` reports `NODE_RELEASE`'s Node.js version and the SHA-256 of the gateway at the commit, and the pod got the bootstrap as its command with both; `/health` is ready; the fit is wholly on the GPU; one chat completion answers through Runpod's proxy or Salad's Container Gateway; Codeman ends the run |
 | `blocked` | No pod: Ollama's pinned release without its exceptions | The release policy blocks it, from OSV.dev's advisories, and no pod is created |
 | `unfit` | A vLLM pod with `max-model-len: 32768` and `max-num-seqs: 256`, which no listed GPU holds | The pod's start fails with the fit's message |
 
@@ -175,6 +175,20 @@ The pod is created on the chosen cloud through Codeman's own `hosts` setting, `[
 > [!WARNING]
 > On Community Cloud, the pod runs on a third party's machine ([self-hosted inference's risks](../../security/risks.md#self-hosted-inference)). It gets what every Codeman pod gets: the bootstrap's URLs and SHA-256, the model and settings, the admin token's hash, and Runpod's own pod-scoped key, with which the gateway terminates its pod. Never the account key. The run's token and the admin token for that pod reach it in requests, and open only that pod's gateway.
 
+### On Salad
+
+With `--provider=salad`, the check runs the same four checks on SaladCloud, through Codeman's [Salad adapter](../../installation/salad.md), each pod a container group of one replica reached through the Container Gateway ([`salad.ts`](../../../e2e/live/salad.ts)):
+
+- **Priority:** High, which no other workload preempts. A node can still be lost.
+- **GPU:** always `auto`. It reads the organization's [GPU classes](../../web/salad/list-the-gpu-classes.md), keeps the NVIDIA ones of 16 to 24 GB with a price at High, and asks [GPU availability](../../web/salad/get-gpu-availability.md) for each: those with nodes available at High have room. Then it keeps, ranks and falls back as on Runpod. The `<check>.gpu` line gives `available_nodes` instead of Runpod's availability.
+- **Hosts:** Salad's are community ones, so `--community=false` is refused, as is an explicit `--gpu`.
+- **A lost node:** a check that fails after Salad moved its pod's instance to another machine prints `<event>.infrastructure`, `result=infrastructure`: the node's failure, not Codeman's. `done` then says `infrastructure` if no other check failed. The exit code is still 1. A node lost with no replacement seen yet stays a plain failure.
+- **Cost:** Salad has no billing API. `done` gives `pods_cost_usd`, the run's pods at their listed prices from creation to termination, an estimate above Salad's bill, which leaves out allocation and the image's download.
+- **vLLM:** Salad does not document its hosts' CUDA version, which vLLM's image needs at 13.0, and Codeman cannot check it before creating the pod. A `vllm` failure for that reason is a finding about Salad, not a defect of the check.
+
+> [!WARNING]
+> Salad's key is a user's, and reaches every organization the user belongs to ([the Salad adapter](../../installation/salad.md)). The pods never get it. Unlike Runpod's, a pod gets no key of its own: it ends by exiting.
+
 > [!NOTE]
 > The bootstrap runs nothing whose SHA-256 differs from its pod's environment. So the Node.js version and the gateway's SHA-256 that the gateway reports ([routes](../../inference/self-hosted.md#routes)) prove what it checked: `node` and `gateway_sha256_match` in the output.
 
@@ -186,6 +200,13 @@ The pod is created on the chosen cloud through Codeman's own `hosts` setting, `[
    read -rs CODEMAN_RUNPOD_API_KEY && export CODEMAN_RUNPOD_API_KEY
    ```
 
+   On Salad, its key, organization and project instead:
+
+   ```sh
+   read -rs CODEMAN_SALAD_API_KEY && export CODEMAN_SALAD_API_KEY
+   export CODEMAN_SALAD_ORGANIZATION=<organization> CODEMAN_SALAD_PROJECT=<project>
+   ```
+
 2. Run the checks, from a clean checkout of a pushed commit:
 
    ```sh
@@ -194,13 +215,14 @@ The pod is created on the chosen cloud through Codeman's own `hosts` setting, `[
 
 | Option | Environment variable | Default |
 | --- | --- | --- |
-| `--gpu=<id>` | `CODEMAN_POD_CHECK_GPU` | `auto`: [the cheapest with room](#how-it-chooses-the-gpu). Or one of the IDs in `GPU_TYPES` ([`check.ts`](../../../e2e/live/check.ts)) |
-| `--community=<bool>` | `CODEMAN_POD_CHECK_COMMUNITY` | `true`: Community Cloud too. `false`: Secure Cloud only |
+| `--provider=<name>` | `CODEMAN_POD_CHECK_PROVIDER` | `runpod`. Or `salad` |
+| `--gpu=<id>` | `CODEMAN_POD_CHECK_GPU` | `auto`: [the cheapest with room](#how-it-chooses-the-gpu). Or, on Runpod, one of the IDs in `GPU_TYPES` ([`check.ts`](../../../e2e/live/check.ts)) |
+| `--community=<bool>` | `CODEMAN_POD_CHECK_COMMUNITY` | `true`: Community Cloud too. `false`: Secure Cloud only, on Runpod |
 | `--checks=<list>` | `CODEMAN_POD_CHECK_CHECKS` | `ollama,vllm` |
 | `--ollama-model=<name>` | `CODEMAN_POD_CHECK_OLLAMA_MODEL` | `qwen2.5:0.5b` |
 | `--vllm-model=<id>` | `CODEMAN_POD_CHECK_VLLM_MODEL` | `Qwen/Qwen2.5-0.5B-Instruct` |
 | `--max-minutes=<n>` | `CODEMAN_POD_CHECK_MAX_MINUTES` | `60`, from 15 to 60: the run stops there, and terminates its pods |
-| `--cleanup` | – | Off. Only terminates every pod that carries `CODEMAN_ORGANIZATION=codeman-pod-check`, as a workflow's last step would |
+| `--cleanup` | – | Off. Only terminates every pod that carries `CODEMAN_ORGANIZATION=codeman-pod-check` on the provider, as a workflow's last step would |
 
 It exits 0 when every check and the cleanup pass, 1 otherwise, and 2 on a wrong input.
 
@@ -213,10 +235,11 @@ The same workflow runs it, with the input `check` set to `pod`, on the branch to
 
 ```sh
 gh workflow run e2e.yml --ref features/multi-service-pods -f check=pod -f pod-checks=ollama,vllm
+gh workflow run e2e.yml --ref features/multi-service-pods -f check=pod -f provider=salad
 ```
 
-- **Inputs:** `gpu`, `auto` by default, or one of the IDs in `GPU_TYPES`; `community`, true by default; `pod-checks`, `ollama` by default. The models and the max minutes keep the script's defaults.
-- **The key:** the secret `CODEMAN_RUNPOD_API_KEY` of the `E2E` environment, which admits only `main`, `features/*` and `fixes/*`. Only the pod job names the environment, and only its two steps that call Runpod get the key; `npm ci` runs before, without it.
+- **Inputs:** `provider`, `runpod` by default, or `salad`; `gpu`, `auto` by default, or on Runpod one of the IDs in `GPU_TYPES`; `community`, true by default, and required on Salad; `pod-checks`, `ollama` by default. The models and the max minutes keep the script's defaults.
+- **The account:** in the `E2E` environment, which admits only `main`, `features/*` and `fixes/*`: the secret `CODEMAN_RUNPOD_API_KEY`, or the secret `CODEMAN_SALAD_API_KEY` with the variables `CODEMAN_SALAD_ORGANIZATION` and `CODEMAN_SALAD_PROJECT`. Only the pod job names the environment, and only its two steps that call the provider get the chosen provider's account, the other's values being empty; `npm ci` runs before, without them.
 - **One at a time:** the job's `concurrency` group is `pod-check`, and a second run waits.
 - **Cleanup:** a last step, `if: always()`, runs `--cleanup`. The job stops at 75 minutes, after the script's own 60.
 - **Output:** only the [allowlisted lines](#what-it-prints), and no artifact. [`e2e/workflow.test.ts`](../../../e2e/workflow.test.ts) holds these rules.
@@ -226,13 +249,13 @@ gh workflow run e2e.yml --ref features/multi-service-pods -f check=pod -f pod-ch
 Only allowlisted values: times, memory, prices, statuses, the GPU type, engine, model, commit, the GPU type's availability, and pass or fail per check. Never a pod's ID, URL or environment, a token, a key, or a response's headers or body. Codeman's own log lines name pods, so none is printed.
 
 - **Before each pod,** the `<check>.gpu` line gives the chosen GPU type, its `cloud`, price and catalog `availability` (`NONE`, `LOW`, `MEDIUM` or `HIGH`) and how many data centers have room, and counts the candidates: `eligible`, `no_room`, `missing` (unknown to the catalog, or not offered on that cloud) and `over_cap`. Each `<check>.start` line repeats the GPU type it tried, with its `attempt`.
-- **A failure** prints its kind and an HTTP status. A pod's start failure, such as the fit's, and Runpod's own message, such as a refused creation's `detail`, print cleaned of every hidden value and URL, cut to 400 characters.
+- **A failure** prints its kind and an HTTP status. A pod's start failure, such as the fit's, and the provider's own message, such as a refused creation's `detail`, print cleaned of every hidden value and URL, cut to 400 characters. A Salad message leaves out its path, which names the organization and the project.
 - **A creation refused with 400** is `unavailable` when the catalog listed no room, and `fail` when it listed some: Runpod gives no capacity no code of its own, and a request that breaks a rule is a 400 too ([create a pod](../../web/runpod/create-a-pod.md#errors)). Runpod's own words for no room, "no instances available" or "no longer any instances available", stay `unavailable`: room can go between the catalog's answer and the creation.
 
-In GitHub Actions (`GITHUB_ACTIONS=true`), each secret and identifier is masked with `::add-mask::` as soon as the run has it: the key first, each gateway's admin token before its pod is created, the run's token once Codeman gives it. A line that would show one is withheld whole.
+In GitHub Actions (`GITHUB_ACTIONS=true`), each secret and identifier is masked with `::add-mask::` as soon as the run has it: the key first, with Salad's organization and project, which name the account (a value under 6 characters is never masked, since that would hide common words; no line prints them), each gateway's admin token before its pod is created, the run's token once Codeman gives it. A line that would show one is withheld whole.
 
 ```text
-[pod-check] inputs result=pass gpu=auto community=true checks=ollama,vllm max_minutes=60
+[pod-check] inputs result=pass provider=runpod gpu=auto community=true checks=ollama,vllm max_minutes=60
 [pod-check] gateway result=pass commit=0123456789abcdef0123456789abcdef01234567
 [pod-check] ollama.gpu result=pass gpu="NVIDIA RTX A4000" cloud=community price_per_hour_usd=0.17 memory_gb=16 availability=HIGH data_centers=6 data_centers_with_room=2 candidates=16 eligible=5 no_room=1 missing=10 over_cap=0
 [pod-check] ollama.start result=unavailable error=PodUnavailable http_status=400 message="Runpod created no pod with NVIDIA RTX A4000: Community Cloud: Runpod POST /pods failed with 400: Bad Request There are no longer any instances available with the requested specifications.." engine=ollama attempt=1 gpu="NVIDIA RTX A4000" cloud=community price_per_hour_usd=0.17 memory_gb=16 availability=HIGH data_centers=6 data_centers_with_room=2 pods=0
@@ -244,7 +267,7 @@ In GitHub Actions (`GITHUB_ACTIONS=true`), each secret and identifier is masked 
 [pod-check] ollama.end result=pass cost_usd=0.017 total_s=231.4
 [pod-check] vllm.gpu ...
 [pod-check] cleanup result=pass pods=2 leftover_pods=0
-[pod-check] done result=pass total_s=812.9
+[pod-check] done result=pass total_s=812.9 pods_cost_usd=0.061
 ```
 
 The figures above are an example, not a measure.
