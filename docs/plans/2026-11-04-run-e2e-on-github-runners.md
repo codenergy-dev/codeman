@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-11-04T14:47:33-03:00
-updated_at: 2026-11-06T19:05:00-03:00
+updated_at: 2026-11-23T14:07:00-03:00
 commit: e1c1411
 ---
 
@@ -60,6 +60,15 @@ Answered on 2026-11-06, after the first dispatches of the pod check:
 11. **The pod check picks its GPU itself,** cheapest first, under the $1 cap for the whole run, from a list of GPU types per check that fit its needs: enough memory for its model and engine, not much more. An explicit GPU type stays possible.
 12. **It may use Runpod's Community Cloud,** through a workflow input on by default. A pod there receives Runpod's pod-scoped key, not the account's, and the check's model is public. The pod check on Salad (step 5) runs on community hosts anyway, since Salad's secure hosts need a contract.
 
+Answered on 2026-11-23, for step 5:
+
+13. **The Salad key is the maintainer's own user's key,** in `E2E`, from an account also used for other projects. It reaches every organization that user belongs to; the maintainer accepts the risk, keeps the balance low ($5 to start), and rotates the key if needed.
+14. **Salad's container groups run at High priority,** which no other workload preempts: an RTX 3090 is $0.20 per hour there, against $0.09 at Lowest, which can interrupt the check at any time.
+15. **The check takes Salad's GPU class itself,** from Salad's GPU availability: the cheapest NVIDIA class of 16 to 24 GB with nodes available at High priority, under the same $1 cap. The workflow's `gpu` input stays Runpod's; on Salad it is always `auto`.
+16. **Salad runs the same four checks as Runpod,** chosen by the same input, `ollama` by default. Salad does not document its hosts' CUDA version, which vLLM 0.32.0 needs at 13.0: a `vllm` failure for that reason is a finding, not a defect of the check.
+
+A check of a model's fit before its pod is created, which would have saved the 19 minutes of the `unfit` check, has its own plan: `docs/plans/2026-11-23-estimate-the-fit-before-creating-a-pod.md`.
+
 ## Secrets and what a public repository shows
 
 What each check needs to see, and nothing else:
@@ -68,7 +77,7 @@ What each check needs to see, and nothing else:
 | --- | --- | --- |
 | The suite on `ubuntu-latest` | None: every key is a fake's | None |
 | Real pod, on Runpod | `CODEMAN_RUNPOD_API_KEY`, in the `E2E` environment | None: the GPU type and model are the workflow's inputs |
-| Real pod, on Salad, later | `CODEMAN_SALAD_API_KEY`, in `E2E` | `CODEMAN_SALAD_ORGANIZATION` and `CODEMAN_SALAD_PROJECT`, in `E2E` |
+| Real pod, on Salad | `CODEMAN_SALAD_API_KEY`, in `E2E` | `CODEMAN_SALAD_ORGANIZATION` and `CODEMAN_SALAD_PROJECT`, in `E2E` |
 
 The names are those of [the templates](../../templates/codeman-task.yml). The `E2E` environment admits only the branches `main`, `features/*` and `fixes/*`. Other keys the check uses, such as the encryption secret and the gateway's tokens, are made for the run and registered as masks.
 
@@ -104,7 +113,7 @@ Rules for the workflow, each checked by a test or by reading the file in step 2:
 
    Done when unit tests cover the script's allowlisted output and its cleanup, with a fake `fetch`, and a dispatch passes on Runpod for less than $1, recorded here.
 4. **Failures on a real pod.** A model that does not fit fails with the fit's message, and a release that is blocked starts no pod. Done when both are in the dispatch.
-5. **Salad.** The same check, with the group's replicas and the Container Gateway. A node's interruption fails the run as "infrastructure", not as a Codeman failure. Done when a dispatch passes. Asks first whether the user's key, which reaches all of their organizations, is acceptable here.
+5. **Salad.** The same checks (decisions 13 to 16), through Codeman's Salad adapter and the Container Gateway, chosen by a workflow input `provider`, `runpod` by default. The Salad key and its organization and project reach only the two steps that call Salad, as the Runpod key does. A node's interruption fails the run as "infrastructure", not as a Codeman failure. Salad's GPU availability page is saved in `docs/web/salad/` first. Done when unit tests cover the Salad path with a fake Salad, and a dispatch of `ollama` passes on Salad, recorded here.
 6. **Docs.** [The suite's page](../development/e2e/suite.md) says how to start each check and what each costs, and [dependencies](../development/dependencies.md) records the workflow's actions. Done when the docs tests pass.
 7. **The rule in AGENTS.md,** once steps 2 and 3 work. Its sections also reach the repositories Codeman runs on, so it must hold for any of them. A bullet under "Ask before critical decisions":
 
@@ -220,4 +229,4 @@ So steps 3 and 4 are done. Two measurements for part 2 and the live test:
 - **A vLLM pod's start takes about 8 minutes** on a fresh host, image and model included, against about 1 minute for Ollama.
 - **A vLLM pod that does not fit fails only after vLLM starts:** about 19 minutes here, billed. A check of the fit before creating the pod would save it.
 
-Next: step 5, Salad, which first asks whether the user's Salad key, which reaches all of their organizations, is acceptable in the `E2E` environment.
+Next: step 5, Salad, with decisions 13 to 16, answered on 2026-11-23.
