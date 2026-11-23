@@ -32,7 +32,7 @@ import type { Pool } from "../../src/pool.ts";
 import type { Log } from "../../src/runtime/runtime.ts";
 import { MemoryStore } from "../../src/store/memory.ts";
 import { type Fields, Report } from "./report.ts";
-import { type ProbeAnswer, SALAD_NAME, saladProvider } from "./salad.ts";
+import { type ProbeAnswer, type ProbeOutcome, SALAD_NAME, saladProvider } from "./salad.ts";
 
 /**
  * The pod check (steps 3 to 5 of the plan to run the e2e suite on GitHub's runners): Codeman's real
@@ -336,9 +336,14 @@ export interface CheckProvider {
   moved?(id: string): Promise<boolean>;
   /**
    * Sends variants of the creation's body for this pod, each stopped so that nothing is billed,
-   * and deletes each group created: Salad's alone.
+   * and deletes each group created, to find what in its command the provider refuses: Salad's
+   * alone. `wait` paces the requests.
    */
-  probe?(spec: PodSpec, hide: (value: string) => void): Promise<ProbeAnswer[]>;
+  probe?(
+    spec: PodSpec,
+    hide: (value: string) => void,
+    wait: (ms: number) => Promise<void>,
+  ): Promise<ProbeOutcome>;
 }
 
 /** How a check ended: `infrastructure` when the provider lost the pod's node, not Codeman. */
@@ -818,7 +823,11 @@ async function probeCheck(context: Context): Promise<Outcome> {
     }
   }
   if (!caught) throw new Error("The probe's pod was created.");
-  const answers = await provider.probe(caught, (value) => context.report.hide(value));
+  const { answers, cause } = await provider.probe(
+    caught,
+    (value) => context.report.hide(value),
+    context.wait ?? ((ms) => new Promise((done) => setTimeout(done, ms))),
+  );
   for (const answer of answers) say(`probe.${answer.variant}`, probeFields(context.report, answer));
   const accepted = answers.filter((answer) => isAccepted(answer.status)).length;
   const leftovers = answers.filter((answer) => answer.deleted === false).length;
@@ -827,16 +836,31 @@ async function probeCheck(context: Context): Promise<Outcome> {
   say("probe", {
     result: passed ? "pass" : "fail",
     accepted,
-    refused: answers.length - accepted,
+    // Not `refused`, which names the characters the probe found refused.
+    rejected: answers.length - accepted,
     undeleted: leftovers,
+    ...cause,
     reason: passed
       ? undefined
       : leftovers > 0
         ? "A probe's group could not be deleted: the cleanup deletes it."
-        : "Salad refused the creation's whole body.",
+        : CAUSES[cause.cause],
   });
   return passed ? "pass" : "fail";
 }
+
+/** What each cause of the probe means, for its summary line. */
+const CAUSES: Readonly<Record<ProbeOutcome["cause"]["cause"], string>> = {
+  none: "Salad took the whole body.",
+  unknown: "Salad refused the creation, and the probe could not tell what in it.",
+  "any-command": "Salad refused every command, even /bin/sh -c :.",
+  character: "Salad refused a command item for a character it holds: the character named.",
+  "item-content": "Salad refused one command item alone, but none of the characters tried.",
+  "total-chars": "Salad refused a command above a total size: the limit lies in the range.",
+  "item-count": "Salad refused a command of 60 items.",
+  "item-length": "Salad refused a command item of 1,000 characters.",
+  throttled: "Salad answered 429: the probe stopped.",
+};
 
 function isAccepted(status: number | undefined): boolean {
   return status !== undefined && status >= 200 && status < 300;
@@ -855,8 +879,9 @@ function probeFields(report: Report, answer: ProbeAnswer): Fields {
   if (answer.status === undefined) {
     return { result: "fail", error: "Error", reason: "The request failed before an answer." };
   }
+  const facts = answer.facts ?? {};
   if (isAccepted(answer.status)) {
-    return { result: "pass", http_status: answer.status, deleted: answer.deleted };
+    return { result: "pass", ...facts, http_status: answer.status, deleted: answer.deleted };
   }
   let parsed: unknown;
   try {
@@ -872,6 +897,7 @@ function probeFields(report: Report, answer: ProbeAnswer): Fields {
   const keys = problem ? Object.keys(problem).filter((key) => PROBLEM_KEY.test(key)) : [];
   return {
     result: "fail",
+    ...facts,
     http_status: answer.status,
     message: described ? report.cleanMessage(described) : undefined,
     keys: keys.length > 0 ? keys.slice(0, 20).join(",") : undefined,

@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type { Fetch } from "../../src/budget.ts";
-import { type GpuAccount, isHostKind, type PodSpec } from "../../src/inference/gpu.ts";
+import { type GpuAccount, isHostKind } from "../../src/inference/gpu.ts";
 import {
   containerGroupRequest,
   memoryGb,
@@ -128,37 +128,38 @@ export function saladProvider(account: Required<GpuAccount>, fetchFn: Fetch): Ch
       nodes.record(id, await instances(request, containers, id).catch(() => []));
       return nodes.moved(id);
     },
-    async probe(spec: PodSpec, hide: (value: string) => void): Promise<ProbeAnswer[]> {
+    async probe(spec, hide, wait): Promise<ProbeOutcome> {
       const listed = (await request(`${organization}/gpu-classes`)) as {
         items?: SaladGpuClass[];
       };
       const gpu = (listed.items ?? []).find((one) => one.name === spec.gpuType);
       if (!gpu) throw new Error("Salad no longer lists the probe's GPU class.");
       const full = containerGroupRequest(spec, gpu, groupName());
-      const tags = Object.fromEntries(
-        TAGS.flatMap((name) => (spec.env[name] ? [[name, spec.env[name]]] : [])),
-      );
-      const answers: ProbeAnswer[] = [];
-      for (const { variant, body } of probeBodies(full, tags)) {
+      let sent = 0;
+      return probeCommand(full, async (variant, command, facts) => {
+        const body = probeBody(full, command);
         hide(String(body.name));
-        answers.push(await probeOne(fetchFn, account.key, containers, variant, body));
-      }
-      return answers;
+        // Paced, so that the probe's requests stay far from any rate limit.
+        if (sent++ > 0) await wait(PROBE_PACE_MS);
+        return { ...(await probeOne(fetchFn, account.key, containers, variant, body)), facts };
+      });
     },
   };
 }
-
-/** The variables the check's cleanup lists its groups by, which every variant keeps. */
-const TAGS = ["CODEMAN_ORGANIZATION", "CODEMAN_POOL"] as const;
 
 /** A container group's name, as the adapter makes one. */
 function groupName(): string {
   return `codeman-${randomBytes(8).toString("hex")}`;
 }
 
+/** What one probe request sent, printable: counts, lengths and a character's name, never text. */
+export type ProbeFacts = Record<string, string | number>;
+
 /** What Salad answered to one variant of the creation's body. */
 export interface ProbeAnswer {
   variant: string;
+  /** What the variant's command was: its size, or the character it tried. */
+  facts?: ProbeFacts | undefined;
   /** The HTTP status, or undefined when the request itself failed. */
   status: number | undefined;
   /** The answer's body, up to 8 KB, for a refusal; never printed as such. */
@@ -168,64 +169,211 @@ export interface ProbeAnswer {
   deleted?: boolean;
 }
 
+/** The probe's answers, and what in the command Salad refuses, as far as they tell. */
+export interface ProbeOutcome {
+  answers: ProbeAnswer[];
+  /**
+   * `none` when Salad takes the whole body; `unknown` when it refuses it without a command too, or
+   * when no test below tells; `any-command` when it refuses even `/bin/sh -c :`; `character` or
+   * `item-content` when one item of the command alone is refused; `total-chars`, `item-count` or
+   * `item-length` for a size; `throttled` when Salad answered 429 and the probe stopped.
+   */
+  cause: { cause: ProbeCause } & ProbeFacts;
+}
+
+export type ProbeCause =
+  | "none"
+  | "unknown"
+  | "any-command"
+  | "character"
+  | "item-content"
+  | "total-chars"
+  | "item-count"
+  | "item-length"
+  | "throttled";
+
+/** The pause between two of the probe's creations. */
+export const PROBE_PACE_MS = 300;
+
+/** The least command: a shell that does nothing, to which a tried item is added. */
+const BASE = ["/bin/sh", "-c", ":"];
+
+/** The total sizes the probe tries, in characters: up to about the bootstrap's, by 100. */
+const SIZE_STEP = 100;
+const SIZE_MAX = 5_000;
+/** Above Salad's documented 1,000 characters an item and 100 items, never reached. */
+const LONG_ITEM = 1_000;
+const MANY_ITEMS = 60;
+
 /**
- * The variants of the adapter's body that the `probe` check sends, to find what Salad refuses:
- * each one stopped (`autostart_policy: false`), so no instance starts and nothing is billed, under
- * a name of its own, and with the variables the cleanup lists its groups by. In order: the whole
- * body, then without one part each, then smaller resources, then the least Salad requires.
+ * The characters and sequences of the bootstrap's script the probe tries one at a time, each as
+ * `x<text>x` after `BASE`, printed by its name only.
  */
-export function probeBodies(
+export const PROBE_CHARACTERS: readonly (readonly [name: string, text: string])[] = [
+  ["dollar", "$"],
+  ["single-quote", "'"],
+  ["double-quote", '"'],
+  ["backslash", "\\"],
+  ["backtick", "`"],
+  ["brace-open", "{"],
+  ["brace-close", "}"],
+  ["paren-open", "("],
+  ["paren-close", ")"],
+  ["bracket-open", "["],
+  ["bracket-close", "]"],
+  ["pipe", "|"],
+  ["ampersand", "&"],
+  ["semicolon", ";"],
+  ["less-than", "<"],
+  ["greater-than", ">"],
+  ["asterisk", "*"],
+  ["question", "?"],
+  ["exclamation", "!"],
+  ["hash", "#"],
+  ["percent", "%"],
+  ["tilde", "~"],
+  ["equals", "="],
+  ["space", " "],
+  ["dollar-paren", "$("],
+  ["dollar-brace", "${"],
+  ["backslash-n", "\\n"],
+  ["backslash-r", "\\r"],
+  ["percent-s", "%s"],
+];
+
+/** A command's size, as a probe line prints it. */
+export function commandFacts(command: readonly string[]): ProbeFacts {
+  return { items: command.length, chars: command.reduce((sum, item) => sum + item.length, 0) };
+}
+
+/**
+ * `BASE` and items of `a`, of `chars` characters in all, each of `LONG_ITEM` at most: few items,
+ * so that their count does not count.
+ */
+export function filledCommand(chars: number): string[] {
+  const command = [...BASE];
+  let left = chars - BASE.join("").length;
+  while (left > 0) {
+    const size = Math.min(LONG_ITEM, left);
+    command.push("a".repeat(size));
+    left -= size;
+  }
+  return command;
+}
+
+/** A variant of the whole body: stopped, named anew, with `command`, or none when null. */
+export function probeBody(
   full: Record<string, unknown>,
-  tags: Record<string, string>,
-): { variant: string; body: Record<string, unknown> }[] {
-  const container = full.container as Record<string, unknown>;
-  const resources = container.resources as Record<string, unknown>;
-  const basic = {
-    cpu: resources.cpu,
-    memory: resources.memory,
-    gpu_classes: resources.gpu_classes,
+  command: readonly string[] | null,
+): Record<string, unknown> {
+  const body = structuredClone(full);
+  const container = body.container as Record<string, unknown>;
+  if (command === null) delete container.command;
+  else container.command = [...command];
+  body.name = groupName();
+  body.autostart_policy = false;
+  return body;
+}
+
+class Throttled extends Error {}
+
+/**
+ * What in the creation's command Salad refuses, by requests each stopped and deleted (`send`),
+ * at most about 40:
+ *
+ * 1. Controls: the whole body, then without its command. When Salad takes the whole body, or
+ *    refuses it without a command too, the command is not the cause.
+ * 2. `/bin/sh -c :`: when refused, any command is.
+ * 3. A binary search over the command's prefixes for the shortest one refused, assuming a
+ *    refusal holds for every longer prefix.
+ * 4. That prefix's last item alone after `/bin/sh -c :`. Refused: its content, then each of
+ *    `PROBE_CHARACTERS` alone, to name a character. Taken: a size, then 60 items, an item of
+ *    1,000 characters, and a total of 5,000 characters in items of 1,000 at most, searched down
+ *    by 100; the first size refused is the cause.
+ *
+ * Stops at Salad's first 429.
+ */
+export async function probeCommand(
+  full: Record<string, unknown>,
+  send: (
+    variant: string,
+    command: readonly string[] | null,
+    facts?: ProbeFacts,
+  ) => Promise<ProbeAnswer>,
+): Promise<ProbeOutcome> {
+  const answers: ProbeAnswer[] = [];
+  const done = (cause: ProbeCause, facts: ProbeFacts = {}): ProbeOutcome => ({
+    answers,
+    cause: { cause, ...facts },
+  });
+  const taken = async (
+    variant: string,
+    command: readonly string[] | null,
+    facts?: ProbeFacts,
+  ): Promise<boolean> => {
+    const answer = await send(variant, command, facts);
+    answers.push(answer);
+    if (answer.status === 429) throw new Throttled();
+    return answer.status !== undefined && answer.status >= 200 && answer.status < 300;
   };
-  const variant = (
-    name: string,
-    change: (body: Record<string, unknown>, container: Record<string, unknown>) => void,
-  ) => {
-    const body = structuredClone(full);
-    change(body, body.container as Record<string, unknown>);
-    body.name = groupName();
-    body.autostart_policy = false;
-    return { variant: name, body };
-  };
-  return [
-    variant("full", () => {}),
-    variant("no-networking", (body) => {
-      delete body.networking;
-    }),
-    variant("no-command", (_, inner) => {
-      delete inner.command;
-    }),
-    variant("tags-only-env", (_, inner) => {
-      inner.environment_variables = { ...tags };
-    }),
-    variant("restart-always", (body) => {
-      body.restart_policy = "always";
-    }),
-    variant("basic-resources", (_, inner) => {
-      inner.resources = { ...basic };
-    }),
-    variant("small-resources", (_, inner) => {
-      inner.resources = { ...(inner.resources as object), cpu: 4, memory: 16_384 };
-    }),
-    variant("minimal", (body, inner) => {
-      for (const key of Object.keys(body)) {
-        if (!["name", "container", "replicas", "restart_policy"].includes(key)) delete body[key];
+  const listed = (full.container as { command?: unknown }).command;
+  const command = Array.isArray(listed) ? listed.map(String) : [];
+  try {
+    if (!(await taken("full", command.length > 0 ? command : null, commandFacts(command)))) {
+      if (command.length === 0 || !(await taken("no-command", null))) return done("unknown");
+    } else {
+      await taken("no-command", null);
+      return done("none");
+    }
+    if (!(await taken("base", BASE, commandFacts(BASE)))) return done("any-command");
+
+    let accepted = 0;
+    let refused = command.length;
+    while (refused - accepted > 1) {
+      const middle = Math.floor((accepted + refused) / 2);
+      const prefix = command.slice(0, middle);
+      if (await taken("prefix", prefix, commandFacts(prefix))) accepted = middle;
+      else refused = middle;
+    }
+    const index = refused - 1;
+    const item = command[index] ?? "";
+    if (!(await taken("item-alone", [...BASE, item], { index, length: item.length }))) {
+      const refusedNames: string[] = [];
+      for (const [name, text] of PROBE_CHARACTERS) {
+        if (!(await taken("character", [...BASE, `x${text}x`], { character: name }))) {
+          refusedNames.push(name);
+        }
       }
-      for (const key of Object.keys(inner)) {
-        if (key !== "image") delete inner[key];
-      }
-      inner.environment_variables = { ...tags };
-      inner.resources = { ...basic };
-    }),
-  ];
+      const inItem = PROBE_CHARACTERS.filter(
+        ([name, text]) => refusedNames.includes(name) && item.includes(text),
+      );
+      const refusedFacts: ProbeFacts =
+        refusedNames.length > 0 ? { refused: refusedNames.join(",") } : {};
+      return inItem[0]
+        ? done("character", { character: inItem[0][0], index, ...refusedFacts })
+        : done("item-content", { index, length: item.length, ...refusedFacts });
+    }
+
+    const many = [...BASE, ...Array.from({ length: MANY_ITEMS - BASE.length }, () => "a")];
+    if (!(await taken("size.items", many, commandFacts(many)))) return done("item-count");
+    const long = [...BASE, "a".repeat(LONG_ITEM)];
+    if (!(await taken("size.item", long, commandFacts(long)))) return done("item-length");
+    const most = filledCommand(SIZE_MAX);
+    if (await taken("size.total", most, commandFacts(most))) return done("unknown", { index });
+    let low = 0;
+    let high = SIZE_MAX / SIZE_STEP;
+    while (high - low > 1) {
+      const middle = Math.floor((low + high) / 2);
+      const tried = filledCommand(middle * SIZE_STEP);
+      if (await taken("size.total", tried, commandFacts(tried))) low = middle;
+      else high = middle;
+    }
+    const lowChars = low === 0 ? BASE.join("").length : low * SIZE_STEP;
+    return done("total-chars", { limit: `${lowChars}-${high * SIZE_STEP}` });
+  } catch (error) {
+    if (error instanceof Throttled) return done("throttled");
+    throw error;
+  }
 }
 
 /** Sends one variant; deletes the group when Salad created it. */

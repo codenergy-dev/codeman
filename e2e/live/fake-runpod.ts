@@ -76,6 +76,8 @@ export interface FakeSaladOptions {
   moveAtChat?: boolean;
   /** Salad refuses a creation whose body this accepts with 400 and validation errors by field. */
   refuse?: (body: Record<string, unknown>) => boolean;
+  /** Salad answers 429 to every creation after this many. */
+  throttleAfter?: number;
 }
 
 export interface FakeOptions {
@@ -290,6 +292,10 @@ export class FakeRunpod {
     }
     if (method === "POST" && path === containers) {
       this.saladBodies.push(body ?? {});
+      const throttleAfter = this.options.salad?.throttleAfter;
+      if (throttleAfter !== undefined && this.saladBodies.length > throttleAfter) {
+        return json(429, { title: "Too Many Requests", status: 429 });
+      }
       if (body && this.options.salad?.refuse?.(body)) {
         return json(400, {
           type: "https://tools.ietf.org/html/rfc9110#section-15.5.1",

@@ -38,6 +38,15 @@ const TEXT_FIELDS: Readonly<Record<string, RegExp>> = {
   type: /^https?:\/\/[A-Za-z0-9.-]{1,100}(\/[A-Za-z0-9._~/#-]{0,200})?$/,
   /** A media type, without its parameters. */
   content_type: /^[a-z0-9.+-]{1,40}\/[a-z0-9.+-]{1,60}$/,
+  /** What the Salad probe found Salad refuses (`ProbeCause` in e2e/live/salad.ts). */
+  cause:
+    /^(none|unknown|any-command|character|item-content|total-chars|item-count|item-length|throttled)$/,
+  /** The name of a character the probe tried, such as `dollar`; never the character. */
+  character: /^[a-z]{1,20}(-[a-z]{1,20})?$/,
+  /** The names of the characters the probe found refused. */
+  refused: /^[a-z]{1,20}(-[a-z]{1,20})?(,[a-z]{1,20}(-[a-z]{1,20})?){0,40}$/,
+  /** A size Salad's limit lies in, as `<taken>-<refused>`. */
+  limit: /^\d{1,6}-\d{1,6}$/,
   /** The check's own sentences, from its code. */
   reason: /^[A-Za-z][A-Za-z0-9 ,.;:()`'_/-]{0,300}$/,
 };

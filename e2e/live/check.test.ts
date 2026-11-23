@@ -658,72 +658,183 @@ describe("the pod check on Salad", () => {
     }
   });
 
-  test("probe: posts the creation's variants stopped, deletes each group, starts no pod", async () => {
+  /** The command of a probe body, or none. */
+  const commandOf = (body: Record<string, unknown>): string[] | undefined =>
+    (body.container as { command?: string[] }).command;
+  /** A fake Salad rule: refuses a command when `bad` says so. */
+  const refusing = (bad: (command: string[]) => boolean): FakeOptions => ({
+    salad: {
+      refuse: (body) => {
+        const command = commandOf(body);
+        return command !== undefined && bad(command);
+      },
+    },
+  });
+  const chars = (command: string[]) => command.reduce((sum, item) => sum + item.length, 0);
+
+  test("probe: takes the whole body stopped, deletes each group, starts no pod", async () => {
     const { code, lines, salad } = await saladRun(["--checks=probe"]);
     assert.equal(code, 0, lines.join("\n"));
     assert.deepEqual(salad.unexpected, []);
-    const variants = [
-      "full",
-      "no-networking",
-      "no-command",
-      "tags-only-env",
-      "restart-always",
-      "basic-resources",
-      "small-resources",
-      "minimal",
-    ];
-    assert.equal(salad.saladBodies.length, variants.length);
+    assert.equal(salad.saladBodies.length, 2);
     for (const body of salad.saladBodies) {
       assert.equal(body.autostart_policy, false);
       const container = body.container as { environment_variables: Record<string, string> };
       assert.equal(container.environment_variables.CODEMAN_ORGANIZATION, OWNER);
       assert.match(container.environment_variables.CODEMAN_POOL ?? "", /^codeman-pod-check-/);
     }
-    assert.equal(new Set(salad.saladBodies.map((body) => body.name)).size, variants.length);
+    assert.equal(new Set(salad.saladBodies.map((body) => body.name)).size, 2);
     // The whole body is the adapter's, as the ollama check would send it.
-    const [full] = salad.saladBodies as [Record<string, unknown>];
+    const [full, bare] = salad.saladBodies as [Record<string, unknown>, Record<string, unknown>];
     const fullContainer = full.container as Record<string, unknown>;
     assert.equal(fullContainer.priority, "high");
     assert.ok(Array.isArray(fullContainer.command) && fullContainer.command.length > 1);
     assert.equal((full.networking as { port: number }).port, 8080);
-    assert.deepEqual(Object.keys(salad.saladBodies.at(-1) ?? {}).sort(), [
-      "autostart_policy",
-      "container",
-      "name",
-      "replicas",
-      "restart_policy",
-    ]);
+    assert.equal(commandOf(bare), undefined);
     for (const pod of salad.pods.values()) {
       assert.equal(pod.salad?.started, false);
       assert.equal(pod.status, "TERMINATED");
     }
     assert.match(line(lines, "probe.gpu"), /result=pass gpu="RTX 3090 \(24 GB\)"/);
-    for (const variant of variants) {
-      assert.match(line(lines, `probe.${variant}`), / result=pass http_status=201 deleted=true$/);
-    }
-    assert.match(line(lines, "probe"), /result=pass accepted=8 refused=0 undeleted=0$/);
+    assert.match(
+      line(lines, "probe.full"),
+      /^\[pod-check\] probe.full result=pass items=\d+ chars=\d+ http_status=201 deleted=true$/,
+    );
+    assert.match(line(lines, "probe.no-command"), / result=pass http_status=201 deleted=true$/);
+    assert.match(line(lines, "probe"), /result=pass accepted=2 rejected=0 undeleted=0 cause=none$/);
     assert.match(line(lines, "cleanup"), /result=pass pods=0 leftover_pods=0/);
     assert.match(line(lines, "done"), /result=pass total_s=\S+ pods_cost_usd=0$/);
     assertNothingLeaksOnSalad(lines, salad);
   });
 
   test("probe: prints a refusal's problem, field by field, and never its other values", async () => {
+    const { code, lines, salad } = await saladRun(
+      ["--checks=probe"],
+      refusing(() => true),
+    );
+    assert.equal(code, 1);
+    // Only the body without a command was created.
+    assert.equal(salad.pods.size, 1);
+    assert.match(
+      line(lines, "probe.full"),
+      /^\[pod-check\] probe.full result=fail items=\d+ chars=\d+ http_status=400 message="One or more validation errors occurred. container.command: The command is not valid." keys=type,title,status,instance,errors,traceId type=https:\/\/tools.ietf.org\/html\/rfc9110#section-15.5.1 content_type=application\/json body_bytes=\d+$/,
+    );
+    assert.match(line(lines, "probe.no-command"), / result=pass http_status=201 deleted=true$/);
+    assert.match(line(lines, "probe.base"), / result=fail items=3 chars=10 http_status=400 /);
+    assert.match(
+      line(lines, "probe"),
+      /result=fail accepted=1 rejected=2 undeleted=0 cause=any-command reason="Salad refused every command, even \/bin\/sh -c :."$/,
+    );
+    assert.ok(!lines.some((one) => one.includes('traceId"') || one.includes("00-fake-trace")));
+    assertNothingLeaksOnSalad(lines, salad);
+  });
+
+  test("probe: names a character Salad refuses, and the item that holds it", async () => {
+    const { code, lines, salad } = await saladRun(
+      ["--checks=probe"],
+      refusing((command) => command.some((item) => item.includes("$("))),
+    );
+    assert.equal(code, 1);
+    const [full] = salad.saladBodies as [Record<string, unknown>];
+    const command = commandOf(full) ?? [];
+    const index = command.findIndex((item) => item.includes("$("));
+    assert.ok(index >= 0);
+    // The shortest refused prefix ends with the item, which is refused alone too.
+    const prefixes = lines.filter((one) => one.startsWith("[pod-check] probe.prefix "));
+    assert.ok(prefixes.length > 0 && prefixes.length <= Math.ceil(Math.log2(command.length)));
+    assert.ok(prefixes.some((one) => one.includes(` result=fail items=${index + 1} `)));
+    assert.match(
+      line(lines, "probe.item-alone"),
+      new RegExp(`result=fail index=${index} length=${command[index]?.length} http_status=400 `),
+    );
+    const characters = lines.filter((one) => one.startsWith("[pod-check] probe.character "));
+    assert.equal(characters.length, 29);
+    assert.ok(characters.some((one) => / result=fail character=dollar-paren /.test(one)));
+    assert.ok(characters.some((one) => / result=pass character=dollar http_status=201 /.test(one)));
+    assert.match(
+      line(lines, "probe"),
+      new RegExp(
+        `result=fail accepted=\\d+ rejected=\\d+ undeleted=0 cause=character character=dollar-paren index=${index} refused=dollar-paren reason=`,
+      ),
+    );
+    // No character is printed raw.
+    assert.ok(!lines.some((one) => one.includes("x$(x")));
+    assert.ok(salad.saladBodies.length <= 45);
+    assertNothingLeaksOnSalad(lines, salad);
+  });
+
+  test("probe: tells an item's content when no character alone is refused", async () => {
+    const { lines, salad } = await saladRun(
+      ["--checks=probe"],
+      refusing((command) => command.some((item) => item.includes("printf"))),
+    );
+    const command = commandOf(salad.saladBodies[0] ?? {}) ?? [];
+    const index = command.findIndex((item) => item.includes("printf"));
+    assert.match(
+      line(lines, "probe"),
+      new RegExp(
+        ` cause=item-content index=${index} length=${command[index]?.length} reason="Salad refused one command item alone`,
+      ),
+    );
+  });
+
+  test("probe: bounds a total size Salad refuses", async () => {
+    const { lines, salad } = await saladRun(
+      ["--checks=probe"],
+      refusing((command) => chars(command) > 3_050),
+    );
+    assert.ok(chars(commandOf(salad.saladBodies[0] ?? {}) ?? []) > 3_050);
+    assert.match(
+      line(lines, "probe.item-alone"),
+      / result=pass index=\d+ length=\d+ http_status=201 /,
+    );
+    assert.match(
+      line(lines, "probe.size.items"),
+      / result=pass items=60 chars=67 http_status=201 /,
+    );
+    assert.match(
+      line(lines, "probe.size.item"),
+      / result=pass items=4 chars=1010 http_status=201 /,
+    );
+    assert.match(
+      line(lines, "probe.size.total"),
+      / result=fail items=8 chars=5000 http_status=400 /,
+    );
+    assert.equal(lines.filter((one) => one.includes("probe.character")).length, 0);
+    assert.match(line(lines, "probe"), / cause=total-chars limit=3000-3100 reason=/);
+    assertNothingLeaksOnSalad(lines, salad);
+  });
+
+  test("probe: names a command of many items Salad refuses", async () => {
+    const { lines } = await saladRun(
+      ["--checks=probe"],
+      refusing((command) => command.length > 50),
+    );
+    assert.match(
+      line(lines, "probe.size.items"),
+      / result=fail items=60 chars=67 http_status=400 /,
+    );
+    assert.equal(lines.filter((one) => one.includes("probe.size.total")).length, 0);
+    assert.match(
+      line(lines, "probe"),
+      / cause=item-count reason="Salad refused a command of 60 items."$/,
+    );
+  });
+
+  test("probe: stops at Salad's first 429", async () => {
     const { code, lines, salad } = await saladRun(["--checks=probe"], {
       salad: {
-        refuse: (body) => Array.isArray((body.container as { command?: unknown }).command),
+        throttleAfter: 3,
+        refuse: (body) => (commandOf(body)?.length ?? 0) > 3,
       },
     });
     assert.equal(code, 1);
-    // Only the variants without a command were created: no-command and minimal.
-    assert.equal(salad.pods.size, 2);
+    assert.equal(salad.saladBodies.length, 4);
+    assert.match(line(lines, "probe.prefix"), / result=fail items=\d+ chars=\d+ http_status=429 /);
     assert.match(
-      line(lines, "probe.full"),
-      /^\[pod-check\] probe.full result=fail http_status=400 message="One or more validation errors occurred. container.command: The command is not valid." keys=type,title,status,instance,errors,traceId type=https:\/\/tools.ietf.org\/html\/rfc9110#section-15.5.1 content_type=application\/json body_bytes=\d+$/,
+      line(lines, "probe"),
+      / cause=throttled reason="Salad answered 429: the probe stopped."$/,
     );
-    assert.match(line(lines, "probe.no-command"), / result=pass http_status=201 deleted=true$/);
-    assert.match(line(lines, "probe"), /result=fail accepted=2 refused=6 undeleted=0 reason=/);
-    assert.ok(!lines.some((one) => one.includes('traceId"') || one.includes("00-fake-trace")));
-    assertNothingLeaksOnSalad(lines, salad);
   });
 
   test("probe runs on Salad only", async () => {
