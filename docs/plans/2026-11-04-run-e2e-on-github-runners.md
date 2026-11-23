@@ -244,4 +244,9 @@ The first dispatch of `ollama` on Salad, at `f07de21`, ended in 23.1 s with no g
 
 `describeProblem` now reads validation errors by field too, for Runpod, Salad and the pod check alike.
 
-Next: the same dispatch again, to read the reason.
+The second dispatch, at `0eb7e6a`, gave the same bare "Bad Request" in 8.9 s, with no group and no cost: the problem holds neither a `detail` nor validation errors, so the body's fault cannot be read from it.
+
+- `bbd2dcd`: the adapter builds a group's request in a pure function, `containerGroupRequest`, which the check reuses.
+- `21a2e33`: a `probe` check, on Salad only. It catches the Ollama pod's spec before its creation, then sends the adapter's body and seven variants of it, each stopped (`autostart_policy: false`), so no instance starts and nothing is billed. It deletes each group Salad creates. Each answer prints its status and, for a refusal, the problem's text, the names of its keys, its `type`, its media type and size.
+
+Next: the maintainer's dispatch of the probe, `-f check=pod -f provider=salad -f pod-checks=probe`, whose accepted and refused variants say which part of the body Salad refuses.
