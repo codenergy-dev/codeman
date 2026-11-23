@@ -152,13 +152,13 @@ function groupName(): string {
   return `codeman-${randomBytes(8).toString("hex")}`;
 }
 
-/** What one probe request sent, printable: counts, lengths and a character's name, never text. */
+/** What one probe request sent, printable: counts, lengths, indexes and names, never text. */
 export type ProbeFacts = Record<string, string | number>;
 
 /** What Salad answered to one variant of the creation's body. */
 export interface ProbeAnswer {
   variant: string;
-  /** What the variant's command was: its size, or the character it tried. */
+  /** What the variant's command was: its size, an item's or a token's index, or a word's name. */
   facts?: ProbeFacts | undefined;
   /** The HTTP status, or undefined when the request itself failed. */
   status: number | undefined;
@@ -174,18 +174,20 @@ export interface ProbeOutcome {
   answers: ProbeAnswer[];
   /**
    * `none` when Salad takes the whole body; `unknown` when it refuses it without a command too, or
-   * when no test below tells; `any-command` when it refuses even `/bin/sh -c :`; `character` or
-   * `item-content` when one item of the command alone is refused; `total-chars`, `item-count` or
-   * `item-length` for a size; `throttled` when Salad answered 429 and the probe stopped.
+   * when no test below tells; `any-command` when it refuses even `/bin/sh -c :`; `item-content`
+   * when an item of the command alone is refused, with the items, tokens and words refused;
+   * `total-chars`, `item-count` or `item-length` for a size; `throttled` when Salad answered 429
+   * and the probe stopped.
    */
   cause: { cause: ProbeCause } & ProbeFacts;
+  /** Whether the probe stopped at its most requests, before every test ran. */
+  capped: boolean;
 }
 
 export type ProbeCause =
   | "none"
   | "unknown"
   | "any-command"
-  | "character"
   | "item-content"
   | "total-chars"
   | "item-count"
@@ -194,9 +196,18 @@ export type ProbeCause =
 
 /** The pause between two of the probe's creations. */
 export const PROBE_PACE_MS = 300;
+/** The probe's most creations in one run. */
+export const PROBE_MAX_REQUESTS = 50;
 
 /** The least command: a shell that does nothing, to which a tried item is added. */
 const BASE = ["/bin/sh", "-c", ":"];
+
+/**
+ * The items the probe tries alone, by their content: those that run a tool that downloads or
+ * checks a download, as the item Salad refused in the dispatch at a01f4e6 does (curl's), and the
+ * command's last two, which run the gateway.
+ */
+const DOWNLOAD_ITEM = /\b(curl|wget|python3|openssl) +(-|s_client\b|dgst\b)/;
 
 /** The total sizes the probe tries, in characters: up to about the bootstrap's, by 100. */
 const SIZE_STEP = 100;
@@ -205,45 +216,42 @@ const SIZE_MAX = 5_000;
 const LONG_ITEM = 1_000;
 const MANY_ITEMS = 60;
 
-/**
- * The characters and sequences of the bootstrap's script the probe tries one at a time, each as
- * `x<text>x` after `BASE`, printed by its name only.
- */
-export const PROBE_CHARACTERS: readonly (readonly [name: string, text: string])[] = [
-  ["dollar", "$"],
-  ["single-quote", "'"],
-  ["double-quote", '"'],
-  ["backslash", "\\"],
-  ["backtick", "`"],
-  ["brace-open", "{"],
-  ["brace-close", "}"],
-  ["paren-open", "("],
-  ["paren-close", ")"],
-  ["bracket-open", "["],
-  ["bracket-close", "]"],
-  ["pipe", "|"],
-  ["ampersand", "&"],
-  ["semicolon", ";"],
-  ["less-than", "<"],
-  ["greater-than", ">"],
-  ["asterisk", "*"],
-  ["question", "?"],
-  ["exclamation", "!"],
-  ["hash", "#"],
-  ["percent", "%"],
-  ["tilde", "~"],
-  ["equals", "="],
-  ["space", " "],
-  ["dollar-paren", "$("],
-  ["dollar-brace", "${"],
-  ["backslash-n", "\\n"],
-  ["backslash-r", "\\r"],
-  ["percent-s", "%s"],
+/** Single items the probe tries after `BASE`, printed by their names only. */
+export const PROBE_WORDS: readonly (readonly [name: string, text: string])[] = [
+  ["curl", "curl"],
+  ["wget", "wget"],
+  ["curl-output", "curl -o f u"],
+  ["curl-url", "curl https://example.com"],
+  ["wget-url", "wget https://example.com"],
+  ["python3-c", "python3 -c x"],
+  ["openssl-s-client", "openssl s_client"],
+  ["base64-d", "base64 -d"],
+  ["eval", "eval"],
 ];
 
 /** A command's size, as a probe line prints it. */
 export function commandFacts(command: readonly string[]): ProbeFacts {
   return { items: command.length, chars: command.reduce((sum, item) => sum + item.length, 0) };
+}
+
+/** The indexes of the items the probe tries alone, in order. */
+export function probedItems(command: readonly string[]): number[] {
+  const last = [command.length - 2, command.length - 1].filter((index) => index >= 0);
+  const chosen = command.flatMap((item, index) => (DOWNLOAD_ITEM.test(item) ? [index] : []));
+  return [...new Set([...chosen, ...last])].sort((a, b) => a - b);
+}
+
+/** An item's tokens, split on whitespace, each with its first index; repeated ones left out. */
+export function itemTokens(item: string): { index: number; text: string }[] {
+  const seen = new Set<string>();
+  return item
+    .split(/\s+/)
+    .filter((text) => text !== "")
+    .flatMap((text, index) => {
+      if (seen.has(text)) return [];
+      seen.add(text);
+      return [{ index, text }];
+    });
 }
 
 /**
@@ -276,22 +284,25 @@ export function probeBody(
 }
 
 class Throttled extends Error {}
+class Capped extends Error {}
 
 /**
  * What in the creation's command Salad refuses, by requests each stopped and deleted (`send`),
- * at most about 40:
+ * at most `PROBE_MAX_REQUESTS`:
  *
  * 1. Controls: the whole body, then without its command. When Salad takes the whole body, or
  *    refuses it without a command too, the command is not the cause.
  * 2. `/bin/sh -c :`: when refused, any command is.
- * 3. A binary search over the command's prefixes for the shortest one refused, assuming a
- *    refusal holds for every longer prefix.
- * 4. That prefix's last item alone after `/bin/sh -c :`. Refused: its content, then each of
- *    `PROBE_CHARACTERS` alone, to name a character. Taken: a size, then 60 items, an item of
- *    1,000 characters, and a total of 5,000 characters in items of 1,000 at most, searched down
- *    by 100; the first size refused is the cause.
+ * 3. Each item of `probedItems` alone after `/bin/sh -c :`.
+ * 4. The first item refused, token by token, each as `x <token> x`; when no token alone is
+ *    refused, the shortest run of adjacent tokens refused, by binary search.
+ * 5. Each of `PROBE_WORDS` alone.
+ * 6. When no item of step 3 is refused: a binary search over the command's prefixes for the
+ *    shortest one refused, assuming a refusal holds for every longer prefix, and its last item
+ *    alone; taken alone, a size: 60 items, an item of 1,000 characters, and a total of 5,000
+ *    characters searched down by 100.
  *
- * Stops at Salad's first 429.
+ * Stops at Salad's first 429, or at its most requests.
  */
 export async function probeCommand(
   full: Record<string, unknown>,
@@ -302,15 +313,26 @@ export async function probeCommand(
   ) => Promise<ProbeAnswer>,
 ): Promise<ProbeOutcome> {
   const answers: ProbeAnswer[] = [];
+  const refusedItems: number[] = [];
+  const refusedTokens: string[] = [];
+  const refusedWords: string[] = [];
+  const found = (): ProbeFacts => ({
+    ...(refusedItems.length > 0 ? { refused_items: refusedItems.join(",") } : {}),
+    ...(refusedTokens.length > 0 ? { refused_tokens: refusedTokens.join(",") } : {}),
+    ...(refusedWords.length > 0 ? { refused_words: refusedWords.join(",") } : {}),
+  });
+  let capped = false;
   const done = (cause: ProbeCause, facts: ProbeFacts = {}): ProbeOutcome => ({
     answers,
-    cause: { cause, ...facts },
+    cause: { cause, ...facts, ...found() },
+    capped,
   });
   const taken = async (
     variant: string,
     command: readonly string[] | null,
     facts?: ProbeFacts,
   ): Promise<boolean> => {
+    if (answers.length >= PROBE_MAX_REQUESTS) throw new Capped();
     const answer = await send(variant, command, facts);
     answers.push(answer);
     if (answer.status === 429) throw new Throttled();
@@ -318,6 +340,47 @@ export async function probeCommand(
   };
   const listed = (full.container as { command?: unknown }).command;
   const command = Array.isArray(listed) ? listed.map(String) : [];
+  /** Steps 4 and 5, after an item refused alone. */
+  const narrow = async (item: string): Promise<void> => {
+    const tokens = itemTokens(item);
+    for (const token of tokens) {
+      const tried = [...BASE, `x ${token.text} x`];
+      if (!(await taken("token", tried, { index: token.index, length: token.text.length }))) {
+        refusedTokens.push(String(token.index));
+      }
+    }
+    for (const [name, text] of PROBE_WORDS) {
+      if (!(await taken("word", [...BASE, text], { word: name }))) refusedWords.push(name);
+    }
+    if (refusedTokens.length > 0) return;
+    // No token alone: the shortest run of adjacent tokens refused, by two binary searches, its
+    // end then its start, assuming a run that holds a refused one is refused too.
+    const words = item.split(/\s+/).filter((text) => text !== "");
+    const run = (from: number, to: number) => {
+      const text = words.slice(from, to).join(" ");
+      return taken("tokens", [...BASE, `x ${text} x`], {
+        index: from,
+        count: to - from,
+        length: text.length,
+      });
+    };
+    if (words.length < 2 || (await run(0, words.length))) return;
+    let kept = 0;
+    let end = words.length;
+    while (end - kept > 1) {
+      const middle = Math.floor((kept + end) / 2);
+      if (await run(0, middle)) kept = middle;
+      else end = middle;
+    }
+    let start = 0;
+    let past = end;
+    while (past - start > 1) {
+      const middle = Math.floor((start + past) / 2);
+      if (await run(middle, end)) past = middle;
+      else start = middle;
+    }
+    refusedTokens.push(start === end - 1 ? String(start) : `${start}-${end - 1}`);
+  };
   try {
     if (!(await taken("full", command.length > 0 ? command : null, commandFacts(command)))) {
       if (command.length === 0 || !(await taken("no-command", null))) return done("unknown");
@@ -326,6 +389,18 @@ export async function probeCommand(
       return done("none");
     }
     if (!(await taken("base", BASE, commandFacts(BASE)))) return done("any-command");
+
+    for (const index of probedItems(command)) {
+      const item = command[index] ?? "";
+      if (!(await taken("item", [...BASE, item], { index, length: item.length }))) {
+        refusedItems.push(index);
+      }
+    }
+    const first = refusedItems[0];
+    if (first !== undefined) {
+      await narrow(command[first] ?? "");
+      return done("item-content");
+    }
 
     let accepted = 0;
     let refused = command.length;
@@ -338,20 +413,9 @@ export async function probeCommand(
     const index = refused - 1;
     const item = command[index] ?? "";
     if (!(await taken("item-alone", [...BASE, item], { index, length: item.length }))) {
-      const refusedNames: string[] = [];
-      for (const [name, text] of PROBE_CHARACTERS) {
-        if (!(await taken("character", [...BASE, `x${text}x`], { character: name }))) {
-          refusedNames.push(name);
-        }
-      }
-      const inItem = PROBE_CHARACTERS.filter(
-        ([name, text]) => refusedNames.includes(name) && item.includes(text),
-      );
-      const refusedFacts: ProbeFacts =
-        refusedNames.length > 0 ? { refused: refusedNames.join(",") } : {};
-      return inItem[0]
-        ? done("character", { character: inItem[0][0], index, ...refusedFacts })
-        : done("item-content", { index, length: item.length, ...refusedFacts });
+      refusedItems.push(index);
+      await narrow(item);
+      return done("item-content");
     }
 
     const many = [...BASE, ...Array.from({ length: MANY_ITEMS - BASE.length }, () => "a")];
@@ -372,6 +436,10 @@ export async function probeCommand(
     return done("total-chars", { limit: `${lowChars}-${high * SIZE_STEP}` });
   } catch (error) {
     if (error instanceof Throttled) return done("throttled");
+    if (error instanceof Capped) {
+      capped = true;
+      return done(refusedItems.length > 0 ? "item-content" : "unknown");
+    }
     throw error;
   }
 }

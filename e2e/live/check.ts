@@ -823,7 +823,7 @@ async function probeCheck(context: Context): Promise<Outcome> {
     }
   }
   if (!caught) throw new Error("The probe's pod was created.");
-  const { answers, cause } = await provider.probe(
+  const { answers, cause, capped } = await provider.probe(
     caught,
     (value) => context.report.hide(value),
     context.wait ?? ((ms) => new Promise((done) => setTimeout(done, ms))),
@@ -836,10 +836,10 @@ async function probeCheck(context: Context): Promise<Outcome> {
   say("probe", {
     result: passed ? "pass" : "fail",
     accepted,
-    // Not `refused`, which names the characters the probe found refused.
     rejected: answers.length - accepted,
     undeleted: leftovers,
     ...cause,
+    capped: capped || undefined,
     reason: passed
       ? undefined
       : leftovers > 0
@@ -854,8 +854,8 @@ const CAUSES: Readonly<Record<ProbeOutcome["cause"]["cause"], string>> = {
   none: "Salad took the whole body.",
   unknown: "Salad refused the creation, and the probe could not tell what in it.",
   "any-command": "Salad refused every command, even /bin/sh -c :.",
-  character: "Salad refused a command item for a character it holds: the character named.",
-  "item-content": "Salad refused one command item alone, but none of the characters tried.",
+  "item-content":
+    "Salad refused command items alone: the items, their tokens and the words it refused are named.",
   "total-chars": "Salad refused a command above a total size: the limit lies in the range.",
   "item-count": "Salad refused a command of 60 items.",
   "item-length": "Salad refused a command item of 1,000 characters.",
@@ -868,11 +868,16 @@ function isAccepted(status: number | undefined): boolean {
 
 /** A top-level key of a problem's body: a name, never a value. */
 const PROBLEM_KEY = /^[A-Za-z_][A-Za-z0-9_-]{0,40}$/;
+/**
+ * A problem's `traceId`: an opaque trace of Salad's servers, which its support can look up. Only
+ * a W3C `traceparent` or a run of hexadecimal digits and hyphens prints; anything else is withheld.
+ */
+const TRACE_ID = /^([0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}|[0-9a-f-]{16,64})$/;
 
 /**
  * What a probe's answer may print: its status, the problem's text as `describeProblem` reads it,
- * cleaned, the names of the body's top-level keys, its `type` when that is a URL, its media type
- * and size. Never another value of the body: `instance`, for one, names the organization and the
+ * cleaned, the names of the body's top-level keys, its `type` when that is a URL, its `traceId`
+ * when that is one, its media type and size. Never another value of the body: `instance`, for one, names the organization and the
  * project.
  */
 function probeFields(report: Report, answer: ProbeAnswer): Fields {
@@ -902,6 +907,12 @@ function probeFields(report: Report, answer: ProbeAnswer): Fields {
     message: described ? report.cleanMessage(described) : undefined,
     keys: keys.length > 0 ? keys.slice(0, 20).join(",") : undefined,
     type: typeof problem?.type === "string" ? problem.type : undefined,
+    trace_id:
+      typeof problem?.traceId === "string"
+        ? TRACE_ID.test(problem.traceId)
+          ? problem.traceId
+          : "withheld"
+        : undefined,
     content_type: answer.contentType?.split(";")[0]?.trim().toLowerCase(),
     body_bytes: Buffer.byteLength(answer.body),
   };

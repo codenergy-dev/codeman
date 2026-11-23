@@ -78,6 +78,8 @@ export interface FakeSaladOptions {
   refuse?: (body: Record<string, unknown>) => boolean;
   /** Salad answers 429 to every creation after this many. */
   throttleAfter?: number;
+  /** The `traceId` of a refusal's problem; a text that is not one by default. */
+  traceId?: string;
 }
 
 export interface FakeOptions {
@@ -303,7 +305,7 @@ export class FakeRunpod {
           status: 400,
           instance: `${containers}`,
           errors: { "container.command": ["The command is not valid."] },
-          traceId: "00-fake-trace-00",
+          traceId: this.options.salad?.traceId ?? "00-fake-trace-00",
         });
       }
       const spec = body as {

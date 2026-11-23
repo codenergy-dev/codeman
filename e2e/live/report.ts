@@ -39,12 +39,18 @@ const TEXT_FIELDS: Readonly<Record<string, RegExp>> = {
   /** A media type, without its parameters. */
   content_type: /^[a-z0-9.+-]{1,40}\/[a-z0-9.+-]{1,60}$/,
   /** What the Salad probe found Salad refuses (`ProbeCause` in e2e/live/salad.ts). */
-  cause:
-    /^(none|unknown|any-command|character|item-content|total-chars|item-count|item-length|throttled)$/,
-  /** The name of a character the probe tried, such as `dollar`; never the character. */
-  character: /^[a-z]{1,20}(-[a-z]{1,20})?$/,
-  /** The names of the characters the probe found refused. */
-  refused: /^[a-z]{1,20}(-[a-z]{1,20})?(,[a-z]{1,20}(-[a-z]{1,20})?){0,40}$/,
+  cause: /^(none|unknown|any-command|item-content|total-chars|item-count|item-length|throttled)$/,
+  /** A problem's `traceId`, as a W3C `traceparent` or hexadecimal digits and hyphens. */
+  trace_id: /^[0-9a-f-]{16,64}$/,
+  /** The name of a word the probe tried, such as `curl-output`; never the word. */
+  word: /^[a-z0-9]{1,20}(-[a-z0-9]{1,20}){0,3}$/,
+  /** The indexes of the command's items the probe found refused alone. */
+  refused_items: /^\d{1,3}(,\d{1,3}){0,99}$/,
+  /** The indexes of an item's tokens, or runs of them as `<first>-<last>`, found refused. */
+  refused_tokens: /^\d{1,3}(-\d{1,3})?(,\d{1,3}(-\d{1,3})?){0,99}$/,
+  /** The names of the words found refused. */
+  refused_words:
+    /^[a-z0-9]{1,20}(-[a-z0-9]{1,20}){0,3}(,[a-z0-9]{1,20}(-[a-z0-9]{1,20}){0,3}){0,19}$/,
   /** A size Salad's limit lies in, as `<taken>-<refused>`. */
   limit: /^\d{1,6}-\d{1,6}$/,
   /** The check's own sentences, from its code. */

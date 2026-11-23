@@ -717,7 +717,7 @@ describe("the pod check on Salad", () => {
     assert.equal(salad.pods.size, 1);
     assert.match(
       line(lines, "probe.full"),
-      /^\[pod-check\] probe.full result=fail items=\d+ chars=\d+ http_status=400 message="One or more validation errors occurred. container.command: The command is not valid." keys=type,title,status,instance,errors,traceId type=https:\/\/tools.ietf.org\/html\/rfc9110#section-15.5.1 content_type=application\/json body_bytes=\d+$/,
+      /^\[pod-check\] probe.full result=fail items=\d+ chars=\d+ http_status=400 message="One or more validation errors occurred. container.command: The command is not valid." keys=type,title,status,instance,errors,traceId type=https:\/\/tools.ietf.org\/html\/rfc9110#section-15.5.1 trace_id=withheld content_type=application\/json body_bytes=\d+$/,
     );
     assert.match(line(lines, "probe.no-command"), / result=pass http_status=201 deleted=true$/);
     assert.match(line(lines, "probe.base"), / result=fail items=3 chars=10 http_status=400 /);
@@ -729,53 +729,101 @@ describe("the pod check on Salad", () => {
     assertNothingLeaksOnSalad(lines, salad);
   });
 
-  test("probe: names a character Salad refuses, and the item that holds it", async () => {
-    const { code, lines, salad } = await saladRun(
-      ["--checks=probe"],
-      refusing((command) => command.some((item) => item.includes("$("))),
+  /** The items the probe tries alone in the Ollama pod's command, by their content. */
+  const probed = (command: string[]) =>
+    command.flatMap((item, index) =>
+      /\b(curl|wget|python3|openssl) +(-|s_client\b|dgst\b)/.test(item) ||
+      index >= command.length - 2
+        ? [index]
+        : [],
     );
+  const tokensOf = (item: string) => item.split(/\s+/).filter((text) => text !== "");
+
+  test("probe: names the items, the tokens and the words Salad refuses", async () => {
+    const { code, lines, salad } = await saladRun(["--checks=probe"], {
+      salad: {
+        refuse: (body) => (commandOf(body) ?? []).some((item) => /\bcurl\b/.test(item)),
+        traceId: "00-0123456789abcdef0123456789abcdef-0123456789abcdef-00",
+      },
+    });
     assert.equal(code, 1);
-    const [full] = salad.saladBodies as [Record<string, unknown>];
-    const command = commandOf(full) ?? [];
-    const index = command.findIndex((item) => item.includes("$("));
-    assert.ok(index >= 0);
-    // The shortest refused prefix ends with the item, which is refused alone too.
-    const prefixes = lines.filter((one) => one.startsWith("[pod-check] probe.prefix "));
-    assert.ok(prefixes.length > 0 && prefixes.length <= Math.ceil(Math.log2(command.length)));
-    assert.ok(prefixes.some((one) => one.includes(` result=fail items=${index + 1} `)));
+    const command = commandOf(salad.saladBodies[0] ?? {}) ?? [];
+    const items = probed(command);
+    assert.ok(items.length >= 6, items.join(","));
+    const tried = lines.filter((one) => one.startsWith("[pod-check] probe.item "));
+    assert.equal(tried.length, items.length);
+    const curl = command.findIndex((item) => item.startsWith("if has curl;"));
+    assert.ok(items.includes(curl));
+    assert.ok(
+      tried.some((one) =>
+        one.includes(` result=fail index=${curl} length=${command[curl]?.length} http_status=400 `),
+      ),
+    );
+    // Each refusal prints its trace, which Salad's support can look up.
+    assert.match(
+      line(lines, "probe.full"),
+      / trace_id=00-0123456789abcdef0123456789abcdef-0123456789abcdef-00 /,
+    );
+    // The curl item's tokens, printed by index and length only: `curl;`, `curl.";` and `curl`.
+    const tokens = tokensOf(command[curl] ?? "");
+    const refusedTokens = tokens.flatMap((token, index) =>
+      /\bcurl\b/.test(`x ${token} x`) ? [index] : [],
+    );
+    assert.deepEqual(refusedTokens.length, 3);
+    assert.equal(
+      lines.filter((one) => one.startsWith("[pod-check] probe.token ")).length,
+      tokens.length,
+    );
+    const words = lines.filter((one) => one.startsWith("[pod-check] probe.word "));
+    assert.equal(words.length, 9);
+    assert.ok(words.some((one) => / result=fail word=curl-output /.test(one)));
+    assert.ok(words.some((one) => / result=pass word=wget http_status=201 /.test(one)));
+    assert.match(
+      line(lines, "probe"),
+      new RegExp(
+        `result=fail accepted=\\d+ rejected=\\d+ undeleted=0 cause=item-content refused_items=${curl} refused_tokens=${refusedTokens.join(",")} refused_words=curl,curl-output,curl-url reason=`,
+      ),
+    );
+    // No item, token or word is printed as text.
+    assert.ok(!lines.some((one) => one.includes("--connect-timeout") || one.includes("curl -o")));
+    assert.ok(salad.saladBodies.length <= 50);
+    assertNothingLeaksOnSalad(lines, salad);
+  });
+
+  test("probe: narrows a run of tokens when no token alone is refused", async () => {
+    const { lines, salad } = await saladRun(
+      ["--checks=probe"],
+      refusing((command) => command.some((item) => item.includes('-o "$2"'))),
+    );
+    const command = commandOf(salad.saladBodies[0] ?? {}) ?? [];
+    const curl = command.findIndex((item) => item.startsWith("if has curl;"));
+    const tokens = tokensOf(command[curl] ?? "");
+    const at = tokens.indexOf("-o");
+    assert.equal(lines.filter((one) => / probe.token result=fail /.test(one)).length, 0);
+    assert.match(
+      line(lines, "probe"),
+      new RegExp(
+        ` cause=item-content refused_items=${curl} refused_tokens=${at}-${at + 1} reason=`,
+      ),
+    );
+    assert.ok(salad.saladBodies.length <= 50);
+    // A trace that is not one is withheld.
+    assert.match(line(lines, "probe.full"), / trace_id=withheld /);
+  });
+
+  test("probe: falls back on the prefixes when no download item is refused", async () => {
+    const { lines, salad } = await saladRun(
+      ["--checks=probe"],
+      refusing((command) => command.some((item) => item.startsWith("log() {"))),
+    );
+    const command = commandOf(salad.saladBodies[0] ?? {}) ?? [];
+    const index = command.findIndex((item) => item.startsWith("log() {"));
+    assert.ok(index >= 0 && !probed(command).includes(index));
     assert.match(
       line(lines, "probe.item-alone"),
       new RegExp(`result=fail index=${index} length=${command[index]?.length} http_status=400 `),
     );
-    const characters = lines.filter((one) => one.startsWith("[pod-check] probe.character "));
-    assert.equal(characters.length, 29);
-    assert.ok(characters.some((one) => / result=fail character=dollar-paren /.test(one)));
-    assert.ok(characters.some((one) => / result=pass character=dollar http_status=201 /.test(one)));
-    assert.match(
-      line(lines, "probe"),
-      new RegExp(
-        `result=fail accepted=\\d+ rejected=\\d+ undeleted=0 cause=character character=dollar-paren index=${index} refused=dollar-paren reason=`,
-      ),
-    );
-    // No character is printed raw.
-    assert.ok(!lines.some((one) => one.includes("x$(x")));
-    assert.ok(salad.saladBodies.length <= 45);
-    assertNothingLeaksOnSalad(lines, salad);
-  });
-
-  test("probe: tells an item's content when no character alone is refused", async () => {
-    const { lines, salad } = await saladRun(
-      ["--checks=probe"],
-      refusing((command) => command.some((item) => item.includes("printf"))),
-    );
-    const command = commandOf(salad.saladBodies[0] ?? {}) ?? [];
-    const index = command.findIndex((item) => item.includes("printf"));
-    assert.match(
-      line(lines, "probe"),
-      new RegExp(
-        ` cause=item-content index=${index} length=${command[index]?.length} reason="Salad refused one command item alone`,
-      ),
-    );
+    assert.match(line(lines, "probe"), new RegExp(` cause=item-content refused_items=${index} `));
   });
 
   test("probe: bounds a total size Salad refuses", async () => {
@@ -830,7 +878,7 @@ describe("the pod check on Salad", () => {
     });
     assert.equal(code, 1);
     assert.equal(salad.saladBodies.length, 4);
-    assert.match(line(lines, "probe.prefix"), / result=fail items=\d+ chars=\d+ http_status=429 /);
+    assert.match(line(lines, "probe.item"), / result=fail index=\d+ length=\d+ http_status=429 /);
     assert.match(
       line(lines, "probe"),
       / cause=throttled reason="Salad answered 429: the probe stopped."$/,
