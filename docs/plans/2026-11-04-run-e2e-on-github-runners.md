@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-11-04T14:47:33-03:00
-updated_at: 2026-11-23T15:10:00-03:00
+updated_at: 2026-11-23T16:20:00-03:00
 commit: e1c1411
 ---
 
@@ -249,4 +249,28 @@ The second dispatch, at `0eb7e6a`, gave the same bare "Bad Request" in 8.9 s, wi
 - `bbd2dcd`: the adapter builds a group's request in a pure function, `containerGroupRequest`, which the check reuses.
 - `21a2e33`: a `probe` check, on Salad only. It catches the Ollama pod's spec before its creation, then sends the adapter's body and seven variants of it, each stopped (`autostart_policy: false`), so no instance starts and nothing is billed. It deletes each group Salad creates. Each answer prints its status and, for a refusal, the problem's text, the names of its keys, its `type`, its media type and size.
 
-Next: the maintainer's dispatch of the probe, `-f check=pod -f provider=salad -f pod-checks=probe`, whose accepted and refused variants say which part of the body Salad refuses.
+The probe's dispatch, at `f344eb1`, on RTX 3080 Ti Laptop (16 GB), in 25.1 s, with no cost and no group left:
+
+| Variant | Salad's answer |
+| --- | --- |
+| `full` | 400 |
+| `no-networking` | 400 |
+| `no-command` | 201, deleted |
+| `tags-only-env` | 400 |
+| `restart-always` | 400 |
+| `basic-resources` | 400 |
+| `small-resources` | 400 |
+| `minimal`, without a command | 201, deleted |
+
+Every refusal was the same bare problem, `type`, `title`, `status`, `instance` and `traceId`, of about 168 bytes. So Salad refuses the bootstrap's command: 56 items, 4,958 characters in all, the longest 906, all printable ASCII on one line each, within the documented 100 items of 1 to 1,000 characters.
+
+The probe's next round finds what in the command (`probeCommand` in `e2e/live/salad.ts`), in about 40 requests at most, each stopped and deleted, 300 ms apart, and stops at a 429:
+
+1. The controls: the whole body, then without its command.
+2. `/bin/sh -c :`: refused, any command is.
+3. A binary search over the command's prefixes for the shortest one refused.
+4. That prefix's last item alone after `/bin/sh -c :`. Refused, its content: then 29 characters and sequences of the script, one at a time, printed by name. Taken, a size: 60 items, an item of 1,000 characters, then a total of 5,000 characters searched down by 100.
+
+Its summary line names the cause: `none`, `any-command`, `character`, `item-content`, `item-count`, `item-length`, `total-chars` with its range, `throttled` or `unknown`.
+
+Next: the maintainer's dispatch of the probe again, `-f check=pod -f provider=salad -f pod-checks=probe`.
