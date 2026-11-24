@@ -183,9 +183,9 @@ With `--provider=salad`, the check runs the same four checks on SaladCloud, thro
 - **GPU:** always `auto`. It reads the organization's [GPU classes](../../web/salad/list-the-gpu-classes.md), keeps the NVIDIA ones of 16 to 24 GB with a price at High, and asks [GPU availability](../../web/salad/get-gpu-availability.md) for each: those with nodes available at High have room. Then it keeps, ranks and falls back as on Runpod. The `<check>.gpu` line gives `available_nodes` instead of Runpod's availability.
 - **Hosts:** Salad's are community ones, so `--community=false` is refused, as is an explicit `--gpu`.
 - **A lost node:** a check that fails after Salad moved its pod's instance to another machine prints `<event>.infrastructure`, `result=infrastructure`: the node's failure, not Codeman's. `done` then says `infrastructure` if no other check failed. The exit code is still 1. A node lost with no replacement seen yet stays a plain failure.
-- **Cost:** Salad has no billing API. `done` gives `pods_cost_usd`, the run's pods at their listed prices from creation to termination, an estimate above Salad's bill, which leaves out allocation and the image's download.
+- **Cost:** Salad has no billing API, and bills an instance per second only while it is `running`: not while a node is allocated, the image downloads or the container is created ([billing](../../web/salad/saladcloud-pricing.md#billing)). At each read of a pod's state, the check also reads its group's [instances](../../web/salad/list-container-group-instances.md): the running instance's `update_time` is when it started running, and the first read that no longer shows it running ends it. `<check>.end` and `done` print `cost_usd` for that time at the listed price, with `cost_basis=billed`; when the check could not tell, because Salad gave no time or the pod moved, for the pod's whole life, with `cost_basis=upper_bound` (`mixed` when some pods are known). `<check>.end` adds `estimate_usd`, Codeman's own estimate of the run, which counts from the pod's creation. `done` keeps `pods_cost_usd`, every pod's whole life, which the run's cap counts.
 - **`probe`:** a diagnostic, on Salad only, that creates no running pod. It builds the Ollama pod's container group request as the adapter does, on the class `ollama` would take, and finds what in its command Salad refuses (`probeCommand` in [`salad.ts`](../../../e2e/live/salad.ts)): the whole body and the body without a command, then a bare `/bin/sh -c :`, then each item that runs a download tool alone, and the command's last two; the first item refused token by token, or by the shortest run of its tokens; a few single words, such as `curl`; and, when no such item is refused, a binary search over the command's prefixes and sizes. Every request has `autostart_policy: false`, so no instance starts and nothing is billed; each group Salad creates is deleted at once; requests are 300 ms apart, 50 at most, and a 429 stops it. Each `probe.<variant>` line gives the command's size, an item's or token's index and length, or a word by its name, the HTTP status and, for a refusal, the problem's text, the names of its top-level keys, its `type`, its `traceId`, its media type and size. The `probe` line names the cause, and the items, tokens and words refused. It passes when Salad accepts the whole body.
-- **vLLM:** Salad does not document its hosts' CUDA version, which vLLM's image needs at 13.0, and Codeman cannot check it before creating the pod. A `vllm` failure for that reason is a finding about Salad, not a defect of the check.
+- **vLLM:** Salad does not document its hosts' CUDA version, which vLLM's image needs at 13.0, and Codeman cannot check it before creating the pod. The `vllm` and `unfit` checks passed on an RTX 3080 Ti Laptop (16 GB) on 2026-11-24; a `vllm` failure for that reason is a finding about Salad, not a defect of the check.
 
 > [!WARNING]
 > Salad's key is a user's, and reaches every organization the user belongs to ([the Salad adapter](../../installation/salad.md)). The pods never get it. Unlike Runpod's, a pod gets no key of its own: it ends by exiting.
@@ -244,6 +244,24 @@ gh workflow run e2e.yml --ref features/multi-service-pods -f check=pod -f provid
 - **One at a time:** the job's `concurrency` group is `pod-check`, and a second run waits.
 - **Cleanup:** a last step, `if: always()`, runs `--cleanup`. The job stops at 75 minutes, after the script's own 60.
 - **Output:** only the [allowlisted lines](#what-it-prints), and no artifact. [`e2e/workflow.test.ts`](../../../e2e/workflow.test.ts) holds these rules.
+
+### What each check costs
+
+What the maintainer's dispatches took, as the [plan](../../plans/2026-11-04-run-e2e-on-github-runners.md#progress) records them. Prices and room change: the check picks the cheapest GPU with room at the time.
+
+| Check | Inputs | Time | Cost |
+| --- | --- | --- | --- |
+| The suite, every group | `check=suite` | `none` 54 min, `ollama` 24 min, `vllm` 8 min, in parallel jobs | Nothing: a public repository's standard runners are free |
+| `ollama` on Runpod | `check=pod pod-checks=ollama` | 1.5 min | $0.021, RTX 4090 on Secure Cloud |
+| `vllm` on Runpod | `pod-checks=vllm` | 8 min to serve | $0.035, RTX A5000 on Secure Cloud |
+| `unfit` on Runpod | `pod-checks=unfit` | 19 min to fail | About $0.08, RTX A4000 on Secure Cloud |
+| `blocked`, on either | `pod-checks=blocked` | Seconds | Nothing: no pod |
+| `ollama` on Salad | `check=pod provider=salad` | 9 min to serve | At most $0.016, RTX 3080 Ti Laptop (16 GB) at High |
+| `vllm` on Salad | `provider=salad pod-checks=vllm` | 13 min to serve | At most $0.021, the same class |
+| `unfit` on Salad | `provider=salad pod-checks=unfit` | 18.5 min to fail | At most $0.032, the same class |
+| `probe` on Salad | `provider=salad pod-checks=probe` | 30 s to 3.5 min | Nothing: no instance starts |
+
+The Salad figures are upper bounds, measured before the check counted only the time Salad bills, which leaves out the minutes of allocation and download. A run never exceeds 1 USD: the check refuses a pod that its max minutes would take past it.
 
 ### What it prints
 

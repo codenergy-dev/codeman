@@ -142,14 +142,14 @@ Tests use the built-in `node:test` runner; Node 24 runs TypeScript directly.
 
 ## GitHub Actions
 
-Pinned to full commit SHAs.
+Pinned to full commit SHAs. The e2e workflow, [`.github/workflows/e2e.yml`](../../.github/workflows/e2e.yml), pins the same SHAs as `ci.yml`, which [`e2e/workflow.test.ts`](../../e2e/workflow.test.ts) checks are full commit SHAs.
 
 | Action | Version | Used in |
 | --- | --- | --- |
-| `actions/checkout` | v7.0.1 | CI, e2e suite, target repository workflow (the repository in `agent`, and Codeman at `CODEMAN_COMMIT_SHA` in each job that runs it) |
-| `actions/setup-node` | v7.0.0 | CI, e2e suite |
+| `actions/checkout` | v7.0.1 | CI, the e2e workflow's suite and pod check, target repository workflow (the repository in `agent`, and Codeman at `CODEMAN_COMMIT_SHA` in each job that runs it) |
+| `actions/setup-node` | v7.0.0 | CI, the e2e workflow's suite and pod check |
 | `actions/create-github-app-token` | v3.2.0 | Target repository workflow |
-| `actions/upload-artifact` | v7.0.1 | E2e suite, target repository workflow |
+| `actions/upload-artifact` | v7.0.1 | The e2e workflow's suite, on a failure; target repository workflow. Never in the pod check, which uploads nothing |
 | `actions/download-artifact` | v8.0.1 | Target repository workflow |
 
 ## External services
