@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { adminToken } from "../../src/inference/selfhosted.ts";
 import { TEST_COMMIT } from "../../src/testing/fake-releases.ts";
+import { QWEN25_05B_CONFIG } from "../../src/testing/gguf.ts";
 import {
   CANDIDATES,
   type CheckOptions,
@@ -328,12 +329,11 @@ describe("the pod check", () => {
         "NVIDIA RTX A4000": { memory: 80, secure: { price: 0.1, availability: "HIGH" } },
         "NVIDIA L4": { memory: 24, secure: { price: 0.4, availability: "HIGH" } },
       },
-      startFailure: "`Qwen/Qwen2.5-0.5B-Instruct` does not fit the GPU with 256 parallel requests.",
     });
     assert.equal(code, 0, lines.join("\n"));
     assert.match(line(lines, "unfit.gpu"), /gpu="NVIDIA L4" .*eligible=1 .*too_large=1/);
-    assert.equal([...runpod.pods.values()][0]?.gpu, "NVIDIA L4");
-    assert.match(line(lines, "unfit"), /result=pass .*attempt=1 gpu="NVIDIA L4"/);
+    assert.equal(runpod.pods.size, 0, "refused before any pod");
+    assert.match(line(lines, "unfit"), /result=pass .*attempt=1 gpu="NVIDIA L4" .*pods=0/);
   });
 
   test("a 400 while the catalog lists room fails the start, with Runpod's detail cleaned", async () => {
@@ -443,16 +443,29 @@ describe("the pod check", () => {
     );
   });
 
-  test("unfit: a model that does not fit fails with the fit's message", async () => {
-    const message =
-      "`Qwen/Qwen2.5-0.5B-Instruct` does not fit the GPU with 256 parallel requests and a context of 32768 tokens: vLLM's K/V cache holds 52.40 of them (1717000 tokens).";
-    const { code, lines, runpod } = await run(["--checks=unfit"], { startFailure: message });
+  test("unfit: Codeman's estimate refuses the model before any pod, with the fit's message", async () => {
+    const { code, lines, runpod } = await run(["--checks=unfit"]);
     assert.equal(code, 0, lines.join("\n"));
     const unfit = line(lines, "unfit");
-    assert.match(unfit, /result=pass engine=vllm model=Qwen\/Qwen2.5-0.5B-Instruct/);
-    assert.ok(unfit.includes(JSON.stringify(message)), unfit);
-    assertAllTerminated(runpod);
+    assert.match(
+      unfit,
+      /result=pass engine=vllm model=Qwen\/Qwen2.5-0.5B-Instruct error=FitRefused message="`Qwen\/Qwen2.5-0.5B-Instruct` does not fit the GPU with 256 parallel requests and a context of 32768 tokens, by Codeman's estimate, so no pod was created: its K\/V cache needs 96.00 GiB/,
+    );
+    assert.match(unfit, / pods=0 /);
+    assert.equal(runpod.pods.size, 0);
+    assert.match(line(lines, "done"), /result=pass .*pods_cost_usd=0$/);
     assertNothingLeaks(lines, runpod);
+  });
+
+  test("unfit: a model the estimate cannot count fails the check, though the gateway refuses it", async () => {
+    const { code, lines, runpod } = await run(["--checks=unfit"], {
+      modelConfig: { ...QWEN25_05B_CONFIG, kv_lora_rank: 512 },
+      startFailure:
+        "`Qwen/Qwen2.5-0.5B-Instruct` does not fit the GPU with 256 parallel requests and a context of 32768 tokens: vLLM's K/V cache holds 52.40 of them (1717000 tokens).",
+    });
+    assert.equal(code, 1);
+    assert.match(line(lines, "unfit"), /result=fail .*error=PodStartFailure .* pods=1 /);
+    assertAllTerminated(runpod);
   });
 
   test("refuses GPU types above the cost cap before any pod", async () => {

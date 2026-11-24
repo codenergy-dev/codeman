@@ -182,6 +182,8 @@ A task claims 40 times at most, counting its waits and the pods it could not cre
 
 #### Creating
 
+Before creating it, `open-key` estimates whether the model and its cache can fit the GPU, for [vLLM](../settings/vllm.md#the-fit-estimated) and [Ollama](../settings/ollama.md#before-the-pod-is-created): a model that cannot fit even by an optimistic bound fails the run with no pod created, as a failed start.
+
 The pod runs the official image of its [engine](../glossary.md#engine), pinned by digest, or the `pod-image` input's for Ollama ([pod images](../settings/pod-engines.md#pod-images)), on a [kind of host](../settings/providers.md#hosts) that `hosts` allows:
 
 | Provider | Where |

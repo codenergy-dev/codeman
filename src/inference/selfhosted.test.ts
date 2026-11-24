@@ -19,11 +19,18 @@ import {
   TEST_NODE,
 } from "../testing/fake-releases.ts";
 import { FakeRuntime } from "../testing/fake-runtime.ts";
+import {
+  QWEN25_05B_CONFIG,
+  QWEN25_05B_INFO,
+  QWEN25_05B_SAFETENSORS,
+  QWEN25_05B_WEIGHTS,
+} from "../testing/gguf.ts";
 import { seedRuns } from "../testing/ledger-runs.ts";
-import type { PodSpec } from "./gpu.ts";
+import { FitRefused, type PodSpec } from "./gpu.ts";
 import type { ModelHub } from "./huggingface.ts";
 import { ENGINE_RELEASES, IMAGES_BEFORE_SALAD } from "./images.ts";
 import { IMAGES_WITHOUT_OLLAMA_SETTINGS, ollama, SINGLE_RUN_IMAGES } from "./ollama.ts";
+import type { OllamaModels } from "./ollama-registry.ts";
 import { ConcurrencyReached, OpenFailure, ProfileUnavailable } from "./provider.ts";
 import { CREATE_LEASE_MS, PodRegistry, UNAVAILABLE_MINUTES } from "./registry.ts";
 import {
@@ -74,6 +81,7 @@ function setup(
     real?: boolean;
     image?: string;
     hub?: ModelHub;
+    ollamaModels?: OllamaModels;
     noBilling?: boolean;
     billsWhileRunning?: boolean;
     releases?: ReturnType<typeof fakeReleases>;
@@ -102,6 +110,7 @@ function setup(
         fetch: gateways.fetch,
         wait: (ms) => wait(ms),
         ...(options.hub ? { hub: options.hub } : {}),
+        ...(options.ollamaModels ? { ollamaModels: options.ollamaModels } : {}),
         releases,
       },
     );
@@ -2005,4 +2014,157 @@ test("pods whose gateways differ never share: the gateway's SHA-256 is part of t
     podSettingsKey({ ...shared, bootstrap: { ...TEST_BOOTSTRAP, gateway: moved } }, "o/r#7"),
     key,
   );
+});
+
+/** The registry's documents of the pool's pods: why each ended. */
+async function endReasons(store: MemoryStore): Promise<unknown[]> {
+  return (await store.query(LAYOUT.pods("o"), {})).map((document) => document.fields.reason);
+}
+
+const QWEN_VLLM: Partial<PodSettings> = {
+  engine: vllm,
+  model: "Qwen/Qwen2.5-0.5B-Instruct",
+  vllm: { "tool-call-parser": "hermes", "max-model-len": "32768", "max-num-seqs": "256" },
+};
+const qwenHub = (config: ModelHub["config"]): ModelHub => ({
+  model: async (id) => ({ id, weightsBytes: QWEN25_05B_SAFETENSORS }),
+  vision: async () => false,
+  ...(config ? { config } : {}),
+});
+
+test("Codeman's estimate refuses a vLLM pod that cannot fit, before creating it", async () => {
+  const { gpu, store, registry, open } = setup({
+    real: true,
+    image: VLLM_IMAGE,
+    hub: qwenHub(async () => QWEN25_05B_CONFIG),
+  });
+  gpu.memories["GPU-A"] = 16;
+  await assert.rejects(open("7", "300", QWEN_VLLM), (error: unknown) => {
+    const cause = error instanceof OpenFailure ? error.cause : error;
+    assert.ok(cause instanceof FitRefused, String(error));
+    assert.ok(!(error instanceof ProfileUnavailable), "a mistake in the settings: no fallback");
+    assert.equal(
+      cause.message,
+      "`Qwen/Qwen2.5-0.5B-Instruct` does not fit the GPU with 256 parallel requests and a context of 32768 tokens, by Codeman's estimate, so no pod was created: its K/V cache needs 96.00 GiB, and the GPU's 16 GB at vLLM's memory utilization, less 0.92 GiB of weights, leave at most 13.80 GiB. Lower `max-model-len` or `max-num-seqs` in the `vllm` settings, set `kv-cache-dtype: fp8` or `language-model-only: true`, or use a GPU with more memory.",
+    );
+    return true;
+  });
+  assert.deepEqual(gpu.created, []);
+  assert.deepEqual(await registry.live(), [], "the creation lease ended");
+  const reasons = await endReasons(store);
+  assert.equal(reasons.length, 1);
+  assert.match(
+    String(reasons[0]),
+    /^its start failed: `Qwen\/Qwen2\.5-0\.5B-Instruct` does not fit/,
+  );
+});
+
+test("a vLLM pod that the estimate allows, or cannot count, is created as before", async () => {
+  const fits = setup({
+    real: true,
+    image: VLLM_IMAGE,
+    hub: qwenHub(async () => QWEN25_05B_CONFIG),
+  });
+  const { runtime } = await fits.open("7", "300", {
+    ...QWEN_VLLM,
+    vllm: { "tool-call-parser": "hermes", "max-num-seqs": "1" },
+  });
+  assert.equal(fits.gpu.created.length, 1);
+  assert.ok(
+    runtime
+      .logged("info")
+      .includes(
+        "By Codeman's estimate, Qwen/Qwen2.5-0.5B-Instruct's K/V cache needs 0.38 GiB for 1 parallel request(s) of 32768 tokens, of the 43.24 GiB at most that the GPU leaves it; the pod's gateway fits it.",
+      ),
+  );
+  for (const [config, why] of [
+    [undefined, "no configuration of the model"],
+    [
+      async () => {
+        throw new Error("Hugging Face answered 404.");
+      },
+      "its config.json: Hugging Face answered 404.",
+    ],
+    [
+      async () => ({ ...QWEN25_05B_CONFIG, kv_lora_rank: 512 }),
+      "its architecture is not one the estimate counts",
+    ],
+  ] as const) {
+    const unknown = setup({ real: true, image: VLLM_IMAGE, hub: qwenHub(config) });
+    const opened = await unknown.open("7", "300", QWEN_VLLM);
+    assert.equal(unknown.gpu.created.length, 1, why);
+    assert.ok(
+      opened.runtime
+        .logged("info")
+        .includes(
+          `Codeman cannot estimate how Qwen/Qwen2.5-0.5B-Instruct fits the GPU (${why}); the pod's gateway fits it.`,
+        ),
+      why,
+    );
+  }
+});
+
+/** Ollama's registry, in memory: `qwen2.5:0.5b`'s facts, and the names asked. */
+function qwenRegistry(): OllamaModels & { asked: string[] } {
+  const asked: string[] = [];
+  return {
+    asked,
+    model: async (name) => {
+      asked.push(name);
+      return name === "qwen2.5:0.5b"
+        ? { weightsBytes: QWEN25_05B_WEIGHTS, info: QWEN25_05B_INFO }
+        : { unknown: "Ollama's registry answered 404." };
+    },
+  };
+}
+
+test("Codeman's estimate refuses an Ollama pod that cannot fit, before creating it", async () => {
+  const ollamaModels = qwenRegistry();
+  const { gpu, store, open } = setup({ real: true, image: SHARED_IMAGE, ollamaModels });
+  gpu.memories["GPU-A"] = 1;
+  await assert.rejects(
+    open("7", "300", { model: "qwen2.5:0.5b", parallel: 2 }),
+    (error: unknown) => {
+      const cause = error instanceof OpenFailure ? error.cause : error;
+      assert.ok(cause instanceof FitRefused, String(error));
+      assert.match(
+        cause.message,
+        /^`qwen2\.5:0\.5b` does not fit the GPU with 2 parallel requests and a context of 32768 tokens, the least Codeman gives an agent, by Codeman's estimate, so no pod was created: .* Give the profile fewer tasks \(`tasks` or `max-tasks`\) or set a smaller `num-parallel`/,
+      );
+      return true;
+    },
+  );
+  assert.deepEqual(gpu.created, []);
+  assert.deepEqual(ollamaModels.asked, ["qwen2.5:0.5b"]);
+  assert.match(String((await endReasons(store))[0]), /^its start failed: `qwen2\.5:0\.5b`/);
+});
+
+test("an Ollama pod that the estimate allows, or cannot read, is created as before", async () => {
+  const ollamaModels = qwenRegistry();
+  const fits = setup({ real: true, image: SHARED_IMAGE, ollamaModels });
+  const { runtime } = await fits.open("7", "300", { model: "qwen2.5:0.5b", parallel: 2 });
+  assert.equal(fits.gpu.created.length, 1);
+  assert.ok(
+    runtime
+      .logged("info")
+      .some((line) =>
+        line.startsWith(
+          "By Codeman's estimate, qwen2.5:0.5b's K/V cache needs 0.75 GiB for 2 parallel request(s) of 32768 tokens",
+        ),
+      ),
+  );
+  const unknown = setup({ real: true, image: SHARED_IMAGE, ollamaModels });
+  const opened = await unknown.open("7", "300");
+  assert.equal(unknown.gpu.created.length, 1);
+  assert.ok(
+    opened.runtime
+      .logged("info")
+      .includes(
+        "Codeman cannot estimate how qwen3-coder:30b fits the GPU (Ollama's registry answered 404.); the pod's gateway fits it.",
+      ),
+  );
+  // An image pinned before the fit to the GPU gets no estimate: its gateway does not fit.
+  const before = setup({ real: true, image: ONE_RUN_IMAGE, ollamaModels: qwenRegistry() });
+  await before.open("7", "300", { model: "qwen2.5:0.5b" });
+  assert.equal(before.gpu.created.length, 1);
 });

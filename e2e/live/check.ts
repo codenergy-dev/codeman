@@ -7,6 +7,7 @@ import type { VllmFitReport } from "../../src/gateway/vllm.ts";
 import type { InferenceEngine } from "../../src/inference/engine.ts";
 import { ENGINES } from "../../src/inference/engines.ts";
 import {
+  FitRefused,
   type GpuAccount,
   type GpuProvider,
   type Pod,
@@ -139,8 +140,8 @@ export const DEFAULT_MODELS = { ollama: "qwen2.5:0.5b", vllm: "Qwen/Qwen2.5-0.5B
 /** vLLM's tool call parser for Qwen2.5, as the e2e suite's vLLM scenarios set it. */
 const TOOL_CALL_PARSER = "hermes";
 /**
- * vLLM settings no GPU of `CANDIDATES.unfit` holds: about `UNFIT_KV_GB` of K/V cache. vLLM starts,
- * and the gateway's fit refuses.
+ * vLLM settings no GPU of `CANDIDATES.unfit` holds: about `UNFIT_KV_GB` of K/V cache. Codeman's
+ * estimate refuses them before creating a pod (docs/plans/2026-11-23-estimate-the-fit-before-creating-a-pod.md).
  */
 const UNFIT_VLLM = { "max-model-len": "32768", "max-num-seqs": "256" };
 
@@ -775,8 +776,9 @@ async function blockedCheck(context: Context): Promise<Outcome> {
 
 /**
  * A model that does not fit fails with the fit's message (step 4 of the plan): a vLLM pod whose
- * explicit settings no GPU of the list holds. The pod starts, the gateway's fit refuses, and
- * Codeman terminates it.
+ * explicit settings no GPU of the list holds. Codeman's estimate refuses it before creating a
+ * pod, so it costs nothing; the gateway's own fit message stays with the e2e suite's
+ * `failures/fit-vllm-explicit`.
  */
 async function unfitCheck(context: Context): Promise<Outcome> {
   const before = context.pods.count;
@@ -790,10 +792,10 @@ async function unfitCheck(context: Context): Promise<Outcome> {
     error = started.error;
   }
   const cause = causeOf(error);
-  const fit =
-    cause instanceof PodStartFailure && /does not fit the GPU|found no context/.test(cause.message);
+  // Refused by Codeman's estimate, before any pod: no time is billed.
+  const fit = cause instanceof FitRefused && /does not fit the GPU/.test(cause.message);
   const created = context.pods.count - before;
-  const passed = fit && created > 0;
+  const passed = fit && created === 0;
   const { result: _, ...found } =
     error === undefined
       ? { result: "", reason: "The pod served the model, which should not fit." }
@@ -1663,6 +1665,9 @@ function failure(report: Report, error: unknown): Fields {
       http_status: status === undefined ? undefined : Number(status),
       message: report.cleanMessage(message),
     };
+  }
+  if (cause instanceof FitRefused) {
+    return { result: "fail", error: "FitRefused", message: report.cleanMessage(message) };
   }
   if (cause instanceof PodStartFailure) {
     return {

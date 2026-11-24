@@ -218,7 +218,7 @@ Codeman's agents work through tool calls. vLLM returns them only with `--enable-
 
 ## Before the pod is created
 
-Before creating a vLLM pod, `open-key` checks the GPU's hosts, then the model. Either check stops the run before paying for anything. Joining a pod checks nothing.
+Before creating a vLLM pod, `open-key` checks the GPU's hosts, then the model, then estimates its fit. Each check stops the run before paying for anything. Joining a pod checks nothing.
 
 ### CUDA
 
@@ -253,6 +253,27 @@ disk GB = max(80, ⌈ weights GB × 1.25 + 40 ⌉)
 ```
 
 The 40 GB are for vLLM's image, unpacked, and its caches.
+
+### The fit, estimated
+
+`open-key` then estimates whether vLLM's K/V cache can hold the pod's requests, from the model's `config.json` on Hugging Face (`GET https://huggingface.co/<id>/resolve/main/config.json`), the weights' size and the GPU's memory ([`estimate.ts`](../../src/gateway/estimate.ts)):
+
+```text
+room       = GPU memory × gpu-memory-utilization (0.92 by default) − weights
+per token  = 2 × layers × K/V heads × head size × 2 bytes (1 with an fp8 cache)
+needed     = max-num-seqs × context × per token
+```
+
+- **The context** is `max-model-len`, or the floor without it: 64000 tokens, or the model's own `max_position_embeddings` when smaller.
+- **It is optimistic on purpose.** It counts no activations, CUDA graphs or CUDA context, which vLLM measures at its start ([gpu_worker.py](../web/vllm/vllm-v1-worker-gpu-worker-py-at-v0-32-0.md)). So it refuses only a pod that cannot fit even so, and leaves what is near the edge to the [gateway's fit](#memory).
+- **When it cannot count,** it says why in the run's log, and the pod is created as before: a sliding window, multi-head latent attention, hybrid or linear attention, a field it needs missing, a `config.json` it cannot read, or a GPU whose memory the provider does not give.
+
+| When | Message |
+| --- | --- |
+| The estimate falls short, with an explicit `max-model-len` | "`<model>` does not fit the GPU with 256 parallel requests and a context of 32768 tokens, by Codeman's estimate, so no pod was created: its K/V cache needs 96.00 GiB, and the GPU's 16 GB at vLLM's memory utilization, less 0.92 GiB of weights, leave at most 13.80 GiB. Lower `max-model-len` or `max-num-seqs` in the `vllm` settings, set `kv-cache-dtype: fp8` or `language-model-only: true`, or use a GPU with more memory." |
+| The estimate falls short at the floor | The same numbers, with "a context of 64000 tokens, the least Codeman gives an agent", and the floor message's levers |
+
+A refusal ends the pod's registry document as a failed start, so the tasks waiting for the same settings fail with the same message.
 
 ## Pod images
 

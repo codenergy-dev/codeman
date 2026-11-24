@@ -226,6 +226,13 @@ export function podCost(start: Date, end: Date, pricePerSecond: number): number 
 export class PodStartFailure extends Error {}
 
 /**
+ * Codeman's estimate, before it creates a pod, says the model cannot fit the GPU with the pod's
+ * settings: no pod is created, and another pod of the same settings would fail the same way, as
+ * a start failure (docs/plans/2026-11-23-estimate-the-fit-before-creating-a-pod.md).
+ */
+export class FitRefused extends PodStartFailure {}
+
+/**
  * The provider has no room for the pod now: no GPU of its type on the hosts it may use, or no
  * machine allocated in time (decision 3 of the plan for falling back to the next profile). Not a
  * mistake in the settings: the run falls back to the next profile.

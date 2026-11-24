@@ -1,6 +1,12 @@
 import { createHmac, randomBytes } from "node:crypto";
 import { usd } from "../budget.ts";
 import { type BootstrapArtifacts, bootstrapCommand, podBootstrap } from "../gateway/bootstrap.ts";
+import {
+  estimateMessage,
+  estimateOllama,
+  estimateVllm,
+  type FitEstimate,
+} from "../gateway/estimate.ts";
 import { type EndedRun, GATEWAY_VERSION, sha256 } from "../gateway/gateway.ts";
 import { type FitReport, GATEWAY_PORT } from "../gateway/pod.ts";
 import type { GatewayUsage, Span } from "../gateway/usage.ts";
@@ -14,6 +20,7 @@ import type { InferenceEngine } from "./engine.ts";
 import {
   DEFAULT_HOSTS,
   endpointProblems,
+  FitRefused,
   type GpuAccount,
   type GpuProvider,
   type HostKind,
@@ -28,6 +35,7 @@ import {
 } from "./gpu.ts";
 import { HuggingFace, type ModelHub } from "./huggingface.ts";
 import { IMAGES_WITHOUT_OLLAMA_SETTINGS, OLLAMA_VERSION, SINGLE_RUN_IMAGES } from "./ollama.ts";
+import { type OllamaModels, OllamaRegistry } from "./ollama-registry.ts";
 import {
   ConcurrencyReached,
   type InferenceProvider,
@@ -458,6 +466,8 @@ export interface SelfHostedOptions {
   wait?: (ms: number) => Promise<void>;
   /** Where a vLLM pod's model is checked and sized: Hugging Face's API by default. */
   hub?: ModelHub;
+  /** Where an Ollama pod's model is read for the estimate of its fit: Ollama's registry by default. */
+  ollamaModels?: OllamaModels;
   /** What a pod runs, and how `open` checks it against the release policy before any pod. */
   releases: PodReleases;
 }
@@ -985,7 +995,9 @@ export class PodInference implements InferenceProvider {
         record.nonce,
         error instanceof PodUnavailable
           ? `${UNAVAILABLE}${error.message}`
-          : "the provider did not create it",
+          : error instanceof FitRefused
+            ? `${START_FAILED}${error.message}`
+            : "the provider did not create it",
       );
       throw error;
     }
@@ -1192,7 +1204,10 @@ export class PodInference implements InferenceProvider {
     const prices = await this.#prices(gpuType, hosts, priority);
     const vllm = onVllm(this.#settings) ? await this.#prepareVllm(log) : undefined;
     const fits = !vllm && fitsTheGpu(image);
-    const memory = fits ? await this.#host.memory?.(gpuType).catch(() => undefined) : undefined;
+    const gpuMemory =
+      vllm || fits ? await this.#host.memory?.(gpuType).catch(() => undefined) : undefined;
+    const memory = fits ? gpuMemory : undefined;
+    if (vllm || fits) await this.#estimate(vllm?.weightsBytes, gpuMemory, log);
     const cached = vllm ? vllm.cached : fits ? await this.#cachedFit(log) : undefined;
     const owner = this.#options.repository.owner.toLowerCase();
     const now = this.#now();
@@ -1271,9 +1286,11 @@ export class PodInference implements InferenceProvider {
    * on Hugging Face with safetensors weights, whose size sets the pod's disk (decision 10). Gives
    * the disk and the cached context.
    */
-  async #prepareVllm(
-    log: Log,
-  ): Promise<{ diskGb: number; cached: { contextLength: number } | undefined }> {
+  async #prepareVllm(log: Log): Promise<{
+    diskGb: number;
+    weightsBytes: number;
+    cached: { contextLength: number } | undefined;
+  }> {
     const { gpuType, model } = this.#settings;
     // Any kind of host the pod may run on will do: the provider places it on one with room.
     if (this.#host.cudaVersions) {
@@ -1304,7 +1321,60 @@ export class PodInference implements InferenceProvider {
     log.info(
       `Hugging Face serves ${models.map(({ id }) => id).join(" and ")}: ${(weights / 1e9).toFixed(1)} GB of weights, so the pod gets ${diskGb} GB of disk.`,
     );
-    return { diskGb, cached: await this.#cachedContext(log) };
+    return { diskGb, weightsBytes: weights, cached: await this.#cachedContext(log) };
+  }
+
+  /**
+   * Before creating a pod, at no cost: Codeman's estimate of the fit (the plan of 2026-11-23),
+   * from the model's `config.json` on Hugging Face for vLLM, or its manifest and GGUF header in
+   * Ollama's registry for Ollama, and the GPU's memory. Throws `FitRefused` when even its
+   * optimistic bound falls short; logs and goes on when it cannot tell, since the gateway's fit
+   * decides anyway.
+   */
+  async #estimate(
+    vllmWeightsBytes: number | undefined,
+    gpuMemoryGb: number | undefined,
+    log: Log,
+  ): Promise<void> {
+    const { model } = this.#settings;
+    const skip = (why: string) =>
+      log.info(
+        `Codeman cannot estimate how ${model} fits the GPU (${why}); the pod's gateway fits it.`,
+      );
+    if (!gpuMemoryGb) return skip("the provider does not give the GPU's memory");
+    let estimate: FitEstimate | undefined;
+    if (vllmWeightsBytes !== undefined) {
+      const hub = this.#options.hub ?? new HuggingFace(this.#options.fetch);
+      if (!hub.config) return skip("no configuration of the model");
+      let config: Readonly<Record<string, unknown>>;
+      try {
+        config = await hub.config(model);
+      } catch (error) {
+        return skip(`its config.json: ${error instanceof Error ? error.message : error}`);
+      }
+      estimate = estimateVllm({
+        config,
+        weightsBytes: vllmWeightsBytes,
+        gpuMemoryGb,
+        settings: this.#settings.vllm ?? {},
+      });
+    } else {
+      const registry = this.#options.ollamaModels ?? new OllamaRegistry(this.#options.fetch);
+      const facts = await registry.model(model);
+      if ("unknown" in facts) return skip(facts.unknown);
+      estimate = estimateOllama({
+        info: facts.info,
+        weightsBytes: facts.weightsBytes,
+        gpuMemoryGb,
+        variables: this.#settings.ollama ?? {},
+      });
+    }
+    if (!estimate) return skip("its architecture is not one the estimate counts");
+    if (!estimate.fits) throw new FitRefused(estimateMessage(model, gpuMemoryGb, estimate));
+    const gib = (bytes: number) => (bytes / 2 ** 30).toFixed(2);
+    log.info(
+      `By Codeman's estimate, ${model}'s K/V cache needs ${gib(estimate.needed)} GiB for ${estimate.parallel} parallel request(s) of ${estimate.context} tokens, of the ${gib(estimate.room)} GiB at most that the GPU leaves it; the pod's gateway fits it.`,
+    );
   }
 
   /** The context that served a vLLM pod's settings before, from the cache of fits. */

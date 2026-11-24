@@ -3,13 +3,22 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { ACTION_ROOT } from "../../src/action.ts";
 import { NODE_RELEASE } from "../../src/inference/images.ts";
+import {
+  ggufHeader,
+  QWEN25_05B_CONFIG,
+  QWEN25_05B_INFO,
+  QWEN25_05B_WEIGHTS,
+} from "../../src/testing/gguf.ts";
 import { type Cloud, GPU_TYPES } from "./check.ts";
 
 /**
  * Everything the pod check reaches, in memory, for its unit tests: Runpod's API and proxy, and
- * Salad's API and Container Gateway, with a gateway on each pod; OSV.dev, Hugging Face's Hub and
- * raw.githubusercontent.com. No network.
+ * Salad's API and Container Gateway, with a gateway on each pod; OSV.dev, Hugging Face's Hub,
+ * Ollama's registry and raw.githubusercontent.com. No network.
  */
+
+/** `qwen2.5:0.5b`'s model layer in the fake registry. */
+const OLLAMA_MODEL_LAYER = `sha256:${"c5".repeat(32)}`;
 
 /** A GPU type on each cloud: its price per hour and availability; null where not offered. */
 export interface FakeGpu {
@@ -94,6 +103,8 @@ export interface FakeOptions {
   chatStatus?: number;
   /** The gateway's start failure, such as the fit's message; it then never serves. */
   startFailure?: string;
+  /** The vLLM model's `config.json` on Hugging Face; Qwen2.5-0.5B-Instruct's by default. */
+  modelConfig?: Record<string, unknown>;
   /** Runpod says every pod failed once created. */
   podsFail?: boolean;
   /** Runpod refuses every termination with 500. */
@@ -191,6 +202,7 @@ export class FakeRunpod {
     if (proxy) return this.#gateway(proxy[1] as string, method, url.pathname, auth);
     if (url.hostname === "api.osv.dev") return this.#osv(url.pathname, body);
     if (url.hostname === "huggingface.co") return this.#hub(url.pathname);
+    if (url.hostname === "registry.ollama.ai") return this.#registry(url.pathname);
     if (url.hostname === "raw.githubusercontent.com") return new Response(GATEWAY);
     this.unexpected.push(`${method} ${url.hostname}`);
     return json(404, {});
@@ -537,11 +549,36 @@ export class FakeRunpod {
     return json(404, {});
   }
 
+  /** Ollama's registry: `qwen2.5:0.5b`'s manifest, and its model layer's GGUF header. */
+  #registry(path: string): Response {
+    const base = "/v2/library/qwen2.5";
+    if (path === `${base}/manifests/0.5b`) {
+      return json(200, {
+        schemaVersion: 2,
+        mediaType: "application/vnd.docker.distribution.manifest.v2+json",
+        layers: [
+          {
+            mediaType: "application/vnd.ollama.image.model",
+            digest: OLLAMA_MODEL_LAYER,
+            size: QWEN25_05B_WEIGHTS,
+          },
+        ],
+      });
+    }
+    if (path === `${base}/blobs/${OLLAMA_MODEL_LAYER}`) {
+      return new Response(ggufHeader(QWEN25_05B_INFO, 100), { status: 206 });
+    }
+    this.unexpected.push(`GET registry ${path}`);
+    return json(404, {});
+  }
+
   #hub(path: string): Response {
     if (path.startsWith("/api/models/")) {
       return json(200, { siblings: [{ rfilename: "model.safetensors", size: 988_097_824 }] });
     }
-    if (path.endsWith("/resolve/main/config.json")) return json(200, {});
+    if (path.endsWith("/resolve/main/config.json")) {
+      return json(200, this.options.modelConfig ?? QWEN25_05B_CONFIG);
+    }
     return json(404, {});
   }
 }
