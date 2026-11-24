@@ -64,6 +64,7 @@ flowchart LR
 | The network | Shared with the runner, so it reaches its model and a Serverless gateway on the loopback |
 
 - Codeman sets the jail up with `unshare`, `mount`, `findmnt` and `setpriv` from Ubuntu's `util-linux`, by their trusted paths. If a mount cannot be made read-only, the agent does not start.
+- The jail's mounts leave the runner's `/run/mount/utab` alone (`mount -n`): they are not the runner's, and libmount could not rewrite that file once `/run` is read-only ([libmount](../web/ubuntu/util-linux-2-39-3-9ubuntu6-6-source-package.md)).
 - The harness runs as `codeman-agent`, with no capability and with `no_new_privs`, so `sudo` and other set-user-ID programs give it nothing.
 - When the harness exits, every process left in the jail ends with it. Nothing it started in the background reaches the fix pass.
 - The agent installs its tools in its home: a global `npm install` into `/usr/local` fails.
