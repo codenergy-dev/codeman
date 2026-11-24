@@ -20392,6 +20392,7 @@ var BOOTSTRAP_VARIABLES = {
   home: "CODEMAN_BOOTSTRAP_HOME"
 };
 var SALAD_COMMAND_LIMITS = { items: 100, itemCharacters: 1e3 };
+var SALAD_FILTERED = /(?:;|\|\|?)\s*(?:\S*\/)?(?:curl|wget|perl)\b/;
 var RUNPOD_REQUEST_BYTES = 102400;
 function podBootstrap(artifacts) {
   const command2 = bootstrapCommand();
@@ -20454,7 +20455,7 @@ function commandProblems(command2) {
   return [
     ...command2.length > items ? [`${command2.length} items, above Salad's ${items}`] : [],
     ...command2.flatMap(
-      (item, index) => item.length === 0 ? [`item ${index} is empty`] : item.length > itemCharacters ? [`item ${index} has ${item.length} characters, above Salad's ${itemCharacters}`] : /[\r\n]/.test(item) ? [`item ${index} spans several lines`] : []
+      (item, index) => item.length === 0 ? [`item ${index} is empty`] : item.length > itemCharacters ? [`item ${index} has ${item.length} characters, above Salad's ${itemCharacters}`] : /[\r\n]/.test(item) ? [`item ${index} spans several lines`] : SALAD_FILTERED.test(item) ? [`item ${index} runs curl, wget or perl after ;, | or ||, which Salad refuses`] : []
     ),
     ...bytes > RUNPOD_REQUEST_BYTES ? [`${bytes} bytes, above Runpod's request of ${RUNPOD_REQUEST_BYTES}`] : []
   ];
@@ -20526,10 +20527,15 @@ openssl_get() {
   rm -f "$2.http"
 }
 
-# Downloads $1 to $2 with the first downloader the image has.
+# Downloads $1 to $2 with the first downloader the image has. curl and wget start their own
+# lines: Salad refuses a command where they follow ;, | or || (docs/web/salad/specifying-a-command.md).
 download() {
-  if has curl; then log "Downloading $1 with curl."; curl -q -fsSL --retry 3 --connect-timeout 30 -o "$2" "$1"
-  elif has wget; then log "Downloading $1 with wget."; wget -q -T 60 -O "$2" "$1"
+  if has curl; then
+    log "Downloading $1 with curl."
+    curl -q -fsSL --retry 3 --connect-timeout 30 -o "$2" "$1"
+  elif has wget; then
+    log "Downloading $1 with wget."
+    wget -q -T 60 -O "$2" "$1"
   elif has python3; then log "Downloading $1 with python3."; python3 -I -c 'import shutil, sys, urllib.request as u; r = u.urlopen(sys.argv[1], timeout=60); f = open(sys.argv[2], "wb"); shutil.copyfileobj(r, f); f.close()' "$1" "$2"
   elif has openssl; then log "Downloading $1 with openssl."; openssl_get "$1" "$2"
   else fail "No curl, wget, python3 or openssl to download $1."
@@ -21024,12 +21030,19 @@ function describeProblem(body) {
   }
   if (typeof problem2 !== "object" || problem2 === null) return void 0;
   const { title, detail, errors } = problem2;
-  const parts = [title, detail, ...Array.isArray(errors) ? errors : []].filter(
+  const parts = [title, detail, ...validationErrors(errors)].filter(
     (part) => typeof part === "string" && part.trim() !== ""
   );
   if (parts.length === 0) return void 0;
   const text = parts.join(" \u2014 ").replace(/\s+/g, " ").trim();
   return text.length > 500 ? `${text.slice(0, 499)}\u2026` : text;
+}
+function validationErrors(errors) {
+  if (Array.isArray(errors)) return errors;
+  if (typeof errors !== "object" || errors === null) return [];
+  return Object.entries(errors).flatMap(
+    ([field, messages2]) => (Array.isArray(messages2) ? messages2 : [messages2]).filter((message) => typeof message === "string").map((message) => field ? `${field}: ${message}` : message)
+  );
 }
 function amount(value) {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
@@ -21114,51 +21127,11 @@ var Salad = class {
     }
     return found;
   }
-  /**
-   * `POST .../containers`: a group of one replica that starts at once, never restarts its
-   * container, and is reached through the Container Gateway, which the gateway's run tokens guard.
-   */
+  /** `POST .../containers`, with `containerGroupRequest`'s body. */
   async #create(spec) {
-    const priority = spec.priority ?? "high";
     const gpu = await this.#class(spec.gpuType, spec.hosts ?? DEFAULT_HOSTS);
-    price(gpu, priority);
-    if (spec.diskGb > MAX_DISK_GB) {
-      throw new Error(
-        `A Salad container has ${MAX_DISK_GB} GB of disk at most, and this pod needs ${spec.diskGb} GB.`
-      );
-    }
-    const group2 = await this.#request(this.#containers(), "POST", {
-      name: `codeman-${randomBytes(8).toString("hex")}`,
-      display_name: displayName(spec.name),
-      container: {
-        image: spec.image,
-        ...spec.command ? { command: command(spec.command) } : {},
-        environment_variables: environment(spec.env),
-        priority,
-        resources: {
-          cpu: within(VCPU, gpu.min_vcpu, gpu.max_vcpu),
-          memory: within(MEMORY_MB, gpu.min_ram, gpu.max_ram),
-          gpu_classes: [gpu.id],
-          storage_amount: within(spec.diskGb * GB, gpu.min_storage, gpu.max_storage),
-          ...spec.sharedMemoryGb ? { shm_size: spec.sharedMemoryGb * 1024 } : {}
-        }
-      },
-      replicas: 1,
-      // A pod that exits is done: Salad must not start it again, here or on another node.
-      restart_policy: "never",
-      autostart_policy: true,
-      networking: {
-        protocol: "http",
-        port: spec.port,
-        // The Container Gateway's own authentication takes the account key; the gateway's run
-        // tokens guard the pod instead.
-        auth: false,
-        load_balancer: "least_number_of_connections",
-        single_connection_limit: false,
-        client_request_timeout: 1e5,
-        server_response_timeout: 1e5
-      }
-    });
+    const body = containerGroupRequest(spec, gpu, `codeman-${randomBytes(8).toString("hex")}`);
+    const group2 = await this.#request(this.#containers(), "POST", body);
     return this.#toPod(group2);
   }
   async #get(id) {
@@ -21253,6 +21226,47 @@ var Salad = class {
     return text.trim() === "" ? void 0 : JSON.parse(text);
   }
 };
+function containerGroupRequest(spec, gpu, name) {
+  const priority = spec.priority ?? "high";
+  price(gpu, priority);
+  if (spec.diskGb > MAX_DISK_GB) {
+    throw new Error(
+      `A Salad container has ${MAX_DISK_GB} GB of disk at most, and this pod needs ${spec.diskGb} GB.`
+    );
+  }
+  return {
+    name,
+    display_name: displayName(spec.name),
+    container: {
+      image: spec.image,
+      ...spec.command ? { command: command(spec.command) } : {},
+      environment_variables: environment(spec.env),
+      priority,
+      resources: {
+        cpu: within(VCPU, gpu.min_vcpu, gpu.max_vcpu),
+        memory: within(MEMORY_MB, gpu.min_ram, gpu.max_ram),
+        gpu_classes: [gpu.id],
+        storage_amount: within(spec.diskGb * GB, gpu.min_storage, gpu.max_storage),
+        ...spec.sharedMemoryGb ? { shm_size: spec.sharedMemoryGb * 1024 } : {}
+      }
+    },
+    replicas: 1,
+    // A pod that exits is done: Salad must not start it again, here or on another node.
+    restart_policy: "never",
+    autostart_policy: true,
+    networking: {
+      protocol: "http",
+      port: spec.port,
+      // The Container Gateway's own authentication takes the account key; the gateway's run
+      // tokens guard the pod instead.
+      auth: false,
+      load_balancer: "least_number_of_connections",
+      single_connection_limit: false,
+      client_request_timeout: 1e5,
+      server_response_timeout: 1e5
+    }
+  };
+}
 function hostOf(gpu) {
   return gpu.gpu_class_type && isHostKind(gpu.gpu_class_type) ? gpu.gpu_class_type : "community";
 }
@@ -23065,9 +23079,10 @@ function documentId(text) {
 
 // src/inference/release-policy.ts
 import { createHash as createHash3 } from "node:crypto";
+var URGENT_FIX_ARTIFACT = "node";
 var MINIMUM_AGE_DAYS = 7;
 var CACHE_HOURS = 24;
-var POLICY_VERSION = 1;
+var POLICY_VERSION = 2;
 var RANK = { unknown: 0, low: 1, moderate: 2, high: 3, critical: 4 };
 function isBlocking(severity) {
   return RANK[severity] >= RANK.high;
@@ -23082,6 +23097,7 @@ function releaseCheckKey(artifacts, exceptions) {
       a.osv?.ecosystem ?? null,
       a.osv?.package ?? null,
       a.replaces ?? null,
+      a.urgentFix ?? null,
       Object.entries(a.provenance ?? {}).sort(([x], [y]) => x < y ? -1 : x > y ? 1 : 0)
     ]).sort((x, y) => JSON.stringify(x) < JSON.stringify(y) ? -1 : 1),
     exceptions: exceptions.map((e) => [e.id, e.reason]).sort((x, y) => JSON.stringify(x) < JSON.stringify(y) ? -1 : 1)
@@ -23205,6 +23221,20 @@ function checkArtifact(artifact, age, plan, found, exceptions, used) {
   const reasons = [];
   const accepted = [];
   let bypass;
+  let urgentFix;
+  const urgent = artifact.urgentFix;
+  if (urgent !== void 0 && artifact.name !== URGENT_FIX_ARTIFACT) {
+    reasons.push({
+      level: "block",
+      text: "it sets `urgentFix`, which only Node.js may, since OSV.dev has no records of it; another release passes under the minimum age through the security fix bypass."
+    });
+  } else if (urgent !== void 0 && urgent.trim() === "") {
+    reasons.push({
+      level: "block",
+      text: "its `urgentFix` gives no reason; the maintainer writes why this release cannot wait for the minimum age."
+    });
+  }
+  const urgentReason = urgent !== void 0 && artifact.name === URGENT_FIX_ARTIFACT && urgent.trim() !== "" ? urgent.trim() : void 0;
   if (age === null) {
     reasons.push({
       level: "block",
@@ -23212,7 +23242,13 @@ function checkArtifact(artifact, age, plan, found, exceptions, used) {
     });
   } else if (age < MINIMUM_AGE_DAYS) {
     const young = `it was published ${formatAge(age)} ago, under the minimum age of ${MINIMUM_AGE_DAYS} days`;
-    if (!artifact.replaces) {
+    if (urgentReason) {
+      urgentFix = urgentReason;
+      reasons.push({
+        level: "note",
+        text: `${young}, but passes as an urgent fix, for the maintainer's reason: ${urgentReason}`
+      });
+    } else if (!artifact.replaces) {
       reasons.push({
         level: "block",
         text: `${young}. Pin an older release, or set the release it replaces when it fixes a high or critical advisory of that release.`
@@ -23284,6 +23320,13 @@ function checkArtifact(artifact, age, plan, found, exceptions, used) {
   } else if (!found) {
     reasons.push({ level: "block", text: "its advisories could not be read from OSV.dev." });
   }
+  if (urgentReason && !urgentFix && age !== null) {
+    reasons.push({
+      level: "note",
+      text: "it is past the minimum age, so its `urgentFix` is no longer needed and can go."
+    });
+  }
+  const provenance = artifact.provenance || urgentFix ? { ...artifact.provenance, ...urgentFix ? { urgentFix } : {} } : void 0;
   return {
     name: artifact.name,
     version: artifact.version,
@@ -23292,7 +23335,7 @@ function checkArtifact(artifact, age, plan, found, exceptions, used) {
     advisories,
     exceptions: accepted,
     ...bypass ? { bypass } : {},
-    ...artifact.provenance ? { provenance: artifact.provenance } : {},
+    ...provenance ? { provenance } : {},
     verdict: verdictOf(reasons),
     reasons: sortReasons(reasons)
   };

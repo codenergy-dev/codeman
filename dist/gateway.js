@@ -1510,12 +1510,19 @@ function describeProblem(body) {
   }
   if (typeof problem !== "object" || problem === null) return void 0;
   const { title, detail, errors } = problem;
-  const parts = [title, detail, ...Array.isArray(errors) ? errors : []].filter(
+  const parts = [title, detail, ...validationErrors(errors)].filter(
     (part) => typeof part === "string" && part.trim() !== ""
   );
   if (parts.length === 0) return void 0;
   const text = parts.join(" \u2014 ").replace(/\s+/g, " ").trim();
   return text.length > 500 ? `${text.slice(0, 499)}\u2026` : text;
+}
+function validationErrors(errors) {
+  if (Array.isArray(errors)) return errors;
+  if (typeof errors !== "object" || errors === null) return [];
+  return Object.entries(errors).flatMap(
+    ([field, messages]) => (Array.isArray(messages) ? messages : [messages]).filter((message) => typeof message === "string").map((message) => field ? `${field}: ${message}` : message)
+  );
 }
 function amount(value) {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
