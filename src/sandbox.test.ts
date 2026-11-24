@@ -541,6 +541,77 @@ test("the agent cannot plant programs that run outside its jail", {
   }
 });
 
+/**
+ * The abstract Unix sockets reviewed: what each is, and why the agent's connection to it cannot
+ * run anything outside the jail. A name may hold a pattern, for parts that change between boots;
+ * such a socket is reviewed only when every process that holds it is its `owner`, read with
+ * `ss -xlpn` as root, so another program's name of the same form is not.
+ */
+const REVIEWED_SOCKETS: { name: RegExp; owner?: string }[] = [
+  // multipathd: only `list` and `show` for a client that is not root, by SO_PEERCRED
+  // (docs/web/ubuntu/multipath-tools-0-9-4-5ubuntu8-2-source-package.md,
+  // docs/web/ubuntu/multipath-tools-0-14-3-2ubuntu1-source-package.md).
+  { name: /^@\/org\/kernel\/linux\/storage\/multipathd$/ },
+  // iscsid's management socket: refuses any client that is not root, by SO_PEERCRED
+  // (docs/web/ubuntu/open-iscsi-2-1-9-3ubuntu5-5-source-package.md,
+  // docs/web/ubuntu/open-iscsi-2-1-11-3ubuntu3-1-source-package.md).
+  { name: /^@ISCSIADM_ABSTRACT_NAMESPACE$/ },
+  // systemd-udevd 259's workers' notifications: a datagram socket bound to `@` and a random
+  // 64-bit number, which ignores any sender the kernel's credentials do not name as one of its
+  // workers (docs/web/ubuntu/systemd-259-9-0ubuntu0-1-source-package.md).
+  { name: /^@\d{1,20}$/, owner: "systemd-udevd" },
+];
+
+/** The processes that hold each socket, by name, from `ss -xlpn`'s listing. */
+function socketOwners(listing: string): Map<string, Set<string>> {
+  const owners = new Map<string, Set<string>>();
+  for (const line of listing.split("\n")) {
+    const name = line.trim().split(/\s+/)[4];
+    if (!name?.startsWith("@")) continue;
+    const held = owners.get(name) ?? new Set<string>();
+    for (const [, process] of line.matchAll(/\("([^"]+)",pid=/g)) held.add(process as string);
+    owners.set(name, held);
+  }
+  return owners;
+}
+
+/** The sockets no entry of `REVIEWED_SOCKETS` accepts. */
+function unreviewedSockets(sockets: string[], owners: Map<string, Set<string>>): string[] {
+  return sockets.filter(
+    (name) =>
+      !REVIEWED_SOCKETS.some(({ name: pattern, owner }) => {
+        if (!pattern.test(name)) return false;
+        if (owner === undefined) return true;
+        const held = owners.get(name);
+        return held !== undefined && held.size > 0 && [...held].every((one) => one === owner);
+      }),
+  );
+}
+
+test("a socket of a reviewed form counts only with its reviewed owner", () => {
+  const listing = [
+    "Netid State  Recv-Q Send-Q Local Address:Port      Peer Address:Port Process",
+    'u_dgr UNCONN 0      0      @18199374096224220369 12345 * 0 users:(("systemd-udevd",pid=410,fd=7))',
+    'u_dgr UNCONN 0      0      @1234 23456 * 0 users:(("evil",pid=9,fd=3))',
+    'u_str LISTEN 0      4096   @/org/kernel/linux/storage/multipathd 345 * 0 users:(("systemd",pid=1,fd=50))',
+  ].join("\n");
+  const owners = socketOwners(listing);
+  assert.deepEqual(
+    unreviewedSockets(
+      [
+        "@18199374096224220369",
+        "@1234",
+        "@/org/kernel/linux/storage/multipathd",
+        "@999",
+        "@ISCSIADM_ABSTRACT_NAMESPACE",
+        "@other",
+      ],
+      owners,
+    ),
+    ["@1234", "@999", "@other"],
+  );
+});
+
 // The jail shares the network, and the system's services run outside it. Through each one the
 // agent tries to run a command that leaves a marker in a directory only the host's /tmp holds:
 // inside the jail, /tmp is a new tmpfs, so a marker means the command ran outside.
@@ -610,26 +681,15 @@ test("the agent cannot run a command outside its jail through the system's servi
     assert.ok(!existsSync(`/var/lib/systemd/linger/${AGENT_USER}`), "the agent does not linger");
     assert.ok(!lines.includes("route bus: visible in the jail"), "the jail hides the system bus");
 
-    // Each listener here must be reviewed: what it is, and why the agent's connection to it cannot
-    // run anything outside the jail. Names may hold patterns, for parts that change between runs.
-    const known: RegExp[] = [
-      // multipathd: only `list` and `show` for a client that is not root, by SO_PEERCRED
-      // (docs/web/ubuntu/multipath-tools-0-9-4-5ubuntu8-2-source-package.md).
-      /^@\/org\/kernel\/linux\/storage\/multipathd$/,
-      // iscsid's management socket: refuses any client that is not root, by SO_PEERCRED
-      // (docs/web/ubuntu/open-iscsi-2-1-9-3ubuntu5-5-source-package.md).
-      /^@ISCSIADM_ABSTRACT_NAMESPACE$/,
-    ];
     const sockets = lines
       .filter((line) => line.startsWith("abstract "))
       .map((line) => line.slice("abstract ".length));
     t.diagnostic(`Abstract Unix sockets: ${sockets.join(", ") || "none"}.`);
-    const unknown = sockets.filter((name) => !known.some((pattern) => pattern.test(name)));
-    const owners = existsSync("/usr/bin/ss")
-      ? asRoot("/usr/bin/ss", "-xlpn")
-          .stdout.split("\n")
-          .filter((line) => unknown.some((name) => line.includes(name)))
-      : [];
+    const listing = existsSync("/usr/bin/ss") ? asRoot("/usr/bin/ss", "-xlpn").stdout : "";
+    const unknown = unreviewedSockets(sockets, socketOwners(listing));
+    const owners = listing
+      .split("\n")
+      .filter((line) => unknown.some((name) => line.includes(name)));
     assert.deepEqual(unknown, [], `Unreviewed abstract Unix sockets:\n${owners.join("\n")}`);
   } finally {
     sealAgentSandbox(worktree);
