@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-10-30T16:20:00-03:00
-updated_at: 2026-11-06T15:18:00-03:00
+updated_at: 2026-11-24T10:00:00-03:00
 commit: 0bbb10d
 ---
 
@@ -130,6 +130,14 @@ Answered by the maintainer on 2026-10-30: each as its recommendation.
    - **Recommendation:** (a). It adds no dependency, and the engines then trust exactly what the pod's Node trusts.
    - **Done on 2026-10-31,** with a fourth variable, `SSL_CERT_DIR`, pointing at the file's directory: Go and OpenSSL add every root of `/etc/ssl/certs` to `SSL_CERT_FILE`'s, and vLLM's system store still trusts the emSign root too. The four replace the image's values ([the engines' trusted roots](../development/dependencies.md#the-engines-trusted-roots)).
 
+Answered by the maintainer on 2026-11-24, each as its recommendation:
+
+11. **`pyasn1` 0.6.4 in vLLM 0.32.0's image** (CVE-2026-119194 to CVE-2026-119197, each a denial of service while decoding ASN.1, fixed in 0.6.5): accepted, with the reason in the audit log. A pod's vLLM decodes prompts and the model's files, not ASN.1 from others, and Python's TLS is OpenSSL's. Reviewed with the next vLLM image.
+12. **A way past the minimum age for an urgent Node.js fix.** OSV.dev has no records of Node.js, so the security fix bypass cannot prove what a release fixes. The catalog gets a field in which the maintainer lets a Node.js release younger than 7 days through, with a written reason, which the policy records as the release's provenance. Without it, a release younger than 7 days stays blocked.
+13. **The minimum age covers the engine's image and Node.js only** in part 1: nothing in an image is younger than the image, though its date is the publisher's word. Part 2's secondary engines, installed by package, need the whole tree checked: a requirement of its plan.
+14. **`undici` 6.28.1,** through `@actions/core` and `@actions/github`: 5 high advisories (denial of service in its EventSource parser, content encodings, TLS 1.2 renegotiation and WebSocket PONGs; a certificate check skipped when an `Agent` is given TLS options). Codeman uses none of these directly. The lockfile moves to 6.29.1, published on 2026-10-15, on its own branch from `main`.
+15. **Advisories with only a CVSS 2 or 4 vector** stay warnings, as today: most OSV records name their severity in the database's own field, which the policy reads first. Scoring CVSS 4 waits for a case that needs it.
+
 ## Steps
 
 The steps start once the decisions are answered. Subagents carry them out, one step or a group of independent steps each; commits are made on `features/multi-service-pods`.
@@ -167,6 +175,7 @@ The steps start once the decisions are answered. Subagents carry them out, one s
 
     Done when each page describes the new behavior and `docs/README.md` lists the new page.
 12. **Checks.** Done when `npm run check` and `npm run test:e2e` pass.
+13. **Node.js's urgent fix** (decision 12). The catalog's field, the policy's check of it and its provenance, with unit tests, and the release policy's page. Done when a Node.js release younger than 7 days passes only with the field, and its reason is recorded.
 
 ## Handover
 
@@ -187,7 +196,7 @@ The live test of part 2 adds the GPU measurements listed in the [investigation](
 
 ## Progress
 
-As of 2026-11-04. The work is paused until the maintainer says to continue, and these decisions wait for them: the 4 `pyasn1` findings, a way past the minimum age for an urgent Node.js fix, the minimum age covering only the image and Node.js, `undici`'s advisory, advisories with only a CVSS 2 or 4 score, and the five of the [plan for GitHub's runners](2026-11-04-run-e2e-on-github-runners.md#decisions).
+The decisions that waited on 2026-11-04 were answered on 2026-11-24 (decisions 11 to 15), and the [plan for GitHub's runners](2026-11-04-run-e2e-on-github-runners.md) is completed.
 
 ### Done on `features/multi-service-pods`
 
@@ -208,9 +217,9 @@ Its first e2e run failed every scenario on a stale job image, which `3dc42ad` fi
 ### Next
 
 1. Done on 2026-11-06. `fixes/node-24-22-1` reached `main` with the [workflow that runs the e2e suite](2026-11-04-run-e2e-on-github-runners.md#decisions) (`f00d362`), and all 48 scenarios passed on GitHub's runner. `0f9bb8c`, on `main`, pins the pod images published from `f00d362`. `540cdad` merges `main` into this branch: `f00d362`'s images are recorded as the last published, and `docker/pod/` and `POD_IMAGES` stay removed.
-2. The maintainer decides on the 4 `pyasn1` findings of the scan of 2026-11-04, in the [audit log](../development/dependencies.md#audit-log).
+2. Decided on 2026-11-24 (decisions 11 to 15): the `pyasn1` findings are accepted in the [audit log](../development/dependencies.md#audit-log), and step 13 adds Node.js's urgent fix.
 3. The audit gaps step 11 found: OSV.dev has no audit log row, and `docs/web/` has no page on how raw.githubusercontent.com serves a file.
 4. Done in `540cdad`: the comment in `docker/runner/Dockerfile` names the Node.js that pods download.
 5. Step 12: `npm run check` (with `biome ci` on the repository's directories, not `.`, while worktrees live under `.claude/`). The e2e suite last passed at 8b3ae41; later commits change only docs and an input's description.
-6. Remove the agents' worktrees and branches (`git worktree remove`).
+6. On 2026-11-24, the worktrees `../codeman-node-fix` and `../codeman-e2e-actions` were removed, their branches being in `main`. The agents' worktrees under `.claude/worktrees/` hold work that is on this branch, not yet in `main`: they go once it merges.
 7. Hand over to the live test, then write part 2's plan.

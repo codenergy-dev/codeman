@@ -1,7 +1,7 @@
 ---
-status: in progress
+status: completed
 created_at: 2026-11-04T14:47:33-03:00
-updated_at: 2026-11-24T09:30:00-03:00
+updated_at: 2026-11-24T10:00:00-03:00
 commit: e1c1411
 ---
 
@@ -329,3 +329,7 @@ The costs above are upper bounds: Salad bills only while an instance runs (docs/
 Step 6 is done: [the suite's page](../development/e2e/suite.md#what-each-check-costs) gives each check's inputs, time and cost from these dispatches, and the Salad cost's basis; [dependencies](../development/dependencies.md#github-actions) records where the e2e workflow uses each action.
 
 Next: every step is done. Step 1 saved the sources (`351aa5f`), step 2 reached `main` with `fixes/e2e-hf-refs-main`, steps 3 to 5 passed on real pods, step 6 is above, and step 7's rule is on `main` (`2360411`). The maintainer decides whether to set this plan `completed`; the review of Ubuntu 26.04 has its own plan, and the estimate of the fit before creating a pod too.
+
+The dispatch of `ollama` on Salad at `2fd590f`, the first with the billed cost, passed: RTX 3080 Ti Laptop (16 GB), created in 2.9 s, serving 211.5 s later, chat in 29.8 s. `cost_usd=0.002 cost_basis=billed`, against an upper bound of $0.007 for the pod's 246.7 s: the instance ran for about a minute of it.
+
+Every step is done, so the plan is completed on 2026-11-24.

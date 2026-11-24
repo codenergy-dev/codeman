@@ -1,7 +1,7 @@
 ---
 status: pending
 created_at: 2026-11-23T14:10:00-03:00
-updated_at: 2026-11-23T14:10:00-03:00
+updated_at: 2026-11-24T10:00:00-03:00
 commit: cf237a6
 ---
 
@@ -52,6 +52,8 @@ needed     = max-num-seqs × context × per token
 The `unfit` case asked 256 × 32,768 × 12,288 bytes, 96 GiB: about 7 times what the A4000 holds, far beyond any error of the estimate.
 
 ## Decisions
+
+Answered by the maintainer on 2026-11-24: 1 (a), 2 (a), 3 (b), 4 (a) and 5 (a). Ollama gets the estimate too, so that both engines behave alike.
 
 1. **What `open-key` does when the estimate is clearly short.**
    - **(a) Fail the run before creating the pod (recommended),** with the gateway's levers: lower `max-model-len` or `max-num-seqs`, `kv-cache-dtype: fp8`, `language-model-only: true`, or a GPU with more memory. The settings name the GPU type, and its price; Codeman should not change it.

@@ -1,7 +1,7 @@
 ---
-status: completed
+status: in progress
 created_at: 2026-10-29T10:26:49-03:00
-updated_at: 2026-10-29T16:34:20-03:00
+updated_at: 2026-11-24T10:00:00-03:00
 commit: 1bdf038
 ---
 
@@ -124,6 +124,8 @@ Runpod's REST API v2 offers no interruptible (spot) pods: `CreatePodRequest` has
 
 **Answer (2026-10-29):** A.
 
+**Answered again (2026-11-24):** B, with A as the fallback. The pod check showed that Salad's instances give it cheaply: the `running` instance's `update_time` is when billing started, and the allocation and download it leaves out took 3 to 13 minutes per pod. When the instance's time cannot be read, or the instance moved to another node, the cost is A's. Budgets keep counting A while a run is open, so they never undercount (step 10).
+
 ### 6. Credentials
 
 | Option | Trade-off |
@@ -182,6 +184,7 @@ Each step ends with `npm run check` passing (lint, types, tests and the build, `
 7. **Test end to end** (decision 7): a fake Salad in `e2e/fakes/salad/` that runs pods with the fake Runpod's launcher, and a scenario of one task on `salad-pod` from its label to its end, its group deleted. Done when the suite passes.
 8. **Document it:** `docs/installation/salad.md`; providers, self-hosted inference, pods, spend and budget pages; `hosts` and `priority` in the settings reference; security risks and secrets, with decision 6 of the self-hosted inference plan now a default; glossary; upgrading, with the template version; the docs index. Done when the docs test passes and no page says pods are only Runpod's or only on Secure Cloud.
 9. **Write the handover**, below: what the responsible person does after the plan, and what to check live. Done when it lists every assumption the adapter makes that the docs did not settle.
+10. **Cost Salad pods from their instance's `running` state** (decision 5, answered again). The adapter reads the pod's instances with its state, and a run's cost and the spend table count from the `running` instance's `update_time` to the pod's end; A when it cannot tell. Done when tests show both, and the [spend](../budget/budget.md) and [Salad](../installation/salad.md) pages say so.
 
 ## Handover
 
@@ -218,6 +221,14 @@ During and after one task, check each assumption the adapter makes that the docu
 | 13 | Codeman's polling stays within 240 requests a minute per key | Several tasks at once | No `429` in the key jobs' logs |
 
 Also compare the task's spend row with Salad's Portal: the row is an estimate from the group's creation, so it should be a little above the bill (decision 5).
+
+### What the pod check found (2026-11-24)
+
+The pod check on Salad ([e2e plan](2026-11-04-run-e2e-on-github-runners.md#progress)) created real groups from this adapter, which reopened this plan:
+
+- **Salad refused every group whose command ran `curl` or `wget` right after `;`,** with a bare 400: its security filters, which [its page on commands](../web/salad/specifying-a-command.md#commands-security-filters-can-reject) documented on 2026-11-13. `f01aa55` puts them on their own lines in the bootstrap, and `commandProblems` refuses such a command before any pod.
+- **Confirmed:** assumption 2 (`DELETE` removes a running group), 3 (the Container Gateway's address answers over HTTPS), 6 (`running` only with the instance up), 9 (8 vCPU and 32 GB were allocated within seconds to minutes), 10 (vLLM serves with 8 GB of `/dev/shm`) and 12 (vLLM's CUDA check passed on a community host).
+- **Still for the live test:** assumptions 1, 4, 5, 7, 8, 11 and 13, and the comparison of a task's spend with Salad's Portal.
 
 ### 3. When something differs
 
