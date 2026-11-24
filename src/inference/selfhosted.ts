@@ -186,6 +186,14 @@ export interface PodHandle {
   start: number;
   /** When the pod was created; its whole life counts in the task's spend. */
   created?: number | undefined;
+  /**
+   * When the provider began billing the pod, as the run that created it saw it once it served:
+   * on Salad, its instance's start of `running`, after its allocation and image download, which
+   * Salad does not bill. `close` counts from it while the provider still reports the same, else
+   * from `created` (decision 5 of the plan for Salad pods). Absent on other providers' pods, and
+   * on runs that joined a pod.
+   */
+  billedFrom?: number | undefined;
   pricePerSecond: number;
   /**
    * What the run may spend, in USD, which caps its cost on a shared pod when the gateway does not
@@ -637,7 +645,9 @@ export class PodInference implements InferenceProvider {
     const { shared } = handle;
     const ended = await this.#endRun(handle, log);
     const keep = handle.reuse === "task" && ended !== undefined;
-    await this.#leave(handle, keep, ended === undefined, log);
+    // Before the pod may end, while the provider still lists its instance.
+    const billedStart = await billedFromHandle(this.#host, handle, this.#now());
+    await this.#leave(handle, keep, ended === undefined, log, billedStart);
     const now = this.#now();
     const usage = { ...tokens(ended), pod: handle.podId, keptPod: keep ? handle.podId : undefined };
     if (shared) {
@@ -657,17 +667,18 @@ export class PodInference implements InferenceProvider {
     // Runpod bills a running pod late, and Salad not at all, so the pod also counts for its
     // whole life so far, including a kept pod's time between runs; its billing, when the
     // provider has one, wins once higher.
+    // Salad's pods from when Salad began billing them, when known (decision 5 of the plan for
+    // Salad pods).
+    const from = billedStart ?? handle.created;
     const lifetime =
-      handle.created === undefined
-        ? undefined
-        : podCost(new Date(handle.created), now, handle.pricePerSecond);
+      from === undefined ? undefined : podCost(new Date(from), now, handle.pricePerSecond);
     const podCosts = billed === undefined && lifetime === undefined ? undefined : { ...billed };
     if (podCosts && lifetime !== undefined) {
       podCosts[handle.podId] = Number(Math.max(podCosts[handle.podId] ?? 0, lifetime).toFixed(6));
     }
     return {
       ...usage,
-      cost: podCost(new Date(handle.start), now, handle.pricePerSecond),
+      cost: podCost(new Date(Math.max(handle.start, billedStart ?? 0)), now, handle.pricePerSecond),
       podCosts,
       pods: this.#takeEvents(),
     };
@@ -712,7 +723,13 @@ export class PodInference implements InferenceProvider {
    * lease holds it. A pod whose gateway did not answer takes no other task. When the registry
    * cannot be reached, the pod stays: it terminates itself once no run uses it.
    */
-  async #leave(handle: PodHandle, keep: boolean, unreachable: boolean, log: Log): Promise<void> {
+  async #leave(
+    handle: PodHandle,
+    keep: boolean,
+    unreachable: boolean,
+    log: Log,
+    billed?: number,
+  ): Promise<void> {
     let left: Awaited<ReturnType<PodRegistry["leave"]>>;
     try {
       left = await this.#registry.leave(handle.nonce, handle.holder, {
@@ -729,7 +746,7 @@ export class PodInference implements InferenceProvider {
       this.#events.push(
         await terminatePod(this.#host, handle.podId, left.pod?.pod ? left.pod : undefined, {
           reason: "no run uses it and no task keeps it",
-          life: lifeOf(handle, this.#options.gpu.name, this.#now()),
+          life: lifeOf(handle, this.#options.gpu.name, this.#now(), billed),
           log,
         }),
       );
@@ -1006,11 +1023,13 @@ export class PodInference implements InferenceProvider {
             ? `${UNAVAILABLE}${error.message}`
             : `it did not serve ${this.#settings.model}`,
       );
+      // Before its end, while the provider still lists its instance.
+      const from = (await billedSince(this.#host, pod.id, life.from, this.#now())) ?? life.from;
       this.#events.push(
         await terminatePod(this.#host, pod.id, undefined, {
-          reason: `it did not serve ${this.#settings.model}; it cost about ${usd(podCost(pod.createdAt, this.#now(), listed))}`,
+          reason: `it did not serve ${this.#settings.model}; it cost about ${usd(podCost(new Date(from), this.#now(), life.pricePerSecond))}`,
           log,
-          life: { ...life, to: this.#now().getTime() },
+          life: { ...life, from, to: this.#now().getTime() },
           warning: true,
         }),
       );
@@ -1111,6 +1130,7 @@ export class PodInference implements InferenceProvider {
         await this.#reportFit(status.fit, podId, own, log);
       }
     }
+    const billedFrom = own ? await billedSince(this.#host, podId, created, this.#now()) : undefined;
     const handle: PodHandle = {
       mode: "pod",
       podId,
@@ -1118,6 +1138,7 @@ export class PodInference implements InferenceProvider {
       url: target.url,
       start: startedBefore && !own ? this.#now().getTime() : created,
       created,
+      ...(billedFrom !== undefined ? { billedFrom } : {}),
       pricePerSecond:
         running.pricePerSecond ??
         record.pricePerSecond ??
@@ -1539,15 +1560,51 @@ async function terminatePod(
   return { pod: id, event: "terminated", reason: options.reason, ...(life ? { life } : {}) };
 }
 
-/** A pod's life as a run's handle knows it, ending at `now`. */
-function lifeOf(handle: PodHandle, provider: string, now: Date): PodLife {
+/**
+ * A pod's life as a run's handle knows it, ending at `now`: from `billed`, when the provider
+ * began billing it, if known, else from its creation.
+ */
+function lifeOf(handle: PodHandle, provider: string, now: Date, billed?: number): PodLife {
   return {
     record: handle.nonce,
     provider,
-    from: handle.created ?? handle.start,
+    from: billed ?? handle.created ?? handle.start,
     to: now.getTime(),
     pricePerSecond: handle.pricePerSecond,
   };
+}
+
+/**
+ * When the provider began billing a pod, in ms, for a provider that says (`billedSince`):
+ * undefined when it does not, cannot tell, or tells a time before `created` or after `now`.
+ */
+async function billedSince(
+  host: Pick<PodHost, "billedSince">,
+  id: string,
+  created: number,
+  now: Date,
+): Promise<number | undefined> {
+  const since = await host.billedSince?.(id).catch(() => undefined);
+  const at = since?.getTime();
+  return at !== undefined && Number.isFinite(at) && at >= created && at <= now.getTime()
+    ? at
+    : undefined;
+}
+
+/**
+ * When the provider began billing a run's pod, as the handle recorded it, once the provider still
+ * tells the same time: the pod has run on one instance since. Undefined otherwise, and the pod
+ * then counts from its creation (decision 5 of the plan for Salad pods).
+ */
+async function billedFromHandle(
+  host: Pick<PodHost, "billedSince">,
+  handle: PodHandle,
+  now: Date,
+): Promise<number | undefined> {
+  if (handle.billedFrom === undefined) return undefined;
+  const created = handle.created ?? handle.start;
+  const since = await billedSince(host, handle.podId, created, now);
+  return since === handle.billedFrom ? since : undefined;
 }
 
 /**
@@ -1587,7 +1644,7 @@ function tokens(usage: GatewayUsage | undefined): Omit<RunUsage, "cost"> {
  * releases the task on its gateway, so its idle time no longer goes to the task.
  */
 export async function releasePod(
-  host: Pick<PodHost, "terminate">,
+  host: Pick<PodHost, "terminate" | "billedSince">,
   registry: PodRegistry,
   text: string,
   log: Log,
@@ -1622,11 +1679,12 @@ export async function releasePod(
     return [];
   }
   const now = options.now?.() ?? new Date();
+  const billed = await billedFromHandle(host, handle, now);
   return [
     await terminatePod(host, handle.podId, undefined, {
       reason: "the task does not go on to another run now, and no other task uses or keeps it",
       log,
-      life: lifeOf(handle, options.provider, now),
+      life: lifeOf(handle, options.provider, now, billed),
     }),
   ];
 }

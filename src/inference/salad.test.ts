@@ -246,6 +246,41 @@ test("a starting group is allocated once a node downloads, creates or runs its i
   assert.equal(calls.length, 8, "a running group's instances are not read");
 });
 
+test("Salad bills a group from its instance's start of running, as seen on one machine", async () => {
+  const T = "2026-11-24T12:04:00Z";
+  const starting = { ...group, current_state: { status: "deploying" } };
+  const on = (machine_id: string, state: string, update_time?: string) => ({
+    instances: [{ machine_id, state, ...(update_time ? { update_time } : {}) }],
+  });
+  // Seen downloading on m1 while starting, then running there.
+  const watched = fakeFetch([
+    starting,
+    classes,
+    on("m1", "downloading", "2026-11-24T12:00:30Z"),
+    on("m1", "running", T),
+  ]);
+  const salad = new Salad(ACCOUNT, watched.fetch);
+  await salad.pods.get(group.name);
+  assert.deepEqual(await salad.pods.billedSince?.(group.name), new Date(T));
+  assert.equal(watched.calls.at(-1)?.[0], `${CONTAINERS}/${group.name}/instances`);
+
+  const billed = async (...reads: unknown[]) => {
+    const { fetch } = fakeFetch([starting, classes, ...reads]);
+    const fresh = new Salad(ACCOUNT, fetch);
+    await fresh.pods.get(group.name);
+    return fresh.pods.billedSince?.(group.name);
+  };
+  // It moved: Salad placed it on another machine.
+  assert.equal(
+    await billed(on("m1", "running", T), on("m2", "running", "2026-11-24T12:20:00Z")),
+    undefined,
+  );
+  // It does not run yet, or its time is unreadable, or Salad lists no instances.
+  assert.equal(await billed(on("m1", "downloading", T), on("m1", "creating", T)), undefined);
+  assert.equal(await billed(on("m1", "creating", T), on("m1", "running")), undefined);
+  assert.equal(await billed(on("m1", "creating", T), new Response("", { status: 404 })), undefined);
+});
+
 test("a deleted group is gone, and deleting it again is not an error", async () => {
   const { fetch, calls } = fakeFetch([
     new Response("", { status: 404 }),

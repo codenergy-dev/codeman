@@ -75,12 +75,17 @@ function setup(
     image?: string;
     hub?: ModelHub;
     noBilling?: boolean;
+    billsWhileRunning?: boolean;
     releases?: ReturnType<typeof fakeReleases>;
   } = {},
 ) {
   const releases = options.releases ?? fakeReleases();
   let now = new Date("2026-10-03T12:00:00Z");
-  const gpu = new FakeGpu({ now: () => now, noBilling: options.noBilling === true });
+  const gpu = new FakeGpu({
+    now: () => now,
+    noBilling: options.noBilling === true,
+    billsWhileRunning: options.billsWhileRunning === true,
+  });
   const gateways = new FakeGateways(gpu, { real: options.real === true });
   after(() => gateways.close());
   const store = new MemoryStore();
@@ -399,6 +404,77 @@ test("without the provider's billing, as on Salad, a run costs its pod's time fr
   const next = await second.provider.close(second.opened.handle, new FakeRuntime());
   near(next.cost, 0.03);
   assert.deepEqual(next.podCosts, { pod1: 0.102 }, "17 minutes of the pod");
+});
+
+test("on a cloud that bills a pod only while it runs, as Salad, the pod counts from then", async () => {
+  const { gpu, open, advance, setWait, release } = setup({
+    noBilling: true,
+    billsWhileRunning: true,
+  });
+  // Salad allocates the pod and downloads its image for 4 minutes, which it does not bill.
+  gpu.startAfter = 4;
+  setWait(async () => advance(60_000));
+  const first = await open("7", "300", {}, repository, 1.5);
+  const created = Date.parse("2026-10-03T12:00:00Z");
+  assert.equal(first.handle.created, created);
+  assert.equal(first.handle.start, created, "the run's limit still counts from the creation");
+  assert.equal(first.handle.billedFrom, created + 4 * 60_000);
+  advance(10 * 60_000);
+  const usage = await first.provider.close(first.opened.handle, new FakeRuntime());
+  // 0.0002 USD a second: the 10 minutes it ran, not the 4 before.
+  near(usage.cost, 0.12);
+  assert.deepEqual(usage.podCosts, { pod1: 0.12 });
+  assert.equal(usage.keptPod, "pod1");
+  // The release that ends the kept pod records its life from the same time.
+  advance(60_000);
+  const events = await release(first.opened.handle);
+  assert.equal(events[0]?.life?.from, created + 4 * 60_000);
+});
+
+test("a pod counts from its creation when the provider no longer tells the time open saw", async () => {
+  const { gpu, open, advance, setWait } = setup({ noBilling: true, billsWhileRunning: true });
+  gpu.startAfter = 4;
+  setWait(async () => advance(60_000));
+  const first = await open("7", "300", { reuse: "run" }, repository, 1.5);
+  assert.equal(first.handle.billedFrom, Date.parse("2026-10-03T12:04:00Z"));
+  advance(10 * 60_000);
+  // Salad placed the pod on another node: a new instance, running since later.
+  gpu.runningSince.set("pod1", new Date("2026-10-03T12:09:00Z"));
+  const usage = await first.provider.close(first.opened.handle, new FakeRuntime());
+  // The 14 minutes since its creation.
+  near(usage.cost, 0.168);
+  assert.deepEqual(usage.podCosts, { pod1: 0.168 });
+  const ended = usage.pods?.find((event) => event.event === "terminated");
+  assert.equal(ended?.life?.from, Date.parse("2026-10-03T12:00:00Z"));
+});
+
+test("a pod that never served counts from its creation, or from when it ran when it did", async () => {
+  const failed = async (configure: (fake: ReturnType<typeof setup>) => void) => {
+    const fake = setup({ noBilling: true, billsWhileRunning: true });
+    fake.setWait(async () => fake.advance(60_000));
+    configure(fake);
+    const failure = await fake.open("7", "300").then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    assert.ok(failure instanceof OpenFailure);
+    return failure.pods.find((event) => event.event === "terminated")?.life?.from;
+  };
+  // No node ever ran it: the provider cannot tell, and it counts from its creation.
+  assert.equal(
+    await failed(({ gpu }) => {
+      gpu.unallocated = true;
+    }),
+    Date.parse("2026-10-03T12:00:00Z"),
+  );
+  // It ran from 12:04, and its model never served.
+  assert.equal(
+    await failed(({ gpu, gateways }) => {
+      gpu.startAfter = 4;
+      gateways.state("pod1").ready = false;
+    }),
+    Date.parse("2026-10-03T12:04:00Z"),
+  );
 });
 
 test("without the provider's billing, runs on a shared pod each count their share of its time", async () => {

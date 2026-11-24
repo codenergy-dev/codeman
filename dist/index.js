@@ -21072,6 +21072,8 @@ var Salad = class {
   #project;
   /** The organization's GPU classes, read once; a failed read is not kept. */
   #classes;
+  /** What this process saw of each group's instance, for when Salad began billing it. */
+  #nodes = new NodeWatch();
   constructor(account, fetchFn = fetch) {
     if (!account.organization || !account.project) {
       throw new Error(
@@ -21090,7 +21092,8 @@ var Salad = class {
       get: (id) => this.#get(id),
       list: (env) => this.#list(env),
       terminate: (id) => this.#terminate(id),
-      url: (id) => this.#url(id)
+      url: (id) => this.#url(id),
+      billedSince: (id) => this.#billedSince(id)
     };
   }
   /** `GET /organizations/{organization}/gpu-classes`, once. */
@@ -21148,16 +21151,39 @@ var Salad = class {
    * not list its instances.
    */
   async #allocated(id) {
+    const states = await this.#instanceStates(id);
+    if (!states) return void 0;
+    return states.some(
+      (state) => state === "downloading" || state === "creating" || state === "running"
+    );
+  }
+  /**
+   * The states of the group's instances, each instance with its machine recorded in `#nodes`;
+   * undefined when Salad does not list them (docs/web/salad/list-container-group-instances.md).
+   */
+  async #instanceStates(id) {
     const listed = await this.#request(
       `${this.#containers(id)}/instances`,
       "GET",
       void 0,
       [404]
     );
-    if (!listed) return void 0;
-    return (listed.instances ?? []).some(
-      ({ state }) => state === "downloading" || state === "creating" || state === "running"
+    if (listed === void 0) return void 0;
+    this.#nodes.record(id, parseInstances(listed), Date.now());
+    return (listed.instances ?? []).flatMap(
+      ({ state }) => typeof state === "string" ? [state] : []
     );
+  }
+  /**
+   * When Salad began billing the group: its instance's start of `running`, as this process has
+   * seen it, on one machine, from every read of its instances (decision 5 of the plan for Salad
+   * pods, answered again on 2026-11-24). Undefined when it cannot tell: no instance runs, the
+   * pod moved or ran again, or its time is unreadable.
+   */
+  async #billedSince(id) {
+    await this.#instanceStates(id).catch(() => void 0);
+    const billed = this.#nodes.billed(id);
+    return billed && billed.to === void 0 ? new Date(billed.from) : void 0;
   }
   /** `GET .../containers`, which returns the project's groups in one page of up to 100. */
   async #list(env) {
@@ -21323,6 +21349,49 @@ function environment(env) {
   }
   return kept;
 }
+function parseInstances(listed) {
+  const items = listed?.instances;
+  if (!Array.isArray(items)) return [];
+  return items.flatMap((item) => {
+    const { machine_id, state, update_time } = item ?? {};
+    if (typeof machine_id !== "string" || typeof state !== "string") return [];
+    const since = typeof update_time === "string" ? Date.parse(update_time) : Number.NaN;
+    return [{ machine: machine_id, state, since: Number.isFinite(since) ? since : void 0 }];
+  });
+}
+var NodeWatch = class {
+  #machines = /* @__PURE__ */ new Map();
+  #runs = /* @__PURE__ */ new Map();
+  /** Records one read of a group's instances, made at `at`. */
+  record(id, seen, at) {
+    const machines = this.#machines.get(id) ?? /* @__PURE__ */ new Set();
+    for (const { machine, state } of seen) {
+      if (state !== "allocating") machines.add(machine);
+    }
+    this.#machines.set(id, machines);
+    const run2 = this.#runs.get(id) ?? { unclear: false };
+    this.#runs.set(id, run2);
+    const running = seen.filter((one) => one.state === "running");
+    const [instance] = running;
+    if (running.length > 1 || instance && (instance.since === void 0 || run2.to !== void 0)) {
+      run2.unclear = true;
+    } else if (instance?.since !== void 0) {
+      run2.from = Math.min(run2.from ?? instance.since, instance.since);
+    } else if (run2.from !== void 0 && run2.to === void 0) {
+      const stopping = seen.find((one) => one.state === "stopping" && one.since !== void 0);
+      run2.to = Math.max(run2.from, stopping?.since ?? at);
+    }
+  }
+  moved(id) {
+    return (this.#machines.get(id)?.size ?? 0) > 1;
+  }
+  /** The time Salad bills the group for, as far as the reads saw it; undefined when unknown. */
+  billed(id) {
+    const run2 = this.#runs.get(id);
+    if (!run2 || run2.unclear || run2.from === void 0 || this.moved(id)) return void 0;
+    return { from: run2.from, to: run2.to };
+  }
+};
 
 // src/inference/providers.ts
 var PROVIDER_NAMES = [
@@ -25575,7 +25644,8 @@ var PodInference = class {
     const { shared } = handle;
     const ended3 = await this.#endRun(handle, log);
     const keep = handle.reuse === "task" && ended3 !== void 0;
-    await this.#leave(handle, keep, ended3 === void 0, log);
+    const billedStart = await billedFromHandle(this.#host, handle, this.#now());
+    await this.#leave(handle, keep, ended3 === void 0, log, billedStart);
     const now = this.#now();
     const usage = { ...tokens(ended3), pod: handle.podId, keptPod: keep ? handle.podId : void 0 };
     if (shared) {
@@ -25592,14 +25662,15 @@ var PodInference = class {
       };
     }
     const billed = await this.#billing([...this.#settings.pods, handle.podId], now, log);
-    const lifetime = handle.created === void 0 ? void 0 : podCost(new Date(handle.created), now, handle.pricePerSecond);
+    const from = billedStart ?? handle.created;
+    const lifetime = from === void 0 ? void 0 : podCost(new Date(from), now, handle.pricePerSecond);
     const podCosts = billed === void 0 && lifetime === void 0 ? void 0 : { ...billed };
     if (podCosts && lifetime !== void 0) {
       podCosts[handle.podId] = Number(Math.max(podCosts[handle.podId] ?? 0, lifetime).toFixed(6));
     }
     return {
       ...usage,
-      cost: podCost(new Date(handle.start), now, handle.pricePerSecond),
+      cost: podCost(new Date(Math.max(handle.start, billedStart ?? 0)), now, handle.pricePerSecond),
       podCosts,
       pods: this.#takeEvents()
     };
@@ -25640,7 +25711,7 @@ var PodInference = class {
    * lease holds it. A pod whose gateway did not answer takes no other task. When the registry
    * cannot be reached, the pod stays: it terminates itself once no run uses it.
    */
-  async #leave(handle, keep, unreachable, log) {
+  async #leave(handle, keep, unreachable, log, billed) {
     let left;
     try {
       left = await this.#registry.leave(handle.nonce, handle.holder, {
@@ -25657,7 +25728,7 @@ var PodInference = class {
       this.#events.push(
         await terminatePod(this.#host, handle.podId, left.pod?.pod ? left.pod : void 0, {
           reason: "no run uses it and no task keeps it",
-          life: lifeOf(handle, this.#options.gpu.name, this.#now()),
+          life: lifeOf(handle, this.#options.gpu.name, this.#now(), billed),
           log
         })
       );
@@ -25891,11 +25962,12 @@ var PodInference = class {
         record.nonce,
         error3 instanceof PodStartFailure ? `${START_FAILED}${error3.message}` : error3 instanceof PodUnavailable ? `${UNAVAILABLE}${error3.message}` : `it did not serve ${this.#settings.model}`
       );
+      const from = await billedSince(this.#host, pod.id, life.from, this.#now()) ?? life.from;
       this.#events.push(
         await terminatePod(this.#host, pod.id, void 0, {
-          reason: `it did not serve ${this.#settings.model}; it cost about ${usd(podCost(pod.createdAt, this.#now(), listed))}`,
+          reason: `it did not serve ${this.#settings.model}; it cost about ${usd(podCost(new Date(from), this.#now(), life.pricePerSecond))}`,
           log,
-          life: { ...life, to: this.#now().getTime() },
+          life: { ...life, from, to: this.#now().getTime() },
           warning: true
         })
       );
@@ -25982,6 +26054,7 @@ var PodInference = class {
         await this.#reportFit(status2.fit, podId, own, log);
       }
     }
+    const billedFrom = own ? await billedSince(this.#host, podId, created, this.#now()) : void 0;
     const handle = {
       mode: "pod",
       podId,
@@ -25989,6 +26062,7 @@ var PodInference = class {
       url: target.url,
       start: startedBefore && !own ? this.#now().getTime() : created,
       created,
+      ...billedFrom !== void 0 ? { billedFrom } : {},
       pricePerSecond: running.pricePerSecond ?? record.pricePerSecond ?? await this.#host.price(
         this.#settings.gpuType,
         running.host ?? this.#hosts[0],
@@ -26309,14 +26383,25 @@ async function terminatePod(host, id, record, options) {
   } : void 0);
   return { pod: id, event: "terminated", reason: options.reason, ...life ? { life } : {} };
 }
-function lifeOf(handle, provider, now) {
+function lifeOf(handle, provider, now, billed) {
   return {
     record: handle.nonce,
     provider,
-    from: handle.created ?? handle.start,
+    from: billed ?? handle.created ?? handle.start,
     to: now.getTime(),
     pricePerSecond: handle.pricePerSecond
   };
+}
+async function billedSince(host, id, created, now) {
+  const since = await host.billedSince?.(id).catch(() => void 0);
+  const at = since?.getTime();
+  return at !== void 0 && Number.isFinite(at) && at >= created && at <= now.getTime() ? at : void 0;
+}
+async function billedFromHandle(host, handle, now) {
+  if (handle.billedFrom === void 0) return void 0;
+  const created = handle.created ?? handle.start;
+  const since = await billedSince(host, handle.podId, created, now);
+  return since === handle.billedFrom ? since : void 0;
 }
 function estimatedShare(handle, now, log) {
   const elapsed = podCost(new Date(handle.start), now, handle.pricePerSecond);
@@ -26363,11 +26448,12 @@ async function releasePod(host, registry, text, log, options) {
     return [];
   }
   const now = options.now?.() ?? /* @__PURE__ */ new Date();
+  const billed = await billedFromHandle(host, handle, now);
   return [
     await terminatePod(host, handle.podId, void 0, {
       reason: "the task does not go on to another run now, and no other task uses or keeps it",
       log,
-      life: lifeOf(handle, options.provider, now)
+      life: lifeOf(handle, options.provider, now, billed)
     })
   ];
 }

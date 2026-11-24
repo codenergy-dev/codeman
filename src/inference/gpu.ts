@@ -141,6 +141,13 @@ export interface PodHost {
    * Absent when the provider has no billing API.
    */
   billing?(ids: readonly string[], since: Date): Promise<Record<string, number>>;
+  /**
+   * When the provider began billing the pod, for one that bills a pod only while it runs on a
+   * machine, not while it is allocated or downloads its image, as Salad. Undefined when it cannot
+   * tell: the pod does not run, moved to another machine, or its time is unreadable. Absent when
+   * the provider bills a pod from its creation, as Runpod. Codeman then counts from the creation.
+   */
+  billedSince?(id: string): Promise<Date | undefined>;
 }
 
 export interface Endpoint {

@@ -82,7 +82,7 @@ interface RunpodEndpoint {
  */
 export class Runpod implements GpuProvider {
   readonly name = "runpod";
-  readonly pods: Required<Omit<PodHost, "unservedImages">>;
+  readonly pods: Required<Omit<PodHost, "unservedImages" | "billedSince">>;
   readonly serverless: ServerlessHost;
   readonly #apiKey: string;
   readonly #fetch: Fetch;
