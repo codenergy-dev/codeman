@@ -34,6 +34,19 @@ import { FakeRuntime } from "./testing/fake-runtime.ts";
 // Creates a system user and needs passwordless sudo, like GitHub's Linux runners. CI sets this.
 const enabled = process.platform === "linux" && process.env.CODEMAN_SANDBOX_TEST === "1";
 
+/**
+ * Asserts that the agent's run exited 0 in time. The jail's own errors, such as the mount that
+ * failed, go to the run's log, not the test's output: a failure prints that log, for CI's.
+ */
+function assertRan(
+  run: { exitCode: number | null; timedOut: boolean },
+  runtime: FakeRuntime,
+): void {
+  if (run.exitCode === 0 && !run.timedOut) return;
+  const log = runtime.logs.map(({ level, message }) => `${level}: ${message}`).join("\n");
+  assert.fail(`The agent's run ended with ${JSON.stringify(run)}. Its log:\n${log}`);
+}
+
 type FakeEntry = { uid?: number; mode: number } | { uid?: number; link: string };
 
 /** A fake file system: each path's owner (root by default) and mode, or a link's target. */
@@ -323,13 +336,14 @@ test("the agent is contained and its changes are collected safely", {
     "exit 0",
   ].join("\n");
 
+  const contained = new FakeRuntime();
   const run = await runAsAgent(
     { file: "/bin/bash", args: ["-c", script], env: { OPENROUTER_API_KEY: "sk-test" } },
     worktree,
     60_000,
-    new FakeRuntime(),
+    contained,
   );
-  assert.deepEqual(run, { exitCode: 0, timedOut: false });
+  assertRan(run, contained);
   // While the sandbox is live, files are read as the agent: no symlink, no pipe, the size checked.
   const live = (name: string, max = 1024) =>
     copyLiveAgentFile(`${worktree}/.codeman/${name}`, join(root, `live-${name}`), max);
@@ -423,6 +437,7 @@ test("the agent stops when its run does, with the reason", { skip: !enabled }, a
     runtime,
     stop.signal,
   );
+  if (run.stopped === undefined) assertRan(run, runtime);
   assert.equal(run.stopped, "No worker started.");
   assert.equal(run.timedOut, false);
   assert.match(runtime.logged("warning")[0] ?? "", /The agent was stopped: No worker started\./);
@@ -497,13 +512,14 @@ test("the agent cannot plant programs that run outside its jail", {
     copyToAgent(repo, worktree);
 
     const started = Date.now();
+    const idleRuntime = new FakeRuntime();
     const idle = await runAsAgent(
       { file: "/bin/true", args: [], env: {} },
       worktree,
       60_000,
-      new FakeRuntime(),
+      idleRuntime,
     );
-    assert.deepEqual(idle, { exitCode: 0, timedOut: false });
+    assertRan(idle, idleRuntime);
     t.diagnostic(`A harness that does nothing ran in the jail in ${Date.now() - started} ms.`);
 
     const plant = planted
@@ -512,13 +528,14 @@ test("the agent cannot plant programs that run outside its jail", {
           `printf '#!/bin/sh\\necho "$0" >> ${marker}\\n' > ${file} && chmod 755 ${file} && echo ${file} >> planted.txt`,
       )
       .join("\n");
+    const plantRuntime = new FakeRuntime();
     const run = await runAsAgent(
       { file: "/bin/bash", args: ["-c", `echo changed >> README.md\n${plant}\nexit 0`], env: {} },
       worktree,
       60_000,
-      new FakeRuntime(),
+      plantRuntime,
     );
-    assert.deepEqual(run, { exitCode: 0, timedOut: false });
+    assertRan(run, plantRuntime);
     sealAgentSandbox(worktree);
     const changes = collectChanges({
       gitDir: join(repo, ".git"),
@@ -667,7 +684,7 @@ test("the agent cannot run a command outside its jail through the system's servi
       60_000,
       runtime,
     );
-    assert.deepEqual(run, { exitCode: 0, timedOut: false });
+    assertRan(run, runtime);
     const lines = runtime.logged("info").map((line) => line.replace(/^│ /, ""));
     for (const line of lines.filter((line) => line.startsWith("route "))) t.diagnostic(line);
 

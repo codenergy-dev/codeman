@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-11-05T16:50:00-03:00
-updated_at: 2026-11-24T13:10:00-03:00
+updated_at: 2026-11-24T14:40:00-03:00
 commit: 4d89540
 ---
 
@@ -82,4 +82,9 @@ What the sources show, which the first CI run on `ubuntu-26.04` must confirm or 
 | Sockets | `systemd-udevd`'s random one, now accepted by its owner. `systemd-homed`, `systemd-importd` and `systemd-sysupdated` bind names of the same form, and stay unreviewed. multipathd also listens on `/run/multipathd.socket`, a path, not an abstract name | Any other abstract socket the test lists |
 | Where programs live | The [Contents index](../web/ubuntu/dists-resolute-contents-amd64-gz.md) lists each program under `usr/` only, as on 24.04 | That `programs come only from trusted directories` still passes |
 
-Next: the maintainer pushes `features/ubuntu-26-04` and opens a pull request. CI's `check-ubuntu-26-04` job gives step 2's list, recorded here; `check` stays on 24.04 and must pass. Then step 3 goes on with what it shows. Steps 4 to 6 wait for it.
+- **Step 2, first runs (2026-11-24).** CI failed on four sandbox tests, the same on this branch and on `fixes/undici-6-29-1`, whose only job, `check`, runs on `ubuntu-24.04` and whose change is the lockfile alone. So this failure is not 26.04's alone; `ubuntu-24.04`'s image changed too:
+  - `the agent is contained and its changes are collected safely`, `the agent cannot plant programs that run outside its jail` and `the agent cannot run a command outside its jail through the system's services` end with exit code 32, not 0.
+  - `the agent stops when its run does, with the reason` has no reason, because the jail had already exited.
+  - Each fits the jail's setup failing before the agent starts: it runs with `set -e`, and 32 is what `mount` returns when a mount fails. Which mount is not in the log: the jail's output goes to the run's log, which the tests did not print. The tests now print it when the agent's run fails (`assertRan` in [`src/sandbox.test.ts`](../../src/sandbox.test.ts)).
+
+Next: the maintainer pushes `features/ubuntu-26-04` again, and pastes both jobs' logs of the test step, with their "Set up job" step, which names each image's version. The jail's log names the mount that failed. A fix that `main` needs, since `ubuntu-24.04` fails too, gets its own branch from `main`, and `check` must pass again once it lands. Then step 3 goes on with what `check-ubuntu-26-04` shows. Steps 4 to 6 wait for it.
