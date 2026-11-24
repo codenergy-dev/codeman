@@ -3379,12 +3379,12 @@ var require_data_url = __commonJS({
       return serialized;
     }
     function collectASequenceOfCodePoints(condition2, input, position) {
-      let result = "";
+      let result2 = "";
       while (position.position < input.length && condition2(input[position.position])) {
-        result += input[position.position];
+        result2 += input[position.position];
         position.position++;
       }
-      return result;
+      return result2;
     }
     function collectASequenceOfCodePointsFast(char, input, position) {
       const idx = input.indexOf(char, position.position);
@@ -3606,16 +3606,16 @@ var require_data_url = __commonJS({
       if ((2 << 15) - 1 > length) {
         return String.fromCharCode.apply(null, input);
       }
-      let result = "";
+      let result2 = "";
       let i = 0;
       let addition = (2 << 15) - 1;
       while (i < length) {
         if (i + addition > length) {
           addition = length - i;
         }
-        result += String.fromCharCode.apply(null, input.subarray(i, i += addition));
+        result2 += String.fromCharCode.apply(null, input.subarray(i, i += addition));
       }
-      return result;
+      return result2;
     }
     function minimizeSupportedMimeType(mimeType) {
       switch (mimeType.essence) {
@@ -3864,15 +3864,15 @@ var require_webidl = __commonJS({
             message: `${argument} ("${webidl.util.Type(O)}") is not an Object.`
           });
         }
-        const result = {};
+        const result2 = {};
         if (!types.isProxy(O)) {
           const keys2 = [...Object.getOwnPropertyNames(O), ...Object.getOwnPropertySymbols(O)];
           for (const key of keys2) {
             const typedKey = keyConverter(key, prefix, argument);
             const typedValue = valueConverter(O[key], prefix, argument);
-            result[typedKey] = typedValue;
+            result2[typedKey] = typedValue;
           }
-          return result;
+          return result2;
         }
         const keys = Reflect.ownKeys(O);
         for (const key of keys) {
@@ -3880,10 +3880,10 @@ var require_webidl = __commonJS({
           if (desc?.enumerable) {
             const typedKey = keyConverter(key, prefix, argument);
             const typedValue = valueConverter(O[key], prefix, argument);
-            result[typedKey] = typedValue;
+            result2[typedKey] = typedValue;
           }
         }
-        return result;
+        return result2;
       };
     };
     webidl.interfaceConverter = function(i) {
@@ -4413,7 +4413,7 @@ var require_util2 = __commonJS({
     }
     var parseHashWithOptions = /(?<algo>sha256|sha384|sha512)-((?<hash>[A-Za-z0-9+/]+|[A-Za-z0-9_-]+)={0,2}(?:\s|$)( +[!-~]*)?)?/i;
     function parseMetadata(metadata) {
-      const result = [];
+      const result2 = [];
       let empty = true;
       for (const token of metadata.split(" ")) {
         empty = false;
@@ -4423,13 +4423,13 @@ var require_util2 = __commonJS({
         }
         const algorithm = parsedToken.groups.algo.toLowerCase();
         if (supportedHashes.includes(algorithm)) {
-          result.push(parsedToken.groups);
+          result2.push(parsedToken.groups);
         }
       }
       if (empty === true) {
         return "no metadata";
       }
-      return result;
+      return result2;
     }
     function getStrongestMetadata(metadataList) {
       let algorithm = metadataList[0].algo;
@@ -4506,12 +4506,12 @@ var require_util2 = __commonJS({
       return normalizedMethodRecordsBase[method.toLowerCase()] ?? method;
     }
     function serializeJavascriptValueToJSONString(value) {
-      const result = JSON.stringify(value);
-      if (result === void 0) {
+      const result2 = JSON.stringify(value);
+      if (result2 === void 0) {
         throw new TypeError("Value is not JSON serializable");
       }
-      assert(typeof result === "string");
-      return result;
+      assert(typeof result2 === "string");
+      return result2;
     }
     var esIteratorPrototype = Object.getPrototypeOf(Object.getPrototypeOf([][Symbol.iterator]()));
     function createIterator(name, kInternalIterator, keyIndex = 0, valueIndex = 1) {
@@ -4549,20 +4549,20 @@ var require_util2 = __commonJS({
           }
           const { [keyIndex]: key, [valueIndex]: value } = values[index];
           this.#index = index + 1;
-          let result;
+          let result2;
           switch (this.#kind) {
             case "key":
-              result = key;
+              result2 = key;
               break;
             case "value":
-              result = value;
+              result2 = value;
               break;
             case "key+value":
-              result = [key, value];
+              result2 = [key, value];
               break;
           }
           return {
-            value: result,
+            value: result2,
             done: false
           };
         }
@@ -5253,11 +5253,11 @@ var require_formdata_parser = __commonJS({
           return "failure";
         }
         position.position += 2;
-        const result = parseMultipartFormDataHeaders(input, position);
-        if (result === "failure") {
+        const result2 = parseMultipartFormDataHeaders(input, position);
+        if (result2 === "failure") {
           return "failure";
         }
-        let { name, filename, contentType, encoding } = result;
+        let { name, filename, contentType, encoding } = result2;
         position.position += 2;
         let body;
         {
@@ -6348,9 +6348,9 @@ var require_client_h1 = __commonJS({
         client2[kHTTPContext] = null;
         if (client2.destroyed) {
           assert(client2[kPending] === 0);
-          const requests = client2[kQueue].splice(client2[kRunningIdx]);
-          for (let i = 0; i < requests.length; i++) {
-            const request2 = requests[i];
+          const requests2 = client2[kQueue].splice(client2[kRunningIdx]);
+          for (let i = 0; i < requests2.length; i++) {
+            const request2 = requests2[i];
             util.errorRequest(client2, request2, err);
           }
         } else if (client2[kRunning] > 0 && err.code !== "UND_ERR_INFO") {
@@ -6926,17 +6926,17 @@ var require_client_h2 = __commonJS({
       }
     } = http2;
     function parseH2Headers(headers) {
-      const result = [];
+      const result2 = [];
       for (const [name, value] of Object.entries(headers)) {
         if (Array.isArray(value)) {
           for (const subvalue of value) {
-            result.push(Buffer.from(name), Buffer.from(subvalue));
+            result2.push(Buffer.from(name), Buffer.from(subvalue));
           }
         } else {
-          result.push(Buffer.from(name), Buffer.from(value));
+          result2.push(Buffer.from(name), Buffer.from(value));
         }
       }
-      return result;
+      return result2;
     }
     async function connectH2(client, socket) {
       client[kSocket] = socket;
@@ -6964,9 +6964,9 @@ var require_client_h2 = __commonJS({
         client2[kHTTP2Session] = null;
         if (client2.destroyed) {
           assert(client2[kPending] === 0);
-          const requests = client2[kQueue].splice(client2[kRunningIdx]);
-          for (let i = 0; i < requests.length; i++) {
-            const request2 = requests[i];
+          const requests2 = client2[kQueue].splice(client2[kRunningIdx]);
+          for (let i = 0; i < requests2.length; i++) {
+            const request2 = requests2[i];
             util.errorRequest(client2, request2, err);
           }
         }
@@ -7871,9 +7871,9 @@ var require_client = __commonJS({
       }
       async [kDestroy](err) {
         return new Promise((resolve) => {
-          const requests = this[kQueue].splice(this[kPendingIdx]);
-          for (let i = 0; i < requests.length; i++) {
-            const request2 = requests[i];
+          const requests2 = this[kQueue].splice(this[kPendingIdx]);
+          for (let i = 0; i < requests2.length; i++) {
+            const request2 = requests2[i];
             util.errorRequest(this, request2, err);
           }
           const callback = () => {
@@ -7897,9 +7897,9 @@ var require_client = __commonJS({
     function onError(client, err) {
       if (client[kRunning] === 0 && err.code !== "UND_ERR_INFO" && err.code !== "UND_ERR_SOCKET") {
         assert(client[kPendingIdx] === client[kRunningIdx]);
-        const requests = client[kQueue].splice(client[kRunningIdx]);
-        for (let i = 0; i < requests.length; i++) {
-          const request2 = requests[i];
+        const requests2 = client[kQueue].splice(client[kRunningIdx]);
+        for (let i = 0; i < requests2.length; i++) {
+          const request2 = requests2[i];
           util.errorRequest(client, request2, err);
         }
         assert(client[kSize] === 0);
@@ -8519,11 +8519,11 @@ var require_balanced_pool = __commonJS({
         return this;
       }
       _updateBalancedPoolStats() {
-        let result = 0;
+        let result2 = 0;
         for (let i = 0; i < this[kClients].length; i++) {
-          result = getGreatestCommonDivisor(this[kClients][i][kWeight], result);
+          result2 = getGreatestCommonDivisor(this[kClients][i][kWeight], result2);
         }
-        this[kGreatestCommonDivisor] = result;
+        this[kGreatestCommonDivisor] = result2;
       }
       removeUpstream(upstream) {
         const upstreamOrigin = parseOrigin(upstream).origin;
@@ -10791,20 +10791,20 @@ var require_mock_utils = __commonJS({
     }
     function generateKeyValues(data) {
       const keys = Object.keys(data);
-      const result = [];
+      const result2 = [];
       for (let i = 0; i < keys.length; ++i) {
         const key = keys[i];
         const value = data[key];
         const name = Buffer.from(`${key}`);
         if (Array.isArray(value)) {
           for (let j = 0; j < value.length; ++j) {
-            result.push(name, Buffer.from(`${value[j]}`));
+            result2.push(name, Buffer.from(`${value[j]}`));
           }
         } else {
-          result.push(name, Buffer.from(`${value}`));
+          result2.push(name, Buffer.from(`${value}`));
         }
       }
-      return result;
+      return result2;
     }
     function getStatusText(statusCode) {
       return STATUS_CODES[statusCode] || "unknown";
@@ -14973,11 +14973,11 @@ var require_util4 = __commonJS({
               queueMicrotask(() => {
                 fr[kState] = "done";
                 try {
-                  const result = packageData(bytes, type, blob.type, encodingName);
+                  const result2 = packageData(bytes, type, blob.type, encodingName);
                   if (fr[kAborted]) {
                     return;
                   }
-                  fr[kResult] = result;
+                  fr[kResult] = result2;
                   fireAProgressEvent("load", fr);
                 } catch (error3) {
                   fr[kError] = error3;
@@ -15451,17 +15451,17 @@ var require_cache = __commonJS({
         const prefix = "Cache.add";
         webidl.argumentLengthCheck(arguments, 1, prefix);
         request2 = webidl.converters.RequestInfo(request2, prefix, "request");
-        const requests = [request2];
-        const responseArrayPromise = this.addAll(requests);
+        const requests2 = [request2];
+        const responseArrayPromise = this.addAll(requests2);
         return await responseArrayPromise;
       }
-      async addAll(requests) {
+      async addAll(requests2) {
         webidl.brandCheck(this, _Cache);
         const prefix = "Cache.addAll";
         webidl.argumentLengthCheck(arguments, 1, prefix);
         const responsePromises = [];
         const requestList = [];
-        for (let request2 of requests) {
+        for (let request2 of requests2) {
           if (request2 === void 0) {
             throw webidl.errors.conversionFailed({
               prefix,
@@ -15482,7 +15482,7 @@ var require_cache = __commonJS({
           }
         }
         const fetchControllers = [];
-        for (const request2 of requests) {
+        for (const request2 of requests2) {
           const r = new Request(request2)[kState];
           if (!urlIsHttpHttpsScheme(r.url)) {
             throw webidl.errors.exception({
@@ -15704,20 +15704,20 @@ var require_cache = __commonJS({
           }
         }
         const promise = createDeferredPromise();
-        const requests = [];
+        const requests2 = [];
         if (request2 === void 0) {
           for (const requestResponse of this.#relevantRequestResponseList) {
-            requests.push(requestResponse[0]);
+            requests2.push(requestResponse[0]);
           }
         } else {
           const requestResponses = this.#queryCache(r, options);
           for (const requestResponse of requestResponses) {
-            requests.push(requestResponse[0]);
+            requests2.push(requestResponse[0]);
           }
         }
         queueMicrotask(() => {
           const requestList = [];
-          for (const request3 of requests) {
+          for (const request3 of requests2) {
             const requestObject = fromInnerRequest(
               request3,
               new AbortController().signal,
@@ -17280,10 +17280,10 @@ var require_connection = __commonJS({
       const wasClean = ws[kSentClose] === sentCloseFrameState.SENT && ws[kReceivedClose];
       let code = 1005;
       let reason = "";
-      const result = ws[kByteParser].closingInfo;
-      if (result && !result.error) {
-        code = result.code ?? 1005;
-        reason = result.reason;
+      const result2 = ws[kByteParser].closingInfo;
+      if (result2 && !result2.error) {
+        code = result2.code ?? 1005;
+        reason = result2.reason;
       } else if (!ws[kReceivedClose]) {
         code = 1006;
       }
@@ -19081,12 +19081,12 @@ var require_lib = __commonJS({
       };
       return function(mod) {
         if (mod && mod.__esModule) return mod;
-        var result = {};
+        var result2 = {};
         if (mod != null) {
-          for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+          for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result2, mod, k[i]);
         }
-        __setModuleDefault(result, mod);
-        return result;
+        __setModuleDefault(result2, mod);
+        return result2;
       };
     })();
     var __awaiter7 = exports && exports.__awaiter || function(thisArg, _arguments, P, generator) {
@@ -19110,8 +19110,8 @@ var require_lib = __commonJS({
             reject(e);
           }
         }
-        function step(result) {
-          result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected);
+        function step(result2) {
+          result2.done ? resolve(result2.value) : adopt(result2.value).then(fulfilled, rejected);
         }
         step((generator = generator.apply(thisArg, _arguments || [])).next());
       });
@@ -19894,6 +19894,19 @@ var IMAGES_WITHOUT_OLLAMA_SETTINGS = /* @__PURE__ */ new Set([
   "ghcr.io/codenergy-dev/codeman-pod@sha256:3252d41775a230249490b5af79aec050151e49c4722bb62f9ce3d247d02f6ca3"
 ]);
 var OLLAMA_VERSION = "0.40.10";
+var OLLAMA_SERIAL_FAMILIES = /* @__PURE__ */ new Set([
+  "mllama",
+  "qwen3vl",
+  "qwen3vlmoe",
+  "qwen35",
+  "qwen35moe",
+  "qwen3next",
+  "lfm2",
+  "lfm2moe",
+  "nemotron_h",
+  "nemotron_h_moe",
+  "nemotron_h_omni"
+]);
 var OLLAMA_SETTINGS = {
   "context-length": { variable: "OLLAMA_CONTEXT_LENGTH", value: { kind: "count", min: 1 } },
   "num-parallel": { variable: "OLLAMA_NUM_PARALLEL", value: { kind: "count", min: 1 } },
@@ -20343,6 +20356,8 @@ function podCost(start, end, pricePerSecond) {
   return Math.max(0, end.getTime() - start.getTime()) / 1e3 * pricePerSecond;
 }
 var PodStartFailure = class extends Error {
+};
+var FitRefused = class extends PodStartFailure {
 };
 var PodUnavailable = class extends Error {
 };
@@ -22148,7 +22163,7 @@ function profiles(node) {
 }
 function profile(node) {
   if (node.kind !== "map") return { ok: false, line: node.line, error: "expected a profile." };
-  const result = { name: "", conditions: {}, settings: {} };
+  const result2 = { name: "", conditions: {}, settings: {} };
   for (const entry of node.entries) {
     const { key, line, value } = entry;
     if (key === "name") {
@@ -22159,23 +22174,23 @@ function profile(node) {
           error: "a profile's `name` must be letters, digits, `.`, `_` or `-`, such as `small-pod`."
         };
       }
-      result.name = value.text;
+      result2.name = value.text;
     } else if (isConditionName(key)) {
       const parsed = condition(entry, key);
       if (!parsed.ok) return parsed;
-      Object.assign(result.conditions, { [key]: parsed.value });
+      Object.assign(result2.conditions, { [key]: parsed.value });
     } else if (isBlockName(key)) {
       const parsed = block(entry, key);
       if (!parsed.ok) return parsed;
-      result.settings[key] = parsed.value;
+      result2.settings[key] = parsed.value;
     } else {
       const parsed = setting(entry, "profile");
       if (!parsed.ok) return parsed;
-      Object.assign(result.settings, { [key]: parsed.value });
+      Object.assign(result2.settings, { [key]: parsed.value });
     }
   }
-  if (!result.name) return { ok: false, line: node.line, error: "a profile needs a `name`." };
-  const { tasks, "min-tasks": min, "max-tasks": max } = result.conditions;
+  if (!result2.name) return { ok: false, line: node.line, error: "a profile needs a `name`." };
+  const { tasks, "min-tasks": min, "max-tasks": max } = result2.conditions;
   if (tasks !== void 0 && (min !== void 0 || max !== void 0)) {
     return {
       ok: false,
@@ -22190,7 +22205,7 @@ function profile(node) {
       error: "`min-tasks` must not be more than `max-tasks`."
     };
   }
-  return { ok: true, value: result };
+  return { ok: true, value: result2 };
 }
 function condition(entry, name) {
   const { line, value } = entry;
@@ -22394,33 +22409,33 @@ function nonDefault(settings, name) {
   return value === void 0 || value === spec?.default ? {} : { [name]: value };
 }
 function serving(layers, base) {
-  let result = pick(base.settings, PROFILE_SETTINGS);
+  let result2 = pick(base.settings, PROFILE_SETTINGS);
   let from = base.source;
   for (const { name, source, settings } of [...layers].reverse()) {
     const { provider } = settings;
-    if (provider !== void 0 && provider !== result.provider) {
-      if (result.model !== void 0 && settings.model === void 0) {
+    if (provider !== void 0 && provider !== result2.provider) {
+      if (result2.model !== void 0 && settings.model === void 0) {
         return {
           ok: false,
-          error: `${name} names \`${provider}\`, but inherits \`${result.provider}\` from ${from}, so it must set its own \`model\`, one for \`${provider}\`.`
+          error: `${name} names \`${provider}\`, but inherits \`${result2.provider}\` from ${from}, so it must set its own \`model\`, one for \`${provider}\`.`
         };
       }
-      result = omit(result, PROVIDER_KEYS);
+      result2 = omit(result2, PROVIDER_KEYS);
     }
     if (provider !== void 0) from = source;
     const engine = settings.engine;
-    if (engine !== void 0 && engine !== engineOf(result)) {
-      result = omit(
-        result,
+    if (engine !== void 0 && engine !== engineOf(result2)) {
+      result2 = omit(
+        result2,
         PROVIDER_BLOCKS.filter((block2) => BLOCK_ENGINES[block2] !== engine)
       );
     }
     const { ollama: ollama2, vllm: vllm2, ...values } = pick(settings, PROFILE_SETTINGS);
-    Object.assign(result, values);
-    if (ollama2 !== void 0) result.ollama = { ...result.ollama, ...ollama2 };
-    if (vllm2 !== void 0) result.vllm = { ...result.vllm, ...vllm2 };
+    Object.assign(result2, values);
+    if (ollama2 !== void 0) result2.ollama = { ...result2.ollama, ...ollama2 };
+    if (vllm2 !== void 0) result2.vllm = { ...result2.vllm, ...vllm2 };
   }
-  return { ok: true, value: result };
+  return { ok: true, value: result2 };
 }
 function engineOf(settings) {
   const provider = settings.provider ?? DEFAULTS.provider;
@@ -22722,19 +22737,19 @@ var OpenRouter = class {
       filters,
       time_range
     });
-    let requests = 0;
+    let requests2 = 0;
     let weighted = 0;
     let measured = 0;
     for (const row of rows) {
       const n = count2(row.request_count);
       const throughput = rate(row.avg_throughput);
-      requests += n;
+      requests2 += n;
       if (throughput !== void 0 && n > 0) {
         weighted += throughput * n;
         measured += n;
       }
     }
-    if (requests === 0) return void 0;
+    if (requests2 === 0) return void 0;
     const largest = await this.#query({
       metrics: ["tokens_prompt"],
       dimensions: ["generation_id"],
@@ -22745,7 +22760,7 @@ var OpenRouter = class {
     });
     const maxInputTokens = largest.reduce((max, row) => Math.max(max, count2(row.tokens_prompt)), 0);
     return {
-      requests,
+      requests: requests2,
       tokensPerSecond: measured > 0 ? weighted / measured : void 0,
       maxInputTokens: largest.length > 0 ? maxInputTokens : void 0
     };
@@ -22980,9 +22995,9 @@ var Osv = class {
         );
       }
       const next = [];
-      for (const [i, result] of results.entries()) {
+      for (const [i, result2] of results.entries()) {
         const item = pending[i];
-        const { vulns, next_page_token: token } = result ?? {};
+        const { vulns, next_page_token: token } = result2 ?? {};
         for (const vuln of Array.isArray(vulns) ? vulns : []) {
           const id = vuln?.id;
           if (typeof id !== "string" || !isOsvId(id)) {
@@ -23256,24 +23271,24 @@ async function checkReleases(artifacts, options) {
     ),
     ...general
   ];
-  const result = {
+  const result2 = {
     verdict: verdictOf(reasons),
     checkedAt: now.toISOString(),
     source: "live",
     artifacts: checks,
     reasons: sortReasons(reasons)
   };
-  if (result.verdict !== "block") {
+  if (result2.verdict !== "block") {
     try {
-      await cache.set(key, result);
+      await cache.set(key, result2);
     } catch (error3) {
-      result.reasons.push({
+      result2.reasons.push({
         level: "note",
         text: `This result could not be cached (${error3 instanceof Error ? error3.message : error3}), so it cannot stand in for OSV.dev if it does not answer later.`
       });
     }
   }
-  return result;
+  return result2;
 }
 async function fresh(cache, key, now) {
   let cached;
@@ -23797,19 +23812,19 @@ var StoredReleaseChecks = class {
     this.#store = store;
   }
   async get(key) {
-    const result = (await this.#store.get(LAYOUT.releaseCheck(key)))?.fields.result;
-    return typeof result === "string" ? JSON.parse(result) : void 0;
+    const result2 = (await this.#store.get(LAYOUT.releaseCheck(key)))?.fields.result;
+    return typeof result2 === "string" ? JSON.parse(result2) : void 0;
   }
-  async set(key, result) {
+  async set(key, result2) {
     await this.#store.write([
       {
         op: "set",
         path: LAYOUT.releaseCheck(key),
         fields: {
-          releases: result.artifacts.map((artifact) => `${artifact.name} ${artifact.version}`),
-          verdict: result.verdict,
-          checkedAt: new Date(result.checkedAt),
-          result: JSON.stringify(result)
+          releases: result2.artifacts.map((artifact) => `${artifact.name} ${artifact.version}`),
+          verdict: result2.verdict,
+          checkedAt: new Date(result2.checkedAt),
+          result: JSON.stringify(result2)
         }
       }
     ]);
@@ -23818,6 +23833,141 @@ var StoredReleaseChecks = class {
 
 // src/inference/selfhosted.ts
 import { createHmac, randomBytes as randomBytes3 } from "node:crypto";
+
+// src/gateway/fit.ts
+var FLOOR_CONTEXT = 64e3;
+var FIT_MARGIN_BYTES = 1024 * 1024 * 1024;
+var KV_BYTES = { f16: 2, q8_0: 34 / 32, q4_0: 18 / 32 };
+function floorContext(modelContext) {
+  return Math.min(FLOOR_CONTEXT, modelContext ?? FLOOR_CONTEXT);
+}
+function kvBytesPerToken(info2, kvCacheType) {
+  const architecture = info2["general.architecture"];
+  if (typeof architecture !== "string") return void 0;
+  const field = (name) => info2[`${architecture}.${name}`];
+  const number3 = (value) => typeof value === "number" && Number.isFinite(value) && value > 0 ? value : void 0;
+  const numbers = (value) => Array.isArray(value) && value.every((item) => typeof item === "number" && item >= 0) ? value : void 0;
+  if (field("attention.sliding_window") !== void 0) return void 0;
+  const headsKv = field("attention.head_count_kv");
+  const headCount = field("attention.head_count");
+  const heads = number3(headCount) ?? Math.max(0, ...numbers(headCount) ?? []);
+  const embedding = number3(field("embedding_length"));
+  const keyLength = number3(field("attention.key_length")) ?? (embedding && heads > 0 ? embedding / heads : void 0);
+  const valueLength = number3(field("attention.value_length")) ?? keyLength;
+  if (!keyLength || !valueLength) return void 0;
+  let kvHeads;
+  const perLayer = numbers(headsKv);
+  if (perLayer) kvHeads = perLayer.reduce((sum, count3) => sum + count3, 0);
+  else {
+    const blocks = number3(field("block_count"));
+    const each = number3(headsKv);
+    const interval = number3(field("full_attention_interval"));
+    if (blocks && each) kvHeads = Math.floor(blocks / (interval ?? 1)) * each;
+  }
+  if (!kvHeads) return void 0;
+  return kvHeads * (keyLength + valueLength) * (KV_BYTES[kvCacheType ?? "f16"] ?? 2);
+}
+
+// src/gateway/estimate.ts
+var GIB = 2 ** 30;
+var VLLM_GPU_MEMORY_UTILIZATION = 0.92;
+var UNCOUNTED_KEYS = [
+  "kv_lora_rank",
+  "layers_block_type",
+  "hybrid_override_pattern",
+  "attn_type_list",
+  "attention_chunk_size",
+  "full_attention_interval",
+  "linear_attn_config",
+  "ssm_cfg",
+  "mamba_expand"
+];
+function positive(value) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : void 0;
+}
+function textConfig(config) {
+  const nested = config.text_config;
+  return positive(config.num_hidden_layers) === void 0 && typeof nested === "object" && nested !== null ? nested : config;
+}
+function vllmKvBytesPerToken(config, kvCacheDtype) {
+  const text = textConfig(config);
+  if (UNCOUNTED_KEYS.some((key) => text[key] !== void 0 && text[key] !== null)) return void 0;
+  const layerTypes = text.layer_types;
+  if (Array.isArray(layerTypes) && layerTypes.some((type) => type !== "full_attention")) {
+    return void 0;
+  }
+  if (positive(text.sliding_window) !== void 0 && text.use_sliding_window !== false) {
+    return void 0;
+  }
+  const layers = positive(text.num_hidden_layers);
+  const heads = positive(text.num_attention_heads);
+  const kvHeads = positive(text.num_key_value_heads) ?? heads;
+  const headSize = positive(text.head_dim) ?? (heads && positive(text.hidden_size) ? text.hidden_size / heads : void 0);
+  if (!layers || !kvHeads || !headSize) return void 0;
+  const bytes = kvCacheDtype?.startsWith("fp8") ? 1 : 2;
+  return 2 * layers * kvHeads * headSize * bytes;
+}
+function vllmModelContext(config) {
+  return positive(textConfig(config).max_position_embeddings);
+}
+function estimateVllm(facts) {
+  const { config, weightsBytes, gpuMemoryGb, settings } = facts;
+  const perToken = vllmKvBytesPerToken(config, settings["kv-cache-dtype"]);
+  const explicit = positive(Number(settings["max-model-len"]));
+  const own = vllmModelContext(config);
+  const context3 = explicit ?? (own === void 0 ? void 0 : floorContext(own));
+  if (!perToken || !context3 || !positive(gpuMemoryGb)) return void 0;
+  const utilization = positive(Number(settings["gpu-memory-utilization"])) ?? VLLM_GPU_MEMORY_UTILIZATION;
+  const budget = gpuMemoryGb * GIB * utilization;
+  return result("vllm", {
+    parallel: positive(Number(settings["max-num-seqs"])) ?? 1,
+    context: context3,
+    floor: explicit === void 0,
+    perToken,
+    budget,
+    weightsBytes
+  });
+}
+function estimateOllama(facts) {
+  const { info: info2, weightsBytes, gpuMemoryGb, variables } = facts;
+  const architecture = info2["general.architecture"];
+  if (typeof architecture !== "string") return void 0;
+  const perToken = kvBytesPerToken(info2, variables.OLLAMA_KV_CACHE_TYPE);
+  const explicit = positive(Number(variables.OLLAMA_CONTEXT_LENGTH));
+  const own = positive(info2[`${architecture}.context_length`]);
+  const context3 = explicit ?? (own === void 0 ? void 0 : floorContext(own));
+  if (!perToken || !context3 || !positive(gpuMemoryGb)) return void 0;
+  const overhead = Number(variables.OLLAMA_GPU_OVERHEAD) || 0;
+  const budget = gpuMemoryGb * GIB - FIT_MARGIN_BYTES - overhead;
+  return result("ollama", {
+    parallel: OLLAMA_SERIAL_FAMILIES.has(architecture) ? 1 : positive(Number(variables.OLLAMA_NUM_PARALLEL)) ?? 1,
+    context: context3,
+    floor: explicit === void 0,
+    perToken,
+    budget,
+    weightsBytes
+  });
+}
+function result(engine, facts) {
+  const needed = facts.parallel * facts.context * facts.perToken;
+  const room = facts.budget - facts.weightsBytes;
+  return { engine, ...facts, needed, room, fits: needed <= room };
+}
+function gib(bytes) {
+  return (bytes / GIB).toFixed(2);
+}
+function requests(parallel) {
+  return `${parallel} parallel request${parallel === 1 ? "" : "s"}`;
+}
+function estimateMessage(model, gpuMemoryGb, estimate) {
+  const { engine, parallel, context: context3, floor, needed, room, weightsBytes } = estimate;
+  const least = floor ? ", the least Codeman gives an agent" : "";
+  const budget = engine === "vllm" ? `the GPU's ${gpuMemoryGb} GB at vLLM's memory utilization, less ${gib(weightsBytes)} GiB of weights` : `the GPU's ${gpuMemoryGb} GB, less llama.cpp's margin of 1 GiB, the settings' overhead and ${gib(weightsBytes)} GiB of weights`;
+  const leaves = room > 0 ? `leave at most ${gib(room)} GiB` : "leave nothing";
+  const why = `\`${model}\` does not fit the GPU with ${requests(parallel)} and a context of ${context3} tokens${least}, by Codeman's estimate, so no pod was created: its K/V cache needs ${gib(needed)} GiB, and ${budget}, ${leaves}.`;
+  const levers = engine === "vllm" ? floor ? "Give the profile fewer tasks (`tasks` or `max-tasks`) or set a smaller `max-num-seqs`, set `kv-cache-dtype: fp8` or `language-model-only: true` in the `vllm` settings, or use a GPU with more memory." : "Lower `max-model-len` or `max-num-seqs` in the `vllm` settings, set `kv-cache-dtype: fp8` or `language-model-only: true`, or use a GPU with more memory." : floor ? "Give the profile fewer tasks (`tasks` or `max-tasks`) or set a smaller `num-parallel`, set `kv-cache-type: q8_0` in the `ollama` settings, use a smaller quantization of the model, or use a GPU with more memory." : "Lower `context-length` or `num-parallel` in the `ollama` settings, set `kv-cache-type: q8_0`, use a smaller quantization of the model, or use a GPU with more memory.";
+  return `${why} ${levers}`;
+}
 
 // src/gateway/gateway.ts
 import { createHash as createHash4, timingSafeEqual } from "node:crypto";
@@ -24505,9 +24655,9 @@ function parseJson(text) {
 function runSettings(body) {
   if (typeof body !== "object" || body === null) return void 0;
   const { tokenSha256, limit, start, pricePerSecond, idleSeconds, task, group: group2 } = body;
-  const positive = (value) => typeof value === "number" && Number.isFinite(value) && value > 0;
+  const positive2 = (value) => typeof value === "number" && Number.isFinite(value) && value > 0;
   if (typeof tokenSha256 !== "string" || !/^[0-9a-f]{64}$/.test(tokenSha256)) return void 0;
-  if (!positive(limit) || !positive(start) || !positive(pricePerSecond)) return void 0;
+  if (!positive2(limit) || !positive2(start) || !positive2(pricePerSecond)) return void 0;
   if (task !== void 0 && (typeof task !== "string" || !TASK.test(task))) return void 0;
   if (group2 !== void 0 && (typeof group2 !== "string" || !GROUP.test(group2))) return void 0;
   const named2 = { ...task ? { task } : {}, ...group2 ? { group: group2 } : {} };
@@ -24525,10 +24675,6 @@ function runSettings(body) {
     ...named2
   };
 }
-
-// src/gateway/fit.ts
-var FIT_MARGIN_BYTES = 1024 * 1024 * 1024;
-var KV_BYTES = { f16: 2, q8_0: 34 / 32, q4_0: 18 / 32 };
 
 // src/gateway/pod.ts
 var GATEWAY_PORT = 8080;
@@ -24563,11 +24709,16 @@ var HuggingFace = class {
     }
     return checked(id, await response.json());
   }
+  /** From the model's `config.json`: whether it has a vision tower that vLLM serves. */
+  async vision(id) {
+    const config = await this.config(id);
+    return typeof config.vision_config === "object" && config.vision_config !== null && config.language_model_only !== true;
+  }
   /**
-   * From the model's `config.json` at `main`, which vLLM downloads: one more public call (see
+   * The model's `config.json` at `main`, which vLLM downloads: one more public call (see
    * docs/web/hugging-face/unsloth-qwen3-8-27b-nvfp4-at-f0b7c9e.md).
    */
-  async vision(id) {
+  async config(id) {
     const path = repositoryPath(id);
     let response;
     try {
@@ -24583,7 +24734,10 @@ var HuggingFace = class {
     const config = await response.json().catch(() => {
       throw new Error("Its config.json is not JSON.");
     });
-    return typeof config?.vision_config === "object" && config.vision_config !== null && config.language_model_only !== true;
+    if (typeof config !== "object" || config === null || Array.isArray(config)) {
+      throw new Error("Its config.json is not an object.");
+    }
+    return config;
   }
 };
 function repositoryPath(id) {
@@ -24622,6 +24776,229 @@ function checked(id, info2) {
     );
   }
   return { id, weightsBytes };
+}
+
+// src/inference/gguf.ts
+var MAX_ARRAY = 4096;
+var UINT8 = 0;
+var INT8 = 1;
+var UINT16 = 2;
+var INT16 = 3;
+var UINT32 = 4;
+var INT32 = 5;
+var FLOAT32 = 6;
+var BOOL = 7;
+var STRING = 8;
+var ARRAY = 9;
+var UINT64 = 10;
+var INT64 = 11;
+var FLOAT64 = 12;
+var SIZES = {
+  [UINT8]: 1,
+  [INT8]: 1,
+  [UINT16]: 2,
+  [INT16]: 2,
+  [UINT32]: 4,
+  [INT32]: 4,
+  [FLOAT32]: 4,
+  [BOOL]: 1,
+  [UINT64]: 8,
+  [INT64]: 8,
+  [FLOAT64]: 8
+};
+var Truncated = class extends Error {
+};
+function ggufMetadata(bytes) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const magic = String.fromCharCode(...bytes.subarray(0, 4));
+  if (magic !== "GGUF" && magic !== "FUGG") return void 0;
+  const little = magic === "GGUF";
+  let offset = 4;
+  const need = (count3) => {
+    if (offset + count3 > bytes.byteLength) throw new Truncated();
+  };
+  const u32 = () => {
+    need(4);
+    const value2 = view.getUint32(offset, little);
+    offset += 4;
+    return value2;
+  };
+  const u64 = () => {
+    need(8);
+    const value2 = view.getBigUint64(offset, little);
+    offset += 8;
+    return value2;
+  };
+  const length = () => {
+    const value2 = u64();
+    if (value2 > BigInt(Number.MAX_SAFE_INTEGER)) throw new Truncated();
+    return Number(value2);
+  };
+  const text = () => {
+    const size = length();
+    need(size);
+    const value2 = new TextDecoder().decode(bytes.subarray(offset, offset + size));
+    offset += size;
+    return value2;
+  };
+  const scalar2 = (type) => {
+    const size = SIZES[type];
+    if (size === void 0) throw new Error(`Unknown GGUF type ${type}.`);
+    need(size);
+    const at = offset;
+    offset += size;
+    switch (type) {
+      case UINT8:
+        return view.getUint8(at);
+      case INT8:
+        return view.getInt8(at);
+      case UINT16:
+        return view.getUint16(at, little);
+      case INT16:
+        return view.getInt16(at, little);
+      case UINT32:
+        return view.getUint32(at, little);
+      case INT32:
+        return view.getInt32(at, little);
+      case FLOAT32:
+        return view.getFloat32(at, little);
+      case BOOL:
+        return view.getUint8(at) !== 0;
+      case UINT64:
+        return Number(view.getBigUint64(at, little));
+      case INT64:
+        return Number(view.getBigInt64(at, little));
+      default:
+        return view.getFloat64(at, little);
+    }
+  };
+  const value = (type) => {
+    if (type === STRING) return text();
+    if (type !== ARRAY) return scalar2(type);
+    const itemType = u32();
+    const count3 = length();
+    const keep = itemType !== STRING && itemType !== ARRAY && count3 <= MAX_ARRAY;
+    const items = [];
+    const size = SIZES[itemType];
+    if (!keep && size !== void 0) {
+      need(size * count3);
+      offset += size * count3;
+      return void 0;
+    }
+    for (let index = 0; index < count3; index++) {
+      const item = value(itemType);
+      if (keep) items.push(item);
+    }
+    return keep ? items : void 0;
+  };
+  const kv = {};
+  try {
+    if (u32() < 2) return void 0;
+    length();
+    const pairs = length();
+    for (let pair = 0; pair < pairs; pair++) {
+      const key = text();
+      const read = value(u32());
+      if (read !== void 0) kv[key] = read;
+    }
+    return { kv, complete: true };
+  } catch (error3) {
+    if (error3 instanceof Truncated) return { kv, complete: false };
+    return void 0;
+  }
+}
+
+// src/inference/ollama-registry.ts
+var OLLAMA_REGISTRY = "registry.ollama.ai";
+var MANIFEST = "application/vnd.docker.distribution.manifest.v2+json";
+var MODEL_LAYER = "application/vnd.ollama.image.model";
+var PROJECTOR_LAYER = "application/vnd.ollama.image.projector";
+var HEADER_BYTES = 256 * 1024;
+function registryName(name) {
+  let rest = name;
+  let tag = "latest";
+  if (rest.lastIndexOf(":") > rest.lastIndexOf("/")) {
+    tag = rest.slice(rest.lastIndexOf(":") + 1);
+    rest = rest.slice(0, rest.lastIndexOf(":"));
+  }
+  const parts = rest.split("/");
+  if (parts.length > 3 || parts.some((part) => part === "") || tag === "") return void 0;
+  const model = parts.pop();
+  const namespace = parts.pop() ?? "library";
+  const host = parts.pop() ?? OLLAMA_REGISTRY;
+  return { host, namespace, model, tag };
+}
+var OllamaRegistry = class {
+  #fetch;
+  constructor(fetchFn = fetch) {
+    this.#fetch = fetchFn;
+  }
+  async model(name) {
+    const parsed = registryName(name.toLowerCase());
+    if (!parsed) return { unknown: `\`${name}\` is not a model name Ollama's registry knows.` };
+    if (parsed.host !== OLLAMA_REGISTRY) {
+      return { unknown: `\`${name}\` is on ${parsed.host}, not on Ollama's registry.` };
+    }
+    const base = `https://${OLLAMA_REGISTRY}/v2/${encodeURIComponent(parsed.namespace)}/${encodeURIComponent(parsed.model)}`;
+    try {
+      const response = await this.#fetch(`${base}/manifests/${encodeURIComponent(parsed.tag)}`, {
+        headers: { Accept: MANIFEST },
+        signal: AbortSignal.timeout(3e4)
+      });
+      if (!response.ok) return { unknown: `Ollama's registry answered ${response.status}.` };
+      const manifest = await response.json();
+      if (manifest.mediaType !== MANIFEST || !Array.isArray(manifest.layers)) {
+        return { unknown: "Ollama's registry gave a manifest list, or no manifest." };
+      }
+      const weights = manifest.layers.filter(
+        (layer) => layer.mediaType === MODEL_LAYER || layer.mediaType === PROJECTOR_LAYER
+      );
+      const model = weights.find((layer) => layer.mediaType === MODEL_LAYER);
+      if (!model || typeof model.digest !== "string" || !/^sha256:[0-9a-f]{64}$/.test(model.digest) || !weights.every((layer) => typeof layer.size === "number" && layer.size >= 0)) {
+        return { unknown: "Its manifest has no model layer with a digest and a size." };
+      }
+      const head = await this.#fetch(`${base}/blobs/${model.digest}`, {
+        headers: { Range: `bytes=0-${HEADER_BYTES - 1}` },
+        signal: AbortSignal.timeout(6e4)
+      });
+      if (head.status !== 206 && head.status !== 200) {
+        return { unknown: `Ollama's registry answered ${head.status} for its model layer.` };
+      }
+      const bytes = await firstBytes(head, HEADER_BYTES);
+      const metadata = ggufMetadata(bytes);
+      if (!metadata) return { unknown: "Its model layer is not a GGUF file." };
+      return {
+        weightsBytes: weights.reduce((total, layer) => total + layer.size, 0),
+        info: metadata.kv
+      };
+    } catch (error3) {
+      return {
+        unknown: `Ollama's registry could not be read (${error3 instanceof Error ? error3.message : error3}).`
+      };
+    }
+  }
+};
+async function firstBytes(response, limit) {
+  const reader = response.body?.getReader();
+  if (!reader) return new Uint8Array();
+  const chunks = [];
+  let size = 0;
+  while (size < limit) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    size += value.byteLength;
+  }
+  await reader.cancel().catch(() => void 0);
+  const bytes = new Uint8Array(Math.min(size, limit));
+  let offset = 0;
+  for (const chunk of chunks) {
+    const part = chunk.subarray(0, bytes.byteLength - offset);
+    bytes.set(part, offset);
+    offset += part.byteLength;
+    if (offset === bytes.byteLength) break;
+  }
+  return bytes;
 }
 
 // src/inference/provider.ts
@@ -25929,7 +26306,7 @@ var PodInference = class {
     } catch (error3) {
       await this.#registry.end(
         record.nonce,
-        error3 instanceof PodUnavailable ? `${UNAVAILABLE}${error3.message}` : "the provider did not create it"
+        error3 instanceof PodUnavailable ? `${UNAVAILABLE}${error3.message}` : error3 instanceof FitRefused ? `${START_FAILED}${error3.message}` : "the provider did not create it"
       );
       throw error3;
     }
@@ -26101,7 +26478,9 @@ var PodInference = class {
     const prices = await this.#prices(gpuType, hosts, priority);
     const vllm2 = onVllm(this.#settings) ? await this.#prepareVllm(log) : void 0;
     const fits = !vllm2 && fitsTheGpu(image);
-    const memory = fits ? await this.#host.memory?.(gpuType).catch(() => void 0) : void 0;
+    const gpuMemory = vllm2 || fits ? await this.#host.memory?.(gpuType).catch(() => void 0) : void 0;
+    const memory = fits ? gpuMemory : void 0;
+    if (vllm2 || fits) await this.#estimate(vllm2?.weightsBytes, gpuMemory, log);
     const cached = vllm2 ? vllm2.cached : fits ? await this.#cachedFit(log) : void 0;
     const owner = this.#options.repository.owner.toLowerCase();
     const now = this.#now();
@@ -26198,7 +26577,54 @@ var PodInference = class {
     log.info(
       `Hugging Face serves ${models.map(({ id }) => id).join(" and ")}: ${(weights / 1e9).toFixed(1)} GB of weights, so the pod gets ${diskGb} GB of disk.`
     );
-    return { diskGb, cached: await this.#cachedContext(log) };
+    return { diskGb, weightsBytes: weights, cached: await this.#cachedContext(log) };
+  }
+  /**
+   * Before creating a pod, at no cost: Codeman's estimate of the fit (the plan of 2026-11-23),
+   * from the model's `config.json` on Hugging Face for vLLM, or its manifest and GGUF header in
+   * Ollama's registry for Ollama, and the GPU's memory. Throws `FitRefused` when even its
+   * optimistic bound falls short; logs and goes on when it cannot tell, since the gateway's fit
+   * decides anyway.
+   */
+  async #estimate(vllmWeightsBytes, gpuMemoryGb, log) {
+    const { model } = this.#settings;
+    const skip = (why) => log.info(
+      `Codeman cannot estimate how ${model} fits the GPU (${why}); the pod's gateway fits it.`
+    );
+    if (!gpuMemoryGb) return skip("the provider does not give the GPU's memory");
+    let estimate;
+    if (vllmWeightsBytes !== void 0) {
+      const hub = this.#options.hub ?? new HuggingFace(this.#options.fetch);
+      if (!hub.config) return skip("no configuration of the model");
+      let config;
+      try {
+        config = await hub.config(model);
+      } catch (error3) {
+        return skip(`its config.json: ${error3 instanceof Error ? error3.message : error3}`);
+      }
+      estimate = estimateVllm({
+        config,
+        weightsBytes: vllmWeightsBytes,
+        gpuMemoryGb,
+        settings: this.#settings.vllm ?? {}
+      });
+    } else {
+      const registry = this.#options.ollamaModels ?? new OllamaRegistry(this.#options.fetch);
+      const facts = await registry.model(model);
+      if ("unknown" in facts) return skip(facts.unknown);
+      estimate = estimateOllama({
+        info: facts.info,
+        weightsBytes: facts.weightsBytes,
+        gpuMemoryGb,
+        variables: this.#settings.ollama ?? {}
+      });
+    }
+    if (!estimate) return skip("its architecture is not one the estimate counts");
+    if (!estimate.fits) throw new FitRefused(estimateMessage(model, gpuMemoryGb, estimate));
+    const gib2 = (bytes) => (bytes / 2 ** 30).toFixed(2);
+    log.info(
+      `By Codeman's estimate, ${model}'s K/V cache needs ${gib2(estimate.needed)} GiB for ${estimate.parallel} parallel request(s) of ${estimate.context} tokens, of the ${gib2(estimate.room)} GiB at most that the GPU leaves it; the pod's gateway fits it.`
+    );
   }
   /** The context that served a vLLM pod's settings before, from the cache of fits. */
   async #cachedContext(log) {
@@ -26728,7 +27154,13 @@ function inferenceProvider(runtime2, store) {
     image: podImage(choice.engine, runtime2.input("pod-image")),
     usage: runtime2.input("gateway-usage"),
     store,
-    fetch: E2E?.fetch
+    fetch: E2E?.fetch,
+    // The e2e jobs reach only fakes: without a fake of Ollama's registry, no estimate is tried.
+    ...E2E && !E2E.endpoints.ollamaRegistry ? {
+      ollamaModels: {
+        model: async () => ({ unknown: "the e2e suite fakes no Ollama registry" })
+      }
+    } : {}
   });
 }
 function openRouterProvider(runtime2, managementKey) {
@@ -26790,6 +27222,7 @@ function selfHosted(choice, repository, inputs) {
         pool: choicePool(choice, repository.owner),
         ...inputs.fetch ? { fetch: inputs.fetch } : {},
         ...inputs.hub ? { hub: inputs.hub } : {},
+        ...inputs.ollamaModels ? { ollamaModels: inputs.ollamaModels } : {},
         releases: inputs.releases ?? {
           gateway: () => gatewayArtifact(),
           osv: new Osv(inputs.fetch),
@@ -26862,7 +27295,7 @@ function safeLine(line, dialect) {
   return outsideCode(line, transform);
 }
 function outsideCode(line, transform) {
-  let result = "";
+  let result2 = "";
   let index = 0;
   while (index < line.length) {
     const open3 = line.indexOf("`", index);
@@ -26870,10 +27303,10 @@ function outsideCode(line, transform) {
     const ticks = /^`+/.exec(line.slice(open3))?.[0] ?? "`";
     const close2 = line.indexOf(ticks, open3 + ticks.length);
     if (close2 === -1) break;
-    result += transform(line.slice(index, open3)) + line.slice(open3, close2 + ticks.length);
+    result2 += transform(line.slice(index, open3)) + line.slice(open3, close2 + ticks.length);
     index = close2 + ticks.length;
   }
-  return result + transform(line.slice(index));
+  return result2 + transform(line.slice(index));
 }
 function neutralize(text, dialect) {
   return breakMatches(
@@ -27736,8 +28169,8 @@ var __awaiter = function(thisArg, _arguments, P, generator) {
         reject(e);
       }
     }
-    function step(result) {
-      result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected);
+    function step(result2) {
+      result2.done ? resolve(result2.value) : adopt(result2.value).then(fulfilled, rejected);
     }
     step((generator = generator.apply(thisArg, _arguments || [])).next());
   });
@@ -27829,12 +28262,12 @@ function addHook(state, kind, name, hook2) {
   }
   if (kind === "after") {
     hook2 = (method, options) => {
-      let result;
+      let result2;
       return Promise.resolve().then(method.bind(null, options)).then((result_) => {
-        result = result_;
-        return orig(result, options);
+        result2 = result_;
+        return orig(result2, options);
       }).then(() => {
-        return result;
+        return result2;
       });
     };
   }
@@ -27931,16 +28364,16 @@ function isPlainObject(value) {
   return typeof Ctor === "function" && Ctor instanceof Ctor && Function.prototype.call(Ctor) === Function.prototype.call(value);
 }
 function mergeDeep(defaults2, options) {
-  const result = Object.assign({}, defaults2);
+  const result2 = Object.assign({}, defaults2);
   Object.keys(options).forEach((key) => {
     if (isPlainObject(options[key])) {
-      if (!(key in defaults2)) Object.assign(result, { [key]: options[key] });
-      else result[key] = mergeDeep(defaults2[key], options[key]);
+      if (!(key in defaults2)) Object.assign(result2, { [key]: options[key] });
+      else result2[key] = mergeDeep(defaults2[key], options[key]);
     } else {
-      Object.assign(result, { [key]: options[key] });
+      Object.assign(result2, { [key]: options[key] });
     }
   });
-  return result;
+  return result2;
 }
 function removeUndefinedProperties(obj) {
   for (const key in obj) {
@@ -27996,13 +28429,13 @@ function extractUrlVariableNames(url) {
   return matches3.map(removeNonChars).reduce((a, b) => a.concat(b), []);
 }
 function omit2(object, keysToOmit) {
-  const result = { __proto__: null };
+  const result2 = { __proto__: null };
   for (const key of Object.keys(object)) {
     if (keysToOmit.indexOf(key) === -1) {
-      result[key] = object[key];
+      result2[key] = object[key];
     }
   }
-  return result;
+  return result2;
 }
 function encodeReserved(str) {
   return str.split(/(%[0-9A-Fa-f]{2})/g).map(function(part) {
@@ -28032,28 +28465,28 @@ function isKeyOperator(operator) {
   return operator === ";" || operator === "&" || operator === "?";
 }
 function getValues(context3, operator, key, modifier) {
-  var value = context3[key], result = [];
+  var value = context3[key], result2 = [];
   if (isDefined(value) && value !== "") {
     if (typeof value === "string" || typeof value === "number" || typeof value === "bigint" || typeof value === "boolean") {
       value = value.toString();
       if (modifier && modifier !== "*") {
         value = value.substring(0, parseInt(modifier, 10));
       }
-      result.push(
+      result2.push(
         encodeValue(operator, value, isKeyOperator(operator) ? key : "")
       );
     } else {
       if (modifier === "*") {
         if (Array.isArray(value)) {
           value.filter(isDefined).forEach(function(value2) {
-            result.push(
+            result2.push(
               encodeValue(operator, value2, isKeyOperator(operator) ? key : "")
             );
           });
         } else {
           Object.keys(value).forEach(function(k) {
             if (isDefined(value[k])) {
-              result.push(encodeValue(operator, value[k], k));
+              result2.push(encodeValue(operator, value[k], k));
             }
           });
         }
@@ -28072,24 +28505,24 @@ function getValues(context3, operator, key, modifier) {
           });
         }
         if (isKeyOperator(operator)) {
-          result.push(encodeUnreserved(key) + "=" + tmp.join(","));
+          result2.push(encodeUnreserved(key) + "=" + tmp.join(","));
         } else if (tmp.length !== 0) {
-          result.push(tmp.join(","));
+          result2.push(tmp.join(","));
         }
       }
     }
   } else {
     if (operator === ";") {
       if (isDefined(value)) {
-        result.push(encodeUnreserved(key));
+        result2.push(encodeUnreserved(key));
       }
     } else if (value === "" && (operator === "&" || operator === "?")) {
-      result.push(encodeUnreserved(key) + "=");
+      result2.push(encodeUnreserved(key) + "=");
     } else if (value === "") {
-      result.push("");
+      result2.push("");
     }
   }
-  return result;
+  return result2;
 }
 function parseUrl(template) {
   return {
@@ -28386,14 +28819,14 @@ function parseParameters(header2, type, index, len, stopFlags) {
   return { type, index, parameters };
 }
 function unescapeQuotedPairs(str, start, end) {
-  let result = "";
+  let result2 = "";
   for (let index = start; index < end; index++) {
     if (str.charCodeAt(index) === BSLASH) {
-      result += str.slice(start, index);
+      result2 += str.slice(start, index);
       start = ++index;
     }
   }
-  return result + str.slice(start, end);
+  return result2 + str.slice(start, end);
 }
 
 // node_modules/json-with-bigint/json-with-bigint.js
@@ -28618,12 +29051,12 @@ var isContextSourceSupported = () => {
     return featureCache.get(parseFingerprint);
   }
   try {
-    const result = JSON.parse(
+    const result2 = JSON.parse(
       "1",
       (_, __, context3) => !!context3?.source && context3.source === "1"
     );
-    featureCache.set(parseFingerprint, result);
-    return result;
+    featureCache.set(parseFingerprint, result2);
+    return result2;
   } catch {
     featureCache.set(parseFingerprint, false);
     return false;
@@ -29008,16 +29441,16 @@ function graphql(request2, query, options) {
   const parsedOptions = typeof query === "string" ? Object.assign({ query }, options) : query;
   const requestOptions = Object.keys(
     parsedOptions
-  ).reduce((result, key) => {
+  ).reduce((result2, key) => {
     if (NON_VARIABLE_OPTIONS.includes(key)) {
-      result[key] = parsedOptions[key];
-      return result;
+      result2[key] = parsedOptions[key];
+      return result2;
     }
-    if (!result.variables) {
-      result.variables = {};
+    if (!result2.variables) {
+      result2.variables = {};
     }
-    result.variables[key] = parsedOptions[key];
-    return result;
+    result2.variables[key] = parsedOptions[key];
+    return result2;
   }, {});
   const baseUrl2 = parsedOptions.baseUrl || request2.endpoint.DEFAULTS.baseUrl;
   if (GHES_V3_SUFFIX_REGEX.test(baseUrl2)) {
@@ -31766,8 +32199,8 @@ function paginate(octokit2, route, parameters, mapFn) {
   );
 }
 function gather(octokit2, results, iterator2, mapFn) {
-  return iterator2.next().then((result) => {
-    if (result.done) {
+  return iterator2.next().then((result2) => {
+    if (result2.done) {
       return results;
     }
     let earlyExit = false;
@@ -31775,7 +32208,7 @@ function gather(octokit2, results, iterator2, mapFn) {
       earlyExit = true;
     }
     results = results.concat(
-      mapFn ? mapFn(result.value, done) : result.value.data
+      mapFn ? mapFn(result2.value, done) : result2.value.data
     );
     if (earlyExit) {
       return results;
@@ -32339,15 +32772,15 @@ function runSudo(name, args, user, input) {
   });
 }
 function checkedSudo(name, args, user, input) {
-  const result = runSudo(name, args, user, input);
-  if (result.status !== 0) {
-    throw new Error(`sudo ${name} failed: ${truncate((result.stderr ?? "").trim(), 500)}`);
+  const result2 = runSudo(name, args, user, input);
+  if (result2.status !== 0) {
+    throw new Error(`sudo ${name} failed: ${truncate((result2.stderr ?? "").trim(), 500)}`);
   }
-  return result.stdout;
+  return result2.stdout;
 }
 function sudoCapture(name, args) {
-  const result = runSudo(name, args);
-  return { status: result.status, stdout: result.stdout ?? "" };
+  const result2 = runSudo(name, args);
+  return { status: result2.status, stdout: result2.stdout ?? "" };
 }
 function sudoAs(user, name, args, input) {
   return checkedSudo(name, args, user, input);
@@ -32687,13 +33120,13 @@ function liveReadCommand(source, maxBytes) {
   return ["/bin/sh", "-c", LIVE_READ_SCRIPT, "sh", source, String(maxBytes + 1)];
 }
 function copyLiveAgentFile(source, target, maxBytes) {
-  const result = spawnSync2(
+  const result2 = spawnSync2(
     program("sudo"),
     ["-n", "-u", AGENT_USER, "--", ...liveReadCommand(source, maxBytes)],
     { timeout: 3e4, maxBuffer: maxBytes + 1024 }
   );
-  if (result.status !== 0 || !result.stdout || result.stdout.length > maxBytes) return false;
-  writeFileSync(target, result.stdout);
+  if (result2.status !== 0 || !result2.stdout || result2.stdout.length > maxBytes) return false;
+  writeFileSync(target, result2.stdout);
   return true;
 }
 function copySealedAgentFile(source, target, maxBytes) {
@@ -34194,7 +34627,7 @@ function ignoredPaths(rules, paths) {
     const init = spawnSync4("git", ["init", "-q", dir], { env, encoding: "utf8" });
     if (init.status !== 0) throw new Error(`git init failed: ${init.stderr.trim()}`);
     writeFileSync3(join5(dir, ".git", "info", "exclude"), rules);
-    const result = spawnSync4(
+    const result2 = spawnSync4(
       "git",
       [
         "-c",
@@ -34217,10 +34650,10 @@ function ignoredPaths(rules, paths) {
         maxBuffer: 64 * 1024 * 1024
       }
     );
-    if (result.status !== 0 && result.status !== 1) {
-      throw new Error(`git check-ignore failed: ${result.stderr.trim()}`);
+    if (result2.status !== 0 && result2.status !== 1) {
+      throw new Error(`git check-ignore failed: ${result2.stderr.trim()}`);
     }
-    const fields = result.stdout.split("\0");
+    const fields = result2.stdout.split("\0");
     const ignored = /* @__PURE__ */ new Set();
     for (let index = 0; index + 3 < fields.length; index += 4) {
       const pattern = fields[index + 2] ?? "";
@@ -34615,7 +35048,7 @@ function routePrompt(task, conventions) {
   const limits = outputLimits(task.settings);
   const quote = quoter();
   const trigger = task.route?.trigger ?? "decisions";
-  const requests = requestsSection(task, quote, "route review alone and say so in its brief");
+  const requests2 = requestsSection(task, quote, "route review alone and say so in its brief");
   const handoff = task.record?.handoff ? `
 ## Notes from the ${task.record.handoff.stage} stage
 
@@ -34644,7 +35077,7 @@ ${TRIGGERS[trigger]}
 
 ## Steps
 
-1. Read the plan, the issue, the maintainer comments${requests ? ", the requests" : ""} and the notes below, if any, and what earlier runs did: the plan's progress notes, \`git log\` and \`git diff origin/${task.defaultBranch}...HEAD\`${task.history?.length ? ", and the reports under Earlier runs" : ""}.
+1. Read the plan, the issue, the maintainer comments${requests2 ? ", the requests" : ""} and the notes below, if any, and what earlier runs did: the plan's progress notes, \`git log\` and \`git diff origin/${task.defaultBranch}...HEAD\`${task.history?.length ? ", and the reports under Earlier runs" : ""}.
 2. Decide, for each routed stage before review, whether it should run now. Each task has its own needs: none of them is required. Leave a stage out when it would have nothing to do, or nothing worth its cost, and say why. Stages that run keep the order above, and review always ends the route.
 3. For each stage that runs, write a brief for its agent: what to focus on, and what earlier work it builds on. It does not repeat the plan.
 4. If no stage before review should run (the request is already done, it contradicts the plan, or it needs a decision the plan does not cover), the route is review alone. Say why in its brief, and what the maintainers could do, such as \`/codeman replan <what to change>\` or a \`/codeman fix\` with more detail: review decides.
@@ -34670,7 +35103,7 @@ ${TRIGGERS[trigger]}
 6. Write \`summary\`, the briefs and the reasons in ${languageName(tag)} (\`${tag}\`): Codeman shows them to the maintainers.
 
 ${issueSection(task, quote)}
-${historySection(task, quote)}${handoff}${requests}`;
+${historySection(task, quote)}${handoff}${requests2}`;
 }
 var STAGE_WORK = {
   web: () => `Your stage is **web**: record in \`docs/web/\` the documentation of the third-party services, APIs and tools the task relies on, following the rules for third-party documentation you received. You change nothing else, except the plan's progress notes: every other change is discarded.
@@ -34747,7 +35180,7 @@ function stagePrompt(task, minutes, conventions) {
   const stage = task.stage ?? "code";
   const quote = quoter();
   const rules = task.ignore ?? defaultIgnore(conventions.workflows);
-  const requests = requestsSection(task, quote);
+  const requests2 = requestsSection(task, quote);
   const handoff = task.record?.handoff ? `
 ## Notes from the ${task.record.handoff.stage} stage
 
@@ -34790,7 +35223,7 @@ ${rules.trim()}
 
 ## Your stage
 
-Read the plan, then the issue, the maintainer comments${requests ? ", the requests" : ""}, the notes from the previous stage and the routing agent's brief below, if any. Check what earlier runs did: the plan's progress notes, \`git log\`${task.history?.length ? " and the reports under Earlier runs" : ""}.${requests ? " Address every request and review comment under Requests first: they refine the approved plan." : ""}
+Read the plan, then the issue, the maintainer comments${requests2 ? ", the requests" : ""}, the notes from the previous stage and the routing agent's brief below, if any. Check what earlier runs did: the plan's progress notes, \`git log\`${task.history?.length ? " and the reports under Earlier runs" : ""}.${requests2 ? " Address every request and review comment under Requests first: they refine the approved plan." : ""}
 
 ${STAGE_WORK[stage](task, conventions)}
 
@@ -34801,7 +35234,7 @@ ${stage === "review" ? "" : `${PROGRESS_RULE}
 ${outputShape(stage, outputLimits(task.settings), conventions.workflows)}
 
 ${issueSection(task, quote)}
-${historySection(task, quote)}${handoff}${briefSection}${accepted}${requests}${workflowResultsSection(task)}`;
+${historySection(task, quote)}${handoff}${briefSection}${accepted}${requests2}${workflowResultsSection(task)}`;
 }
 function historySection(task, quote) {
   if (!task.history?.length) return "";
@@ -34829,7 +35262,7 @@ ${runs.join("\n")}
 }
 function requestsSection(task, quote, uncovered = "report `blocked` and explain what must be decided") {
   if (task.requests.length === 0 && task.reviews.length === 0) return "";
-  const requests = task.requests.map(
+  const requests2 = task.requests.map(
     (request2) => quote(`${request2.kind.toUpperCase()} by ${request2.author}`, request2.text || "(no text)")
   );
   const reviews = task.reviews.map((review) => {
@@ -34848,7 +35281,7 @@ function requestsSection(task, quote, uncovered = "report `blocked` and explain 
 
 Maintainers asked for the following since the last run, on the issue or on the pull request. They refine the approved plan: if one needs a decision the plan does not cover, ${uncovered}.
 
-${[...requests, ...reviews].join("\n\n")}
+${[...requests2, ...reviews].join("\n\n")}
 `;
 }
 
@@ -34874,11 +35307,11 @@ function ruleBlocks(markdown) {
 }
 function trigrams(text) {
   const words = text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
-  const result = /* @__PURE__ */ new Set();
+  const result2 = /* @__PURE__ */ new Set();
   for (let index = 0; index + 2 < words.length; index++) {
-    result.add(`${words[index]} ${words[index + 1]} ${words[index + 2]}`);
+    result2.add(`${words[index]} ${words[index + 1]} ${words[index + 2]}`);
   }
-  return result;
+  return result2;
 }
 function coverage(block2, text) {
   const wanted = trigrams(block2);
@@ -36224,7 +36657,7 @@ async function movedTo(io, branch, baseSha, error3) {
 async function applyRoute(task, io) {
   if (!task.record) return blocked(io, task, "The task has no record of its plan.");
   const t = say(task);
-  const requests = task.requests.length > 0 || task.reviews.length > 0 ? {
+  const requests2 = task.requests.length > 0 || task.reviews.length > 0 ? {
     after: {
       commentId: task.record.processedCommentId,
       reviewId: task.record.processedReviewId ?? 0
@@ -36245,7 +36678,7 @@ async function applyRoute(task, io) {
     const stages2 = stagesFrom(task.route?.fallback ?? "design");
     io.runtime.warning(oneLine(error3));
     return start(
-      { stages: stages2.map((stage) => ({ stage, brief: "" })), skipped: [], requests },
+      { stages: stages2.map((stage) => ({ stage, brief: "" })), skipped: [], requests: requests2 },
       {
         outcome: "failed",
         message: t.routeFallback(stages2.map((stage) => t.stage(stage)).join(", ")),
@@ -36270,7 +36703,7 @@ async function applyRoute(task, io) {
   }));
   const stages = value.route.map(({ stage, brief }) => ({ stage, brief: truncate(brief, 2e3) }));
   return start(
-    { stages, skipped, requests },
+    { stages, skipped, requests: requests2 },
     {
       outcome: "done",
       message: t.routeChosen(stages.map(({ stage }) => t.stage(stage)).join(", ")),
@@ -37067,13 +37500,13 @@ async function select(services) {
       await refuse(task);
       continue;
     }
-    const result = stateOf(task.labels);
-    if (!result.ok) {
-      runtime2.warning(`${line}: ${result.error}`);
+    const result2 = stateOf(task.labels);
+    if (!result2.ok) {
+      runtime2.warning(`${line}: ${result2.error}`);
       continue;
     }
-    const candidate = { number: task.number, state: result.state };
-    if (result.state !== "new" && result.state !== "planning") {
+    const candidate = { number: task.number, state: result2.state };
+    if (result2.state !== "new" && result2.state !== "planning") {
       const talk = await conversation(task.number);
       const record = talk.status?.record;
       if (record) {
@@ -37083,13 +37516,13 @@ async function select(services) {
           talk.maintainers,
           record.processedReviewId ?? 0
         );
-        candidate.pending = pendingWork(newCommands(talk, reviews), result.state);
+        candidate.pending = pendingWork(newCommands(talk, reviews), result2.state);
         candidate.planned = pendingDecisions(record).length === 0;
         candidate.accept = acceptRequest(
           authorizedComments(talk.comments, talk.maintainers),
           record.acceptedCommentId ?? 0
         ) !== void 0;
-        if (result.state === "awaiting-workflow" && record.awaiting?.length) {
+        if (result2.state === "awaiting-workflow" && record.awaiting?.length) {
           const head = await repo.branchSha(record.branch);
           const runs = head ? finishedRuns(await ci.runsForCommit(head), record.awaiting) : void 0;
           if (runs) workflowRuns.set(task.number, runs);
@@ -37098,7 +37531,7 @@ async function select(services) {
       }
     }
     candidates.push(candidate);
-    runtime2.info(`${line} [${result.state}]${candidate.pending ? ` (${candidate.pending})` : ""}`);
+    runtime2.info(`${line} [${result2.state}]${candidate.pending ? ` (${candidate.pending})` : ""}`);
   }
   const inherited = [inputs, fileSettings.value, shared.value];
   const cap = tasksPerRun(inherited);
@@ -37249,7 +37682,7 @@ async function select(services) {
       ),
       ...reviewCommands(windowReviews)
     ] : [];
-    const requests = [...resumeRequests(windowSources), ...newRequests];
+    const requests2 = [...resumeRequests(windowSources), ...newRequests];
     const problems = [
       ...description.commands,
       ...sources.map(({ command: command2 }) => command2)
@@ -37287,7 +37720,7 @@ async function select(services) {
       url: task.url,
       comments: maintainerComments,
       reviews: [...windowReviews, ...reviews],
-      requests,
+      requests: requests2,
       resume,
       accept: choice.action === "accept" ? acceptRequest(maintainerComments, record?.acceptedCommentId ?? 0) : void 0,
       workflowRuns: action === "implement" ? workflowRuns.get(task.number) : void 0,
@@ -37512,9 +37945,9 @@ function taskOutputs(task, run2, pool2) {
     "ledger-run": task.needsAgent ? run2 : ""
   };
 }
-function routing(labels, record, requests) {
+function routing(labels, record, requests2) {
   const state = fromStateOf(labels);
-  if (requests.some((request2) => request2.kind === "fix")) {
+  if (requests2.some((request2) => request2.kind === "fix")) {
     return { trigger: "fix", fallback: "code" };
   }
   if (record?.route?.stages.length === 0) {
@@ -37535,8 +37968,8 @@ function firstStage(labels) {
   return fromStateOf(labels) === "done" ? "code" : "design";
 }
 function fromStateOf(labels) {
-  const result = stateOf(labels);
-  return result.ok ? result.state : "new";
+  const result2 = stateOf(labels);
+  return result2.ok ? result2.state : "new";
 }
 function startMessage(t, task) {
   if (task.action === "route") return t.startRoute;
@@ -37659,9 +38092,9 @@ var Firestore = class _Firestore {
           writes.push(...more);
         }
       };
-      let result;
+      let result2;
       try {
-        result = await work(tx);
+        result2 = await work(tx);
       } catch (error3) {
         await this.#call("rollback", { transaction }).catch(() => void 0);
         throw error3;
@@ -37671,7 +38104,7 @@ var Firestore = class _Firestore {
           writes: writes.map((write) => this.#write(write)),
           transaction
         });
-        return result;
+        return result2;
       } catch (error3) {
         if (!(error3 instanceof Aborted)) throw error3;
         if (attempt >= attempts) {
@@ -37690,7 +38123,7 @@ var Firestore = class _Firestore {
       documents: [name],
       ...transaction ? { transaction } : {}
     });
-    const found = results.find((result) => result.found)?.found;
+    const found = results.find((result2) => result2.found)?.found;
     return found && this.#document(found);
   }
   async #query(path, query = {}, transaction) {
@@ -37714,7 +38147,7 @@ var Firestore = class _Firestore {
       { structuredQuery, ...transaction ? { transaction } : {} },
       parent
     );
-    return results.flatMap((result) => result.document ? [this.#document(result.document)] : []);
+    return results.flatMap((result2) => result2.document ? [this.#document(result2.document)] : []);
   }
   #write(write) {
     const name = this.#name(write.path, "document");
@@ -38197,8 +38630,8 @@ var __awaiter2 = function(thisArg, _arguments, P, generator) {
         reject(e);
       }
     }
-    function step(result) {
-      result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected);
+    function step(result2) {
+      result2.done ? resolve(result2.value) : adopt(result2.value).then(fulfilled, rejected);
     }
     step((generator = generator.apply(thisArg, _arguments || [])).next());
   });
@@ -38826,8 +39259,8 @@ var __awaiter3 = function(thisArg, _arguments, P, generator) {
         reject(e);
       }
     }
-    function step(result) {
-      result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected);
+    function step(result2) {
+      result2.done ? resolve(result2.value) : adopt(result2.value).then(fulfilled, rejected);
     }
     step((generator = generator.apply(thisArg, _arguments || [])).next());
   });
@@ -38877,8 +39310,8 @@ var __awaiter4 = function(thisArg, _arguments, P, generator) {
         reject(e);
       }
     }
-    function step(result) {
-      result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected);
+    function step(result2) {
+      result2.done ? resolve(result2.value) : adopt(result2.value).then(fulfilled, rejected);
     }
     step((generator = generator.apply(thisArg, _arguments || [])).next());
   });
@@ -38966,8 +39399,8 @@ var __awaiter5 = function(thisArg, _arguments, P, generator) {
         reject(e);
       }
     }
-    function step(result) {
-      result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected);
+    function step(result2) {
+      result2.done ? resolve(result2.value) : adopt(result2.value).then(fulfilled, rejected);
     }
     step((generator = generator.apply(thisArg, _arguments || [])).next());
   });
@@ -39265,8 +39698,8 @@ var __awaiter6 = function(thisArg, _arguments, P, generator) {
         reject(e);
       }
     }
-    function step(result) {
-      result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected);
+    function step(result2) {
+      result2.done ? resolve(result2.value) : adopt(result2.value).then(fulfilled, rejected);
     }
     step((generator = generator.apply(thisArg, _arguments || [])).next());
   });
