@@ -94,7 +94,7 @@ The model ID depends on the engine, as on `runpod-pod`.
 
 - **Secrets:** `CODEMAN_SALAD_API_KEY`, in the key jobs. The key is its user's, and reaches every organization and project the user belongs to.
 - **Variables:** `CODEMAN_SALAD_ORGANIZATION` and `CODEMAN_SALAD_PROJECT`, in the key jobs: where Codeman creates its container groups.
-- **Cost:** an estimate: the pod's time at the listed price of its GPU class and priority, the image's download included, which Salad does not bill. It is split among the runs on the pod as on Runpod, and never reconciled, since Salad has no billing API ([spend](../budget/spend.md#self-hosted-runs)).
+- **Cost:** an estimate: the pod's time at the listed price of its GPU class and priority, from when Salad began billing it, after its allocation and image download, or from its creation when Codeman cannot tell ([spend](../budget/spend.md#the-months)). It is split among the runs on the pod as on Runpod, and never reconciled, since Salad has no billing API ([spend](../budget/spend.md#self-hosted-runs)).
 - **Pod image:** as on `runpod-pod`. A run on an older image whose gateway cannot serve on Salad stops before any group is created ([Salad's pod images](../installation/salad.md#pod-images)).
 
 ## Hosts

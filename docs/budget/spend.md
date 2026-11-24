@@ -62,7 +62,9 @@ The organization's month reconciles Runpod's with its billing by the hour (`GET 
 
 Salad has no billing API ([plan for Salad pods](../plans/2026-10-29-add-salad-pods.md), decision 5), so its account is not hourly:
 
-- A Salad run's cost is an estimate: the pod's time at the listed price of its GPU class and priority. It counts from the group's creation, so it includes the image's download, which Salad does not bill, and never falls short of the bill on that account.
+- A Salad run's cost is an estimate: the pod's time at the listed price of its GPU class and priority. It counts from when Salad began billing the pod: its instance's start of `running`, after the allocation and the image's download, which Salad does not bill (decision 5, answered again on 2026-11-24). The run that creates the pod reads that time once the pod serves, and `close-key` reads it again: when Salad no longer tells the same time, as after it placed the pod on another node, or tells none, the run counts from the group's creation, which never falls short of the bill.
+- While the run is open, its [budget](budget.md#reservations) and its gateway's limit count from the group's creation: an open run never counts less than Salad bills.
+- A run that joins a pod another run created, and the pods a run did not create but terminated, count from the group's creation.
 - The organization's month counts those estimates as they are. It reads no Salad billing, so a run on another provider needs no Salad key for the month's past Salad runs.
 - A pod's time that no run accounts for counts only when a Codeman job ends the pod ([untracked time](#untracked-time)).
 
@@ -118,7 +120,7 @@ Self-hosted rows name `Runpod (pod)`, `Runpod (Serverless)` or `Salad (pod)`. Th
 
 - A pod run's cost is its pod's time at its price. The task also counts its pod's time between runs, refreshed from billing.
 - A Serverless run's cost is an estimate. It counts in the month as soon as the run ends, and shrinks when other runs that used the worker at the same times close.
-- A Salad pod run's cost is an estimate, at Salad's listed price for its GPU and priority, the image's free download included. Nothing refreshes it.
+- A Salad pod run's cost is an estimate, at Salad's listed price for its GPU and priority, from when Salad began billing the pod when Codeman could tell, else from its creation, the image's free download then included. Nothing refreshes it.
 - The month is the repository's, from the ledger.
 
 ## How it works
