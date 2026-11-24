@@ -32887,15 +32887,15 @@ targets=$(${resolve("findmnt")} -rn -o TARGET)
 while IFS= read -r target; do
   target=$(printf '%b' "$target")
   case "$target" in /proc | /proc/*) continue ;; esac
-  ${mount} -o remount,bind,ro "$target"
+  ${mount} -n -o remount,bind,ro "$target"
 done <<< "$targets"
-${mount} -t proc -o nosuid,nodev,noexec proc /proc
+${mount} -n -t proc -o nosuid,nodev,noexec proc /proc
 for dir in /tmp /var/tmp /dev/shm; do
-  ${mount} -t tmpfs -o mode=1777,nosuid,nodev tmpfs "$dir"
+  ${mount} -n -t tmpfs -o mode=1777,nosuid,nodev tmpfs "$dir"
 done
-if [ -d /run/dbus ]; then ${mount} -t tmpfs -o mode=755,nosuid,nodev,noexec tmpfs /run/dbus; fi
-${mount} --bind ${AGENT_HOME} ${AGENT_HOME}
-${mount} -o remount,bind,rw,nosuid,nodev ${AGENT_HOME}
+if [ -d /run/dbus ]; then ${mount} -n -t tmpfs -o mode=755,nosuid,nodev,noexec tmpfs /run/dbus; fi
+${mount} -n --bind ${AGENT_HOME} ${AGENT_HOME}
+${mount} -n -o remount,bind,rw,nosuid,nodev ${AGENT_HOME}
 launcher=$1; shift
 ${resolve("setpriv")} --reuid=${AGENT_USER} --regid=${AGENT_USER} --init-groups --no-new-privs   --inh-caps=-all --bounding-set=-all -- ${resolve("bash")} -c "$launcher" ${AGENT_USER} "$@"
 exit $?`;

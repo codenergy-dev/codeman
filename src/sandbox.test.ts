@@ -218,22 +218,22 @@ test("the jail makes every mount read-only but the agent's home, then drops to t
     "/tmp",
   ]);
   assert.equal(status, 0);
-  const tmpfs = (dir: string) => `mount -t tmpfs -o mode=1777,nosuid,nodev tmpfs ${dir}`;
+  const tmpfs = (dir: string) => `mount -n -t tmpfs -o mode=1777,nosuid,nodev tmpfs ${dir}`;
   assert.deepEqual(lines, [
     "findmnt -rn -o TARGET",
-    "mount -o remount,bind,ro /",
-    "mount -o remount,bind,ro /mnt/a b",
-    "mount -o remount,bind,ro /tmp",
-    "mount -t proc -o nosuid,nodev,noexec proc /proc",
+    "mount -n -o remount,bind,ro /",
+    "mount -n -o remount,bind,ro /mnt/a b",
+    "mount -n -o remount,bind,ro /tmp",
+    "mount -n -t proc -o nosuid,nodev,noexec proc /proc",
     tmpfs("/tmp"),
     tmpfs("/var/tmp"),
     tmpfs("/dev/shm"),
     // The system bus is hidden where the host has one.
     ...(existsSync("/run/dbus")
-      ? ["mount -t tmpfs -o mode=755,nosuid,nodev,noexec tmpfs /run/dbus"]
+      ? ["mount -n -t tmpfs -o mode=755,nosuid,nodev,noexec tmpfs /run/dbus"]
       : []),
-    `mount --bind ${AGENT_HOME} ${AGENT_HOME}`,
-    `mount -o remount,bind,rw,nosuid,nodev ${AGENT_HOME}`,
+    `mount -n --bind ${AGENT_HOME} ${AGENT_HOME}`,
+    `mount -n -o remount,bind,rw,nosuid,nodev ${AGENT_HOME}`,
     `setpriv --reuid=${AGENT_USER} --regid=${AGENT_USER} --init-groups --no-new-privs --inh-caps=-all --bounding-set=-all -- ${bash} -c LAUNCHER ${AGENT_USER} KEY /w /h`,
   ]);
   assert.doesNotMatch(
