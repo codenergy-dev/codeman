@@ -34,6 +34,19 @@ import { FakeRuntime } from "./testing/fake-runtime.ts";
 // Creates a system user and needs passwordless sudo, like GitHub's Linux runners. CI sets this.
 const enabled = process.platform === "linux" && process.env.CODEMAN_SANDBOX_TEST === "1";
 
+/**
+ * Asserts that the agent's run exited 0 in time. The jail's own errors, such as the mount that
+ * failed, go to the run's log, not the test's output: a failure prints that log, for CI's.
+ */
+function assertRan(
+  run: { exitCode: number | null; timedOut: boolean },
+  runtime: FakeRuntime,
+): void {
+  if (run.exitCode === 0 && !run.timedOut) return;
+  const log = runtime.logs.map(({ level, message }) => `${level}: ${message}`).join("\n");
+  assert.fail(`The agent's run ended with ${JSON.stringify(run)}. Its log:\n${log}`);
+}
+
 type FakeEntry = { uid?: number; mode: number } | { uid?: number; link: string };
 
 /** A fake file system: each path's owner (root by default) and mode, or a link's target. */
@@ -323,13 +336,14 @@ test("the agent is contained and its changes are collected safely", {
     "exit 0",
   ].join("\n");
 
+  const contained = new FakeRuntime();
   const run = await runAsAgent(
     { file: "/bin/bash", args: ["-c", script], env: { OPENROUTER_API_KEY: "sk-test" } },
     worktree,
     60_000,
-    new FakeRuntime(),
+    contained,
   );
-  assert.deepEqual(run, { exitCode: 0, timedOut: false });
+  assertRan(run, contained);
   // While the sandbox is live, files are read as the agent: no symlink, no pipe, the size checked.
   const live = (name: string, max = 1024) =>
     copyLiveAgentFile(`${worktree}/.codeman/${name}`, join(root, `live-${name}`), max);
@@ -423,6 +437,7 @@ test("the agent stops when its run does, with the reason", { skip: !enabled }, a
     runtime,
     stop.signal,
   );
+  if (run.stopped === undefined) assertRan(run, runtime);
   assert.equal(run.stopped, "No worker started.");
   assert.equal(run.timedOut, false);
   assert.match(runtime.logged("warning")[0] ?? "", /The agent was stopped: No worker started\./);
@@ -497,13 +512,14 @@ test("the agent cannot plant programs that run outside its jail", {
     copyToAgent(repo, worktree);
 
     const started = Date.now();
+    const idleRuntime = new FakeRuntime();
     const idle = await runAsAgent(
       { file: "/bin/true", args: [], env: {} },
       worktree,
       60_000,
-      new FakeRuntime(),
+      idleRuntime,
     );
-    assert.deepEqual(idle, { exitCode: 0, timedOut: false });
+    assertRan(idle, idleRuntime);
     t.diagnostic(`A harness that does nothing ran in the jail in ${Date.now() - started} ms.`);
 
     const plant = planted
@@ -512,13 +528,14 @@ test("the agent cannot plant programs that run outside its jail", {
           `printf '#!/bin/sh\\necho "$0" >> ${marker}\\n' > ${file} && chmod 755 ${file} && echo ${file} >> planted.txt`,
       )
       .join("\n");
+    const plantRuntime = new FakeRuntime();
     const run = await runAsAgent(
       { file: "/bin/bash", args: ["-c", `echo changed >> README.md\n${plant}\nexit 0`], env: {} },
       worktree,
       60_000,
-      new FakeRuntime(),
+      plantRuntime,
     );
-    assert.deepEqual(run, { exitCode: 0, timedOut: false });
+    assertRan(run, plantRuntime);
     sealAgentSandbox(worktree);
     const changes = collectChanges({
       gitDir: join(repo, ".git"),
@@ -539,6 +556,77 @@ test("the agent cannot plant programs that run outside its jail", {
   } finally {
     asRoot("/usr/bin/rm", "-f", "--", ...planted);
   }
+});
+
+/**
+ * The abstract Unix sockets reviewed: what each is, and why the agent's connection to it cannot
+ * run anything outside the jail. A name may hold a pattern, for parts that change between boots;
+ * such a socket is reviewed only when every process that holds it is its `owner`, read with
+ * `ss -xlpn` as root, so another program's name of the same form is not.
+ */
+const REVIEWED_SOCKETS: { name: RegExp; owner?: string }[] = [
+  // multipathd: only `list` and `show` for a client that is not root, by SO_PEERCRED
+  // (docs/web/ubuntu/multipath-tools-0-9-4-5ubuntu8-2-source-package.md,
+  // docs/web/ubuntu/multipath-tools-0-14-3-2ubuntu1-source-package.md).
+  { name: /^@\/org\/kernel\/linux\/storage\/multipathd$/ },
+  // iscsid's management socket: refuses any client that is not root, by SO_PEERCRED
+  // (docs/web/ubuntu/open-iscsi-2-1-9-3ubuntu5-5-source-package.md,
+  // docs/web/ubuntu/open-iscsi-2-1-11-3ubuntu3-1-source-package.md).
+  { name: /^@ISCSIADM_ABSTRACT_NAMESPACE$/ },
+  // systemd-udevd 259's workers' notifications: a datagram socket bound to `@` and a random
+  // 64-bit number, which ignores any sender the kernel's credentials do not name as one of its
+  // workers (docs/web/ubuntu/systemd-259-9-0ubuntu0-1-source-package.md).
+  { name: /^@\d{1,20}$/, owner: "systemd-udevd" },
+];
+
+/** The processes that hold each socket, by name, from `ss -xlpn`'s listing. */
+function socketOwners(listing: string): Map<string, Set<string>> {
+  const owners = new Map<string, Set<string>>();
+  for (const line of listing.split("\n")) {
+    const name = line.trim().split(/\s+/)[4];
+    if (!name?.startsWith("@")) continue;
+    const held = owners.get(name) ?? new Set<string>();
+    for (const [, process] of line.matchAll(/\("([^"]+)",pid=/g)) held.add(process as string);
+    owners.set(name, held);
+  }
+  return owners;
+}
+
+/** The sockets no entry of `REVIEWED_SOCKETS` accepts. */
+function unreviewedSockets(sockets: string[], owners: Map<string, Set<string>>): string[] {
+  return sockets.filter(
+    (name) =>
+      !REVIEWED_SOCKETS.some(({ name: pattern, owner }) => {
+        if (!pattern.test(name)) return false;
+        if (owner === undefined) return true;
+        const held = owners.get(name);
+        return held !== undefined && held.size > 0 && [...held].every((one) => one === owner);
+      }),
+  );
+}
+
+test("a socket of a reviewed form counts only with its reviewed owner", () => {
+  const listing = [
+    "Netid State  Recv-Q Send-Q Local Address:Port      Peer Address:Port Process",
+    'u_dgr UNCONN 0      0      @18199374096224220369 12345 * 0 users:(("systemd-udevd",pid=410,fd=7))',
+    'u_dgr UNCONN 0      0      @1234 23456 * 0 users:(("evil",pid=9,fd=3))',
+    'u_str LISTEN 0      4096   @/org/kernel/linux/storage/multipathd 345 * 0 users:(("systemd",pid=1,fd=50))',
+  ].join("\n");
+  const owners = socketOwners(listing);
+  assert.deepEqual(
+    unreviewedSockets(
+      [
+        "@18199374096224220369",
+        "@1234",
+        "@/org/kernel/linux/storage/multipathd",
+        "@999",
+        "@ISCSIADM_ABSTRACT_NAMESPACE",
+        "@other",
+      ],
+      owners,
+    ),
+    ["@1234", "@999", "@other"],
+  );
 });
 
 // The jail shares the network, and the system's services run outside it. Through each one the
@@ -596,7 +684,7 @@ test("the agent cannot run a command outside its jail through the system's servi
       60_000,
       runtime,
     );
-    assert.deepEqual(run, { exitCode: 0, timedOut: false });
+    assertRan(run, runtime);
     const lines = runtime.logged("info").map((line) => line.replace(/^│ /, ""));
     for (const line of lines.filter((line) => line.startsWith("route "))) t.diagnostic(line);
 
@@ -610,26 +698,15 @@ test("the agent cannot run a command outside its jail through the system's servi
     assert.ok(!existsSync(`/var/lib/systemd/linger/${AGENT_USER}`), "the agent does not linger");
     assert.ok(!lines.includes("route bus: visible in the jail"), "the jail hides the system bus");
 
-    // Each listener here must be reviewed: what it is, and why the agent's connection to it cannot
-    // run anything outside the jail. Names may hold patterns, for parts that change between runs.
-    const known: RegExp[] = [
-      // multipathd: only `list` and `show` for a client that is not root, by SO_PEERCRED
-      // (docs/web/ubuntu/multipath-tools-0-9-4-5ubuntu8-2-source-package.md).
-      /^@\/org\/kernel\/linux\/storage\/multipathd$/,
-      // iscsid's management socket: refuses any client that is not root, by SO_PEERCRED
-      // (docs/web/ubuntu/open-iscsi-2-1-9-3ubuntu5-5-source-package.md).
-      /^@ISCSIADM_ABSTRACT_NAMESPACE$/,
-    ];
     const sockets = lines
       .filter((line) => line.startsWith("abstract "))
       .map((line) => line.slice("abstract ".length));
     t.diagnostic(`Abstract Unix sockets: ${sockets.join(", ") || "none"}.`);
-    const unknown = sockets.filter((name) => !known.some((pattern) => pattern.test(name)));
-    const owners = existsSync("/usr/bin/ss")
-      ? asRoot("/usr/bin/ss", "-xlpn")
-          .stdout.split("\n")
-          .filter((line) => unknown.some((name) => line.includes(name)))
-      : [];
+    const listing = existsSync("/usr/bin/ss") ? asRoot("/usr/bin/ss", "-xlpn").stdout : "";
+    const unknown = unreviewedSockets(sockets, socketOwners(listing));
+    const owners = listing
+      .split("\n")
+      .filter((line) => unknown.some((name) => line.includes(name)));
     assert.deepEqual(unknown, [], `Unreviewed abstract Unix sockets:\n${owners.join("\n")}`);
   } finally {
     sealAgentSandbox(worktree);

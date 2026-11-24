@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
+import { parse } from "yaml";
 import { TEMPLATE_VERSION } from "./action.ts";
 import { ACCOUNTS, PROVIDERS } from "./inference/providers.ts";
 import { renamedSetting } from "./settings.ts";
@@ -399,20 +400,32 @@ test("no other job runs Codeman, and no commit is written in the files", () => {
 });
 
 // The sandbox was reviewed on Ubuntu 24.04 only; ubuntu-latest moves to 26.04 in November 2026.
-// See docs/plans/2026-11-05-review-codeman-on-ubuntu-26-04.md.
+// While the review on 26.04 lasts, CI runs its checks on both. See
+// docs/plans/2026-11-05-review-codeman-on-ubuntu-26-04.md.
 test("the templates and the workflows that test the sandbox run on Ubuntu 24.04", () => {
+  const labels = (file: string) =>
+    [...readFileSync(file, "utf8").matchAll(/^\s*runs-on:\s*(.+)$/gm)].map((match) => match[1]);
   for (const file of [
     "templates/codeman.yml",
     "templates/codeman-task.yml",
-    ".github/workflows/ci.yml",
     ".github/workflows/e2e.yml",
   ]) {
-    const labels = [...readFileSync(file, "utf8").matchAll(/^\s*runs-on:\s*(.+)$/gm)].map(
-      (match) => match[1],
-    );
-    assert.ok(labels.length > 0, file);
-    for (const label of labels) assert.equal(label, "ubuntu-24.04", file);
+    assert.ok(labels(file).length > 0, file);
+    for (const label of labels(file)) assert.equal(label, "ubuntu-24.04", file);
   }
+  assert.deepEqual(labels(".github/workflows/ci.yml"), ["ubuntu-24.04", "ubuntu-26.04"]);
+});
+
+test("CI's job on Ubuntu 26.04 runs the same steps as its check on 24.04", () => {
+  const ci = parse(readFileSync(".github/workflows/ci.yml", "utf8")) as {
+    jobs: Record<string, { "runs-on": string; "timeout-minutes": number; steps: unknown[] }>;
+  };
+  assert.deepEqual(Object.keys(ci.jobs), ["check", "check-ubuntu-26-04"]);
+  const { check, "check-ubuntu-26-04": next } = ci.jobs;
+  assert.equal(check?.["runs-on"], "ubuntu-24.04");
+  assert.equal(next?.["runs-on"], "ubuntu-26.04");
+  assert.equal(next?.["timeout-minutes"], check?.["timeout-minutes"]);
+  assert.deepEqual(next?.steps, check?.steps);
 });
 
 test("checking Codeman out changes no job's permissions", () => {
