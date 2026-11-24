@@ -157,6 +157,28 @@ A start that fails stops the run with the gateway's message, in `open-key`'s log
 
 To serve a larger context, lower `num-parallel`, set `kv-cache-type: q8_0`, or use a GPU with more memory.
 
+### Before the pod is created
+
+Before creating an Ollama pod on an image that fits the model to the GPU, `open-key` estimates whether the model and its cache can fit at all, and creates no pod when even an optimistic bound falls short ([`estimate.ts`](../../src/gateway/estimate.ts)). Joining a pod checks nothing.
+
+1. **The model's facts** come from Ollama's registry, without a token, as the pod would pull it: the manifest's model and projector layers give the weights' bytes, and the first 256 KiB of the model layer, by a ranged read, give its GGUF metadata, the keys `/api/show` gives ([server/images.go](../web/ollama/server-images-go-at-v0-40-10.md), [fs/gguf/gguf.go](../web/ollama/fs-gguf-gguf-go-at-v0-40-10.md)).
+2. **The estimate** is the computed context's own, at the floor or at the explicit `context-length`, without the search:
+
+   ```text
+   room    = GPU memory − weights − 1024 MiB − gpu-overhead
+   needed  = parallel requests × context × per token
+   ```
+
+   It counts no compute buffers, so it refuses only a model that cannot fit even so, and leaves what is near the edge to the [load's check](#wholly-on-the-gpu).
+3. **When it cannot tell,** it says why in the run's log, and the pod is created as before: a model on another registry, such as `hf.co/…`, a manifest list, a model layer that is not GGUF, metadata beyond the first 256 KiB, a sliding window, the registry not answering, or an unknown GPU memory.
+
+| When | Message |
+| --- | --- |
+| The estimate falls short at the floor | "`qwen2.5:0.5b` does not fit the GPU with 2 parallel requests and a context of 32768 tokens, the least Codeman gives an agent, by Codeman's estimate, so no pod was created: its K/V cache needs 0.75 GiB, and the GPU's 1 GB, less llama.cpp's margin of 1 GiB, the settings' overhead and 0.37 GiB of weights, leave nothing. Give the profile fewer tasks (`tasks` or `max-tasks`) or set a smaller `num-parallel`, set `kv-cache-type: q8_0` in the `ollama` settings, use a smaller quantization of the model, or use a GPU with more memory." |
+| The estimate falls short at an explicit `context-length` | The same numbers, then "Lower `context-length` or `num-parallel` in the `ollama` settings, set `kv-cache-type: q8_0`, use a smaller quantization of the model, or use a GPU with more memory." |
+
+A refusal ends the pod's registry document as a failed start, so the tasks waiting for the same settings fail with the same message.
+
 ### What the run shows
 
 | Where | Example |

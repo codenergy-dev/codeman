@@ -157,7 +157,7 @@ The suite runs no engine on a GPU. The pod check does: [`e2e/live/pod.ts`](../..
 | --- | --- | --- |
 | `ollama`, `vllm` | A pod from the catalog's official image through the bootstrap, with `qwen2.5:0.5b` or `Qwen/Qwen2.5-0.5B-Instruct` | The gateway's `/admin/status` reports `NODE_RELEASE`'s Node.js version and the SHA-256 of the gateway at the commit, and the pod got the bootstrap as its command with both; `/health` is ready; the fit is wholly on the GPU; one chat completion answers through Runpod's proxy or Salad's Container Gateway; Codeman ends the run |
 | `blocked` | No pod: Ollama's pinned release without its exceptions | The release policy blocks it, from OSV.dev's advisories, and no pod is created |
-| `unfit` | A vLLM pod with `max-model-len: 32768` and `max-num-seqs: 256`, which no listed GPU holds | The pod's start fails with the fit's message |
+| `unfit` | No pod: a vLLM pod with `max-model-len: 32768` and `max-num-seqs: 256`, which no listed GPU holds | [Codeman's estimate](../../settings/vllm.md#the-fit-estimated) refuses it with the fit's message (`error=FitRefused`), and no pod is created. The gateway's own fit message stays with the suite's `failures/fit-vllm-explicit` |
 
 ### How it chooses the GPU
 
@@ -254,11 +254,10 @@ What the maintainer's dispatches took, as the [plan](../../plans/2026-11-04-run-
 | The suite, every group | `check=suite` | `none` 54 min, `ollama` 24 min, `vllm` 8 min, in parallel jobs | Nothing: a public repository's standard runners are free |
 | `ollama` on Runpod | `check=pod pod-checks=ollama` | 1.5 min | $0.021, RTX 4090 on Secure Cloud |
 | `vllm` on Runpod | `pod-checks=vllm` | 8 min to serve | $0.035, RTX A5000 on Secure Cloud |
-| `unfit` on Runpod | `pod-checks=unfit` | 19 min to fail | About $0.08, RTX A4000 on Secure Cloud |
+| `unfit`, on either | `pod-checks=unfit` | Seconds | Nothing: refused before any pod. Before the estimate, its pod failed after 19 minutes, about $0.08 on Runpod's RTX A4000 |
 | `blocked`, on either | `pod-checks=blocked` | Seconds | Nothing: no pod |
 | `ollama` on Salad | `check=pod provider=salad` | 9 min to serve | At most $0.016, RTX 3080 Ti Laptop (16 GB) at High |
 | `vllm` on Salad | `provider=salad pod-checks=vllm` | 13 min to serve | At most $0.021, the same class |
-| `unfit` on Salad | `provider=salad pod-checks=unfit` | 18.5 min to fail | At most $0.032, the same class |
 | `probe` on Salad | `provider=salad pod-checks=probe` | 30 s to 3.5 min | Nothing: no instance starts |
 
 The Salad figures are upper bounds, measured before the check counted only the time Salad bills, which leaves out the minutes of allocation and download. A run never exceeds 1 USD: the check refuses a pod that its max minutes would take past it.

@@ -70,6 +70,7 @@ Every dependency is audited before it is added (see `AGENTS.md`). This page reco
 | 2026-11-06 | Codeman's pod images published from `f00d362`, on Node.js 24.22.1 | [Seed the e2e suite's vLLM model](../plans/2026-11-06-seed-the-e2e-vllm-model-with-refs-main.md#results) | Pinned `codeman-ollama@sha256:1c1771d2…` and `codeman-vllm@sha256:330e23c0…`. Each pulls without credentials, its tag and `org.opencontainers.image.revision` are `f00d362`, its base layers are the pinned Ollama 0.35.1 or vLLM 0.31.0 image's (4 of 7 and 40 of 43), its `/opt/codeman/gateway.js` is byte for byte `dist/gateway.js`, and its `/usr/local/bin/node` is byte for byte the `node` of `node-v24.22.1-linux-x64.tar.xz`, checked against Node.js's `SHASUMS256.txt`. The e2e suite passed all 48 scenarios with this change on GitHub's runner. The pods no longer trust the emSign root. No other dependency changed |
 | 2026-11-24 | `pyasn1` 0.6.4 in vLLM 0.32.0's official image | [Official engine images](../plans/2026-10-30-start-pods-from-official-engine-images.md#decisions), decision 11 | CVE-2026-119194 to CVE-2026-119197, each a denial of service while decoding ASN.1, fixed in 0.6.5, accepted: a pod's vLLM decodes prompts and the model's files, not ASN.1 from others, and Python's TLS is OpenSSL's. Reviewed with the next vLLM image. No dependency changed |
 | 2026-11-24 | OSV.dev's API, which the release policy reads | [Official engine images](../plans/2026-10-30-start-pods-from-official-engine-images.md#progress), the audit gap of step 11 | Called with `fetch`: no npm package added. Each request carries a package's name and version, or an advisory's ID, and no key. No rate limit at present; querybatch's pagination is followed. Its documentation is Apache-2.0, in `google/osv.dev`. A failure stops the run unless a passing check of the last 24 hours stands |
+| 2026-11-24 | Ollama's registry, for the estimate of an Ollama pod's fit | [Estimate the fit before creating a pod](../plans/2026-11-23-estimate-the-fit-before-creating-a-pod.md), decision 3 | The same registry the pods pull from, called without a token: a manifest and a ranged read of 256 KiB per Ollama pod created. No package added; the GGUF reader is Codeman's own. Its client and the GGUF format recorded at Ollama v0.40.10 in `docs/web/ollama/` ([Ollama's registry](#ollamas-registry)) |
 
 ## Where each dependency runs
 
@@ -169,7 +170,8 @@ Codeman calls these APIs with `fetch` or through the packages above. Their docum
 | Ollama | The engine of Ollama pods: pulling a model, its context length, where it loads it, and its OpenAI-compatible API | `docs/web/ollama/` |
 | llama.cpp | The server Ollama runs for a model in the pod: how it fits a model to the GPU | `docs/web/llama-cpp/` |
 | vLLM | The engine of vLLM pods: its arguments, how it sizes the K/V cache and refuses a context that does not fit, what it reports, tool calling and reasoning parsers | `docs/web/vllm/`, `docs/web/docker-hub/` |
-| Hugging Face Hub API | Before creating a vLLM pod: whether its model exists, is public and not gated, has safetensors weights, and how large they are; vLLM, in the pod, downloads the model from the Hub | `docs/web/hugging-face/` |
+| Hugging Face Hub API | Before creating a vLLM pod: whether its model exists, is public and not gated, has safetensors weights, and how large they are, and its `config.json`, for the estimate of its fit and whether it reads images; vLLM, in the pod, downloads the model from the Hub | `docs/web/hugging-face/` |
+| Ollama's registry | Before creating an Ollama pod: the model's manifest, and its GGUF header by a ranged read, for the estimate of its fit; Ollama, in the pod, pulls the model from it | `docs/web/ollama/` |
 | OSV.dev API | The release policy: which advisories affect a pinned release, and each advisory's record | `docs/web/osv/` |
 | nodejs.org | The bootstrap, in a pod: Node.js's linux-x64 tarball | `docs/web/nodejs/` |
 | raw.githubusercontent.com | The bootstrap, in a pod: `dist/gateway.js` at the action's commit, whose URL names the commit, so the file cannot change ([permanent links](../web/github/getting-permanent-links-to-files.md), "Press Y to permalink to a file in a specific commit"). No GitHub page documents the raw host itself: that it serves a public repository's file without a key or a redirect was seen in the pod checks on Runpod and Salad, and the SHA-256 is what makes the file trusted | `docs/web/github/` |
@@ -273,6 +275,23 @@ Audited on 2026-10-03 for the [self-hosted inference plan](../plans/2026-10-02-s
   1. Check the key in the source of the Ollama version the catalog pins, recorded in `docs/web/ollama/`.
   2. Add it to `OLLAMA_SETTINGS`, to the [accepted keys](../settings/ollama.md#accepted-keys) table, and to its test, together.
 
+### Ollama's registry
+
+Audited on 2026-11-24 for the [estimate of the fit](../plans/2026-11-23-estimate-the-fit-before-creating-a-pod.md), decision 3.
+
+- **What:** the registry Ollama pulls a model from by name, `registry.ollama.ai`, which speaks the Docker registry's v2 API ([the tool](../web/tools/ollama.md), [server/images.go](../web/ollama/server-images-go-at-v0-40-10.md)). It is not a new host: each Ollama pod already pulls its model from it.
+- **What Codeman calls,** in the [key job](../glossary.md#key-jobs), with `fetch`, before creating an Ollama pod on an image that fits the model to the GPU ([`ollama-registry.ts`](../../src/inference/ollama-registry.ts)):
+  1. `GET https://registry.ollama.ai/v2/<namespace>/<model>/manifests/<tag>`, accepting a plain manifest only: the sizes of its model and projector layers.
+  2. `GET https://registry.ollama.ai/v2/<namespace>/<model>/blobs/<digest>` of the model layer, with `Range: bytes=0-262143`: the GGUF header's metadata, read as Ollama reads it ([fs/gguf/gguf.go](../web/ollama/fs-gguf-gguf-go-at-v0-40-10.md)). Ollama downloads blobs in ranged parts too ([server/download.go](../web/ollama/server-download-go-at-v0-40-10.md)); on 2026-11-24 the registry redirected the blob to its storage, which answered `206 Partial Content`.
+- **Why:** a model whose K/V cache cannot fit the GPU stops the run before a pod is paid for. A small in-house reader is what Codeman does: no package is added, and the GGUF reader keeps only numbers, strings and short arrays of numbers.
+- **License and maintenance:** the registry is Ollama's service; its client and the GGUF format are in [ollama/ollama](https://github.com/ollama/ollama), MIT, at the tag Codeman pins (v0.40.10).
+- **Failures:** a model on another registry, a manifest list, a layer that is not GGUF, a header beyond 256 KiB, an error or a timeout give no estimate, and the pod is created as before: the gateway's fit still decides.
+- **Permissions:** public, unauthenticated and read-only.
+- **Data:** the requests carry only the model's name and its layer's digest.
+- **Credentials:** none.
+- **Spending:** free. Two requests per Ollama pod Codeman creates, and 256 KiB of the model's file, against the whole file the pod pulls.
+- **Terms:** each model has its own license, in its manifest's license layer, which the person who chooses it is responsible for.
+
 <a id="vllm-in-codemans-vllm-pod-image"></a>
 
 ### vLLM
@@ -326,7 +345,7 @@ Audited on 2026-10-13 for the [plan for vLLM on pods](../plans/2026-10-13-vllm-o
 Audited on 2026-10-13 for the [plan for vLLM on pods](../plans/2026-10-13-vllm-on-pods.md), decision 10.
 
 - **What:** the Hub where vLLM's models are published, by ID (`namespace/name`).
-  - Codeman's [key job](../glossary.md#key-jobs) calls one route of its API, `GET https://huggingface.co/api/models/<id>?blobs=true`, with `fetch` ([hf_api.py](../web/hugging-face/src-huggingface-hub-hf-api-py-at-v2-2-0.md)).
+  - Codeman's [key job](../glossary.md#key-jobs) calls one route of its API, `GET https://huggingface.co/api/models/<id>?blobs=true`, with `fetch` ([hf_api.py](../web/hugging-face/src-huggingface-hub-hf-api-py-at-v2-2-0.md)), and reads the model's `config.json` at `main`, `GET https://huggingface.co/<id>/resolve/main/config.json`: for the [estimate of its fit](../settings/vllm.md#the-fit-estimated), and whether vLLM serves a vision tower.
   - vLLM, in the pod, downloads the model's files from the Hub.
 - **Why:** before paying for a pod, a model that does not exist, is private or gated, or has no safetensors weights stops the run. The weights' size sets the pod's container disk.
   - A small in-house check is what Codeman does: no client library is added. `huggingface_hub` is Python, and the call is one request.

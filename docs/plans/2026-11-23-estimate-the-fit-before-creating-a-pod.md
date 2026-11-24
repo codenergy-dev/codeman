@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-11-23T14:10:00-03:00
-updated_at: 2026-11-24T11:30:00-03:00
+updated_at: 2026-11-24T13:30:00-03:00
 commit: cf237a6
 ---
 
@@ -101,3 +101,13 @@ Answered by the maintainer on 2026-11-24: 1 (a), 2 (a), 3 (b), 4 (a) and 5 (a). 
 - Choosing the context before the pod starts: the gateway and the [cache of fits](../settings/pod-engines.md#the-cache-of-fits) keep doing it.
 - Changing the GPU type the settings name.
 - Speculative decoding's draft model and multimodal towers beyond `language-model-only`: only their weights count, not their cache or activations, which keeps the estimate optimistic.
+
+## Progress
+
+On the branch `features/fit-estimate`, from `features/multi-service-pods` at `4130b58`; `dist/` is rebuilt when it merges.
+
+- Step 1, `85c3d19`: vLLM 0.32.0's `gpu_worker.py`, `worker/utils.py` (in our own words) and `mem_utils.py` (in full) confirm the formula: the K/V cache gets at most the GPU's total memory × `gpu-memory-utilization`, less what the engine consumed, weights included. Ollama 0.40.10's `types/model/name.go`, `server/download.go` and `fs/gguf/gguf.go` in full, `server/images.go` and `manifest/manifest.go` in our own words. On 2026-11-24, `registry.ollama.ai` served `qwen2.5:0.5b`'s manifest, and its model blob answered a ranged read with `206 Partial Content`, after a redirect to its storage; the first 256 KiB held the architecture's keys, before the tokenizer, giving 12,288 bytes per token.
+- Step 2, `e3967e8`: `estimateVllm` and `estimateOllama` in [`src/gateway/estimate.ts`](../../src/gateway/estimate.ts). Ollama's budget also leaves out llama.cpp's fit margin (1 GiB) and `gpu-overhead`, which are rules of the engine, as `gpu-memory-utilization` is vLLM's, not overheads to estimate.
+- Step 3, `e3967e8`: `OllamaRegistry` and the GGUF reader, [`src/inference/ollama-registry.ts`](../../src/inference/ollama-registry.ts) and [`gguf.ts`](../../src/inference/gguf.ts).
+- Step 4, `205a483`: `open-key` throws `FitRefused`, a `PodStartFailure`, before `create`, and ends the registry document as a failed start. The e2e build tries no Ollama estimate without a fake of the registry, and its fake Hugging Face serves no `config.json`: the suite's scenarios, `failures/fit-floor` and `failures/fit-vllm-explicit` included, still reach the gateway's fit, as before.
+- Step 5, `59ed131`: the pod check's `unfit` passes on `FitRefused` with no pod. A dispatch of `unfit` is the maintainer's: `check=pod pod-checks=unfit`, on Runpod or Salad, which should end in seconds at no cost.

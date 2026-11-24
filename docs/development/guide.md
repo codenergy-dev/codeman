@@ -38,6 +38,7 @@ The [end-to-end suite](e2e/suite.md) runs the bundles of `npm run build:e2e`, wh
 | `salad` | `https://api.salad.com`, Salad's public API |
 | `saladPods` | A Salad pod's URL, its Container Gateway's `https://{networking.dns}`; this value is a URL with `{id}` and `{port}` |
 | `huggingFace` | `https://huggingface.co`: the model's information, checked before a vLLM pod |
+| `ollamaRegistry` | `https://registry.ollama.ai`, read for the estimate of an Ollama pod's fit. The suite has no fake of it yet: without this key, the e2e build tries no estimate for Ollama |
 | `npm` | `https://registry.npmjs.org`, where OpenCode is downloaded; its pinned integrity is still checked |
 | `googleSts`, `googleIamCredentials`, `firestore` | Google's STS, IAM Credentials and Firestore |
 
