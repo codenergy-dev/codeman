@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-11-04T14:47:33-03:00
-updated_at: 2026-11-23T18:10:00-03:00
+updated_at: 2026-11-24T09:30:00-03:00
 commit: e1c1411
 ---
 
@@ -294,7 +294,9 @@ Each refusal also prints the problem's `traceId`, which Salad's support can look
 
 Before that dispatch, Salad's own page answered: [Specifying a command](../web/salad/specifying-a-command.md#commands-security-filters-can-reject), updated on 2026-11-13 and refreshed here, says that security filters refuse a command where `curl`, `wget` or `perl` comes right after `;`, `|` or `||`. The bootstrap had exactly two such items, `; curl` (item 25) and `; wget` (item 26); the copy saved on 2026-10-30 predates that section.
 
-So the bootstrap's `download` puts `curl` and `wget` on their own lines, as the page advises, and `commandProblems` refuses a command that breaks the rule, with a test, before any pod. The probe's third round then serves as the confirmation: with the fix, Salad should accept `full` and every item.
+So the bootstrap's `download` puts `curl` and `wget` on their own lines, as the page advises, and `commandProblems` refuses a command that breaks the rule, with a test, before any pod.
+
+The probe's dispatch at `f01aa55`, with the fix, confirmed it, in 31.2 s, with no cost and no group left: Salad accepted `full`, now 60 items of 4,952 characters in all, and `no-command`, so the round stopped there with `cause=none`.
 
 The dispatch of `ollama` on Salad with the defaults, at `f01aa55`, passed, for about $0.016:
 
@@ -309,4 +311,21 @@ The dispatch of `ollama` on Salad with the defaults, at `f01aa55`, passed, for a
 
 So step 5 is done. The probe stays as a free diagnostic for the next refusal Salad does not explain. A Salad pod's start took about 9 minutes for Ollama, against about 1 minute on Runpod, mostly before the container runs.
 
-Next: step 6, the docs.
+The dispatch of `vllm,blocked,unfit` on Salad with the defaults, at `148a05b`, passed all three, in 1,908.1 s, for at most $0.053 (`pods_cost_usd`, at the listed price over each pod's whole life):
+
+| Check | GPU, host, price | Result |
+| --- | --- | --- |
+| `vllm` | RTX 3080 Ti Laptop (16 GB), community, $0.10/h, 3 nodes available | Created in 16.4 s, serving 770.4 s later. Bootstrap verified Node.js v24.22.1 and the gateway at the commit. Fit: K/V cache of 1,811,536 tokens, 55.28 requests of 32,768. Chat through the Container Gateway in 1.4 s. At most $0.021, over 790.3 s |
+| `blocked` | None | Passed: OSV.dev blocked Ollama 0.40.10 on the same 7 Go advisories, GO-2025-4251 first, and no pod was created |
+| `unfit` | The same class, 2 nodes available | Failed with the fit's message: the K/V cache holds 54.07 of the 256 requests (1,771,904 tokens). 1,113.1 s from the start to the failure; cleanup deleted the 2 groups |
+
+Two findings:
+
+- **Salad's hosts run vLLM 0.32.0, which needs CUDA 13.0, on this class.** That answers the doubt of decision 16.
+- **A vLLM pod's start on Salad took about 13 minutes,** against about 8 on Runpod, most of it Salad's allocation and image download, which it does not bill.
+
+The costs above are upper bounds: Salad bills only while an instance runs (docs/web/salad/saladcloud-pricing.md, "Billing"). `e7661b3` makes the check read when the instance started running, from Salad's instances (`update_time` of the `running` instance), and print the billed cost with `cost_basis=billed`, or the upper bound with `cost_basis=upper_bound` when it cannot tell. The run's cap still counts the upper bound.
+
+Step 6 is done: [the suite's page](../development/e2e/suite.md#what-each-check-costs) gives each check's inputs, time and cost from these dispatches, and the Salad cost's basis; [dependencies](../development/dependencies.md#github-actions) records where the e2e workflow uses each action.
+
+Next: every step is done. Step 1 saved the sources (`351aa5f`), step 2 reached `main` with `fixes/e2e-hf-refs-main`, steps 3 to 5 passed on real pods, step 6 is above, and step 7's rule is on `main` (`2360411`). The maintainer decides whether to set this plan `completed`; the review of Ubuntu 26.04 has its own plan, and the estimate of the fit before creating a pod too.
