@@ -1,7 +1,7 @@
 ---
 status: completed
 created_at: 2026-10-29T10:26:49-03:00
-updated_at: 2026-11-24T12:00:00-03:00
+updated_at: 2026-11-24T14:30:00-03:00
 commit: 1bdf038
 ---
 
@@ -186,7 +186,7 @@ Each step ends with `npm run check` passing (lint, types, tests and the build, `
 9. **Write the handover**, below: what the responsible person does after the plan, and what to check live. Done when it lists every assumption the adapter makes that the docs did not settle.
 10. **Cost Salad pods from their instance's `running` state** (decision 5, answered again). The adapter reads the pod's instances with its state, and a run's cost and the spend table count from the `running` instance's `update_time` to the pod's end; A when it cannot tell. Done when tests show both, and the [spend](../budget/budget.md) and [Salad](../installation/salad.md) pages say so. Done: `79b9890` and `d7b4813`.
     - The adapter keeps what it saw of each group's instances in one process (`NodeWatch`, moved from the pod check into `src/inference/salad.ts`), and tells when Salad began billing a group through `PodHost.billedSince`: the `running` instance's `update_time`, on one machine; undefined when no instance runs, the pod moved, or the time is unreadable. Runpod has no `billedSince`.
-    - The run that creates a pod records that time in its handle (`billedFrom`) once the pod serves. `close` and `release-pod` count the run and the pod's life from it while Salad still tells the same time, else from the creation. A pod that never served counts from when it ran, as the creating run saw it, else from its creation.
+    - The run that creates a pod records that time in its handle (`billedFrom`) once the pod serves; the maintainer approved this field of the handle on 2026-11-24. `close` and `release-pod` count the run and the pod's life from it while Salad still tells the same time, else from the creation. A pod that never served counts from when it ran, as the creating run saw it, else from its creation.
     - An open run's limit and reservation still count from the creation, so an open run never counts less than Salad bills. Runs that join a pod another run created, shared pods' shares, which the gateway counts from each run's start, and pods a sweep terminates count as before.
 
 ## Handover
