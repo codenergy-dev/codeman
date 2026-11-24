@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-10-30T16:20:00-03:00
-updated_at: 2026-11-24T10:00:00-03:00
+updated_at: 2026-11-24T12:45:00-03:00
 commit: 0bbb10d
 ---
 
@@ -217,9 +217,9 @@ Its first e2e run failed every scenario on a stale job image, which `3dc42ad` fi
 ### Next
 
 1. Done on 2026-11-06. `fixes/node-24-22-1` reached `main` with the [workflow that runs the e2e suite](2026-11-04-run-e2e-on-github-runners.md#decisions) (`f00d362`), and all 48 scenarios passed on GitHub's runner. `0f9bb8c`, on `main`, pins the pod images published from `f00d362`. `540cdad` merges `main` into this branch: `f00d362`'s images are recorded as the last published, and `docker/pod/` and `POD_IMAGES` stay removed.
-2. Decided on 2026-11-24 (decisions 11 to 15): the `pyasn1` findings are accepted in the [audit log](../development/dependencies.md#audit-log), and step 13 adds Node.js's urgent fix.
-3. The audit gaps step 11 found: OSV.dev has no audit log row, and `docs/web/` has no page on how raw.githubusercontent.com serves a file.
+2. Decided on 2026-11-24 (decisions 11 to 15). Done: the `pyasn1` findings are accepted in the [audit log](../development/dependencies.md#audit-log) (`6126aed`); step 13, Node.js's urgent fix, is `08f35a3`, with the release policy's page stating the minimum age's scope and the CVSS 2 or 4 warnings.
+3. Done on 2026-11-24: OSV.dev's audit, from its saved pages (`2b87245`), and GitHub's page on permanent links, which says a URL naming a commit keeps that file's version (`138b50c`). No GitHub page documents raw.githubusercontent.com itself; the dependencies table says what was seen of it, and the SHA-256 keeps the file trusted.
 4. Done in `540cdad`: the comment in `docker/runner/Dockerfile` names the Node.js that pods download.
-5. Step 12: `npm run check` (with `biome ci` on the repository's directories, not `.`, while worktrees live under `.claude/`). The e2e suite last passed at 8b3ae41; later commits change only docs and an input's description.
+5. Step 12, without the e2e suite, passed on 2026-11-24: the build (`6497293` rebuilds `dist/`, stale since `0eb7e6a`), `biome ci` on the repository's directories, not `.`, while worktrees live under `.claude/`, the typecheck, and the unit tests (1,148 passed, 6 skipped). The e2e suite last passed at 8b3ae41. Since then, `f01aa55` changed the bootstrap's download lines and `08f35a3` the release policy: the maintainer decides whether it runs again, and where, before step 12 is done.
 6. On 2026-11-24, the worktrees `../codeman-node-fix` and `../codeman-e2e-actions` were removed, their branches being in `main`. The agents' worktrees under `.claude/worktrees/` hold work that is on this branch, not yet in `main`: they go once it merges.
 7. Hand over to the live test, then write part 2's plan.
