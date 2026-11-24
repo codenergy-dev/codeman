@@ -19,6 +19,7 @@ const ORIGINS = {
   googleIamCredentials: "https://iamcredentials.googleapis.com",
   firestore: "https://firestore.googleapis.com",
   osv: "https://api.osv.dev",
+  ollamaRegistry: "https://registry.ollama.ai",
 } as const;
 
 /**
