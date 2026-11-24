@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-10-30T16:20:00-03:00
-updated_at: 2026-11-24T12:45:00-03:00
+updated_at: 2026-11-24T18:00:00-03:00
 commit: 0bbb10d
 ---
 
@@ -135,7 +135,7 @@ Answered by the maintainer on 2026-11-24, each as its recommendation:
 11. **`pyasn1` 0.6.4 in vLLM 0.32.0's image** (CVE-2026-119194 to CVE-2026-119197, each a denial of service while decoding ASN.1, fixed in 0.6.5): accepted, with the reason in the audit log. A pod's vLLM decodes prompts and the model's files, not ASN.1 from others, and Python's TLS is OpenSSL's. Reviewed with the next vLLM image.
 12. **A way past the minimum age for an urgent Node.js fix.** OSV.dev has no records of Node.js, so the security fix bypass cannot prove what a release fixes. The catalog gets a field in which the maintainer lets a Node.js release younger than 7 days through, with a written reason, which the policy records as the release's provenance. Without it, a release younger than 7 days stays blocked.
 13. **The minimum age covers the engine's image and Node.js only** in part 1: nothing in an image is younger than the image, though its date is the publisher's word. Part 2's secondary engines, installed by package, need the whole tree checked: a requirement of its plan.
-14. **`undici` 6.28.1,** through `@actions/core` and `@actions/github`: 5 high advisories (denial of service in its EventSource parser, content encodings, TLS 1.2 renegotiation and WebSocket PONGs; a certificate check skipped when an `Agent` is given TLS options). Codeman uses none of these directly. The lockfile moves to 6.29.1, published on 2026-10-15, on its own branch from `main`.
+14. **`undici` 6.28.1,** through `@actions/core` and `@actions/github`: 5 high advisories (denial of service in its EventSource parser, content encodings, TLS 1.2 renegotiation and WebSocket PONGs; a certificate check skipped when an `Agent` is given TLS options). Codeman uses none of these directly. The lockfile moves to 6.29.1, published on 2026-10-15, on its own branch from `main`, merged through pull request #3 on 2026-11-24.
 15. **Advisories with only a CVSS 2 or 4 vector** stay warnings, as today: most OSV records name their severity in the database's own field, which the policy reads first. Scoring CVSS 4 waits for a case that needs it.
 
 ## Steps
