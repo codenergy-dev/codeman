@@ -26,7 +26,17 @@ export interface ReleaseArtifact {
   replaces?: string;
   /** Recorded, never required. */
   provenance?: Record<string, string | boolean>;
+  /**
+   * Node.js only: the maintainer's written reason to let a release under the minimum age through,
+   * for an urgent fix. OSV.dev has no records of Node.js, so the security fix bypass cannot show
+   * what a release fixes (decision 12 of the plan to start pods from official engine images).
+   * Recorded as the release's provenance, `urgentFix`.
+   */
+  urgentFix?: string;
 }
+
+/** The only artifact `urgentFix` may let through under the minimum age. */
+export const URGENT_FIX_ARTIFACT = "node";
 
 /** An advisory accepted, by its ID or one of its aliases, with the reason it is accepted. */
 export interface AdvisoryException {
@@ -41,7 +51,7 @@ export const MINIMUM_AGE_DAYS = 7;
 export const CACHE_HOURS = 24;
 
 /** Bumped when a rule changes, so a cached result of the older rules is not used. */
-const POLICY_VERSION = 1;
+const POLICY_VERSION = 2;
 
 export type Severity = "critical" | "high" | "moderate" | "low" | "unknown";
 
@@ -146,6 +156,7 @@ export function releaseCheckKey(
         a.osv?.ecosystem ?? null,
         a.osv?.package ?? null,
         a.replaces ?? null,
+        a.urgentFix ?? null,
         Object.entries(a.provenance ?? {}).sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0)),
       ])
       .sort((x, y) => (JSON.stringify(x) < JSON.stringify(y) ? -1 : 1)),
@@ -159,7 +170,8 @@ export function releaseCheckKey(
 /**
  * Checks each artifact against the release policy:
  * - It must be at least 7 days old, unless `replaces` is set and it is the earliest release that
- *   fixes a high or critical advisory affecting `replaces`.
+ *   fixes a high or critical advisory affecting `replaces`, or, for Node.js only, `urgentFix`
+ *   gives the maintainer's reason.
  * - Its advisories of severity high or critical block, unless an exception names the advisory or
  *   one of its aliases. Moderate, low and those without a severity are warnings.
  * - Its provenance is recorded only.
@@ -303,8 +315,27 @@ function checkArtifact(
   const reasons: Reason[] = [];
   const accepted: AdvisoryException[] = [];
   let bypass: ArtifactCheck["bypass"];
+  let urgentFix: string | undefined;
 
-  // Minimum age, with the security fix bypass.
+  // The maintainer's reason for Node.js's urgent fix: for Node.js alone, and never empty.
+  const urgent = artifact.urgentFix;
+  if (urgent !== undefined && artifact.name !== URGENT_FIX_ARTIFACT) {
+    reasons.push({
+      level: "block",
+      text: "it sets `urgentFix`, which only Node.js may, since OSV.dev has no records of it; another release passes under the minimum age through the security fix bypass.",
+    });
+  } else if (urgent !== undefined && urgent.trim() === "") {
+    reasons.push({
+      level: "block",
+      text: "its `urgentFix` gives no reason; the maintainer writes why this release cannot wait for the minimum age.",
+    });
+  }
+  const urgentReason =
+    urgent !== undefined && artifact.name === URGENT_FIX_ARTIFACT && urgent.trim() !== ""
+      ? urgent.trim()
+      : undefined;
+
+  // Minimum age, with the security fix bypass, or Node.js's urgent fix.
   if (age === null) {
     reasons.push({
       level: "block",
@@ -312,7 +343,13 @@ function checkArtifact(
     });
   } else if (age < MINIMUM_AGE_DAYS) {
     const young = `it was published ${formatAge(age)} ago, under the minimum age of ${MINIMUM_AGE_DAYS} days`;
-    if (!artifact.replaces) {
+    if (urgentReason) {
+      urgentFix = urgentReason;
+      reasons.push({
+        level: "note",
+        text: `${young}, but passes as an urgent fix, for the maintainer's reason: ${urgentReason}`,
+      });
+    } else if (!artifact.replaces) {
       reasons.push({
         level: "block",
         text: `${young}. Pin an older release, or set the release it replaces when it fixes a high or critical advisory of that release.`,
@@ -393,6 +430,16 @@ function checkArtifact(
   } else if (!found) {
     reasons.push({ level: "block", text: "its advisories could not be read from OSV.dev." });
   }
+  if (urgentReason && !urgentFix && age !== null) {
+    reasons.push({
+      level: "note",
+      text: "it is past the minimum age, so its `urgentFix` is no longer needed and can go.",
+    });
+  }
+  const provenance =
+    artifact.provenance || urgentFix
+      ? { ...artifact.provenance, ...(urgentFix ? { urgentFix } : {}) }
+      : undefined;
 
   return {
     name: artifact.name,
@@ -402,7 +449,7 @@ function checkArtifact(
     advisories,
     exceptions: accepted,
     ...(bypass ? { bypass } : {}),
-    ...(artifact.provenance ? { provenance: artifact.provenance } : {}),
+    ...(provenance ? { provenance } : {}),
     verdict: verdictOf(reasons),
     reasons: sortReasons(reasons),
   };

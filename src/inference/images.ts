@@ -171,6 +171,8 @@ export const ENGINE_RELEASES: Readonly<Record<string, EngineRelease>> = {
  * `SHASUMS256.txt`, whose detached signature verified with the releaser's key from
  * nodejs/release-keys (docs/development/dependencies.md#audit-log). OSV.dev covers no Node.js
  * release: its advisories are checked by hand, from its security releases, when it is pinned.
+ * A release under the policy's minimum age passes only with `urgentFix`, the maintainer's written
+ * reason it cannot wait (src/inference/release-policy.ts); it goes once the release is 7 days old.
  */
 export const NODE_RELEASE: NodeRelease = {
   url: "https://nodejs.org/dist/v24.22.1/node-v24.22.1-linux-x64.tar.gz",

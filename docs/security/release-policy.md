@@ -15,10 +15,10 @@ Each rule gives one result:
 
 | Rule | Result |
 | --- | --- |
-| Published less than 7 days ago | Block, unless the [security fix bypass](#security-fix-bypass) admits it |
+| Published less than 7 days ago | Block, unless the [security fix bypass](#security-fix-bypass) admits it, or, for Node.js, an [urgent fix](#nodejss-urgent-fix) |
 | Its date cannot be read | Block |
 | A high or critical advisory | Block, unless an [exception](#exceptions) accepts it |
-| A moderate or low advisory, or one without a severity | Warning |
+| A moderate or low advisory, or one without a severity, such as one with only a CVSS 2 or 4 vector | Warning |
 | An advisory an exception accepts | Note, with the exception's reason |
 | An exception without a reason | Block |
 | An exception that matches no advisory | Note: it can go |
@@ -27,7 +27,7 @@ Each rule gives one result:
 A run with warnings goes on. The pod's `resolution` records the result ([data layout](../backend/data-layout.md#resolution)).
 
 > [!NOTE]
-> The minimum age covers these two releases, not each package inside an image. What an image holds is scanned when it is pinned ([OS packages](#os-packages)).
+> The minimum age covers these two releases, the engine's image and Node.js, not each package inside an image: nothing in an image is younger than the image, though its date is its publisher's word. What an image holds is scanned when it is pinned ([OS packages](#os-packages)). Engines installed by package, in later work, will need each package's age checked.
 
 ### Security fix bypass
 
@@ -37,6 +37,14 @@ A release younger than 7 days passes when both hold:
 - OSV.dev shows it is the earliest release that fixes a high or critical advisory of that release.
 
 The bypass waives only the age: the release's own advisories still count. It cannot admit Node.js, since OSV.dev holds nothing to show what it fixes.
+
+### Node.js's urgent fix
+
+A Node.js release younger than 7 days passes when the catalog's `NODE_RELEASE.release` sets `urgentFix` to the maintainer's written reason it cannot wait, such as a security release that removes a compromised root. The release's advisories are read by hand, from Node.js's security releases, as for any Node.js pin.
+
+- The reason is recorded in the check's provenance, as `urgentFix`.
+- An empty reason blocks. So does `urgentFix` on any other release, whose advisories OSV.dev covers.
+- Once the release is 7 days old, the check notes that `urgentFix` can go.
 
 ### Exceptions
 
@@ -139,7 +147,7 @@ flowchart TD
 
 - **The query.** One `POST /v1/querybatch` for each release's package and version, then `GET /v1/vulns/{id}` for each record. It carries no key, and only those names and versions ([`src/inference/osv.ts`](../../src/inference/osv.ts)).
 - **One advisory.** Records that alias each other count as one, under its GHSA ID when it has one. Withdrawn records are ignored.
-- **Its severity.** The one a database names, the highest when several do. Otherwise a score computed from a CVSS 3 vector: 9 and up is critical, 7 high, 4 moderate, and below that low. A record with neither takes the severity of up to 4 of its aliases' records.
+- **Its severity.** The one a database names, the highest when several do. Otherwise a score computed from a CVSS 3 vector: 9 and up is critical, 7 high, 4 moderate, and below that low. A record with neither takes the severity of up to 4 of its aliases' records. Codeman does not score CVSS 2 or 4 vectors: a record with only those has no severity, a warning to review by hand.
 - **The cache's key.** A hash of the policy's version, the releases with their provenance, and the exceptions. A change to any of them makes a new check ([`src/inference/release-policy.ts`](../../src/inference/release-policy.ts)).
 
 Why these rules, and the measurements behind them, are in the [investigation of multi-service pods](../plans/2026-10-30-investigate-multi-service-pods.md#recommendations) and the [plan to start pods from official engine images](../plans/2026-10-30-start-pods-from-official-engine-images.md#decisions).

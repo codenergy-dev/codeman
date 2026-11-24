@@ -321,6 +321,61 @@ test("an artifact without an advisory database is checked for its age only", asy
   assert.match(texts(unreadable.reasons, "block")[0] ?? "", /"last week", cannot be read/);
 });
 
+test("Node.js under the minimum age passes only with the maintainer's urgent fix reason", async () => {
+  const osv = database();
+  const young = { ...node, publishedAt: days(2), replaces: "24.21.0" };
+  const reason = "Removes the compromised emSign root; see Node's security release.";
+
+  const blocked = await check([young], { osv });
+  assert.equal(blocked.verdict, "block");
+  assert.equal(blocked.artifacts[0]?.provenance, undefined);
+
+  const urgent = await check([{ ...young, urgentFix: `  ${reason} ` }], { osv });
+  assert.equal(urgent.verdict, "pass");
+  assert.ok(
+    texts(urgent.reasons, "note").includes(
+      `node 24.22.1: it was published 2 days ago, under the minimum age of 7 days, but passes as an urgent fix, for the maintainer's reason: ${reason}`,
+    ),
+  );
+  // The reason is recorded as the release's provenance, beside what it had.
+  const provenance = { shasumsSigned: true };
+  const recorded = await check([{ ...young, provenance, urgentFix: reason }], { osv });
+  assert.deepEqual(recorded.artifacts[0]?.provenance, { shasumsSigned: true, urgentFix: reason });
+  assert.deepEqual(provenance, { shasumsSigned: true });
+
+  // Without a reason, it blocks.
+  const empty = await check([{ ...young, urgentFix: " " }], { osv });
+  assert.equal(empty.verdict, "block");
+  assert.ok(
+    texts(empty.reasons, "block").includes(
+      "node 24.22.1: its `urgentFix` gives no reason; the maintainer writes why this release cannot wait for the minimum age.",
+    ),
+  );
+
+  // Past the minimum age, it is not needed, and not recorded.
+  const old = await check([{ ...node, urgentFix: reason }], { osv });
+  assert.equal(old.verdict, "pass");
+  assert.equal(old.artifacts[0]?.provenance, undefined);
+  assert.ok(
+    texts(old.reasons, "note").includes(
+      "node 24.22.1: it is past the minimum age, so its `urgentFix` is no longer needed and can go.",
+    ),
+  );
+
+  // No other artifact may set it, young or old.
+  const engine = await check([{ ...vllm("0.32.0", days(30)), urgentFix: reason }], { osv });
+  assert.equal(engine.verdict, "block");
+  assert.ok(
+    texts(engine.reasons, "block").includes(
+      "vllm 0.32.0: it sets `urgentFix`, which only Node.js may, since OSV.dev has no records of it; another release passes under the minimum age through the security fix bypass.",
+    ),
+  );
+});
+
+test("the cache's key changes with the urgent fix's reason", () => {
+  assert.notEqual(releaseCheckKey([node], []), releaseCheckKey([{ ...node, urgentFix: "x" }], []));
+});
+
 test("provenance is recorded, never required; an exception needs its reason", async () => {
   const provenance = { attested: false, immutable: false, revision: "4f2a9c1" };
   const result = await check([{ ...node, provenance }]);

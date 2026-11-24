@@ -365,6 +365,14 @@ Audited on 2026-10-30 for the [plan to start pods from official engine images](.
 - **Known vulnerabilities:** OSV.dev covers no Node.js release, so its security releases are the source. 24.22.1 is the security release of 2026-10-21; the next 24.x release, 24.22.2, has V8 backports and a stream fix only ([v24.22.1](../web/nodejs/node-v24-22-1.md)).
 - **The engines' roots:** the engines trust its roots too ([below](#the-engines-trusted-roots)).
 
+To pin a new Node.js release:
+
+1. **Read its security release** on `nodejs.org`, and save its page in `docs/web/nodejs/`: OSV.dev has no records of Node.js.
+2. **Check its tarball:** its SHA-256 against `SHASUMS256.txt`, and that file's signature with a key of `nodejs/release-keys`, as above.
+3. **Change `NODE_RELEASE`:** `url`, `sha256`, `release.version`, `publishedAt`, `replaces` and `provenance`.
+4. **Under the minimum age of 7 days,** it passes only with `release.urgentFix`, the maintainer's written reason it cannot wait ([Node.js's urgent fix](../security/release-policy.md#nodejss-urgent-fix)). Remove the field once the release is 7 days old: the release policy notes when it can go.
+5. **Record the audit** in the [audit log](#audit-log), then follow [pin a new engine version](../security/release-policy.md#pin-a-new-engine-version) from its step 7.
+
 ### The engines' trusted roots
 
 Checked on 2026-10-31 for the [plan to start pods from official engine images](../plans/2026-10-30-start-pods-from-official-engine-images.md#decisions), decision 10.

@@ -99,3 +99,11 @@ test("Node's tarball for the bootstrap is pinned by URL and SHA-256", () => {
   );
   assert.match(sha256, /^[0-9a-f]{64}$/);
 });
+
+test("only Node's release may carry an urgent fix's reason, and never an empty one", () => {
+  for (const [engine, { release }] of Object.entries(ENGINE_RELEASES)) {
+    assert.equal(release.urgentFix, undefined, engine);
+  }
+  const { urgentFix } = NODE_RELEASE.release;
+  if (urgentFix !== undefined) assert.ok(urgentFix.trim().length >= 20, "a written reason");
+});
