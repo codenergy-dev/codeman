@@ -32,7 +32,13 @@ import type { Pool } from "../../src/pool.ts";
 import type { Log } from "../../src/runtime/runtime.ts";
 import { MemoryStore } from "../../src/store/memory.ts";
 import { type Fields, Report } from "./report.ts";
-import { type ProbeAnswer, type ProbeOutcome, SALAD_NAME, saladProvider } from "./salad.ts";
+import {
+  type BilledSpan,
+  type ProbeAnswer,
+  type ProbeOutcome,
+  SALAD_NAME,
+  saladProvider,
+} from "./salad.ts";
 
 /**
  * The pod check (steps 3 to 5 of the plan to run the e2e suite on GitHub's runners): Codeman's real
@@ -335,6 +341,11 @@ export interface CheckProvider {
   /** Whether a pod moved to another node while the check watched it: the provider lost its node. */
   moved?(id: string): Promise<boolean>;
   /**
+   * The time the provider bills a pod for, from what `observe` saw, when that is narrower than the
+   * pod's life and known: Salad's alone, which bills only while its instance runs.
+   */
+  billed?(id: string): BilledSpan | undefined;
+  /**
    * Sends variants of the creation's body for this pod, each stopped so that nothing is billed,
    * and deletes each group created, to find what in its command the provider refuses: Salad's
    * alone. `wait` paces the requests.
@@ -464,11 +475,17 @@ export async function podCheck(options: CheckOptions): Promise<number> {
   const complete = results.length > inputs.checks.length;
   const passed = complete && results.every((result) => result === "pass");
   const infrastructure = complete && !passed && results.every((result) => result !== "fail");
+  const end = now().getTime();
+  // On Salad, which bills only while an instance runs: the run's pods for that time, where the
+  // check saw it, else for their whole life.
+  const billed = provider.billed ? pods.costUsd(end, provider.billed) : undefined;
   report.line("done", {
     result: passed ? "pass" : infrastructure ? "infrastructure" : "fail",
-    total_s: seconds(started, now().getTime()),
-    // What the run's pods cost at their listed prices: Salad has no billing to read.
-    pods_cost_usd: Math.round(pods.spentUsd(now().getTime()) * 10_000) / 10_000,
+    total_s: seconds(started, end),
+    ...(billed ? { cost_usd: usd(billed.usd), cost_basis: billed.basis } : {}),
+    // What the run's pods cost at their listed prices over their whole life, from before their
+    // creation to their termination: an upper bound, which the run's cap counts.
+    pods_cost_usd: usd(pods.spentUsd(end)),
   });
   return passed ? 0 : 1;
 }
@@ -496,7 +513,7 @@ function checkProvider(
           "CODEMAN_SALAD_ORGANIZATION and CODEMAN_SALAD_PROJECT must hold Salad's names of an organization and a project.",
       };
     }
-    return saladProvider({ key, organization, project }, fetchFn);
+    return saladProvider({ key, organization, project }, fetchFn, () => now().getTime());
   }
   const key = env.CODEMAN_RUNPOD_API_KEY ?? "";
   if (!API_KEY.test(key)) {
@@ -647,6 +664,9 @@ async function serveCheck(context: Context, engine: "ollama" | "vllm"): Promise<
   });
   const results: boolean[] = [];
   let moved = false;
+  const { observe } = context.provider;
+  // While it serves, its instance runs: when it started running is when the provider bills from.
+  if (observe) await observe(handle.podId).catch(() => undefined);
   try {
     const status = await adminStatus(context, handle).catch(() => undefined);
     const bootstrap = bootstrapFields(context, handle.nonce, engine, status);
@@ -667,10 +687,17 @@ async function serveCheck(context: Context, engine: "ollama" | "vllm"): Promise<
     }
   } finally {
     try {
+      if (observe) await observe(handle.podId).catch(() => undefined);
       const usage = await inference.close(opened.handle, SILENT);
+      const billed = context.provider.billed
+        ? context.pods.costUsd(context.now().getTime(), context.provider.billed, [handle.podId])
+        : undefined;
       say(`${engine}.end`, {
         result: "pass",
-        cost_usd: usage.cost,
+        // Codeman's cost of the run; on Salad, what Salad bills the pod for so far, and Codeman's
+        // own estimate of the run beside it, which counts from the pod's creation.
+        cost_usd: billed ? usd(billed.usd) : usage.cost,
+        ...(billed ? { cost_basis: billed.basis, estimate_usd: usage.cost } : {}),
         total_s: seconds(start, context.now().getTime()),
       });
       results.push(true);
@@ -1399,6 +1426,32 @@ class TrackedPods {
     return spent;
   }
 
+  /**
+   * What this run's pods cost, in USD: each for the time `billed` gives, within its life, else for
+   * its whole life. `basis` says which: `billed` when every pod's time is known, `upper_bound` when
+   * none is, `mixed` otherwise. `ids` limits it to those pods.
+   */
+  costUsd(
+    now: number,
+    billed: (id: string) => BilledSpan | undefined,
+    ids?: readonly string[],
+  ): { usd: number; basis: "billed" | "upper_bound" | "mixed" } {
+    let usd = 0;
+    let known = 0;
+    let unknown = 0;
+    for (const [id, { hourly, from, to }] of this.#costs) {
+      if (ids && !ids.includes(id)) continue;
+      const end = to ?? now;
+      const span = id.startsWith("pending:") ? undefined : billed(id);
+      const start = span ? Math.max(from, span.from) : from;
+      const stop = span ? Math.min(end, span.to ?? end) : end;
+      usd += (hourly * Math.max(0, stop - start)) / 3_600_000;
+      if (span) known++;
+      else unknown++;
+    }
+    return { usd, basis: unknown === 0 ? "billed" : known === 0 ? "upper_bound" : "mixed" };
+  }
+
   /** The prices per hour of this run's pods still running, or maybe running. */
   runningHourly(): number {
     let hourly = 0;
@@ -1661,6 +1714,11 @@ function runTag(env: Readonly<Record<string, string | undefined>>): string {
   return /^\d{1,20}$/.test(run) && /^\d{1,4}$/.test(attempt)
     ? `${run}-${attempt}`
     : randomBytes(4).toString("hex");
+}
+
+/** USD, to the hundredth of a cent. */
+function usd(amount: number): number {
+  return Math.round(amount * 10_000) / 10_000;
 }
 
 function seconds(from: number, to: number): number {

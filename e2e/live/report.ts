@@ -40,6 +40,8 @@ const TEXT_FIELDS: Readonly<Record<string, RegExp>> = {
   content_type: /^[a-z0-9.+-]{1,40}\/[a-z0-9.+-]{1,60}$/,
   /** What the Salad probe found Salad refuses (`ProbeCause` in e2e/live/salad.ts). */
   cause: /^(none|unknown|any-command|item-content|total-chars|item-count|item-length|throttled)$/,
+  /** Whether a Salad cost counts only the instances' running time, or their whole life. */
+  cost_basis: /^(billed|upper_bound|mixed)$/,
   /** A problem's `traceId`, as a W3C `traceparent` or hexadecimal digits and hyphens. */
   trace_id: /^[0-9a-f-]{16,64}$/,
   /** The name of a word the probe tried, such as `curl-output`; never the word. */

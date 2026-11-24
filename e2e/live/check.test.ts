@@ -19,6 +19,7 @@ import {
   SALAD_ORGANIZATION,
   SALAD_PROJECT,
 } from "./fake-runpod.ts";
+import { NodeWatch } from "./salad.ts";
 
 const KEY = "rpa_TESTKEY0123456789abcdefghijklmnop";
 
@@ -499,10 +500,11 @@ const SALAD_ENV = {
 };
 
 /** Runs the check against a fake Salad, with the workflow's environment for Salad. */
-async function saladRun(argv: string[], fake: FakeOptions = {}) {
+async function saladRun(argv: string[], fake: FakeOptions = {}, now?: () => Date) {
   const lines: string[] = [];
   const salad = new FakeRunpod(lines, fake);
   const code = await podCheck({
+    ...(now ? { now } : {}),
     argv: ["--provider=salad", ...argv],
     env: { ...SALAD_ENV, GITHUB_SHA: TEST_COMMIT, GITHUB_ACTIONS: "true" },
     write: (line) => lines.push(line),
@@ -577,7 +579,41 @@ describe("the pod check on Salad", () => {
       }
     }
     assert.match(line(lines, "cleanup"), /result=pass pods=2 leftover_pods=0/);
-    assert.match(line(lines, "done"), /result=pass total_s=\S+ pods_cost_usd=/);
+    assert.match(
+      line(lines, "done"),
+      /result=pass total_s=\S+ cost_usd=\S+ cost_basis=billed pods_cost_usd=/,
+    );
+    assert.match(line(lines, "ollama.end"), / cost_usd=\S+ cost_basis=billed estimate_usd=\S+ /);
+  });
+
+  test("counts only the time Salad's instance runs, which Salad bills", async () => {
+    // A clock that moves 60 s at each read; the instance runs 5 minutes after its creation.
+    let at = Date.now();
+    const clock = () => {
+      at += 60_000;
+      return new Date(at);
+    };
+    const { code, lines } = await saladRun(
+      ["--checks=ollama"],
+      { now: clock, salad: { runningSince: (created) => created + 300_000 } },
+      clock,
+    );
+    assert.equal(code, 0, lines.join("\n"));
+    const done = /cost_usd=(\S+) cost_basis=billed pods_cost_usd=(\S+)$/.exec(line(lines, "done"));
+    assert.ok(done, line(lines, "done"));
+    const [billed, bound] = [Number(done[1]), Number(done[2])];
+    // At least the 5 minutes before it ran, at $0.20 per hour, are left out, and its run counts.
+    assert.ok(bound - billed >= 0.0166, `${billed} vs ${bound}`);
+    assert.ok(billed > 0, `${billed} vs ${bound}`);
+  });
+
+  test("falls back on the pod's whole life when Salad gives no running time", async () => {
+    const { code, lines } = await saladRun(["--checks=ollama"], {
+      salad: { runningSince: () => undefined },
+    });
+    assert.equal(code, 0, lines.join("\n"));
+    assert.match(line(lines, "done"), / cost_usd=\S+ cost_basis=upper_bound pods_cost_usd=/);
+    assert.match(line(lines, "ollama.end"), / cost_basis=upper_bound /);
   });
 
   test("skips classes without nodes available at High priority", async () => {
@@ -703,7 +739,10 @@ describe("the pod check on Salad", () => {
     assert.match(line(lines, "probe.no-command"), / result=pass http_status=201 deleted=true$/);
     assert.match(line(lines, "probe"), /result=pass accepted=2 rejected=0 undeleted=0 cause=none$/);
     assert.match(line(lines, "cleanup"), /result=pass pods=0 leftover_pods=0/);
-    assert.match(line(lines, "done"), /result=pass total_s=\S+ pods_cost_usd=0$/);
+    assert.match(
+      line(lines, "done"),
+      /result=pass total_s=\S+ cost_usd=0 cost_basis=billed pods_cost_usd=0$/,
+    );
     assertNothingLeaksOnSalad(lines, salad);
   });
 
@@ -989,5 +1028,46 @@ describe("runCommit", () => {
       }),
       undefined,
     );
+  });
+});
+
+describe("NodeWatch", () => {
+  const T = Date.parse("2026-11-24T12:00:00Z");
+  const on = (machine: string, state: string, since?: number) => ({ machine, state, since });
+
+  test("bills from when the instance started running to when it stopped", () => {
+    const watch = new NodeWatch();
+    watch.record("g", [on("m1", "downloading", T)], T + 1_000);
+    assert.equal(watch.billed("g"), undefined);
+    watch.record("g", [on("m1", "running", T + 60_000)], T + 90_000);
+    assert.deepEqual(watch.billed("g"), { from: T + 60_000, to: undefined });
+    watch.record("g", [on("m1", "running", T + 60_000)], T + 200_000);
+    watch.record("g", [on("m1", "stopping", T + 250_000)], T + 260_000);
+    assert.deepEqual(watch.billed("g"), { from: T + 60_000, to: T + 250_000 });
+  });
+
+  test("ends the run at the read that lists no instance, without a stopping time", () => {
+    const watch = new NodeWatch();
+    watch.record("g", [on("m1", "running", T)], T + 10_000);
+    watch.record("g", [], T + 50_000);
+    assert.deepEqual(watch.billed("g"), { from: T, to: T + 50_000 });
+  });
+
+  test("knows no billed time when the pod moved, ran again, or gave no time", () => {
+    const moved = new NodeWatch();
+    moved.record("g", [on("m1", "running", T)], T);
+    moved.record("g", [on("m2", "running", T + 5_000)], T + 6_000);
+    assert.equal(moved.moved("g"), true);
+    assert.equal(moved.billed("g"), undefined);
+
+    const again = new NodeWatch();
+    again.record("g", [on("m1", "running", T)], T);
+    again.record("g", [], T + 1_000);
+    again.record("g", [on("m1", "running", T + 2_000)], T + 3_000);
+    assert.equal(again.billed("g"), undefined);
+
+    const untimed = new NodeWatch();
+    untimed.record("g", [on("m1", "running")], T);
+    assert.equal(untimed.billed("g"), undefined);
   });
 });

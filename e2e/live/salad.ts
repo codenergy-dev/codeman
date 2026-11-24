@@ -44,7 +44,11 @@ interface GpuClass {
 }
 
 /** The check's view of Salad, for `podCheck`. */
-export function saladProvider(account: Required<GpuAccount>, fetchFn: Fetch): CheckProvider {
+export function saladProvider(
+  account: Required<GpuAccount>,
+  fetchFn: Fetch,
+  now: () => number = Date.now,
+): CheckProvider {
   const salad = new Salad(account, fetchFn);
   const request = async (path: string, method = "GET", body?: unknown): Promise<unknown> => {
     const response = await fetchFn(`${API}${path}`, {
@@ -121,13 +125,15 @@ export function saladProvider(account: Required<GpuAccount>, fetchFn: Fetch): Ch
       );
     },
     observe: async (id) => {
-      nodes.record(id, await instances(request, containers, id));
+      nodes.record(id, await instances(request, containers, id), now());
     },
     moved: async (id) => {
       // The group may be gone already: what was seen before still tells.
-      nodes.record(id, await instances(request, containers, id).catch(() => []));
+      const seen = await instances(request, containers, id).catch(() => undefined);
+      if (seen) nodes.record(id, seen, now());
       return nodes.moved(id);
     },
+    billed: (id) => nodes.billed(id),
     async probe(spec, hide, wait): Promise<ProbeOutcome> {
       const listed = (await request(`${organization}/gpu-classes`)) as {
         items?: SaladGpuClass[];
@@ -485,40 +491,87 @@ async function probeOne(
   return { variant, status: response.status, body: "", contentType, deleted };
 }
 
-/** A group's instances, as the machine each is on and its state; none when Salad lists none. */
+/** A group's instance as the check reads it: its machine, its state, and since when, in ms. */
+export interface SeenInstance {
+  machine: string;
+  state: string;
+  /** `update_time`: when the instance last changed its state; undefined when unreadable. */
+  since?: number | undefined;
+}
+
+/** A group's instances (docs/web/salad/list-container-group-instances.md); none when Salad lists none. */
 async function instances(
   request: (path: string) => Promise<unknown>,
   containers: string,
   id: string,
-): Promise<{ machine: string; state: string }[]> {
+): Promise<SeenInstance[]> {
   const listed = (await request(`${containers}/${encodeURIComponent(id)}/instances`)) as {
-    instances?: { machine_id?: unknown; state?: unknown }[];
+    instances?: { machine_id?: unknown; state?: unknown; update_time?: unknown }[];
   };
-  return (listed.instances ?? []).flatMap(({ machine_id, state }) =>
-    typeof machine_id === "string" && typeof state === "string"
-      ? [{ machine: machine_id, state }]
-      : [],
-  );
+  return (listed.instances ?? []).flatMap(({ machine_id, state, update_time }) => {
+    if (typeof machine_id !== "string" || typeof state !== "string") return [];
+    const since = typeof update_time === "string" ? Date.parse(update_time) : Number.NaN;
+    return [{ machine: machine_id, state, since: Number.isFinite(since) ? since : undefined }];
+  });
+}
+
+/** The time Salad bills a pod for, in ms since the epoch: `to` is unset while it runs. */
+export interface BilledSpan {
+  from: number;
+  to?: number | undefined;
 }
 
 /**
- * The machines each group's instance was seen on. A group of one replica whose instance is seen on
- * a second machine moved: Salad lost the first node and placed the pod on another, which a pod's
- * own exit does not cause, its group never restarting it (`restart_policy: never`; risk 1 of the
- * plan for Salad pods). A node lost with no replacement seen yet is not told apart.
+ * What the check saw of each group's instance.
+ *
+ * - **Its machines.** A group of one replica whose instance is seen on a second machine moved:
+ *   Salad lost the first node and placed the pod on another, which a pod's own exit does not
+ *   cause, its group never restarting it (`restart_policy: never`; risk 1 of the plan for Salad
+ *   pods). A node lost with no replacement seen yet is not told apart.
+ * - **When it ran.** Salad bills an instance per second while it is `running`, not while it is
+ *   allocated, downloads its image or is created (docs/web/salad/saladcloud-pricing.md,
+ *   "Billing"). A running instance's `update_time` is when it started running; the first read that
+ *   no longer shows it running ends it, at a `stopping` instance's `update_time`, else at that
+ *   read. Its billed time is unknown when it moved, ran on two instances at once, ran again after
+ *   it stopped, or was never seen running with a readable time.
  */
 export class NodeWatch {
   readonly #machines = new Map<string, Set<string>>();
+  readonly #runs = new Map<string, { from?: number; to?: number; unclear: boolean }>();
 
-  record(id: string, seen: readonly { machine: string; state: string }[]): void {
+  /** Records one read of a group's instances, made at `at`. */
+  record(id: string, seen: readonly SeenInstance[], at: number): void {
     const machines = this.#machines.get(id) ?? new Set<string>();
     for (const { machine, state } of seen) {
       if (state !== "allocating") machines.add(machine);
     }
     this.#machines.set(id, machines);
+
+    const run = this.#runs.get(id) ?? { unclear: false };
+    this.#runs.set(id, run);
+    const running = seen.filter((one) => one.state === "running");
+    const [instance] = running;
+    if (
+      running.length > 1 ||
+      (instance && (instance.since === undefined || run.to !== undefined))
+    ) {
+      run.unclear = true;
+    } else if (instance?.since !== undefined) {
+      run.from = Math.min(run.from ?? instance.since, instance.since);
+    } else if (run.from !== undefined && run.to === undefined) {
+      const stopping = seen.find((one) => one.state === "stopping" && one.since !== undefined);
+      run.to = Math.max(run.from, stopping?.since ?? at);
+    }
   }
 
   moved(id: string): boolean {
     return (this.#machines.get(id)?.size ?? 0) > 1;
+  }
+
+  /** The time Salad bills the group for, as far as the check saw it; undefined when unknown. */
+  billed(id: string): BilledSpan | undefined {
+    const run = this.#runs.get(id);
+    if (!run || run.unclear || run.from === undefined || this.moved(id)) return undefined;
+    return { from: run.from, to: run.to };
   }
 }

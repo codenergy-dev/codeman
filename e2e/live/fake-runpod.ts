@@ -80,9 +80,16 @@ export interface FakeSaladOptions {
   throttleAfter?: number;
   /** The `traceId` of a refusal's problem; a text that is not one by default. */
   traceId?: string;
+  /**
+   * Each instance's `update_time`, from its group's creation in ms since the epoch; the creation
+   * itself by default, and none when this gives undefined.
+   */
+  runningSince?: (created: number) => number | undefined;
 }
 
 export interface FakeOptions {
+  /** The clock of Salad's groups' creation times; the real one by default. */
+  now?: () => Date;
   /** The chat completion's status. */
   chatStatus?: number;
   /** The gateway's start failure, such as the fit's message; it then never serves. */
@@ -330,7 +337,7 @@ export class FakeRunpod {
         command: spec.container.command ?? [],
         env: spec.container.environment_variables,
         status: "RUNNING",
-        createdAt: new Date().toISOString(),
+        createdAt: (this.options.now?.() ?? new Date()).toISOString(),
         salad: {
           priority: spec.container.priority,
           machines: [this.#machine()],
@@ -359,8 +366,20 @@ export class FakeRunpod {
     if (match && (!pod?.salad || pod.status === "TERMINATED")) return json(404, {});
     if (pod?.salad && method === "GET" && match?.[2]) {
       const machine = pod.salad.machines.at(-1) as string;
+      const created = Date.parse(pod.createdAt);
+      const since = this.options.salad?.runningSince
+        ? this.options.salad.runningSince(created)
+        : created;
       return json(200, {
-        instances: [{ id: "i-1", machine_id: machine, state: "running", ready: true }],
+        instances: [
+          {
+            id: "i-1",
+            machine_id: machine,
+            state: "running",
+            ready: true,
+            ...(since === undefined ? {} : { update_time: new Date(since).toISOString() }),
+          },
+        ],
       });
     }
     if (pod?.salad && method === "GET") {
