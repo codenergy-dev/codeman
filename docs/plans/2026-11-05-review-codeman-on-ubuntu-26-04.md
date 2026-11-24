@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-11-05T16:50:00-03:00
-updated_at: 2026-11-24T14:40:00-03:00
+updated_at: 2026-11-24T16:10:00-03:00
 commit: 4d89540
 ---
 
@@ -86,5 +86,9 @@ What the sources show, which the first CI run on `ubuntu-26.04` must confirm or 
   - `the agent is contained and its changes are collected safely`, `the agent cannot plant programs that run outside its jail` and `the agent cannot run a command outside its jail through the system's services` end with exit code 32, not 0.
   - `the agent stops when its run does, with the reason` has no reason, because the jail had already exited.
   - Each fits the jail's setup failing before the agent starts: it runs with `set -e`, and 32 is what `mount` returns when a mount fails. Which mount is not in the log: the jail's output goes to the run's log, which the tests did not print. The tests now print it when the agent's run fails (`assertRan` in [`src/sandbox.test.ts`](../../src/sandbox.test.ts)).
+- **Step 2, second run (`c1033f1`).** `check-ubuntu-26-04` passed every test, on image 20261116.202.1. `check` failed the same four, on `ubuntu-24.04` image 20261116.133.1, and the jail's log named the mount: "mount: /snap/core22/2987: filesystem was mounted, but any subsequent operation failed: Read-only file system."
+  - The cause, from util-linux's source, saved on the fix's branch as `docs/web/ubuntu/util-linux-2-39-3-9ubuntu6-6-source-package.md`: a snap's mount has userspace options, which libmount records in `/run/mount/utab`, and rewrites after a remount. The jail had already made `/run` read-only, so the write failed and `mount` exited with 32.
+  - Reproduced in the local runner image with a mount that has `x-gdu.hide`: the sandbox tests fail with the same message, and pass with `mount -n`.
+  - The fix is on `fixes/jail-mount-no-utab`, from `main` (`e98d12c`): every mount of the jail runs with `-n`. `main` and every branch need it for `check` to pass.
 
-Next: the maintainer pushes `features/ubuntu-26-04` again, and pastes both jobs' logs of the test step, with their "Set up job" step, which names each image's version. The jail's log names the mount that failed. A fix that `main` needs, since `ubuntu-24.04` fails too, gets its own branch from `main`, and `check` must pass again once it lands. Then step 3 goes on with what `check-ubuntu-26-04` shows. Steps 4 to 6 wait for it.
+Next: the maintainer pushes `fixes/jail-mount-no-utab` and merges it into `main`; this branch then merges `main`, and step 3 goes on with what `check-ubuntu-26-04` showed: nothing failed there. Steps 4 to 6 follow.
