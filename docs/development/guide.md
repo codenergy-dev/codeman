@@ -76,6 +76,8 @@ Tests sit next to the code they test, as `*.test.ts`. Most run everywhere. These
 7. `npm run build`.
 8. Fail when `dist/` differs from what the build wrote: "dist/ is out of date. Run 'npm run build' and commit the result."
 
+A second job, `check-ubuntu-26-04`, runs the same steps on `ubuntu-26.04` while Codeman's sandbox is reviewed there ([the review](../plans/2026-11-05-review-codeman-on-ubuntu-26-04.md)). Its failures show what differs from Ubuntu 24.04; the templates and the e2e workflow stay on `ubuntu-24.04` until the review moves them.
+
 CI has no Firestore emulator, so the emulator's tests are skipped there. The pod images have a workflow of their own; see [pod images](#pod-images).
 
 ## Source layout
