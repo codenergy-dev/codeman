@@ -784,7 +784,7 @@ test("the runner's sudo, coreutils and AppArmor are reported", { skip: !enabled 
     existsSync(file)
       ? (spawnSync(file, args, { encoding: "utf8" }).stdout ?? "").split("\n")[0]
       : "missing";
-  for (const program of ["/usr/bin/sudo", "/usr/bin/cp", "/usr/bin/bwrap"]) {
+  for (const program of ["/usr/bin/sudo", "/usr/bin/cp", "/usr/bin/dd", "/usr/bin/bwrap"]) {
     const path = existsSync(program) ? realpathSync(program) : "missing";
     t.diagnostic(`${program}: ${path}, ${firstLine(program, "--version")}`);
   }

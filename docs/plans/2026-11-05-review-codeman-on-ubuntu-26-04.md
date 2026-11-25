@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-11-05T16:50:00-03:00
-updated_at: 2026-11-25T10:30:00-03:00
+updated_at: 2026-11-25T14:00:00-03:00
 commit: 4d89540
 ---
 
@@ -95,4 +95,17 @@ What the sources show, which the first CI run on `ubuntu-26.04` must confirm or 
   - `the agent cannot undo its jail from a user namespace`: as the agent, in the jail, `unshare` and `bwrap` each try to create a user namespace, to unmount the jail's tmpfs over `/tmp` and `/run/dbus`, and to make `/usr/local/bin` writable again. It passes when the runner's `/tmp` and system bus stay hidden and nothing is written; each route's result is printed. In the local runner image, which loads no AppArmor profile, `unshare` creates the namespace, and the jail's mounts stay locked: `/tmp` stays the jail's, and the remount fails with 32. That image has no `bwrap`.
   - `the runner's sudo, coreutils and AppArmor are reported`: which `sudo`, `cp` and `bwrap` the runner has and their versions, `kernel.apparmor_restrict_unprivileged_userns`, and the AppArmor profiles loaded for user namespaces.
 
-Next: the maintainer pushes `features/ubuntu-26-04-review` and opens a pull request; both jobs' `npm test` logs answer the table's last column, recorded here. Step 3 is then done with the table's rows answered. Steps 4 to 6 follow.
+- **Step 3, the first run of these tests (`b4d9cb4`).** Every test passes on both jobs: `check` on `ubuntu-24.04` and `check-ubuntu-26-04`. What the runners showed, row by row of the table above:
+
+  | Difference | `ubuntu-24.04` | `ubuntu-26.04` |
+  | --- | --- | --- |
+  | `sudo` | sudo 1.9.15p5 | sudo-rs 0.2.13, `/usr/bin/sudo` linking to `/usr/lib/cargo/bin/sudo`. The sandbox's `sudo -n` calls behave the same: every sandbox test passes |
+  | coreutils | GNU 9.4 | `cp` is GNU 9.7 (`/usr/bin/gnucp`); `dd` is not GNU's, so the unit test of the live read skipped. The sandbox test reads live files through it and passes: a link and a pipe are refused, without blocking, and the limit holds. The unit test now accepts uutils' `dd`, and the report names `dd` |
+  | AppArmor | `kernel.apparmor_restrict_unprivileged_userns` 1; `unprivileged_userns` enforced | The same, plus `bwrap` and `unpriv_bwrap` enforced |
+  | User namespaces, from the jail | `unshare` refused (writing `uid_map`); no `bwrap` | `unshare` refused the same way. `bwrap` creates one, and the jail holds: unmounting its `/tmp` reveals nothing, and `/usr/local/bin` bound again stays read-only ("Read-only file system") |
+  | `setpriv`, `unshare` | Unchanged | Unchanged: every sandbox test passes |
+  | polkit's login1 | The system bus is hidden | The same: `systemd-run` and `loginctl` find no bus |
+  | Sockets | `multipathd`'s and `iscsid`'s | The same, plus `systemd-udevd`'s random one, accepted by its owner |
+  | Where programs live | `programs come only from trusted directories` passes | The same |
+
+Next: the maintainer pushes `features/ubuntu-26-04-review` again; the run should pass the unit test of the live read on 26.04 with uutils' `dd`, and name it. Step 3 is then done. Steps 4 to 6 follow.

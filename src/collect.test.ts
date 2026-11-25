@@ -15,10 +15,14 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { liveReadCommand, parseFindTypes, parseStatus, statusArgs } from "./collect.ts";
 
-/** A PATH whose `dd` is GNU's, as on Linux runners: `gdd` on macOS, if installed. */
+/**
+ * A PATH whose `dd` is GNU's, or the uutils' that Ubuntu 26.04 may ship, as on Linux runners: `gdd`
+ * on macOS, if installed.
+ */
 function gnuDdPath(dir: string): string | undefined {
   const path = process.env.PATH ?? "";
-  if (spawnSync("dd", ["--version"], { encoding: "utf8" }).stdout?.includes("GNU")) return path;
+  const version = spawnSync("dd", ["--version"], { encoding: "utf8" }).stdout ?? "";
+  if (/GNU|uutils/.test(version)) return path;
   const gdd = spawnSync("sh", ["-c", "command -v gdd"], { encoding: "utf8" }).stdout.trim();
   if (!gdd) return undefined;
   mkdirSync(join(dir, "bin"), { recursive: true });
@@ -30,7 +34,7 @@ test("the live read takes only a regular file, within the limit, and never block
   const dir = mkdtempSync(join(tmpdir(), "codeman-live-"));
   try {
     const path = gnuDdPath(dir);
-    if (!path) return t.skip("needs GNU dd");
+    if (!path) return t.skip("needs GNU or uutils dd");
     writeFileSync(join(dir, "ok.json"), '{"ok":1}\n');
     writeFileSync(join(dir, "secret"), "secret\n");
     symlinkSync(join(dir, "secret"), join(dir, "link.json"));
