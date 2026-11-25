@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-11-05T16:50:00-03:00
-updated_at: 2026-11-25T14:00:00-03:00
+updated_at: 2026-11-25T15:00:00-03:00
 commit: 4d89540
 ---
 
@@ -108,4 +108,6 @@ What the sources show, which the first CI run on `ubuntu-26.04` must confirm or 
   | Sockets | `multipathd`'s and `iscsid`'s | The same, plus `systemd-udevd`'s random one, accepted by its owner |
   | Where programs live | `programs come only from trusted directories` passes | The same |
 
-Next: the maintainer pushes `features/ubuntu-26-04-review` again; the run should pass the unit test of the live read on 26.04 with uutils' `dd`, and name it. Step 3 is then done. Steps 4 to 6 follow.
+- **Step 3, done (`3c6f722`).** Both jobs pass every test. On `ubuntu-26.04`, `dd` is uutils' 0.10.0 (`/usr/lib/cargo/bin/coreutils/dd`), and the live read's unit test passes with it; `ubuntu-24.04`'s is GNU's 9.4. The other rows read as in the run before.
+
+Next: step 4, the local images on Ubuntu 26.04. Their `cp` and `dd` should match the runner's mix, GNU's `cp` and uutils' `dd`, and their `sudo` be sudo-rs.
