@@ -1,3 +1,6 @@
+import { constants } from "node:fs";
+import { access } from "node:fs/promises";
+import { delimiter, join } from "node:path";
 import { E2E } from "../e2e.ts";
 import { Runpod } from "../inference/runpod.ts";
 
@@ -30,4 +33,27 @@ export async function listenEverywhere<T>(listen: (host: string) => Promise<T>):
     if ((error as NodeJS.ErrnoException).code !== "EAFNOSUPPORT") throw error;
     return listen("0.0.0.0");
   }
+}
+
+/**
+ * The path of the executable `name` on the environment's `PATH`, as `spawn` would find it, or
+ * undefined. A pod starts from an image Codeman did not build, which may lack its engine's
+ * command: the gateway then says so, rather than fail to spawn it.
+ */
+export async function findCommand(
+  name: string,
+  env: Record<string, string | undefined>,
+): Promise<string | undefined> {
+  for (const directory of (env.PATH ?? "").split(delimiter)) {
+    if (directory === "") continue;
+    const file = join(directory, name);
+    if (
+      await access(file, constants.X_OK).then(
+        () => true,
+        () => false,
+      )
+    )
+      return file;
+  }
+  return undefined;
 }

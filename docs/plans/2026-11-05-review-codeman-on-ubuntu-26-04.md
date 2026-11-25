@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-11-05T16:50:00-03:00
-updated_at: 2026-11-24T17:00:00-03:00
+updated_at: 2026-11-24T18:00:00-03:00
 commit: 4d89540
 ---
 
@@ -60,7 +60,7 @@ Answered by the maintainer on 2026-11-24: each as its recommendation. The templa
 
 ## Progress
 
-On the branch `features/ubuntu-26-04`, from `main` at `0f9bb8c`.
+On the branch `features/ubuntu-26-04`, from `main` at `0f9bb8c`, merged through pull request #4 on 2026-11-24, with the sandbox fix of pull request #5. Step 3 goes on in a new branch from `main`.
 
 - **Step 1, done.** The sources are saved:
   - the [announcement](../web/github/ubuntu-ubuntu-latest-label-will-use-ubuntu-26-04-in-november-2026.md), and the image's [README at e015a08](../web/github/runner-images-ubuntu2604-readme-md-at-e015a08.md): image 20261116.202.1, kernel 7.0.0-1020-azure, systemd 259.9-0ubuntu0.1;
@@ -91,4 +91,4 @@ What the sources show, which the first CI run on `ubuntu-26.04` must confirm or 
   - Reproduced in the local runner image with a mount that has `x-gdu.hide`: the sandbox tests fail with the same message, and pass with `mount -n`.
   - The fix, `e98d12c`: every mount of the jail runs with `-n`. It reached `main` through pull request #5, and this branch merged `main`.
 
-Next: the maintainer pushes this branch; both jobs should pass. Step 3 then goes on with the review of each row of the table above, since `check-ubuntu-26-04` found nothing failing. Steps 4 to 6 follow.
+Next: step 3 then goes on with the review of each row of the table above, since `check-ubuntu-26-04` found nothing failing. Steps 4 to 6 follow.

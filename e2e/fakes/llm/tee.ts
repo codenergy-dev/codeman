@@ -118,7 +118,7 @@ export interface TeeRunner {
   parallel?: number;
 }
 
-/** The programs that serve an engine's requests in a pod: Ollama 0.35.1's runner. */
+/** The programs that serve an engine's requests in a pod: Ollama's, from 0.35.1 to 0.40.10. */
 const RUNNERS = new Set(["llama-server"]);
 
 /** What the tee saw of one chat request. */
@@ -376,7 +376,7 @@ export class Tee {
 
   /**
    * vLLM's requests running and waiting now, from its `/metrics`
-   * (docs/web/vllm/vllm-v1-metrics-loggers-py-at-v0-31-0.md); none on a failure.
+   * (docs/web/vllm/vllm-v1-metrics-loggers-py-at-v0-32-0.md); none on a failure.
    */
   async #gauges(): Promise<{ running: number; waiting: number }> {
     try {
@@ -656,7 +656,8 @@ function header(value: string | string[] | undefined): string | undefined {
  * - `TEE_VRAM_BYTES`: the virtual VRAM for Ollama's `/api/ps`; without it, `/api/ps` passes;
  * - `TEE_MAX_TOKENS`: the engine's `max_tokens` for an agent's request, 8 by default;
  * - `TEE_CONTROL_PORT`: the inspection API's own port, 9091 by default, on `HOST`;
- * - `CODEMAN_IMAGE_ENGINE`: the pod image's engine; `vllm` samples vLLM's gauges, not slots;
+ * - `CODEMAN_ENGINE`: the pod's engine, which Codeman gives it; `vllm` samples vLLM's gauges,
+ *   not slots;
  * - `TEE_MEET_ISSUES`: hold the agents' turns until that many issues' meet (`TeeSetup.meet`),
  *   each for at most `TEE_MEET_TIMEOUT_MS`, 120000 by default.
  */
@@ -705,7 +706,7 @@ export async function fromEnv(env: NodeJS.ProcessEnv): Promise<FakeServer> {
     script,
     vramBytes: count("TEE_VRAM_BYTES", env.TEE_VRAM_BYTES),
     maxTokens: count("TEE_MAX_TOKENS", env.TEE_MAX_TOKENS, 8) as number,
-    vllm: env.CODEMAN_IMAGE_ENGINE === "vllm",
+    vllm: env.CODEMAN_ENGINE === "vllm",
   });
   const inspection = await tee.inspection.listen({
     host: env.HOST ?? "0.0.0.0",

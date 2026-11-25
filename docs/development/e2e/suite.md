@@ -4,21 +4,22 @@ This page is for whoever changes Codeman and wants to see a [task](../../glossar
 
 ## What it covers
 
-Codeman's bundles of the [e2e build](../guide.md#the-e2e-build) run the templates' jobs, one container per job, against local fakes of GitHub, OpenRouter, Runpod, Google and Hugging Face's Hub. The bugs it is for showed only on real repositories; the [plan](../../plans/2026-10-20-end-to-end-test-suite.md#context) lists them.
+Codeman's bundles of the [e2e build](../guide.md#the-e2e-build) run the templates' jobs, one container per job, against local fakes of GitHub, OpenRouter, Runpod, Salad, Google, Hugging Face's Hub, OSV.dev and nodejs.org. The bugs it is for showed only on real repositories; the [plan](../../plans/2026-10-20-end-to-end-test-suite.md#context) lists them.
 
 - **The workflows:** the job order, `if:` rules, matrices and the reusable workflow, read from `templates/codeman.yml` and `codeman-task.yml`. Real outputs and artifacts cross the jobs.
 - **The jobs:** in the local runner image, plus `gh`, with the agent's [jail](../../runs/agent.md#the-jail).
 - **The agent:** OpenCode itself, downloaded from a local npm cache and checked against its pinned integrity. A scripted model gives its replies.
 - **GitHub:** every App token's permissions and every user's collaborator role, enforced. A token the fake did not give fails the scenario. The fake lists each token with the template job that asked for it, so a scenario checks that each job's token holds only what the template declares (`security/token-permissions`).
 - **Google:** the OIDC, STS and IAM Credentials path, with its signature, audience and [attribute condition](../../glossary.md#attribute-condition). Firestore's emulator runs Codeman's security rules.
-- **Pods:** the [gateway](../../glossary.md#gateway) as a process, in front of real Ollama 0.35.1 or vLLM 0.31.0 on the CPU, with the same tiny model on both.
+- **Pods:** the engines' official images, Ollama 0.40.10's and vLLM 0.32.0's CPU image, started by Codeman's bootstrap as on a real pod: it downloads Node.js and the e2e [gateway](../../glossary.md#gateway) from the fakes, checks their SHA-256, and runs the gateway, in front of the real engine on the CPU, with the same tiny model on both.
+- **The release policy:** `open-key` checks the pinned releases against the fake OSV.dev before any pod, with the catalog's exceptions; `failures/release-blocked` adds an advisory that blocks.
 
 Each scenario is a YAML file under [`e2e/scenarios/`](../../../e2e/scenarios/happy-path/openrouter-plan-only.yaml), by subject: `happy-path/`, `pods/`, `serverless/`, `parallel/`, `pools/`, `budgets/`, `failures/`, `commands/`, `profiles/` and `security/` today. The catalogue is phase 5 of the [plan](../../plans/2026-10-20-end-to-end-test-suite.md#phase-5-the-scenario-catalogue).
 
 ## What it does not cover
 
 - Real OpenRouter, Runpod, Google or GitHub accounts, and anything that costs money.
-- vLLM on a GPU, and the production `vllm` image: the e2e vLLM pod uses vLLM's CPU image.
+- vLLM on a GPU, and the production `vllm` image: the e2e vLLM pod uses vLLM's CPU image. [The pod check](#the-pod-check) starts them on a real GPU.
 - The model's quality: replies are scripted.
 - Real throughput, the proxy's 100-second cut, Runpod's real worker states and billing, and Workload Identity Federation's real behavior.
 - arm64 hosts and AVX-512 paths.
@@ -32,14 +33,16 @@ The suite replaces some parts of the real path. What each replacement hides, no 
 
 | Seam | Replaces | Hides |
 | --- | --- | --- |
-| The [e2e build's](../guide.md#the-e2e-build) redirects | The hosts of OpenRouter, Runpod, Google's STS, IAM Credentials and Firestore, Hugging Face's Hub, and npm, by the fakes' origins | The real services' TLS, DNS and behavior: the fakes follow `docs/web/`, which does not prove the services agree. The published `dist/` differs from the e2e bundle in its wiring |
+| The [e2e build's](../guide.md#the-e2e-build) redirects | The hosts of OpenRouter, Runpod, Salad, Google's STS, IAM Credentials and Firestore, Hugging Face's Hub, npm and OSV.dev, by the fakes' origins | The real services' TLS, DNS and behavior: the fakes follow `docs/web/`, which does not prove the services agree. The published `dist/` differs from the e2e bundle in its wiring |
 | The fake Hub | Hugging Face's model information, from the `vllm` profile's model volume | Other models, and private, gated or disabled ones: the fake serves only what the volume holds, as public |
 | The fake GitHub | GitHub's API, under `/api/v3` and `/api/graphql` as on GitHub Enterprise Server | github.com's own behavior where it differs from the fake |
 | The simulator's emulated actions | `actions/checkout`, `create-github-app-token`, `upload-artifact` and `download-artifact` | The actions' own code, and GitHub's runner. An input the emulation lacks stops the run |
 | act, for the scenarios [under act](#under-act) | GitHub's runner, with the actions' own code | What [act's limits](#acts-limits) list |
 | The tee, in each pod | The agent's chat to the engine | The engine reads a short fixed prompt, not the agent's: real prefill, real context use and parsing of the agent's tool calls go untested |
 | The tee's `/api/ps` and pull | Ollama's `size_vram`, and its registry pull | A real GPU's memory, and a pull from the registry |
-| The pod launcher | Runpod's and Salad's machines, and Codeman's pinned pod images | The published images: the e2e images are built locally, with the e2e gateway |
+| The jobs network's aliases | `nodejs.org` and `raw.githubusercontent.com`, which a pod's bootstrap downloads from, by the fake nodejs.org and the fake GitHub, with the session's test CA, which the e2e pod images add to their system's store | Those hosts' real TLS, CDN and answers. The fake GitHub serves the e2e bundle's gateway, not the published `dist/gateway.js` |
+| The fake OSV.dev | OSV.dev's advisories, from records it holds: those OSV.dev gave on 2026-10-30, and the scenario's | Advisories published since: a scenario passes even when the real database would block a pinned release |
+| The pod launcher | Runpod's and Salad's machines | The official images with the tee added, and vLLM's CPU image in place of its CUDA one. The pod's command runs as the arguments of the e2e image's entry point, which starts the tee first, not in place of the image's entry point |
 | The simulator's masks | GitHub's runner's, which hide each secret a step registers and skip each job output holding one | The fake Google's access token, `owner`, the one the Firestore emulator takes as an admin: Codeman masks it, but the simulator does not, since a real token is random and a common word would hide every output with it, such as `select`'s `dispatches`. A log that printed the token would not show it masked |
 
 ## Before you run it
@@ -58,8 +61,9 @@ The first run with both profiles downloads about 6.4 GB and stores about 17 GB o
 | Input | Needed by | Measured on the plan's machine |
 | --- | --- | --- |
 | The fakes', emulator's and job images' bases, the emulator's jar, `gh`, OpenCode | Every scenario | Not measured apart |
-| `ollama/ollama:0.35.1` and `qwen2.5:0.5b` | The `ollama` profile | 9.37 GB of image, 35 minutes to pull; 398 MB of model |
-| `vllm/vllm-openai-cpu:v0.31.0` and `Qwen/Qwen2.5-0.5B-Instruct` | The `vllm` profile | 6.73 GB of image, 25 minutes to pull; 1.0 GB of model |
+| `ollama/ollama:0.40.10` and `qwen2.5:0.5b` | The `ollama` profile | 3.37 GB of image (0.35.1's was 9.37 GB, 35 minutes to pull); 398 MB of model |
+| Node.js 24.22.1's linux-x64 tarball | Both pod profiles | 58 MB, from nodejs.org, checked against `NODE_RELEASE`'s SHA-256 |
+| `vllm/vllm-openai-cpu:v0.32.0` and `Qwen/Qwen2.5-0.5B-Instruct` | The `vllm` profile | v0.31.0's image: 6.73 GB, 25 minutes to pull (v0.32.0 is 1.72 GB compressed, against 1.57 GB); 1.0 GB of model |
 
 > [!NOTE]
 > Large pulls can fail midway, with `unexpected EOF`. Run the command again: the seeds retry and resume, and Docker keeps the layers it has.
@@ -83,7 +87,7 @@ The largest `ollama` scenario, `parallel/four-tasks-one-pod`, peaks at about 5.6
 > [!IMPORTANT]
 > For the `vllm` profile, set Docker Desktop's memory to 10 GB or more (Settings, Resources). Otherwise a run that selects a vLLM scenario, such as `npm run test:e2e -- parallel`, stops before it starts anything: "Docker has 7.7 GiB of memory, too little for a scenario: parallel/vllm-two-seats needs about 8.0 GiB, with the vllm profile. …". Select the other scenarios by name or tag to run them.
 
-A vLLM pod takes 5 to 6 minutes to serve on a CPU. Scenarios run one at a time.
+A vLLM pod takes about 7.5 minutes to serve on a CPU: about 1.5 to start, and about 6 for its first request, the gateway's tool-call probe. Scenarios run one at a time.
 
 ## Run it
 
@@ -111,7 +115,7 @@ The command exits 1 when a scenario fails or is not run, or when a [known bug's]
 An argument that matches no scenario is an error, so a typo runs nothing.
 
 > [!NOTE]
-> The pod images hold the e2e gateway. With `--no-build`, they keep the gateway of their last build, even after a change to `src/gateway/`.
+> The pod images hold the tee, from the fakes' sources. With `--no-build`, they keep the tee of their last build. The gateway is the e2e bundle's of the run, which each pod downloads.
 
 - **Services stay up** between runs, so the next run starts in seconds. Compose recreates only what changed.
 - **Each scenario starts fresh:** every fake is reset, the store is a new Firestore project, and the runtime removes the scenario's containers when it ends. A scenario fails at once if anything of an earlier one is left.
@@ -131,8 +135,160 @@ The maintainer starts the suite by hand, on GitHub's standard runners, with [`.g
 
 - **What runs:** with no selectors, one job per `--profile=` group, so no runner holds both profiles' images, and one group's failure does not stop the others. With selectors, those scenarios in one job. Each job downloads its images and models again: there is no cache.
 - **What it costs:** nothing on a public repository, whose [standard runners are free](../../web/github/github-hosted-runners-reference.md#standard-github-hosted-runners-for-public-repositories).
-- **What it can reach:** only `contents: read`, and no secret, variable or environment: every key in a run is a fake's: random for the session, or a constant of the suite's code.
+- **What it can reach:** only `contents: read`, and no secret, variable or environment: every key in a run is a fake's: random for the session, or a constant of the suite's code. The same workflow's `pod` check is the only job with a secret ([below](#from-the-workflow)).
 - **On a failure:** download the job's `e2e-report-<group>` artifact, kept one day, then [read the failure](#read-a-failure). The logs show `df -h` and `docker system df` before and after the suite.
+
+## The pod check
+
+The suite runs no engine on a GPU. The pod check does: [`e2e/live/pod.ts`](../../../e2e/live/pod.ts) starts real pods on Runpod or [Salad](#on-salad), from the sources, so no redirect of the [e2e build](../guide.md#the-e2e-build) applies.
+
+> [!WARNING]
+> It costs money: each pod is billed while it runs. Ask the maintainer before running it; they decide whether and where it runs.
+
+### What it does
+
+1. Checks its inputs, each against a strict pattern, and never repeats a wrong one.
+2. Checks the gateway the pods will download: `dist/gateway.js` on raw.githubusercontent.com at the run's commit must have the checkout's SHA-256. The commit is `GITHUB_SHA` in GitHub Actions, the one `actions/checkout` checks out and so the one `open-key` gives pods; else `git rev-parse HEAD`. It must be pushed.
+3. For each check that creates a pod, [chooses its GPU](#how-it-chooses-the-gpu): the cheapest with room, under the run's cost cap of 1 USD.
+4. Runs each check with Codeman's own path: `PodInference`, the real `Runpod` or `Salad`, the real release policy with OSV.dev, and a pod registry in memory. Its pods carry `CODEMAN_ORGANIZATION=codeman-pod-check`, and a pool of their own run.
+5. Terminates every pod it created, and any other of its pool, then checks with the provider that each is gone: on success, on a failure, at its max minutes, and on SIGINT or SIGTERM.
+
+| Check | Starts | Passes when |
+| --- | --- | --- |
+| `ollama`, `vllm` | A pod from the catalog's official image through the bootstrap, with `qwen2.5:0.5b` or `Qwen/Qwen2.5-0.5B-Instruct` | The gateway's `/admin/status` reports `NODE_RELEASE`'s Node.js version and the SHA-256 of the gateway at the commit, and the pod got the bootstrap as its command with both; `/health` is ready; the fit is wholly on the GPU; one chat completion answers through Runpod's proxy or Salad's Container Gateway; Codeman ends the run |
+| `blocked` | No pod: Ollama's pinned release without its exceptions | The release policy blocks it, from OSV.dev's advisories, and no pod is created |
+| `unfit` | No pod: a vLLM pod with `max-model-len: 32768` and `max-num-seqs: 256`, which no listed GPU holds | [Codeman's estimate](../../settings/vllm.md#the-fit-estimated) refuses it with the fit's message (`error=FitRefused`), and no pod is created. The gateway's own fit message stays with the suite's `failures/fit-vllm-explicit` |
+
+### How it chooses the GPU
+
+With `--gpu=auto`, the default, each check that creates a pod has its own list of GPU types, `CANDIDATES` in [`check.ts`](../../../e2e/live/check.ts): 16 to 24 GB, enough for a 0.5B model and not much more. `unfit` takes only GPUs far below the K/V cache it asks, about 103 GB, and skips one the catalog lists with 48 GB or more.
+
+1. **Read.** For each GPU type, on Secure Cloud and, with `--community=true`, Community Cloud, it reads Runpod's catalog: price, memory and availability, with CUDA 13.0 for vLLM ([get a GPU type](../../web/runpod/get-a-gpu-type.md)). An ID the catalog does not know (404) is skipped.
+2. **Keep.** It keeps those with room (`LOW`, `MEDIUM` or `HIGH`) whose price keeps the run within its cap.
+3. **Rank.** It takes the cheapest; ties keep the list's order, Secure Cloud first. The `<check>.gpu` line names it, with how many candidates it considered and why it skipped the others.
+4. **Fall back.** When Runpod then has no room after all, it tries the next one, 3 GPU types at most. Each attempt has its own `<check>.start` line.
+
+The pod is created on the chosen cloud through Codeman's own `hosts` setting, `[secure]` or `[community]`. An explicit `--gpu=<id>` reads that GPU type alone, on the allowed clouds, and tries it once.
+
+**The cost cap holds for the whole run:** what its pods cost so far, at their prices, plus the prices of the pods still running and the next one for the run's remaining time, must stay within 1 USD. A pod whose creation's answer was lost counts as running.
+
+> [!WARNING]
+> On Community Cloud, the pod runs on a third party's machine ([self-hosted inference's risks](../../security/risks.md#self-hosted-inference)). It gets what every Codeman pod gets: the bootstrap's URLs and SHA-256, the model and settings, the admin token's hash, and Runpod's own pod-scoped key, with which the gateway terminates its pod. Never the account key. The run's token and the admin token for that pod reach it in requests, and open only that pod's gateway.
+
+### On Salad
+
+With `--provider=salad`, the check runs the same four checks on SaladCloud, through Codeman's [Salad adapter](../../installation/salad.md), each pod a container group of one replica reached through the Container Gateway ([`salad.ts`](../../../e2e/live/salad.ts)):
+
+- **Priority:** High, which no other workload preempts. A node can still be lost.
+- **GPU:** always `auto`. It reads the organization's [GPU classes](../../web/salad/list-the-gpu-classes.md), keeps the NVIDIA ones of 16 to 24 GB with a price at High, and asks [GPU availability](../../web/salad/get-gpu-availability.md) for each: those with nodes available at High have room. Then it keeps, ranks and falls back as on Runpod. The `<check>.gpu` line gives `available_nodes` instead of Runpod's availability.
+- **Hosts:** Salad's are community ones, so `--community=false` is refused, as is an explicit `--gpu`.
+- **A lost node:** a check that fails after Salad moved its pod's instance to another machine prints `<event>.infrastructure`, `result=infrastructure`: the node's failure, not Codeman's. `done` then says `infrastructure` if no other check failed. The exit code is still 1. A node lost with no replacement seen yet stays a plain failure.
+- **Cost:** Salad has no billing API, and bills an instance per second only while it is `running`: not while a node is allocated, the image downloads or the container is created ([billing](../../web/salad/saladcloud-pricing.md#billing)). At each read of a pod's state, the check also reads its group's [instances](../../web/salad/list-container-group-instances.md): the running instance's `update_time` is when it started running, and the first read that no longer shows it running ends it. `<check>.end` and `done` print `cost_usd` for that time at the listed price, with `cost_basis=billed`; when the check could not tell, because Salad gave no time or the pod moved, for the pod's whole life, with `cost_basis=upper_bound` (`mixed` when some pods are known). `<check>.end` adds `estimate_usd`, Codeman's own estimate of the run, which counts from the pod's creation. `done` keeps `pods_cost_usd`, every pod's whole life, which the run's cap counts.
+- **`probe`:** a diagnostic, on Salad only, that creates no running pod. It builds the Ollama pod's container group request as the adapter does, on the class `ollama` would take, and finds what in its command Salad refuses (`probeCommand` in [`salad.ts`](../../../e2e/live/salad.ts)): the whole body and the body without a command, then a bare `/bin/sh -c :`, then each item that runs a download tool alone, and the command's last two; the first item refused token by token, or by the shortest run of its tokens; a few single words, such as `curl`; and, when no such item is refused, a binary search over the command's prefixes and sizes. Every request has `autostart_policy: false`, so no instance starts and nothing is billed; each group Salad creates is deleted at once; requests are 300 ms apart, 50 at most, and a 429 stops it. Each `probe.<variant>` line gives the command's size, an item's or token's index and length, or a word by its name, the HTTP status and, for a refusal, the problem's text, the names of its top-level keys, its `type`, its `traceId`, its media type and size. The `probe` line names the cause, and the items, tokens and words refused. It passes when Salad accepts the whole body.
+- **vLLM:** Salad does not document its hosts' CUDA version, which vLLM's image needs at 13.0, and Codeman cannot check it before creating the pod. The `vllm` and `unfit` checks passed on an RTX 3080 Ti Laptop (16 GB) on 2026-11-24; a `vllm` failure for that reason is a finding about Salad, not a defect of the check.
+
+> [!WARNING]
+> Salad's key is a user's, and reaches every organization the user belongs to ([the Salad adapter](../../installation/salad.md)). The pods never get it. Unlike Runpod's, a pod gets no key of its own: it ends by exiting.
+
+> [!NOTE]
+> The bootstrap runs nothing whose SHA-256 differs from its pod's environment. So the Node.js version and the gateway's SHA-256 that the gateway reports ([routes](../../inference/self-hosted.md#routes)) prove what it checked: `node` and `gateway_sha256_match` in the output.
+
+### Run it
+
+1. Put the Runpod key in the environment, without it reaching the shell's history:
+
+   ```sh
+   read -rs CODEMAN_RUNPOD_API_KEY && export CODEMAN_RUNPOD_API_KEY
+   ```
+
+   On Salad, its key, organization and project instead:
+
+   ```sh
+   read -rs CODEMAN_SALAD_API_KEY && export CODEMAN_SALAD_API_KEY
+   export CODEMAN_SALAD_ORGANIZATION=<organization> CODEMAN_SALAD_PROJECT=<project>
+   ```
+
+2. Run the checks, from a clean checkout of a pushed commit:
+
+   ```sh
+   node e2e/live/pod.ts --checks=ollama,vllm,blocked,unfit
+   ```
+
+| Option | Environment variable | Default |
+| --- | --- | --- |
+| `--provider=<name>` | `CODEMAN_POD_CHECK_PROVIDER` | `runpod`. Or `salad` |
+| `--gpu=<id>` | `CODEMAN_POD_CHECK_GPU` | `auto`: [the cheapest with room](#how-it-chooses-the-gpu). Or, on Runpod, one of the IDs in `GPU_TYPES` ([`check.ts`](../../../e2e/live/check.ts)) |
+| `--community=<bool>` | `CODEMAN_POD_CHECK_COMMUNITY` | `true`: Community Cloud too. `false`: Secure Cloud only, on Runpod |
+| `--checks=<list>` | `CODEMAN_POD_CHECK_CHECKS` | `ollama,vllm` |
+| `--ollama-model=<name>` | `CODEMAN_POD_CHECK_OLLAMA_MODEL` | `qwen2.5:0.5b` |
+| `--vllm-model=<id>` | `CODEMAN_POD_CHECK_VLLM_MODEL` | `Qwen/Qwen2.5-0.5B-Instruct` |
+| `--max-minutes=<n>` | `CODEMAN_POD_CHECK_MAX_MINUTES` | `60`, from 15 to 60: the run stops there, and terminates its pods |
+| `--cleanup` | – | Off. Only terminates every pod that carries `CODEMAN_ORGANIZATION=codeman-pod-check` on the provider, as a workflow's last step would |
+
+It exits 0 when every check and the cleanup pass, 1 otherwise, and 2 on a wrong input.
+
+> [!CAUTION]
+> Run one at a time. Codeman's sweep terminates the pods of `codeman-pod-check` that its pool does not hold, so a run terminates another's. That also ends an earlier run's leftovers, which the output counts.
+
+### From the workflow
+
+The same workflow runs it, with the input `check` set to `pod`, on the branch to check. The run's commit must hold the `dist/gateway.js` the check expects.
+
+```sh
+gh workflow run e2e.yml --ref features/multi-service-pods -f check=pod -f pod-checks=ollama,vllm
+gh workflow run e2e.yml --ref features/multi-service-pods -f check=pod -f provider=salad
+```
+
+- **Inputs:** `provider`, `runpod` by default, or `salad`; `gpu`, `auto` by default, or on Runpod one of the IDs in `GPU_TYPES`; `community`, true by default, and required on Salad; `pod-checks`, `ollama` by default. The models and the max minutes keep the script's defaults.
+- **The account:** in the `E2E` environment, which admits only `main`, `features/*` and `fixes/*`: the secret `CODEMAN_RUNPOD_API_KEY`, or the secret `CODEMAN_SALAD_API_KEY` with the variables `CODEMAN_SALAD_ORGANIZATION` and `CODEMAN_SALAD_PROJECT`. Only the pod job names the environment, and only its two steps that call the provider get the chosen provider's account, the other's values being empty; `npm ci` runs before, without them.
+- **One at a time:** the job's `concurrency` group is `pod-check`, and a second run waits.
+- **Cleanup:** a last step, `if: always()`, runs `--cleanup`. The job stops at 75 minutes, after the script's own 60.
+- **Output:** only the [allowlisted lines](#what-it-prints), and no artifact. [`e2e/workflow.test.ts`](../../../e2e/workflow.test.ts) holds these rules.
+
+### What each check costs
+
+What the maintainer's dispatches took, as the [plan](../../plans/2026-11-04-run-e2e-on-github-runners.md#progress) records them. Prices and room change: the check picks the cheapest GPU with room at the time.
+
+| Check | Inputs | Time | Cost |
+| --- | --- | --- | --- |
+| The suite, every group | `check=suite` | `none` 54 min, `ollama` 24 min, `vllm` 8 min, in parallel jobs | Nothing: a public repository's standard runners are free |
+| `ollama` on Runpod | `check=pod pod-checks=ollama` | 1.5 min | $0.021, RTX 4090 on Secure Cloud |
+| `vllm` on Runpod | `pod-checks=vllm` | 8 min to serve | $0.035, RTX A5000 on Secure Cloud |
+| `unfit`, on either | `pod-checks=unfit` | Seconds | Nothing: refused before any pod. Before the estimate, its pod failed after 19 minutes, about $0.08 on Runpod's RTX A4000 |
+| `blocked`, on either | `pod-checks=blocked` | Seconds | Nothing: no pod |
+| `ollama` on Salad | `check=pod provider=salad` | 9 min to serve | At most $0.016, RTX 3080 Ti Laptop (16 GB) at High |
+| `vllm` on Salad | `provider=salad pod-checks=vllm` | 13 min to serve | At most $0.021, the same class |
+| `probe` on Salad | `provider=salad pod-checks=probe` | 30 s to 3.5 min | Nothing: no instance starts |
+
+The Salad figures are upper bounds, measured before the check counted only the time Salad bills, which leaves out the minutes of allocation and download. A run never exceeds 1 USD: the check refuses a pod that its max minutes would take past it.
+
+### What it prints
+
+Only allowlisted values: times, memory, prices, statuses, the GPU type, engine, model, commit, the GPU type's availability, and pass or fail per check. Never a pod's ID, URL or environment, a token, a key, or a response's headers or body. Codeman's own log lines name pods, so none is printed.
+
+- **Before each pod,** the `<check>.gpu` line gives the chosen GPU type, its `cloud`, price and catalog `availability` (`NONE`, `LOW`, `MEDIUM` or `HIGH`) and how many data centers have room, and counts the candidates: `eligible`, `no_room`, `missing` (unknown to the catalog, or not offered on that cloud) and `over_cap`. Each `<check>.start` line repeats the GPU type it tried, with its `attempt`.
+- **A failure** prints its kind and an HTTP status. A pod's start failure, such as the fit's, and the provider's own message, such as a refused creation's `detail`, print cleaned of every hidden value and URL, cut to 400 characters. A Salad message leaves out its path, which names the organization and the project.
+- **A creation refused with 400** is `unavailable` when the catalog listed no room, and `fail` when it listed some: Runpod gives no capacity no code of its own, and a request that breaks a rule is a 400 too ([create a pod](../../web/runpod/create-a-pod.md#errors)). Runpod's own words for no room, "no instances available" or "no longer any instances available", stay `unavailable`: room can go between the catalog's answer and the creation.
+
+In GitHub Actions (`GITHUB_ACTIONS=true`), each secret and identifier is masked with `::add-mask::` as soon as the run has it: the key first, with Salad's organization and project, which name the account (a value under 6 characters is never masked, since that would hide common words; no line prints them), each gateway's admin token before its pod is created, the run's token once Codeman gives it. A line that would show one is withheld whole.
+
+```text
+[pod-check] inputs result=pass provider=runpod gpu=auto community=true checks=ollama,vllm max_minutes=60
+[pod-check] gateway result=pass commit=0123456789abcdef0123456789abcdef01234567
+[pod-check] ollama.gpu result=pass gpu="NVIDIA RTX A4000" cloud=community price_per_hour_usd=0.17 memory_gb=16 availability=HIGH data_centers=6 data_centers_with_room=2 candidates=16 eligible=5 no_room=1 missing=10 over_cap=0
+[pod-check] ollama.start result=unavailable error=PodUnavailable http_status=400 message="Runpod created no pod with NVIDIA RTX A4000: Community Cloud: Runpod POST /pods failed with 400: Bad Request There are no longer any instances available with the requested specifications.." engine=ollama attempt=1 gpu="NVIDIA RTX A4000" cloud=community price_per_hour_usd=0.17 memory_gb=16 availability=HIGH data_centers=6 data_centers_with_room=2 pods=0
+[pod-check] ollama.start result=pass engine=ollama model=qwen2.5:0.5b attempt=2 gpu="NVIDIA RTX A5000" cloud=community price_per_hour_usd=0.22 memory_gb=24 availability=MEDIUM data_centers=5 data_centers_with_room=1 create_s=2.1 serve_s=214.6
+[pod-check] ollama.bootstrap result=pass node=v24.22.1 node_match=true gateway_sha256_match=true command=true image=true node_spec=true gateway_spec=true gateway_answered=true gateway_version=2
+[pod-check] ollama.health result=pass http_status=200 ready=true
+[pod-check] ollama.fit result=pass gpu_memory_gb=24 size_gb=1.2 vram_gb=1.2 context=32768 parallel=1 requested_parallel=1 source=search loads=1
+[pod-check] ollama.chat result=pass http_status=200 answered=true completion_tokens=2 chat_s=0.6
+[pod-check] ollama.end result=pass cost_usd=0.017 total_s=231.4
+[pod-check] vllm.gpu ...
+[pod-check] cleanup result=pass pods=2 leftover_pods=0
+[pod-check] done result=pass total_s=812.9 pods_cost_usd=0.061
+```
+
+The figures above are an example, not a measure.
 
 ## Read a failure
 
@@ -264,7 +420,7 @@ flowchart LR
 2. The session ([`session.ts`](../../../e2e/runtime/session.ts)) builds the images, runs `docker compose up --wait` with the profiles, and opens the pod launcher.
 3. For each scenario, it builds the world on the fakes: users, repositories with the templates, the App, the Google side and the agent's script.
 4. The scenario's actions run in order ([`run.ts`](../../../e2e/runtime/run.ts)). A `run` or an `advance` hands an event to the workflow simulator, or to act's driver ([under act](#under-act)), which runs each job in its own container on the internal jobs network. A cancelled or timed-out step's processes get SIGINT, then SIGTERM after 7.5 seconds, then SIGKILL 2.5 seconds later, as GitHub's runner sends them; the container stays, so the job's `always()` steps run.
-5. A pod the fake Runpod creates goes to the launcher, which runs the local image its allowlist maps the pinned image to.
+5. A pod the fake Runpod or Salad creates goes to the launcher, which runs the local image its allowlist maps the official image to, with the pod's command, the bootstrap.
 6. `expect`, `wait` and `advance` read the fakes and the store ([`expect.ts`](../../../e2e/runtime/expect.ts)). At the end, any violation fails the scenario, and a failure writes the report ([`report.ts`](../../../e2e/runtime/report.ts)).
 
 Each job container gets `--init`, `SYS_ADMIN`, unconfined seccomp and AppArmor, as the [local runner](../local-actions.md#run-the-tests) does, and 3 GiB of memory. The fakes get 192 MiB each, the fake GitHub 384 MiB, and the emulator 1 GiB. No container gets the Docker socket.

@@ -1681,7 +1681,7 @@ describe("vLLM settings on pods", () => {
       ],
       [
         ["vllm:", "  tool-call-parser: qwen4"],
-        "line 2: `vllm`'s `tool-call-parser` must be one of vLLM 0.31.0's, such as `qwen3_xml`, not `qwen4`",
+        "line 2: `vllm`'s `tool-call-parser` must be one of vLLM 0.32.0's, such as `qwen3_xml`, not `qwen4`",
       ],
       [
         ["vllm:", "  kv-cache-dtype: nvfp4"],

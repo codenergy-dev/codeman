@@ -50,6 +50,10 @@ The tasks that run at once with the same resolved settings. On a pod, a batch ma
 
 The pool's index of ready tasks that a pod profile could serve, one snapshot per repository, from which `select` forms batches. GitHub stays the source of truth. See [the board](runs/batches.md#the-board).
 
+### Bootstrap
+
+The command of a pod: it downloads Node.js and the [gateway](#gateway), checks each one's SHA-256, then runs the gateway, in the engine's official image. See [starting](inference/pods.md#starting-1).
+
 ### Brief
 
 The routing agent's instructions to one routed stage it chooses. The routing stage's run comment shows each brief. See [routing](tasks/stages.md#routing).
@@ -253,11 +257,11 @@ How many requests a pod's engine serves at once: Ollama's `num-parallel` or vLLM
 
 ### Pinned pod image
 
-The image of an engine that pods run, pinned by digest in `POD_IMAGES`, not the latest build. A change to the gateway reaches pods only once its new digest is pinned. See [pod images](development/guide.md#pod-images).
+The official image of an engine that pods run, pinned by its index digest in `ENGINE_RELEASES`, not the latest release. A new engine release reaches pods only once it is pinned. See [pod images](settings/pod-engines.md#pod-images).
 
 ### Pod
 
-A GPU container that Codeman creates, with Codeman's image for its engine, to serve the pool's tasks with the same pod settings: a pod on Runpod, or a container group of one replica on Salad. It runs on the [hosts](#hosts) its settings allow. Runpod bills every second it exists, Salad every second its container runs. See [pods](inference/pods.md).
+A GPU container that Codeman creates, from its engine's official image, to serve the pool's tasks with the same pod settings: a pod on Runpod, or a container group of one replica on Salad. It runs on the [hosts](#hosts) its settings allow. Runpod bills every second it exists, Salad every second its container runs. See [pods](inference/pods.md).
 
 ### Pod registry
 
@@ -265,7 +269,7 @@ The pool's documents of its pods in the backend: each pod's settings, capacity, 
 
 ### Pod settings
 
-The hash of what a pod serves: its model, GPU type, image and `pod-reuse`, its `hosts` and `priority` when not the provider's defaults, and its engine's settings with their derived values. Tasks share a pod only when their pod settings are the same. See [pods](inference/pods.md).
+The hash of what a pod serves: its model, GPU type, image and `pod-reuse`, its `hosts` and `priority` when not the provider's defaults, its engine's settings with their derived values, and what its [bootstrap](#bootstrap) downloads. Tasks share a pod only when their pod settings are the same. See [pods](inference/pods.md).
 
 ### Pool
 
@@ -292,6 +296,10 @@ Always qualified: an [inference provider](#inference-provider), in the settings,
 The settings that only some [inference providers](#inference-provider) take: `engine`, `gpu`, `endpoint`, `pod-reuse`, `hosts` and `priority`, and the [engine blocks](#engine-block). A layer or profile that names another provider keeps none of the inherited ones. See [provider settings across layers](settings/provider-settings-across-layers.md).
 
 ## R
+
+### Release policy
+
+What `open-key` checks of the releases a pod would run, before any pod: their age, their advisories and their provenance. See [release policy](security/release-policy.md).
 
 ### Reservation
 

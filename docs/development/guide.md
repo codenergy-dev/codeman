@@ -38,6 +38,7 @@ The [end-to-end suite](e2e/suite.md) runs the bundles of `npm run build:e2e`, wh
 | `salad` | `https://api.salad.com`, Salad's public API |
 | `saladPods` | A Salad pod's URL, its Container Gateway's `https://{networking.dns}`; this value is a URL with `{id}` and `{port}` |
 | `huggingFace` | `https://huggingface.co`: the model's information, checked before a vLLM pod |
+| `ollamaRegistry` | `https://registry.ollama.ai`, read for the estimate of an Ollama pod's fit. The suite has no fake of it yet: without this key, the e2e build tries no estimate for Ollama |
 | `npm` | `https://registry.npmjs.org`, where OpenCode is downloaded; its pinned integrity is still checked |
 | `googleSts`, `googleIamCredentials`, `firestore` | Google's STS, IAM Credentials and Firestore |
 
@@ -78,7 +79,7 @@ Tests sit next to the code they test, as `*.test.ts`. Most run everywhere. These
 
 A second job, `check-ubuntu-26-04`, runs the same steps on `ubuntu-26.04` while Codeman's sandbox is reviewed there ([the review](../plans/2026-11-05-review-codeman-on-ubuntu-26-04.md)). Its failures show what differs from Ubuntu 24.04; the templates and the e2e workflow stay on `ubuntu-24.04` until the review moves them.
 
-CI has no Firestore emulator, so the emulator's tests are skipped there. The pod images have a workflow of their own; see [pod images](#pod-images).
+CI has no Firestore emulator, so the emulator's tests are skipped there.
 
 ## Source layout
 
@@ -112,7 +113,7 @@ Each step takes `Services` ([`src/services.ts`](../../src/services.ts)), which h
 | `store()` | The store of the [backend](../glossary.md#backend) |
 | `ledger(job, pool)` | The job's [ledger](../glossary.md#ledger) |
 
-The gateway has its own entry point, [`src/gateway/main.ts`](../../src/gateway/main.ts), bundled into `dist/gateway.js`. It runs in Codeman's pod images and in the agent job, and uses Node's modules only.
+The gateway has its own entry point, [`src/gateway/main.ts`](../../src/gateway/main.ts), bundled into `dist/gateway.js`. It runs in each pod, which downloads it at start ([pod images](#pod-images)), and in the agent job, and uses Node's modules only.
 
 ### Interfaces and adapters
 
@@ -135,7 +136,9 @@ The gateway has its own entry point, [`src/gateway/main.ts`](../../src/gateway/m
 | --- | --- | --- |
 | Providers and their settings | `src/inference/providers.ts` | [Providers](../settings/providers.md) |
 | Pod engines' settings | `src/inference/ollama.ts`, `src/inference/vllm.ts` | [Ollama settings](../settings/ollama.md), [vLLM settings](../settings/vllm.md) |
-| Pod images by [engine](../glossary.md#engine) | `src/inference/images.ts` | [Pod images](#pod-images) |
+| What pods run, by [engine](../glossary.md#engine): the catalog | `src/inference/images.ts` | [Pod images](#pod-images) |
+| The release policy, and what a pod's record holds of it | `src/inference/release-policy.ts`, `src/inference/osv.ts`, `src/inference/resolution.ts` | [Release policy](../security/release-policy.md) |
+| A pod's command, the [bootstrap](../glossary.md#bootstrap) | `src/gateway/bootstrap.ts` | [Starting](../inference/pods.md#starting-1) |
 | A vLLM pod's model on Hugging Face | `src/inference/huggingface.ts` | [The model](../settings/vllm.md#the-model) |
 | The [pod registry](../glossary.md#pod-registry) | `src/inference/registry.ts` | [Pods](../inference/pods.md) |
 | The gateway | `src/gateway/` | [The gateway](../inference/self-hosted.md#the-gateway) |
@@ -169,7 +172,7 @@ The gateway has its own entry point, [`src/gateway/main.ts`](../../src/gateway/m
 | `dist/` | The bundled action and gateway |
 | `templates/` | The files that target repositories copy; see [template version](#template-version) |
 | `firebase/firestore.rules` | The backend's security rules, which deny every client. [Installation](../installation/setup.md#4-set-up-the-backend) publishes them |
-| `docker/pod/` | Codeman's pod images, one target per engine; see [pod images](#pod-images) |
+| `scripts/scan-image.sh` | Scans an image with Trivy before it is pinned; see [pin a new engine version](../security/release-policy.md#pin-a-new-engine-version) |
 | `docker/runner/`, `scripts/runner.sh` | A local stand-in for GitHub's `ubuntu-24.04` runner, and the script that runs a command in it; see [running Actions locally](local-actions.md) |
 | `e2e/` | The [end-to-end suite](e2e/suite.md): its fakes, runtime, infrastructure, fixtures and scenarios. `e2e/.build/` and `e2e/.out/` are ignored |
 | `docs/web/` | The documentation of the third-party services Codeman uses |
@@ -192,7 +195,7 @@ Codeman has no tags or packages: every commit of `main` is a version that reposi
 - **Merging to `main` releases.** Each repository runs the commit that its `CODEMAN_COMMIT_SHA` variable names, its [Codeman's commit](../glossary.md#codemans-commit). It moves to a new one only when that variable changes ([installation](../installation/setup.md#5-add-the-workflow-and-settings)).
 - **A user-facing change** goes in [upgrading](../installation/upgrading.md): what changed, and what to do.
 - **A change the templates must follow** bumps the [template version](#template-version).
-- **A change to the gateway or the pod images** reaches pods only after a re-pin; see [pod images](#pod-images).
+- **A change to the gateway** reaches new pods with the commit a repository runs. **A new engine or Node.js release** reaches them once it is pinned; see [pod images](#pod-images).
 
 ## Template version
 
@@ -232,63 +235,16 @@ flowchart TD
 
 ## Pod images
 
-[Pods](../glossary.md#pod) run one of Codeman's images, one per engine. Each is the engine's official image, plus Node's binary and the gateway, `dist/gateway.js`. [`docker/pod/Dockerfile`](../../docker/pod/Dockerfile) has a target per engine.
+[Pods](../glossary.md#pod) start from each engine's official image, pinned by its index digest in `ENGINE_RELEASES` in [`src/inference/images.ts`](../../src/inference/images.ts). Their command is the bootstrap ([`src/gateway/bootstrap.ts`](../../src/gateway/bootstrap.ts)): it downloads Node.js (`NODE_RELEASE`) and the gateway, `dist/gateway.js` at the action's commit on `raw.githubusercontent.com`, checks each one's SHA-256, then runs the gateway ([the plan](../plans/2026-10-30-start-pods-from-official-engine-images.md)).
 
-| Engine | Dockerfile target | Package |
-| --- | --- | --- |
-| Ollama | `ollama` | `ghcr.io/<owner>/codeman-ollama` |
-| vLLM | `vllm` | `ghcr.io/<owner>/codeman-vllm` |
+Codeman no longer builds or publishes images of its own. The ones it published, `ghcr.io/<owner>/codeman-<engine>`, stay on GHCR, untouched: pods created from them may still run.
 
 > [!IMPORTANT]
-> Pods run the images pinned in `POD_IMAGES`, not the latest build. A change to `docker/pod/`, such as a base image's digest, or to `dist/gateway.js` reaches pods only once the new digests are pinned, in a commit after the one the images were built from.
-
-```mermaid
-sequenceDiagram
-  actor M as Maintainer
-  participant WF as pod-image.yml, one leg per engine
-  participant R as GitHub container registry
-  participant S as src/inference/images.ts
-  M->>WF: Push to main that changes the image or the gateway, or run it by hand
-  WF->>WF: Free the disk, vLLM only, then build the engine's target
-  WF->>R: Push the image, tagged with the commit
-  WF-->>M: The run's summary lists the digests
-  opt First publish of a package
-    M->>R: Make the package public
-    M->>R: Pull it by digest while logged out
-  end
-  M->>S: Pin each digest in POD_IMAGES, in a commit of its own
-  Note over M,S: Until then, new pods run the image pinned before, and its gateway
-```
-
-### Publish
-
-[`.github/workflows/pod-image.yml`](../../.github/workflows/pod-image.yml) builds and publishes both images, one leg per engine:
-
-- **When:** a push to `main` that changes `docker/pod/`, `dist/gateway.js` or the workflow, or a manual run.
-- **Where:** GitHub's container registry, as `ghcr.io/<owner>/codeman-<engine>:<commit>`.
-- **Output:** the run's summary lists both digests.
-- **Time:** the vLLM leg first frees the runner's disk. It may take most of its 60 minutes the first time, while GHCR has none of vLLM's layers.
-
-### Make a new package public, once
-
-A package that GHCR creates is private. Runpod and Salad pull images without credentials, so a pod on a private image never starts.
-
-After the first publish of `codeman-ollama` and of `codeman-vllm`:
-
-1. On GitHub, open the owner's **Packages** tab, then the package.
-2. Go to **Package settings** › **Danger Zone** › **Change visibility** › **Public**, and type the package's name to confirm. The package is public.
-3. While logged out, run `docker pull ghcr.io/<owner>/codeman-<engine>@sha256:<digest>`. The pull succeeds.
-
-An organization must allow public packages: organization **Settings** › **Packages** › **Package creation**.
+> A change to `dist/gateway.js` reaches new pods with the commit the action runs from: there is no image to publish. A new engine release reaches them once it is pinned.
 
 ### Pin the digests
 
-1. Check that each image's tag is the commit it was built from.
-2. In [`src/inference/images.ts`](../../src/inference/images.ts), set the engine's line of `POD_IMAGES`, such as `vllm: "ghcr.io/codenergy-dev/codeman-vllm@sha256:<digest>"`.
-3. Commit it on its own, after the commit the images were built from.
-4. Add a row to the [audit log](dependencies.md#audit-log): the commit the images were built from, the digests, and what changed in them.
-
-A test checks that each pinned image is its engine's package, by digest. The pinned digest is what the glossary calls a [pinned pod image](../glossary.md#pinned-pod-image).
+How to choose, scan, record and pin a release is in [pin a new engine version](../security/release-policy.md#pin-a-new-engine-version).
 
 ### Keep older images listed
 
@@ -304,7 +260,7 @@ Pods on an image pinned before may still exist. Codeman must know what their gat
 - When the Ollama image changes, the image it replaces stays in the lists where it belongs.
 - When new digests are pinned, the ones they replace stay in `IMAGES_BEFORE_SALAD`, and the new ones are not added: they serve on Salad.
 - Both lists hold `ghcr.io/codenergy-dev/codeman-pod` digests, pinned before the images per engine.
-- An image built from the current code needs neither list.
+- The official images of `ENGINE_RELEASES` need neither list.
 
 ## Firestore's emulator
 

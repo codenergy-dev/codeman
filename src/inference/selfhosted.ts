@@ -1,5 +1,12 @@
 import { createHmac, randomBytes } from "node:crypto";
 import { usd } from "../budget.ts";
+import { type BootstrapArtifacts, bootstrapCommand, podBootstrap } from "../gateway/bootstrap.ts";
+import {
+  estimateMessage,
+  estimateOllama,
+  estimateVllm,
+  type FitEstimate,
+} from "../gateway/estimate.ts";
 import { type EndedRun, GATEWAY_VERSION, sha256 } from "../gateway/gateway.ts";
 import { type FitReport, GATEWAY_PORT } from "../gateway/pod.ts";
 import type { GatewayUsage, Span } from "../gateway/usage.ts";
@@ -13,6 +20,7 @@ import type { InferenceEngine } from "./engine.ts";
 import {
   DEFAULT_HOSTS,
   endpointProblems,
+  FitRefused,
   type GpuAccount,
   type GpuProvider,
   type HostKind,
@@ -27,6 +35,7 @@ import {
 } from "./gpu.ts";
 import { HuggingFace, type ModelHub } from "./huggingface.ts";
 import { IMAGES_WITHOUT_OLLAMA_SETTINGS, OLLAMA_VERSION, SINGLE_RUN_IMAGES } from "./ollama.ts";
+import { type OllamaModels, OllamaRegistry } from "./ollama-registry.ts";
 import {
   ConcurrencyReached,
   type InferenceProvider,
@@ -48,6 +57,7 @@ import {
   registered,
   UNAVAILABLE,
 } from "./registry.ts";
+import { type PodReleases, type Resolution, resolvePod } from "./resolution.ts";
 import { VLLM_MIN_CUDA } from "./vllm.ts";
 
 /** How long a new pod has to pull its image and model and serve it. */
@@ -98,8 +108,17 @@ export interface SelfHostedSettings {
 
 export interface PodSettings extends SelfHostedSettings {
   gpuType: string;
-  /** The pod image, by digest. */
+  /**
+   * The pod image, by digest: the engine's official one from the catalog, or the `pod-image`
+   * input's for Ollama.
+   */
   image: string;
+  /**
+   * What the pod's bootstrap downloads and runs (src/gateway/bootstrap.ts): Node.js and the
+   * gateway, by URL and SHA-256. `open` resolves it before it computes the settings key; the
+   * settings a provider is given leave it undefined.
+   */
+  bootstrap?: BootstrapArtifacts | undefined;
   /** `task`: a pod serves the next runs on its settings too; `run`: it ends with its runs. */
   reuse: "task" | "run";
   /**
@@ -175,6 +194,14 @@ export interface PodHandle {
   start: number;
   /** When the pod was created; its whole life counts in the task's spend. */
   created?: number | undefined;
+  /**
+   * When the provider began billing the pod, as the run that created it saw it once it served:
+   * on Salad, its instance's start of `running`, after its allocation and image download, which
+   * Salad does not bill. `close` counts from it while the provider still reports the same, else
+   * from `created` (decision 5 of the plan for Salad pods). Absent on other providers' pods, and
+   * on runs that joined a pod.
+   */
+  billedFrom?: number | undefined;
   pricePerSecond: number;
   /**
    * What the run may spend, in USD, which caps its cost on a shared pod when the gateway does not
@@ -280,14 +307,17 @@ function quotedVariables(settings: Pick<PodSettings, "ollama">): string {
  * of its own. Ollama settings are part of them, only when there are some, so pods without any
  * keep their hash (choice 9 of the Ollama settings plan); a vLLM pod's has its engine and its
  * vLLM settings (decision 9 of the plan for vLLM on pods). Its kinds of host and its priority
- * are part of them only when not the defaults, so pods from before them keep their hash.
+ * are part of them only when not the defaults, so pods from before them keep their hash. A pod
+ * its bootstrap starts has the gateway's SHA-256, and a hash of the bootstrap's command and the
+ * Node.js it downloads, so pods whose gateways or bootstraps differ never mix (the plan to start
+ * pods from official engine images): before it, the image's digest named the gateway.
  */
 export function podSettingsKey(
   settings: Pick<PodSettings, "model" | "gpuType" | "image" | "reuse" | "ollama"> &
-    Partial<Pick<PodSettings, "engine" | "vllm" | "hosts" | "priority">>,
+    Partial<Pick<PodSettings, "engine" | "vllm" | "hosts" | "priority" | "bootstrap">>,
   holder: string,
 ): string {
-  const { model, gpuType, image, reuse, priority } = settings;
+  const { model, gpuType, image, reuse, priority, bootstrap } = settings;
   const ollama = ollamaVariables(settings);
   const vllm = settings.engine && onVllm({ engine: settings.engine });
   const hosts = (settings.hosts ?? DEFAULT_HOSTS).join(",");
@@ -301,6 +331,12 @@ export function podSettingsKey(
     ...(vllm ? ["engine vllm", `vllm ${vllmValues(settings).join(" ")}`] : []),
     ...(hosts !== DEFAULT_HOSTS.join(",") ? [`hosts ${hosts}`] : []),
     ...(priority !== undefined ? [`priority ${priority}`] : []),
+    ...(bootstrap
+      ? [
+          `gateway ${bootstrap.gateway.sha256}`,
+          `bootstrap ${sha256(JSON.stringify([bootstrapCommand(), bootstrap.node.url, bootstrap.node.sha256]))}`,
+        ]
+      : []),
   ];
   return sha256(parts.join("\n")).slice(0, 16);
 }
@@ -430,6 +466,10 @@ export interface SelfHostedOptions {
   wait?: (ms: number) => Promise<void>;
   /** Where a vLLM pod's model is checked and sized: Hugging Face's API by default. */
   hub?: ModelHub;
+  /** Where an Ollama pod's model is read for the estimate of its fit: Ollama's registry by default. */
+  ollamaModels?: OllamaModels;
+  /** What a pod runs, and how `open` checks it against the release policy before any pod. */
+  releases: PodReleases;
 }
 
 /**
@@ -492,7 +532,7 @@ export class PodInference implements InferenceProvider {
     if (onVllm(this.#settings)) {
       if (image) return;
       throw new Error(
-        "This version of Codeman pins no vLLM pod image yet (`POD_IMAGES` in src/inference/images.ts), so no pod was created: use a version that pins one, or `engine: ollama`. See docs/settings/vllm.md#pod-images.",
+        "This version of Codeman pins no vLLM pod image yet (`ENGINE_RELEASES` in src/inference/images.ts), so no pod was created: use a version that pins one, or `engine: ollama`. See docs/settings/vllm.md#pod-images.",
       );
     }
     if (fitsTheGpu(image)) return;
@@ -508,15 +548,30 @@ export class PodInference implements InferenceProvider {
     }
   }
 
+  /**
+   * Gives the run a pod of its settings. First, before any pod is swept, joined or created, it
+   * resolves what the pod runs and checks it against the release policy: a block stops the run.
+   */
   async open(run: RunRequest, log: Log): Promise<OpenedRun> {
     const token = randomBytes(32).toString("base64url");
     const holder = leaseHolder(this.#options.repository, run.task);
-    const settings = podSettingsKey(this.#settings, holder);
     let handle: PodHandle;
     try {
       this.#checkImage(log);
+      const { engine, image } = this.#settings;
+      const resolution = await resolvePod(
+        engine.name,
+        image,
+        this.#options.releases,
+        this.#now(),
+        log,
+      );
+      const settings = podSettingsKey(
+        { ...this.#settings, bootstrap: resolution.artifacts },
+        holder,
+      );
       await this.#sweep(holder, settings, log);
-      handle = await this.#claim(run, holder, settings, token, log);
+      handle = await this.#claim(run, holder, settings, token, resolution, log);
     } catch (error) {
       if (error instanceof ConcurrencyReached) throw error;
       if (error instanceof PodUnavailable) throw new ProfileUnavailable(error, this.#takeEvents());
@@ -600,7 +655,9 @@ export class PodInference implements InferenceProvider {
     const { shared } = handle;
     const ended = await this.#endRun(handle, log);
     const keep = handle.reuse === "task" && ended !== undefined;
-    await this.#leave(handle, keep, ended === undefined, log);
+    // Before the pod may end, while the provider still lists its instance.
+    const billedStart = await billedFromHandle(this.#host, handle, this.#now());
+    await this.#leave(handle, keep, ended === undefined, log, billedStart);
     const now = this.#now();
     const usage = { ...tokens(ended), pod: handle.podId, keptPod: keep ? handle.podId : undefined };
     if (shared) {
@@ -620,17 +677,18 @@ export class PodInference implements InferenceProvider {
     // Runpod bills a running pod late, and Salad not at all, so the pod also counts for its
     // whole life so far, including a kept pod's time between runs; its billing, when the
     // provider has one, wins once higher.
+    // Salad's pods from when Salad began billing them, when known (decision 5 of the plan for
+    // Salad pods).
+    const from = billedStart ?? handle.created;
     const lifetime =
-      handle.created === undefined
-        ? undefined
-        : podCost(new Date(handle.created), now, handle.pricePerSecond);
+      from === undefined ? undefined : podCost(new Date(from), now, handle.pricePerSecond);
     const podCosts = billed === undefined && lifetime === undefined ? undefined : { ...billed };
     if (podCosts && lifetime !== undefined) {
       podCosts[handle.podId] = Number(Math.max(podCosts[handle.podId] ?? 0, lifetime).toFixed(6));
     }
     return {
       ...usage,
-      cost: podCost(new Date(handle.start), now, handle.pricePerSecond),
+      cost: podCost(new Date(Math.max(handle.start, billedStart ?? 0)), now, handle.pricePerSecond),
       podCosts,
       pods: this.#takeEvents(),
     };
@@ -675,7 +733,13 @@ export class PodInference implements InferenceProvider {
    * lease holds it. A pod whose gateway did not answer takes no other task. When the registry
    * cannot be reached, the pod stays: it terminates itself once no run uses it.
    */
-  async #leave(handle: PodHandle, keep: boolean, unreachable: boolean, log: Log): Promise<void> {
+  async #leave(
+    handle: PodHandle,
+    keep: boolean,
+    unreachable: boolean,
+    log: Log,
+    billed?: number,
+  ): Promise<void> {
     let left: Awaited<ReturnType<PodRegistry["leave"]>>;
     try {
       left = await this.#registry.leave(handle.nonce, handle.holder, {
@@ -692,7 +756,7 @@ export class PodInference implements InferenceProvider {
       this.#events.push(
         await terminatePod(this.#host, handle.podId, left.pod?.pod ? left.pod : undefined, {
           reason: "no run uses it and no task keeps it",
-          life: lifeOf(handle, this.#options.gpu.name, this.#now()),
+          life: lifeOf(handle, this.#options.gpu.name, this.#now(), billed),
           log,
         }),
       );
@@ -832,6 +896,7 @@ export class PodInference implements InferenceProvider {
     holder: string,
     settings: string,
     token: string,
+    resolution: Resolution,
     log: Log,
   ): Promise<PodHandle> {
     const { model, gpuType, image, reuse } = this.#settings;
@@ -849,6 +914,7 @@ export class PodInference implements InferenceProvider {
       ...(capacity === undefined ? {} : { capacity }),
       ...(batch === undefined ? {} : { batch }),
       ...(concurrency === undefined ? {} : { key: concurrency.key }),
+      resolution: resolution.fields,
     };
     let waiting = false;
     for (let claims = 0; claims < CLAIMS; claims++) {
@@ -874,7 +940,7 @@ export class PodInference implements InferenceProvider {
         continue;
       }
       if (claim.kind === "create") {
-        const handle = await this.#create(claim.pod, run, holder, token, log);
+        const handle = await this.#create(claim.pod, run, holder, token, resolution, log);
         if (handle) return handle;
         continue;
       }
@@ -918,17 +984,20 @@ export class PodInference implements InferenceProvider {
     run: RunRequest,
     holder: string,
     token: string,
+    resolution: Resolution,
     log: Log,
   ): Promise<PodHandle | undefined> {
     let launched: { pod: Pod; listed: number };
     try {
-      launched = await this.#launch(record, log);
+      launched = await this.#launch(record, resolution, log);
     } catch (error) {
       await this.#registry.end(
         record.nonce,
         error instanceof PodUnavailable
           ? `${UNAVAILABLE}${error.message}`
-          : "the provider did not create it",
+          : error instanceof FitRefused
+            ? `${START_FAILED}${error.message}`
+            : "the provider did not create it",
       );
       throw error;
     }
@@ -966,11 +1035,13 @@ export class PodInference implements InferenceProvider {
             ? `${UNAVAILABLE}${error.message}`
             : `it did not serve ${this.#settings.model}`,
       );
+      // Before its end, while the provider still lists its instance.
+      const from = (await billedSince(this.#host, pod.id, life.from, this.#now())) ?? life.from;
       this.#events.push(
         await terminatePod(this.#host, pod.id, undefined, {
-          reason: `it did not serve ${this.#settings.model}; it cost about ${usd(podCost(pod.createdAt, this.#now(), listed))}`,
+          reason: `it did not serve ${this.#settings.model}; it cost about ${usd(podCost(new Date(from), this.#now(), life.pricePerSecond))}`,
           log,
-          life: { ...life, to: this.#now().getTime() },
+          life: { ...life, from, to: this.#now().getTime() },
           warning: true,
         }),
       );
@@ -1071,6 +1142,7 @@ export class PodInference implements InferenceProvider {
         await this.#reportFit(status.fit, podId, own, log);
       }
     }
+    const billedFrom = own ? await billedSince(this.#host, podId, created, this.#now()) : undefined;
     const handle: PodHandle = {
       mode: "pod",
       podId,
@@ -1078,6 +1150,7 @@ export class PodInference implements InferenceProvider {
       url: target.url,
       start: startedBefore && !own ? this.#now().getTime() : created,
       created,
+      ...(billedFrom !== undefined ? { billedFrom } : {}),
       pricePerSecond:
         running.pricePerSecond ??
         record.pricePerSecond ??
@@ -1114,22 +1187,36 @@ export class PodInference implements InferenceProvider {
     return (this.#options.wait ?? ((delay) => new Promise((done) => setTimeout(done, delay))))(ms);
   }
 
-  /** Creates the pod of a creation lease, named by its nonce, with its settings in its environment. */
-  async #launch(record: RegisteredPod, log: Log): Promise<{ pod: Pod; listed: number }> {
+  /**
+   * Creates the pod of a creation lease, named by its nonce, with its settings in its environment.
+   * Its command is the bootstrap, which downloads Node.js and the gateway, checks them, and runs
+   * the gateway, which starts the image's engine.
+   */
+  async #launch(
+    record: RegisteredPod,
+    resolution: Resolution,
+    log: Log,
+  ): Promise<{ pod: Pod; listed: number }> {
     const { model, gpuType, image, engine, priority } = this.#settings;
     if (!image) throw new Error("No pod image is pinned; see docs/installation/runpod.md#pods.");
+    const bootstrap = podBootstrap(resolution.artifacts);
     const hosts = this.#hosts;
     const prices = await this.#prices(gpuType, hosts, priority);
     const vllm = onVllm(this.#settings) ? await this.#prepareVllm(log) : undefined;
     const fits = !vllm && fitsTheGpu(image);
-    const memory = fits ? await this.#host.memory?.(gpuType).catch(() => undefined) : undefined;
+    const gpuMemory =
+      vllm || fits ? await this.#host.memory?.(gpuType).catch(() => undefined) : undefined;
+    const memory = fits ? gpuMemory : undefined;
+    if (vllm || fits) await this.#estimate(vllm?.weightsBytes, gpuMemory, log);
     const cached = vllm ? vllm.cached : fits ? await this.#cachedFit(log) : undefined;
     const owner = this.#options.repository.owner.toLowerCase();
     const now = this.#now();
     const pod = await this.#host.create({
       name: `codeman-${owner}-${record.settings}`.slice(0, 100),
       image,
+      command: bootstrap.command,
       env: {
+        ...bootstrap.env,
         ...(Object.keys(this.#settings.ollama ?? {}).length > 0
           ? { CODEMAN_OLLAMA: JSON.stringify(this.#settings.ollama) }
           : {}),
@@ -1199,9 +1286,11 @@ export class PodInference implements InferenceProvider {
    * on Hugging Face with safetensors weights, whose size sets the pod's disk (decision 10). Gives
    * the disk and the cached context.
    */
-  async #prepareVllm(
-    log: Log,
-  ): Promise<{ diskGb: number; cached: { contextLength: number } | undefined }> {
+  async #prepareVllm(log: Log): Promise<{
+    diskGb: number;
+    weightsBytes: number;
+    cached: { contextLength: number } | undefined;
+  }> {
     const { gpuType, model } = this.#settings;
     // Any kind of host the pod may run on will do: the provider places it on one with room.
     if (this.#host.cudaVersions) {
@@ -1232,7 +1321,60 @@ export class PodInference implements InferenceProvider {
     log.info(
       `Hugging Face serves ${models.map(({ id }) => id).join(" and ")}: ${(weights / 1e9).toFixed(1)} GB of weights, so the pod gets ${diskGb} GB of disk.`,
     );
-    return { diskGb, cached: await this.#cachedContext(log) };
+    return { diskGb, weightsBytes: weights, cached: await this.#cachedContext(log) };
+  }
+
+  /**
+   * Before creating a pod, at no cost: Codeman's estimate of the fit (the plan of 2026-11-23),
+   * from the model's `config.json` on Hugging Face for vLLM, or its manifest and GGUF header in
+   * Ollama's registry for Ollama, and the GPU's memory. Throws `FitRefused` when even its
+   * optimistic bound falls short; logs and goes on when it cannot tell, since the gateway's fit
+   * decides anyway.
+   */
+  async #estimate(
+    vllmWeightsBytes: number | undefined,
+    gpuMemoryGb: number | undefined,
+    log: Log,
+  ): Promise<void> {
+    const { model } = this.#settings;
+    const skip = (why: string) =>
+      log.info(
+        `Codeman cannot estimate how ${model} fits the GPU (${why}); the pod's gateway fits it.`,
+      );
+    if (!gpuMemoryGb) return skip("the provider does not give the GPU's memory");
+    let estimate: FitEstimate | undefined;
+    if (vllmWeightsBytes !== undefined) {
+      const hub = this.#options.hub ?? new HuggingFace(this.#options.fetch);
+      if (!hub.config) return skip("no configuration of the model");
+      let config: Readonly<Record<string, unknown>>;
+      try {
+        config = await hub.config(model);
+      } catch (error) {
+        return skip(`its config.json: ${error instanceof Error ? error.message : error}`);
+      }
+      estimate = estimateVllm({
+        config,
+        weightsBytes: vllmWeightsBytes,
+        gpuMemoryGb,
+        settings: this.#settings.vllm ?? {},
+      });
+    } else {
+      const registry = this.#options.ollamaModels ?? new OllamaRegistry(this.#options.fetch);
+      const facts = await registry.model(model);
+      if ("unknown" in facts) return skip(facts.unknown);
+      estimate = estimateOllama({
+        info: facts.info,
+        weightsBytes: facts.weightsBytes,
+        gpuMemoryGb,
+        variables: this.#settings.ollama ?? {},
+      });
+    }
+    if (!estimate) return skip("its architecture is not one the estimate counts");
+    if (!estimate.fits) throw new FitRefused(estimateMessage(model, gpuMemoryGb, estimate));
+    const gib = (bytes: number) => (bytes / 2 ** 30).toFixed(2);
+    log.info(
+      `By Codeman's estimate, ${model}'s K/V cache needs ${gib(estimate.needed)} GiB for ${estimate.parallel} parallel request(s) of ${estimate.context} tokens, of the ${gib(estimate.room)} GiB at most that the GPU leaves it; the pod's gateway fits it.`,
+    );
   }
 
   /** The context that served a vLLM pod's settings before, from the cache of fits. */
@@ -1488,15 +1630,51 @@ async function terminatePod(
   return { pod: id, event: "terminated", reason: options.reason, ...(life ? { life } : {}) };
 }
 
-/** A pod's life as a run's handle knows it, ending at `now`. */
-function lifeOf(handle: PodHandle, provider: string, now: Date): PodLife {
+/**
+ * A pod's life as a run's handle knows it, ending at `now`: from `billed`, when the provider
+ * began billing it, if known, else from its creation.
+ */
+function lifeOf(handle: PodHandle, provider: string, now: Date, billed?: number): PodLife {
   return {
     record: handle.nonce,
     provider,
-    from: handle.created ?? handle.start,
+    from: billed ?? handle.created ?? handle.start,
     to: now.getTime(),
     pricePerSecond: handle.pricePerSecond,
   };
+}
+
+/**
+ * When the provider began billing a pod, in ms, for a provider that says (`billedSince`):
+ * undefined when it does not, cannot tell, or tells a time before `created` or after `now`.
+ */
+async function billedSince(
+  host: Pick<PodHost, "billedSince">,
+  id: string,
+  created: number,
+  now: Date,
+): Promise<number | undefined> {
+  const since = await host.billedSince?.(id).catch(() => undefined);
+  const at = since?.getTime();
+  return at !== undefined && Number.isFinite(at) && at >= created && at <= now.getTime()
+    ? at
+    : undefined;
+}
+
+/**
+ * When the provider began billing a run's pod, as the handle recorded it, once the provider still
+ * tells the same time: the pod has run on one instance since. Undefined otherwise, and the pod
+ * then counts from its creation (decision 5 of the plan for Salad pods).
+ */
+async function billedFromHandle(
+  host: Pick<PodHost, "billedSince">,
+  handle: PodHandle,
+  now: Date,
+): Promise<number | undefined> {
+  if (handle.billedFrom === undefined) return undefined;
+  const created = handle.created ?? handle.start;
+  const since = await billedSince(host, handle.podId, created, now);
+  return since === handle.billedFrom ? since : undefined;
 }
 
 /**
@@ -1536,7 +1714,7 @@ function tokens(usage: GatewayUsage | undefined): Omit<RunUsage, "cost"> {
  * releases the task on its gateway, so its idle time no longer goes to the task.
  */
 export async function releasePod(
-  host: Pick<PodHost, "terminate">,
+  host: Pick<PodHost, "terminate" | "billedSince">,
   registry: PodRegistry,
   text: string,
   log: Log,
@@ -1571,11 +1749,12 @@ export async function releasePod(
     return [];
   }
   const now = options.now?.() ?? new Date();
+  const billed = await billedFromHandle(host, handle, now);
   return [
     await terminatePod(host, handle.podId, undefined, {
       reason: "the task does not go on to another run now, and no other task uses or keeps it",
       log,
-      life: lifeOf(handle, options.provider, now),
+      life: lifeOf(handle, options.provider, now, billed),
     }),
   ];
 }

@@ -4,7 +4,7 @@
 # See docs/development/local-actions.md.
 # Every input is pinned by digest; apt packages come from Ubuntu's signed archive.
 
-# Only Node.js's files are used: the version of the pod images.
+# Only Node.js's files are used: the version pods download (NODE_RELEASE, src/inference/images.ts).
 FROM node:24.22.1-bookworm-slim@sha256:be8204d4bd327363357f532187b752ff62759c31bedf98e9e18fc08c9cbd605c AS node
 
 # The templates and CI run on ubuntu-24.04 (docs/installation/setup.md).

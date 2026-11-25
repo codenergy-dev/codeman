@@ -1,14 +1,17 @@
 #!/bin/sh
 # Fills the Ollama models volume with qwen2.5:0.5b, once, for e2e/infra/compose.yaml's
-# `seed-ollama`. Checks the manifest's digest, which /api/tags reports, and every blob it names,
-# by SHA-256. When they already match, it makes no request at all. See
-# docs/development/dependencies.md#the-e2e-models.
+# `seed-ollama`. Checks the manifest Ollama reads by its digest, which /api/tags reports, and every
+# blob it names, by SHA-256. When they already match and Ollama has listed the model, it makes no
+# request at all. See docs/development/dependencies.md#the-e2e-models.
 set -eu
 
 model=qwen2.5:0.5b
 digest=a8b0c51577010a279d933d14c2a8ab4b268079d44c5c8830c0a93900f1827c67
 models=${OLLAMA_MODELS:-/root/.ollama/models}
-manifest=$models/manifests/registry.ollama.ai/library/qwen2.5/0.5b
+# Ollama 0.40 keeps the registry's manifest as a blob and links it here, the path it reads first.
+# Its file under manifests/registry.ollama.ai/ is a copy for older releases, which lists the
+# manifest's own blob as one more layer, so it never hashes to the digest.
+manifest=$models/manifests-v2/ollama.com/library/qwen2.5/0.5b
 
 # The manifest's bytes hash to the pinned digest, and each layer's blob to its own digest.
 check() {
@@ -21,25 +24,44 @@ check() {
   done
 }
 
-if check; then
+# Ollama 0.40 writes metadata/ when it first lists a model. The pods mount the volume read-only, and
+# their Ollama answers 500 to /api/tags while it cannot write it.
+listed() {
+  [ -n "$(ls -A "$models/metadata" 2>/dev/null)" ]
+}
+
+# Ollama pulls and lists through its server, on the loopback of this container only.
+serve() {
+  export OLLAMA_HOST=127.0.0.1:11434
+  ollama serve >/tmp/ollama.log 2>&1 &
+  for _ in $(seq 60); do ollama list >/dev/null 2>&1 && return 0; sleep 1; done
+  echo "Ollama did not list the models in $models." >&2
+  exit 1
+}
+
+if check && listed; then
   echo "$model is present, manifest sha256:$digest."
   exit 0
 fi
 
-# Ollama pulls through its server, on the loopback of this container only.
-export OLLAMA_HOST=127.0.0.1:11434
-ollama serve >/tmp/ollama.log 2>&1 &
-for _ in $(seq 60); do ollama list >/dev/null 2>&1 && break; sleep 1; done
-
-# Pulls can fail midway (the plan's spike 0.1): retry, and Ollama resumes from the blobs it has.
-for attempt in 1 2 3 4 5; do
-  ollama pull "$model" && break
-  [ "$attempt" -lt 5 ] || { echo "Could not pull $model." >&2; exit 1; }
-  sleep $((attempt * 15))
-done
+serve
 
 if ! check; then
-  echo "$model's manifest is not sha256:$digest: the tag moved, or a blob is wrong." >&2
+  # Pulls can fail midway (the plan's spike 0.1): retry, and Ollama resumes from the blobs it has.
+  for attempt in 1 2 3 4 5; do
+    ollama pull "$model" && break
+    [ "$attempt" -lt 5 ] || { echo "Could not pull $model." >&2; exit 1; }
+    sleep $((attempt * 15))
+  done
+  if ! check; then
+    echo "$model's manifest is not sha256:$digest: the tag moved, or a blob is wrong." >&2
+    exit 1
+  fi
+fi
+
+ollama list >/dev/null
+if ! listed; then
+  echo "Ollama did not write $models/metadata when it listed $model." >&2
   exit 1
 fi
-echo "Pulled $model, manifest sha256:$digest."
+echo "Seeded $model, manifest sha256:$digest."

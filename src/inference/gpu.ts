@@ -47,6 +47,11 @@ export interface PodSpec {
   /** For people reading the provider's console; Codeman finds its pods by `env`. */
   name: string;
   image: string;
+  /**
+   * What it runs in place of the image's entry point and command, in exec form: the first item is
+   * the program, the others its arguments; the image's own when undefined.
+   */
+  command?: readonly string[] | undefined;
   env: Record<string, string>;
   /** The HTTP port the provider exposes. */
   port: number;
@@ -136,6 +141,13 @@ export interface PodHost {
    * Absent when the provider has no billing API.
    */
   billing?(ids: readonly string[], since: Date): Promise<Record<string, number>>;
+  /**
+   * When the provider began billing the pod, for one that bills a pod only while it runs on a
+   * machine, not while it is allocated or downloads its image, as Salad. Undefined when it cannot
+   * tell: the pod does not run, moved to another machine, or its time is unreadable. Absent when
+   * the provider bills a pod from its creation, as Runpod. Codeman then counts from the creation.
+   */
+  billedSince?(id: string): Promise<Date | undefined>;
 }
 
 export interface Endpoint {
@@ -212,6 +224,13 @@ export function podCost(start: Date, end: Date, pricePerSecond: number): number 
  * same way.
  */
 export class PodStartFailure extends Error {}
+
+/**
+ * Codeman's estimate, before it creates a pod, says the model cannot fit the GPU with the pod's
+ * settings: no pod is created, and another pod of the same settings would fail the same way, as
+ * a start failure (docs/plans/2026-11-23-estimate-the-fit-before-creating-a-pod.md).
+ */
+export class FitRefused extends PodStartFailure {}
 
 /**
  * The provider has no room for the pod now: no GPU of its type on the hosts it may use, or no

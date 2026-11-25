@@ -1,15 +1,51 @@
-# The end-to-end suite on GitHub's standard runners, started only by hand. Every key in it is a
-# fake's: it needs no secret, variable or environment, and must stay so.
+# Started only by hand, for one of two checks:
+# - `suite`: the end-to-end suite on GitHub's standard runners. Every key in it is a fake's: its job
+#   names no environment, so it reads no secret, and must stay so.
+# - `pod`: real pods on Runpod or Salad (e2e/live/pod.ts), which cost money. Only its job names the
+#   `E2E` environment, and only its two steps that call the provider get its key, and only the
+#   chosen provider's.
 # See docs/development/e2e/suite.md#on-github-actions.
 name: E2E
 
 on:
   workflow_dispatch:
     inputs:
+      check:
+        description: Which check to run.
+        type: choice
+        options: [suite, pod]
+        default: suite
+      provider:
+        description: The pod check's GPU cloud.
+        type: choice
+        options: [runpod, salad]
+        default: runpod
       selectors:
         description: Scenarios to run in one job, as paths or tags separated by a space. Empty runs every scenario, one job per Docker profile.
         type: string
         required: false
+      gpu:
+        description: The pod check's GPU type on Runpod; auto takes the cheapest with room for each check, under its cost cap. On Salad, always auto.
+        type: choice
+        options:
+          - auto
+          - NVIDIA RTX A4000
+          - NVIDIA RTX 2000 Ada Generation
+          - NVIDIA RTX A4500
+          - NVIDIA RTX 4000 Ada Generation
+          - NVIDIA RTX A5000
+          - NVIDIA GeForce RTX 3090
+          - NVIDIA L4
+          - NVIDIA GeForce RTX 4090
+        default: auto
+      pod-checks:
+        description: The pod check's checks, separated by commas, from ollama, vllm, blocked and unfit, or probe on Salad (no pod starts).
+        type: string
+        default: ollama
+      community:
+        description: Let the pod check use Runpod's Community Cloud too, where hosts are third parties' machines. Salad's hosts are all community ones, so Salad needs it.
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -17,6 +53,7 @@ permissions:
 jobs:
   suite:
     name: Suite (${{ matrix.group }})
+    if: inputs.check == 'suite'
     runs-on: ubuntu-24.04
     # Under GitHub's limit of 6 hours, and above the suite's step, so its report still uploads.
     timeout-minutes: 330
@@ -97,3 +134,51 @@ jobs:
           include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 1
+
+  pod:
+    name: Pod check
+    if: inputs.check == 'pod'
+    runs-on: ubuntu-24.04
+    environment: E2E
+    # One at a time: a run's cleanup terminates every pod the check tagged, another run's too.
+    concurrency:
+      group: pod-check
+      cancel-in-progress: false
+    # Above the script's own limit of 60 minutes, so its cleanup still runs.
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+      # Without the key: install scripts never see it.
+      - run: npm ci
+      # The script checks each input against a pattern, never repeats one, and prints only an
+      # allowlist of values; it masks the key and every token it makes before using them. Each
+      # provider's key, and Salad's organization and project, reach it only for that provider.
+      - name: Run the pod check
+        timeout-minutes: 65
+        env:
+          CODEMAN_RUNPOD_API_KEY: ${{ inputs.provider == 'runpod' && secrets.CODEMAN_RUNPOD_API_KEY || '' }}
+          CODEMAN_SALAD_API_KEY: ${{ inputs.provider == 'salad' && secrets.CODEMAN_SALAD_API_KEY || '' }}
+          CODEMAN_SALAD_ORGANIZATION: ${{ inputs.provider == 'salad' && vars.CODEMAN_SALAD_ORGANIZATION || '' }}
+          CODEMAN_SALAD_PROJECT: ${{ inputs.provider == 'salad' && vars.CODEMAN_SALAD_PROJECT || '' }}
+          CODEMAN_POD_CHECK_PROVIDER: ${{ inputs.provider }}
+          CODEMAN_POD_CHECK_GPU: ${{ inputs.gpu }}
+          CODEMAN_POD_CHECK_CHECKS: ${{ inputs.pod-checks }}
+          CODEMAN_POD_CHECK_COMMUNITY: ${{ inputs.community }}
+        run: node e2e/live/pod.ts
+      # Terminates every pod the check tagged on the provider, whatever happened above.
+      - name: Terminate the check's pods
+        if: always()
+        timeout-minutes: 5
+        env:
+          CODEMAN_RUNPOD_API_KEY: ${{ inputs.provider == 'runpod' && secrets.CODEMAN_RUNPOD_API_KEY || '' }}
+          CODEMAN_SALAD_API_KEY: ${{ inputs.provider == 'salad' && secrets.CODEMAN_SALAD_API_KEY || '' }}
+          CODEMAN_SALAD_ORGANIZATION: ${{ inputs.provider == 'salad' && vars.CODEMAN_SALAD_ORGANIZATION || '' }}
+          CODEMAN_SALAD_PROJECT: ${{ inputs.provider == 'salad' && vars.CODEMAN_SALAD_PROJECT || '' }}
+          CODEMAN_POD_CHECK_PROVIDER: ${{ inputs.provider }}
+        run: node e2e/live/pod.ts --cleanup

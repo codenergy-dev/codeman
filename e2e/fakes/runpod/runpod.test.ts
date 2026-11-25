@@ -103,6 +103,20 @@ test("a created pod's env reaches the launcher unchanged, with its image, GPU an
   // A port the pod does not expose, or an unknown pod, is a 404.
   assert.equal((await fetch(`${origin}/pods/${created.body.id}/9000/health`)).status, 404);
   assert.equal((await fetch(`${origin}/pods/nope/8000/health`)).status, 404);
+  assert.equal(created.body.args, "", "the image's own command");
+  assert.equal(spec?.command, undefined);
+});
+
+test("a pod's entrypoint and cmd reach the launcher as one command, and come back with args", async () => {
+  const entrypoint = ["/bin/sh"];
+  const cmd = ["-c", 'eval "$(printf \'%s\\n\' "$@")"', "bootstrap", "set -eu"];
+  const created = await call("POST", "/v2/pods", { ...POD, entrypoint, cmd });
+  assert.equal(created.status, 201);
+  assert.deepEqual(
+    [created.body.entrypoint, created.body.cmd, JSON.parse(created.body.args)],
+    [entrypoint, cmd, { entrypoint, cmd }],
+  );
+  assert.deepEqual(launcher.launched.at(-1)?.command, [...entrypoint, ...cmd]);
 });
 
 test("a terminated pod stops billing, and leaves the API but not its billing", async () => {
@@ -188,6 +202,11 @@ test("creation fails on capacity, contract and faults, as Runpod answers", async
   assert.deepEqual(invalid.body.errors, [
     "$.env.A: expected string",
     "$.ports[0]: expected port/protocol",
+  ]);
+  const command = await call("POST", "/v2/pods", { ...POD, entrypoint: "/bin/sh", cmd: [1] });
+  assert.deepEqual(command.body.errors, [
+    "$.entrypoint: expected an array of strings",
+    "$.cmd: expected an array of strings",
   ]);
   assert.equal((await call("POST", "/v2/pods", POD, "wrong")).status, 401);
   assert.equal((await call("GET", "/v2/pods", undefined, "")).body.detail, "missing bearer token");

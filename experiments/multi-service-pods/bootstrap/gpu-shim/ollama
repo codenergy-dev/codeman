@@ -1,0 +1,13 @@
+#!/bin/sh
+# A stand-in for a GPU, for the experiment only: first on the PATH, so the gateway's `ollama serve`
+# runs the real Ollama one port up, behind vram.ts on Ollama's port, which reports every loaded
+# model as wholly on the GPU. The gateway's fit then accepts a CPU, as the e2e suite's tee makes
+# it do. Every other command goes to the real Ollama unchanged. Mounted read-only at /shim.
+#
+# Usage: docker run ... -v "$PWD/gpu-shim:/shim:ro" -e PATH=/shim:/usr/bin:/bin <ollama image>
+if [ "${1:-}" = serve ]; then
+  # A shim left from a previous start keeps the port; this one then exits at once.
+  /tmp/codeman/node/bin/node /shim/vram.ts &
+  OLLAMA_HOST=127.0.0.1:11435 exec /usr/bin/ollama serve
+fi
+exec /usr/bin/ollama "$@"

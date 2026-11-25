@@ -8,7 +8,7 @@ The Compose file, [`e2e/infra/compose.yaml`](../../../e2e/infra/compose.yaml), r
 
 | Service | Stands for | Jobs and pods reach it at |
 | --- | --- | --- |
-| `github` | GitHub's REST and GraphQL APIs, git over HTTPS, the artifact service, App and `GITHUB_TOKEN` tokens | `https://github-e2e.localhost`, at a fixed address |
+| `github` | GitHub's REST and GraphQL APIs, git over HTTPS, the artifact service, App and `GITHUB_TOKEN` tokens; raw.githubusercontent.com, for the gateway a pod downloads | `https://github-e2e.localhost`, at a fixed address; `https://raw.githubusercontent.com` |
 | `google` | GitHub's OIDC issuer, Google's STS and IAM Credentials | `http://google:8080` |
 | `openrouter` | OpenRouter's management API, and its inference API for OpenCode | `http://openrouter:8080` |
 | `runpod` | Runpod's REST API, the pods' proxy, and the Serverless queues | `http://runpod:8080`; a pod at `/pods/{id}/{port}` |
@@ -16,6 +16,8 @@ The Compose file, [`e2e/infra/compose.yaml`](../../../e2e/infra/compose.yaml), r
 | `llm` | The scripted model, behind OpenRouter, the Serverless queues and the tee | `http://llm:8080` |
 | `npm` | The npm registry, for OpenCode's tarballs only | `http://npm:8080` |
 | `huggingface` | Hugging Face's Hub, for the model information only | `http://huggingface:8080` |
+| `osv` | OSV.dev's API, for `open-key`'s release policy | `http://osv:8080` |
+| `nodejs` | nodejs.org's download server, for the Node.js a pod's bootstrap downloads | `https://nodejs.org` |
 | `firestore` | Firestore, as Google's emulator with Codeman's rules | `http://firestore:8080` |
 
 - **The fake Hub** serves `GET /api/models/{namespace}/{name}`, the one route Codeman calls before it creates a vLLM pod ([`huggingface.ts`](../../../e2e/fakes/huggingface/huggingface.ts)). Its models come from the `codeman-e2e-hf` volume, mounted read-only, in [the client's cache layout](../../web/hugging-face/understand-caching.md): each file's size and hash from its blob. Without the `vllm` profile the volume is empty, and every model answers 401, as the Hub does for a missing one. Its unit tests use `models.json`, the pinned model as the seeded volume gives it.
@@ -25,6 +27,10 @@ The Compose file, [`e2e/infra/compose.yaml`](../../../e2e/infra/compose.yaml), r
 - **The fake GitHub** serves HTTPS under a `*.localhost` name, which `@actions/artifact` requires. A test CA signs its certificate, made once and kept in a volume while valid. Node, git and `gh` in the job image trust it.
 - **The fake Google's** token is `owner`, which the emulator takes as an admin, past the rules. A job that skips the token path is refused.
 - **The npm cache** is filled once by `seed-npm`, which checks each tarball against OpenCode's pinned integrity. Codeman checks it again on download.
+- **The fake OSV.dev** answers `POST /v1/querybatch` and `GET /v1/vulns/{id}` from the records it holds ([`osv.ts`](../../../e2e/fakes/osv/osv.ts)): by default, those OSV.dev gave for the catalog's releases on 2026-10-30, `src/inference/osv-fixtures.json` and `records.json` beside it, the Ollama records that `docs/web/osv/ollama-*.md` describe. So Ollama 0.40.10 has its 9 advisories, which the catalog's exceptions accept, and vLLM 0.32.0 and Node.js have none. A scenario adds records with `world.osv` ([the world](scenarios.md#the-rest-of-the-world)); a reset drops them.
+- **The fake nodejs.org** serves only `NODE_RELEASE`'s tarball, at its path under `/dist/` ([`nodejs.ts`](../../../e2e/fakes/nodejs/nodejs.ts)). `seed-node` fills its volume once in the pod profiles, and keeps a file only when its SHA-256 is `NODE_RELEASE`'s; the bootstrap checks it again. Without a pod profile, the file answers 404.
+- **raw.githubusercontent.com** is the fake GitHub under that name: a public repository's file at a commit, as `text/plain`, without a redirect ([`raw.ts`](../../../e2e/fakes/github/raw.ts)). The runtime commits the e2e bundle's `dist/gateway.js` to Codeman's repository there, and the job's checkout of Codeman holds the same file and a `.git/HEAD` with that commit, so the gateway's URL and SHA-256 that `open-key` gives a pod match what the pod downloads.
+- **HTTPS under real names.** The jobs network gives the fake GitHub and the fake nodejs.org the names `raw.githubusercontent.com` and `nodejs.org` as aliases, so a pod's bootstrap downloads its real URLs. The session's certificate names both hosts; the e2e pod images add its CA to their system's store at start, for `curl` or `openssl`, and Node.js reads it from `NODE_EXTRA_CA_CERTS`.
 
 ### Networks
 
@@ -71,6 +77,7 @@ Each fake's own routes are under `/_fake/<fake>/`.
 | `openrouter` | `GET keys`, with each key's shown `usage` and real spend; `PUT keys/{hash}/usage`; `PUT credits`, the account's credits until the next reset; `PUT lags`; `POST settle`; `PUT prices`; `PUT completions`; `GET generations`, each billed request |
 | `runpod` | `GET pods`, terminated ones included, with each one's env, `cost` and `billing` (`running`, or `stopped` once it exited or was terminated); `POST pods/{id}/{action}`; `PUT setup`; `GET` and `PATCH catalog`; `PUT endpoints/{id}` and its `workers`; `GET jobs`, the Serverless jobs; `GET endpoints/{id}/cost`; `PUT faults`, `{ podStart, lowBalance, holdQueues, podAgeMs }`, where `podAgeMs` dates the pods created from then on, and their billing, that far back. The setup's shapes refuse unknown keys |
 | `salad` | `GET groups`, deleted ones included, with each one's env, `gpu`, `host`, `priority`, `restartPolicy`, `replicas`, `networking`, `deleted` and `deletedAt`; `PUT setup`, `{ keys, organization, project, classes }` |
+| `osv` | `PUT records`, `{ records }`, OSV records added to or replacing the default ones by ID; `GET records` |
 | `llm` | `PUT scripts/{scenario}`, `GET scripts`, `DELETE scripts/{scenario}`; `GET turns`, each request and what it was taken for; `GET violations`, the requests no script covered |
 
 The `fakes` check of a scenario reads these lists ([checks](scenarios.md#the-fakes-lists)).
@@ -106,7 +113,7 @@ The first turn of every conversation but the fix pass's reads the task file. Ope
 
 ## The tee
 
-Each e2e pod image runs the tee on the engine's port: 11434 for Ollama, 8000 for vLLM. A wrapper moves the real engine one port up. The gateway, the e2e build's `gateway.js`, runs as on a real pod.
+Each e2e pod image runs the tee on the engine's port: 11434 for Ollama, 8000 for vLLM, with a Node.js of its own, off the `PATH`. A wrapper moves the real engine one port up. Then the image's entry point runs the pod's command, the bootstrap, which downloads Node.js and the e2e build's `gateway.js` from the fakes and runs the gateway, as on a real pod.
 
 | Request | The tee |
 | --- | --- |
@@ -128,14 +135,14 @@ Its inspection API, under `/_fake/tee/` on port 9091 and on the engine's port:
 - `GET /requests`: each chat request, what the model took it for, and when the engine started and ended it, so a scenario can count how many were at the engine at once;
 - `DELETE /requests`;
 - `GET /runners`: the engine's runner processes in the pod, from `/proc`: Ollama's `llama-server`, with its arguments, its context (`-c`, all its parallel requests together) and its parallel requests (`-np`);
-- `GET /slots`: the runners' slots, from llama-server's `/slots`, each with its context; and `busiest`, the most slots that processed at once. The tee samples them every 100 ms while agents' requests are at the engine, since Ollama queues requests beyond its slots, which the tee cannot tell from running ones. In a vLLM pod (`CODEMAN_IMAGE_ENGINE=vllm`), it samples vLLM's `/metrics` instead: `busiest` is the most requests `vllm:num_requests_running` gave, and `waiting` the most `vllm:num_requests_waiting` gave;
+- `GET /slots`: the runners' slots, from llama-server's `/slots`, each with its context; and `busiest`, the most slots that processed at once. The tee samples them every 100 ms while agents' requests are at the engine, since Ollama queues requests beyond its slots, which the tee cannot tell from running ones. In a vLLM pod (`CODEMAN_ENGINE=vllm`), it samples vLLM's `/metrics` instead: `busiest` is the most requests `vllm:num_requests_running` gave, and `waiting` the most `vllm:num_requests_waiting` gave;
 - `PUT /vram` `{ bytes }`: the virtual VRAM, or `null` to pass `/api/ps` unchanged.
 
 ## The pod launcher
 
 No container gets the Docker socket. When the fake Runpod creates a pod, or the fake Salad a container group, it calls the runtime's launcher, on the host, behind a token of the session ([`launcher.ts`](../../../e2e/runtime/launcher.ts)).
 
-1. The launcher maps the pod's image to a local e2e image, by the allowlist of [`e2e/infra/pod-images.ts`](../../../e2e/infra/pod-images.ts): Codeman's [pinned pod images](../../glossary.md#pinned-pod-image), by digest. Any other image is refused. The local images are built from the sources' gateway, so the e2e build lets Salad pods run any pinned image, even one that `IMAGES_BEFORE_SALAD` lists.
-2. It runs the container with `docker run --init` on the jobs network, with the pod's environment, the tee's options of the scenario (`world.runpod.tee`), and its model's volume, read-only. A vLLM pod also gets 1 GiB of `/dev/shm`, as a Runpod pod has more than Docker's default of 64 MiB: vLLM's CPU engine allocates 160 MiB there at its start, and fails without it.
+1. The launcher maps the pod's image to a local e2e image, by the allowlist of [`e2e/infra/pod-images.ts`](../../../e2e/infra/pod-images.ts): the engines' official images of `ENGINE_RELEASES`, by digest. Any other image is refused, Codeman's own pod images and the `pod-image` input's included. The local images are those official images with the tee, and vLLM's CPU image of the same release for its CUDA one.
+2. It runs the container with `docker run --init` on the jobs network, with the pod's environment and command, the tee's options of the scenario (`world.runpod.tee`), the session's CA, and its model's volume, read-only. The command, Runpod's `entrypoint` and `cmd` or Salad's `command`, goes as the arguments of the image's entry point, which starts the tee, then runs it. A vLLM pod also gets 1 GiB of `/dev/shm`, as a Runpod pod has more than Docker's default of 64 MiB: vLLM's CPU engine allocates 160 MiB there at its start, and fails without it.
 3. The fake Runpod's proxy, or the fake Salad's Container Gateway, forwards `/pods/{id}/{port}` to the container.
 4. A terminated pod's container is removed, after the runtime reads its engine's state, which the `engine` check then gives for that pod ([checks](scenarios.md#checks)). Every container of a scenario goes when the scenario ends.

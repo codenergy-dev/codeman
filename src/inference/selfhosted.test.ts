@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { after, test } from "node:test";
+import { podBootstrap } from "../gateway/bootstrap.ts";
 import { GATEWAY_VERSION, sha256 } from "../gateway/gateway.ts";
 import type { FitReport } from "../gateway/pod.ts";
 import { closeKey, openKey } from "../steps/keys.ts";
@@ -8,12 +9,28 @@ import { LAYOUT } from "../store/layout.ts";
 import { MemoryStore } from "../store/memory.ts";
 import { FakeGateways, FakeGpu } from "../testing/fake-gpu.ts";
 import { FakePlatform, fakeServices } from "../testing/fake-platform.ts";
+import {
+  FakeOsv,
+  fakeReleases,
+  TEST_BOOTSTRAP,
+  TEST_COMMIT,
+  TEST_ENGINES,
+  TEST_GATEWAY,
+  TEST_NODE,
+} from "../testing/fake-releases.ts";
 import { FakeRuntime } from "../testing/fake-runtime.ts";
+import {
+  QWEN25_05B_CONFIG,
+  QWEN25_05B_INFO,
+  QWEN25_05B_SAFETENSORS,
+  QWEN25_05B_WEIGHTS,
+} from "../testing/gguf.ts";
 import { seedRuns } from "../testing/ledger-runs.ts";
-import type { PodSpec } from "./gpu.ts";
+import { FitRefused, type PodSpec } from "./gpu.ts";
 import type { ModelHub } from "./huggingface.ts";
-import { IMAGES_BEFORE_SALAD, POD_IMAGES } from "./images.ts";
+import { ENGINE_RELEASES, IMAGES_BEFORE_SALAD } from "./images.ts";
 import { IMAGES_WITHOUT_OLLAMA_SETTINGS, ollama, SINGLE_RUN_IMAGES } from "./ollama.ts";
+import type { OllamaModels } from "./ollama-registry.ts";
 import { ConcurrencyReached, OpenFailure, ProfileUnavailable } from "./provider.ts";
 import { CREATE_LEASE_MS, PodRegistry, UNAVAILABLE_MINUTES } from "./registry.ts";
 import {
@@ -48,6 +65,9 @@ const settings: PodSettings = {
 };
 /** An image built since shared pods: its gateway serves several runs. */
 const SHARED_IMAGE = "ghcr.io/o/codeman-pod@sha256:1";
+/** The settings key of a pod that a run creates: with what its bootstrap downloads. */
+const keyOf = (pod: Parameters<typeof podSettingsKey>[0], holder: string) =>
+  podSettingsKey({ ...pod, bootstrap: TEST_BOOTSTRAP }, holder);
 const noWait = async () => undefined;
 const near = (actual: number | undefined, expected: number) =>
   assert.ok(Math.abs((actual ?? Number.NaN) - expected) < 1e-9, `${actual} is not ${expected}`);
@@ -57,10 +77,23 @@ const near = (actual: number | undefined, expected: number) =>
  * as one that serves one run at a time; with `real`, Codeman's own gateway answers.
  */
 function setup(
-  options: { real?: boolean; image?: string; hub?: ModelHub; noBilling?: boolean } = {},
+  options: {
+    real?: boolean;
+    image?: string;
+    hub?: ModelHub;
+    ollamaModels?: OllamaModels;
+    noBilling?: boolean;
+    billsWhileRunning?: boolean;
+    releases?: ReturnType<typeof fakeReleases>;
+  } = {},
 ) {
+  const releases = options.releases ?? fakeReleases();
   let now = new Date("2026-10-03T12:00:00Z");
-  const gpu = new FakeGpu({ now: () => now, noBilling: options.noBilling === true });
+  const gpu = new FakeGpu({
+    now: () => now,
+    noBilling: options.noBilling === true,
+    billsWhileRunning: options.billsWhileRunning === true,
+  });
   const gateways = new FakeGateways(gpu, { real: options.real === true });
   after(() => gateways.close());
   const store = new MemoryStore();
@@ -77,6 +110,8 @@ function setup(
         fetch: gateways.fetch,
         wait: (ms) => wait(ms),
         ...(options.hub ? { hub: options.hub } : {}),
+        ...(options.ollamaModels ? { ollamaModels: options.ollamaModels } : {}),
+        releases,
       },
     );
   const open = async (
@@ -106,6 +141,7 @@ function setup(
     gateways,
     store,
     registry,
+    releases,
     make,
     open,
     release,
@@ -127,7 +163,7 @@ test("a run creates a pod for its settings, held in the registry, and gives the 
   assert.equal(spec?.image, ONE_RUN_IMAGE);
   assert.equal(spec?.port, 8080);
   assert.equal(spec?.env.CODEMAN_ORGANIZATION, "o");
-  assert.equal(spec?.env.CODEMAN_POD_SETTINGS, podSettingsKey(settings, "o/r#7"));
+  assert.equal(spec?.env.CODEMAN_POD_SETTINGS, keyOf(settings, "o/r#7"));
   assert.equal(spec?.env.CODEMAN_MODEL, "qwen3-coder:30b");
   assert.equal(spec?.env.CODEMAN_START_BY, "2026-10-03T12:25:00.000Z");
   for (const name of ["CODEMAN_REPOSITORY", "CODEMAN_TASK", "CODEMAN_RUN", "CODEMAN_GROUP"]) {
@@ -136,6 +172,14 @@ test("a run creates a pod for its settings, held in the registry, and gives the 
   const nonce = spec?.env.CODEMAN_NONCE ?? "";
   assert.equal(spec?.env.CODEMAN_ADMIN_SHA256, sha256(adminToken("account-key", nonce)));
   assert.ok(!JSON.stringify(spec?.env).includes("account-key"));
+  // The bootstrap starts it: it downloads Node.js and the gateway, and checks both.
+  const bootstrap = podBootstrap(TEST_BOOTSTRAP);
+  assert.deepEqual(spec?.command, bootstrap.command);
+  for (const [name, value] of Object.entries(bootstrap.env)) {
+    assert.equal(spec?.env[name], value, name);
+  }
+  assert.equal(spec?.env.CODEMAN_BOOTSTRAP_GATEWAY_URL, TEST_GATEWAY.url);
+  assert.equal(spec?.env.CODEMAN_BOOTSTRAP_NODE_SHA256, TEST_NODE.sha256);
 
   assert.equal(handle.podId, "pod1");
   assert.equal(handle.nonce, nonce);
@@ -371,6 +415,77 @@ test("without the provider's billing, as on Salad, a run costs its pod's time fr
   assert.deepEqual(next.podCosts, { pod1: 0.102 }, "17 minutes of the pod");
 });
 
+test("on a cloud that bills a pod only while it runs, as Salad, the pod counts from then", async () => {
+  const { gpu, open, advance, setWait, release } = setup({
+    noBilling: true,
+    billsWhileRunning: true,
+  });
+  // Salad allocates the pod and downloads its image for 4 minutes, which it does not bill.
+  gpu.startAfter = 4;
+  setWait(async () => advance(60_000));
+  const first = await open("7", "300", {}, repository, 1.5);
+  const created = Date.parse("2026-10-03T12:00:00Z");
+  assert.equal(first.handle.created, created);
+  assert.equal(first.handle.start, created, "the run's limit still counts from the creation");
+  assert.equal(first.handle.billedFrom, created + 4 * 60_000);
+  advance(10 * 60_000);
+  const usage = await first.provider.close(first.opened.handle, new FakeRuntime());
+  // 0.0002 USD a second: the 10 minutes it ran, not the 4 before.
+  near(usage.cost, 0.12);
+  assert.deepEqual(usage.podCosts, { pod1: 0.12 });
+  assert.equal(usage.keptPod, "pod1");
+  // The release that ends the kept pod records its life from the same time.
+  advance(60_000);
+  const events = await release(first.opened.handle);
+  assert.equal(events[0]?.life?.from, created + 4 * 60_000);
+});
+
+test("a pod counts from its creation when the provider no longer tells the time open saw", async () => {
+  const { gpu, open, advance, setWait } = setup({ noBilling: true, billsWhileRunning: true });
+  gpu.startAfter = 4;
+  setWait(async () => advance(60_000));
+  const first = await open("7", "300", { reuse: "run" }, repository, 1.5);
+  assert.equal(first.handle.billedFrom, Date.parse("2026-10-03T12:04:00Z"));
+  advance(10 * 60_000);
+  // Salad placed the pod on another node: a new instance, running since later.
+  gpu.runningSince.set("pod1", new Date("2026-10-03T12:09:00Z"));
+  const usage = await first.provider.close(first.opened.handle, new FakeRuntime());
+  // The 14 minutes since its creation.
+  near(usage.cost, 0.168);
+  assert.deepEqual(usage.podCosts, { pod1: 0.168 });
+  const ended = usage.pods?.find((event) => event.event === "terminated");
+  assert.equal(ended?.life?.from, Date.parse("2026-10-03T12:00:00Z"));
+});
+
+test("a pod that never served counts from its creation, or from when it ran when it did", async () => {
+  const failed = async (configure: (fake: ReturnType<typeof setup>) => void) => {
+    const fake = setup({ noBilling: true, billsWhileRunning: true });
+    fake.setWait(async () => fake.advance(60_000));
+    configure(fake);
+    const failure = await fake.open("7", "300").then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    assert.ok(failure instanceof OpenFailure);
+    return failure.pods.find((event) => event.event === "terminated")?.life?.from;
+  };
+  // No node ever ran it: the provider cannot tell, and it counts from its creation.
+  assert.equal(
+    await failed(({ gpu }) => {
+      gpu.unallocated = true;
+    }),
+    Date.parse("2026-10-03T12:00:00Z"),
+  );
+  // It ran from 12:04, and its model never served.
+  assert.equal(
+    await failed(({ gpu, gateways }) => {
+      gpu.startAfter = 4;
+      gateways.state("pod1").ready = false;
+    }),
+    Date.parse("2026-10-03T12:04:00Z"),
+  );
+});
+
 test("without the provider's billing, runs on a shared pod each count their share of its time", async () => {
   const { gpu, open, advance } = setup({ real: true, image: SHARED_IMAGE, noBilling: true });
   gpu.billed.pod1 = 9;
@@ -597,7 +712,7 @@ test("a task that waits for another's creation lease joins its pod, from its sta
   });
   // Task 7 of another job holds the creation lease, and its pod starts.
   const description = {
-    settings: podSettingsKey({ ...settings, image: SHARED_IMAGE }, "o/r#7"),
+    settings: keyOf({ ...settings, image: SHARED_IMAGE }, "o/r#7"),
     model: settings.model,
     gpuType: "GPU-A",
     image: SHARED_IMAGE,
@@ -888,7 +1003,13 @@ test("an image whose gateway cannot serve on the provider is refused before any 
   const gpu = new FakeGpu({ unservedImages: IMAGES_BEFORE_SALAD });
   const inference = new PodInference(
     { ...settings, image },
-    { repository, gpu, account: { key: "account-key" }, store: new MemoryStore() },
+    {
+      repository,
+      gpu,
+      account: { key: "account-key" },
+      store: new MemoryStore(),
+      releases: fakeReleases(),
+    },
   );
   await assert.rejects(
     inference.open(
@@ -903,7 +1024,9 @@ test("an image whose gateway cannot serve on the provider is refused before any 
   );
   assert.deepEqual(gpu.created, []);
   // The images pinned now serve on Salad: the ones they replaced stay listed.
-  for (const pinned of Object.values(POD_IMAGES)) assert.ok(!IMAGES_BEFORE_SALAD.has(pinned));
+  for (const { image: pinned } of Object.values(ENGINE_RELEASES)) {
+    assert.ok(!IMAGES_BEFORE_SALAD.has(pinned));
+  }
   assert.ok(!IMAGES_BEFORE_SALAD.has(SHARED_IMAGE));
 });
 
@@ -962,7 +1085,7 @@ test("on an image that fits the GPU, num-parallel defaults to the profile's coun
   assert.equal(pod?.env.CODEMAN_GPU_MEMORY_GB, "48", "the GPU type's memory, for the estimate");
   assert.equal(pod?.env.CODEMAN_FIT, undefined, "nothing cached yet");
   const shared = { ...settings, image: SHARED_IMAGE };
-  const key = podSettingsKey({ ...shared, ollama: { OLLAMA_NUM_PARALLEL: "4" } }, "o/r#7");
+  const key = keyOf({ ...shared, ollama: { OLLAMA_NUM_PARALLEL: "4" } }, "o/r#7");
   assert.equal(pod?.name, `codeman-o-${key}`, "the derived value is part of the settings key");
   assert.ok(
     a.runtime
@@ -987,7 +1110,7 @@ test("an image pinned before Ollama settings gets no derived settings, no cache,
     assert.equal(env.CODEMAN_OLLAMA, undefined);
     assert.equal(env.CODEMAN_FIT, undefined);
     assert.equal(env.CODEMAN_GPU_MEMORY_GB, undefined);
-    const key = podSettingsKey({ ...settings, image }, "o/r#7");
+    const key = keyOf({ ...settings, image }, "o/r#7");
     assert.equal(gpu.created[0]?.name, `codeman-o-${key}`, "the key it had before");
     assert.ok(
       runtime
@@ -1265,10 +1388,7 @@ test("a vLLM pod gets its settings with max-num-seqs, vLLM's CUDA, and a disk fo
     assert.equal(spec?.env[name], undefined, name);
   }
   assert.deepEqual(asked, ["unsloth/Qwen3.8-27B-NVFP4"]);
-  const key = podSettingsKey(
-    { ...settings, ...onVllm, image: VLLM_IMAGE, vllm: podVllm(onVllm) },
-    "o/r#7",
-  );
+  const key = keyOf({ ...settings, ...onVllm, image: VLLM_IMAGE, vllm: podVllm(onVllm) }, "o/r#7");
   assert.equal(spec?.name, `codeman-o-${key}`);
   const info = runtime.logged("info");
   assert.ok(info.includes("Pod pod1 runs on a host with CUDA 13.0."));
@@ -1391,7 +1511,7 @@ test("without a pinned vLLM image, a run stops before any pod, at no cost", asyn
     (error: unknown) =>
       error instanceof OpenFailure &&
       error.message ===
-        "This version of Codeman pins no vLLM pod image yet (`POD_IMAGES` in src/inference/images.ts), so no pod was created: use a version that pins one, or `engine: ollama`. See docs/settings/vllm.md#pod-images.",
+        "This version of Codeman pins no vLLM pod image yet (`ENGINE_RELEASES` in src/inference/images.ts), so no pod was created: use a version that pins one, or `engine: ollama`. See docs/settings/vllm.md#pod-images.",
   );
   assert.deepEqual(gpu.created, []);
   assert.deepEqual(asked, []);
@@ -1598,7 +1718,7 @@ test("a registered pod of another account is neither joined nor swept", async ()
   const { gpu, registry, open } = setup();
   const claim = await registry.claim(
     {
-      settings: podSettingsKey(settings, "o/r#7"),
+      settings: keyOf(settings, "o/r#7"),
       model: settings.model,
       gpuType: "GPU-A",
       image: ONE_RUN_IMAGE,
@@ -1653,4 +1773,398 @@ test("kinds of host and a priority are part of a pod's settings, only when not t
     community,
   );
   assert.notEqual(podSettingsKey({ ...shared, priority: "low" }, "o/r#7"), before);
+});
+
+/** The catalog's Ollama image in tests, which the release policy checks. */
+const OLLAMA_IMAGE = TEST_ENGINES.ollama?.image ?? "";
+const RUN = { limit: 1, reservationMs: 2 * 3_600_000 };
+
+/** Opens a run for `task`, with its own runtime, whether it opens or fails. */
+async function tryOpen(make: (more?: Partial<PodSettings>) => PodInference, task: string) {
+  const runtime = new FakeRuntime();
+  const opened = await make()
+    .open({ task, runId: "300", ...RUN }, runtime)
+    .then(
+      (value) => ({ value, error: undefined }),
+      (error: unknown) => ({ value: undefined, error }),
+    );
+  return { ...opened, runtime };
+}
+
+test("a pod of the catalog's image: its releases pass the policy, logged, and its document records them", async () => {
+  const { store, releases, open } = setup({ real: true, image: OLLAMA_IMAGE });
+  const { handle, runtime } = await open("7", "300");
+  assert.deepEqual(releases.osv.asked, [
+    { package: { ecosystem: "Go", name: "github.com/ollama/ollama" }, version: "0.40.10" },
+  ]);
+  assert.ok(
+    runtime.logged("info").includes("The release policy passes ollama 0.40.10 and node 24.22.1."),
+  );
+  assert.ok(
+    runtime
+      .logged("info")
+      .some((line) => line.startsWith("Release policy: node 24.22.1: no advisory database")),
+  );
+  const resolution = (await store.get(LAYOUT.pod("o", handle.nonce)))?.fields.resolution;
+  assert.deepEqual(resolution, {
+    verdict: "pass",
+    source: "live",
+    image: {
+      reference: OLLAMA_IMAGE,
+      digest: `sha256:${"c".repeat(64)}`,
+      checked: true,
+      name: "ollama",
+      version: "0.40.10",
+      publishedAt: "2026-08-01T00:00:00Z",
+      ageDays: 63.5,
+      verdict: "pass",
+      advisories: [],
+      exceptions: [],
+      provenance: { commitVerified: true },
+    },
+    node: {
+      url: TEST_NODE.url,
+      sha256: TEST_NODE.sha256,
+      name: "node",
+      version: "24.22.1",
+      publishedAt: "2026-08-01T00:00:00Z",
+      ageDays: 63.5,
+      verdict: "pass",
+      advisories: [],
+      exceptions: [],
+      provenance: { shasumsSigned: true },
+    },
+    gateway: { url: TEST_GATEWAY.url, sha256: TEST_GATEWAY.sha256, commit: TEST_COMMIT },
+    reasons: [
+      {
+        level: "note",
+        text: "node 24.22.1: no advisory database is named for it, so OSV.dev was not asked; its advisories are checked by hand when it is pinned.",
+      },
+    ],
+    checkedAt: new Date("2026-10-03T12:00:00Z"),
+  });
+  assert.equal(releases.cache.entries.size, 1, "a passing check stands in for an outage");
+});
+
+test("a release the policy blocks stops the run before any pod, naming the advisory and how to move on", async () => {
+  const osv = new FakeOsv();
+  osv.advise("Go", "github.com/ollama/ollama", "0.40.10", {
+    id: "GHSA-aaaa-bbbb-cccc",
+    fixed: "0.41.0",
+    summary: "Ollama leaks the model's files",
+  });
+  const releases = fakeReleases({ osv });
+  const { gpu, registry, make } = setup({ real: true, image: OLLAMA_IMAGE, releases });
+  const { error, runtime } = await tryOpen(make, "7");
+  assert.ok(error instanceof OpenFailure && !(error instanceof ProfileUnavailable));
+  assert.equal(
+    error.message,
+    "The release policy blocks ollama 0.40.10 and node 24.22.1, so no pod was created, and the run stops rather than fall back to another profile: ollama 0.40.10: it has GHSA-aaaa-bbbb-cccc (high): Ollama leaks the model's files. It is fixed in 0.41.0; pin that release, or add an exception for GHSA-aaaa-bbbb-cccc with its reason. Codeman pins these releases (`ENGINE_RELEASES` and `NODE_RELEASE` in src/inference/images.ts): set CODEMAN_COMMIT_SHA to a commit of Codeman whose releases pass, or, for Ollama, choose an image with the `pod-image` input, which the policy does not check.",
+  );
+  assert.deepEqual(runtime.logged("error"), [
+    "Release policy: ollama 0.40.10: it has GHSA-aaaa-bbbb-cccc (high): Ollama leaks the model's files. It is fixed in 0.41.0; pin that release, or add an exception for GHSA-aaaa-bbbb-cccc with its reason.",
+  ]);
+  assert.deepEqual(gpu.created, []);
+  assert.deepEqual(await registry.live(), []);
+  assert.equal(releases.cache.entries.size, 0, "a block is never cached");
+});
+
+test("an exception accepts its advisory with its reason, and the pod's document records it", async () => {
+  const osv = new FakeOsv();
+  osv.advise("Go", "github.com/ollama/ollama", "0.40.10", { id: "GHSA-aaaa-bbbb-cccc" });
+  const ollama = TEST_ENGINES.ollama as NonNullable<typeof TEST_ENGINES.ollama>;
+  const exception = {
+    id: "GHSA-aaaa-bbbb-cccc",
+    reason: "The pod's Ollama listens on its loopback.",
+  };
+  const releases = fakeReleases({
+    osv,
+    engines: { ...TEST_ENGINES, ollama: { ...ollama, exceptions: [exception] } },
+  });
+  const { store, open } = setup({ real: true, image: OLLAMA_IMAGE, releases });
+  const { handle, runtime } = await open("7", "300");
+  assert.ok(
+    runtime
+      .logged("info")
+      .includes(
+        "Release policy: ollama 0.40.10: GHSA-aaaa-bbbb-cccc (high) is accepted by the exception for GHSA-aaaa-bbbb-cccc: The pod's Ollama listens on its loopback.",
+      ),
+  );
+  const resolution = (await store.get(LAYOUT.pod("o", handle.nonce)))?.fields.resolution as {
+    verdict: string;
+    image: { exceptions: unknown[]; advisories: { id: string; acceptedBecause?: string }[] };
+  };
+  assert.equal(resolution.verdict, "pass");
+  assert.deepEqual(resolution.image.exceptions, [exception]);
+  assert.equal(resolution.image.advisories[0]?.acceptedBecause, exception.reason);
+});
+
+test("when OSV.dev does not answer, a check that passed within 24 hours stands, with a warning; an older one does not", async () => {
+  const { gpu, store, releases, make, advance } = setup({ real: true, image: OLLAMA_IMAGE });
+  assert.ok((await tryOpen(make, "7")).value);
+  releases.osv.down = true;
+  advance(3_600_000);
+  const later = await tryOpen(make, "8");
+  assert.ok(later.value, "the cached check stands");
+  assert.ok(
+    later.runtime
+      .logged("info")
+      .includes(
+        "The release policy passes, with warnings, ollama 0.40.10 and node 24.22.1, from its check at 2026-10-03T12:00:00.000Z.",
+      ),
+  );
+  assert.ok(
+    later.runtime
+      .logged("warning")
+      .includes(
+        "Release policy: OSV.dev could not be reached: connect ECONNREFUSED. The same releases passed at 2026-10-03T12:00:00.000Z, within the last 24 hours, so that result stands.",
+      ),
+  );
+  assert.equal(gpu.created.length, 1, "it joined the pod: the document records the first check");
+  const first = (await store.query(LAYOUT.pods("o")))[0]?.fields.resolution as { source: string };
+  assert.equal(first.source, "live");
+
+  advance(24 * 3_600_000);
+  const stale = await tryOpen(make, "9");
+  assert.ok(stale.error instanceof OpenFailure);
+  assert.equal(
+    stale.error.message,
+    "The release policy could not check ollama 0.40.10 and node 24.22.1, so no pod was created and the run stops: ollama 0.40.10: its advisories could not be read from OSV.dev. OSV.dev could not be reached: connect ECONNREFUSED. No passing check of the same releases and exceptions from the last 24 hours is cached, so they cannot be checked; try again later.",
+  );
+});
+
+test("when OSV.dev does not answer and no check is cached, the run stops before any pod", async () => {
+  const releases = fakeReleases();
+  releases.osv.down = true;
+  const { gpu, make } = setup({ real: true, image: OLLAMA_IMAGE, releases });
+  const { error } = await tryOpen(make, "7");
+  assert.ok(error instanceof OpenFailure);
+  assert.match(
+    error.message,
+    /^The release policy could not check ollama 0\.40\.10 and node 24\.22\.1/,
+  );
+  assert.match(error.message, /try again later\.$/);
+  assert.deepEqual(gpu.created, []);
+});
+
+test("a run whose Codeman commit is unknown stops before any pod, and asks OSV.dev nothing", async () => {
+  const releases = fakeReleases({
+    gateway: () => {
+      throw new Error("Codeman's commit is unknown.");
+    },
+  });
+  const { gpu, registry, make } = setup({ real: true, image: OLLAMA_IMAGE, releases });
+  const { error } = await tryOpen(make, "7");
+  assert.ok(error instanceof OpenFailure);
+  assert.equal(error.message, "Codeman's commit is unknown.");
+  assert.deepEqual(gpu.created, []);
+  assert.deepEqual(await registry.live(), []);
+  assert.deepEqual(releases.osv.asked, []);
+});
+
+test("an image the `pod-image` input chose gets the bootstrap, and the policy checks only Node.js", async () => {
+  const osv = new FakeOsv();
+  osv.advise("Go", "github.com/ollama/ollama", "0.40.10", { id: "GHSA-aaaa-bbbb-cccc" });
+  const { gpu, store, open } = setup({
+    real: true,
+    image: SHARED_IMAGE,
+    releases: fakeReleases({ osv }),
+  });
+  const { handle, runtime } = await open("7", "300");
+  assert.deepEqual(osv.asked, [], "Node.js names no advisory database");
+  assert.ok(
+    runtime
+      .logged("info")
+      .includes(
+        `The pod image ${SHARED_IMAGE} is not the one Codeman pins for ollama, as when the \`pod-image\` input chooses it: the release policy checks Node.js only.`,
+      ),
+  );
+  assert.equal(gpu.created[0]?.image, SHARED_IMAGE);
+  assert.deepEqual(gpu.created[0]?.command, podBootstrap(TEST_BOOTSTRAP).command);
+  const resolution = (await store.get(LAYOUT.pod("o", handle.nonce)))?.fields.resolution as {
+    image: Record<string, unknown>;
+  };
+  assert.deepEqual(resolution.image, { reference: SHARED_IMAGE, checked: false });
+});
+
+test("pods whose gateways differ never share: the gateway's SHA-256 is part of the settings", async () => {
+  let gateway = TEST_GATEWAY;
+  const releases = fakeReleases({ gateway: () => gateway });
+  const { gpu, open } = setup({ real: true, image: SHARED_IMAGE, releases });
+  const a = await open("7", "300");
+  gateway = { ...TEST_GATEWAY, sha256: "e".repeat(64) };
+  const b = await open("8", "300");
+  assert.notEqual(a.handle.podId, b.handle.podId);
+  assert.equal(gpu.created[1]?.env.CODEMAN_BOOTSTRAP_GATEWAY_SHA256, "e".repeat(64));
+  const shared = { ...settings, image: SHARED_IMAGE };
+  const key = podSettingsKey({ ...shared, bootstrap: TEST_BOOTSTRAP }, "o/r#7");
+  assert.equal(gpu.created[0]?.env.CODEMAN_POD_SETTINGS, key);
+  assert.notEqual(key, podSettingsKey(shared, "o/r#7"), "nor with pods from before the bootstrap");
+  // Another Node.js changes it; the same gateway at another commit does not.
+  const node = { ...TEST_BOOTSTRAP.node, sha256: "f".repeat(64) };
+  assert.notEqual(
+    podSettingsKey({ ...shared, bootstrap: { ...TEST_BOOTSTRAP, node } }, "o/r#7"),
+    key,
+  );
+  const moved = {
+    ...TEST_BOOTSTRAP.gateway,
+    url: TEST_GATEWAY.url.replace(TEST_COMMIT, "f".repeat(40)),
+  };
+  assert.equal(
+    podSettingsKey({ ...shared, bootstrap: { ...TEST_BOOTSTRAP, gateway: moved } }, "o/r#7"),
+    key,
+  );
+});
+
+/** The registry's documents of the pool's pods: why each ended. */
+async function endReasons(store: MemoryStore): Promise<unknown[]> {
+  return (await store.query(LAYOUT.pods("o"), {})).map((document) => document.fields.reason);
+}
+
+const QWEN_VLLM: Partial<PodSettings> = {
+  engine: vllm,
+  model: "Qwen/Qwen2.5-0.5B-Instruct",
+  vllm: { "tool-call-parser": "hermes", "max-model-len": "32768", "max-num-seqs": "256" },
+};
+const qwenHub = (config: ModelHub["config"]): ModelHub => ({
+  model: async (id) => ({ id, weightsBytes: QWEN25_05B_SAFETENSORS }),
+  vision: async () => false,
+  ...(config ? { config } : {}),
+});
+
+test("Codeman's estimate refuses a vLLM pod that cannot fit, before creating it", async () => {
+  const { gpu, store, registry, open } = setup({
+    real: true,
+    image: VLLM_IMAGE,
+    hub: qwenHub(async () => QWEN25_05B_CONFIG),
+  });
+  gpu.memories["GPU-A"] = 16;
+  await assert.rejects(open("7", "300", QWEN_VLLM), (error: unknown) => {
+    const cause = error instanceof OpenFailure ? error.cause : error;
+    assert.ok(cause instanceof FitRefused, String(error));
+    assert.ok(!(error instanceof ProfileUnavailable), "a mistake in the settings: no fallback");
+    assert.equal(
+      cause.message,
+      "`Qwen/Qwen2.5-0.5B-Instruct` does not fit the GPU with 256 parallel requests and a context of 32768 tokens, by Codeman's estimate, so no pod was created: its K/V cache needs 96.00 GiB, and the GPU's 16 GB at vLLM's memory utilization, less 0.92 GiB of weights, leave at most 13.80 GiB. Lower `max-model-len` or `max-num-seqs` in the `vllm` settings, set `kv-cache-dtype: fp8` or `language-model-only: true`, or use a GPU with more memory.",
+    );
+    return true;
+  });
+  assert.deepEqual(gpu.created, []);
+  assert.deepEqual(await registry.live(), [], "the creation lease ended");
+  const reasons = await endReasons(store);
+  assert.equal(reasons.length, 1);
+  assert.match(
+    String(reasons[0]),
+    /^its start failed: `Qwen\/Qwen2\.5-0\.5B-Instruct` does not fit/,
+  );
+});
+
+test("a vLLM pod that the estimate allows, or cannot count, is created as before", async () => {
+  const fits = setup({
+    real: true,
+    image: VLLM_IMAGE,
+    hub: qwenHub(async () => QWEN25_05B_CONFIG),
+  });
+  const { runtime } = await fits.open("7", "300", {
+    ...QWEN_VLLM,
+    vllm: { "tool-call-parser": "hermes", "max-num-seqs": "1" },
+  });
+  assert.equal(fits.gpu.created.length, 1);
+  assert.ok(
+    runtime
+      .logged("info")
+      .includes(
+        "By Codeman's estimate, Qwen/Qwen2.5-0.5B-Instruct's K/V cache needs 0.38 GiB for 1 parallel request(s) of 32768 tokens, of the 43.24 GiB at most that the GPU leaves it; the pod's gateway fits it.",
+      ),
+  );
+  for (const [config, why] of [
+    [undefined, "no configuration of the model"],
+    [
+      async () => {
+        throw new Error("Hugging Face answered 404.");
+      },
+      "its config.json: Hugging Face answered 404.",
+    ],
+    [
+      async () => ({ ...QWEN25_05B_CONFIG, kv_lora_rank: 512 }),
+      "its architecture is not one the estimate counts",
+    ],
+  ] as const) {
+    const unknown = setup({ real: true, image: VLLM_IMAGE, hub: qwenHub(config) });
+    const opened = await unknown.open("7", "300", QWEN_VLLM);
+    assert.equal(unknown.gpu.created.length, 1, why);
+    assert.ok(
+      opened.runtime
+        .logged("info")
+        .includes(
+          `Codeman cannot estimate how Qwen/Qwen2.5-0.5B-Instruct fits the GPU (${why}); the pod's gateway fits it.`,
+        ),
+      why,
+    );
+  }
+});
+
+/** Ollama's registry, in memory: `qwen2.5:0.5b`'s facts, and the names asked. */
+function qwenRegistry(): OllamaModels & { asked: string[] } {
+  const asked: string[] = [];
+  return {
+    asked,
+    model: async (name) => {
+      asked.push(name);
+      return name === "qwen2.5:0.5b"
+        ? { weightsBytes: QWEN25_05B_WEIGHTS, info: QWEN25_05B_INFO }
+        : { unknown: "Ollama's registry answered 404." };
+    },
+  };
+}
+
+test("Codeman's estimate refuses an Ollama pod that cannot fit, before creating it", async () => {
+  const ollamaModels = qwenRegistry();
+  const { gpu, store, open } = setup({ real: true, image: SHARED_IMAGE, ollamaModels });
+  gpu.memories["GPU-A"] = 1;
+  await assert.rejects(
+    open("7", "300", { model: "qwen2.5:0.5b", parallel: 2 }),
+    (error: unknown) => {
+      const cause = error instanceof OpenFailure ? error.cause : error;
+      assert.ok(cause instanceof FitRefused, String(error));
+      assert.match(
+        cause.message,
+        /^`qwen2\.5:0\.5b` does not fit the GPU with 2 parallel requests and a context of 32768 tokens, the least Codeman gives an agent, by Codeman's estimate, so no pod was created: .* Give the profile fewer tasks \(`tasks` or `max-tasks`\) or set a smaller `num-parallel`/,
+      );
+      return true;
+    },
+  );
+  assert.deepEqual(gpu.created, []);
+  assert.deepEqual(ollamaModels.asked, ["qwen2.5:0.5b"]);
+  assert.match(String((await endReasons(store))[0]), /^its start failed: `qwen2\.5:0\.5b`/);
+});
+
+test("an Ollama pod that the estimate allows, or cannot read, is created as before", async () => {
+  const ollamaModels = qwenRegistry();
+  const fits = setup({ real: true, image: SHARED_IMAGE, ollamaModels });
+  const { runtime } = await fits.open("7", "300", { model: "qwen2.5:0.5b", parallel: 2 });
+  assert.equal(fits.gpu.created.length, 1);
+  assert.ok(
+    runtime
+      .logged("info")
+      .some((line) =>
+        line.startsWith(
+          "By Codeman's estimate, qwen2.5:0.5b's K/V cache needs 0.75 GiB for 2 parallel request(s) of 32768 tokens",
+        ),
+      ),
+  );
+  const unknown = setup({ real: true, image: SHARED_IMAGE, ollamaModels });
+  const opened = await unknown.open("7", "300");
+  assert.equal(unknown.gpu.created.length, 1);
+  assert.ok(
+    opened.runtime
+      .logged("info")
+      .includes(
+        "Codeman cannot estimate how qwen3-coder:30b fits the GPU (Ollama's registry answered 404.); the pod's gateway fits it.",
+      ),
+  );
+  // An image pinned before the fit to the GPU gets no estimate: its gateway does not fit.
+  const before = setup({ real: true, image: ONE_RUN_IMAGE, ollamaModels: qwenRegistry() });
+  await before.open("7", "300", { model: "qwen2.5:0.5b" });
+  assert.equal(before.gpu.created.length, 1);
 });

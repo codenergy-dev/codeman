@@ -1,0 +1,1086 @@
+import assert from "node:assert/strict";
+import { describe, test } from "node:test";
+import { adminToken } from "../../src/inference/selfhosted.ts";
+import { TEST_COMMIT } from "../../src/testing/fake-releases.ts";
+import { QWEN25_05B_CONFIG } from "../../src/testing/gguf.ts";
+import {
+  CANDIDATES,
+  type CheckOptions,
+  GPU_MEMORY_GB,
+  OWNER,
+  parseInputs,
+  podCheck,
+  runCommit,
+  UNFIT_KV_GB,
+} from "./check.ts";
+import {
+  type FakeOptions,
+  FakeRunpod,
+  SALAD_CLASSES,
+  SALAD_ORGANIZATION,
+  SALAD_PROJECT,
+} from "./fake-runpod.ts";
+import { NodeWatch } from "./salad.ts";
+
+const KEY = "rpa_TESTKEY0123456789abcdefghijklmnop";
+
+/** Runs the check against a fake Runpod, and gives what it printed and the fake. */
+async function run(
+  argv: string[],
+  fake: FakeOptions = {},
+  more: Partial<CheckOptions> & { actions?: boolean; env?: Record<string, string> } = {},
+) {
+  const lines: string[] = [];
+  const runpod = new FakeRunpod(lines, fake);
+  const code = await podCheck({
+    argv,
+    env: {
+      CODEMAN_RUNPOD_API_KEY: KEY,
+      GITHUB_SHA: TEST_COMMIT,
+      ...(more.actions === false ? {} : { GITHUB_ACTIONS: "true" }),
+      ...more.env,
+    },
+    write: (line) => lines.push(line),
+    git: () => {
+      throw new Error("No git in tests.");
+    },
+    fetch: runpod.fetch,
+    wait: async () => {},
+    ...more,
+  });
+  return { code, lines, runpod };
+}
+
+/** Every value the output must never show: pods' IDs, URLs and nonces, tokens, and the key. */
+function secrets(runpod: FakeRunpod): string[] {
+  const pods = [...runpod.pods.values()];
+  return [
+    KEY,
+    ...pods.flatMap((pod) => [
+      pod.id,
+      `https://${pod.id}-8080.proxy.runpod.net`,
+      pod.env.CODEMAN_NONCE ?? "",
+      pod.env.CODEMAN_NONCE ? adminToken(KEY, pod.env.CODEMAN_NONCE) : "",
+    ]),
+    ...runpod.bearers.map((bearer) => bearer.token),
+  ].filter((value) => value !== "");
+}
+
+/** Checks that no line but a mask shows a secret, and that each was masked before its use. */
+function assertNothingLeaks(lines: readonly string[], runpod: FakeRunpod, actions = true): void {
+  for (const secret of secrets(runpod)) {
+    // The runner reads a mask command, and never shows it. A pod's URL is known only once the
+    // pod runs, and is masked then.
+    if (actions && !secret.startsWith("https://")) {
+      assert.ok(lines.includes(`::add-mask::${secret}`), "A secret was not masked.");
+    }
+    for (const line of lines) {
+      if (actions && line.startsWith("::add-mask::")) continue;
+      assert.ok(!line.includes(secret), `A line shows a secret: ${line}`);
+    }
+  }
+  if (!actions) assert.ok(!lines.some((line) => line.startsWith("::")));
+  if (actions) {
+    for (const { token, printed } of runpod.bearers) {
+      assert.ok(printed.includes(`::add-mask::${token}`), "A token was used before its mask.");
+    }
+    assert.equal(lines[0], `::add-mask::${KEY}`);
+  }
+  for (const line of lines) {
+    assert.match(line, /^(::add-mask::\S+|\[pod-check\] [a-z.-]+( [a-z0-9_]+=("[^"]*"|\S+))*)$/);
+  }
+}
+
+/** The check's own pods, which must all be terminated. */
+function assertAllTerminated(runpod: FakeRunpod): void {
+  for (const pod of runpod.pods.values()) {
+    if (pod.env.CODEMAN_ORGANIZATION !== OWNER) continue;
+    assert.equal(pod.status, "TERMINATED", "A pod of the check was left running.");
+  }
+}
+
+function line(lines: readonly string[], event: string): string {
+  const found = lines.find((one) => one.startsWith(`[pod-check] ${event} `));
+  assert.ok(found, `No line for ${event} in:\n${lines.join("\n")}`);
+  return found;
+}
+
+describe("the pod check", () => {
+  test("serves on Ollama then vLLM, prints only allowlisted values, and terminates both pods", async () => {
+    const { code, lines, runpod } = await run(["--gpu=NVIDIA RTX A5000"]);
+    assert.equal(code, 0, lines.join("\n"));
+    assert.deepEqual(runpod.unexpected, []);
+    assert.equal(runpod.pods.size, 2);
+    assertAllTerminated(runpod);
+    assertNothingLeaks(lines, runpod);
+    for (const engine of ["ollama", "vllm"]) {
+      for (const step of ["start", "bootstrap", "health", "fit", "chat", "end"]) {
+        assert.match(line(lines, `${engine}.${step}`), / result=pass/);
+      }
+    }
+    assert.match(line(lines, "gateway"), new RegExp(`result=pass commit=${TEST_COMMIT}`));
+    assert.match(
+      line(lines, "ollama.bootstrap"),
+      /result=pass node=v24\.22\.1 node_match=true gateway_sha256_match=true command=true image=true node_spec=true gateway_spec=true gateway_answered=true gateway_version=2/,
+    );
+    assert.match(line(lines, "ollama.fit"), /gpu_memory_gb=24 size_gb=1.2 vram_gb=1.2/);
+    assert.match(line(lines, "vllm.fit"), /cache_tokens=1717000 concurrency=52.4/);
+    assert.match(line(lines, "ollama.chat"), /http_status=200 answered=true completion_tokens=2/);
+    assert.match(line(lines, "cleanup"), /result=pass pods=2 leftover_pods=0/);
+    assert.match(line(lines, "done"), /result=pass/);
+  });
+
+  test("gives each pod the bootstrap with the gateway at the run's commit", async () => {
+    const { runpod } = await run(["--checks=ollama"]);
+    const [pod] = runpod.pods.values();
+    assert.equal(pod?.command[0], "/bin/sh");
+    assert.equal(
+      pod?.env.CODEMAN_BOOTSTRAP_GATEWAY_URL,
+      `https://raw.githubusercontent.com/codenergy-dev/codeman/${TEST_COMMIT}/dist/gateway.js`,
+    );
+    assert.equal(pod?.env.CODEMAN_ORGANIZATION, OWNER);
+  });
+
+  test("fails the bootstrap when the gateway runs on another Node.js or another file", async () => {
+    for (const [fake, field] of [
+      [{ node: "v24.21.0" }, /node=v24\.21\.0 node_match=false gateway_sha256_match=true/],
+      [{ gatewaySha256: "b".repeat(64) }, /node_match=true gateway_sha256_match=false/],
+    ] as const) {
+      const { code, lines, runpod } = await run(["--checks=ollama"], fake);
+      assert.equal(code, 1);
+      const bootstrap = line(lines, "ollama.bootstrap");
+      assert.match(bootstrap, /result=fail/);
+      assert.match(bootstrap, field);
+      assertAllTerminated(runpod);
+      assertNothingLeaks(lines, runpod);
+    }
+  });
+
+  test("prints no mask outside GitHub Actions, and no secret either", async () => {
+    const { code, lines, runpod } = await run(["--checks=ollama"], {}, { actions: false });
+    assert.equal(code, 0, lines.join("\n"));
+    assertNothingLeaks(lines, runpod, false);
+  });
+
+  test("terminates the pods when a check fails, and exits 1", async () => {
+    const { code, lines, runpod } = await run([], { chatStatus: 500 });
+    assert.equal(code, 1);
+    assert.match(line(lines, "ollama.chat"), /result=fail http_status=500 answered=false/);
+    assert.match(line(lines, "cleanup"), /result=pass pods=2/);
+    assert.match(line(lines, "done"), /result=fail/);
+    assertAllTerminated(runpod);
+    assertNothingLeaks(lines, runpod);
+  });
+
+  test("terminates a pod whose start fails", async () => {
+    const { code, lines, runpod } = await run(["--checks=ollama"], { podsFail: true });
+    assert.equal(code, 1);
+    assert.match(
+      line(lines, "ollama.start"),
+      /result=fail error=Error reason="The pod was failed before it served."/,
+    );
+    assert.equal(runpod.pods.size, 1);
+    assertAllTerminated(runpod);
+    assertNothingLeaks(lines, runpod);
+  });
+
+  test("prints the GPU it chose, and the catalog's availability, before each pod", async () => {
+    const { lines } = await run([]);
+    assert.match(
+      line(lines, "ollama.gpu"),
+      /^\[pod-check\] ollama.gpu result=pass gpu="NVIDIA RTX A4000" cloud=secure price_per_hour_usd=0.27 memory_gb=24 availability=HIGH data_centers=2 data_centers_with_room=1 candidates=16 eligible=16 no_room=0 missing=0 over_cap=0$/,
+    );
+    assert.match(
+      line(lines, "ollama.start"),
+      /result=pass engine=ollama model=qwen2.5:0.5b attempt=1 gpu="NVIDIA RTX A4000" cloud=secure price_per_hour_usd=0.27 memory_gb=24 availability=HIGH data_centers=2 data_centers_with_room=1 create_s=/,
+    );
+    assert.match(line(lines, "vllm.start"), /attempt=1 gpu="NVIDIA RTX A4000" cloud=secure/);
+  });
+
+  test("takes the cheapest GPU type with room, across both clouds", async () => {
+    const { code, lines, runpod } = await run(["--checks=ollama"], {
+      catalog: {
+        "NVIDIA RTX A4000": {
+          secure: { price: 0.25, availability: "HIGH" },
+          community: { price: 0.17, availability: "LOW" },
+        },
+        "NVIDIA RTX A5000": {
+          secure: { price: 0.27, availability: "HIGH" },
+          community: { price: 0.16, availability: "MEDIUM" },
+        },
+      },
+    });
+    assert.equal(code, 0, lines.join("\n"));
+    const [pod] = runpod.pods.values();
+    assert.equal(pod?.gpu, "NVIDIA RTX A5000");
+    assert.equal(pod?.cloud, "community");
+    assert.match(
+      line(lines, "ollama.gpu"),
+      /gpu="NVIDIA RTX A5000" cloud=community price_per_hour_usd=0.16 .*candidates=16 eligible=4 no_room=0 missing=12 over_cap=0/,
+    );
+    assert.match(line(lines, "ollama.start"), /result=pass .*cloud=community/);
+    assertNothingLeaks(lines, runpod);
+  });
+
+  test("skips GPU types without room, unknown to the catalog, or over the cost cap", async () => {
+    const { code, lines, runpod } = await run(["--checks=ollama"], {
+      catalog: {
+        "NVIDIA RTX A4000": { secure: { price: 0.2, availability: "NONE" }, community: null },
+        "NVIDIA RTX A4500": { secure: { price: 1.5, availability: "HIGH" }, community: null },
+        "NVIDIA L4": {
+          secure: { price: 0.4, availability: "HIGH" },
+          community: { price: 0.3, availability: "HIGH" },
+        },
+      },
+    });
+    assert.equal(code, 0, lines.join("\n"));
+    assert.match(
+      line(lines, "ollama.gpu"),
+      /result=pass gpu="NVIDIA L4" cloud=community price_per_hour_usd=0.3 .*candidates=16 eligible=2 no_room=1 missing=12 over_cap=1/,
+    );
+    assert.equal([...runpod.pods.values()][0]?.gpu, "NVIDIA L4");
+  });
+
+  test("creates nothing when no GPU type has room", async () => {
+    const { code, lines, runpod } = await run(["--checks=ollama"], { availability: "NONE" });
+    assert.equal(code, 1);
+    assert.equal(runpod.pods.size, 0);
+    assert.match(
+      line(lines, "ollama.gpu"),
+      /result=unavailable candidates=16 eligible=0 no_room=16 missing=0 over_cap=0 reason="No GPU type of the list has room now."/,
+    );
+    assert.ok(!lines.some((one) => one.startsWith("[pod-check] ollama.start")));
+  });
+
+  test("tries the next GPU type when Runpod has no room after all", async () => {
+    const { code, lines, runpod } = await run(["--checks=ollama", "--community=false"], {
+      catalog: {
+        "NVIDIA RTX A4000": { secure: { price: 0.2, availability: "HIGH" } },
+        "NVIDIA RTX A5000": { secure: { price: 0.3, availability: "HIGH" } },
+      },
+      createError: ({ gpu }) =>
+        gpu === "NVIDIA RTX A4000"
+          ? { status: 400, detail: "There are no longer any instances available." }
+          : undefined,
+    });
+    assert.equal(code, 0, lines.join("\n"));
+    const starts = lines.filter((one) => one.startsWith("[pod-check] ollama.start "));
+    assert.equal(starts.length, 2);
+    assert.match(
+      starts[0] ?? "",
+      /result=unavailable error=PodUnavailable http_status=400 message=".*no longer any instances available.*" engine=ollama attempt=1 gpu="NVIDIA RTX A4000" cloud=secure/,
+    );
+    assert.match(starts[1] ?? "", /result=pass .*attempt=2 gpu="NVIDIA RTX A5000" cloud=secure/);
+    assert.equal(runpod.pods.size, 1);
+    assertAllTerminated(runpod);
+    assertNothingLeaks(lines, runpod);
+  });
+
+  test("gives up after a few GPU types without room, and an explicit one gets no other", async () => {
+    const noRoom = () => ({ status: 400, detail: "There are no instances available." });
+    const auto = await run(["--checks=ollama"], { createError: noRoom });
+    assert.equal(auto.code, 1);
+    const starts = auto.lines.filter((one) => one.startsWith("[pod-check] ollama.start "));
+    assert.equal(starts.length, 3);
+    assert.match(starts[2] ?? "", /result=unavailable .*attempt=3/);
+    const explicit = await run(["--checks=ollama", "--gpu=NVIDIA L4"], { createError: noRoom });
+    assert.equal(explicit.code, 1);
+    const one = explicit.lines.filter((line) => line.startsWith("[pod-check] ollama.start "));
+    assert.equal(one.length, 1);
+    assert.match(one[0] ?? "", /attempt=1 gpu="NVIDIA L4" cloud=secure/);
+    assert.match(line(explicit.lines, "ollama.gpu"), /candidates=2 eligible=2/);
+  });
+
+  test("limits the candidates to Secure Cloud without community", async () => {
+    const { code, lines, runpod } = await run(["--checks=ollama", "--community=false"], {
+      catalog: {
+        "NVIDIA RTX A4000": {
+          secure: { price: 0.25, availability: "HIGH" },
+          community: { price: 0.1, availability: "HIGH" },
+        },
+      },
+    });
+    assert.equal(code, 0, lines.join("\n"));
+    assert.ok(runpod.catalogReads.every((read) => read.endsWith(" secure")));
+    assert.equal([...runpod.pods.values()][0]?.cloud, "secure");
+    assert.match(line(lines, "ollama.gpu"), /cloud=secure .*candidates=8 eligible=1/);
+    assert.match(line(lines, "inputs"), /community=false/);
+  });
+
+  test("keeps the whole run under its cost cap, counting a pod that still runs", async () => {
+    // At 0.6 USD an hour, one pod for the run's hour fits; two at once do not.
+    const { code, lines, runpod } = await run([], { hourly: 0.6, terminateFails: true });
+    assert.equal(code, 1);
+    assert.match(line(lines, "ollama.start"), /result=pass/);
+    assert.match(
+      line(lines, "vllm.gpu"),
+      /result=fail .*eligible=0 no_room=0 missing=0 over_cap=16/,
+    );
+    assert.equal(runpod.pods.size, 1);
+    assert.match(line(lines, "cleanup"), /result=fail/);
+  });
+
+  test("unfit: takes only GPU types far below the K/V cache it asks", async () => {
+    for (const gpu of CANDIDATES.unfit) {
+      assert.ok((GPU_MEMORY_GB[gpu] ?? Infinity) * 2 < UNFIT_KV_GB, gpu);
+    }
+    const { code, lines, runpod } = await run(["--checks=unfit"], {
+      catalog: {
+        "NVIDIA RTX A4000": { memory: 80, secure: { price: 0.1, availability: "HIGH" } },
+        "NVIDIA L4": { memory: 24, secure: { price: 0.4, availability: "HIGH" } },
+      },
+    });
+    assert.equal(code, 0, lines.join("\n"));
+    assert.match(line(lines, "unfit.gpu"), /gpu="NVIDIA L4" .*eligible=1 .*too_large=1/);
+    assert.equal(runpod.pods.size, 0, "refused before any pod");
+    assert.match(line(lines, "unfit"), /result=pass .*attempt=1 gpu="NVIDIA L4" .*pods=0/);
+  });
+
+  test("a 400 while the catalog lists room fails the start, with Runpod's detail cleaned", async () => {
+    const { code, lines, runpod } = await run(["--checks=ollama"], {
+      createError: (spec) => {
+        const nonce = spec.env.CODEMAN_NONCE ?? "";
+        return {
+          status: 400,
+          detail: `env refused: ${KEY} ${adminToken(KEY, nonce)} ${nonce} at https://example.com/x`,
+        };
+      },
+    });
+    assert.equal(code, 1);
+    const start = line(lines, "ollama.start");
+    assert.match(
+      start,
+      /^\[pod-check\] ollama.start result=fail error=PodUnavailable http_status=400/,
+    );
+    assert.match(start, /env refused: \[hidden\] \[hidden\] \[hidden\] at \[url\]/);
+    assert.match(
+      start,
+      /reason="Runpod refused the creation with 400 while its catalog listed room/,
+    );
+    assert.ok(!start.includes(KEY));
+    assertNothingLeaks(lines, runpod);
+  });
+
+  test("Runpod's own words for no room stay unavailable, though the catalog listed room", async () => {
+    const { code, lines, runpod } = await run(["--checks=ollama"], {
+      createError: () => ({
+        status: 400,
+        detail:
+          "There are no longer any instances available with the requested specifications. Please refresh and try again.",
+      }),
+    });
+    assert.equal(code, 1);
+    assert.equal(runpod.pods.size, 0);
+    const start = line(lines, "ollama.start");
+    assert.match(start, /result=unavailable error=PodUnavailable http_status=400/);
+    assert.match(start, /availability=HIGH/);
+    assert.ok(!start.includes("reason="));
+  });
+
+  test("terminates a pod whose creation's answer was lost, from its pool", async () => {
+    const { code, lines, runpod } = await run(["--checks=ollama"], { loseCreateAnswer: true });
+    assert.equal(code, 1);
+    assert.equal(runpod.pods.size, 1);
+    assert.match(line(lines, "cleanup"), /result=pass pods=1/);
+    assertAllTerminated(runpod);
+    assertNothingLeaks(lines, runpod);
+  });
+
+  test("terminates the pod when interrupted mid-start, and starts no other", async () => {
+    const stop = new AbortController();
+    const { code, lines, runpod } = await run(
+      [],
+      { onCreate: () => stop.abort() },
+      { signal: stop.signal },
+    );
+    assert.equal(code, 1);
+    assert.equal(runpod.pods.size, 1);
+    assert.match(line(lines, "ollama"), /result=stopped reason="The run was interrupted."/);
+    assert.ok(!lines.some((one) => one.startsWith("[pod-check] vllm")));
+    assertAllTerminated(runpod);
+    assertNothingLeaks(lines, runpod);
+  });
+
+  test("terminates an earlier run's leftover pod, and never another organization's", async () => {
+    const lines: string[] = [];
+    const runpod = new FakeRunpod(lines);
+    const leftover = runpod.addPod({ CODEMAN_ORGANIZATION: OWNER, CODEMAN_POOL: `${OWNER}-1-1` });
+    const theirs = runpod.addPod({ CODEMAN_ORGANIZATION: "acme", CODEMAN_POOL: "acme" });
+    const code = await podCheck({
+      argv: ["--checks=ollama"],
+      env: { CODEMAN_RUNPOD_API_KEY: KEY, GITHUB_SHA: TEST_COMMIT, GITHUB_RUN_ID: "2" },
+      write: (one) => lines.push(one),
+      git: () => "",
+      fetch: runpod.fetch,
+      wait: async () => {},
+    });
+    assert.equal(code, 0, lines.join("\n"));
+    assert.equal(leftover.status, "TERMINATED");
+    assert.equal(theirs.status, "RUNNING");
+    assert.match(line(lines, "cleanup"), /leftover_pods=1/);
+    assertNothingLeaks(lines, runpod, false);
+  });
+
+  test("blocked: a release the policy blocks starts no pod", async () => {
+    const { code, lines, runpod } = await run(["--checks=blocked"], {
+      ollamaAdvisory: "GHSA-fccc-8m69-8r78",
+    });
+    assert.equal(code, 0, lines.join("\n"));
+    assert.equal(runpod.pods.size, 0);
+    assert.match(
+      line(lines, "blocked"),
+      /result=pass error=ReleaseBlocked advisories=GHSA-fccc-8m69-8r78 pods=0/,
+    );
+  });
+
+  test("blocked: fails when the policy lets the release pass, and creates no pod", async () => {
+    const { code, lines, runpod } = await run(["--checks=blocked"]);
+    assert.equal(code, 1);
+    assert.equal(runpod.pods.size, 0);
+    assert.match(
+      line(lines, "blocked"),
+      /result=fail error=Error reason="The release policy did not block the release." pods=0/,
+    );
+  });
+
+  test("unfit: Codeman's estimate refuses the model before any pod, with the fit's message", async () => {
+    const { code, lines, runpod } = await run(["--checks=unfit"]);
+    assert.equal(code, 0, lines.join("\n"));
+    const unfit = line(lines, "unfit");
+    assert.match(
+      unfit,
+      /result=pass engine=vllm model=Qwen\/Qwen2.5-0.5B-Instruct error=FitRefused message="`Qwen\/Qwen2.5-0.5B-Instruct` does not fit the GPU with 256 parallel requests and a context of 32768 tokens, by Codeman's estimate, so no pod was created: its K\/V cache needs 96.00 GiB/,
+    );
+    assert.match(unfit, / pods=0 /);
+    assert.equal(runpod.pods.size, 0);
+    assert.match(line(lines, "done"), /result=pass .*pods_cost_usd=0$/);
+    assertNothingLeaks(lines, runpod);
+  });
+
+  test("unfit: a model the estimate cannot count fails the check, though the gateway refuses it", async () => {
+    const { code, lines, runpod } = await run(["--checks=unfit"], {
+      modelConfig: { ...QWEN25_05B_CONFIG, kv_lora_rank: 512 },
+      startFailure:
+        "`Qwen/Qwen2.5-0.5B-Instruct` does not fit the GPU with 256 parallel requests and a context of 32768 tokens: vLLM's K/V cache holds 52.40 of them (1717000 tokens).",
+    });
+    assert.equal(code, 1);
+    assert.match(line(lines, "unfit"), /result=fail .*error=PodStartFailure .* pods=1 /);
+    assertAllTerminated(runpod);
+  });
+
+  test("refuses GPU types above the cost cap before any pod", async () => {
+    const { code, lines, runpod } = await run(["--checks=ollama"], { hourly: 1.5 });
+    assert.equal(code, 1);
+    assert.equal(runpod.pods.size, 0);
+    assert.match(
+      line(lines, "ollama.gpu"),
+      /result=fail candidates=16 eligible=0 no_room=0 missing=0 over_cap=16 reason="No GPU type with room fits the run's cost cap of 1 USD: lower the max minutes."/,
+    );
+  });
+
+  test("refuses a wrong input before any request, without repeating it", async () => {
+    const { code, lines, runpod } = await run(["--gpu=::set-env name=X::1"]);
+    assert.equal(code, 2);
+    assert.equal(runpod.bearers.length, 0);
+    assert.ok(!lines.join("\n").includes("set-env"));
+    assert.match(line(lines, "inputs"), /result=fail reason="The GPU type must be auto, or one of/);
+  });
+
+  test("--cleanup terminates every pod of the check, and no other", async () => {
+    const lines: string[] = [];
+    const runpod = new FakeRunpod(lines);
+    const ours = runpod.addPod({ CODEMAN_ORGANIZATION: OWNER, CODEMAN_POOL: `${OWNER}-9-1` });
+    const theirs = runpod.addPod({ CODEMAN_ORGANIZATION: "acme" });
+    const code = await podCheck({
+      argv: ["--cleanup"],
+      env: { CODEMAN_RUNPOD_API_KEY: KEY },
+      write: (one) => lines.push(one),
+      git: () => "",
+      fetch: runpod.fetch,
+    });
+    assert.equal(code, 0);
+    assert.equal(ours.status, "TERMINATED");
+    assert.equal(theirs.status, "RUNNING");
+    assert.deepEqual(lines, ["[pod-check] cleanup result=pass pods=1"]);
+  });
+});
+
+const SALAD_KEY = "salad_TESTKEY0123456789abcdefghijklmn";
+const SALAD_ENV = {
+  CODEMAN_SALAD_API_KEY: SALAD_KEY,
+  CODEMAN_SALAD_ORGANIZATION: SALAD_ORGANIZATION,
+  CODEMAN_SALAD_PROJECT: SALAD_PROJECT,
+};
+
+/** Runs the check against a fake Salad, with the workflow's environment for Salad. */
+async function saladRun(argv: string[], fake: FakeOptions = {}, now?: () => Date) {
+  const lines: string[] = [];
+  const salad = new FakeRunpod(lines, fake);
+  const code = await podCheck({
+    ...(now ? { now } : {}),
+    argv: ["--provider=salad", ...argv],
+    env: { ...SALAD_ENV, GITHUB_SHA: TEST_COMMIT, GITHUB_ACTIONS: "true" },
+    write: (line) => lines.push(line),
+    git: () => {
+      throw new Error("No git in tests.");
+    },
+    fetch: salad.fetch,
+    wait: async () => {},
+  });
+  return { code, lines, salad };
+}
+
+/**
+ * Checks that no line but a mask shows the Salad key, its organization and project, a group's
+ * name or address, a nonce or a token; and that each was masked before its use.
+ */
+function assertNothingLeaksOnSalad(lines: readonly string[], salad: FakeRunpod): void {
+  const pods = [...salad.pods.values()];
+  const hidden = [
+    SALAD_KEY,
+    SALAD_ORGANIZATION,
+    SALAD_PROJECT,
+    ...pods.flatMap((pod) => [
+      pod.id,
+      `${pod.id}.salad.cloud`,
+      ...(pod.salad?.machines ?? []),
+      pod.env.CODEMAN_NONCE ?? "",
+      pod.env.CODEMAN_NONCE ? adminToken(SALAD_KEY, pod.env.CODEMAN_NONCE) : "",
+    ]),
+    ...salad.bearers.map((bearer) => bearer.token),
+  ].filter((value) => value !== "");
+  for (const secret of hidden) {
+    for (const line of lines) {
+      if (line.startsWith("::add-mask::")) continue;
+      assert.ok(!line.includes(secret), `A line shows a secret: ${line}`);
+    }
+  }
+  for (const value of [SALAD_KEY, SALAD_ORGANIZATION, SALAD_PROJECT]) {
+    assert.ok(lines.slice(0, 3).includes(`::add-mask::${value}`), "Not masked first.");
+  }
+  for (const { token, printed } of salad.bearers) {
+    assert.ok(printed.includes(`::add-mask::${token}`), "A token was used before its mask.");
+  }
+  for (const line of lines) {
+    assert.match(line, /^(::add-mask::\S+|\[pod-check\] [a-z.-]+( [a-z0-9_]+=("[^"]*"|\S+))*)$/);
+  }
+}
+
+describe("the pod check on Salad", () => {
+  test("serves on Ollama then vLLM, at High priority, on the cheapest class that fits", async () => {
+    const { code, lines, salad } = await saladRun([]);
+    assert.equal(code, 0, lines.join("\n"));
+    assert.deepEqual(salad.unexpected, []);
+    assert.equal(salad.pods.size, 2);
+    for (const pod of salad.pods.values()) {
+      assert.equal(pod.gpu, "RTX 3090 (24 GB)");
+      assert.equal(pod.salad?.priority, "high");
+      assert.equal(pod.env.CODEMAN_ORGANIZATION, OWNER);
+      assert.equal(pod.status, "TERMINATED");
+    }
+    assertNothingLeaksOnSalad(lines, salad);
+    assert.match(line(lines, "inputs"), /result=pass provider=salad gpu=auto community=true/);
+    // Only the NVIDIA classes of 16 to 24 GB are read: not the 32 GB, 12 GB or AMD ones.
+    assert.equal(new Set(salad.availabilityReads).size, 2);
+    assert.match(
+      line(lines, "ollama.gpu"),
+      /^\[pod-check\] ollama.gpu result=pass gpu="RTX 3090 \(24 GB\)" cloud=community price_per_hour_usd=0.2 memory_gb=24 available_nodes=5 candidates=2 eligible=2 no_room=0 missing=0 over_cap=0$/,
+    );
+    for (const engine of ["ollama", "vllm"]) {
+      for (const step of ["start", "bootstrap", "health", "fit", "chat", "end"]) {
+        assert.match(line(lines, `${engine}.${step}`), / result=pass/);
+      }
+    }
+    assert.match(line(lines, "cleanup"), /result=pass pods=2 leftover_pods=0/);
+    assert.match(
+      line(lines, "done"),
+      /result=pass total_s=\S+ cost_usd=\S+ cost_basis=billed pods_cost_usd=/,
+    );
+    assert.match(line(lines, "ollama.end"), / cost_usd=\S+ cost_basis=billed estimate_usd=\S+ /);
+  });
+
+  test("counts only the time Salad's instance runs, which Salad bills", async () => {
+    // A clock that moves 60 s at each read; the instance runs 5 minutes after its creation.
+    let at = Date.now();
+    const clock = () => {
+      at += 60_000;
+      return new Date(at);
+    };
+    const { code, lines } = await saladRun(
+      ["--checks=ollama"],
+      { now: clock, salad: { runningSince: (created) => created + 300_000 } },
+      clock,
+    );
+    assert.equal(code, 0, lines.join("\n"));
+    const done = /cost_usd=(\S+) cost_basis=billed pods_cost_usd=(\S+)$/.exec(line(lines, "done"));
+    assert.ok(done, line(lines, "done"));
+    const [billed, bound] = [Number(done[1]), Number(done[2])];
+    // At least the 5 minutes before it ran, at $0.20 per hour, are left out, and its run counts.
+    assert.ok(bound - billed >= 0.0166, `${billed} vs ${bound}`);
+    assert.ok(billed > 0, `${billed} vs ${bound}`);
+  });
+
+  test("falls back on the pod's whole life when Salad gives no running time", async () => {
+    const { code, lines } = await saladRun(["--checks=ollama"], {
+      salad: { runningSince: () => undefined },
+    });
+    assert.equal(code, 0, lines.join("\n"));
+    assert.match(line(lines, "done"), / cost_usd=\S+ cost_basis=upper_bound pods_cost_usd=/);
+    assert.match(line(lines, "ollama.end"), / cost_basis=upper_bound /);
+  });
+
+  test("skips classes without nodes available at High priority", async () => {
+    const { code, lines, salad } = await saladRun(["--checks=ollama"], {
+      salad: { available: { "RTX 3090 (24 GB)": 0 } },
+    });
+    assert.equal(code, 0, lines.join("\n"));
+    assert.equal([...salad.pods.values()][0]?.gpu, "RTX 4090 (24 GB)");
+    assert.match(
+      line(lines, "ollama.gpu"),
+      /gpu="RTX 4090 \(24 GB\)" .*available_nodes=5 candidates=2 eligible=1 no_room=1/,
+    );
+  });
+
+  test("creates nothing when no class has nodes available", async () => {
+    const { code, lines, salad } = await saladRun(["--checks=ollama"], {
+      salad: { available: { "RTX 3090 (24 GB)": 0, "RTX 4090 (24 GB)": 0 } },
+    });
+    assert.equal(code, 1);
+    assert.equal(salad.pods.size, 0);
+    assert.match(line(lines, "ollama.gpu"), /result=unavailable candidates=2 eligible=0 no_room=2/);
+  });
+
+  test("a pod Salad moves to another node fails as infrastructure, not as Codeman", async () => {
+    const { code, lines, salad } = await saladRun(["--checks=ollama"], {
+      salad: { moveAtChat: true },
+    });
+    assert.equal(code, 1);
+    assert.match(line(lines, "ollama.chat"), /result=fail http_status=502/);
+    assert.match(line(lines, "ollama.infrastructure"), /result=infrastructure reason=/);
+    assert.match(line(lines, "done"), /result=infrastructure/);
+    assert.equal([...salad.pods.values()][0]?.status, "TERMINATED");
+    assertNothingLeaksOnSalad(lines, salad);
+  });
+
+  test("a failure on the same node stays Codeman's", async () => {
+    const { code, lines } = await saladRun(["--checks=ollama"], { chatStatus: 500 });
+    assert.equal(code, 1);
+    assert.ok(!lines.some((one) => one.includes("infrastructure")));
+    assert.match(line(lines, "done"), /result=fail/);
+  });
+
+  test("blocked and unfit run on Salad too", async () => {
+    const blocked = await saladRun(["--checks=blocked"], { ollamaAdvisory: "GHSA-fccc-8m69-8r78" });
+    assert.equal(blocked.code, 0, blocked.lines.join("\n"));
+    assert.equal(blocked.salad.pods.size, 0);
+    const unfit = await saladRun(["--checks=unfit"], {
+      startFailure: "`Qwen/Qwen2.5-0.5B-Instruct` does not fit the GPU with 256 parallel requests.",
+    });
+    assert.equal(unfit.code, 0, unfit.lines.join("\n"));
+    assert.match(
+      line(unfit.lines, "unfit"),
+      /result=pass .*gpu="RTX 3090 \(24 GB\)" cloud=community/,
+    );
+    assertNothingLeaksOnSalad(unfit.lines, unfit.salad);
+  });
+
+  test("refuses a GPU type, Secure hosts only, or a missing account, before any request", async () => {
+    for (const [argv, env, reason] of [
+      [["--gpu=NVIDIA L4"], SALAD_ENV, /On Salad, the GPU type must be auto/],
+      [["--community=false"], SALAD_ENV, /On Salad, community must be true/],
+      [[], { ...SALAD_ENV, CODEMAN_SALAD_PROJECT: "" }, /CODEMAN_SALAD_PROJECT must hold/],
+      [[], { ...SALAD_ENV, CODEMAN_SALAD_ORGANIZATION: "Acme Corp" }, /must hold Salad's names/],
+      [[], { ...SALAD_ENV, CODEMAN_SALAD_API_KEY: "" }, /CODEMAN_SALAD_API_KEY must hold/],
+    ] as const) {
+      const lines: string[] = [];
+      const salad = new FakeRunpod(lines);
+      const code = await podCheck({
+        argv: ["--provider=salad", ...argv],
+        env: { ...env, GITHUB_SHA: TEST_COMMIT },
+        write: (one) => lines.push(one),
+        git: () => "",
+        fetch: salad.fetch,
+      });
+      assert.equal(code, 2);
+      assert.equal(salad.bearers.length, 0);
+      assert.match(line(lines, "inputs"), reason);
+    }
+  });
+
+  /** The command of a probe body, or none. */
+  const commandOf = (body: Record<string, unknown>): string[] | undefined =>
+    (body.container as { command?: string[] }).command;
+  /** A fake Salad rule: refuses a command when `bad` says so. */
+  const refusing = (bad: (command: string[]) => boolean): FakeOptions => ({
+    salad: {
+      refuse: (body) => {
+        const command = commandOf(body);
+        return command !== undefined && bad(command);
+      },
+    },
+  });
+  const chars = (command: string[]) => command.reduce((sum, item) => sum + item.length, 0);
+
+  test("probe: takes the whole body stopped, deletes each group, starts no pod", async () => {
+    const { code, lines, salad } = await saladRun(["--checks=probe"]);
+    assert.equal(code, 0, lines.join("\n"));
+    assert.deepEqual(salad.unexpected, []);
+    assert.equal(salad.saladBodies.length, 2);
+    for (const body of salad.saladBodies) {
+      assert.equal(body.autostart_policy, false);
+      const container = body.container as { environment_variables: Record<string, string> };
+      assert.equal(container.environment_variables.CODEMAN_ORGANIZATION, OWNER);
+      assert.match(container.environment_variables.CODEMAN_POOL ?? "", /^codeman-pod-check-/);
+    }
+    assert.equal(new Set(salad.saladBodies.map((body) => body.name)).size, 2);
+    // The whole body is the adapter's, as the ollama check would send it.
+    const [full, bare] = salad.saladBodies as [Record<string, unknown>, Record<string, unknown>];
+    const fullContainer = full.container as Record<string, unknown>;
+    assert.equal(fullContainer.priority, "high");
+    assert.ok(Array.isArray(fullContainer.command) && fullContainer.command.length > 1);
+    assert.equal((full.networking as { port: number }).port, 8080);
+    assert.equal(commandOf(bare), undefined);
+    for (const pod of salad.pods.values()) {
+      assert.equal(pod.salad?.started, false);
+      assert.equal(pod.status, "TERMINATED");
+    }
+    assert.match(line(lines, "probe.gpu"), /result=pass gpu="RTX 3090 \(24 GB\)"/);
+    assert.match(
+      line(lines, "probe.full"),
+      /^\[pod-check\] probe.full result=pass items=\d+ chars=\d+ http_status=201 deleted=true$/,
+    );
+    assert.match(line(lines, "probe.no-command"), / result=pass http_status=201 deleted=true$/);
+    assert.match(line(lines, "probe"), /result=pass accepted=2 rejected=0 undeleted=0 cause=none$/);
+    assert.match(line(lines, "cleanup"), /result=pass pods=0 leftover_pods=0/);
+    assert.match(
+      line(lines, "done"),
+      /result=pass total_s=\S+ cost_usd=0 cost_basis=billed pods_cost_usd=0$/,
+    );
+    assertNothingLeaksOnSalad(lines, salad);
+  });
+
+  test("probe: prints a refusal's problem, field by field, and never its other values", async () => {
+    const { code, lines, salad } = await saladRun(
+      ["--checks=probe"],
+      refusing(() => true),
+    );
+    assert.equal(code, 1);
+    // Only the body without a command was created.
+    assert.equal(salad.pods.size, 1);
+    assert.match(
+      line(lines, "probe.full"),
+      /^\[pod-check\] probe.full result=fail items=\d+ chars=\d+ http_status=400 message="One or more validation errors occurred. container.command: The command is not valid." keys=type,title,status,instance,errors,traceId type=https:\/\/tools.ietf.org\/html\/rfc9110#section-15.5.1 trace_id=withheld content_type=application\/json body_bytes=\d+$/,
+    );
+    assert.match(line(lines, "probe.no-command"), / result=pass http_status=201 deleted=true$/);
+    assert.match(line(lines, "probe.base"), / result=fail items=3 chars=10 http_status=400 /);
+    assert.match(
+      line(lines, "probe"),
+      /result=fail accepted=1 rejected=2 undeleted=0 cause=any-command reason="Salad refused every command, even \/bin\/sh -c :."$/,
+    );
+    assert.ok(!lines.some((one) => one.includes('traceId"') || one.includes("00-fake-trace")));
+    assertNothingLeaksOnSalad(lines, salad);
+  });
+
+  /** The items the probe tries alone in the Ollama pod's command, by their content. */
+  const probed = (command: string[]) =>
+    command.flatMap((item, index) =>
+      /\b(curl|wget|python3|openssl) +(-|s_client\b|dgst\b)/.test(item) ||
+      index >= command.length - 2
+        ? [index]
+        : [],
+    );
+  const tokensOf = (item: string) => item.split(/\s+/).filter((text) => text !== "");
+
+  test("probe: names the items, the tokens and the words Salad refuses", async () => {
+    const { code, lines, salad } = await saladRun(["--checks=probe"], {
+      salad: {
+        refuse: (body) => (commandOf(body) ?? []).some((item) => /\bcurl\b/.test(item)),
+        traceId: "00-0123456789abcdef0123456789abcdef-0123456789abcdef-00",
+      },
+    });
+    assert.equal(code, 1);
+    const command = commandOf(salad.saladBodies[0] ?? {}) ?? [];
+    const items = probed(command);
+    assert.ok(items.length >= 6, items.join(","));
+    const tried = lines.filter((one) => one.startsWith("[pod-check] probe.item "));
+    assert.equal(tried.length, items.length);
+    const curl = command.findIndex((item) => item.startsWith("curl -q "));
+    assert.ok(items.includes(curl));
+    assert.ok(
+      tried.some((one) =>
+        one.includes(` result=fail index=${curl} length=${command[curl]?.length} http_status=400 `),
+      ),
+    );
+    // Each refusal prints its trace, which Salad's support can look up.
+    assert.match(
+      line(lines, "probe.full"),
+      / trace_id=00-0123456789abcdef0123456789abcdef-0123456789abcdef-00 /,
+    );
+    // The curl item's tokens, printed by index and length only: `curl` alone.
+    const tokens = tokensOf(command[curl] ?? "");
+    const refusedTokens = tokens.flatMap((token, index) =>
+      /\bcurl\b/.test(`x ${token} x`) ? [index] : [],
+    );
+    assert.deepEqual(refusedTokens, [0]);
+    assert.equal(
+      lines.filter((one) => one.startsWith("[pod-check] probe.token ")).length,
+      tokens.length,
+    );
+    const words = lines.filter((one) => one.startsWith("[pod-check] probe.word "));
+    assert.equal(words.length, 9);
+    assert.ok(words.some((one) => / result=fail word=curl-output /.test(one)));
+    assert.ok(words.some((one) => / result=pass word=wget http_status=201 /.test(one)));
+    assert.match(
+      line(lines, "probe"),
+      new RegExp(
+        `result=fail accepted=\\d+ rejected=\\d+ undeleted=0 cause=item-content refused_items=${curl} refused_tokens=${refusedTokens.join(",")} refused_words=curl,curl-output,curl-url reason=`,
+      ),
+    );
+    // No item, token or word is printed as text.
+    assert.ok(!lines.some((one) => one.includes("--connect-timeout") || one.includes("curl -o")));
+    assert.ok(salad.saladBodies.length <= 50);
+    assertNothingLeaksOnSalad(lines, salad);
+  });
+
+  test("probe: narrows a run of tokens when no token alone is refused", async () => {
+    const { lines, salad } = await saladRun(
+      ["--checks=probe"],
+      refusing((command) => command.some((item) => item.includes('-o "$2"'))),
+    );
+    const command = commandOf(salad.saladBodies[0] ?? {}) ?? [];
+    const curl = command.findIndex((item) => item.startsWith("curl -q "));
+    const tokens = tokensOf(command[curl] ?? "");
+    const at = tokens.indexOf("-o");
+    assert.equal(lines.filter((one) => / probe.token result=fail /.test(one)).length, 0);
+    assert.match(
+      line(lines, "probe"),
+      new RegExp(
+        ` cause=item-content refused_items=${curl} refused_tokens=${at}-${at + 1} reason=`,
+      ),
+    );
+    assert.ok(salad.saladBodies.length <= 50);
+    // A trace that is not one is withheld.
+    assert.match(line(lines, "probe.full"), / trace_id=withheld /);
+  });
+
+  test("probe: falls back on the prefixes when no download item is refused", async () => {
+    const { lines, salad } = await saladRun(
+      ["--checks=probe"],
+      refusing((command) => command.some((item) => item.startsWith("log() {"))),
+    );
+    const command = commandOf(salad.saladBodies[0] ?? {}) ?? [];
+    const index = command.findIndex((item) => item.startsWith("log() {"));
+    assert.ok(index >= 0 && !probed(command).includes(index));
+    assert.match(
+      line(lines, "probe.item-alone"),
+      new RegExp(`result=fail index=${index} length=${command[index]?.length} http_status=400 `),
+    );
+    assert.match(line(lines, "probe"), new RegExp(` cause=item-content refused_items=${index} `));
+  });
+
+  test("probe: bounds a total size Salad refuses", async () => {
+    const { lines, salad } = await saladRun(
+      ["--checks=probe"],
+      refusing((command) => chars(command) > 3_050),
+    );
+    assert.ok(chars(commandOf(salad.saladBodies[0] ?? {}) ?? []) > 3_050);
+    assert.match(
+      line(lines, "probe.item-alone"),
+      / result=pass index=\d+ length=\d+ http_status=201 /,
+    );
+    assert.match(
+      line(lines, "probe.size.items"),
+      / result=pass items=60 chars=67 http_status=201 /,
+    );
+    assert.match(
+      line(lines, "probe.size.item"),
+      / result=pass items=4 chars=1010 http_status=201 /,
+    );
+    assert.match(
+      line(lines, "probe.size.total"),
+      / result=fail items=8 chars=5000 http_status=400 /,
+    );
+    assert.equal(lines.filter((one) => one.includes("probe.character")).length, 0);
+    assert.match(line(lines, "probe"), / cause=total-chars limit=3000-3100 reason=/);
+    assertNothingLeaksOnSalad(lines, salad);
+  });
+
+  test("probe: names a command of many items Salad refuses", async () => {
+    const { lines } = await saladRun(
+      ["--checks=probe"],
+      refusing((command) => command.length > 50),
+    );
+    assert.match(
+      line(lines, "probe.size.items"),
+      / result=fail items=60 chars=67 http_status=400 /,
+    );
+    assert.equal(lines.filter((one) => one.includes("probe.size.total")).length, 0);
+    assert.match(
+      line(lines, "probe"),
+      / cause=item-count reason="Salad refused a command of 60 items."$/,
+    );
+  });
+
+  test("probe: stops at Salad's first 429", async () => {
+    const { code, lines, salad } = await saladRun(["--checks=probe"], {
+      salad: {
+        throttleAfter: 3,
+        refuse: (body) => (commandOf(body)?.length ?? 0) > 3,
+      },
+    });
+    assert.equal(code, 1);
+    assert.equal(salad.saladBodies.length, 4);
+    assert.match(line(lines, "probe.item"), / result=fail index=\d+ length=\d+ http_status=429 /);
+    assert.match(
+      line(lines, "probe"),
+      / cause=throttled reason="Salad answered 429: the probe stopped."$/,
+    );
+  });
+
+  test("probe runs on Salad only", async () => {
+    assert.match(
+      (parseInputs(["--checks=probe"], {}) as { problem: string }).problem,
+      /The probe check runs on Salad only/,
+    );
+    assert.ok("inputs" in parseInputs(["--provider=salad", "--checks=ollama,probe"], {}));
+    const lines: string[] = [];
+    const runpod = new FakeRunpod(lines);
+    const code = await podCheck({
+      argv: ["--checks=probe"],
+      env: { CODEMAN_RUNPOD_API_KEY: KEY, GITHUB_SHA: TEST_COMMIT },
+      write: (one) => lines.push(one),
+      git: () => "",
+      fetch: runpod.fetch,
+    });
+    assert.equal(code, 2);
+    assert.equal(runpod.bearers.length, 0);
+  });
+
+  test("--cleanup deletes every container group of the check, and no other", async () => {
+    const lines: string[] = [];
+    const salad = new FakeRunpod(lines);
+    const group = (env: Record<string, string>) => {
+      const pod = salad.addPod(env);
+      pod.gpu = SALAD_CLASSES[1]?.name ?? "";
+      pod.salad = { priority: "high", machines: ["machine-1"] };
+      return pod;
+    };
+    const ours = group({ CODEMAN_ORGANIZATION: OWNER, CODEMAN_POOL: `${OWNER}-9-1` });
+    const theirs = group({ CODEMAN_ORGANIZATION: "acme" });
+    const code = await podCheck({
+      argv: ["--cleanup", "--provider=salad"],
+      env: SALAD_ENV,
+      write: (one) => lines.push(one),
+      git: () => "",
+      fetch: salad.fetch,
+    });
+    assert.equal(code, 0, lines.join("\n"));
+    assert.equal(ours.status, "TERMINATED");
+    assert.equal(theirs.status, "RUNNING");
+    assert.deepEqual(lines, ["[pod-check] cleanup result=pass pods=1"]);
+  });
+});
+
+describe("parseInputs", () => {
+  test("takes arguments over the environment, and defaults", () => {
+    const parsed = parseInputs(["--checks=vllm,blocked"], {
+      CODEMAN_POD_CHECK_CHECKS: "ollama",
+      CODEMAN_POD_CHECK_GPU: "NVIDIA L4",
+      CODEMAN_POD_CHECK_MAX_MINUTES: "",
+    });
+    assert.deepEqual(parsed, {
+      inputs: {
+        provider: "runpod",
+        gpu: "NVIDIA L4",
+        community: true,
+        checks: ["vllm", "blocked"],
+        ollamaModel: "qwen2.5:0.5b",
+        vllmModel: "Qwen/Qwen2.5-0.5B-Instruct",
+        maxMinutes: 60,
+        cleanup: false,
+      },
+    });
+  });
+
+  test("refuses what its patterns do not match", () => {
+    for (const argv of [
+      ["--gpu=NVIDIA H100 80GB HBM3"],
+      ["--checks=ollama,ollama"],
+      ["--community=yes"],
+      ["--checks=all"],
+      ["--ollama-model=Qwen2.5;rm"],
+      ["--vllm-model=../etc/passwd"],
+      ["--max-minutes=90"],
+      ["--max-minutes=1e2"],
+      ["--unknown=1"],
+      ["--gpu=NVIDIA L4", "--gpu=NVIDIA L4"],
+    ]) {
+      assert.ok("problem" in parseInputs(argv, {}), argv.join(" "));
+    }
+  });
+});
+
+describe("runCommit", () => {
+  test("takes GITHUB_SHA, else git's HEAD, and only a full SHA", () => {
+    const head = "f".repeat(40);
+    assert.equal(
+      runCommit({ GITHUB_SHA: TEST_COMMIT }, () => head),
+      TEST_COMMIT,
+    );
+    assert.equal(
+      runCommit({}, () => `${head}\n`),
+      head,
+    );
+    assert.equal(
+      runCommit({}, () => "main"),
+      undefined,
+    );
+    assert.equal(
+      runCommit({}, () => {
+        throw new Error("not a repository");
+      }),
+      undefined,
+    );
+  });
+});
+
+describe("NodeWatch", () => {
+  const T = Date.parse("2026-11-24T12:00:00Z");
+  const on = (machine: string, state: string, since?: number) => ({ machine, state, since });
+
+  test("bills from when the instance started running to when it stopped", () => {
+    const watch = new NodeWatch();
+    watch.record("g", [on("m1", "downloading", T)], T + 1_000);
+    assert.equal(watch.billed("g"), undefined);
+    watch.record("g", [on("m1", "running", T + 60_000)], T + 90_000);
+    assert.deepEqual(watch.billed("g"), { from: T + 60_000, to: undefined });
+    watch.record("g", [on("m1", "running", T + 60_000)], T + 200_000);
+    watch.record("g", [on("m1", "stopping", T + 250_000)], T + 260_000);
+    assert.deepEqual(watch.billed("g"), { from: T + 60_000, to: T + 250_000 });
+  });
+
+  test("ends the run at the read that lists no instance, without a stopping time", () => {
+    const watch = new NodeWatch();
+    watch.record("g", [on("m1", "running", T)], T + 10_000);
+    watch.record("g", [], T + 50_000);
+    assert.deepEqual(watch.billed("g"), { from: T, to: T + 50_000 });
+  });
+
+  test("knows no billed time when the pod moved, ran again, or gave no time", () => {
+    const moved = new NodeWatch();
+    moved.record("g", [on("m1", "running", T)], T);
+    moved.record("g", [on("m2", "running", T + 5_000)], T + 6_000);
+    assert.equal(moved.moved("g"), true);
+    assert.equal(moved.billed("g"), undefined);
+
+    const again = new NodeWatch();
+    again.record("g", [on("m1", "running", T)], T);
+    again.record("g", [], T + 1_000);
+    again.record("g", [on("m1", "running", T + 2_000)], T + 3_000);
+    assert.equal(again.billed("g"), undefined);
+
+    const untimed = new NodeWatch();
+    untimed.record("g", [on("m1", "running")], T);
+    assert.equal(untimed.billed("g"), undefined);
+  });
+});

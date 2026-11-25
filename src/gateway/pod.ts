@@ -15,6 +15,7 @@ import {
   placementOf,
   searchContext,
 } from "./fit.ts";
+import type { RootsEnvironment } from "./roots.ts";
 
 /** The port a pod exposes, to the gateway; Ollama's own port stays on the pod's loopback. */
 export const GATEWAY_PORT = 8080;
@@ -69,10 +70,11 @@ export function expiry(state: PodState, policy: PodPolicy, now: number): string 
 /** The pod's settings, from the environment Codeman created it with. */
 export interface PodSettings {
   model: string;
-  /** The engine Codeman created the pod for (`CODEMAN_ENGINE`), `ollama` when unset. */
+  /**
+   * The engine Codeman created the pod for (`CODEMAN_ENGINE`), `ollama` when unset. The pod's
+   * environment names it, not its image: a pod starts from the engine's official image.
+   */
   engine: string;
-  /** The engine the pod's image serves (`CODEMAN_IMAGE_ENGINE`), `ollama` when unset. */
-  imageEngine: string;
   adminSha256: string;
   policy: PodPolicy;
   /**
@@ -106,7 +108,6 @@ export function podSettings(env: Record<string, string | undefined>): PodSetting
   return {
     model,
     engine: env.CODEMAN_ENGINE || "ollama",
-    imageEngine: env.CODEMAN_IMAGE_ENGINE || "ollama",
     adminSha256,
     policy: { startBy, keptIdleMs: keptIdle * 60_000, runIdleMs: runIdle * 60_000 },
     ollama: parseOllamaVariables(env.CODEMAN_OLLAMA),
@@ -175,12 +176,14 @@ export function fitOptions(
 /**
  * The environment of `ollama serve`: the gateway's, then the variables of the pod's Ollama
  * settings, then those the gateway sets itself, which always win: Ollama on the pod's loopback,
- * the model kept loaded, and the context length it was restarted with.
+ * the model kept loaded, the context length it was restarted with, and the gateway's roots for
+ * the registry's TLS (roots.ts).
  */
 export function ollamaServeEnvironment(
   base: Readonly<Record<string, string | undefined>>,
   variables: Readonly<Record<string, string>>,
   contextLength: number | undefined,
+  roots: RootsEnvironment,
 ): Record<string, string | undefined> {
   return {
     ...base,
@@ -188,6 +191,7 @@ export function ollamaServeEnvironment(
     OLLAMA_HOST: "127.0.0.1:11434",
     OLLAMA_KEEP_ALIVE: "-1",
     ...(contextLength ? { OLLAMA_CONTEXT_LENGTH: String(contextLength) } : {}),
+    ...roots,
   };
 }
 

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { request as httpRequest } from "node:http";
 import { after, before, beforeEach, test } from "node:test";
 import { hasGit } from "./git.ts";
 import { GitHubFake } from "./github.ts";
@@ -616,4 +617,44 @@ test("a push may date its commit in the past, as git lets a committer", { skip }
   assert.equal(listed.status, 200);
   assert.equal(listed.body[0]?.sha, pushed.result);
   assert.equal(listed.body[0]?.commit.committer.date, hourAgo);
+});
+
+test("raw.githubusercontent.com serves a public repository's file at a commit", {
+  skip,
+}, async () => {
+  const sha = await setup.site.git.resolve("main");
+  assert.ok(sha);
+  // fetch sends the URL's host whatever the headers say.
+  const raw = (path: string, host = "raw.githubusercontent.com") =>
+    new Promise<{ status: number; type: string | undefined; body: string }>((resolve, reject) => {
+      const request = httpRequest(`${origin}${path}`, { headers: { host } }, (response) => {
+        let body = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk: string) => {
+          body += chunk;
+        });
+        response.on("end", () =>
+          resolve({
+            status: response.statusCode ?? 0,
+            type: response.headers["content-type"],
+            body,
+          }),
+        );
+      });
+      request.on("error", reject);
+      request.end();
+    });
+  const file = await raw(`/acme/site/${sha}/README.md`);
+  assert.equal(file.status, 200);
+  assert.equal(file.type, "text/plain; charset=utf-8");
+  assert.equal(file.body, "# App\n");
+  // A private repository, a missing file or commit, and another host answer 404.
+  for (const path of [
+    `/acme/app/${sha}/README.md`,
+    `/acme/site/${sha}/nope`,
+    `/acme/site/${"0".repeat(40)}/README.md`,
+  ]) {
+    assert.equal((await raw(path)).status, 404, path);
+  }
+  assert.equal((await raw(`/acme/site/${sha}/README.md`, "github-e2e.localhost")).status, 404);
 });

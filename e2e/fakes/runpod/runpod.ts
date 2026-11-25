@@ -380,6 +380,9 @@ export class RunpodFake {
         id: podId(),
         name: create.name,
         image: create.image,
+        ...(create.entrypoint || create.cmd
+          ? { command: [...(create.entrypoint ?? []), ...(create.cmd ?? [])] }
+          : {}),
         env: { ...(create.env ?? {}) },
         ports: ports.map((port) => {
           const [number = "", protocol = "http"] = port.split("/");
@@ -476,7 +479,9 @@ export class RunpodFake {
       id: pod.spec.id,
       name: pod.spec.name,
       image: pod.spec.image,
-      args: "",
+      // The stored form of the command, which responses return beside its fields
+      // (docs/web/runpod/runpod-rest-api.md#the-containers-command).
+      ...commandFields(pod.spec.command),
       disk: pod.spec.diskGb ?? null,
       ports: [...pod.ports],
       env: { ...pod.spec.env },
@@ -618,6 +623,8 @@ export class RunpodFake {
 interface CreatePod {
   name: string;
   image: string;
+  entrypoint?: string[];
+  cmd?: string[];
   gpu?: {
     id: string;
     count?: number;
@@ -640,6 +647,18 @@ function createErrors(value: unknown): string[] {
   if (typeof body.name !== "string" || body.name === "") errors.push("$.name: required string");
   if (typeof body.image !== "string" || body.image === "") {
     errors.push("$.image: required unless templateId is set");
+  }
+  for (const field of ["entrypoint", "cmd"]) {
+    const value = body[field];
+    if (
+      value !== undefined &&
+      !(Array.isArray(value) && value.every((item) => typeof item === "string"))
+    ) {
+      errors.push(`$.${field}: expected an array of strings`);
+    }
+  }
+  if (body.args !== undefined && (body.entrypoint !== undefined || body.cmd !== undefined)) {
+    errors.push("$.args: the fake takes it only without entrypoint and cmd");
   }
   if (body.cloud !== undefined && body.cloud !== "SECURE" && body.cloud !== "COMMUNITY") {
     errors.push("$.cloud: must be SECURE or COMMUNITY");
@@ -706,6 +725,17 @@ function createErrors(value: unknown): string[] {
     }
   }
   return errors;
+}
+
+/**
+ * A pod's command as Runpod returns it: `entrypoint`, `cmd`, and `args`, the JSON object they
+ * encode into; `args` is empty, and the others absent, when the image's own command runs.
+ */
+function commandFields(command: readonly string[] | undefined): Record<string, unknown> {
+  if (!command) return { args: "" };
+  const entrypoint = command.slice(0, 1);
+  const cmd = command.slice(1);
+  return { entrypoint, cmd, args: JSON.stringify({ entrypoint, cmd }) };
 }
 
 /** A page of a cursor-paginated list: the cursor is the index of the page's first item. */

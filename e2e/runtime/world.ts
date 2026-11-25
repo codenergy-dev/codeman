@@ -7,7 +7,13 @@ import type { Role } from "../fakes/github/world.ts";
 import type { Fakes } from "./fakes.ts";
 import { INTERNAL } from "./fakes.ts";
 import type { RemoteGitHub } from "./github.ts";
-import { PROVIDER_SECRETS, type Scenario, secretsOf, type World } from "./scenario/schema.ts";
+import {
+  type OsvAdvisory,
+  PROVIDER_SECRETS,
+  type Scenario,
+  secretsOf,
+  type World,
+} from "./scenario/schema.ts";
 
 /**
  * Builds a scenario's world on fakes that were just reset: its users, organizations and
@@ -227,6 +233,34 @@ async function setUpProviders(world: World, fakes: Fakes): Promise<void> {
   if (openrouter?.prices)
     await fakes.openrouter.json("PUT", "/openrouter/prices", openrouter.prices);
   if (openrouter?.lags) await fakes.openrouter.json("PUT", "/openrouter/lags", openrouter.lags);
+  if (world.osv) {
+    await fakes.osv.json("PUT", "/osv/records", {
+      records: world.osv.advisories.map(osvRecord),
+    });
+  }
+}
+
+/** A scenario's advisory as OSV.dev serves one of GitHub's (docs/web/osv/get-v1-vulns-id.md). */
+export function osvRecord(advisory: OsvAdvisory): Record<string, unknown> {
+  return {
+    id: advisory.id,
+    ...(advisory.summary ? { summary: advisory.summary } : {}),
+    database_specific: { severity: advisory.severity.toUpperCase() },
+    affected: [
+      {
+        package: { ecosystem: advisory.ecosystem, name: advisory.package },
+        ranges: [
+          {
+            type: "ECOSYSTEM",
+            events: [
+              { introduced: advisory.introduced },
+              ...(advisory.fixed ? [{ fixed: advisory.fixed }] : []),
+            ],
+          },
+        ],
+      },
+    ],
+  };
 }
 
 /** A fixture's files, as text, by their path under it. */

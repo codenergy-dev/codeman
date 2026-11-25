@@ -51,6 +51,12 @@ export class FakeGpu implements GpuProvider {
   full = false;
   /** Whether new pods get no machine, as on Salad: they stay starting, not allocated. */
   unallocated = false;
+  /**
+   * When each pod started running, by ID: set as a pod turns `running`, and what `billedSince`
+   * reports on a cloud that bills only while a pod runs, as Salad. A test may change it, as a
+   * reallocation would.
+   */
+  readonly runningSince = new Map<string, Date>();
   now: () => Date;
   #next = 1;
   #gets = new Map<string, number>();
@@ -63,6 +69,8 @@ export class FakeGpu implements GpuProvider {
       unservedImages?: ReadonlySet<string>;
       /** A cloud without pod billing, as Salad: `pods.billing` is left out. */
       noBilling?: boolean;
+      /** A cloud that bills a pod only while it runs, as Salad: `pods.billedSince` is set. */
+      billsWhileRunning?: boolean;
     } = {},
   ) {
     this.prices = options.prices ?? { "GPU-A": 0.0002 };
@@ -118,6 +126,7 @@ export class FakeGpu implements GpuProvider {
         if (pod.status === "starting" && gets > this.startAfter) {
           pod.status = "running";
           pod.cudaVersion = this.cudaVersion;
+          this.runningSince.set(id, this.now());
         }
         return { ...pod };
       },
@@ -130,6 +139,12 @@ export class FakeGpu implements GpuProvider {
         this.live.delete(id);
       },
       url: async (id, port) => `https://${id}-${port}.pods.test`,
+      ...(options.billsWhileRunning
+        ? {
+            billedSince: async (id: string) =>
+              this.live.has(id) ? this.runningSince.get(id) : undefined,
+          }
+        : {}),
       ...(options.noBilling
         ? {}
         : {

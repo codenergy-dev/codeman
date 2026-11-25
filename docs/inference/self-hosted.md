@@ -8,7 +8,7 @@ The choice was made in the [self-hosted inference plan](../plans/2026-10-02-self
 
 | Provider | GPU | [Engine](../glossary.md#engine) | Billed | Start |
 | --- | --- | --- | --- | --- |
-| `runpod-pod` | A [pod](../glossary.md#pod) Codeman creates, with the task's `gpu`, on Secure Cloud unless `hosts` allows Community Cloud | Ollama or vLLM (`engine`), each in a pod image of Codeman's | Every second the pod exists, from its creation | Minutes (more for vLLM), unless the task's pod was kept |
+| `runpod-pod` | A [pod](../glossary.md#pod) Codeman creates, with the task's `gpu`, on Secure Cloud unless `hosts` allows Community Cloud | Ollama or vLLM (`engine`), each from its official image | Every second the pod exists, from its creation | Minutes (more for vLLM), unless the task's pod was kept |
 | `runpod-serverless` | The workers of an endpoint a maintainer created ([installation](../installation/runpod.md)) | Runpod's vLLM worker | Every second a worker runs, its model's load and idle timeout included | Minutes, while vLLM prepares the model, unless a worker is still up; a run with no worker for 25 minutes fails |
 | `salad-pod` | A pod Codeman creates, a container group of one replica on the task's GPU class, on Community hosts: consumer PCs ([installation](../installation/salad.md)) | Ollama or vLLM, as on Runpod | Every second the container runs, at the price of its GPU class and priority; the image's download is free | Minutes, more on a slow home connection, unless the task's pod was kept |
 
@@ -74,6 +74,7 @@ The [gateway](../glossary.md#gateway) serves several [gateway runs](../glossary.
 - Only `POST /v1/chat/completions`, `POST /v1/completions` and `GET /v1/models` reach the engine.
 - Streamed requests ask the engine for usage in their last chunk.
 - `GET /usage` and the `/admin/` routes take an admin token ([the admin token](#the-admin-token)). The `/admin/` routes start, end and release runs, and report the gateway's state, with its API `version`: 2 serves several runs.
+- A pod's gateway also reports, in `/admin/status`, the Node.js it runs on (`node`, such as `v24.22.1`) and the SHA-256 of its own file (`gatewaySha256`), hashed once at its start. They show what the pod's [bootstrap](pods.md#starting) checked. Codeman's jobs do not read them, so gateways without them work as before.
 
 #### Usage
 

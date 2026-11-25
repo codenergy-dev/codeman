@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { test } from "node:test";
 import { podSettings } from "./pod.ts";
+import type { RootsEnvironment } from "./roots.ts";
 import {
   autoFitModelContext,
   cacheCapacity,
@@ -8,6 +11,7 @@ import {
   driverCudaVersion,
   nextContext,
   prepareVllm,
+  probe,
   servedContext,
   VllmFitFailure,
   type VllmServer,
@@ -17,6 +21,14 @@ import {
 } from "./vllm.ts";
 
 const MODEL = "unsloth/Qwen3.8-27B-NVFP4";
+
+/** The gateway's roots, as roots.ts points an engine at them. */
+const ROOTS: RootsEnvironment = {
+  SSL_CERT_FILE: "/tmp/codeman/roots/roots.pem",
+  SSL_CERT_DIR: "/tmp/codeman/roots",
+  REQUESTS_CA_BUNDLE: "/tmp/codeman/roots/roots.pem",
+  CURL_CA_BUNDLE: "/tmp/codeman/roots/roots.pem",
+};
 const metrics = (tokens: number, concurrency: number) =>
   [
     "# HELP vllm:cache_config_info Information of the LLMEngine CacheConfig",
@@ -35,7 +47,7 @@ function fakeVllm(options: {
   fixed?: number;
   own?: number;
   toolCalls?: boolean;
-}): VllmServer & { starts: (number | "auto")[]; probes: number } {
+}): VllmServer & { starts: (number | "auto")[]; probes: number; maxTokens: number[] } {
   const { available, fixed = 0, own = 262_144 } = options;
   let served: { context: number; concurrency: number } | undefined;
   let reason: string | undefined;
@@ -44,6 +56,7 @@ function fakeVllm(options: {
     url: "http://127.0.0.1:8000",
     starts: [] as (number | "auto")[],
     probes: 0,
+    maxTokens: [] as number[],
     start: async (context: number | "auto") => {
       server.starts.push(context);
       served = undefined;
@@ -60,8 +73,8 @@ function fakeVllm(options: {
         }
         output.push(
           length === own
-            ? `INFO Auto-fit max_model_len: full model context length ${own} fits in available GPU memory`
-            : `INFO Auto-fit max_model_len: reduced from ${own} to ${length} to fit in available GPU memory (9.5 GiB available for KV cache)`,
+            ? `INFO Auto-fit max_model_len: full model context length ${own} fits in available KV cache memory (9.5 GiB GPU)`
+            : `INFO Auto-fit max_model_len: reduced from ${own} to ${length} to fit in available KV cache memory (9.5 GiB GPU)`,
         );
       } else if (!fits(context)) {
         reason = `ValueError: To serve at least one request with the model's max seq len (${context}), (8.50 GiB KV cache is needed, which is larger than the available KV cache memory (4.0 GiB). Based on the available memory, the estimated maximum model length is ${available - fixed}.`;
@@ -87,6 +100,12 @@ function fakeVllm(options: {
         const body = JSON.parse(String(init?.body));
         assert.equal(body.tools[0].function.name, "ping");
         assert.equal(body.tool_choice, "auto");
+        server.maxTokens.push(body.max_tokens);
+        // Like vLLM, it refuses a prompt, here of about 300 tokens, and max_tokens beyond the context.
+        if (body.max_tokens + 300 > served.context) {
+          const message = `This model's maximum context length is ${served.context} tokens. However, you requested ${body.max_tokens + 300} tokens.`;
+          return Response.json({ error: { message } }, { status: 400 });
+        }
         const message =
           options.toolCalls === false
             ? { content: "<tool_call>ping</tool_call>", tool_calls: [] }
@@ -131,18 +150,25 @@ test("vLLM serves on the loopback, under the run's model, with tool calls and th
     ],
   );
   assert.throws(() => vllmServeArguments(MODEL, { host: "0.0.0.0" }, 4096), /cannot set `host`/);
-  const env = vllmServeEnvironment({
-    PATH: "/bin",
-    RUNPOD_API_KEY: "secret",
-    CUDA_VISIBLE_DEVICES: "MIG-1b2c3d4e-0000-1111-2222-333344445555",
-  });
+  const env = vllmServeEnvironment(
+    {
+      PATH: "/bin",
+      RUNPOD_API_KEY: "secret",
+      CUDA_VISIBLE_DEVICES: "MIG-1b2c3d4e-0000-1111-2222-333344445555",
+    },
+    ROOTS,
+  );
   assert.deepEqual(env, {
     PATH: "/bin",
     CUDA_VISIBLE_DEVICES: "0",
     VLLM_NO_USAGE_STATS: "1",
     DO_NOT_TRACK: "1",
+    ...ROOTS,
   });
-  assert.equal(vllmServeEnvironment({ CUDA_VISIBLE_DEVICES: "1" }).CUDA_VISIBLE_DEVICES, "1");
+  assert.equal(
+    vllmServeEnvironment({ CUDA_VISIBLE_DEVICES: "1" }, ROOTS).CUDA_VISIBLE_DEVICES,
+    "1",
+  );
 });
 
 test("reads vLLM's served context, its cache's capacity, its auto-fit and its errors", () => {
@@ -154,9 +180,22 @@ test("reads vLLM's served context, its cache's capacity, its auto-fit and its er
   assert.equal(cacheCapacity('vllm:cache_config_info{kv_cache_size_tokens="None"} 1.0'), undefined);
   assert.equal(servedContext({ data: [{ id: MODEL, max_model_len: 131072 }] }, MODEL), 131072);
   assert.equal(servedContext({ data: [] }, MODEL), undefined);
+  // vLLM 0.32.0's lines, then 0.31.0's, whose ends differ.
   assert.equal(
     autoFitModelContext([
-      "INFO Auto-fit max_model_len: reduced from 262144 to 190000 to fit in available GPU memory",
+      "INFO Auto-fit max_model_len: reduced from 262144 to 190000 to fit in available KV cache memory (61.2 GiB GPU)",
+    ]),
+    262144,
+  );
+  assert.equal(
+    autoFitModelContext([
+      "INFO Auto-fit max_model_len: full model context length 32768 fits in available KV cache memory (1.0 GiB CPU)",
+    ]),
+    32768,
+  );
+  assert.equal(
+    autoFitModelContext([
+      "INFO Auto-fit max_model_len: reduced from 262144 to 190000 to fit in available GPU memory (61.2 GiB available for KV cache)",
     ]),
     262144,
   );
@@ -284,6 +323,58 @@ test("a probe without a parsed tool call fails the start, naming the parser", as
   assert.equal(server.probes, 2);
 });
 
+test("the probe fits a small explicit context, and a refusal says why", async () => {
+  const small = fakeVllm({ available: 500_000 });
+  const fit = await prepareVllm(small, MODEL, () => {}, { ...options, configured: 4096 });
+  assert.equal(fit.contextLength, 4096);
+  assert.deepEqual(small.maxTokens, [2048], "half the context, not 4096");
+  const large = fakeVllm({ available: 1_700_000 });
+  await prepareVllm(large, MODEL, () => {}, options);
+  assert.deepEqual(large.maxTokens, [4096]);
+  const tiny = fakeVllm({ available: 500_000 });
+  await assert.rejects(
+    prepareVllm(tiny, MODEL, () => {}, { ...options, configured: 512 }),
+    /\(it answered 400: \{"error":\{"message":"This model's maximum context length is 512 tokens\./,
+  );
+});
+
+test("the probe does not use fetch, which gives up on an answer that takes 5 minutes to start", async (t) => {
+  const fetchSpy = t.mock.method(globalThis, "fetch", async () => {
+    throw new Error("The probe must not use fetch.");
+  });
+  const answers = [
+    { status: 500, body: { error: { message: "Not yet." } } },
+    {
+      status: 200,
+      body: { choices: [{ message: { tool_calls: [{ function: { name: "ping" } }] } }] },
+    },
+  ];
+  const engine = createServer((request, response) => {
+    request.resume();
+    const answer = answers.shift();
+    response.writeHead(answer?.status ?? 500, { "Content-Type": "application/json" });
+    response.end(JSON.stringify(answer?.body ?? {}));
+  });
+  await new Promise<void>((listening) => engine.listen(0, "127.0.0.1", listening));
+  t.after(() => engine.close());
+  const { port } = engine.address() as AddressInfo;
+
+  const lines: string[] = [];
+  await probe(
+    { url: `http://127.0.0.1:${port}` },
+    MODEL,
+    "hermes",
+    (line) => lines.push(line),
+    8192,
+  );
+
+  assert.equal(fetchSpy.mock.callCount(), 0);
+  assert.deepEqual(lines, [
+    'The probe of tool calls failed (try 1 of 2): it answered 500: {"error":{"message":"Not yet."}}.',
+    "vLLM returned a tool call with the parser hermes.",
+  ]);
+});
+
 test("a pod reads its engine, its vLLM settings and its cached context", () => {
   const base = {
     CODEMAN_MODEL: MODEL,
@@ -293,12 +384,10 @@ test("a pod reads its engine, its vLLM settings and its cached context", () => {
   const settings = podSettings({
     ...base,
     CODEMAN_ENGINE: "vllm",
-    CODEMAN_IMAGE_ENGINE: "vllm",
     CODEMAN_VLLM: '{"max-num-seqs":"4","tool-call-parser":"qwen3_xml"}',
     CODEMAN_FIT: '{"contextLength":131072}',
   });
   assert.equal(settings.engine, "vllm");
-  assert.equal(settings.imageEngine, "vllm");
   assert.deepEqual(settings.vllm, {
     ok: true,
     value: { "max-num-seqs": "4", "tool-call-parser": "qwen3_xml" },
@@ -307,7 +396,6 @@ test("a pod reads its engine, its vLLM settings and its cached context", () => {
   assert.equal(settings.fitHint, undefined, "an Ollama hint needs a digest");
   const old = podSettings(base);
   assert.equal(old.engine, "ollama");
-  assert.equal(old.imageEngine, "ollama");
   assert.deepEqual(old.vllm, { ok: true, value: {} });
   assert.equal(
     podSettings({ ...base, CODEMAN_VLLM: '{"host":"0.0.0.0"}' }).vllm.ok,

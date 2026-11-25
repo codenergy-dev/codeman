@@ -1,0 +1,71 @@
+# OSV.dev publishes a critical advisory of the Ollama release Codeman pins, with no exception in
+# the catalog. open-key's release policy blocks it before it sweeps, joins or creates any pod
+# (docs/plans/2026-10-30-start-pods-from-official-engine-images.md, "The policy at open-key"): the
+# run fails at a cost of 0 with a `key-failed` event that names the release and the advisory, and
+# apply blocks the task. A block is a mistake in the pinned releases, not a lack of room, so the run
+# falls back to no other profile. No pod is created, so no pod downloads Node.js.
+name: A blocking advisory of the pinned Ollama stops the run before any pod
+tags: [failures, pods, ollama, release-policy]
+runner: simulator
+world:
+  organizations:
+    - name: acme
+      settings:
+        provider: runpod-pod
+        model: qwen2.5:0.5b
+        gpu: NVIDIA GeForce RTX 4090
+        task-budget: 2
+  repositories:
+    - { name: acme/app, fixture: node-small, maintainers: [alice] }
+  osv:
+    advisories:
+      - id: GHSA-e2e0-test-0001
+        ecosystem: Go
+        package: github.com/ollama/ollama
+        severity: critical
+        summary: An advisory of the e2e suite
+        fixed: "0.40.11"
+actions:
+  - open-issue: { ref: i1, as: alice, title: Add a health route, labels: [codeman] }
+  - run: { event: issues.labeled }
+  - expect:
+      issue: i1
+      labels: [codeman:blocked]
+      no-labels: [codeman:planning]
+      comments:
+        - kind: run
+          contains:
+            - Codeman could not give this run access to its model (an OpenRouter key, or a GPU). See the run log.
+            - Remove the `codeman:blocked` label to try again.
+      pull-request: none
+      ledger: { runs: 1, cost-at-most: 0 }
+      store:
+        - collection: organizations/acme/runs
+          where: { status: failed, cost: 0, stage: plan, provider: runpod-pod }
+          count: 1
+        - collection: organizations/acme/events
+          where:
+            type: key-failed
+            reason:
+              contains:
+                - The release policy blocks ollama 0.40.10 and node 24.22.1, so no pod was created
+                - GHSA-e2e0-test-0001 (critical
+                - rather than fall back to another profile
+          count: 1
+        - { collection: organizations/acme/events, where: { type: pod-created }, count: 0 }
+        - { collection: pools/acme/pods, count: 0 }
+        # A block is not cached: only a check that passes stands in for OSV.dev later.
+        - { collection: releaseChecks, count: 0 }
+      pods: [{ count: 0 }]
+      fakes:
+        osv:
+          requests: { where: { method: POST, path: /v1/querybatch }, count: { at-least: 1 } }
+        nodejs:
+          requests: { count: 0 }
+        runpod:
+          requests: { where: { method: POST, path: /v2/pods }, count: 0 }
+        github:
+          dispatches: { count: 0 }
+        llm:
+          turns: { count: 0 }
+      violations: none

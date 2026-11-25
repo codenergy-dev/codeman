@@ -3,6 +3,8 @@ const require = createRequire(import.meta.url);
 
 // src/gateway/main.ts
 import { execFile, spawn } from "node:child_process";
+import { rootCertificates as rootCertificates2 } from "node:tls";
+import { fileURLToPath } from "node:url";
 
 // src/inference/engine.ts
 function openAiUsage(body, cachedApart = false) {
@@ -29,7 +31,7 @@ var IMAGES_WITHOUT_OLLAMA_SETTINGS = /* @__PURE__ */ new Set([
   "ghcr.io/codenergy-dev/codeman-pod@sha256:3252d41775a230249490b5af79aec050151e49c4722bb62f9ce3d247d02f6ca3"
 ]);
 var OLLAMA_URL = "http://127.0.0.1:11434";
-var OLLAMA_VERSION = "0.35.1";
+var OLLAMA_VERSION = "0.40.10";
 var OLLAMA_SERIAL_FAMILIES = /* @__PURE__ */ new Set([
   "mllama",
   "qwen3vl",
@@ -160,7 +162,7 @@ function isHuggingFaceId(text) {
   const [namespace = "", name = "", ...rest] = text.split("/");
   return rest.length === 0 && [namespace, name].every((part) => HUB_NAME.test(part) && !/--|\.\./.test(part));
 }
-var VLLM_VERSION = "0.31.0";
+var VLLM_VERSION = "0.32.0";
 var VLLM_MIN_CUDA = "13.0";
 var VLLM_PORT = 8e3;
 var VLLM_URL = `http://127.0.0.1:${VLLM_PORT}`;
@@ -181,6 +183,7 @@ var VLLM_TOOL_PARSERS = [
   "granite",
   "granite4",
   "hermes",
+  "hf",
   "poolside_v1",
   "hunyuan_a13b",
   "hy_v3",
@@ -201,11 +204,13 @@ var VLLM_TOOL_PARSERS = [
   "minicpm5",
   "mistral",
   "olmo3",
+  "plamo3",
   "muse_glimmer",
   "openai",
   "phi4_mini_json",
   "pythonic",
   "qwen3_coder",
+  "qwen3_json",
   "qwen3_xml",
   "seed_oss",
   "step3",
@@ -233,6 +238,7 @@ var VLLM_REASONING_PARSERS = [
   "openai_gptoss",
   "granite",
   "granite_thinking_parser",
+  "hf",
   "holo2",
   "hunyuan_a13b",
   "hy_v3",
@@ -241,12 +247,14 @@ var VLLM_REASONING_PARSERS = [
   "kimi_k3",
   "k2_horizon",
   "mimo",
+  "minicpmv",
   "minimax_m2",
   "minimax_m2_append_think",
   "minimax_m3",
   "mistral",
   "nemotron_v3",
   "olmo3",
+  "plamo3",
   "muse_glimmer",
   "qwen3",
   "seed_oss",
@@ -478,6 +486,7 @@ function list2(items) {
 
 // src/gateway/gateway.ts
 import { createHash, timingSafeEqual } from "node:crypto";
+import { readFileSync } from "node:fs";
 import {
   createServer,
   request as httpRequest
@@ -621,6 +630,13 @@ var MAX_BODY_BYTES = 32 * 1024 * 1024;
 var KEEP_ALIVE_MS = 2e4;
 function sha256(text) {
   return createHash("sha256").update(text).digest("hex");
+}
+function gatewayBuild(file, node = process.version) {
+  try {
+    return { node, sha256: createHash("sha256").update(readFileSync(file)).digest("hex") };
+  } catch {
+    return { node, sha256: void 0 };
+  }
 }
 function matches(token, hash) {
   if (!token || !hash) return false;
@@ -871,6 +887,8 @@ var Gateway = class {
     return {
       version: GATEWAY_VERSION,
       engine: this.#options.engine.name,
+      // Optional fields: Codeman reads neither, so older gateways' lack of them changes nothing.
+      ...this.#options.build ? { node: this.#options.build.node, gatewaySha256: this.#options.build.sha256 } : {},
       ready: this.ready,
       contextLength: this.contextLength,
       ollama: this.ollama,
@@ -1155,6 +1173,11 @@ function runSettings(body) {
   };
 }
 
+// src/gateway/host.ts
+import { constants } from "node:fs";
+import { access } from "node:fs/promises";
+import { delimiter, join } from "node:path";
+
 // src/e2e.ts
 var PODS = { runpod: "runpodPods", salad: "saladPods" };
 var PODS_KEYS = Object.values(PODS);
@@ -1339,6 +1362,9 @@ var Runpod = class {
     const pod = await this.#request("/pods", "POST", {
       name: spec.name,
       image: spec.image,
+      // The command in exec form, its program as the entry point
+      // (docs/web/runpod/runpod-rest-api.md#the-containers-command).
+      ...spec.command ? { entrypoint: spec.command.slice(0, 1), cmd: spec.command.slice(1) } : {},
       gpu: {
         id: spec.gpuType,
         count: 1,
@@ -1484,12 +1510,19 @@ function describeProblem(body) {
   }
   if (typeof problem !== "object" || problem === null) return void 0;
   const { title, detail, errors } = problem;
-  const parts = [title, detail, ...Array.isArray(errors) ? errors : []].filter(
+  const parts = [title, detail, ...validationErrors(errors)].filter(
     (part) => typeof part === "string" && part.trim() !== ""
   );
   if (parts.length === 0) return void 0;
   const text = parts.join(" \u2014 ").replace(/\s+/g, " ").trim();
   return text.length > 500 ? `${text.slice(0, 499)}\u2026` : text;
+}
+function validationErrors(errors) {
+  if (Array.isArray(errors)) return errors;
+  if (typeof errors !== "object" || errors === null) return [];
+  return Object.entries(errors).flatMap(
+    ([field, messages]) => (Array.isArray(messages) ? messages : [messages]).filter((message) => typeof message === "string").map((message) => field ? `${field}: ${message}` : message)
+  );
 }
 function amount(value) {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
@@ -1512,6 +1545,18 @@ async function listenEverywhere(listen) {
     if (error2.code !== "EAFNOSUPPORT") throw error2;
     return listen("0.0.0.0");
   }
+}
+async function findCommand(name, env) {
+  for (const directory of (env.PATH ?? "").split(delimiter)) {
+    if (directory === "") continue;
+    const file = join(directory, name);
+    if (await access(file, constants.X_OK).then(
+      () => true,
+      () => false
+    ))
+      return file;
+  }
+  return void 0;
 }
 
 // src/gateway/fit.ts
@@ -1637,7 +1682,6 @@ function podSettings(env) {
   return {
     model,
     engine: env.CODEMAN_ENGINE || "ollama",
-    imageEngine: env.CODEMAN_IMAGE_ENGINE || "ollama",
     adminSha256,
     policy: { startBy, keptIdleMs: keptIdle * 6e4, runIdleMs: runIdle * 6e4 },
     ollama: parseOllamaVariables(env.CODEMAN_OLLAMA),
@@ -1678,13 +1722,14 @@ function fitOptions(variables, settings) {
     hint: settings.fitHint
   };
 }
-function ollamaServeEnvironment(base, variables, contextLength) {
+function ollamaServeEnvironment(base, variables, contextLength, roots) {
   return {
     ...base,
     ...variables,
     OLLAMA_HOST: "127.0.0.1:11434",
     OLLAMA_KEEP_ALIVE: "-1",
-    ...contextLength ? { OLLAMA_CONTEXT_LENGTH: String(contextLength) } : {}
+    ...contextLength ? { OLLAMA_CONTEXT_LENGTH: String(contextLength) } : {},
+    ...roots
   };
 }
 var FitFailure = class extends Error {
@@ -1846,6 +1891,42 @@ async function untilUp(server) {
   throw new Error("Ollama did not start.");
 }
 
+// src/gateway/roots.ts
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import { join as join2 } from "node:path";
+import { rootCertificates } from "node:tls";
+var ROOTS_VARIABLES = [
+  "SSL_CERT_FILE",
+  "SSL_CERT_DIR",
+  "REQUESTS_CA_BUNDLE",
+  "CURL_CA_BUNDLE"
+];
+function rootsPem(roots = rootCertificates) {
+  return roots.map((root) => `${root}
+`).join("");
+}
+var HOME_VARIABLE = "CODEMAN_BOOTSTRAP_HOME";
+function rootsDirectory(env) {
+  return join2(env[HOME_VARIABLE] || "/tmp/codeman", "roots");
+}
+async function writeRoots(directory, roots = rootCertificates) {
+  await rm(directory, { recursive: true, force: true });
+  await mkdir(directory, { recursive: true, mode: 493 });
+  const file = join2(directory, "roots.pem");
+  await writeFile(file, rootsPem(roots), { mode: 420 });
+  return {
+    SSL_CERT_FILE: file,
+    SSL_CERT_DIR: directory,
+    REQUESTS_CA_BUNDLE: file,
+    CURL_CA_BUNDLE: file
+  };
+}
+function replacedRoots(base, roots) {
+  return ROOTS_VARIABLES.filter((name) => base[name] && base[name] !== roots[name]).map(
+    (name) => `${name}=${base[name]}`
+  );
+}
+
 // src/gateway/vllm.ts
 var VllmFitFailure = class extends Error {
 };
@@ -1869,12 +1950,13 @@ function vllmServeArguments(model, settings, maxModelLen) {
   ];
 }
 var MIG_UUID = /^MIG-/;
-function vllmServeEnvironment(base) {
+function vllmServeEnvironment(base, roots) {
   const { RUNPOD_API_KEY: _, ...rest } = base;
   return {
     ...rest,
     VLLM_NO_USAGE_STATS: "1",
     DO_NOT_TRACK: "1",
+    ...roots,
     ...MIG_UUID.test(base.CUDA_VISIBLE_DEVICES ?? "") ? { CUDA_VISIBLE_DEVICES: "0" } : {}
   };
 }
@@ -2058,7 +2140,7 @@ async function prepareVllm(server, model, log, options) {
       throw new VllmFitFailure(vllmFloorMessage(model, n, floor, measure));
     }
   }
-  await probe(server, model, options.toolCallParser, log);
+  await probe(server, model, options.toolCallParser, log, measure.contextLength);
   return {
     engine: "vllm",
     contextLength: measure.contextLength,
@@ -2073,12 +2155,23 @@ async function prepareVllm(server, model, log, options) {
   };
 }
 var PROBE_TRIES = 2;
-async function probe(server, model, parser, log) {
-  const fetchFn = server.fetch ?? fetch;
+var PROBE_TRY_MS = 10 * 6e4;
+var postPatiently = async (url, init) => {
+  const answer2 = await forward(url, init);
+  const chunks = [];
+  for await (const chunk of answer2) chunks.push(chunk);
+  return new Response(Buffer.concat(chunks), { status: answer2.statusCode ?? 502 });
+};
+var PROBE_MAX_TOKENS = 4096;
+function probeMaxTokens(contextLength) {
+  return Math.max(1, Math.min(PROBE_MAX_TOKENS, Math.floor(contextLength / 2)));
+}
+async function probe(server, model, parser, log, contextLength) {
+  const post = server.fetch ?? postPatiently;
   let detail = "no answer";
   for (let attempt = 1; attempt <= PROBE_TRIES; attempt++) {
     try {
-      const response = await fetchFn(`${server.url}/v1/chat/completions`, {
+      const response = await post(`${server.url}/v1/chat/completions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -2095,18 +2188,25 @@ async function probe(server, model, parser, log) {
             }
           ],
           tool_choice: "auto",
-          max_tokens: 4096,
+          max_tokens: probeMaxTokens(contextLength),
           temperature: 0
         }),
-        signal: AbortSignal.timeout(5 * 6e4)
+        signal: AbortSignal.timeout(PROBE_TRY_MS)
       });
-      const body = await response.json().catch(() => ({}));
+      const text = await response.text();
+      const body = (() => {
+        try {
+          return JSON.parse(text);
+        } catch {
+          return {};
+        }
+      })();
       const calls = body.choices?.[0]?.message?.tool_calls ?? [];
       if (response.ok && calls.some((call) => call.function?.name === "ping")) {
         log(`vLLM returned a tool call with the parser ${parser}.`);
         return;
       }
-      detail = response.ok ? "it answered without a parsed tool call" : `it answered ${response.status}`;
+      detail = response.ok ? "it answered without a parsed tool call" : `it answered ${response.status}${text.trim() ? `: ${text.trim().slice(0, 300)}` : ""}`;
     } catch (error2) {
       detail = error2 instanceof Error ? error2.message : String(error2);
     }
@@ -2117,8 +2217,8 @@ async function probe(server, model, parser, log) {
 
 // src/gateway/main.ts
 var ENGINES = {
-  ollama: { engine: ollama, url: OLLAMA_URL },
-  vllm: { engine: vllm, url: VLLM_URL }
+  ollama: { engine: ollama, url: OLLAMA_URL, command: "ollama" },
+  vllm: { engine: vllm, url: VLLM_URL, command: "vllm" }
 };
 var KEPT_LINES = 400;
 async function main() {
@@ -2136,9 +2236,9 @@ async function main() {
   };
   if (Date.now() >= settings.policy.startBy) await terminate("it started after its start limit");
   const served = ENGINES[settings.engine];
-  if (!served || settings.engine !== settings.imageEngine) {
+  if (!served) {
     await terminate(
-      `it was created for the engine ${settings.engine}, and its image serves ${settings.imageEngine}`
+      `it was created for the engine ${settings.engine}, which the gateway does not serve`
     );
   }
   if (!settings.ollama.ok) {
@@ -2147,11 +2247,13 @@ async function main() {
   if (!settings.vllm.ok) {
     await terminate(`its vLLM settings cannot be applied: ${settings.vllm.error}`);
   }
-  const { engine, url } = served;
+  const { engine, url, command } = served;
   const gateway = new Gateway({
     upstream: `${url}/v1`,
     engine,
     adminSha256: settings.adminSha256,
+    // The bundle's own file: the bootstrap runs it as `node <file>`, which is this module's URL.
+    build: gatewayBuild(fileURLToPath(import.meta.url)),
     log
   });
   await listenEverywhere((host) => gateway.listen(host, GATEWAY_PORT));
@@ -2162,9 +2264,18 @@ async function main() {
     if (reason) void terminate(reason);
   }, 15e3).unref();
   try {
-    const fit = settings.engine === "vllm" ? await serveVllm(settings, gateway, log, (child) => {
+    if (!await findCommand(command, process.env)) {
+      throw new Error(
+        `the pod's image has no \`${command}\` command on its PATH, so it cannot serve with ${settings.engine}`
+      );
+    }
+    const roots = await writeRoots(rootsDirectory(process.env));
+    const replaced = replacedRoots(process.env, roots);
+    if (replaced.length > 0) log(`The engine's roots replace the image's ${replaced.join(", ")}.`);
+    log(`The engine trusts Node.js's ${rootCertificates2.length} roots, in ${roots.SSL_CERT_FILE}.`);
+    const fit = settings.engine === "vllm" ? await serveVllm(settings, gateway, log, roots, (child) => {
       engineProcess = child;
-    }) : await serveOllama(settings, gateway, log, (child) => {
+    }) : await serveOllama(settings, gateway, log, roots, (child) => {
       engineProcess = child;
     });
     gateway.fit = fit;
@@ -2181,19 +2292,19 @@ async function main() {
     await terminate(reason);
   }
 }
-async function serveOllama(settings, gateway, log, running) {
+async function serveOllama(settings, gateway, log, roots, running) {
   const variables = settings.ollama.ok ? settings.ollama.value : {};
   const names = Object.entries(variables).map(([name, value]) => `${name}=${value}`);
   if (names.length > 0) log(`Ollama settings: ${names.join(", ")}.`);
   gateway.ollama = variables;
-  let child = serveOllamaProcess(variables, void 0);
+  let child = serveOllamaProcess(variables, void 0, roots);
   running(child);
   return prepareOllama(
     {
       url: OLLAMA_URL,
       restart: async (contextLength) => {
         await stop(child);
-        child = serveOllamaProcess(variables, contextLength);
+        child = serveOllamaProcess(variables, contextLength, roots);
         running(child);
       }
     },
@@ -2202,7 +2313,7 @@ async function serveOllama(settings, gateway, log, running) {
     fitOptions(variables, settings)
   );
 }
-async function serveVllm(settings, gateway, log, running) {
+async function serveVllm(settings, gateway, log, roots, running) {
   const values = settings.vllm.ok ? settings.vllm.value : {};
   const names = Object.entries(values).map(([key, value]) => `${key}=${value}`);
   log(`vLLM settings: ${names.join(", ")}.`);
@@ -2222,7 +2333,7 @@ async function serveVllm(settings, gateway, log, running) {
         lines = [];
         stopped = void 0;
         const started = spawn("vllm", vllmServeArguments(settings.model, values, maxModelLen), {
-          env: vllmServeEnvironment(process.env),
+          env: vllmServeEnvironment(process.env, roots),
           stdio: ["ignore", "pipe", "pipe"],
           // Its own process group, so stopping it stops the engine's processes too.
           detached: true
@@ -2275,11 +2386,13 @@ async function nvidiaSmi() {
   );
   return run("nvidia-smi").catch(() => run("/usr/lib/wsl/lib/nvidia-smi"));
 }
-function serveOllamaProcess(variables, contextLength) {
-  return spawn("ollama", ["serve"], {
+function serveOllamaProcess(variables, contextLength, roots) {
+  const child = spawn("ollama", ["serve"], {
     stdio: "inherit",
-    env: ollamaServeEnvironment(process.env, variables, contextLength)
+    env: ollamaServeEnvironment(process.env, variables, contextLength, roots)
   });
+  child.once("error", (error2) => console.log(`[codeman] Ollama could not start: ${error2.message}`));
+  return child;
 }
 async function stop(child) {
   if (!child?.pid || child.exitCode !== null || child.signalCode !== null) return;

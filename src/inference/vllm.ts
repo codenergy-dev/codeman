@@ -61,10 +61,11 @@ export function vllmContextLength(env: Record<string, string>): number | undefin
 }
 
 /**
- * The vLLM of the vLLM pod image (`docker/pod/Dockerfile`), whose arguments `VLLM_SETTINGS` and
- * whose parsers the lists below take (decision 1 of the plan for vLLM on pods).
+ * The vLLM of the catalog's official image (`ENGINE_RELEASES.vllm` in `images.ts`), whose
+ * arguments `VLLM_SETTINGS` and whose parsers the lists below take (decision 1 of the plan for
+ * vLLM on pods). A test compares them.
  */
-export const VLLM_VERSION = "0.31.0";
+export const VLLM_VERSION = "0.32.0";
 
 /**
  * The CUDA version the vLLM image is built with (`CUDA_VERSION` of its configuration,
@@ -98,6 +99,7 @@ export const VLLM_TOOL_PARSERS: readonly string[] = [
   "granite",
   "granite4",
   "hermes",
+  "hf",
   "poolside_v1",
   "hunyuan_a13b",
   "hy_v3",
@@ -118,11 +120,13 @@ export const VLLM_TOOL_PARSERS: readonly string[] = [
   "minicpm5",
   "mistral",
   "olmo3",
+  "plamo3",
   "muse_glimmer",
   "openai",
   "phi4_mini_json",
   "pythonic",
   "qwen3_coder",
+  "qwen3_json",
   "qwen3_xml",
   "seed_oss",
   "step3",
@@ -155,6 +159,7 @@ export const VLLM_REASONING_PARSERS: readonly string[] = [
   "openai_gptoss",
   "granite",
   "granite_thinking_parser",
+  "hf",
   "holo2",
   "hunyuan_a13b",
   "hy_v3",
@@ -163,12 +168,14 @@ export const VLLM_REASONING_PARSERS: readonly string[] = [
   "kimi_k3",
   "k2_horizon",
   "mimo",
+  "minicpmv",
   "minimax_m2",
   "minimax_m2_append_think",
   "minimax_m3",
   "mistral",
   "nemotron_v3",
   "olmo3",
+  "plamo3",
   "muse_glimmer",
   "qwen3",
   "seed_oss",

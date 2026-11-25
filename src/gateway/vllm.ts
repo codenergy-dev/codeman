@@ -6,6 +6,8 @@
  */
 import { VLLM_MIN_CUDA, vllmArguments } from "../inference/vllm.ts";
 import { CONTEXT_STEP, floorContext } from "./fit.ts";
+import { forward } from "./gateway.ts";
+import type { RootsEnvironment } from "./roots.ts";
 
 /** The model's start failed for a reason its settings can fix; `message` says how. */
 export class VllmFitFailure extends Error {}
@@ -91,17 +93,20 @@ const MIG_UUID = /^MIG-/;
 
 /**
  * The environment of `vllm serve`: the gateway's, without the pod's Runpod key, never reporting
- * usage, and with the GPU by index when it is a MIG partition's UUID, on which vLLM 0.31.0 fails
- * to start (docs/plans/2026-10-13-vllm-on-pods.md, MIG).
+ * usage, with the gateway's roots for the TLS of its downloads (roots.ts), and with the GPU by
+ * index when it is a MIG partition's UUID, on which vLLM 0.31.0 fails to start
+ * (docs/plans/2026-10-13-vllm-on-pods.md, MIG); 0.32.0's release notes name no fix.
  */
 export function vllmServeEnvironment(
   base: Readonly<Record<string, string | undefined>>,
+  roots: RootsEnvironment,
 ): Record<string, string | undefined> {
   const { RUNPOD_API_KEY: _, ...rest } = base;
   return {
     ...rest,
     VLLM_NO_USAGE_STATS: "1",
     DO_NOT_TRACK: "1",
+    ...roots,
     ...(MIG_UUID.test(base.CUDA_VISIBLE_DEVICES ?? "") ? { CUDA_VISIBLE_DEVICES: "0" } : {}),
   };
 }
@@ -139,7 +144,8 @@ export function servedContext(models: unknown, model: string): number | undefine
 
 /**
  * The model's own context, from vLLM's auto-fit lines: "full model context length N fits", or
- * "reduced from N to M" (docs/web/vllm/vllm-v1-core-kv-cache-utils-py-at-v0-31-0.md).
+ * "reduced from N to M", whose ends changed in vLLM 0.32.0
+ * (docs/web/vllm/vllm-v1-core-kv-cache-utils-py-at-v0-32-0.md).
  */
 export function autoFitModelContext(lines: readonly string[]): number | undefined {
   for (const line of [...lines].reverse()) {
@@ -394,7 +400,7 @@ export async function prepareVllm(
       throw new VllmFitFailure(vllmFloorMessage(model, n, floor, measure));
     }
   }
-  await probe(server, model, options.toolCallParser, log);
+  await probe(server, model, options.toolCallParser, log, measure.contextLength);
   return {
     engine: "vllm",
     contextLength: measure.contextLength,
@@ -413,6 +419,49 @@ export async function prepareVllm(
 const PROBE_TRIES = 2;
 
 /**
+ * How long a try waits for vLLM's answer. The probe is the engine's first request, the slowest it
+ * serves: on the e2e suite's CPU, 176 to 233 s on vLLM 0.31.0 and about 6 minutes on 0.32.0. A try
+ * that ends before it does counts as a failed try, though the engine still works on the answer.
+ */
+const PROBE_TRY_MS = 10 * 60_000;
+
+/** The probe's request, whose answer is read whole. */
+type ProbePost = (
+  url: string,
+  init: {
+    method: string;
+    headers: Record<string, string>;
+    body: string;
+    signal: AbortSignal;
+  },
+) => Promise<Response>;
+
+/**
+ * Posts with `node:http`: `fetch` gives up on an answer whose headers take 5 minutes, whatever the
+ * request's signal says, and vLLM sends a whole answer's headers with its end.
+ */
+const postPatiently: ProbePost = async (url, init) => {
+  const answer = await forward(url, init);
+  const chunks: Buffer[] = [];
+  for await (const chunk of answer as AsyncIterable<Buffer>) chunks.push(chunk);
+  return new Response(Buffer.concat(chunks), { status: answer.statusCode ?? 502 });
+};
+
+/** The most tokens the probe lets the model write: room for a reasoning model to think first. */
+const PROBE_MAX_TOKENS = 4096;
+
+/**
+ * The probe's `max_tokens` for the context vLLM serves: 4096, or half the context when that is
+ * less. vLLM 0.31.0 refused a request whose prompt and `max_tokens` exceed its context, so a fixed
+ * 4096 failed the start of a pod whose `max-model-len` was below about 4,300 tokens, blaming the
+ * parser (E1 of the investigation of multi-service pods). vLLM 0.32.0 takes `max_tokens` as an
+ * upper bound only (docs/web/vllm/v0-32-0.md); the cap stays, and costs nothing.
+ */
+export function probeMaxTokens(contextLength: number): number {
+  return Math.max(1, Math.min(PROBE_MAX_TOKENS, Math.floor(contextLength / 2)));
+}
+
+/**
  * Asks vLLM for a call of a `ping` tool, as an agent's request would offer one; fails the start
  * when no try returns a parsed tool call, which a parser that does not match the model gives.
  */
@@ -421,12 +470,13 @@ export async function probe(
   model: string,
   parser: string,
   log: (message: string) => void,
+  contextLength: number,
 ): Promise<void> {
-  const fetchFn = server.fetch ?? fetch;
+  const post: ProbePost = server.fetch ?? postPatiently;
   let detail = "no answer";
   for (let attempt = 1; attempt <= PROBE_TRIES; attempt++) {
     try {
-      const response = await fetchFn(`${server.url}/v1/chat/completions`, {
+      const response = await post(`${server.url}/v1/chat/completions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -443,12 +493,19 @@ export async function probe(
             },
           ],
           tool_choice: "auto",
-          max_tokens: 4096,
+          max_tokens: probeMaxTokens(contextLength),
           temperature: 0,
         }),
-        signal: AbortSignal.timeout(5 * 60_000),
+        signal: AbortSignal.timeout(PROBE_TRY_MS),
       });
-      const body = (await response.json().catch(() => ({}))) as {
+      const text = await response.text();
+      const body = (() => {
+        try {
+          return JSON.parse(text);
+        } catch {
+          return {};
+        }
+      })() as {
         choices?: { message?: { tool_calls?: { function?: { name?: unknown } }[] | null } }[];
       };
       const calls = body.choices?.[0]?.message?.tool_calls ?? [];
@@ -456,9 +513,10 @@ export async function probe(
         log(`vLLM returned a tool call with the parser ${parser}.`);
         return;
       }
+      // A refusal says why, which may not be the parser.
       detail = response.ok
         ? "it answered without a parsed tool call"
-        : `it answered ${response.status}`;
+        : `it answered ${response.status}${text.trim() ? `: ${text.trim().slice(0, 300)}` : ""}`;
     } catch (error) {
       detail = error instanceof Error ? error.message : String(error);
     }

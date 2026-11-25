@@ -1,0 +1,127 @@
+---
+title: "xet-core: xet_client/Cargo.toml at 4b48571"
+url: https://github.com/huggingface/xet-core/blob/4b485713577a8f25d015953046210dc3d5d25ea5/xet_client/Cargo.toml
+created_at: 2026-10-31T09:30:24-03:00
+updated_at: 2026-10-31T09:30:24-03:00
+tool: docs/web/tools/github-repositories.md
+license: Apache-2.0
+---
+
+# xet-core: xet_client/Cargo.toml at 4b48571
+
+The commit of the tag `v1.7.0`, the `hf_xet` in vLLM 0.32.0's images. Its default feature, `rustls-tls`, builds `reqwest` with rustls (`reqwest/rustls`), not with the system's OpenSSL (`native-tls`).
+
+```toml
+[package]
+name = "xet-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Client library for communicating with Hugging Face Xet storage servers.  Use through the hf-xet crate."
+readme = "README.md"
+keywords = ["huggingface"]
+categories = ["artificial-intelligence", "network-programming"]
+
+[lib]
+name = "xet_client"
+path = "src/lib.rs"
+
+[dependencies]
+xet-runtime = { version = "1.7.0", path = "../xet_runtime" }
+xet-core-structures = { version = "1.7.0", path = "../xet_core_structures" }
+
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+base64 = { workspace = true }
+bytes = { workspace = true }
+clap = { workspace = true, optional = true }
+crc32fast = { workspace = true }
+futures = { workspace = true }
+http = { workspace = true }
+more-asserts = { workspace = true }
+rand = { workspace = true }
+reqwest = { workspace = true }
+reqwest-middleware = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_repr = { workspace = true }
+statrs = { workspace = true }
+tempfile = { workspace = true }
+thiserror = { workspace = true }
+tokio-retry = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, optional = true }
+url = { workspace = true }
+urlencoding = { workspace = true }
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+tokio = { workspace = true, features = [
+    "sync",
+    "macros",
+    "io-util",
+    "rt",
+    "time",
+] }
+tokio_with_wasm = { workspace = true, features = ["rt", "sync"] }
+web-time = { workspace = true }
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+axum = { workspace = true, optional = true }
+# Telemetry only; it is compiled out on wasm (no XetRuntime::spawn there), which also keeps
+# chrono's clock off a target where it needs `wasmbind` to work.
+chrono = { workspace = true }
+uuid = { workspace = true, features = ["v7"] }
+humantime = { workspace = true, optional = true }
+futures-util = { workspace = true, optional = true }
+redb = { workspace = true }
+human-bandwidth = { workspace = true, optional = true }
+hyper = { workspace = true }
+tokio = { workspace = true }
+tower-http = { version = "0.6", features = ["cors"], optional = true }
+
+[features]
+strict = []
+smoke-test = []
+default = ["rustls-tls"]
+elevated_information_level = []
+fd-track = ["xet-runtime/fd-track"]
+rustls-tls = ["reqwest/rustls"]
+rustls-no-provider = ["reqwest/rustls-no-provider"]
+native-tls = ["reqwest/native-tls"]
+native-tls-vendored = ["reqwest/native-tls-vendored"]
+# The cache_analysis binary needs clap for argument parsing.
+analysis = ["dep:clap"]
+simulation = [
+    "dep:axum",
+    "dep:humantime",
+    "dep:futures-util",
+    "dep:human-bandwidth",
+    "dep:tower-http",
+    "dep:clap",
+    "dep:tracing-subscriber",
+    "xet-core-structures/simulation",
+]
+
+[[bin]]
+name = "local_cas_server"
+path = "src/cas_client/simulation/local_server/main.rs"
+required-features = ["simulation"]
+
+[[bin]]
+name = "cache_analysis"
+path = "src/chunk_cache/bin/analysis.rs"
+required-features = ["analysis"]
+
+[dev-dependencies]
+approx = { workspace = true }
+ctor = { workspace = true }
+mockall = { workspace = true }
+httpmock = { workspace = true }
+rand_distr = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+tracing-test = { workspace = true }
+wiremock = { workspace = true }
+```

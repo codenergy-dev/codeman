@@ -17,7 +17,7 @@ The choices were made in the [Ollama settings plan](../plans/2026-10-08-ollama-s
 
 ## Accepted keys
 
-Only these keys, taken from the server of Ollama 0.35.1, the version in Codeman's pod image ([`envconfig/config.go` at v0.35.1](../web/ollama/envconfig-config-go-at-v0-35-1.md), and the [FAQ](../web/ollama/faq.md)). `src/inference/ollama.test.ts` checks this table against `OLLAMA_SETTINGS` in [`src/inference/ollama.ts`](../../src/inference/ollama.ts).
+Only these keys, taken from the server of Ollama 0.40.10, the version pods run ([`envconfig/config.go` at v0.40.10](../web/ollama/envconfig-config-go-at-v0-40-10.md), and the [FAQ](../web/ollama/faq.md)). `src/inference/ollama.test.ts` checks this table against `OLLAMA_SETTINGS` in [`src/inference/ollama.ts`](../../src/inference/ollama.ts).
 
 | Key | Variable | Value | Ollama's default | Without the key | Meaning |
 | --- | --- | --- | --- | --- | --- |
@@ -52,7 +52,7 @@ Ollama ignores a variable it does not know. So Codeman checks each key and value
 1. **Layers.** Each key is inherited like a provider setting, and a layer that names another provider drops the block ([the block](pod-engines.md#the-block)).
 2. **Pods.** The settings are part of the [pod settings](../glossary.md#pod-settings), so tasks with different Ollama settings never share a pod ([pods](../inference/pods.md)).
 3. **The pod.** Codeman creates it with `CODEMAN_OLLAMA`, the variables as JSON, such as `{"OLLAMA_NUM_PARALLEL":"4"}`, the derived `num-parallel` included ([from settings to the pod](pod-engines.md#from-settings-to-the-pod)).
-4. **The gateway.** It checks the variables against the same list, and gives them to Ollama with its own `OLLAMA_HOST` and `OLLAMA_KEEP_ALIVE` on top. It logs them ("Ollama settings: OLLAMA_NUM_PARALLEL=4.") and reports them in its status. A pod whose `CODEMAN_OLLAMA` it cannot read terminates itself, saying why.
+4. **The gateway.** It checks the variables against the same list, and gives them to Ollama with its own `OLLAMA_HOST` and `OLLAMA_KEEP_ALIVE` on top, and the variables that make Ollama trust the gateway's Node.js roots ([the engines' trusted roots](../development/dependencies.md#the-engines-trusted-roots)). It logs them ("Ollama settings: OLLAMA_NUM_PARALLEL=4.") and reports them in its status. A pod whose `CODEMAN_OLLAMA` it cannot read terminates itself, saying why.
 5. **The context length.** With `context-length`, Ollama keeps it, and the gateway only checks that the model fits the GPU with it. Without it, the gateway computes one ([memory](#memory)). Either is the context length `open-key` reports and the agent is told.
 
 ## Parallel requests
@@ -61,7 +61,7 @@ Without `num-parallel`, a pod's Ollama serves as many requests at once as the mo
 
 ### Families served one request at a time
 
-Ollama 0.35.1 serves some model families one request at a time, whatever `num-parallel` says ([server/sched.go](../web/ollama/server-sched-go-at-v0-35-1.md#parallel-requests); `OLLAMA_SERIAL_FAMILIES` in [`src/inference/ollama.ts`](../../src/inference/ollama.ts)):
+Ollama 0.40.10 serves some model families one request at a time, whatever `num-parallel` says ([server/sched.go](../web/ollama/server-sched-go-at-v0-40-10.md#parallel-requests); `OLLAMA_SERIAL_FAMILIES` in [`src/inference/ollama.ts`](../../src/inference/ollama.ts)):
 
 - `qwen35`, `qwen35moe` and `qwen3next`;
 - `qwen3vl` and `qwen3vlmoe`;
@@ -69,14 +69,14 @@ Ollama 0.35.1 serves some model families one request at a time, whatever `num-pa
 - `lfm2` and `lfm2moe`;
 - `nemotron_h`, `nemotron_h_moe` and `nemotron_h_omni`.
 
-The gateway fits such a model for one request. `open-key` warns that the runs on the pod wait for each other's requests: "Ollama 0.35.1 serves `<model>`'s family (`<family>`) one request at a time, whatever num-parallel says: the runs that share pod `<id>` wait for each other's requests." [vLLM](vllm.md) batches every family.
+The gateway fits such a model for one request. `open-key` warns that the runs on the pod wait for each other's requests: "Ollama 0.40.10 serves `<model>`'s family (`<family>`) one request at a time, whatever num-parallel says: the runs that share pod `<id>` wait for each other's requests." [vLLM](vllm.md) batches every family.
 
 ## Memory
 
 Ollama's K/V cache grows with `num-parallel` × `context-length`, beside the model ([FAQ](../web/ollama/faq.md#how-does-ollama-handle-concurrent-requests)).
 
 > [!WARNING]
-> When the model and its cache do not fit the GPU, Ollama does not fail: it puts part of the model on the CPU, which runs much slower ([server/sched.go](../web/ollama/server-sched-go-at-v0-35-1.md#loading), [common/fit.cpp](../web/llama-cpp/common-fit-cpp-at-b11232.md)).
+> When the model and its cache do not fit the GPU, Ollama does not fail: it puts part of the model on the CPU, which runs much slower ([server/sched.go](../web/ollama/server-sched-go-at-v0-40-10.md#loading), [common/fit.cpp](../web/llama-cpp/common-fit-cpp-at-b11803.md)).
 
 So the pod's gateway checks every load, and computes the context when the settings give none ([`src/gateway/fit.ts`](../../src/gateway/fit.ts)). The floor, the candidates and what a failed start does are in [context and the GPU](pod-engines.md#context-and-the-gpu).
 
@@ -101,7 +101,7 @@ flowchart TD
 
 After each load, the gateway reads `GET /api/ps`. A model wholly on the GPU has `size_vram` equal to `size` ([list running models](../web/ollama/list-running-models.md)). The pod serves only such a model, with an explicit `context-length` too.
 
-llama.cpp, which Ollama runs, leaves 1024 MiB of each GPU free when it decides what goes on it ([common/common.h](../web/llama-cpp/common-common-h-at-b11232.md)). A model wholly on the GPU therefore leaves that much for what grows while it runs.
+llama.cpp, which Ollama runs, leaves 1024 MiB of each GPU free when it decides what goes on it ([common/common.h](../web/llama-cpp/common-common-h-at-b11803.md)). A model wholly on the GPU therefore leaves that much for what grows while it runs.
 
 ### The computed context
 
@@ -157,6 +157,28 @@ A start that fails stops the run with the gateway's message, in `open-key`'s log
 
 To serve a larger context, lower `num-parallel`, set `kv-cache-type: q8_0`, or use a GPU with more memory.
 
+### Before the pod is created
+
+Before creating an Ollama pod on an image that fits the model to the GPU, `open-key` estimates whether the model and its cache can fit at all, and creates no pod when even an optimistic bound falls short ([`estimate.ts`](../../src/gateway/estimate.ts)). Joining a pod checks nothing.
+
+1. **The model's facts** come from Ollama's registry, without a token, as the pod would pull it: the manifest's model and projector layers give the weights' bytes, and the first 256 KiB of the model layer, by a ranged read, give its GGUF metadata, the keys `/api/show` gives ([server/images.go](../web/ollama/server-images-go-at-v0-40-10.md), [fs/gguf/gguf.go](../web/ollama/fs-gguf-gguf-go-at-v0-40-10.md)).
+2. **The estimate** is the computed context's own, at the floor or at the explicit `context-length`, without the search:
+
+   ```text
+   room    = GPU memory − weights − 1024 MiB − gpu-overhead
+   needed  = parallel requests × context × per token
+   ```
+
+   It counts no compute buffers, so it refuses only a model that cannot fit even so, and leaves what is near the edge to the [load's check](#wholly-on-the-gpu).
+3. **When it cannot tell,** it says why in the run's log, and the pod is created as before: a model on another registry, such as `hf.co/…`, a manifest list, a model layer that is not GGUF, metadata beyond the first 256 KiB, a sliding window, the registry not answering, or an unknown GPU memory.
+
+| When | Message |
+| --- | --- |
+| The estimate falls short at the floor | "`qwen2.5:0.5b` does not fit the GPU with 2 parallel requests and a context of 32768 tokens, the least Codeman gives an agent, by Codeman's estimate, so no pod was created: its K/V cache needs 0.75 GiB, and the GPU's 1 GB, less llama.cpp's margin of 1 GiB, the settings' overhead and 0.37 GiB of weights, leave nothing. Give the profile fewer tasks (`tasks` or `max-tasks`) or set a smaller `num-parallel`, set `kv-cache-type: q8_0` in the `ollama` settings, use a smaller quantization of the model, or use a GPU with more memory." |
+| The estimate falls short at an explicit `context-length` | The same numbers, then "Lower `context-length` or `num-parallel` in the `ollama` settings, set `kv-cache-type: q8_0`, use a smaller quantization of the model, or use a GPU with more memory." |
+
+A refusal ends the pod's registry document as a failed start, so the tasks waiting for the same settings fail with the same message.
+
 ### What the run shows
 
 | Where | Example |
@@ -166,11 +188,11 @@ To serve a larger context, lower `num-parallel`, set `kv-cache-type: q8_0`, or u
 
 ## Pod images
 
-The Ollama image is the `ollama` entry of `POD_IMAGES`, or the `pod-image` input's ([pod images](pod-engines.md#pod-images)). Applying the settings, and fitting the model to the GPU, need an image whose gateway does both. A requested setting is never dropped:
+The Ollama image is the `ollama` entry of `ENGINE_RELEASES`, or the `pod-image` input's ([pod images](pod-engines.md#pod-images)). The gateway applies the settings and fits the model to the GPU, and the [bootstrap](../glossary.md#bootstrap) gives every pod the gateway of Codeman's commit. Older images stay listed by digest. A requested setting is never dropped:
 
 | Image | With `ollama:` settings | Without them |
 | --- | --- | --- |
-| Codeman's pinned image | Applied and checked | The derived `num-parallel` and the computed context |
+| The pinned image | Applied and checked | The derived `num-parallel` and the computed context |
 | Listed in `IMAGES_WITHOUT_OLLAMA_SETTINGS` | The run stops in `open-key`, before any pod is created | Served without the derived `num-parallel`, with the model's own context length, and no check of the GPU |
 | Any other, such as a `pod-image` input's | It must report exactly the requested variables and a fit, or the run fails | It must report a fit, or the run fails |
 

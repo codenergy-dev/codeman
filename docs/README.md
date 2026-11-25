@@ -59,6 +59,7 @@ New to Codeman? Read the [README](../README.md), then follow [Installation](inst
 | [Secrets](security/secrets.md) | See where each credential goes, and why it is safe |
 | [Risks](security/risks.md) | Know the real risks, and how to protect against each |
 | [Forks](security/forks.md) | Know what a fork gets, and what to set |
+| [Release policy](security/release-policy.md) | Know what is checked before a pod runs an engine's release, and what a block means |
 
 ## How it works
 
@@ -79,7 +80,7 @@ New to Codeman? Read the [README](../README.md), then follow [Installation](inst
 
 | Page | Read it to … |
 | --- | --- |
-| [Development](development/guide.md) | Build, test and release Codeman, and publish its pod images |
+| [Development](development/guide.md) | Build, test and release Codeman, and pin what its pods run |
 | [Writing the docs](development/documentation.md) | Shape a page, and keep its links and anchors |
 | [Platforms](development/platforms.md) | Add a platform or runtime behind Codeman's interfaces |
 | [Dependencies](development/dependencies.md) | See what Codeman depends on, why, and the audits |

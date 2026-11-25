@@ -159,6 +159,7 @@ The repository's code, issues and comments go to the model provider through Open
 - Only the settings files set `hosts`, so a task's command cannot widen where the code goes.
 - A pod's gateway is public behind Runpod's proxy or Salad's Container Gateway, and serves only whoever holds the run's token. Ollama's and vLLM's own ports stay inside the pod.
 - A pod's environment holds no secret: hashes and public values. A Salad pod holds no key at all, since Salad's only key reaches its user's whole account; it ends by exiting.
+- A pod downloads Node.js and its gateway at start, each checked by its SHA-256 ([what a pod starts from](#what-a-pod-starts-from)).
 - A vLLM pod downloads its model from Hugging Face. Before creating it, Codeman asks Hugging Face's API whether the model is public, without a token; the request carries only the model's ID.
 - vLLM's usage statistics are turned off. Its arguments that run a model repository's code (`trust-remote-code`), load plugins, or send the cache, traces or requests elsewhere are refused ([vLLM settings](../settings/vllm.md#refused-keys)).
 
@@ -180,9 +181,26 @@ The workflow runs Codeman, third-party actions and the OpenCode [harness](../glo
 - Each job that runs Codeman checks it out at the commit in the `CODEMAN_COMMIT_SHA` variable, after a check of that commit (below).
 - The templates pin every other action to a full commit SHA.
 - OpenCode is pinned to a version, and checked against its npm integrity hash.
-- Codeman's pod images, one with Ollama and one with vLLM, are pinned by digest.
+- Each engine's official image is pinned by digest, and Node.js for pods by SHA-256.
+- `open-key` checks the engine's and Node.js's releases on every run on a pod, and a block stops the run ([release policy](release-policy.md)).
 
 See [dependencies](../development/dependencies.md).
+
+### What a pod starts from
+
+A pod starts from its engine's official image, then downloads what Codeman adds to it. These are the hosts that takes:
+
+| Who | Reaches | For | What makes it trusted |
+| --- | --- | --- | --- |
+| Runpod or Salad | Docker Hub | The engine's image | Its index digest, pinned in the catalog |
+| The pod's bootstrap | `nodejs.org` | Node.js's linux-x64 tarball | Its SHA-256, pinned in the catalog |
+| The pod's bootstrap | `raw.githubusercontent.com` | `dist/gateway.js` at the action's commit | Its SHA-256, computed by `open-key` from its own copy |
+| `open-key` | `api.osv.dev` | The releases' advisories | It sends only package names, versions and advisory IDs, with no key |
+
+- **Nothing runs unchecked.** A failed download or a SHA-256 that differs exits before anything downloaded runs. The SHA-256, not TLS, is what makes each file trusted.
+- **What the images hold.** An engine's image is its publisher's: Codeman scans it when pinning, and accepts some findings with their reasons ([audit log](../development/dependencies.md#audit-log)). A later finding in its packages shows only at the next scan.
+- **An outage can stop runs.** Without OSV.dev, and with no passing check of the last 24 hours, runs on pods stop, at no cost ([release policy](release-policy.md#when-osvdev-does-not-answer)).
+- **A `pod-image` is yours.** The release policy does not check an image that input names ([an image of your own](../settings/pod-engines.md#an-image-of-your-own)).
 
 ### The commit check
 
@@ -223,6 +241,7 @@ What remains: moving to an older commit of Codeman's `main`, or to a newer one b
 ### How to protect (risk 7)
 
 - Set `CODEMAN_COMMIT_SHA` once, in the organization, and read Codeman's changes before moving to a newer commit.
+- Name a `pod-image` only by digest, and only when you audited that image.
 - Give write access to the repositories that run Codeman, and to every repository of a pool that receives Codeman's secrets, only to people you would trust with all of those secrets. Write access is access to them ([who can read Codeman's secrets](overview.md#who-can-read-codemans-secrets)).
 - Check from time to time that no repository has a variable of that name of its own (**Settings → Secrets and variables → Actions → Variables**), and read the audit log for changes to it.
 

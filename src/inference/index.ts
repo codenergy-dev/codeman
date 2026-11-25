@@ -1,3 +1,4 @@
+import { gatewayArtifact } from "../action.ts";
 import { E2E } from "../e2e.ts";
 import type { RepositoryRef } from "../platform/types.ts";
 import { isLogin, isPoolId, MAX_POOL_MEMBERS, type Pool, soloPool } from "../pool.ts";
@@ -11,7 +12,9 @@ import { type GpuAccount, type GpuProvider, type HostKind, isHostKind } from "./
 import type { ModelHub } from "./huggingface.ts";
 import { podImage } from "./images.ts";
 import { type OllamaSettings, ollamaEnvironment } from "./ollama.ts";
+import type { OllamaModels } from "./ollama-registry.ts";
 import { OpenRouter, OpenRouterProvider } from "./openrouter.ts";
+import { Osv } from "./osv.ts";
 import type { InferenceProvider } from "./provider.ts";
 import {
   ACCOUNTS,
@@ -23,6 +26,7 @@ import {
   type PodProviderName,
   PROVIDERS,
 } from "./providers.ts";
+import { type PodReleases, StoredReleaseChecks } from "./resolution.ts";
 import { Runpod } from "./runpod.ts";
 import { Salad } from "./salad.ts";
 import { PodInference, ServerlessInference } from "./selfhosted.ts";
@@ -365,6 +369,14 @@ export function inferenceProvider(runtime: Runtime, store: () => Store): Inferen
     usage: runtime.input("gateway-usage"),
     store,
     fetch: E2E?.fetch,
+    // The e2e jobs reach only fakes: without a fake of Ollama's registry, no estimate is tried.
+    ...(E2E && !E2E.endpoints.ollamaRegistry
+      ? {
+          ollamaModels: {
+            model: async () => ({ unknown: "the e2e suite fakes no Ollama registry" }),
+          },
+        }
+      : {}),
   });
 }
 
@@ -414,6 +426,13 @@ export function selfHosted(
     /** For tests and the e2e build: the gateways' fetch, and where vLLM's models are checked. */
     fetch?: typeof fetch;
     hub?: ModelHub;
+    /** Where an Ollama pod's model is read for the estimate of its fit: Ollama's registry by default. */
+    ollamaModels?: OllamaModels;
+    /**
+     * For tests: what a pod runs and how it is checked. By default, the action's gateway, OSV.dev
+     * and the release checks in Codeman's store.
+     */
+    releases?: PodReleases;
   },
 ): InferenceProvider {
   const gpu = inputs.gpu ?? gpuProvider(accountOf(choice.provider), inputs.account);
@@ -421,6 +440,7 @@ export function selfHosted(
   if (!engine) throw new Error(`Unknown engine "${choice.engine}".`);
   const common = { model: choice.model, engine, pods: choice.pods };
   if (onPod(choice)) {
+    const store = inputs.store();
     return new PodInference(
       {
         ...common,
@@ -441,10 +461,16 @@ export function selfHosted(
         repository,
         gpu,
         account: inputs.account,
-        store: inputs.store(),
+        store,
         pool: choicePool(choice, repository.owner),
         ...(inputs.fetch ? { fetch: inputs.fetch } : {}),
         ...(inputs.hub ? { hub: inputs.hub } : {}),
+        ...(inputs.ollamaModels ? { ollamaModels: inputs.ollamaModels } : {}),
+        releases: inputs.releases ?? {
+          gateway: () => gatewayArtifact(),
+          osv: new Osv(inputs.fetch),
+          cache: new StoredReleaseChecks(store),
+        },
       },
     );
   }

@@ -90,6 +90,12 @@ export interface PodDescription {
   batch?: string;
   /** The task's batch key (decision 3 of the plan for limiting concurrent instances of a profile). */
   key?: string;
+  /**
+   * What the pod runs, by URL and digest, and the release policy's check of it (decision 6 of the
+   * plan to start pods from official engine images); absent from older documents, and never read
+   * back: it is for audits.
+   */
+  resolution?: Fields;
 }
 
 /**

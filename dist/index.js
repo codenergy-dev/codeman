@@ -1955,14 +1955,14 @@ var require_request = __commonJS({
         if (statusCode !== null) {
           this.#publishUpgradeHeaders(statusCode, headers, statusText);
         }
-        const result = this[kHandler].onUpgrade(statusCode, headers, socket);
+        const result2 = this[kHandler].onUpgrade(statusCode, headers, socket);
         if (!this.aborted) {
           this.completed = true;
           if (statusCode !== null) {
             this.#publishUpgradeTrailers();
           }
         }
-        return result;
+        return result2;
       }
       /**
        * @param {number} statusCode
@@ -3443,12 +3443,12 @@ var require_data_url = __commonJS({
       return serialized;
     }
     function collectASequenceOfCodePoints(condition2, input, position) {
-      let result = "";
+      let result2 = "";
       while (position.position < input.length && condition2(input[position.position])) {
-        result += input[position.position];
+        result2 += input[position.position];
         position.position++;
       }
-      return result;
+      return result2;
     }
     function collectASequenceOfCodePointsFast(char, input, position) {
       const idx = input.indexOf(char, position.position);
@@ -3670,16 +3670,16 @@ var require_data_url = __commonJS({
       if ((2 << 15) - 1 > length) {
         return String.fromCharCode.apply(null, input);
       }
-      let result = "";
+      let result2 = "";
       let i = 0;
       let addition = (2 << 15) - 1;
       while (i < length) {
         if (i + addition > length) {
           addition = length - i;
         }
-        result += String.fromCharCode.apply(null, input.subarray(i, i += addition));
+        result2 += String.fromCharCode.apply(null, input.subarray(i, i += addition));
       }
-      return result;
+      return result2;
     }
     function minimizeSupportedMimeType(mimeType) {
       switch (mimeType.essence) {
@@ -3928,15 +3928,15 @@ var require_webidl = __commonJS({
             message: `${argument} ("${webidl.util.Type(O)}") is not an Object.`
           });
         }
-        const result = {};
+        const result2 = {};
         if (!types.isProxy(O)) {
           const keys2 = [...Object.getOwnPropertyNames(O), ...Object.getOwnPropertySymbols(O)];
           for (const key of keys2) {
             const typedKey = keyConverter(key, prefix, argument);
             const typedValue = valueConverter(O[key], prefix, argument);
-            result[typedKey] = typedValue;
+            result2[typedKey] = typedValue;
           }
-          return result;
+          return result2;
         }
         const keys = Reflect.ownKeys(O);
         for (const key of keys) {
@@ -3944,10 +3944,10 @@ var require_webidl = __commonJS({
           if (desc?.enumerable) {
             const typedKey = keyConverter(key, prefix, argument);
             const typedValue = valueConverter(O[key], prefix, argument);
-            result[typedKey] = typedValue;
+            result2[typedKey] = typedValue;
           }
         }
-        return result;
+        return result2;
       };
     };
     webidl.interfaceConverter = function(i) {
@@ -4456,8 +4456,8 @@ var require_util2 = __commonJS({
       if (parsedMetadata.length === 0) {
         return true;
       }
-      const strongest = getStrongestMetadata(parsedMetadata);
-      const metadata = filterMetadataListByAlgorithm(parsedMetadata, strongest);
+      const strongest2 = getStrongestMetadata(parsedMetadata);
+      const metadata = filterMetadataListByAlgorithm(parsedMetadata, strongest2);
       for (const item of metadata) {
         const algorithm = item.algo;
         const expectedValue = item.hash;
@@ -4477,7 +4477,7 @@ var require_util2 = __commonJS({
     }
     var parseHashWithOptions = /(?<algo>sha256|sha384|sha512)-((?<hash>[A-Za-z0-9+/]+|[A-Za-z0-9_-]+)={0,2}(?:\s|$)( +[!-~]*)?)?/i;
     function parseMetadata(metadata) {
-      const result = [];
+      const result2 = [];
       let empty = true;
       for (const token of metadata.split(" ")) {
         empty = false;
@@ -4487,13 +4487,13 @@ var require_util2 = __commonJS({
         }
         const algorithm = parsedToken.groups.algo.toLowerCase();
         if (supportedHashes.includes(algorithm)) {
-          result.push(parsedToken.groups);
+          result2.push(parsedToken.groups);
         }
       }
       if (empty === true) {
         return "no metadata";
       }
-      return result;
+      return result2;
     }
     function getStrongestMetadata(metadataList) {
       let algorithm = metadataList[0].algo;
@@ -4570,12 +4570,12 @@ var require_util2 = __commonJS({
       return normalizedMethodRecordsBase[method.toLowerCase()] ?? method;
     }
     function serializeJavascriptValueToJSONString(value) {
-      const result = JSON.stringify(value);
-      if (result === void 0) {
+      const result2 = JSON.stringify(value);
+      if (result2 === void 0) {
         throw new TypeError("Value is not JSON serializable");
       }
-      assert(typeof result === "string");
-      return result;
+      assert(typeof result2 === "string");
+      return result2;
     }
     var esIteratorPrototype = Object.getPrototypeOf(Object.getPrototypeOf([][Symbol.iterator]()));
     function createIterator(name, kInternalIterator, keyIndex = 0, valueIndex = 1) {
@@ -4613,20 +4613,20 @@ var require_util2 = __commonJS({
           }
           const { [keyIndex]: key, [valueIndex]: value } = values[index];
           this.#index = index + 1;
-          let result;
+          let result2;
           switch (this.#kind) {
             case "key":
-              result = key;
+              result2 = key;
               break;
             case "value":
-              result = value;
+              result2 = value;
               break;
             case "key+value":
-              result = [key, value];
+              result2 = [key, value];
               break;
           }
           return {
-            value: result,
+            value: result2,
             done: false
           };
         }
@@ -5317,11 +5317,11 @@ var require_formdata_parser = __commonJS({
           return "failure";
         }
         position.position += 2;
-        const result = parseMultipartFormDataHeaders(input, position);
-        if (result === "failure") {
+        const result2 = parseMultipartFormDataHeaders(input, position);
+        if (result2 === "failure") {
           return "failure";
         }
-        let { name, filename, contentType, encoding } = result;
+        let { name, filename, contentType, encoding } = result2;
         position.position += 2;
         let body;
         {
@@ -6412,9 +6412,9 @@ var require_client_h1 = __commonJS({
         client2[kHTTPContext] = null;
         if (client2.destroyed) {
           assert(client2[kPending] === 0);
-          const requests = client2[kQueue].splice(client2[kRunningIdx]);
-          for (let i = 0; i < requests.length; i++) {
-            const request2 = requests[i];
+          const requests2 = client2[kQueue].splice(client2[kRunningIdx]);
+          for (let i = 0; i < requests2.length; i++) {
+            const request2 = requests2[i];
             util.errorRequest(client2, request2, err);
           }
         } else if (client2[kRunning] > 0 && err.code !== "UND_ERR_INFO") {
@@ -6997,17 +6997,17 @@ var require_client_h2 = __commonJS({
       }
     } = http2;
     function parseH2Headers(headers) {
-      const result = [];
+      const result2 = [];
       for (const [name, value] of Object.entries(headers)) {
         if (Array.isArray(value)) {
           for (const subvalue of value) {
-            result.push(Buffer.from(name), Buffer.from(subvalue));
+            result2.push(Buffer.from(name), Buffer.from(subvalue));
           }
         } else {
-          result.push(Buffer.from(name), Buffer.from(value));
+          result2.push(Buffer.from(name), Buffer.from(value));
         }
       }
-      return result;
+      return result2;
     }
     function parseH2ResponseHeaders(headers) {
       const { [HTTP2_HEADER_STATUS]: _statusCode, ...realHeaders } = headers;
@@ -7039,9 +7039,9 @@ var require_client_h2 = __commonJS({
         client2[kHTTP2Session] = null;
         if (client2.destroyed) {
           assert(client2[kPending] === 0);
-          const requests = client2[kQueue].splice(client2[kRunningIdx]);
-          for (let i = 0; i < requests.length; i++) {
-            const request2 = requests[i];
+          const requests2 = client2[kQueue].splice(client2[kRunningIdx]);
+          for (let i = 0; i < requests2.length; i++) {
+            const request2 = requests2[i];
             util.errorRequest(client2, request2, err);
           }
         }
@@ -7975,9 +7975,9 @@ var require_client = __commonJS({
       }
       async [kDestroy](err) {
         return new Promise((resolve) => {
-          const requests = this[kQueue].splice(this[kPendingIdx]);
-          for (let i = 0; i < requests.length; i++) {
-            const request2 = requests[i];
+          const requests2 = this[kQueue].splice(this[kPendingIdx]);
+          for (let i = 0; i < requests2.length; i++) {
+            const request2 = requests2[i];
             util.errorRequest(this, request2, err);
           }
           const callback = () => {
@@ -8001,9 +8001,9 @@ var require_client = __commonJS({
     function onError(client, err) {
       if (client[kRunning] === 0 && err.code !== "UND_ERR_INFO" && err.code !== "UND_ERR_SOCKET") {
         assert(client[kPendingIdx] === client[kRunningIdx]);
-        const requests = client[kQueue].splice(client[kRunningIdx]);
-        for (let i = 0; i < requests.length; i++) {
-          const request2 = requests[i];
+        const requests2 = client[kQueue].splice(client[kRunningIdx]);
+        for (let i = 0; i < requests2.length; i++) {
+          const request2 = requests2[i];
           util.errorRequest(client, request2, err);
         }
         assert(client[kSize] === 0);
@@ -8623,11 +8623,11 @@ var require_balanced_pool = __commonJS({
         return this;
       }
       _updateBalancedPoolStats() {
-        let result = 0;
+        let result2 = 0;
         for (let i = 0; i < this[kClients].length; i++) {
-          result = getGreatestCommonDivisor(this[kClients][i][kWeight], result);
+          result2 = getGreatestCommonDivisor(this[kClients][i][kWeight], result2);
         }
-        this[kGreatestCommonDivisor] = result;
+        this[kGreatestCommonDivisor] = result2;
       }
       removeUpstream(upstream) {
         const upstreamOrigin = parseOrigin(upstream).origin;
@@ -10898,20 +10898,20 @@ var require_mock_utils = __commonJS({
     }
     function generateKeyValues(data) {
       const keys = Object.keys(data);
-      const result = [];
+      const result2 = [];
       for (let i = 0; i < keys.length; ++i) {
         const key = keys[i];
         const value = data[key];
         const name = Buffer.from(`${key}`);
         if (Array.isArray(value)) {
           for (let j = 0; j < value.length; ++j) {
-            result.push(name, Buffer.from(`${value[j]}`));
+            result2.push(name, Buffer.from(`${value[j]}`));
           }
         } else {
-          result.push(name, Buffer.from(`${value}`));
+          result2.push(name, Buffer.from(`${value}`));
         }
       }
-      return result;
+      return result2;
     }
     function getStatusText(statusCode) {
       return STATUS_CODES[statusCode] || "unknown";
@@ -14739,11 +14739,11 @@ var require_progressevent = __commonJS({
 var require_encoding = __commonJS({
   "node_modules/undici/lib/web/fileapi/encoding.js"(exports, module) {
     "use strict";
-    function getEncoding(label) {
-      if (!label) {
+    function getEncoding(label2) {
+      if (!label2) {
         return "failure";
       }
-      switch (label.trim().toLowerCase()) {
+      switch (label2.trim().toLowerCase()) {
         case "unicode-1-1-utf-8":
         case "unicode11utf8":
         case "unicode20utf8":
@@ -15078,11 +15078,11 @@ var require_util4 = __commonJS({
               queueMicrotask(() => {
                 fr[kState] = "done";
                 try {
-                  const result = packageData(bytes, type, blob.type, encodingName);
+                  const result2 = packageData(bytes, type, blob.type, encodingName);
                   if (fr[kAborted]) {
                     return;
                   }
-                  fr[kResult] = result;
+                  fr[kResult] = result2;
                   fireAProgressEvent("load", fr);
                 } catch (error3) {
                   fr[kError] = error3;
@@ -15556,17 +15556,17 @@ var require_cache = __commonJS({
         const prefix = "Cache.add";
         webidl.argumentLengthCheck(arguments, 1, prefix);
         request2 = webidl.converters.RequestInfo(request2, prefix, "request");
-        const requests = [request2];
-        const responseArrayPromise = this.addAll(requests);
+        const requests2 = [request2];
+        const responseArrayPromise = this.addAll(requests2);
         return await responseArrayPromise;
       }
-      async addAll(requests) {
+      async addAll(requests2) {
         webidl.brandCheck(this, _Cache);
         const prefix = "Cache.addAll";
         webidl.argumentLengthCheck(arguments, 1, prefix);
         const responsePromises = [];
         const requestList = [];
-        for (let request2 of requests) {
+        for (let request2 of requests2) {
           if (request2 === void 0) {
             throw webidl.errors.conversionFailed({
               prefix,
@@ -15587,7 +15587,7 @@ var require_cache = __commonJS({
           }
         }
         const fetchControllers = [];
-        for (const request2 of requests) {
+        for (const request2 of requests2) {
           const r = new Request(request2)[kState];
           if (!urlIsHttpHttpsScheme(r.url)) {
             throw webidl.errors.exception({
@@ -15809,20 +15809,20 @@ var require_cache = __commonJS({
           }
         }
         const promise = createDeferredPromise();
-        const requests = [];
+        const requests2 = [];
         if (request2 === void 0) {
           for (const requestResponse of this.#relevantRequestResponseList) {
-            requests.push(requestResponse[0]);
+            requests2.push(requestResponse[0]);
           }
         } else {
           const requestResponses = this.#queryCache(r, options);
           for (const requestResponse of requestResponses) {
-            requests.push(requestResponse[0]);
+            requests2.push(requestResponse[0]);
           }
         }
         queueMicrotask(() => {
           const requestList = [];
-          for (const request3 of requests) {
+          for (const request3 of requests2) {
             const requestObject = fromInnerRequest(
               request3,
               new AbortController().signal,
@@ -17385,10 +17385,10 @@ var require_connection = __commonJS({
       const wasClean = ws[kSentClose] === sentCloseFrameState.SENT && ws[kReceivedClose];
       let code = 1005;
       let reason = "";
-      const result = ws[kByteParser].closingInfo;
-      if (result && !result.error) {
-        code = result.code ?? 1005;
-        reason = result.reason;
+      const result2 = ws[kByteParser].closingInfo;
+      if (result2 && !result2.error) {
+        code = result2.code ?? 1005;
+        reason = result2.reason;
       } else if (!ws[kReceivedClose]) {
         code = 1006;
       }
@@ -18399,7 +18399,7 @@ var require_eventsource_stream = __commonJS({
     var defaultMaxEventSize = buffer.kStringMaxLength;
     var DATA = Buffer.from("data");
     var EVENT = Buffer.from("event");
-    var ID = Buffer.from("id");
+    var ID2 = Buffer.from("id");
     var RETRY = Buffer.from("retry");
     var minParserItems = 1024;
     var maxParserItems = 131072;
@@ -18615,7 +18615,7 @@ ${value}`;
           }
           return;
         }
-        if (isFieldName(line, fieldLength, ID)) {
+        if (isFieldName(line, fieldLength, ID2)) {
           if (isValidLastEventIdBytes(line, valueStart)) {
             this.setEventFieldSize("id", line.length - valueStart);
             event.id = line.toString("utf8", valueStart);
@@ -19264,12 +19264,12 @@ var require_lib = __commonJS({
       };
       return function(mod) {
         if (mod && mod.__esModule) return mod;
-        var result = {};
+        var result2 = {};
         if (mod != null) {
-          for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+          for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result2, mod, k[i]);
         }
-        __setModuleDefault(result, mod);
-        return result;
+        __setModuleDefault(result2, mod);
+        return result2;
       };
     })();
     var __awaiter7 = exports && exports.__awaiter || function(thisArg, _arguments, P, generator) {
@@ -19293,8 +19293,8 @@ var require_lib = __commonJS({
             reject(e);
           }
         }
-        function step(result) {
-          result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected);
+        function step(result2) {
+          result2.done ? resolve(result2.value) : adopt(result2.value).then(fulfilled, rejected);
         }
         step((generator = generator.apply(thisArg, _arguments || [])).next());
       });
@@ -19923,6 +19923,7 @@ var require_lib = __commonJS({
 });
 
 // src/action.ts
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { isAbsolute, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19937,6 +19938,27 @@ function actionCommit(root = ACTION_ROOT) {
   } catch {
     return void 0;
   }
+}
+var GATEWAY_FILE = "dist/gateway.js";
+function gatewayArtifact(root = ACTION_ROOT, commit = actionCommit(root), repository = CODEMAN_REPOSITORY) {
+  if (!commit || !FULL_SHA.test(commit)) {
+    throw new Error(
+      `Codeman's commit is unknown: its checkout at ${root} is not of a full commit SHA, so a pod could not download this gateway from raw.githubusercontent.com, and no pod was created. Run Codeman from a checkout of the commit in CODEMAN_COMMIT_SHA, as the workflow templates do.`
+    );
+  }
+  let file;
+  try {
+    file = readFileSync(join(root, GATEWAY_FILE));
+  } catch (error3) {
+    throw new Error(
+      `Codeman's checkout at ${root} has no ${GATEWAY_FILE} to give a pod (${error3 instanceof Error ? error3.message : error3}), so no pod was created.`
+    );
+  }
+  return {
+    url: `https://raw.githubusercontent.com/${repository}/${commit}/${GATEWAY_FILE}`,
+    sha256: createHash("sha256").update(file).digest("hex"),
+    commit
+  };
 }
 function templateVersionProblem(given, commit) {
   const version = given.trim();
@@ -20028,7 +20050,7 @@ function agreement(pool2, owner, declarations) {
 }
 
 // src/settings.ts
-import { createHash } from "node:crypto";
+import { createHash as createHash2 } from "node:crypto";
 
 // src/inference/engine.ts
 function openAiUsage(body, cachedApart = false) {
@@ -20054,7 +20076,20 @@ var IMAGES_WITHOUT_OLLAMA_SETTINGS = /* @__PURE__ */ new Set([
   ...SINGLE_RUN_IMAGES,
   "ghcr.io/codenergy-dev/codeman-pod@sha256:3252d41775a230249490b5af79aec050151e49c4722bb62f9ce3d247d02f6ca3"
 ]);
-var OLLAMA_VERSION = "0.35.1";
+var OLLAMA_VERSION = "0.40.10";
+var OLLAMA_SERIAL_FAMILIES = /* @__PURE__ */ new Set([
+  "mllama",
+  "qwen3vl",
+  "qwen3vlmoe",
+  "qwen35",
+  "qwen35moe",
+  "qwen3next",
+  "lfm2",
+  "lfm2moe",
+  "nemotron_h",
+  "nemotron_h_moe",
+  "nemotron_h_omni"
+]);
 var OLLAMA_SETTINGS = {
   "context-length": { variable: "OLLAMA_CONTEXT_LENGTH", value: { kind: "count", min: 1 } },
   "num-parallel": { variable: "OLLAMA_NUM_PARALLEL", value: { kind: "count", min: 1 } },
@@ -20170,7 +20205,7 @@ function vllmContextLength(env) {
   const value = Number(env.MAX_MODEL_LEN);
   return Number.isInteger(value) && value > 0 ? value : void 0;
 }
-var VLLM_VERSION = "0.31.0";
+var VLLM_VERSION = "0.32.0";
 var VLLM_MIN_CUDA = "13.0";
 var VLLM_PORT = 8e3;
 var VLLM_URL = `http://127.0.0.1:${VLLM_PORT}`;
@@ -20191,6 +20226,7 @@ var VLLM_TOOL_PARSERS = [
   "granite",
   "granite4",
   "hermes",
+  "hf",
   "poolside_v1",
   "hunyuan_a13b",
   "hy_v3",
@@ -20211,11 +20247,13 @@ var VLLM_TOOL_PARSERS = [
   "minicpm5",
   "mistral",
   "olmo3",
+  "plamo3",
   "muse_glimmer",
   "openai",
   "phi4_mini_json",
   "pythonic",
   "qwen3_coder",
+  "qwen3_json",
   "qwen3_xml",
   "seed_oss",
   "step3",
@@ -20243,6 +20281,7 @@ var VLLM_REASONING_PARSERS = [
   "openai_gptoss",
   "granite",
   "granite_thinking_parser",
+  "hf",
   "holo2",
   "hunyuan_a13b",
   "hy_v3",
@@ -20251,12 +20290,14 @@ var VLLM_REASONING_PARSERS = [
   "kimi_k3",
   "k2_horizon",
   "mimo",
+  "minicpmv",
   "minimax_m2",
   "minimax_m2_append_think",
   "minimax_m3",
   "mistral",
   "nemotron_v3",
   "olmo3",
+  "plamo3",
   "muse_glimmer",
   "qwen3",
   "seed_oss",
@@ -20499,6 +20540,8 @@ function podCost(start, end, pricePerSecond) {
 }
 var PodStartFailure = class extends Error {
 };
+var FitRefused = class extends PodStartFailure {
+};
 var PodUnavailable = class extends Error {
 };
 async function waitUntilReady(host, id, ready, options) {
@@ -20537,13 +20580,194 @@ function sleep(ms) {
 // src/inference/salad.ts
 import { randomBytes } from "node:crypto";
 
-// src/inference/images.ts
-var POD_IMAGES = {
-  // Published from f00d362: Node.js 24.22.1.
-  ollama: "ghcr.io/codenergy-dev/codeman-ollama@sha256:1c1771d22e238d9dbcba398ec2c0d248044be7accd9a4aeebe66ec522806f970",
-  // Published from f00d362: vLLM 0.31.0, Node.js 24.22.1.
-  vllm: "ghcr.io/codenergy-dev/codeman-vllm@sha256:330e23c032e5ff40d622df7aca5690d2f4922d771dd351daa07aa8a5c659b942"
+// src/gateway/bootstrap.ts
+var BOOTSTRAP_VARIABLES = {
+  nodeUrl: "CODEMAN_BOOTSTRAP_NODE_URL",
+  nodeSha256: "CODEMAN_BOOTSTRAP_NODE_SHA256",
+  gatewayUrl: "CODEMAN_BOOTSTRAP_GATEWAY_URL",
+  gatewaySha256: "CODEMAN_BOOTSTRAP_GATEWAY_SHA256",
+  /** Where the files go, `/tmp/codeman` when unset. Codeman never sets it; tests do. */
+  home: "CODEMAN_BOOTSTRAP_HOME"
 };
+var SALAD_COMMAND_LIMITS = { items: 100, itemCharacters: 1e3 };
+var SALAD_FILTERED = /(?:;|\|\|?)\s*(?:\S*\/)?(?:curl|wget|perl)\b/;
+var RUNPOD_REQUEST_BYTES = 102400;
+function podBootstrap(artifacts) {
+  const command2 = bootstrapCommand();
+  const [entrypoint, ...cmd] = command2;
+  return { env: bootstrapEnvironment(artifacts), command: command2, entrypoint: [entrypoint], cmd };
+}
+function bootstrapEnvironment(artifacts) {
+  const node = checkedArtifact("Node.js", artifacts.node);
+  const gateway = checkedArtifact("The gateway", artifacts.gateway);
+  if (!NODE_TARBALL.test(new URL(node.url).pathname)) {
+    throw new Error(
+      `Node.js's URL must name a linux-x64 .tar.gz, such as node-v24.22.1-linux-x64.tar.gz: ${node.url}`
+    );
+  }
+  return {
+    [BOOTSTRAP_VARIABLES.nodeUrl]: node.url,
+    [BOOTSTRAP_VARIABLES.nodeSha256]: node.sha256,
+    [BOOTSTRAP_VARIABLES.gatewayUrl]: gateway.url,
+    [BOOTSTRAP_VARIABLES.gatewaySha256]: gateway.sha256
+  };
+}
+var NODE_TARBALL = /\/node-v\d+\.\d+\.\d+-linux-x64\.tar\.gz$/;
+function checkedArtifact(what, artifact) {
+  const sha2562 = artifact.sha256.toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(sha2562)) {
+    throw new Error(`${what}'s SHA-256 must be 64 hex digits: '${artifact.sha256}'.`);
+  }
+  let protocol;
+  try {
+    protocol = new URL(artifact.url).protocol;
+  } catch {
+    protocol = void 0;
+  }
+  if (protocol !== "https:" && protocol !== "http:" || /[^!-~]/.test(artifact.url)) {
+    throw new Error(`${what}'s URL must be HTTP or HTTPS, without spaces: '${artifact.url}'.`);
+  }
+  return { url: artifact.url, sha256: sha2562 };
+}
+function bootstrapCommand() {
+  const command2 = [
+    "/bin/sh",
+    "-c",
+    `eval "$(printf '%s\\n' "$@")"`,
+    "bootstrap",
+    ...scriptLines()
+  ];
+  const problems = commandProblems(command2);
+  if (problems.length > 0) {
+    throw new Error(
+      `The bootstrap's command breaks the providers' limits: ${problems.join("; ")}.`
+    );
+  }
+  return command2;
+}
+function commandProblems(command2) {
+  const { items, itemCharacters } = SALAD_COMMAND_LIMITS;
+  const bytes = Buffer.byteLength(
+    JSON.stringify({ entrypoint: command2.slice(0, 1), cmd: command2.slice(1) })
+  );
+  return [
+    ...command2.length > items ? [`${command2.length} items, above Salad's ${items}`] : [],
+    ...command2.flatMap(
+      (item, index) => item.length === 0 ? [`item ${index} is empty`] : item.length > itemCharacters ? [`item ${index} has ${item.length} characters, above Salad's ${itemCharacters}`] : /[\r\n]/.test(item) ? [`item ${index} spans several lines`] : SALAD_FILTERED.test(item) ? [`item ${index} runs curl, wget or perl after ;, | or ||, which Salad refuses`] : []
+    ),
+    ...bytes > RUNPOD_REQUEST_BYTES ? [`${bytes} bytes, above Runpod's request of ${RUNPOD_REQUEST_BYTES}`] : []
+  ];
+}
+function scriptLines() {
+  return script().split("\n").map((line) => line.trim()).filter((line) => line !== "" && !line.startsWith("#"));
+}
+var STAGE_2 = [
+  'const { createHash } = require("node:crypto");',
+  'const { writeFileSync } = require("node:fs");',
+  "const env = process.env, file = process.argv[1];",
+  `const url = env.${BOOTSTRAP_VARIABLES.gatewayUrl} ?? "", want = env.${BOOTSTRAP_VARIABLES.gatewaySha256} ?? "";`,
+  "const fail = (message) => { console.error(`[bootstrap] ${message}`); process.exit(1); };",
+  `if (!/^[0-9a-f]{64}$/.test(want)) fail(\`${BOOTSTRAP_VARIABLES.gatewaySha256} is not a SHA-256: "\${want}".\`);`,
+  "const download = async () => {",
+  "console.error(`[bootstrap] Downloading ${url} with Node.js.`);",
+  "const response = await fetch(url, { signal: AbortSignal.timeout(300_000) });",
+  "if (!response.ok) throw new Error(`it answered ${response.status}`);",
+  "const body = Buffer.from(await response.arrayBuffer());",
+  'const actual = createHash("sha256").update(body).digest("hex");',
+  "if (actual !== want) fail(`Refused ${url}: its SHA-256 is ${actual}, not ${want}.`);",
+  "writeFileSync(file, body, { mode: 0o600 });",
+  "};",
+  "const run = () => {",
+  'console.error("[bootstrap] Starting the gateway.");',
+  "try { if (process.execve) process.execve(process.execPath, [process.execPath, file], env); } catch (error) { console.error(`[bootstrap] Running the gateway as a child: ${error.message}.`); }",
+  'const child = require("node:child_process").spawn(process.execPath, [file], { stdio: "inherit" });',
+  'for (const signal of ["SIGTERM", "SIGINT", "SIGHUP", "SIGQUIT", "SIGUSR2"]) process.on(signal, () => child.kill(signal));',
+  'child.on("error", (error) => fail(`Could not start the gateway: ${error.message}.`));',
+  'child.on("exit", (code) => process.exit(code ?? 1));',
+  "};",
+  "download().then(run, (error) => fail(`Could not download ${url}: ${error.message}.`));"
+];
+var STAGE_2_ITEM = 900;
+function packedStage2() {
+  if (STAGE_2.some((line) => line.includes("'"))) throw new Error("Stage 2 holds a single quote.");
+  return STAGE_2.reduce((items, line) => {
+    const last = items.at(-1);
+    if (last !== void 0 && last.length + 1 + line.length <= STAGE_2_ITEM) {
+      items[items.length - 1] = `${last} ${line}`;
+    } else items.push(line);
+    return items;
+  }, []);
+}
+function script() {
+  const v = BOOTSTRAP_VARIABLES;
+  return `
+set -eu
+home=\${${v.home}:-/tmp/codeman}
+log() { echo "[bootstrap] $*" >&2; }
+fail() { log "$*"; exit 1; }
+has() { command -v "$1" >/dev/null 2>&1; }
+
+# HTTPS with openssl alone, as Ollama's image has it: HTTP/1.0, no redirects.
+openssl_get() {
+  case $1 in https://*) ;; *) fail "Only openssl to download $1, which is not HTTPS." ;; esac
+  rest=\${1#https://}; authority=\${rest%%/*}; host=\${authority%:*}
+  case $rest in */*) path=/\${rest#*/} ;; *) path=/ ;; esac
+  case $authority in *:*) port=\${authority##*:} ;; *) port=443 ;; esac
+  printf 'GET %s HTTP/1.0\\r\\nHost: %s\\r\\nConnection: close\\r\\n\\r\\n' "$path" "$authority" | openssl s_client -quiet -verify_return_error -verify_hostname "$host" -servername "$host" -connect "$host:$port" >"$2.http" 2>/dev/null || return 1
+  # The headers' bytes, up to the empty line, and the status line, which must be 200.
+  size=0 status= cr=$(printf '\\r')
+  while IFS= read -r line; do
+    status=\${status:-$line}; size=$((size + \${#line} + 1))
+    [ "$line" = "$cr" ] && break
+  done <"$2.http"
+  case $status in "HTTP/1."?" 200 "*) ;; *) log "$1 answered '$status'."; return 1 ;; esac
+  tail -c +$((size + 1)) "$2.http" >"$2" || return 1
+  rm -f "$2.http"
+}
+
+# Downloads $1 to $2 with the first downloader the image has. curl and wget start their own
+# lines: Salad refuses a command where they follow ;, | or || (docs/web/salad/specifying-a-command.md).
+download() {
+  if has curl; then
+    log "Downloading $1 with curl."
+    curl -q -fsSL --retry 3 --connect-timeout 30 -o "$2" "$1"
+  elif has wget; then
+    log "Downloading $1 with wget."
+    wget -q -T 60 -O "$2" "$1"
+  elif has python3; then log "Downloading $1 with python3."; python3 -I -c 'import shutil, sys, urllib.request as u; r = u.urlopen(sys.argv[1], timeout=60); f = open(sys.argv[2], "wb"); shutil.copyfileobj(r, f); f.close()' "$1" "$2"
+  elif has openssl; then log "Downloading $1 with openssl."; openssl_get "$1" "$2"
+  else fail "No curl, wget, python3 or openssl to download $1."
+  fi
+}
+
+node_url=\${${v.nodeUrl}:-}; want=\${${v.nodeSha256}:-}
+case $want in *[!0-9a-f]* | "") fail "${v.nodeSha256} is not a SHA-256: '$want'." ;; esac
+[ \${#want} -eq 64 ] || fail "${v.nodeSha256} is not a SHA-256: '$want'."
+name=\${node_url##*/}; name=\${name%.tar.gz}
+case $name in node-v*-linux-x64) ;; *) fail "${v.nodeUrl} does not name Node.js's linux-x64 .tar.gz: '$node_url'." ;; esac
+has tar && has gzip || fail "No tar and gzip to unpack Node.js."
+mkdir -p "$home"
+rm -rf "$home/node" "$home/unpack" "$home/node.tar.gz" "$home/gateway.mjs"
+mkdir "$home/unpack"
+download "$node_url" "$home/node.tar.gz" || fail "Could not download $node_url."
+file=$home/node.tar.gz
+if has sha256sum; then checker=sha256sum; actual=$(sha256sum "$file" | cut -d ' ' -f 1)
+elif has openssl; then checker=openssl; actual=$(openssl dgst -sha256 -r "$file" | cut -d ' ' -f 1)
+elif has python3; then checker=python3; actual=$(python3 -I -c 'import hashlib, sys; h = hashlib.sha256(); f = open(sys.argv[1], "rb"); [h.update(b) for b in iter(lambda: f.read(1 << 20), b"")]; print(h.hexdigest())' "$file")
+else fail "No sha256sum, openssl or python3 to check $node_url."
+fi
+log "Checked $node_url with $checker."
+[ "$actual" = "$want" ] || { rm -f "$file"; fail "Refused $node_url: its SHA-256 is '$actual', not $want."; }
+# Only bin/node, owned by the user unpacking it, not by the tarball's UID.
+gzip -dc "$file" | tar -xof - -C "$home/unpack" "$name/bin/node" || fail "Could not unpack $name/bin/node from $node_url."
+mv "$home/unpack/$name/bin/node" "$home/node"
+rm -rf "$home/unpack" "$file"
+"$home/node" --version >/dev/null 2>&1 || fail "Node.js does not run in this image: it needs glibc on linux-x64."
+exec "$home/node" -e '${packedStage2().join("\n")}' "$home/gateway.mjs"
+`;
+}
+
+// src/inference/images.ts
 var IMAGES_BEFORE_SALAD = /* @__PURE__ */ new Set([
   "ghcr.io/codenergy-dev/codeman-pod@sha256:6a7617fc8772c43600349a971a424bc918982c6d38972e7d1802a1a607e76d27",
   "ghcr.io/codenergy-dev/codeman-pod@sha256:3252d41775a230249490b5af79aec050151e49c4722bb62f9ce3d247d02f6ca3",
@@ -20556,9 +20780,130 @@ var IMAGES_BEFORE_SALAD = /* @__PURE__ */ new Set([
   "ghcr.io/codenergy-dev/codeman-vllm@sha256:73f6419404c8c419cb8381c3cb593db0325aa6d813beb7f2a31b52923d8a0d30",
   "ghcr.io/codenergy-dev/codeman-vllm@sha256:a5b4a03205fc96f1ae3a731a03124a5a27eaf2d36450f937ff1f063112fc681e"
 ]);
+var NO_MODEL_UPLOAD = "Its API listens only on the pod's loopback, and the gateway forwards only `/v1/chat/completions`, `/v1/completions` and `/v1/models` to it, so no request creates a model or uploads a blob; the gateway pulls only the settings' model, from Ollama's registry.";
+var ENGINE_RELEASES = {
+  // Ollama 0.40.10, replacing 0.35.1: the newest release at least 7 days old. Its own 9 advisories
+  // have no fix in any release up to 0.40.13 (OSV.dev, 2026-10-30): Go's records have no upper
+  // bound and no severity; GitHub's, their aliases, bound each at or below 0.20.2
+  // (docs/web/osv/ollama-*.md). Its binary moves to Go 1.26.10 and newer `golang.org/x` modules,
+  // which fix the 50 high findings Trivy reports in 0.35.1's, and it has none
+  // (docs/development/dependencies.md#audit-log). Its upgrade checklist found nothing Codeman relies
+  // on changed: its server variables, serial families, llama.cpp's fit (b11803) and what `/api/ps`
+  // reports are 0.35.1's; its batch allowance and decision models changed
+  // (docs/development/dependencies.md#ollama, docs/web/ollama/ollama-v0-40-10.md).
+  ollama: {
+    image: "docker.io/ollama/ollama@sha256:4c5b27871a3239a717048f9b93057680a51b60c8119a7016aebb57f938e25e35",
+    release: {
+      name: "ollama",
+      version: "0.40.10",
+      // The image's `created`; the GitHub release is of 15:03:59Z.
+      publishedAt: "2026-10-23T16:34:45Z",
+      osv: { ecosystem: "Go", package: "github.com/ollama/ollama" },
+      replaces: "0.35.1",
+      provenance: {
+        source: "https://github.com/ollama/ollama",
+        commit: "f52b9e742d8c9a308f7b23cd1f0ab52c7ddb694d",
+        githubReleasePublishedAt: "2026-10-23T15:03:59Z",
+        githubReleaseImmutable: false,
+        tag: "lightweight",
+        commitVerified: true,
+        attestations: false,
+        imageSignature: false,
+        imageRevisionLabel: false
+      }
+    },
+    exceptions: [
+      {
+        id: "GO-2025-3557",
+        reason: `CVE-2025-0315 (GHSA-fccc-8m69-8r78, high, up to 0.3.14): a crafted GGUF model uploaded and created exhausts memory. ${NO_MODEL_UPLOAD}`
+      },
+      {
+        id: "GO-2025-3558",
+        reason: `CVE-2024-12055 (GHSA-89qx-m49c-8crf, high, up to 0.3.14): a crafted GGUF model uploaded and created crashes the server. ${NO_MODEL_UPLOAD}`
+      },
+      {
+        id: "GO-2025-3559",
+        reason: `CVE-2025-0317 (GHSA-9gcr-28rp-cc24, high, up to 0.3.14): a crafted GGUF model uploaded and created divides by zero. ${NO_MODEL_UPLOAD}`
+      },
+      {
+        id: "GO-2025-3582",
+        reason: `CVE-2025-0312 (GHSA-p2wh-w96x-w232, high, up to 0.3.14): a crafted GGUF model uploaded and created dereferences a null pointer. ${NO_MODEL_UPLOAD}`
+      },
+      {
+        id: "GO-2025-3689",
+        reason: `CVE-2024-8063 (GHSA-2xf2-gjm6-g2c6, high, up to 0.3.3): a GGUF model imported through a crafted Modelfile divides by zero. ${NO_MODEL_UPLOAD}`
+      },
+      {
+        id: "GO-2025-3695",
+        reason: "CVE-2025-1975 (GHSA-wrh5-cmwx-q2qr, high, up to 0.5.11): a crafted manifest from a spoofed registry crashes `/api/pull`. Only the gateway calls `/api/pull`, for the settings' model on Ollama's registry over TLS; at worst the pod's start fails."
+      },
+      {
+        id: "GO-2025-3824",
+        reason: "CVE-2025-51471 (GHSA-x9hg-5q6g-q3jr, moderate, up to 0.9.6): a malicious registry's `WWW-Authenticate` realm takes the token `/api/pull` signs. Only the gateway pulls, from Ollama's registry, and the pod's Ollama holds no account: its key is generated in the pod and reaches nothing else."
+      },
+      {
+        id: "GO-2025-4251",
+        reason: "CVE-2025-63389 (GHSA-f6mr-38g8-39rg, critical, up to 0.13.5): the API has no authentication. Accepted by design: the gateway sets `OLLAMA_HOST=127.0.0.1:11434`, so only the pod's own processes reach it, and the gateway forwards only three OpenAI-compatible routes, for the runs' tokens."
+      },
+      {
+        id: "GO-2026-5750",
+        reason: "CVE-2026-7020 (GHSA-x99g-8v8j-25j2, low, up to 0.20.2): path traversal in the image generation models' transfer (`x/imagegen/transfer`). It runs only when pulling or creating a model, which only the gateway does, for the settings' model on Ollama's registry."
+      }
+    ]
+  },
+  // vLLM 0.32.0, replacing 0.31.0, whose 2 high advisories (GHSA-6757-hggm-hp2w,
+  // GHSA-h3rc-j82p-2c3h) it fixes; no advisory for it on OSV.dev or GitHub on 2026-10-30. CUDA
+  // 13.0, as 0.31.0 (`VLLM_MIN_CUDA`). docs/web/docker-hub/vllm-vllm-openai-v0-32-0.md. Its
+  // upgrade checklist added parsers and changed the end of the auto-fit lines
+  // (docs/development/dependencies.md#vllm-in-codemans-vllm-pod-image).
+  vllm: {
+    image: "docker.io/vllm/vllm-openai@sha256:befccf0e7e4089aa23926bb6f887a85c0d46c2a99e6de5c5ffdf5cb7957c5b34",
+    release: {
+      name: "vllm",
+      version: "0.32.0",
+      // The image's `created`; the GitHub release is of 06:50:48Z, the first wheel on PyPI 10:03:29Z.
+      publishedAt: "2026-10-18T03:08:50Z",
+      osv: { ecosystem: "PyPI", package: "vllm" },
+      replaces: "0.31.0",
+      provenance: {
+        source: "https://github.com/vllm-project/vllm",
+        commit: "5df63a7203cdb9328d824a27b682e77c7b9928be",
+        imageRevisionLabel: true,
+        revisionMatchesTag: true,
+        commitVerified: false,
+        githubReleasePublishedAt: "2026-10-18T06:50:48Z",
+        githubReleaseImmutable: false,
+        pypiPublishedAt: "2026-10-18T10:03:29Z",
+        attestations: false,
+        imageSignature: false
+      }
+    },
+    exceptions: []
+  }
+};
+var NODE_RELEASE = {
+  url: "https://nodejs.org/dist/v24.22.1/node-v24.22.1-linux-x64.tar.gz",
+  sha256: "eb6728e77c576a35162c122c45ccadf224d89ff00abc8dae46cc2897c6002d7c",
+  release: {
+    name: "node",
+    version: "24.22.1",
+    publishedAt: "2026-10-21T10:38:25Z",
+    replaces: "24.21.0",
+    provenance: {
+      source: "https://github.com/nodejs/node",
+      commit: "ce7aaf1cee78b8cf0ce17364260535c418d3ed26",
+      shasumsSigned: true,
+      signingKey: "5BE8A3F6C8A5C01D106C0AD820B1A390B168D356"
+    }
+  }
+};
 function podImage(engine, override = "") {
   if (engine === "ollama" && override !== "") return override;
-  return POD_IMAGES[engine] ?? "";
+  return ENGINE_RELEASES[engine]?.image ?? "";
+}
+function catalogRelease(engine, image, catalog = ENGINE_RELEASES) {
+  const release2 = catalog[engine];
+  return release2 && release2.image === image ? release2 : void 0;
 }
 
 // src/inference/runpod.ts
@@ -20735,6 +21080,9 @@ var Runpod = class {
     const pod = await this.#request("/pods", "POST", {
       name: spec.name,
       image: spec.image,
+      // The command in exec form, its program as the entry point
+      // (docs/web/runpod/runpod-rest-api.md#the-containers-command).
+      ...spec.command ? { entrypoint: spec.command.slice(0, 1), cmd: spec.command.slice(1) } : {},
       gpu: {
         id: spec.gpuType,
         count: 1,
@@ -20880,12 +21228,19 @@ function describeProblem(body) {
   }
   if (typeof problem2 !== "object" || problem2 === null) return void 0;
   const { title, detail, errors } = problem2;
-  const parts = [title, detail, ...Array.isArray(errors) ? errors : []].filter(
+  const parts = [title, detail, ...validationErrors(errors)].filter(
     (part) => typeof part === "string" && part.trim() !== ""
   );
   if (parts.length === 0) return void 0;
   const text = parts.join(" \u2014 ").replace(/\s+/g, " ").trim();
   return text.length > 500 ? `${text.slice(0, 499)}\u2026` : text;
+}
+function validationErrors(errors) {
+  if (Array.isArray(errors)) return errors;
+  if (typeof errors !== "object" || errors === null) return [];
+  return Object.entries(errors).flatMap(
+    ([field, messages2]) => (Array.isArray(messages2) ? messages2 : [messages2]).filter((message) => typeof message === "string").map((message) => field ? `${field}: ${message}` : message)
+  );
 }
 function amount(value) {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
@@ -20915,6 +21270,8 @@ var Salad = class {
   #project;
   /** The organization's GPU classes, read once; a failed read is not kept. */
   #classes;
+  /** What this process saw of each group's instance, for when Salad began billing it. */
+  #nodes = new NodeWatch();
   constructor(account, fetchFn = fetch) {
     if (!account.organization || !account.project) {
       throw new Error(
@@ -20933,7 +21290,8 @@ var Salad = class {
       get: (id) => this.#get(id),
       list: (env) => this.#list(env),
       terminate: (id) => this.#terminate(id),
-      url: (id) => this.#url(id)
+      url: (id) => this.#url(id),
+      billedSince: (id) => this.#billedSince(id)
     };
   }
   /** `GET /organizations/{organization}/gpu-classes`, once. */
@@ -20970,56 +21328,17 @@ var Salad = class {
     }
     return found;
   }
-  /**
-   * `POST .../containers`: a group of one replica that starts at once, never restarts its
-   * container, and is reached through the Container Gateway, which the gateway's run tokens guard.
-   */
+  /** `POST .../containers`, with `containerGroupRequest`'s body. */
   async #create(spec) {
-    const priority = spec.priority ?? "high";
     const gpu = await this.#class(spec.gpuType, spec.hosts ?? DEFAULT_HOSTS);
-    price(gpu, priority);
-    if (spec.diskGb > MAX_DISK_GB) {
-      throw new Error(
-        `A Salad container has ${MAX_DISK_GB} GB of disk at most, and this pod needs ${spec.diskGb} GB.`
-      );
-    }
-    const group = await this.#request(this.#containers(), "POST", {
-      name: `codeman-${randomBytes(8).toString("hex")}`,
-      display_name: displayName(spec.name),
-      container: {
-        image: spec.image,
-        environment_variables: environment(spec.env),
-        priority,
-        resources: {
-          cpu: within(VCPU, gpu.min_vcpu, gpu.max_vcpu),
-          memory: within(MEMORY_MB, gpu.min_ram, gpu.max_ram),
-          gpu_classes: [gpu.id],
-          storage_amount: within(spec.diskGb * GB, gpu.min_storage, gpu.max_storage),
-          ...spec.sharedMemoryGb ? { shm_size: spec.sharedMemoryGb * 1024 } : {}
-        }
-      },
-      replicas: 1,
-      // A pod that exits is done: Salad must not start it again, here or on another node.
-      restart_policy: "never",
-      autostart_policy: true,
-      networking: {
-        protocol: "http",
-        port: spec.port,
-        // The Container Gateway's own authentication takes the account key; the gateway's run
-        // tokens guard the pod instead.
-        auth: false,
-        load_balancer: "least_number_of_connections",
-        single_connection_limit: false,
-        client_request_timeout: 1e5,
-        server_response_timeout: 1e5
-      }
-    });
-    return this.#toPod(group);
+    const body = containerGroupRequest(spec, gpu, `codeman-${randomBytes(8).toString("hex")}`);
+    const group2 = await this.#request(this.#containers(), "POST", body);
+    return this.#toPod(group2);
   }
   async #get(id) {
-    const group = await this.#request(this.#containers(id), "GET", void 0, [404]);
-    if (!group) return void 0;
-    const pod = await this.#toPod(group);
+    const group2 = await this.#request(this.#containers(id), "GET", void 0, [404]);
+    if (!group2) return void 0;
+    const pod = await this.#toPod(group2);
     if (pod.status !== "starting") return pod;
     const allocated = await this.#allocated(id);
     return allocated === void 0 ? pod : { ...pod, allocated };
@@ -21030,21 +21349,44 @@ var Salad = class {
    * not list its instances.
    */
   async #allocated(id) {
+    const states = await this.#instanceStates(id);
+    if (!states) return void 0;
+    return states.some(
+      (state) => state === "downloading" || state === "creating" || state === "running"
+    );
+  }
+  /**
+   * The states of the group's instances, each instance with its machine recorded in `#nodes`;
+   * undefined when Salad does not list them (docs/web/salad/list-container-group-instances.md).
+   */
+  async #instanceStates(id) {
     const listed = await this.#request(
       `${this.#containers(id)}/instances`,
       "GET",
       void 0,
       [404]
     );
-    if (!listed) return void 0;
-    return (listed.instances ?? []).some(
-      ({ state }) => state === "downloading" || state === "creating" || state === "running"
+    if (listed === void 0) return void 0;
+    this.#nodes.record(id, parseInstances(listed), Date.now());
+    return (listed.instances ?? []).flatMap(
+      ({ state }) => typeof state === "string" ? [state] : []
     );
+  }
+  /**
+   * When Salad began billing the group: its instance's start of `running`, as this process has
+   * seen it, on one machine, from every read of its instances (decision 5 of the plan for Salad
+   * pods, answered again on 2026-11-24). Undefined when it cannot tell: no instance runs, the
+   * pod moved or ran again, or its time is unreadable.
+   */
+  async #billedSince(id) {
+    await this.#instanceStates(id).catch(() => void 0);
+    const billed = this.#nodes.billed(id);
+    return billed && billed.to === void 0 ? new Date(billed.from) : void 0;
   }
   /** `GET .../containers`, which returns the project's groups in one page of up to 100. */
   async #list(env) {
     const { items } = await this.#request(this.#containers());
-    const pods = await Promise.all((items ?? []).map((group) => this.#toPod(group)));
+    const pods = await Promise.all((items ?? []).map((group2) => this.#toPod(group2)));
     return pods.filter(
       (pod) => Object.entries(env).every(([name, value]) => pod.env[name] === value)
     );
@@ -21055,30 +21397,30 @@ var Salad = class {
   }
   /** The Container Gateway's address of the group, which Salad gives once it has one. */
   async #url(id) {
-    const group = await this.#request(this.#containers(id), "GET", void 0, [404]);
-    const dns = group?.networking?.dns;
+    const group2 = await this.#request(this.#containers(id), "GET", void 0, [404]);
+    const dns = group2?.networking?.dns;
     if (!dns) throw new Error(`Salad has no address for container group ${id} yet.`);
     return /^https?:\/\//.test(dns) ? dns : `https://${dns}`;
   }
-  async #toPod(group) {
-    const classId = group.container?.resources?.gpu_classes?.[0];
+  async #toPod(group2) {
+    const classId = group2.container?.resources?.gpu_classes?.[0];
     const gpu = classId ? (await this.#gpuClasses()).find((candidate) => candidate.id === classId) : void 0;
-    const status2 = STATUS2[group.current_state?.status ?? ""] ?? "starting";
-    const running = (group.current_state?.instance_status_counts?.running_count ?? 0) > 0;
+    const status2 = STATUS2[group2.current_state?.status ?? ""] ?? "starting";
+    const running = (group2.current_state?.instance_status_counts?.running_count ?? 0) > 0;
     let pricePerSecond;
     try {
-      pricePerSecond = gpu ? price(gpu, group.priority ?? "high") : void 0;
+      pricePerSecond = gpu ? price(gpu, group2.priority ?? "high") : void 0;
     } catch {
       pricePerSecond = void 0;
     }
     return {
-      id: group.name,
-      name: group.display_name ?? group.name,
+      id: group2.name,
+      name: group2.display_name ?? group2.name,
       status: status2 === "running" && !running ? "starting" : status2,
-      image: group.container?.image ?? "",
-      env: group.container?.environment_variables ?? {},
+      image: group2.container?.image ?? "",
+      env: group2.container?.environment_variables ?? {},
       gpuType: gpu?.name,
-      createdAt: new Date(group.create_time),
+      createdAt: new Date(group2.create_time),
       // Salad bills no other rate than the class's listed price at the group's priority.
       pricePerSecond,
       ...gpu ? { host: hostOf(gpu) } : {}
@@ -21108,6 +21450,47 @@ var Salad = class {
     return text.trim() === "" ? void 0 : JSON.parse(text);
   }
 };
+function containerGroupRequest(spec, gpu, name) {
+  const priority = spec.priority ?? "high";
+  price(gpu, priority);
+  if (spec.diskGb > MAX_DISK_GB) {
+    throw new Error(
+      `A Salad container has ${MAX_DISK_GB} GB of disk at most, and this pod needs ${spec.diskGb} GB.`
+    );
+  }
+  return {
+    name,
+    display_name: displayName(spec.name),
+    container: {
+      image: spec.image,
+      ...spec.command ? { command: command(spec.command) } : {},
+      environment_variables: environment(spec.env),
+      priority,
+      resources: {
+        cpu: within(VCPU, gpu.min_vcpu, gpu.max_vcpu),
+        memory: within(MEMORY_MB, gpu.min_ram, gpu.max_ram),
+        gpu_classes: [gpu.id],
+        storage_amount: within(spec.diskGb * GB, gpu.min_storage, gpu.max_storage),
+        ...spec.sharedMemoryGb ? { shm_size: spec.sharedMemoryGb * 1024 } : {}
+      }
+    },
+    replicas: 1,
+    // A pod that exits is done: Salad must not start it again, here or on another node.
+    restart_policy: "never",
+    autostart_policy: true,
+    networking: {
+      protocol: "http",
+      port: spec.port,
+      // The Container Gateway's own authentication takes the account key; the gateway's run
+      // tokens guard the pod instead.
+      auth: false,
+      load_balancer: "least_number_of_connections",
+      single_connection_limit: false,
+      client_request_timeout: 1e5,
+      server_response_timeout: 1e5
+    }
+  };
+}
 function hostOf(gpu) {
   return gpu.gpu_class_type && isHostKind(gpu.gpu_class_type) ? gpu.gpu_class_type : "community";
 }
@@ -21135,6 +21518,22 @@ function displayName(name) {
   const shown = name.replace(/[^ ,\-.0-9A-Za-z]/g, "-").slice(0, 63);
   return shown.length >= 2 ? shown : "codeman";
 }
+function command(items) {
+  const { items: most, itemCharacters } = SALAD_COMMAND_LIMITS;
+  if (items.length > most) {
+    throw new Error(
+      `Salad takes a command of ${most} items at most; this one has ${items.length}.`
+    );
+  }
+  for (const [index, item] of items.entries()) {
+    if (item.length === 0 || item.length > itemCharacters) {
+      throw new Error(
+        `Salad takes command items of 1 to ${itemCharacters.toLocaleString("en-US")} characters; item ${index} has ${item.length}.`
+      );
+    }
+  }
+  return [...items];
+}
 function environment(env) {
   const kept = {};
   for (const [name, value] of Object.entries(env)) {
@@ -21148,6 +21547,49 @@ function environment(env) {
   }
   return kept;
 }
+function parseInstances(listed) {
+  const items = listed?.instances;
+  if (!Array.isArray(items)) return [];
+  return items.flatMap((item) => {
+    const { machine_id, state, update_time } = item ?? {};
+    if (typeof machine_id !== "string" || typeof state !== "string") return [];
+    const since = typeof update_time === "string" ? Date.parse(update_time) : Number.NaN;
+    return [{ machine: machine_id, state, since: Number.isFinite(since) ? since : void 0 }];
+  });
+}
+var NodeWatch = class {
+  #machines = /* @__PURE__ */ new Map();
+  #runs = /* @__PURE__ */ new Map();
+  /** Records one read of a group's instances, made at `at`. */
+  record(id, seen, at) {
+    const machines = this.#machines.get(id) ?? /* @__PURE__ */ new Set();
+    for (const { machine, state } of seen) {
+      if (state !== "allocating") machines.add(machine);
+    }
+    this.#machines.set(id, machines);
+    const run2 = this.#runs.get(id) ?? { unclear: false };
+    this.#runs.set(id, run2);
+    const running = seen.filter((one) => one.state === "running");
+    const [instance] = running;
+    if (running.length > 1 || instance && (instance.since === void 0 || run2.to !== void 0)) {
+      run2.unclear = true;
+    } else if (instance?.since !== void 0) {
+      run2.from = Math.min(run2.from ?? instance.since, instance.since);
+    } else if (run2.from !== void 0 && run2.to === void 0) {
+      const stopping = seen.find((one) => one.state === "stopping" && one.since !== void 0);
+      run2.to = Math.max(run2.from, stopping?.since ?? at);
+    }
+  }
+  moved(id) {
+    return (this.#machines.get(id)?.size ?? 0) > 1;
+  }
+  /** The time Salad bills the group for, as far as the reads saw it; undefined when unknown. */
+  billed(id) {
+    const run2 = this.#runs.get(id);
+    if (!run2 || run2.unclear || run2.from === void 0 || this.moved(id)) return void 0;
+    return { from: run2.from, to: run2.to };
+  }
+};
 
 // src/inference/providers.ts
 var PROVIDER_NAMES = [
@@ -21904,7 +22346,7 @@ function profiles(node) {
 }
 function profile(node) {
   if (node.kind !== "map") return { ok: false, line: node.line, error: "expected a profile." };
-  const result = { name: "", conditions: {}, settings: {} };
+  const result2 = { name: "", conditions: {}, settings: {} };
   for (const entry of node.entries) {
     const { key, line, value } = entry;
     if (key === "name") {
@@ -21915,23 +22357,23 @@ function profile(node) {
           error: "a profile's `name` must be letters, digits, `.`, `_` or `-`, such as `small-pod`."
         };
       }
-      result.name = value.text;
+      result2.name = value.text;
     } else if (isConditionName(key)) {
       const parsed = condition(entry, key);
       if (!parsed.ok) return parsed;
-      Object.assign(result.conditions, { [key]: parsed.value });
+      Object.assign(result2.conditions, { [key]: parsed.value });
     } else if (isBlockName(key)) {
       const parsed = block(entry, key);
       if (!parsed.ok) return parsed;
-      result.settings[key] = parsed.value;
+      result2.settings[key] = parsed.value;
     } else {
       const parsed = setting(entry, "profile");
       if (!parsed.ok) return parsed;
-      Object.assign(result.settings, { [key]: parsed.value });
+      Object.assign(result2.settings, { [key]: parsed.value });
     }
   }
-  if (!result.name) return { ok: false, line: node.line, error: "a profile needs a `name`." };
-  const { tasks, "min-tasks": min, "max-tasks": max } = result.conditions;
+  if (!result2.name) return { ok: false, line: node.line, error: "a profile needs a `name`." };
+  const { tasks, "min-tasks": min, "max-tasks": max } = result2.conditions;
   if (tasks !== void 0 && (min !== void 0 || max !== void 0)) {
     return {
       ok: false,
@@ -21946,7 +22388,7 @@ function profile(node) {
       error: "`min-tasks` must not be more than `max-tasks`."
     };
   }
-  return { ok: true, value: result };
+  return { ok: true, value: result2 };
 }
 function condition(entry, name) {
   const { line, value } = entry;
@@ -22089,8 +22531,8 @@ function tasksPerRun(layers) {
   let most = 1;
   for (const { conditions } of list4) {
     const { tasks, "min-tasks": min, "max-tasks": max } = conditions;
-    const named = tasks ?? max ?? (min === void 0 ? void 0 : MAX_TASKS);
-    if (named !== void 0) most = Math.max(most, named);
+    const named2 = tasks ?? max ?? (min === void 0 ? void 0 : MAX_TASKS);
+    if (named2 !== void 0) most = Math.max(most, named2);
   }
   return most;
 }
@@ -22142,7 +22584,7 @@ function batchKey(settings, profile2, parallel) {
     ...nonDefault(settings, "hosts"),
     ...nonDefault(settings, "priority")
   };
-  return createHash("sha256").update(JSON.stringify(serving2)).digest("hex").slice(0, 16);
+  return createHash2("sha256").update(JSON.stringify(serving2)).digest("hex").slice(0, 16);
 }
 function nonDefault(settings, name) {
   const value = settings[name];
@@ -22150,33 +22592,33 @@ function nonDefault(settings, name) {
   return value === void 0 || value === spec?.default ? {} : { [name]: value };
 }
 function serving(layers, base) {
-  let result = pick(base.settings, PROFILE_SETTINGS);
+  let result2 = pick(base.settings, PROFILE_SETTINGS);
   let from = base.source;
   for (const { name, source, settings } of [...layers].reverse()) {
     const { provider } = settings;
-    if (provider !== void 0 && provider !== result.provider) {
-      if (result.model !== void 0 && settings.model === void 0) {
+    if (provider !== void 0 && provider !== result2.provider) {
+      if (result2.model !== void 0 && settings.model === void 0) {
         return {
           ok: false,
-          error: `${name} names \`${provider}\`, but inherits \`${result.provider}\` from ${from}, so it must set its own \`model\`, one for \`${provider}\`.`
+          error: `${name} names \`${provider}\`, but inherits \`${result2.provider}\` from ${from}, so it must set its own \`model\`, one for \`${provider}\`.`
         };
       }
-      result = omit(result, PROVIDER_KEYS);
+      result2 = omit(result2, PROVIDER_KEYS);
     }
     if (provider !== void 0) from = source;
     const engine = settings.engine;
-    if (engine !== void 0 && engine !== engineOf(result)) {
-      result = omit(
-        result,
+    if (engine !== void 0 && engine !== engineOf(result2)) {
+      result2 = omit(
+        result2,
         PROVIDER_BLOCKS.filter((block2) => BLOCK_ENGINES[block2] !== engine)
       );
     }
     const { ollama: ollama2, vllm: vllm2, ...values } = pick(settings, PROFILE_SETTINGS);
-    Object.assign(result, values);
-    if (ollama2 !== void 0) result.ollama = { ...result.ollama, ...ollama2 };
-    if (vllm2 !== void 0) result.vllm = { ...result.vllm, ...vllm2 };
+    Object.assign(result2, values);
+    if (ollama2 !== void 0) result2.ollama = { ...result2.ollama, ...ollama2 };
+    if (vllm2 !== void 0) result2.vllm = { ...result2.vllm, ...vllm2 };
   }
-  return { ok: true, value: result };
+  return { ok: true, value: result2 };
 }
 function engineOf(settings) {
   const provider = settings.provider ?? DEFAULTS.provider;
@@ -22204,14 +22646,14 @@ function omit(layer, names) {
   return Object.fromEntries(Object.entries(layer).filter(([name]) => !names.includes(name)));
 }
 function settingSources(layers) {
-  const named = /* @__PURE__ */ new Set();
+  const named2 = /* @__PURE__ */ new Set();
   const show = (value) => Array.isArray(value) ? `[${value.map((item) => typeof item === "string" ? item : item.name).join(", ")}]` : typeof value === "object" && value !== null ? `{${Object.entries(value).map(([key, text]) => `${key}: ${text}`).join(", ")}}` : String(value);
   return layers.flatMap((layer, index) => {
     const values = Object.entries(layer).filter(
-      ([name, value]) => value !== void 0 && !named.has(name)
+      ([name, value]) => value !== void 0 && !named2.has(name)
     );
     if (values.length === 0) return [];
-    for (const [name] of values) named.add(name);
+    for (const [name] of values) named2.add(name);
     const source = LAYER_SOURCES[index] ?? `layer ${index + 1}`;
     return [`Settings from ${source}: ${values.map(([n, v]) => `${n}=${show(v)}`).join(", ")}.`];
   });
@@ -22300,26 +22742,26 @@ function counted(runs) {
     const key = JSON.stringify([run2.repository, run2.task, run2.pod]);
     onPods.set(key, [...onPods.get(key) ?? [], run2]);
   }
-  const pods = [...onPods.values()].map((group) => ({
-    runs: group,
+  const pods = [...onPods.values()].map((group2) => ({
+    runs: group2,
     amount: Math.max(
-      group.reduce((sum, run2) => sum + runAmount(run2), 0),
-      ...group.map((run2) => run2.podCost ?? 0)
+      group2.reduce((sum, run2) => sum + runAmount(run2), 0),
+      ...group2.map((run2) => run2.podCost ?? 0)
     )
   }));
   return [...alone, ...pods];
 }
 function spentBy(runs) {
-  return counted(runs).reduce((sum, group) => sum + group.amount, 0);
+  return counted(runs).reduce((sum, group2) => sum + group2.amount, 0);
 }
 function taskTotal(runs) {
   return spentBy(runs) + runs.reduce((sum, run2) => sum + (run2.carried ?? 0), 0);
 }
 function costsByWorkflowRun(runs) {
   const costs = {};
-  for (const group of counted(runs)) {
-    for (const run2 of group.runs) {
-      const amount2 = group.runs.length === 1 ? group.amount : runAmount(run2);
+  for (const group2 of counted(runs)) {
+    for (const run2 of group2.runs) {
+      const amount2 = group2.runs.length === 1 ? group2.amount : runAmount(run2);
       costs[run2.workflowRun] = (costs[run2.workflowRun] ?? 0) + amount2;
     }
   }
@@ -22348,21 +22790,21 @@ function reconciledMonth(runs, billed, now, pool2 = { others: [], members: 1 }) 
 function estimated(runs, billed, now) {
   let whole = 0;
   const estimates = /* @__PURE__ */ new Map();
-  for (const group of counted(runs)) {
-    const [first] = group.runs;
+  for (const group2 of counted(runs)) {
+    const [first] = group2.runs;
     const hours = first && billed.get(first.account);
-    if (!first || !hours || group.runs.some((run2) => reserving(run2, now))) {
-      whole += group.amount;
+    if (!first || !hours || group2.runs.some((run2) => reserving(run2, now))) {
+      whole += group2.amount;
       continue;
     }
-    const start = Math.min(...group.runs.map((run2) => run2.start.getTime()));
-    const end = Math.max(...group.runs.map((run2) => endOf(run2, now).getTime()));
+    const start = Math.min(...group2.runs.map((run2) => run2.start.getTime()));
+    const end = Math.max(...group2.runs.map((run2) => endOf(run2, now).getTime()));
     let estimate = estimates.get(first.account);
     if (!estimate) {
       estimate = /* @__PURE__ */ new Map();
       estimates.set(first.account, estimate);
     }
-    spread(estimate, group.amount, start, end);
+    spread(estimate, group2.amount, start, end);
   }
   return { whole, estimates };
 }
@@ -22478,19 +22920,19 @@ var OpenRouter = class {
       filters,
       time_range
     });
-    let requests = 0;
+    let requests2 = 0;
     let weighted = 0;
     let measured = 0;
     for (const row of rows) {
       const n = count2(row.request_count);
       const throughput = rate(row.avg_throughput);
-      requests += n;
+      requests2 += n;
       if (throughput !== void 0 && n > 0) {
         weighted += throughput * n;
         measured += n;
       }
     }
-    if (requests === 0) return void 0;
+    if (requests2 === 0) return void 0;
     const largest = await this.#query({
       metrics: ["tokens_prompt"],
       dimensions: ["generation_id"],
@@ -22501,7 +22943,7 @@ var OpenRouter = class {
     });
     const maxInputTokens = largest.reduce((max, row) => Math.max(max, count2(row.tokens_prompt)), 0);
     return {
-      requests,
+      requests: requests2,
       tokensPerSecond: measured > 0 ? weighted / measured : void 0,
       maxInputTokens: largest.length > 0 ? maxInputTokens : void 0
     };
@@ -22666,11 +23108,1052 @@ function sleep2(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// src/inference/osv.ts
+var OSV_API = "https://api.osv.dev";
+var OsvError = class extends Error {
+  /** The HTTP status, when OSV.dev answered one. */
+  status;
+  constructor(message, status2, options) {
+    super(message, options);
+    this.status = status2;
+  }
+};
+var OsvUnavailable = class extends OsvError {
+};
+var OsvUnusable = class extends OsvError {
+};
+var OSV_LIMITS = {
+  batchSize: 1e3,
+  maxPages: 10,
+  maxRecords: 1e3,
+  concurrency: 8,
+  timeoutMs: 3e4
+};
+var ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+function isOsvId(id) {
+  return ID.test(id);
+}
+var Osv = class {
+  #fetch;
+  #limits;
+  #api;
+  constructor(fetchFn = fetch, limits = {}, api = OSV_API) {
+    this.#fetch = fetchFn;
+    this.#limits = { ...OSV_LIMITS, ...limits };
+    this.#api = api;
+  }
+  async query(queries) {
+    const ids = [];
+    for (let start = 0; start < queries.length; start += this.#limits.batchSize) {
+      ids.push(...await this.#batch(queries.slice(start, start + this.#limits.batchSize)));
+    }
+    return ids;
+  }
+  /** One batch, following the pages of the queries that have more. */
+  async #batch(queries) {
+    const ids = queries.map(() => []);
+    let pending = queries.map((query, index) => ({ index, query, token: void 0 }));
+    for (let page = 0; pending.length > 0; page++) {
+      if (page === this.#limits.maxPages) {
+        throw new OsvUnusable(
+          `OSV.dev had more than ${this.#limits.maxPages} pages of advisories for ${pending.length} of the packages queried.`
+        );
+      }
+      const body = {
+        queries: pending.map(({ query, token }) => ({
+          package: { ecosystem: query.package.ecosystem, name: query.package.name },
+          version: query.version,
+          ...typeof token === "string" ? { page_token: token } : {}
+        }))
+      };
+      const answer2 = await this.#request("POST /v1/querybatch", `${this.#api}/v1/querybatch`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      const results = answer2?.results;
+      if (!Array.isArray(results) || results.length !== pending.length) {
+        throw new OsvUnusable(
+          `OSV.dev's querybatch answered ${Array.isArray(results) ? `${results.length} results` : "no results"} for ${pending.length} queries.`
+        );
+      }
+      const next = [];
+      for (const [i, result2] of results.entries()) {
+        const item = pending[i];
+        const { vulns, next_page_token: token } = result2 ?? {};
+        for (const vuln of Array.isArray(vulns) ? vulns : []) {
+          const id = vuln?.id;
+          if (typeof id !== "string" || !isOsvId(id)) {
+            throw new OsvUnusable(`OSV.dev's querybatch answered an advisory without a valid ID.`);
+          }
+          const list4 = ids[item.index];
+          if (!list4.includes(id)) list4.push(id);
+        }
+        if (typeof token === "string" && token !== "") next.push({ ...item, token });
+      }
+      pending = next;
+    }
+    return ids;
+  }
+  async records(ids) {
+    const unique = [...new Set(ids)];
+    if (unique.length > this.#limits.maxRecords) {
+      throw new OsvUnusable(
+        `${unique.length} advisories to read from OSV.dev, over the cap of ${this.#limits.maxRecords}.`
+      );
+    }
+    for (const id of unique) {
+      if (!isOsvId(id)) throw new OsvUnusable(`\`${id}\` is not an advisory ID OSV.dev serves.`);
+    }
+    const records = /* @__PURE__ */ new Map();
+    let next = 0;
+    const worker = async () => {
+      while (next < unique.length) {
+        const id = unique[next++];
+        const record = await this.#request(
+          `GET /v1/vulns/${id}`,
+          `${this.#api}/v1/vulns/${encodeURIComponent(id)}`,
+          { method: "GET" },
+          true
+        );
+        if (record === null) continue;
+        if (typeof record.id !== "string") {
+          throw new OsvUnusable(`OSV.dev's record of ${id} has no ID.`);
+        }
+        records.set(id, record);
+      }
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(this.#limits.concurrency, unique.length) }, worker)
+    );
+    return records;
+  }
+  /** The JSON OSV.dev answers, or null for a 404 when `missingIsNull`. */
+  async #request(what, url, init, missingIsNull = false) {
+    let response;
+    try {
+      response = await this.#fetch(url, {
+        ...init,
+        headers: { Accept: "application/json", ...init.headers },
+        signal: AbortSignal.timeout(this.#limits.timeoutMs)
+      });
+    } catch (error3) {
+      throw new OsvUnavailable(
+        `OSV.dev did not answer ${what} (${error3 instanceof Error ? error3.message : error3}).`,
+        void 0,
+        { cause: error3 }
+      );
+    }
+    if (missingIsNull && response.status === 404) return null;
+    if (response.status === 429 || response.status >= 500) {
+      throw new OsvUnavailable(
+        `OSV.dev answered ${what} with ${response.status}.`,
+        response.status
+      );
+    }
+    if (!response.ok) {
+      throw new OsvUnusable(`OSV.dev answered ${what} with ${response.status}.`, response.status);
+    }
+    let body;
+    try {
+      body = await response.json();
+    } catch (error3) {
+      throw new OsvUnavailable(
+        `OSV.dev answered ${what} with a body that is not JSON.`,
+        response.status,
+        { cause: error3 }
+      );
+    }
+    if (typeof body !== "object" || body === null || Array.isArray(body)) {
+      throw new OsvUnusable(`OSV.dev answered ${what} with JSON that is not an object.`);
+    }
+    return body;
+  }
+};
+
+// src/store/layout.ts
+var LAYOUT = {
+  organization: (owner) => `organizations/${documentId(owner.toLowerCase())}`,
+  /** A run of a task's agent: one per task a workflow run's attempt picked for an agent. */
+  runs: (owner) => `${LAYOUT.organization(owner)}/runs`,
+  run: (owner, run2) => `${LAYOUT.runs(owner)}/${documentId(run2)}`,
+  /** What the jobs did, one document each, named after its run and what happened. */
+  events: (owner) => `${LAYOUT.organization(owner)}/events`,
+  event: (owner, event) => `${LAYOUT.events(owner)}/${documentId(event)}`,
+  /**
+   * The pod registry of an organization before pools, kept as history: the organization's month
+   * still counts the time its pods' tasks did not.
+   */
+  organizationPods: (owner) => `${LAYOUT.organization(owner)}/pods`,
+  /** A pool, by its ID: its members' logins joined by `+`. */
+  pool: (pool2) => `pools/${documentId(pool2.toLowerCase())}`,
+  /**
+   * The pod registry: a pod Codeman created, named by the nonce of its admin token, which the
+   * task that creates it draws first; with the leases of the tasks that use or keep it.
+   */
+  pods: (pool2) => `${LAYOUT.pool(pool2)}/pods`,
+  pod: (pool2, nonce) => `${LAYOUT.pods(pool2)}/${documentId(nonce)}`,
+  /**
+   * The board: each repository's ready tasks that a pod could serve, as its last `select` saw
+   * them, named by the repository (`owner/name`).
+   */
+  board: (pool2) => `${LAYOUT.pool(pool2)}/board`,
+  boardEntry: (pool2, repository) => `${LAYOUT.board(pool2)}/${documentId(repository.toLowerCase())}`,
+  /** A batch: the tasks, of any repository of the pool, that one pod serves at once. */
+  batches: (pool2) => `${LAYOUT.pool(pool2)}/batches`,
+  batch: (pool2, id) => `${LAYOUT.batches(pool2)}/${documentId(id)}`,
+  /**
+   * The cache of fits: the context a pod's model fitted its GPU with, for one combination of
+   * image, model, GPU type and engine settings, named by their hash (decision 4 of the plan for
+   * fitting Ollama to the GPU). It depends on nothing an organization owns.
+   */
+  contexts: () => "contexts",
+  context: (key) => `${LAYOUT.contexts()}/${documentId(key)}`,
+  /**
+   * The release checks that passed: the release policy's result for one set of pinned releases
+   * and exceptions, named by their hash (`releaseCheckKey`), which stands in for OSV.dev when it
+   * does not answer, for 24 hours (decision 7 of the plan to start pods from official engine
+   * images). It depends on nothing an organization owns.
+   */
+  releaseChecks: () => "releaseChecks",
+  releaseCheck: (key) => `${LAYOUT.releaseChecks()}/${documentId(key)}`,
+  /**
+   * A Serverless endpoint of the pool's GPU account, by its ID; under it, each run's billed times
+   * on the endpoint's worker, named by the run and its reservation, which the ledger splits among
+   * the runs that used the worker at once.
+   */
+  endpoint: (pool2, endpoint2) => `${LAYOUT.pool(pool2)}/endpoints/${documentId(endpoint2)}`,
+  endpointRuns: (pool2, endpoint2) => `${LAYOUT.endpoint(pool2, endpoint2)}/runs`,
+  endpointRun: (pool2, endpoint2, id) => `${LAYOUT.endpointRuns(pool2, endpoint2)}/${documentId(id)}`
+};
+function ledgerRunId(workflowRun, attempt, task) {
+  return `${workflowRun}-${attempt}-${task}`;
+}
+function ledgerMonth(date) {
+  return date.toISOString().slice(0, 7);
+}
+function isLedgerRunId(text) {
+  return /^\d+-\d+-\d+$/.test(text);
+}
+function repositoryName(repository) {
+  return `${repository.owner}/${repository.name}`.toLowerCase();
+}
+function documentId(text) {
+  if (text === "") throw new Error("A document ID may not be empty.");
+  const escaped = text.replaceAll("%", "%25").replaceAll("/", "%2F");
+  return escaped === "." || escaped === ".." || /^__.*__$/.test(escaped) ? `%${escaped}` : escaped;
+}
+
+// src/inference/release-policy.ts
+import { createHash as createHash3 } from "node:crypto";
+var URGENT_FIX_ARTIFACT = "node";
+var MINIMUM_AGE_DAYS = 7;
+var CACHE_HOURS = 24;
+var POLICY_VERSION = 2;
+var RANK = { unknown: 0, low: 1, moderate: 2, high: 3, critical: 4 };
+function isBlocking(severity) {
+  return RANK[severity] >= RANK.high;
+}
+function releaseCheckKey(artifacts, exceptions) {
+  const canonical = {
+    policy: POLICY_VERSION,
+    artifacts: artifacts.map((a) => [
+      a.name,
+      a.version,
+      a.publishedAt,
+      a.osv?.ecosystem ?? null,
+      a.osv?.package ?? null,
+      a.replaces ?? null,
+      a.urgentFix ?? null,
+      Object.entries(a.provenance ?? {}).sort(([x], [y]) => x < y ? -1 : x > y ? 1 : 0)
+    ]).sort((x, y) => JSON.stringify(x) < JSON.stringify(y) ? -1 : 1),
+    exceptions: exceptions.map((e) => [e.id, e.reason]).sort((x, y) => JSON.stringify(x) < JSON.stringify(y) ? -1 : 1)
+  };
+  return createHash3("sha256").update(JSON.stringify(canonical)).digest("hex");
+}
+async function checkReleases(artifacts, options) {
+  const { now, osv, cache } = options;
+  const exceptions = options.exceptions;
+  const key = releaseCheckKey(artifacts, exceptions);
+  const ages = artifacts.map((artifact) => ageDays(artifact.publishedAt, now));
+  const queries = [];
+  const seen = /* @__PURE__ */ new Map();
+  const queryOf = (pkg, version) => {
+    const query = { package: pkg, version: osvVersion(version) };
+    const id = JSON.stringify(query);
+    let index = seen.get(id);
+    if (index === void 0) {
+      index = queries.push(query) - 1;
+      seen.set(id, index);
+    }
+    return index;
+  };
+  const plans = artifacts.map((artifact, i) => {
+    if (!artifact.osv) return {};
+    const pkg = { ecosystem: artifact.osv.ecosystem, name: artifact.osv.package };
+    const young = (ages[i] ?? null) !== null && ages[i] < MINIMUM_AGE_DAYS;
+    return {
+      own: queryOf(pkg, artifact.version),
+      ...young && artifact.replaces ? { replaced: queryOf(pkg, artifact.replaces) } : {}
+    };
+  });
+  let found;
+  let failure;
+  if (queries.length > 0) {
+    try {
+      found = await lookUp(osv, queries);
+    } catch (error3) {
+      const message = error3 instanceof Error ? error3.message : String(error3);
+      if (error3 instanceof OsvUnavailable) {
+        const cached = await fresh(cache, key, now);
+        if (cached) {
+          return {
+            ...cached,
+            verdict: "warn",
+            checkedAt: now.toISOString(),
+            source: "cache",
+            cachedFrom: cached.checkedAt,
+            reasons: [
+              ...cached.reasons.filter((r) => r.level !== "note"),
+              {
+                level: "warning",
+                text: `${message} The same releases passed at ${cached.checkedAt}, within the last ${CACHE_HOURS} hours, so that result stands.`
+              },
+              ...cached.reasons.filter((r) => r.level === "note")
+            ]
+          };
+        }
+        failure = `${message} No passing check of the same releases and exceptions from the last ${CACHE_HOURS} hours is cached, so they cannot be checked; try again later.`;
+      } else {
+        failure = `OSV.dev's advisories could not be read: ${message}`;
+      }
+    }
+  }
+  const used = /* @__PURE__ */ new Set();
+  const checks = artifacts.map(
+    (artifact, i) => checkArtifact(artifact, ages[i] ?? null, plans[i] ?? {}, found, exceptions, used)
+  );
+  const general = [];
+  if (failure) general.push({ level: "block", text: failure });
+  for (const exception of exceptions) {
+    if (exception.reason.trim() === "") {
+      general.push({
+        level: "block",
+        text: `The exception for ${exception.id} gives no reason; each exception says why its advisory is accepted.`
+      });
+    } else if (!failure && !used.has(exception)) {
+      general.push({
+        level: "note",
+        text: `The exception for ${exception.id} matches no advisory of these releases, so it can go.`
+      });
+    }
+  }
+  const reasons = [
+    ...checks.flatMap(
+      (check) => check.reasons.map((r) => ({ level: r.level, text: `${label(check)}: ${r.text}` }))
+    ),
+    ...general
+  ];
+  const result2 = {
+    verdict: verdictOf(reasons),
+    checkedAt: now.toISOString(),
+    source: "live",
+    artifacts: checks,
+    reasons: sortReasons(reasons)
+  };
+  if (result2.verdict !== "block") {
+    try {
+      await cache.set(key, result2);
+    } catch (error3) {
+      result2.reasons.push({
+        level: "note",
+        text: `This result could not be cached (${error3 instanceof Error ? error3.message : error3}), so it cannot stand in for OSV.dev if it does not answer later.`
+      });
+    }
+  }
+  return result2;
+}
+async function fresh(cache, key, now) {
+  let cached;
+  try {
+    cached = await cache.get(key);
+  } catch {
+    return void 0;
+  }
+  if (!cached || cached.verdict === "block" || cached.source !== "live") return void 0;
+  const age = now.getTime() - Date.parse(cached.checkedAt);
+  return age >= 0 && age <= CACHE_HOURS * 36e5 ? cached : void 0;
+}
+function checkArtifact(artifact, age, plan, found, exceptions, used) {
+  const reasons = [];
+  const accepted = [];
+  let bypass;
+  let urgentFix;
+  const urgent = artifact.urgentFix;
+  if (urgent !== void 0 && artifact.name !== URGENT_FIX_ARTIFACT) {
+    reasons.push({
+      level: "block",
+      text: "it sets `urgentFix`, which only Node.js may, since OSV.dev has no records of it; another release passes under the minimum age through the security fix bypass."
+    });
+  } else if (urgent !== void 0 && urgent.trim() === "") {
+    reasons.push({
+      level: "block",
+      text: "its `urgentFix` gives no reason; the maintainer writes why this release cannot wait for the minimum age."
+    });
+  }
+  const urgentReason = urgent !== void 0 && artifact.name === URGENT_FIX_ARTIFACT && urgent.trim() !== "" ? urgent.trim() : void 0;
+  if (age === null) {
+    reasons.push({
+      level: "block",
+      text: `its publication date, "${artifact.publishedAt}", cannot be read, so its age is unknown.`
+    });
+  } else if (age < MINIMUM_AGE_DAYS) {
+    const young = `it was published ${formatAge(age)} ago, under the minimum age of ${MINIMUM_AGE_DAYS} days`;
+    if (urgentReason) {
+      urgentFix = urgentReason;
+      reasons.push({
+        level: "note",
+        text: `${young}, but passes as an urgent fix, for the maintainer's reason: ${urgentReason}`
+      });
+    } else if (!artifact.replaces) {
+      reasons.push({
+        level: "block",
+        text: `${young}. Pin an older release, or set the release it replaces when it fixes a high or critical advisory of that release.`
+      });
+    } else if (!artifact.osv) {
+      reasons.push({
+        level: "block",
+        text: `${young}, and with no advisory database named for it, nothing shows that it fixes an advisory of ${artifact.replaces}.`
+      });
+    } else if (found && plan.replaced !== void 0) {
+      const fixes = (found[plan.replaced] ?? []).filter((a) => isBlocking(a.severity));
+      const justified = fixes.find(
+        (a) => a.fixed[0] !== void 0 && compareVersions(a.fixed[0], artifact.version) === 0
+      );
+      if (justified) {
+        bypass = { replaces: artifact.replaces, advisory: justified.id };
+        reasons.push({
+          level: "note",
+          text: `${young}, but passes: it is the earliest release that fixes ${justified.id} (${justified.severity}) of ${artifact.replaces}, which it replaces.`
+        });
+      } else {
+        const earliest = fixes.filter((a) => a.fixed[0] !== void 0).map((a) => `${a.id} is fixed first in ${a.fixed[0]}`);
+        reasons.push({
+          level: "block",
+          text: `${young}, and it is not the earliest release that fixes a high or critical advisory of ${artifact.replaces}, which it replaces: ${earliest.length > 0 ? `${earliest.join("; ")}.` : `${artifact.replaces} has none with a fix.`}`
+        });
+      }
+    } else {
+      reasons.push({
+        level: "block",
+        text: `${young}, and whether it fixes an advisory of ${artifact.replaces} could not be checked.`
+      });
+    }
+  }
+  const advisories = plan.own !== void 0 && found ? found[plan.own] ?? [] : [];
+  for (const advisory of advisories) {
+    const exception = exceptions.find((e) => e.reason.trim() !== "" && matches(e.id, advisory));
+    const named2 = `${advisory.id} (${advisory.severity === "unknown" ? "no severity" : advisory.severity}${advisory.aliases.length > 0 ? `, also ${advisory.aliases.join(", ")}` : ""})`;
+    const summary2 = advisory.summary ? `: ${advisory.summary}` : "";
+    const fix = advisory.fixed[0] !== void 0 ? `fixed in ${advisory.fixed[0]}` : "no release fixes it";
+    const remedy = advisory.fixed[0] !== void 0 ? `It is fixed in ${advisory.fixed[0]}; pin that release` : "No release fixes it; pin a release it does not affect";
+    if (exception) {
+      used.add(exception);
+      if (!accepted.includes(exception)) accepted.push(exception);
+      advisory.acceptedBecause = exception.reason;
+      reasons.push({
+        level: "note",
+        text: `${named2} is accepted by the exception for ${exception.id}: ${exception.reason}`
+      });
+    } else if (isBlocking(advisory.severity)) {
+      reasons.push({
+        level: "block",
+        text: `it has ${named2}${summary2}. ${remedy}, or add an exception for ${advisory.id} with its reason.`
+      });
+    } else if (advisory.severity === "unknown") {
+      reasons.push({
+        level: "warning",
+        text: `it has ${named2}${summary2}. ${advisory.severityFrom}, so review it by hand; ${fix}.`
+      });
+    } else {
+      reasons.push({ level: "warning", text: `it has ${named2}${summary2}; ${fix}.` });
+    }
+  }
+  if (!artifact.osv) {
+    reasons.push({
+      level: "note",
+      text: "no advisory database is named for it, so OSV.dev was not asked; its advisories are checked by hand when it is pinned."
+    });
+  } else if (!found) {
+    reasons.push({ level: "block", text: "its advisories could not be read from OSV.dev." });
+  }
+  if (urgentReason && !urgentFix && age !== null) {
+    reasons.push({
+      level: "note",
+      text: "it is past the minimum age, so its `urgentFix` is no longer needed and can go."
+    });
+  }
+  const provenance = artifact.provenance || urgentFix ? { ...artifact.provenance, ...urgentFix ? { urgentFix } : {} } : void 0;
+  return {
+    name: artifact.name,
+    version: artifact.version,
+    publishedAt: artifact.publishedAt,
+    ageDays: age === null ? null : Math.round(age * 100) / 100,
+    advisories,
+    exceptions: accepted,
+    ...bypass ? { bypass } : {},
+    ...provenance ? { provenance } : {},
+    verdict: verdictOf(reasons),
+    reasons: sortReasons(reasons)
+  };
+}
+function matches(id, advisory) {
+  const wanted = id.trim().toUpperCase();
+  return [advisory.id, ...advisory.aliases].some((other) => other.toUpperCase() === wanted);
+}
+function verdictOf(reasons) {
+  if (reasons.some((r) => r.level === "block")) return "block";
+  return reasons.some((r) => r.level === "warning") ? "warn" : "pass";
+}
+function sortReasons(reasons) {
+  const order = { block: 0, warning: 1, note: 2 };
+  return [...reasons].sort((a, b) => order[a.level] - order[b.level]);
+}
+function label(check) {
+  return `${check.name} ${check.version}`;
+}
+function ageDays(publishedAt, now) {
+  const published = Date.parse(publishedAt);
+  return Number.isNaN(published) ? null : (now.getTime() - published) / 864e5;
+}
+function formatAge(days) {
+  if (days < 1) {
+    const hours = Math.max(0, Math.floor(days * 24));
+    return `${hours} hour${hours === 1 ? "" : "s"}`;
+  }
+  return `${Math.floor(days * 10) / 10} days`;
+}
+function osvVersion(version) {
+  return version.replace(/^v(?=\d)/, "");
+}
+var ALIASES_READ = 4;
+async function lookUp(osv, queries) {
+  const ids = await osv.query(queries);
+  const records = await osv.records([...new Set(ids.flat())]);
+  const aliasIds = /* @__PURE__ */ new Set();
+  for (const record of records.values()) {
+    if (record.withdrawn || severityOf(record).severity !== "unknown") continue;
+    for (const alias of preferred(record.aliases ?? []).slice(0, ALIASES_READ)) {
+      if (!records.has(alias) && isOsvId(alias)) aliasIds.add(alias);
+    }
+  }
+  const aliases = aliasIds.size > 0 ? await osv.records([...aliasIds]) : /* @__PURE__ */ new Map();
+  return queries.map(
+    (query, i) => group(
+      query,
+      (ids[i] ?? []).flatMap((id) => {
+        const record = records.get(id);
+        return record && !record.withdrawn ? [record] : [];
+      }),
+      aliases
+    )
+  );
+}
+function preferred(ids) {
+  const rank = (id) => id.startsWith("GHSA-") ? 0 : id.startsWith("CVE-") ? 1 : 2;
+  return [...ids].sort((a, b) => rank(a) - rank(b));
+}
+function group(query, records, aliasRecords) {
+  const groups = [];
+  for (const record of records) {
+    const names = /* @__PURE__ */ new Set([record.id, ...record.aliases ?? []]);
+    const joined = groups.filter(
+      (g) => g.some((other) => names.has(other.id) || (other.aliases ?? []).includes(record.id))
+    );
+    const merged = [...joined.flat(), record];
+    for (const g of joined) groups.splice(groups.indexOf(g), 1);
+    groups.push(merged);
+  }
+  const advisories = groups.map((members) => {
+    const [primary] = preferred(members.map((m) => m.id));
+    const head = members.find((m) => m.id === primary);
+    const names = new Set(members.flatMap((m) => [m.id, ...m.aliases ?? []]));
+    names.delete(head.id);
+    let severity = strongest(members.map(severityOf));
+    const outside = [...names].filter((name) => !members.some((m) => m.id === name));
+    if (severity.severity === "unknown" && outside.length > 0) {
+      const fromAliases = strongest(
+        outside.flatMap((alias) => {
+          const record = aliasRecords.get(alias);
+          if (!record) return [];
+          const found = severityOf(record);
+          return found.severity === "unknown" ? [] : [{ ...found, from: `${found.from}, an alias` }];
+        })
+      );
+      severity = fromAliases.severity !== "unknown" ? fromAliases : { severity: "unknown", from: `${severity.from}, and none of its aliases has one` };
+    }
+    const fixed = [...new Set(members.flatMap((m) => fixesFor(m, query)))].sort(compareVersions);
+    return {
+      id: head.id,
+      aliases: [...names].sort(),
+      summary: firstLine(head.summary ?? members.find((m) => m.summary)?.summary ?? head.details),
+      severity: severity.severity,
+      severityFrom: severity.from,
+      fixed
+    };
+  });
+  return advisories.sort(
+    (a, b) => RANK[b.severity] - RANK[a.severity] || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
+  );
+}
+function firstLine(text) {
+  return ((text ?? "").split("\n")[0] ?? "").trim().slice(0, 200).replace(/\.$/, "");
+}
+function strongest(found) {
+  let best = { severity: "unknown", from: "It carries no severity" };
+  for (const f of found) {
+    const better = Number(f.named ?? false) - Number(best.named ?? false) || RANK[f.severity] - RANK[best.severity];
+    if (better > 0) best = f;
+    else if (best.severity === "unknown" && f.severity === "unknown" && f.from !== best.from) {
+      best = f;
+    }
+  }
+  return best;
+}
+function named(value) {
+  if (typeof value !== "string") return void 0;
+  const word = value.trim().toUpperCase();
+  if (word === "CRITICAL") return "critical";
+  if (word === "HIGH") return "high";
+  if (word === "MODERATE" || word === "MEDIUM") return "moderate";
+  if (word === "LOW") return "low";
+  return void 0;
+}
+function severityOf(record) {
+  const top = named(record.database_specific?.severity);
+  if (top) return { severity: top, from: `${record.id} database_specific`, named: true };
+  let best;
+  for (const affected of record.affected ?? []) {
+    for (const value of [
+      affected.database_specific?.severity,
+      affected.ecosystem_specific?.severity
+    ]) {
+      const severity = named(value);
+      if (severity && (!best || RANK[severity] > RANK[best.severity])) {
+        best = { severity, from: `${record.id} affected severity`, named: true };
+      }
+    }
+  }
+  if (best) return best;
+  const vectors = record.severity ?? [];
+  for (const { type, score } of vectors) {
+    if ((type === "CVSS_V3" || score?.startsWith("CVSS:3.")) && typeof score === "string") {
+      const base = cvss3(score);
+      if (base !== null) {
+        return { severity: fromScore(base), from: `${record.id} CVSS_V3 ${base.toFixed(1)}` };
+      }
+    }
+  }
+  for (const { type, score } of vectors) {
+    const severity = type === "Ubuntu" ? named(score) : void 0;
+    if (severity) return { severity, from: `${record.id} Ubuntu priority`, named: true };
+  }
+  if (vectors.length > 0) {
+    const types = [...new Set(vectors.map((v) => v.type ?? "unknown"))].join(", ");
+    return { severity: "unknown", from: `Its ${types} vector is not one Codeman scores` };
+  }
+  return { severity: "unknown", from: "It carries no severity" };
+}
+function fromScore(score) {
+  if (score >= 9) return "critical";
+  if (score >= 7) return "high";
+  if (score >= 4) return "moderate";
+  return "low";
+}
+function roundUp(value) {
+  const scaled = Math.round(value * 1e5);
+  return scaled % 1e4 === 0 ? scaled / 1e5 : (Math.floor(scaled / 1e4) + 1) / 10;
+}
+function cvss3(vector) {
+  const parts = vector.split("/");
+  if (!/^CVSS:3\.[01]$/.test(parts[0] ?? "")) return null;
+  const m = new Map(parts.slice(1).map((p) => p.split(":")));
+  const pick2 = (metric, weights) => {
+    const value = m.get(metric);
+    return value !== void 0 && value in weights ? weights[value] : void 0;
+  };
+  const scope = m.get("S");
+  if (scope !== "U" && scope !== "C") return null;
+  const changed = scope === "C";
+  const cia = { H: 0.56, L: 0.22, N: 0 };
+  const av = pick2("AV", { N: 0.85, A: 0.62, L: 0.55, P: 0.2 });
+  const ac = pick2("AC", { L: 0.77, H: 0.44 });
+  const pr = pick2("PR", { N: 0.85, L: changed ? 0.68 : 0.62, H: changed ? 0.5 : 0.27 });
+  const ui = pick2("UI", { N: 0.85, R: 0.62 });
+  const c = pick2("C", cia);
+  const i = pick2("I", cia);
+  const a = pick2("A", cia);
+  if ([av, ac, pr, ui, c, i, a].some((w) => w === void 0)) return null;
+  const iss = 1 - (1 - c) * (1 - i) * (1 - a);
+  const impact = changed ? 7.52 * (iss - 0.029) - 3.25 * (iss - 0.02) ** 15 : 6.42 * iss;
+  if (impact <= 0) return 0;
+  const exploitability = 8.22 * av * ac * pr * ui;
+  return roundUp(Math.min((changed ? 1.08 : 1) * (impact + exploitability), 10));
+}
+function pypiName(name) {
+  return name.toLowerCase().replace(/[-_.]+/g, "-");
+}
+function samePackage(affected, pkg) {
+  if (affected.ecosystem !== pkg.ecosystem || typeof affected.name !== "string") return false;
+  return pkg.ecosystem === "PyPI" ? pypiName(affected.name) === pypiName(pkg.name) : affected.name === pkg.name;
+}
+function fixesFor(record, query) {
+  const fixes = [];
+  let listed = false;
+  const above = [];
+  for (const affected of record.affected ?? []) {
+    if (!affected.package || !samePackage(affected.package, query.package)) continue;
+    if (affected.versions?.some((v) => compareVersions(v, query.version) === 0)) listed = true;
+    for (const range of affected.ranges ?? []) {
+      if (range.type === "GIT") continue;
+      const events = (range.events ?? []).flatMap((event) => eventOf(event));
+      events.sort((x, y) => compareEvent(x.at, y.at));
+      for (const event of events) {
+        if (event.kind === "fixed" && compareEvent(event.at, query.version) > 0) {
+          above.push(event.at);
+        }
+      }
+      let inside = false;
+      for (const event of events) {
+        const order = compareEvent(event.at, query.version);
+        if (order < 0 || order === 0 && event.kind !== "last_affected") {
+          if (event.kind === "introduced") inside = true;
+          else if (event.kind === "fixed" || event.kind === "last_affected") inside = false;
+          continue;
+        }
+        if (order === 0) break;
+        if (inside && event.kind === "fixed") fixes.push(event.at);
+        if (event.kind !== "limit") break;
+      }
+    }
+  }
+  const all = fixes.length > 0 ? fixes : listed ? above : [];
+  return [...new Set(all)].sort(compareVersions);
+}
+function eventOf(event) {
+  return ["introduced", "fixed", "last_affected", "limit"].flatMap(
+    (kind) => typeof event[kind] === "string" ? [{ kind, at: event[kind] }] : []
+  );
+}
+function compareEvent(a, b) {
+  if (a === "0" || b === "0") return a === b ? 0 : a === "0" ? -1 : 1;
+  return compareVersions(a, b);
+}
+function parseVersion(version) {
+  const v = version.trim().toLowerCase().replace(/^v/, "").split("+")[0] ?? "";
+  const m = v.match(
+    /^(?:(\d+)!)?(\d+(?:\.\d+)*)(?:[-_.]?(a|b|c|rc|alpha|beta|pre|preview)[-_.]?(\d*))?(?:[-_.]?(?:post|rev|r)[-_.]?(\d*))?(?:[-_.]?dev[-_.]?(\d*))?$/
+  );
+  if (!m) return null;
+  const pre = m[3] ? { a: 0, alpha: 0, b: 1, beta: 1 }[m[3]] ?? 2 : 3;
+  return {
+    epoch: Number(m[1] ?? 0),
+    release: (m[2] ?? "0").split(".").map(Number),
+    // A dev release without a pre release comes before the pre releases.
+    pre: m[3] ? [pre, Number(m[4] || 0)] : m[6] !== void 0 && m[5] === void 0 ? [-1, 0] : [3, 0],
+    post: m[5] !== void 0 ? Number(m[5] || 0) : -1,
+    dev: m[6] !== void 0 ? Number(m[6] || 0) : Number.POSITIVE_INFINITY
+  };
+}
+function compareVersions(a, b) {
+  const x = parseVersion(a);
+  const y = parseVersion(b);
+  if (!x || !y) return a.localeCompare(b, void 0, { numeric: true });
+  if (x.epoch !== y.epoch) return x.epoch - y.epoch;
+  const n = Math.max(x.release.length, y.release.length);
+  for (let i = 0; i < n; i++) {
+    const d = (x.release[i] ?? 0) - (y.release[i] ?? 0);
+    if (d) return d;
+  }
+  const pairs = [
+    [x.pre[0] ?? 0, y.pre[0] ?? 0],
+    [x.pre[1] ?? 0, y.pre[1] ?? 0],
+    [x.post, y.post],
+    [x.dev, y.dev]
+  ];
+  for (const [p, q] of pairs) if (p !== q) return p < q ? -1 : 1;
+  return 0;
+}
+
+// src/inference/resolution.ts
+var ReleaseBlocked = class extends Error {
+  check;
+  constructor(message, check) {
+    super(message);
+    this.check = check;
+  }
+};
+async function resolvePod(engine, image, releases, now, log) {
+  const gateway = releases.gateway();
+  const node = releases.node ?? NODE_RELEASE;
+  const pinned = catalogRelease(engine, image, releases.engines ?? ENGINE_RELEASES);
+  if (!pinned) {
+    log.info(
+      `The pod image ${image} is not the one Codeman pins for ${engine}, as when the \`pod-image\` input chooses it: the release policy checks Node.js only.`
+    );
+  }
+  const artifacts = [...pinned ? [pinned.release] : [], node.release];
+  let unreadable = false;
+  const failed2 = (error3) => {
+    unreadable = true;
+    throw error3;
+  };
+  const osv = {
+    query: (queries) => releases.osv.query(queries).catch(failed2),
+    records: (ids) => releases.osv.records(ids).catch(failed2)
+  };
+  const check = await checkReleases(artifacts, {
+    now,
+    exceptions: pinned?.exceptions ?? [],
+    osv,
+    cache: releases.cache
+  });
+  const names = artifacts.map((artifact) => `${artifact.name} ${artifact.version}`).join(" and ");
+  if (check.verdict === "block") {
+    const reasons = check.reasons.filter((reason) => reason.level === "block");
+    for (const reason of reasons) log.error(`Release policy: ${reason.text}`);
+    const text = reasons.map((reason) => reason.text).join(" ");
+    throw new ReleaseBlocked(
+      unreadable ? `The release policy could not check ${names}, so no pod was created and the run stops: ${text}` : `The release policy blocks ${names}, so no pod was created, and the run stops rather than fall back to another profile: ${text} Codeman pins these releases (\`ENGINE_RELEASES\` and \`NODE_RELEASE\` in src/inference/images.ts): set CODEMAN_COMMIT_SHA to a commit of Codeman whose releases pass, or, for Ollama, choose an image with the \`pod-image\` input, which the policy does not check.`,
+      check
+    );
+  }
+  const from = check.source === "cache" ? `, from its check at ${check.cachedFrom}` : "";
+  const verdict = check.verdict === "warn" ? "passes, with warnings," : "passes";
+  log.info(`The release policy ${verdict} ${names}${from}.`);
+  for (const reason of check.reasons) {
+    if (reason.level === "warning") log.warning(`Release policy: ${reason.text}`);
+    else log.info(`Release policy: ${reason.text}`);
+  }
+  const bootstrap = {
+    node: { url: node.url, sha256: node.sha256 },
+    gateway: { url: gateway.url, sha256: gateway.sha256 }
+  };
+  const found = (name) => check.artifacts.find((one) => one.name === name);
+  return {
+    artifacts: bootstrap,
+    check,
+    fields: resolutionFields(check, {
+      image: { reference: image, ...pinned ? { check: found(pinned.release.name) } : {} },
+      node: { url: node.url, sha256: node.sha256, check: found(node.release.name) },
+      gateway
+    })
+  };
+}
+function resolutionFields(check, artifacts) {
+  const { image, node, gateway } = artifacts;
+  const digest = /@(sha256:[0-9a-f]{64})$/.exec(image.reference)?.[1];
+  const plain = JSON.parse(
+    JSON.stringify({
+      verdict: check.verdict,
+      source: check.source,
+      ...check.cachedFrom ? { cachedFrom: check.cachedFrom } : {},
+      image: {
+        reference: image.reference,
+        ...digest ? { digest } : {},
+        // An image the `pod-image` input chose is not checked.
+        checked: image.check !== void 0,
+        ...image.check ? released(image.check) : {}
+      },
+      node: {
+        url: node.url,
+        sha256: node.sha256,
+        ...node.check ? released(node.check) : {}
+      },
+      gateway: { url: gateway.url, sha256: gateway.sha256, commit: gateway.commit },
+      reasons: check.reasons
+    })
+  );
+  return { ...plain, checkedAt: new Date(check.checkedAt) };
+}
+function released(check) {
+  return {
+    name: check.name,
+    version: check.version,
+    publishedAt: check.publishedAt,
+    ageDays: check.ageDays,
+    verdict: check.verdict,
+    advisories: check.advisories,
+    exceptions: check.exceptions,
+    ...check.bypass ? { bypass: check.bypass } : {},
+    ...check.provenance ? { provenance: check.provenance } : {}
+  };
+}
+var StoredReleaseChecks = class {
+  #store;
+  constructor(store) {
+    this.#store = store;
+  }
+  async get(key) {
+    const result2 = (await this.#store.get(LAYOUT.releaseCheck(key)))?.fields.result;
+    return typeof result2 === "string" ? JSON.parse(result2) : void 0;
+  }
+  async set(key, result2) {
+    await this.#store.write([
+      {
+        op: "set",
+        path: LAYOUT.releaseCheck(key),
+        fields: {
+          releases: result2.artifacts.map((artifact) => `${artifact.name} ${artifact.version}`),
+          verdict: result2.verdict,
+          checkedAt: new Date(result2.checkedAt),
+          result: JSON.stringify(result2)
+        }
+      }
+    ]);
+  }
+};
+
 // src/inference/selfhosted.ts
 import { createHmac, randomBytes as randomBytes3 } from "node:crypto";
 
+// src/gateway/fit.ts
+var FLOOR_CONTEXT = 64e3;
+var FIT_MARGIN_BYTES = 1024 * 1024 * 1024;
+var KV_BYTES = { f16: 2, q8_0: 34 / 32, q4_0: 18 / 32 };
+function floorContext(modelContext) {
+  return Math.min(FLOOR_CONTEXT, modelContext ?? FLOOR_CONTEXT);
+}
+function kvBytesPerToken(info2, kvCacheType) {
+  const architecture = info2["general.architecture"];
+  if (typeof architecture !== "string") return void 0;
+  const field = (name) => info2[`${architecture}.${name}`];
+  const number3 = (value) => typeof value === "number" && Number.isFinite(value) && value > 0 ? value : void 0;
+  const numbers = (value) => Array.isArray(value) && value.every((item) => typeof item === "number" && item >= 0) ? value : void 0;
+  if (field("attention.sliding_window") !== void 0) return void 0;
+  const headsKv = field("attention.head_count_kv");
+  const headCount = field("attention.head_count");
+  const heads = number3(headCount) ?? Math.max(0, ...numbers(headCount) ?? []);
+  const embedding = number3(field("embedding_length"));
+  const keyLength = number3(field("attention.key_length")) ?? (embedding && heads > 0 ? embedding / heads : void 0);
+  const valueLength = number3(field("attention.value_length")) ?? keyLength;
+  if (!keyLength || !valueLength) return void 0;
+  let kvHeads;
+  const perLayer = numbers(headsKv);
+  if (perLayer) kvHeads = perLayer.reduce((sum, count3) => sum + count3, 0);
+  else {
+    const blocks = number3(field("block_count"));
+    const each = number3(headsKv);
+    const interval = number3(field("full_attention_interval"));
+    if (blocks && each) kvHeads = Math.floor(blocks / (interval ?? 1)) * each;
+  }
+  if (!kvHeads) return void 0;
+  return kvHeads * (keyLength + valueLength) * (KV_BYTES[kvCacheType ?? "f16"] ?? 2);
+}
+
+// src/gateway/estimate.ts
+var GIB = 2 ** 30;
+var VLLM_GPU_MEMORY_UTILIZATION = 0.92;
+var UNCOUNTED_KEYS = [
+  "kv_lora_rank",
+  "layers_block_type",
+  "hybrid_override_pattern",
+  "attn_type_list",
+  "attention_chunk_size",
+  "full_attention_interval",
+  "linear_attn_config",
+  "ssm_cfg",
+  "mamba_expand"
+];
+function positive(value) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : void 0;
+}
+function textConfig(config) {
+  const nested = config.text_config;
+  return positive(config.num_hidden_layers) === void 0 && typeof nested === "object" && nested !== null ? nested : config;
+}
+function vllmKvBytesPerToken(config, kvCacheDtype) {
+  const text = textConfig(config);
+  if (UNCOUNTED_KEYS.some((key) => text[key] !== void 0 && text[key] !== null)) return void 0;
+  const layerTypes = text.layer_types;
+  if (Array.isArray(layerTypes) && layerTypes.some((type) => type !== "full_attention")) {
+    return void 0;
+  }
+  if (positive(text.sliding_window) !== void 0 && text.use_sliding_window !== false) {
+    return void 0;
+  }
+  const layers = positive(text.num_hidden_layers);
+  const heads = positive(text.num_attention_heads);
+  const kvHeads = positive(text.num_key_value_heads) ?? heads;
+  const headSize = positive(text.head_dim) ?? (heads && positive(text.hidden_size) ? text.hidden_size / heads : void 0);
+  if (!layers || !kvHeads || !headSize) return void 0;
+  const bytes = kvCacheDtype?.startsWith("fp8") ? 1 : 2;
+  return 2 * layers * kvHeads * headSize * bytes;
+}
+function vllmModelContext(config) {
+  return positive(textConfig(config).max_position_embeddings);
+}
+function estimateVllm(facts) {
+  const { config, weightsBytes, gpuMemoryGb, settings } = facts;
+  const perToken = vllmKvBytesPerToken(config, settings["kv-cache-dtype"]);
+  const explicit = positive(Number(settings["max-model-len"]));
+  const own = vllmModelContext(config);
+  const context3 = explicit ?? (own === void 0 ? void 0 : floorContext(own));
+  if (!perToken || !context3 || !positive(gpuMemoryGb)) return void 0;
+  const utilization = positive(Number(settings["gpu-memory-utilization"])) ?? VLLM_GPU_MEMORY_UTILIZATION;
+  const budget = gpuMemoryGb * GIB * utilization;
+  return result("vllm", {
+    parallel: positive(Number(settings["max-num-seqs"])) ?? 1,
+    context: context3,
+    floor: explicit === void 0,
+    perToken,
+    budget,
+    weightsBytes
+  });
+}
+function estimateOllama(facts) {
+  const { info: info2, weightsBytes, gpuMemoryGb, variables } = facts;
+  const architecture = info2["general.architecture"];
+  if (typeof architecture !== "string") return void 0;
+  const perToken = kvBytesPerToken(info2, variables.OLLAMA_KV_CACHE_TYPE);
+  const explicit = positive(Number(variables.OLLAMA_CONTEXT_LENGTH));
+  const own = positive(info2[`${architecture}.context_length`]);
+  const context3 = explicit ?? (own === void 0 ? void 0 : floorContext(own));
+  if (!perToken || !context3 || !positive(gpuMemoryGb)) return void 0;
+  const overhead = Number(variables.OLLAMA_GPU_OVERHEAD) || 0;
+  const budget = gpuMemoryGb * GIB - FIT_MARGIN_BYTES - overhead;
+  return result("ollama", {
+    parallel: OLLAMA_SERIAL_FAMILIES.has(architecture) ? 1 : positive(Number(variables.OLLAMA_NUM_PARALLEL)) ?? 1,
+    context: context3,
+    floor: explicit === void 0,
+    perToken,
+    budget,
+    weightsBytes
+  });
+}
+function result(engine, facts) {
+  const needed = facts.parallel * facts.context * facts.perToken;
+  const room = facts.budget - facts.weightsBytes;
+  return { engine, ...facts, needed, room, fits: needed <= room };
+}
+function gib(bytes) {
+  return (bytes / GIB).toFixed(2);
+}
+function requests(parallel) {
+  return `${parallel} parallel request${parallel === 1 ? "" : "s"}`;
+}
+function estimateMessage(model, gpuMemoryGb, estimate) {
+  const { engine, parallel, context: context3, floor, needed, room, weightsBytes } = estimate;
+  const least = floor ? ", the least Codeman gives an agent" : "";
+  const budget = engine === "vllm" ? `the GPU's ${gpuMemoryGb} GB at vLLM's memory utilization, less ${gib(weightsBytes)} GiB of weights` : `the GPU's ${gpuMemoryGb} GB, less llama.cpp's margin of 1 GiB, the settings' overhead and ${gib(weightsBytes)} GiB of weights`;
+  const leaves = room > 0 ? `leave at most ${gib(room)} GiB` : "leave nothing";
+  const why = `\`${model}\` does not fit the GPU with ${requests(parallel)} and a context of ${context3} tokens${least}, by Codeman's estimate, so no pod was created: its K/V cache needs ${gib(needed)} GiB, and ${budget}, ${leaves}.`;
+  const levers = engine === "vllm" ? floor ? "Give the profile fewer tasks (`tasks` or `max-tasks`) or set a smaller `max-num-seqs`, set `kv-cache-dtype: fp8` or `language-model-only: true` in the `vllm` settings, or use a GPU with more memory." : "Lower `max-model-len` or `max-num-seqs` in the `vllm` settings, set `kv-cache-dtype: fp8` or `language-model-only: true`, or use a GPU with more memory." : floor ? "Give the profile fewer tasks (`tasks` or `max-tasks`) or set a smaller `num-parallel`, set `kv-cache-type: q8_0` in the `ollama` settings, use a smaller quantization of the model, or use a GPU with more memory." : "Lower `context-length` or `num-parallel` in the `ollama` settings, set `kv-cache-type: q8_0`, use a smaller quantization of the model, or use a GPU with more memory.";
+  return `${why} ${levers}`;
+}
+
 // src/gateway/gateway.ts
-import { createHash as createHash2, timingSafeEqual } from "node:crypto";
+import { createHash as createHash4, timingSafeEqual } from "node:crypto";
 import {
   createServer,
   request as httpRequest
@@ -22839,9 +24322,9 @@ var GROUP = /^[\w.-]{1,100}$/;
 var MAX_BODY_BYTES = 32 * 1024 * 1024;
 var KEEP_ALIVE_MS = 2e4;
 function sha256(text) {
-  return createHash2("sha256").update(text).digest("hex");
+  return createHash4("sha256").update(text).digest("hex");
 }
-function matches(token, hash) {
+function matches2(token, hash) {
   if (!token || !hash) return false;
   const given = Buffer.from(sha256(token), "hex");
   const expected = Buffer.from(hash, "hex");
@@ -23090,6 +24573,8 @@ var Gateway = class {
     return {
       version: GATEWAY_VERSION,
       engine: this.#options.engine.name,
+      // Optional fields: Codeman reads neither, so older gateways' lack of them changes nothing.
+      ...this.#options.build ? { node: this.#options.build.node, gatewaySha256: this.#options.build.sha256 } : {},
       ready: this.ready,
       contextLength: this.contextLength,
       ollama: this.ollama,
@@ -23134,7 +24619,7 @@ var Gateway = class {
       return this.#admin(route, request2, response);
     if (!ROUTES.has(route)) return send(response, 404, error("Not found."));
     const token = bearer(request2);
-    const run2 = this.#runs.findLast((one) => matches(token, one.tokenSha256));
+    const run2 = this.#runs.findLast((one) => matches2(token, one.tokenSha256));
     if (run2?.stopped) return answer(response, run2.stopped);
     if (!run2?.active) return send(response, 401, error("Invalid token."));
     this.lastActivity = run2.lastActivity = this.#now();
@@ -23143,7 +24628,7 @@ var Gateway = class {
     await this.#forward(run2, request2, response, path);
   }
   async #admin(route, request2, response) {
-    if (!matches(bearer(request2), this.#options.adminSha256)) {
+    if (!matches2(bearer(request2), this.#options.adminSha256)) {
       return send(response, 401, error("Invalid token."));
     }
     if (route === "GET /usage") return send(response, 200, this.usage() ?? null);
@@ -23352,15 +24837,15 @@ function parseJson(text) {
 }
 function runSettings(body) {
   if (typeof body !== "object" || body === null) return void 0;
-  const { tokenSha256, limit, start, pricePerSecond, idleSeconds, task, group } = body;
-  const positive = (value) => typeof value === "number" && Number.isFinite(value) && value > 0;
+  const { tokenSha256, limit, start, pricePerSecond, idleSeconds, task, group: group2 } = body;
+  const positive2 = (value) => typeof value === "number" && Number.isFinite(value) && value > 0;
   if (typeof tokenSha256 !== "string" || !/^[0-9a-f]{64}$/.test(tokenSha256)) return void 0;
-  if (!positive(limit) || !positive(start) || !positive(pricePerSecond)) return void 0;
+  if (!positive2(limit) || !positive2(start) || !positive2(pricePerSecond)) return void 0;
   if (task !== void 0 && (typeof task !== "string" || !TASK.test(task))) return void 0;
-  if (group !== void 0 && (typeof group !== "string" || !GROUP.test(group))) return void 0;
-  const named = { ...task ? { task } : {}, ...group ? { group } : {} };
+  if (group2 !== void 0 && (typeof group2 !== "string" || !GROUP.test(group2))) return void 0;
+  const named2 = { ...task ? { task } : {}, ...group2 ? { group: group2 } : {} };
   if (idleSeconds === void 0) {
-    return { tokenSha256, limit, start, meter: { kind: "time", pricePerSecond }, ...named };
+    return { tokenSha256, limit, start, meter: { kind: "time", pricePerSecond }, ...named2 };
   }
   if (typeof idleSeconds !== "number" || !Number.isFinite(idleSeconds) || idleSeconds < 0) {
     return void 0;
@@ -23370,82 +24855,13 @@ function runSettings(body) {
     limit,
     start,
     meter: { kind: "busy", pricePerSecond, idleMs: idleSeconds * 1e3 },
-    ...named
+    ...named2
   };
 }
-
-// src/gateway/fit.ts
-var FIT_MARGIN_BYTES = 1024 * 1024 * 1024;
-var KV_BYTES = { f16: 2, q8_0: 34 / 32, q4_0: 18 / 32 };
 
 // src/gateway/pod.ts
 var GATEWAY_PORT = 8080;
 var FAILURE_GRACE_MS = 2 * 6e4;
-
-// src/store/layout.ts
-var LAYOUT = {
-  organization: (owner) => `organizations/${documentId(owner.toLowerCase())}`,
-  /** A run of a task's agent: one per task a workflow run's attempt picked for an agent. */
-  runs: (owner) => `${LAYOUT.organization(owner)}/runs`,
-  run: (owner, run2) => `${LAYOUT.runs(owner)}/${documentId(run2)}`,
-  /** What the jobs did, one document each, named after its run and what happened. */
-  events: (owner) => `${LAYOUT.organization(owner)}/events`,
-  event: (owner, event) => `${LAYOUT.events(owner)}/${documentId(event)}`,
-  /**
-   * The pod registry of an organization before pools, kept as history: the organization's month
-   * still counts the time its pods' tasks did not.
-   */
-  organizationPods: (owner) => `${LAYOUT.organization(owner)}/pods`,
-  /** A pool, by its ID: its members' logins joined by `+`. */
-  pool: (pool2) => `pools/${documentId(pool2.toLowerCase())}`,
-  /**
-   * The pod registry: a pod Codeman created, named by the nonce of its admin token, which the
-   * task that creates it draws first; with the leases of the tasks that use or keep it.
-   */
-  pods: (pool2) => `${LAYOUT.pool(pool2)}/pods`,
-  pod: (pool2, nonce) => `${LAYOUT.pods(pool2)}/${documentId(nonce)}`,
-  /**
-   * The board: each repository's ready tasks that a pod could serve, as its last `select` saw
-   * them, named by the repository (`owner/name`).
-   */
-  board: (pool2) => `${LAYOUT.pool(pool2)}/board`,
-  boardEntry: (pool2, repository) => `${LAYOUT.board(pool2)}/${documentId(repository.toLowerCase())}`,
-  /** A batch: the tasks, of any repository of the pool, that one pod serves at once. */
-  batches: (pool2) => `${LAYOUT.pool(pool2)}/batches`,
-  batch: (pool2, id) => `${LAYOUT.batches(pool2)}/${documentId(id)}`,
-  /**
-   * The cache of fits: the context a pod's model fitted its GPU with, for one combination of
-   * image, model, GPU type and engine settings, named by their hash (decision 4 of the plan for
-   * fitting Ollama to the GPU). It depends on nothing an organization owns.
-   */
-  contexts: () => "contexts",
-  context: (key) => `${LAYOUT.contexts()}/${documentId(key)}`,
-  /**
-   * A Serverless endpoint of the pool's GPU account, by its ID; under it, each run's billed times
-   * on the endpoint's worker, named by the run and its reservation, which the ledger splits among
-   * the runs that used the worker at once.
-   */
-  endpoint: (pool2, endpoint2) => `${LAYOUT.pool(pool2)}/endpoints/${documentId(endpoint2)}`,
-  endpointRuns: (pool2, endpoint2) => `${LAYOUT.endpoint(pool2, endpoint2)}/runs`,
-  endpointRun: (pool2, endpoint2, id) => `${LAYOUT.endpointRuns(pool2, endpoint2)}/${documentId(id)}`
-};
-function ledgerRunId(workflowRun, attempt, task) {
-  return `${workflowRun}-${attempt}-${task}`;
-}
-function ledgerMonth(date) {
-  return date.toISOString().slice(0, 7);
-}
-function isLedgerRunId(text) {
-  return /^\d+-\d+-\d+$/.test(text);
-}
-function repositoryName(repository) {
-  return `${repository.owner}/${repository.name}`.toLowerCase();
-}
-function documentId(text) {
-  if (text === "") throw new Error("A document ID may not be empty.");
-  const escaped = text.replaceAll("%", "%25").replaceAll("/", "%2F");
-  return escaped === "." || escaped === ".." || /^__.*__$/.test(escaped) ? `%${escaped}` : escaped;
-}
 
 // src/inference/huggingface.ts
 var HUB = "https://huggingface.co";
@@ -23476,11 +24892,16 @@ var HuggingFace = class {
     }
     return checked(id, await response.json());
   }
+  /** From the model's `config.json`: whether it has a vision tower that vLLM serves. */
+  async vision(id) {
+    const config = await this.config(id);
+    return typeof config.vision_config === "object" && config.vision_config !== null && config.language_model_only !== true;
+  }
   /**
-   * From the model's `config.json` at `main`, which vLLM downloads: one more public call (see
+   * The model's `config.json` at `main`, which vLLM downloads: one more public call (see
    * docs/web/hugging-face/unsloth-qwen3-8-27b-nvfp4-at-f0b7c9e.md).
    */
-  async vision(id) {
+  async config(id) {
     const path = repositoryPath(id);
     let response;
     try {
@@ -23496,7 +24917,10 @@ var HuggingFace = class {
     const config = await response.json().catch(() => {
       throw new Error("Its config.json is not JSON.");
     });
-    return typeof config?.vision_config === "object" && config.vision_config !== null && config.language_model_only !== true;
+    if (typeof config !== "object" || config === null || Array.isArray(config)) {
+      throw new Error("Its config.json is not an object.");
+    }
+    return config;
   }
 };
 function repositoryPath(id) {
@@ -23535,6 +24959,229 @@ function checked(id, info2) {
     );
   }
   return { id, weightsBytes };
+}
+
+// src/inference/gguf.ts
+var MAX_ARRAY = 4096;
+var UINT8 = 0;
+var INT8 = 1;
+var UINT16 = 2;
+var INT16 = 3;
+var UINT32 = 4;
+var INT32 = 5;
+var FLOAT32 = 6;
+var BOOL = 7;
+var STRING = 8;
+var ARRAY = 9;
+var UINT64 = 10;
+var INT64 = 11;
+var FLOAT64 = 12;
+var SIZES = {
+  [UINT8]: 1,
+  [INT8]: 1,
+  [UINT16]: 2,
+  [INT16]: 2,
+  [UINT32]: 4,
+  [INT32]: 4,
+  [FLOAT32]: 4,
+  [BOOL]: 1,
+  [UINT64]: 8,
+  [INT64]: 8,
+  [FLOAT64]: 8
+};
+var Truncated = class extends Error {
+};
+function ggufMetadata(bytes) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const magic = String.fromCharCode(...bytes.subarray(0, 4));
+  if (magic !== "GGUF" && magic !== "FUGG") return void 0;
+  const little = magic === "GGUF";
+  let offset = 4;
+  const need = (count3) => {
+    if (offset + count3 > bytes.byteLength) throw new Truncated();
+  };
+  const u32 = () => {
+    need(4);
+    const value2 = view.getUint32(offset, little);
+    offset += 4;
+    return value2;
+  };
+  const u64 = () => {
+    need(8);
+    const value2 = view.getBigUint64(offset, little);
+    offset += 8;
+    return value2;
+  };
+  const length = () => {
+    const value2 = u64();
+    if (value2 > BigInt(Number.MAX_SAFE_INTEGER)) throw new Truncated();
+    return Number(value2);
+  };
+  const text = () => {
+    const size = length();
+    need(size);
+    const value2 = new TextDecoder().decode(bytes.subarray(offset, offset + size));
+    offset += size;
+    return value2;
+  };
+  const scalar2 = (type) => {
+    const size = SIZES[type];
+    if (size === void 0) throw new Error(`Unknown GGUF type ${type}.`);
+    need(size);
+    const at = offset;
+    offset += size;
+    switch (type) {
+      case UINT8:
+        return view.getUint8(at);
+      case INT8:
+        return view.getInt8(at);
+      case UINT16:
+        return view.getUint16(at, little);
+      case INT16:
+        return view.getInt16(at, little);
+      case UINT32:
+        return view.getUint32(at, little);
+      case INT32:
+        return view.getInt32(at, little);
+      case FLOAT32:
+        return view.getFloat32(at, little);
+      case BOOL:
+        return view.getUint8(at) !== 0;
+      case UINT64:
+        return Number(view.getBigUint64(at, little));
+      case INT64:
+        return Number(view.getBigInt64(at, little));
+      default:
+        return view.getFloat64(at, little);
+    }
+  };
+  const value = (type) => {
+    if (type === STRING) return text();
+    if (type !== ARRAY) return scalar2(type);
+    const itemType = u32();
+    const count3 = length();
+    const keep = itemType !== STRING && itemType !== ARRAY && count3 <= MAX_ARRAY;
+    const items = [];
+    const size = SIZES[itemType];
+    if (!keep && size !== void 0) {
+      need(size * count3);
+      offset += size * count3;
+      return void 0;
+    }
+    for (let index = 0; index < count3; index++) {
+      const item = value(itemType);
+      if (keep) items.push(item);
+    }
+    return keep ? items : void 0;
+  };
+  const kv = {};
+  try {
+    if (u32() < 2) return void 0;
+    length();
+    const pairs = length();
+    for (let pair = 0; pair < pairs; pair++) {
+      const key = text();
+      const read = value(u32());
+      if (read !== void 0) kv[key] = read;
+    }
+    return { kv, complete: true };
+  } catch (error3) {
+    if (error3 instanceof Truncated) return { kv, complete: false };
+    return void 0;
+  }
+}
+
+// src/inference/ollama-registry.ts
+var OLLAMA_REGISTRY = "registry.ollama.ai";
+var MANIFEST = "application/vnd.docker.distribution.manifest.v2+json";
+var MODEL_LAYER = "application/vnd.ollama.image.model";
+var PROJECTOR_LAYER = "application/vnd.ollama.image.projector";
+var HEADER_BYTES = 256 * 1024;
+function registryName(name) {
+  let rest = name;
+  let tag = "latest";
+  if (rest.lastIndexOf(":") > rest.lastIndexOf("/")) {
+    tag = rest.slice(rest.lastIndexOf(":") + 1);
+    rest = rest.slice(0, rest.lastIndexOf(":"));
+  }
+  const parts = rest.split("/");
+  if (parts.length > 3 || parts.some((part) => part === "") || tag === "") return void 0;
+  const model = parts.pop();
+  const namespace = parts.pop() ?? "library";
+  const host = parts.pop() ?? OLLAMA_REGISTRY;
+  return { host, namespace, model, tag };
+}
+var OllamaRegistry = class {
+  #fetch;
+  constructor(fetchFn = fetch) {
+    this.#fetch = fetchFn;
+  }
+  async model(name) {
+    const parsed = registryName(name.toLowerCase());
+    if (!parsed) return { unknown: `\`${name}\` is not a model name Ollama's registry knows.` };
+    if (parsed.host !== OLLAMA_REGISTRY) {
+      return { unknown: `\`${name}\` is on ${parsed.host}, not on Ollama's registry.` };
+    }
+    const base = `https://${OLLAMA_REGISTRY}/v2/${encodeURIComponent(parsed.namespace)}/${encodeURIComponent(parsed.model)}`;
+    try {
+      const response = await this.#fetch(`${base}/manifests/${encodeURIComponent(parsed.tag)}`, {
+        headers: { Accept: MANIFEST },
+        signal: AbortSignal.timeout(3e4)
+      });
+      if (!response.ok) return { unknown: `Ollama's registry answered ${response.status}.` };
+      const manifest = await response.json();
+      if (manifest.mediaType !== MANIFEST || !Array.isArray(manifest.layers)) {
+        return { unknown: "Ollama's registry gave a manifest list, or no manifest." };
+      }
+      const weights = manifest.layers.filter(
+        (layer) => layer.mediaType === MODEL_LAYER || layer.mediaType === PROJECTOR_LAYER
+      );
+      const model = weights.find((layer) => layer.mediaType === MODEL_LAYER);
+      if (!model || typeof model.digest !== "string" || !/^sha256:[0-9a-f]{64}$/.test(model.digest) || !weights.every((layer) => typeof layer.size === "number" && layer.size >= 0)) {
+        return { unknown: "Its manifest has no model layer with a digest and a size." };
+      }
+      const head = await this.#fetch(`${base}/blobs/${model.digest}`, {
+        headers: { Range: `bytes=0-${HEADER_BYTES - 1}` },
+        signal: AbortSignal.timeout(6e4)
+      });
+      if (head.status !== 206 && head.status !== 200) {
+        return { unknown: `Ollama's registry answered ${head.status} for its model layer.` };
+      }
+      const bytes = await firstBytes(head, HEADER_BYTES);
+      const metadata = ggufMetadata(bytes);
+      if (!metadata) return { unknown: "Its model layer is not a GGUF file." };
+      return {
+        weightsBytes: weights.reduce((total, layer) => total + layer.size, 0),
+        info: metadata.kv
+      };
+    } catch (error3) {
+      return {
+        unknown: `Ollama's registry could not be read (${error3 instanceof Error ? error3.message : error3}).`
+      };
+    }
+  }
+};
+async function firstBytes(response, limit) {
+  const reader = response.body?.getReader();
+  if (!reader) return new Uint8Array();
+  const chunks = [];
+  let size = 0;
+  while (size < limit) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    size += value.byteLength;
+  }
+  await reader.cancel().catch(() => void 0);
+  const bytes = new Uint8Array(Math.min(size, limit));
+  let offset = 0;
+  for (const chunk of chunks) {
+    const part = chunk.subarray(0, bytes.byteLength - offset);
+    bytes.set(part, offset);
+    offset += part.byteLength;
+    if (offset === bytes.byteLength) break;
+  }
+  return bytes;
 }
 
 // src/inference/provider.ts
@@ -23778,12 +25425,12 @@ function exchange(store, input) {
         ...input.unavailable ? { unavailable: input.unavailable } : {}
       });
       const formed = [];
-      const named = [];
+      const named2 = [];
       const targets = /* @__PURE__ */ new Map();
       let index = 0;
       for (const batch of formation.batches) {
         const id = batch.pod ? `${input.run.id}-${input.run.attempt}-${index++}` : void 0;
-        named.push({ ...batch, id });
+        named2.push({ ...batch, id });
         for (const task of batch.tasks) {
           if (task.repository === repository) {
             formed.push({
@@ -23854,7 +25501,7 @@ function exchange(store, input) {
         honored,
         formed,
         dropped,
-        batches: named,
+        batches: named2,
         waiting: formation.waiting,
         unserved: formation.unserved,
         dispatches
@@ -24337,7 +25984,7 @@ function quotedVariables(settings) {
   return ollamaVariables(settings).map((variable) => `\`${variable}\``).join(", ");
 }
 function podSettingsKey(settings, holder) {
-  const { model, gpuType, image, reuse, priority } = settings;
+  const { model, gpuType, image, reuse, priority, bootstrap } = settings;
   const ollama2 = ollamaVariables(settings);
   const vllm2 = settings.engine && onVllm({ engine: settings.engine });
   const hosts = (settings.hosts ?? DEFAULT_HOSTS).join(",");
@@ -24350,7 +25997,11 @@ function podSettingsKey(settings, holder) {
     ...ollama2.length > 0 ? [`ollama ${ollama2.join(" ")}`] : [],
     ...vllm2 ? ["engine vllm", `vllm ${vllmValues(settings).join(" ")}`] : [],
     ...hosts !== DEFAULT_HOSTS.join(",") ? [`hosts ${hosts}`] : [],
-    ...priority !== void 0 ? [`priority ${priority}`] : []
+    ...priority !== void 0 ? [`priority ${priority}`] : [],
+    ...bootstrap ? [
+      `gateway ${bootstrap.gateway.sha256}`,
+      `bootstrap ${sha256(JSON.stringify([bootstrapCommand(), bootstrap.node.url, bootstrap.node.sha256]))}`
+    ] : []
   ];
   return sha256(parts.join("\n")).slice(0, 16);
 }
@@ -24359,13 +26010,13 @@ function ofOrganization(pod, owner) {
   return organization !== void 0 && organization.toLowerCase() === owner.toLowerCase();
 }
 function ofPool(pod, pool2, owner) {
-  const named = pod.env.CODEMAN_POOL;
-  return named ? named.toLowerCase() === pool2.toLowerCase() : ofOrganization(pod, owner);
+  const named2 = pod.env.CODEMAN_POOL;
+  return named2 ? named2.toLowerCase() === pool2.toLowerCase() : ofOrganization(pod, owner);
 }
 function otherPoolOf(pod, pool2, owner) {
-  const named = pod.env.CODEMAN_POOL?.toLowerCase();
-  if (!named || named === pool2.toLowerCase()) return void 0;
-  return pod.env.CODEMAN_ORGANIZATION?.toLowerCase() === owner.toLowerCase() ? named : void 0;
+  const named2 = pod.env.CODEMAN_POOL?.toLowerCase();
+  if (!named2 || named2 === pool2.toLowerCase()) return void 0;
+  return pod.env.CODEMAN_ORGANIZATION?.toLowerCase() === owner.toLowerCase() ? named2 : void 0;
 }
 function accountFingerprint(account) {
   const scope = account.organization !== void 0 || account.project !== void 0 ? `:${account.organization ?? ""}/${account.project ?? ""}` : "";
@@ -24440,7 +26091,7 @@ var PodInference = class {
     if (onVllm(this.#settings)) {
       if (image) return;
       throw new Error(
-        "This version of Codeman pins no vLLM pod image yet (`POD_IMAGES` in src/inference/images.ts), so no pod was created: use a version that pins one, or `engine: ollama`. See docs/settings/vllm.md#pod-images."
+        "This version of Codeman pins no vLLM pod image yet (`ENGINE_RELEASES` in src/inference/images.ts), so no pod was created: use a version that pins one, or `engine: ollama`. See docs/settings/vllm.md#pod-images."
       );
     }
     if (fitsTheGpu(image)) return;
@@ -24455,15 +26106,30 @@ var PodInference = class {
       );
     }
   }
+  /**
+   * Gives the run a pod of its settings. First, before any pod is swept, joined or created, it
+   * resolves what the pod runs and checks it against the release policy: a block stops the run.
+   */
   async open(run2, log) {
     const token = randomBytes3(32).toString("base64url");
     const holder = leaseHolder(this.#options.repository, run2.task);
-    const settings = podSettingsKey(this.#settings, holder);
     let handle;
     try {
       this.#checkImage(log);
+      const { engine, image } = this.#settings;
+      const resolution = await resolvePod(
+        engine.name,
+        image,
+        this.#options.releases,
+        this.#now(),
+        log
+      );
+      const settings = podSettingsKey(
+        { ...this.#settings, bootstrap: resolution.artifacts },
+        holder
+      );
       await this.#sweep(holder, settings, log);
-      handle = await this.#claim(run2, holder, settings, token, log);
+      handle = await this.#claim(run2, holder, settings, token, resolution, log);
     } catch (error3) {
       if (error3 instanceof ConcurrencyReached) throw error3;
       if (error3 instanceof PodUnavailable) throw new ProfileUnavailable(error3, this.#takeEvents());
@@ -24538,7 +26204,8 @@ var PodInference = class {
     const { shared } = handle;
     const ended3 = await this.#endRun(handle, log);
     const keep = handle.reuse === "task" && ended3 !== void 0;
-    await this.#leave(handle, keep, ended3 === void 0, log);
+    const billedStart = await billedFromHandle(this.#host, handle, this.#now());
+    await this.#leave(handle, keep, ended3 === void 0, log, billedStart);
     const now = this.#now();
     const usage = { ...tokens(ended3), pod: handle.podId, keptPod: keep ? handle.podId : void 0 };
     if (shared) {
@@ -24555,14 +26222,15 @@ var PodInference = class {
       };
     }
     const billed = await this.#billing([...this.#settings.pods, handle.podId], now, log);
-    const lifetime = handle.created === void 0 ? void 0 : podCost(new Date(handle.created), now, handle.pricePerSecond);
+    const from = billedStart ?? handle.created;
+    const lifetime = from === void 0 ? void 0 : podCost(new Date(from), now, handle.pricePerSecond);
     const podCosts = billed === void 0 && lifetime === void 0 ? void 0 : { ...billed };
     if (podCosts && lifetime !== void 0) {
       podCosts[handle.podId] = Number(Math.max(podCosts[handle.podId] ?? 0, lifetime).toFixed(6));
     }
     return {
       ...usage,
-      cost: podCost(new Date(handle.start), now, handle.pricePerSecond),
+      cost: podCost(new Date(Math.max(handle.start, billedStart ?? 0)), now, handle.pricePerSecond),
       podCosts,
       pods: this.#takeEvents()
     };
@@ -24603,7 +26271,7 @@ var PodInference = class {
    * lease holds it. A pod whose gateway did not answer takes no other task. When the registry
    * cannot be reached, the pod stays: it terminates itself once no run uses it.
    */
-  async #leave(handle, keep, unreachable, log) {
+  async #leave(handle, keep, unreachable, log, billed) {
     let left;
     try {
       left = await this.#registry.leave(handle.nonce, handle.holder, {
@@ -24620,7 +26288,7 @@ var PodInference = class {
       this.#events.push(
         await terminatePod(this.#host, handle.podId, left.pod?.pod ? left.pod : void 0, {
           reason: "no run uses it and no task keeps it",
-          life: lifeOf(handle, this.#options.gpu.name, this.#now()),
+          life: lifeOf(handle, this.#options.gpu.name, this.#now(), billed),
           log
         })
       );
@@ -24737,7 +26405,7 @@ var PodInference = class {
    * while another task creates it. A pod the task cannot join takes no other task, and the task
    * claims again, which creates another.
    */
-  async #claim(run2, holder, settings, token, log) {
+  async #claim(run2, holder, settings, token, resolution, log) {
     const { model, gpuType, image, reuse } = this.#settings;
     const capacity = podCapacity(this.#settings);
     const { batch, concurrency } = this.#settings;
@@ -24752,7 +26420,8 @@ var PodInference = class {
       organization: this.#options.repository.owner.toLowerCase(),
       ...capacity === void 0 ? {} : { capacity },
       ...batch === void 0 ? {} : { batch },
-      ...concurrency === void 0 ? {} : { key: concurrency.key }
+      ...concurrency === void 0 ? {} : { key: concurrency.key },
+      resolution: resolution.fields
     };
     let waiting = false;
     for (let claims = 0; claims < CLAIMS; claims++) {
@@ -24778,7 +26447,7 @@ var PodInference = class {
         continue;
       }
       if (claim.kind === "create") {
-        const handle = await this.#create(claim.pod, run2, holder, token, log);
+        const handle = await this.#create(claim.pod, run2, holder, token, resolution, log);
         if (handle) return handle;
         continue;
       }
@@ -24813,14 +26482,14 @@ var PodInference = class {
    * serves the model. Undefined when another task took the lease meanwhile: the pod is then
    * terminated, and the task claims again.
    */
-  async #create(record, run2, holder, token, log) {
+  async #create(record, run2, holder, token, resolution, log) {
     let launched;
     try {
-      launched = await this.#launch(record, log);
+      launched = await this.#launch(record, resolution, log);
     } catch (error3) {
       await this.#registry.end(
         record.nonce,
-        error3 instanceof PodUnavailable ? `${UNAVAILABLE}${error3.message}` : "the provider did not create it"
+        error3 instanceof PodUnavailable ? `${UNAVAILABLE}${error3.message}` : error3 instanceof FitRefused ? `${START_FAILED}${error3.message}` : "the provider did not create it"
       );
       throw error3;
     }
@@ -24853,11 +26522,12 @@ var PodInference = class {
         record.nonce,
         error3 instanceof PodStartFailure ? `${START_FAILED}${error3.message}` : error3 instanceof PodUnavailable ? `${UNAVAILABLE}${error3.message}` : `it did not serve ${this.#settings.model}`
       );
+      const from = await billedSince(this.#host, pod.id, life.from, this.#now()) ?? life.from;
       this.#events.push(
         await terminatePod(this.#host, pod.id, void 0, {
-          reason: `it did not serve ${this.#settings.model}; it cost about ${usd(podCost(pod.createdAt, this.#now(), listed))}`,
+          reason: `it did not serve ${this.#settings.model}; it cost about ${usd(podCost(new Date(from), this.#now(), life.pricePerSecond))}`,
           log,
-          life: { ...life, to: this.#now().getTime() },
+          life: { ...life, from, to: this.#now().getTime() },
           warning: true
         })
       );
@@ -24944,6 +26614,7 @@ var PodInference = class {
         await this.#reportFit(status2.fit, podId, own, log);
       }
     }
+    const billedFrom = own ? await billedSince(this.#host, podId, created, this.#now()) : void 0;
     const handle = {
       mode: "pod",
       podId,
@@ -24951,6 +26622,7 @@ var PodInference = class {
       url: target.url,
       start: startedBefore && !own ? this.#now().getTime() : created,
       created,
+      ...billedFrom !== void 0 ? { billedFrom } : {},
       pricePerSecond: running.pricePerSecond ?? record.pricePerSecond ?? await this.#host.price(
         this.#settings.gpuType,
         running.host ?? this.#hosts[0],
@@ -24976,22 +26648,31 @@ var PodInference = class {
   #wait(ms) {
     return (this.#options.wait ?? ((delay) => new Promise((done) => setTimeout(done, delay))))(ms);
   }
-  /** Creates the pod of a creation lease, named by its nonce, with its settings in its environment. */
-  async #launch(record, log) {
+  /**
+   * Creates the pod of a creation lease, named by its nonce, with its settings in its environment.
+   * Its command is the bootstrap, which downloads Node.js and the gateway, checks them, and runs
+   * the gateway, which starts the image's engine.
+   */
+  async #launch(record, resolution, log) {
     const { model, gpuType, image, engine, priority } = this.#settings;
     if (!image) throw new Error("No pod image is pinned; see docs/installation/runpod.md#pods.");
+    const bootstrap = podBootstrap(resolution.artifacts);
     const hosts = this.#hosts;
     const prices = await this.#prices(gpuType, hosts, priority);
     const vllm2 = onVllm(this.#settings) ? await this.#prepareVllm(log) : void 0;
     const fits = !vllm2 && fitsTheGpu(image);
-    const memory = fits ? await this.#host.memory?.(gpuType).catch(() => void 0) : void 0;
+    const gpuMemory = vllm2 || fits ? await this.#host.memory?.(gpuType).catch(() => void 0) : void 0;
+    const memory = fits ? gpuMemory : void 0;
+    if (vllm2 || fits) await this.#estimate(vllm2?.weightsBytes, gpuMemory, log);
     const cached = vllm2 ? vllm2.cached : fits ? await this.#cachedFit(log) : void 0;
     const owner = this.#options.repository.owner.toLowerCase();
     const now = this.#now();
     const pod = await this.#host.create({
       name: `codeman-${owner}-${record.settings}`.slice(0, 100),
       image,
+      command: bootstrap.command,
       env: {
+        ...bootstrap.env,
         ...Object.keys(this.#settings.ollama ?? {}).length > 0 ? { CODEMAN_OLLAMA: JSON.stringify(this.#settings.ollama) } : {},
         ...vllm2 ? { CODEMAN_VLLM: JSON.stringify(this.#settings.vllm) } : {},
         ...memory ? { CODEMAN_GPU_MEMORY_GB: String(memory) } : {},
@@ -25079,7 +26760,54 @@ var PodInference = class {
     log.info(
       `Hugging Face serves ${models.map(({ id }) => id).join(" and ")}: ${(weights / 1e9).toFixed(1)} GB of weights, so the pod gets ${diskGb} GB of disk.`
     );
-    return { diskGb, cached: await this.#cachedContext(log) };
+    return { diskGb, weightsBytes: weights, cached: await this.#cachedContext(log) };
+  }
+  /**
+   * Before creating a pod, at no cost: Codeman's estimate of the fit (the plan of 2026-11-23),
+   * from the model's `config.json` on Hugging Face for vLLM, or its manifest and GGUF header in
+   * Ollama's registry for Ollama, and the GPU's memory. Throws `FitRefused` when even its
+   * optimistic bound falls short; logs and goes on when it cannot tell, since the gateway's fit
+   * decides anyway.
+   */
+  async #estimate(vllmWeightsBytes, gpuMemoryGb, log) {
+    const { model } = this.#settings;
+    const skip = (why) => log.info(
+      `Codeman cannot estimate how ${model} fits the GPU (${why}); the pod's gateway fits it.`
+    );
+    if (!gpuMemoryGb) return skip("the provider does not give the GPU's memory");
+    let estimate;
+    if (vllmWeightsBytes !== void 0) {
+      const hub = this.#options.hub ?? new HuggingFace(this.#options.fetch);
+      if (!hub.config) return skip("no configuration of the model");
+      let config;
+      try {
+        config = await hub.config(model);
+      } catch (error3) {
+        return skip(`its config.json: ${error3 instanceof Error ? error3.message : error3}`);
+      }
+      estimate = estimateVllm({
+        config,
+        weightsBytes: vllmWeightsBytes,
+        gpuMemoryGb,
+        settings: this.#settings.vllm ?? {}
+      });
+    } else {
+      const registry = this.#options.ollamaModels ?? new OllamaRegistry(this.#options.fetch);
+      const facts = await registry.model(model);
+      if ("unknown" in facts) return skip(facts.unknown);
+      estimate = estimateOllama({
+        info: facts.info,
+        weightsBytes: facts.weightsBytes,
+        gpuMemoryGb,
+        variables: this.#settings.ollama ?? {}
+      });
+    }
+    if (!estimate) return skip("its architecture is not one the estimate counts");
+    if (!estimate.fits) throw new FitRefused(estimateMessage(model, gpuMemoryGb, estimate));
+    const gib2 = (bytes) => (bytes / 2 ** 30).toFixed(2);
+    log.info(
+      `By Codeman's estimate, ${model}'s K/V cache needs ${gib2(estimate.needed)} GiB for ${estimate.parallel} parallel request(s) of ${estimate.context} tokens, of the ${gib2(estimate.room)} GiB at most that the GPU leaves it; the pod's gateway fits it.`
+    );
   }
   /** The context that served a vLLM pod's settings before, from the cache of fits. */
   async #cachedContext(log) {
@@ -25264,14 +26992,25 @@ async function terminatePod(host, id, record, options) {
   } : void 0);
   return { pod: id, event: "terminated", reason: options.reason, ...life ? { life } : {} };
 }
-function lifeOf(handle, provider, now) {
+function lifeOf(handle, provider, now, billed) {
   return {
     record: handle.nonce,
     provider,
-    from: handle.created ?? handle.start,
+    from: billed ?? handle.created ?? handle.start,
     to: now.getTime(),
     pricePerSecond: handle.pricePerSecond
   };
+}
+async function billedSince(host, id, created, now) {
+  const since = await host.billedSince?.(id).catch(() => void 0);
+  const at = since?.getTime();
+  return at !== void 0 && Number.isFinite(at) && at >= created && at <= now.getTime() ? at : void 0;
+}
+async function billedFromHandle(host, handle, now) {
+  if (handle.billedFrom === void 0) return void 0;
+  const created = handle.created ?? handle.start;
+  const since = await billedSince(host, handle.podId, created, now);
+  return since === handle.billedFrom ? since : void 0;
 }
 function estimatedShare(handle, now, log) {
   const elapsed = podCost(new Date(handle.start), now, handle.pricePerSecond);
@@ -25318,11 +27057,12 @@ async function releasePod(host, registry, text, log, options) {
     return [];
   }
   const now = options.now?.() ?? /* @__PURE__ */ new Date();
+  const billed = await billedFromHandle(host, handle, now);
   return [
     await terminatePod(host, handle.podId, void 0, {
       reason: "the task does not go on to another run now, and no other task uses or keeps it",
       log,
-      life: lifeOf(handle, options.provider, now)
+      life: lifeOf(handle, options.provider, now, billed)
     })
   ];
 }
@@ -25597,7 +27337,13 @@ function inferenceProvider(runtime2, store) {
     image: podImage(choice.engine, runtime2.input("pod-image")),
     usage: runtime2.input("gateway-usage"),
     store,
-    fetch: E2E?.fetch
+    fetch: E2E?.fetch,
+    // The e2e jobs reach only fakes: without a fake of Ollama's registry, no estimate is tried.
+    ...E2E && !E2E.endpoints.ollamaRegistry ? {
+      ollamaModels: {
+        model: async () => ({ unknown: "the e2e suite fakes no Ollama registry" })
+      }
+    } : {}
   });
 }
 function openRouterProvider(runtime2, managementKey) {
@@ -25636,6 +27382,7 @@ function selfHosted(choice, repository, inputs) {
   if (!engine) throw new Error(`Unknown engine "${choice.engine}".`);
   const common = { model: choice.model, engine, pods: choice.pods };
   if (onPod(choice)) {
+    const store = inputs.store();
     return new PodInference(
       {
         ...common,
@@ -25654,10 +27401,16 @@ function selfHosted(choice, repository, inputs) {
         repository,
         gpu,
         account: inputs.account,
-        store: inputs.store(),
+        store,
         pool: choicePool(choice, repository.owner),
         ...inputs.fetch ? { fetch: inputs.fetch } : {},
-        ...inputs.hub ? { hub: inputs.hub } : {}
+        ...inputs.hub ? { hub: inputs.hub } : {},
+        ...inputs.ollamaModels ? { ollamaModels: inputs.ollamaModels } : {},
+        releases: inputs.releases ?? {
+          gateway: () => gatewayArtifact(),
+          osv: new Osv(inputs.fetch),
+          cache: new StoredReleaseChecks(store)
+        }
       }
     );
   }
@@ -25725,7 +27478,7 @@ function safeLine(line, dialect) {
   return outsideCode(line, transform);
 }
 function outsideCode(line, transform) {
-  let result = "";
+  let result2 = "";
   let index = 0;
   while (index < line.length) {
     const open3 = line.indexOf("`", index);
@@ -25733,16 +27486,16 @@ function outsideCode(line, transform) {
     const ticks = /^`+/.exec(line.slice(open3))?.[0] ?? "`";
     const close2 = line.indexOf(ticks, open3 + ticks.length);
     if (close2 === -1) break;
-    result += transform(line.slice(index, open3)) + line.slice(open3, close2 + ticks.length);
+    result2 += transform(line.slice(index, open3)) + line.slice(open3, close2 + ticks.length);
     index = close2 + ticks.length;
   }
-  return result + transform(line.slice(index));
+  return result2 + transform(line.slice(index));
 }
 function neutralize(text, dialect) {
   return breakMatches(
     text.replace(
       /!?\[([^\]]*)\]\(\s*<?([^)\s>]*)>?(?:\s+[^)]*)?\)/g,
-      (_, label, url) => url ? `${label} (${url})` : label
+      (_, label2, url) => url ? `${label2} (${url})` : label2
     ).replace(/[<[\]]/g, (char) => `\\${char}`),
     dialect.references
   );
@@ -26599,8 +28352,8 @@ var __awaiter = function(thisArg, _arguments, P, generator) {
         reject(e);
       }
     }
-    function step(result) {
-      result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected);
+    function step(result2) {
+      result2.done ? resolve(result2.value) : adopt(result2.value).then(fulfilled, rejected);
     }
     step((generator = generator.apply(thisArg, _arguments || [])).next());
   });
@@ -26692,12 +28445,12 @@ function addHook(state, kind, name, hook2) {
   }
   if (kind === "after") {
     hook2 = (method, options) => {
-      let result;
+      let result2;
       return Promise.resolve().then(method.bind(null, options)).then((result_) => {
-        result = result_;
-        return orig(result, options);
+        result2 = result_;
+        return orig(result2, options);
       }).then(() => {
-        return result;
+        return result2;
       });
     };
   }
@@ -26794,16 +28547,16 @@ function isPlainObject(value) {
   return typeof Ctor === "function" && Ctor instanceof Ctor && Function.prototype.call(Ctor) === Function.prototype.call(value);
 }
 function mergeDeep(defaults2, options) {
-  const result = Object.assign({}, defaults2);
+  const result2 = Object.assign({}, defaults2);
   Object.keys(options).forEach((key) => {
     if (isPlainObject(options[key])) {
-      if (!(key in defaults2)) Object.assign(result, { [key]: options[key] });
-      else result[key] = mergeDeep(defaults2[key], options[key]);
+      if (!(key in defaults2)) Object.assign(result2, { [key]: options[key] });
+      else result2[key] = mergeDeep(defaults2[key], options[key]);
     } else {
-      Object.assign(result, { [key]: options[key] });
+      Object.assign(result2, { [key]: options[key] });
     }
   });
-  return result;
+  return result2;
 }
 function removeUndefinedProperties(obj) {
   for (const key in obj) {
@@ -26852,20 +28605,20 @@ function removeNonChars(variableName) {
   return variableName.replace(/(?:^\W+)|(?:(?<!\W)\W+$)/g, "").split(/,/);
 }
 function extractUrlVariableNames(url) {
-  const matches2 = url.match(urlVariableRegex);
-  if (!matches2) {
+  const matches3 = url.match(urlVariableRegex);
+  if (!matches3) {
     return [];
   }
-  return matches2.map(removeNonChars).reduce((a, b) => a.concat(b), []);
+  return matches3.map(removeNonChars).reduce((a, b) => a.concat(b), []);
 }
 function omit2(object, keysToOmit) {
-  const result = { __proto__: null };
+  const result2 = { __proto__: null };
   for (const key of Object.keys(object)) {
     if (keysToOmit.indexOf(key) === -1) {
-      result[key] = object[key];
+      result2[key] = object[key];
     }
   }
-  return result;
+  return result2;
 }
 function encodeReserved(str) {
   return str.split(/(%[0-9A-Fa-f]{2})/g).map(function(part) {
@@ -26895,28 +28648,28 @@ function isKeyOperator(operator) {
   return operator === ";" || operator === "&" || operator === "?";
 }
 function getValues(context3, operator, key, modifier) {
-  var value = context3[key], result = [];
+  var value = context3[key], result2 = [];
   if (isDefined(value) && value !== "") {
     if (typeof value === "string" || typeof value === "number" || typeof value === "bigint" || typeof value === "boolean") {
       value = value.toString();
       if (modifier && modifier !== "*") {
         value = value.substring(0, parseInt(modifier, 10));
       }
-      result.push(
+      result2.push(
         encodeValue(operator, value, isKeyOperator(operator) ? key : "")
       );
     } else {
       if (modifier === "*") {
         if (Array.isArray(value)) {
           value.filter(isDefined).forEach(function(value2) {
-            result.push(
+            result2.push(
               encodeValue(operator, value2, isKeyOperator(operator) ? key : "")
             );
           });
         } else {
           Object.keys(value).forEach(function(k) {
             if (isDefined(value[k])) {
-              result.push(encodeValue(operator, value[k], k));
+              result2.push(encodeValue(operator, value[k], k));
             }
           });
         }
@@ -26935,24 +28688,24 @@ function getValues(context3, operator, key, modifier) {
           });
         }
         if (isKeyOperator(operator)) {
-          result.push(encodeUnreserved(key) + "=" + tmp.join(","));
+          result2.push(encodeUnreserved(key) + "=" + tmp.join(","));
         } else if (tmp.length !== 0) {
-          result.push(tmp.join(","));
+          result2.push(tmp.join(","));
         }
       }
     }
   } else {
     if (operator === ";") {
       if (isDefined(value)) {
-        result.push(encodeUnreserved(key));
+        result2.push(encodeUnreserved(key));
       }
     } else if (value === "" && (operator === "&" || operator === "?")) {
-      result.push(encodeUnreserved(key) + "=");
+      result2.push(encodeUnreserved(key) + "=");
     } else if (value === "") {
-      result.push("");
+      result2.push("");
     }
   }
-  return result;
+  return result2;
 }
 function parseUrl(template) {
   return {
@@ -27249,14 +29002,14 @@ function parseParameters(header2, type, index, len, stopFlags) {
   return { type, index, parameters };
 }
 function unescapeQuotedPairs(str, start, end) {
-  let result = "";
+  let result2 = "";
   for (let index = start; index < end; index++) {
     if (str.charCodeAt(index) === BSLASH) {
-      result += str.slice(start, index);
+      result2 += str.slice(start, index);
       start = ++index;
     }
   }
-  return result + str.slice(start, end);
+  return result2 + str.slice(start, end);
 }
 
 // node_modules/json-with-bigint/json-with-bigint.js
@@ -27481,12 +29234,12 @@ var isContextSourceSupported = () => {
     return featureCache.get(parseFingerprint);
   }
   try {
-    const result = JSON.parse(
+    const result2 = JSON.parse(
       "1",
       (_, __, context3) => !!context3?.source && context3.source === "1"
     );
-    featureCache.set(parseFingerprint, result);
-    return result;
+    featureCache.set(parseFingerprint, result2);
+    return result2;
   } catch {
     featureCache.set(parseFingerprint, false);
     return false;
@@ -27712,8 +29465,8 @@ async function fetchWrapper(requestOptions) {
     data: ""
   };
   if ("deprecation" in responseHeaders) {
-    const matches2 = responseHeaders.link && responseHeaders.link.match(/<([^<>]+)>; rel="deprecation"/);
-    const deprecationLink = matches2 && matches2.pop();
+    const matches3 = responseHeaders.link && responseHeaders.link.match(/<([^<>]+)>; rel="deprecation"/);
+    const deprecationLink = matches3 && matches3.pop();
     log.warn(
       `[@octokit/request] "${requestOptions.method} ${requestOptions.url}" is deprecated. It is scheduled to be removed on ${responseHeaders.sunset}${deprecationLink ? `. See ${deprecationLink}` : ""}`
     );
@@ -27871,16 +29624,16 @@ function graphql(request2, query, options) {
   const parsedOptions = typeof query === "string" ? Object.assign({ query }, options) : query;
   const requestOptions = Object.keys(
     parsedOptions
-  ).reduce((result, key) => {
+  ).reduce((result2, key) => {
     if (NON_VARIABLE_OPTIONS.includes(key)) {
-      result[key] = parsedOptions[key];
-      return result;
+      result2[key] = parsedOptions[key];
+      return result2;
     }
-    if (!result.variables) {
-      result.variables = {};
+    if (!result2.variables) {
+      result2.variables = {};
     }
-    result.variables[key] = parsedOptions[key];
-    return result;
+    result2.variables[key] = parsedOptions[key];
+    return result2;
   }, {});
   const baseUrl2 = parsedOptions.baseUrl || request2.endpoint.DEFAULTS.baseUrl;
   if (GHES_V3_SUFFIX_REGEX.test(baseUrl2)) {
@@ -30629,8 +32382,8 @@ function paginate(octokit2, route, parameters, mapFn) {
   );
 }
 function gather(octokit2, results, iterator2, mapFn) {
-  return iterator2.next().then((result) => {
-    if (result.done) {
+  return iterator2.next().then((result2) => {
+    if (result2.done) {
       return results;
     }
     let earlyExit = false;
@@ -30638,7 +32391,7 @@ function gather(octokit2, results, iterator2, mapFn) {
       earlyExit = true;
     }
     results = results.concat(
-      mapFn ? mapFn(result.value, done) : result.value.data
+      mapFn ? mapFn(result2.value, done) : result2.value.data
     );
     if (earlyExit) {
       return results;
@@ -30774,7 +32527,7 @@ function toReviewComment(comment) {
   };
 }
 function labelNames(labels) {
-  return labels.map((label) => typeof label === "string" ? label : label.name ?? "").filter((name) => name !== "");
+  return labels.map((label2) => typeof label2 === "string" ? label2 : label2.name ?? "").filter((name) => name !== "");
 }
 var MAINTAINER_PERMISSIONS = /* @__PURE__ */ new Set(["admin", "write"]);
 var GitHubPlatform = class {
@@ -30805,17 +32558,17 @@ var GitHubPlatform = class {
   }
   async currentLabels(issue2) {
     const { data } = await this.#octokit.rest.issues.get({ ...this.#scope, issue_number: issue2 });
-    return data.labels.map((label) => typeof label === "string" ? label : label.name ?? "");
+    return data.labels.map((label2) => typeof label2 === "string" ? label2 : label2.name ?? "");
   }
   async setState(issue2, labels, state) {
     for (const other of STATES) {
-      const label = stateLabel(other);
-      if (other !== state && labels.includes(label)) {
+      const label2 = stateLabel(other);
+      if (other !== state && labels.includes(label2)) {
         try {
           await this.#octokit.rest.issues.removeLabel({
             ...this.#scope,
             issue_number: issue2,
-            name: label
+            name: label2
           });
         } catch (error3) {
           if (status(error3) !== 404) throw error3;
@@ -31202,15 +32955,15 @@ function runSudo(name, args, user, input) {
   });
 }
 function checkedSudo(name, args, user, input) {
-  const result = runSudo(name, args, user, input);
-  if (result.status !== 0) {
-    throw new Error(`sudo ${name} failed: ${truncate((result.stderr ?? "").trim(), 500)}`);
+  const result2 = runSudo(name, args, user, input);
+  if (result2.status !== 0) {
+    throw new Error(`sudo ${name} failed: ${truncate((result2.stderr ?? "").trim(), 500)}`);
   }
-  return result.stdout;
+  return result2.stdout;
 }
 function sudoCapture(name, args) {
-  const result = runSudo(name, args);
-  return { status: result.status, stdout: result.stdout ?? "" };
+  const result2 = runSudo(name, args);
+  return { status: result2.status, stdout: result2.stdout ?? "" };
 }
 function sudoAs(user, name, args, input) {
   return checkedSudo(name, args, user, input);
@@ -31330,8 +33083,8 @@ launcher=$1; shift
 ${resolve("setpriv")} --reuid=${AGENT_USER} --regid=${AGENT_USER} --init-groups --no-new-privs   --inh-caps=-all --bounding-set=-all -- ${resolve("bash")} -c "$launcher" ${AGENT_USER} "$@"
 exit $?`;
 }
-function jailArgs(command, cwd, launcherScript, resolve = program) {
-  const keep = Object.keys(command.env);
+function jailArgs(command2, cwd, launcherScript, resolve = program) {
+  const keep = Object.keys(command2.env);
   return [
     "-n",
     `--preserve-env=${keep.join(",")}`,
@@ -31352,18 +33105,18 @@ function jailArgs(command, cwd, launcherScript, resolve = program) {
     launcherScript,
     keep.join(" "),
     cwd,
-    command.file,
-    ...command.args
+    command2.file,
+    ...command2.args
   ];
 }
-async function runAsAgent(command, cwd, timeoutMs, log, stop) {
+async function runAsAgent(command2, cwd, timeoutMs, log, stop) {
   const args = jailArgs(
-    command,
+    command2,
     cwd,
     launcher(agentEnv(agentPath(process.env.PATH ?? "", homedir())))
   );
   const child = spawn(program("sudo"), args, {
-    env: { PATH: process.env.PATH ?? SAFE_PATH, ...command.env },
+    env: { PATH: process.env.PATH ?? SAFE_PATH, ...command2.env },
     stdio: ["ignore", "pipe", "pipe"]
   });
   for (const stream of [child.stdout, child.stderr]) {
@@ -31550,13 +33303,13 @@ function liveReadCommand(source, maxBytes) {
   return ["/bin/sh", "-c", LIVE_READ_SCRIPT, "sh", source, String(maxBytes + 1)];
 }
 function copyLiveAgentFile(source, target, maxBytes) {
-  const result = spawnSync2(
+  const result2 = spawnSync2(
     program("sudo"),
     ["-n", "-u", AGENT_USER, "--", ...liveReadCommand(source, maxBytes)],
     { timeout: 3e4, maxBuffer: maxBytes + 1024 }
   );
-  if (result.status !== 0 || !result.stdout || result.stdout.length > maxBytes) return false;
-  writeFileSync(target, result.stdout);
+  if (result2.status !== 0 || !result2.stdout || result2.stdout.length > maxBytes) return false;
+  writeFileSync(target, result2.stdout);
   return true;
 }
 function copySealedAgentFile(source, target, maxBytes) {
@@ -31611,7 +33364,7 @@ function deriveKey(secret, salt) {
 
 // src/harness/opencode.ts
 import { spawnSync as spawnSync3 } from "node:child_process";
-import { createHash as createHash3 } from "node:crypto";
+import { createHash as createHash5 } from "node:crypto";
 import { chmodSync, mkdirSync as mkdirSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import { join as join4 } from "node:path";
 var OPENCODE_VERSION = "1.18.32";
@@ -31679,7 +33432,7 @@ async function downloadOpenCode(pkg, fetchFn) {
   const response = await fetchFn(url);
   if (!response.ok) throw new Error(`Downloading ${url} failed with ${response.status}.`);
   const tarball = Buffer.from(await response.arrayBuffer());
-  const integrity = `sha512-${createHash3("sha512").update(tarball).digest("base64")}`;
+  const integrity = `sha512-${createHash5("sha512").update(tarball).digest("base64")}`;
   if (integrity !== pkg.integrity) {
     throw new Error(`${pkg.name}@${OPENCODE_VERSION} does not match its pinned integrity.`);
   }
@@ -32250,9 +34003,9 @@ function parseDecision(item, index, id, limits, cuts) {
     if (!isObject(option) || option.key !== key) {
       return { ok: false, error: `${where}.options[${index2}].key must be "${key}".` };
     }
-    const label = string(option.label, `${where}.options[${index2}].label`, limits.label, cuts);
-    if (!label.ok) return label;
-    options.push({ key, label: label.value });
+    const label2 = string(option.label, `${where}.options[${index2}].label`, limits.label, cuts);
+    if (!label2.ok) return label2;
+    options.push({ key, label: label2.value });
   }
   if (!options.some((option) => option.key === item.recommendation)) {
     return { ok: false, error: `${where}.recommendation must be one of the option keys.` };
@@ -33057,7 +34810,7 @@ function ignoredPaths(rules, paths) {
     const init = spawnSync4("git", ["init", "-q", dir], { env, encoding: "utf8" });
     if (init.status !== 0) throw new Error(`git init failed: ${init.stderr.trim()}`);
     writeFileSync3(join5(dir, ".git", "info", "exclude"), rules);
-    const result = spawnSync4(
+    const result2 = spawnSync4(
       "git",
       [
         "-c",
@@ -33080,10 +34833,10 @@ function ignoredPaths(rules, paths) {
         maxBuffer: 64 * 1024 * 1024
       }
     );
-    if (result.status !== 0 && result.status !== 1) {
-      throw new Error(`git check-ignore failed: ${result.stderr.trim()}`);
+    if (result2.status !== 0 && result2.status !== 1) {
+      throw new Error(`git check-ignore failed: ${result2.stderr.trim()}`);
     }
-    const fields = result.stdout.split("\0");
+    const fields = result2.stdout.split("\0");
     const ignored = /* @__PURE__ */ new Set();
     for (let index = 0; index + 3 < fields.length; index += 4) {
       const pattern = fields[index + 2] ?? "";
@@ -33161,16 +34914,16 @@ function applyCommands(record, sources) {
   const decisions = record.decisions.map((decision) => ({ ...decision }));
   const errors = [];
   let processedCommentId = record.processedCommentId;
-  for (const { commentId, author, command } of sources) {
+  for (const { commentId, author, command: command2 } of sources) {
     processedCommentId = Math.max(processedCommentId, commentId);
-    if (command.kind === "invalid") {
-      errors.push({ text: command.text, problem: command.problem });
-    } else if (command.kind === "approve") {
+    if (command2.kind === "invalid") {
+      errors.push({ text: command2.text, problem: command2.problem });
+    } else if (command2.kind === "approve") {
       for (const decision of decisions) {
         decision.answer ??= { option: decision.recommendation, by: author };
       }
-    } else if (command.kind === "decide") {
-      for (const [id, option] of command.answers) {
+    } else if (command2.kind === "decide") {
+      for (const [id, option] of command2.answers) {
         const decision = decisions.find((candidate) => candidate.id === id);
         if (!decision) {
           errors.push({ problem: { kind: "no-decision", id } });
@@ -33180,12 +34933,12 @@ function applyCommands(record, sources) {
           decision.answer = { option, by: author };
         }
       }
-    } else if (command.kind === "answer") {
-      const decision = decisions.find((candidate) => candidate.id === command.id);
-      if (decision) decision.answer = { text: command.text, by: author };
-      else errors.push({ problem: { kind: "no-decision", id: command.id } });
-    } else if (command.kind === "fix" || command.kind === "continue") {
-      errors.push({ problem: { kind: "awaits-decisions", command: command.kind } });
+    } else if (command2.kind === "answer") {
+      const decision = decisions.find((candidate) => candidate.id === command2.id);
+      if (decision) decision.answer = { text: command2.text, by: author };
+      else errors.push({ problem: { kind: "no-decision", id: command2.id } });
+    } else if (command2.kind === "fix" || command2.kind === "continue") {
+      errors.push({ problem: { kind: "awaits-decisions", command: command2.kind } });
     }
   }
   return { record: { ...record, decisions, processedCommentId }, errors };
@@ -33359,7 +35112,7 @@ Start no new work, and run no long command, such as the whole test suite.`;
 }
 function quoter() {
   const nonce = randomBytes5(6).toString("hex");
-  return (label, text) => [`<<<${label} ${nonce}`, text.trim() || "(empty)", `>>>${label} ${nonce}`].join("\n");
+  return (label2, text) => [`<<<${label2} ${nonce}`, text.trim() || "(empty)", `>>>${label2} ${nonce}`].join("\n");
 }
 function issueSection(task, quote) {
   const comments = task.comments.length === 0 ? "(none)" : task.comments.map((comment) => quote(`COMMENT by ${comment.author}`, comment.body)).join("\n\n");
@@ -33478,7 +35231,7 @@ function routePrompt(task, conventions) {
   const limits = outputLimits(task.settings);
   const quote = quoter();
   const trigger = task.route?.trigger ?? "decisions";
-  const requests = requestsSection(task, quote, "route review alone and say so in its brief");
+  const requests2 = requestsSection(task, quote, "route review alone and say so in its brief");
   const handoff = task.record?.handoff ? `
 ## Notes from the ${task.record.handoff.stage} stage
 
@@ -33507,7 +35260,7 @@ ${TRIGGERS[trigger]}
 
 ## Steps
 
-1. Read the plan, the issue, the maintainer comments${requests ? ", the requests" : ""} and the notes below, if any, and what earlier runs did: the plan's progress notes, \`git log\` and \`git diff origin/${task.defaultBranch}...HEAD\`${task.history?.length ? ", and the reports under Earlier runs" : ""}.
+1. Read the plan, the issue, the maintainer comments${requests2 ? ", the requests" : ""} and the notes below, if any, and what earlier runs did: the plan's progress notes, \`git log\` and \`git diff origin/${task.defaultBranch}...HEAD\`${task.history?.length ? ", and the reports under Earlier runs" : ""}.
 2. Decide, for each routed stage before review, whether it should run now. Each task has its own needs: none of them is required. Leave a stage out when it would have nothing to do, or nothing worth its cost, and say why. Stages that run keep the order above, and review always ends the route.
 3. For each stage that runs, write a brief for its agent: what to focus on, and what earlier work it builds on. It does not repeat the plan.
 4. If no stage before review should run (the request is already done, it contradicts the plan, or it needs a decision the plan does not cover), the route is review alone. Say why in its brief, and what the maintainers could do, such as \`/codeman replan <what to change>\` or a \`/codeman fix\` with more detail: review decides.
@@ -33533,7 +35286,7 @@ ${TRIGGERS[trigger]}
 6. Write \`summary\`, the briefs and the reasons in ${languageName(tag)} (\`${tag}\`): Codeman shows them to the maintainers.
 
 ${issueSection(task, quote)}
-${historySection(task, quote)}${handoff}${requests}`;
+${historySection(task, quote)}${handoff}${requests2}`;
 }
 var STAGE_WORK = {
   web: () => `Your stage is **web**: record in \`docs/web/\` the documentation of the third-party services, APIs and tools the task relies on, following the rules for third-party documentation you received. You change nothing else, except the plan's progress notes: every other change is discarded.
@@ -33610,7 +35363,7 @@ function stagePrompt(task, minutes, conventions) {
   const stage = task.stage ?? "code";
   const quote = quoter();
   const rules = task.ignore ?? defaultIgnore(conventions.workflows);
-  const requests = requestsSection(task, quote);
+  const requests2 = requestsSection(task, quote);
   const handoff = task.record?.handoff ? `
 ## Notes from the ${task.record.handoff.stage} stage
 
@@ -33653,7 +35406,7 @@ ${rules.trim()}
 
 ## Your stage
 
-Read the plan, then the issue, the maintainer comments${requests ? ", the requests" : ""}, the notes from the previous stage and the routing agent's brief below, if any. Check what earlier runs did: the plan's progress notes, \`git log\`${task.history?.length ? " and the reports under Earlier runs" : ""}.${requests ? " Address every request and review comment under Requests first: they refine the approved plan." : ""}
+Read the plan, then the issue, the maintainer comments${requests2 ? ", the requests" : ""}, the notes from the previous stage and the routing agent's brief below, if any. Check what earlier runs did: the plan's progress notes, \`git log\`${task.history?.length ? " and the reports under Earlier runs" : ""}.${requests2 ? " Address every request and review comment under Requests first: they refine the approved plan." : ""}
 
 ${STAGE_WORK[stage](task, conventions)}
 
@@ -33664,7 +35417,7 @@ ${stage === "review" ? "" : `${PROGRESS_RULE}
 ${outputShape(stage, outputLimits(task.settings), conventions.workflows)}
 
 ${issueSection(task, quote)}
-${historySection(task, quote)}${handoff}${briefSection}${accepted}${requests}${workflowResultsSection(task)}`;
+${historySection(task, quote)}${handoff}${briefSection}${accepted}${requests2}${workflowResultsSection(task)}`;
 }
 function historySection(task, quote) {
   if (!task.history?.length) return "";
@@ -33692,7 +35445,7 @@ ${runs.join("\n")}
 }
 function requestsSection(task, quote, uncovered = "report `blocked` and explain what must be decided") {
   if (task.requests.length === 0 && task.reviews.length === 0) return "";
-  const requests = task.requests.map(
+  const requests2 = task.requests.map(
     (request2) => quote(`${request2.kind.toUpperCase()} by ${request2.author}`, request2.text || "(no text)")
   );
   const reviews = task.reviews.map((review) => {
@@ -33711,7 +35464,7 @@ function requestsSection(task, quote, uncovered = "report `blocked` and explain 
 
 Maintainers asked for the following since the last run, on the issue or on the pull request. They refine the approved plan: if one needs a decision the plan does not cover, ${uncovered}.
 
-${[...requests, ...reviews].join("\n\n")}
+${[...requests2, ...reviews].join("\n\n")}
 `;
 }
 
@@ -33737,11 +35490,11 @@ function ruleBlocks(markdown) {
 }
 function trigrams(text) {
   const words = text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
-  const result = /* @__PURE__ */ new Set();
+  const result2 = /* @__PURE__ */ new Set();
   for (let index = 0; index + 2 < words.length; index++) {
-    result.add(`${words[index]} ${words[index + 1]} ${words[index + 2]}`);
+    result2.add(`${words[index]} ${words[index + 1]} ${words[index + 2]}`);
   }
-  return result;
+  return result2;
 }
 function coverage(block2, text) {
   const wanted = trigrams(block2);
@@ -34349,8 +36102,8 @@ function parseCommands(body) {
     if (open3) commands.push(finishText(open3));
     open3 = void 0;
   };
-  for (const { raw, command } of scan(body)) {
-    if (command) {
+  for (const { raw, command: command2 } of scan(body)) {
+    if (command2) {
       close2();
       const parsed = parseLine(raw.trim());
       if ("lines" in parsed) open3 = parsed;
@@ -34364,8 +36117,8 @@ function parseCommands(body) {
 }
 function descriptionCommands(body) {
   const lines = scan(body);
-  const commands = lines.flatMap(({ raw, command }) => {
-    if (!command) return [];
+  const commands = lines.flatMap(({ raw, command: command2 }) => {
+    if (!command2) return [];
     const line = raw.trim();
     const [, name = "", ...args] = line.split(/\s+/);
     switch (name.toLowerCase()) {
@@ -34377,7 +36130,7 @@ function descriptionCommands(body) {
         return [invalidLine(line)({ kind: "not-in-description" })];
     }
   });
-  const text = lines.filter(({ command }) => !command).map(({ raw }) => raw).join("\n").trim();
+  const text = lines.filter(({ command: command2 }) => !command2).map(({ raw }) => raw).join("\n").trim();
   return { commands, text };
 }
 function scan(body) {
@@ -34386,8 +36139,8 @@ function scan(body) {
     const line = raw.trim();
     const fence = /^(```|~~~)/.test(line);
     if (fence) fenced = !fenced;
-    const command = !fenced && !fence && line.split(/\s+/)[0]?.toLowerCase() === "/codeman";
-    return { raw, command };
+    const command2 = !fenced && !fence && line.split(/\s+/)[0]?.toLowerCase() === "/codeman";
+    return { raw, command: command2 };
   });
 }
 function invalidLine(line) {
@@ -34531,28 +36284,28 @@ function authorizedReviews(reviews, comments, maintainers, afterId) {
 function reviewCommands(reviews) {
   return reviews.flatMap((review) => {
     const commands = parseCommands(review.body);
-    const implicit = review.verdict === "changes-requested" && !commands.some((command) => command.kind === "fix") ? [{ kind: "fix", text: review.body.trim() }] : [];
-    return [...commands, ...implicit].map((command) => ({
+    const implicit = review.verdict === "changes-requested" && !commands.some((command2) => command2.kind === "fix") ? [{ kind: "fix", text: review.body.trim() }] : [];
+    return [...commands, ...implicit].map((command2) => ({
       commentId: 0,
       author: review.author,
-      command
+      command: command2
     }));
   });
 }
 function commandsAfter(comments, afterId) {
   return comments.filter((comment) => comment.id > afterId).sort((a, b) => a.id - b.id).flatMap(
-    (comment) => parseCommands(comment.body).map((command) => ({
+    (comment) => parseCommands(comment.body).map((command2) => ({
       commentId: comment.id,
       author: comment.author,
-      command
+      command: command2
     }))
   );
 }
 function taskSettings(comments, description = []) {
   const settings = {};
-  const commands = [...description, ...commandsAfter(comments, 0).map(({ command }) => command)];
-  for (const command of commands) {
-    if (command.kind === "set") Object.assign(settings, { [command.name]: command.value });
+  const commands = [...description, ...commandsAfter(comments, 0).map(({ command: command2 }) => command2)];
+  for (const command2 of commands) {
+    if (command2.kind === "set") Object.assign(settings, { [command2.name]: command2.value });
   }
   return settings;
 }
@@ -34572,11 +36325,11 @@ var RESUMABLE = /* @__PURE__ */ new Set([
 ]);
 function acceptRequest(comments, afterId) {
   return comments.filter(
-    (comment) => comment.id > afterId && parseCommands(comment.body).some((command) => command.kind === "accept-workflows")
+    (comment) => comment.id > afterId && parseCommands(comment.body).some((command2) => command2.kind === "accept-workflows")
   ).sort((a, b) => a.id - b.id).at(-1);
 }
 function pendingWork(sources, state) {
-  const kinds = new Set(sources.map(({ command }) => command.kind));
+  const kinds = new Set(sources.map(({ command: command2 }) => command2.kind));
   if (kinds.has("replan")) return "replan";
   if (RESUMABLE.has(state) && (kinds.has("fix") || kinds.has("continue"))) return "resume";
   if (DECIDING.has(state) && sources.some((source) => source.commentId > 0)) return "record";
@@ -34584,11 +36337,11 @@ function pendingWork(sources, state) {
 }
 function resumeRequests(sources) {
   return sources.flatMap(
-    ({ author, command }) => command.kind === "fix" || command.kind === "continue" ? [{ kind: command.kind, author, text: command.text }] : []
+    ({ author, command: command2 }) => command2.kind === "fix" || command2.kind === "continue" ? [{ kind: command2.kind, author, text: command2.text }] : []
   );
 }
 function replanRequests(sources) {
-  return sources.flatMap(({ command }) => command.kind === "replan" ? [command.text] : []);
+  return sources.flatMap(({ command: command2 }) => command2.kind === "replan" ? [command2.text] : []);
 }
 function chooseTask(candidates) {
   const sorted = [...candidates].sort((a, b) => a.number - b.number);
@@ -34830,8 +36583,8 @@ async function applyStage(task, io) {
     outputLimits(task.settings),
     io.conventions.workflows
   ) : { ok: false, error: "The agent did not write output.json." };
-  const fresh = task.resume || task.record.stage !== stage;
-  const runs = (fresh ? 0 : task.record.runs ?? 0) + 1;
+  const fresh2 = task.resume || task.record.stage !== stage;
+  const runs = (fresh2 ? 0 : task.record.runs ?? 0) + 1;
   const maxRuns = task.settings["max-runs"];
   const reached = (count3) => count3 >= maxRuns;
   const requested = task.requests.length > 0;
@@ -35087,7 +36840,7 @@ async function movedTo(io, branch, baseSha, error3) {
 async function applyRoute(task, io) {
   if (!task.record) return blocked(io, task, "The task has no record of its plan.");
   const t = say(task);
-  const requests = task.requests.length > 0 || task.reviews.length > 0 ? {
+  const requests2 = task.requests.length > 0 || task.reviews.length > 0 ? {
     after: {
       commentId: task.record.processedCommentId,
       reviewId: task.record.processedReviewId ?? 0
@@ -35108,7 +36861,7 @@ async function applyRoute(task, io) {
     const stages2 = stagesFrom(task.route?.fallback ?? "design");
     io.runtime.warning(oneLine(error3));
     return start(
-      { stages: stages2.map((stage) => ({ stage, brief: "" })), skipped: [], requests },
+      { stages: stages2.map((stage) => ({ stage, brief: "" })), skipped: [], requests: requests2 },
       {
         outcome: "failed",
         message: t.routeFallback(stages2.map((stage) => t.stage(stage)).join(", ")),
@@ -35133,7 +36886,7 @@ async function applyRoute(task, io) {
   }));
   const stages = value.route.map(({ stage, brief }) => ({ stage, brief: truncate(brief, 2e3) }));
   return start(
-    { stages, skipped, requests },
+    { stages, skipped, requests: requests2 },
     {
       outcome: "done",
       message: t.routeChosen(stages.map(({ stage }) => t.stage(stage)).join(", ")),
@@ -35930,13 +37683,13 @@ async function select(services) {
       await refuse(task);
       continue;
     }
-    const result = stateOf(task.labels);
-    if (!result.ok) {
-      runtime2.warning(`${line}: ${result.error}`);
+    const result2 = stateOf(task.labels);
+    if (!result2.ok) {
+      runtime2.warning(`${line}: ${result2.error}`);
       continue;
     }
-    const candidate = { number: task.number, state: result.state };
-    if (result.state !== "new" && result.state !== "planning") {
+    const candidate = { number: task.number, state: result2.state };
+    if (result2.state !== "new" && result2.state !== "planning") {
       const talk = await conversation(task.number);
       const record = talk.status?.record;
       if (record) {
@@ -35946,13 +37699,13 @@ async function select(services) {
           talk.maintainers,
           record.processedReviewId ?? 0
         );
-        candidate.pending = pendingWork(newCommands(talk, reviews), result.state);
+        candidate.pending = pendingWork(newCommands(talk, reviews), result2.state);
         candidate.planned = pendingDecisions(record).length === 0;
         candidate.accept = acceptRequest(
           authorizedComments(talk.comments, talk.maintainers),
           record.acceptedCommentId ?? 0
         ) !== void 0;
-        if (result.state === "awaiting-workflow" && record.awaiting?.length) {
+        if (result2.state === "awaiting-workflow" && record.awaiting?.length) {
           const head = await repo.branchSha(record.branch);
           const runs = head ? finishedRuns(await ci.runsForCommit(head), record.awaiting) : void 0;
           if (runs) workflowRuns.set(task.number, runs);
@@ -35961,7 +37714,7 @@ async function select(services) {
       }
     }
     candidates.push(candidate);
-    runtime2.info(`${line} [${result.state}]${candidate.pending ? ` (${candidate.pending})` : ""}`);
+    runtime2.info(`${line} [${result2.state}]${candidate.pending ? ` (${candidate.pending})` : ""}`);
   }
   const inherited = [inputs, fileSettings.value, shared.value];
   const cap = tasksPerRun(inherited);
@@ -36112,12 +37865,12 @@ async function select(services) {
       ),
       ...reviewCommands(windowReviews)
     ] : [];
-    const requests = [...resumeRequests(windowSources), ...newRequests];
+    const requests2 = [...resumeRequests(windowSources), ...newRequests];
     const problems = [
       ...description.commands,
-      ...sources.map(({ command }) => command)
+      ...sources.map(({ command: command2 }) => command2)
     ].flatMap(
-      (command) => command.kind === "invalid" ? [{ text: command.text, problem: command.problem }] : []
+      (command2) => command2.kind === "invalid" ? [{ text: command2.text, problem: command2.problem }] : []
     );
     const fromState = stateOf(task.labels);
     if (!fromState.ok) throw new Error(fromState.error);
@@ -36150,7 +37903,7 @@ async function select(services) {
       url: task.url,
       comments: maintainerComments,
       reviews: [...windowReviews, ...reviews],
-      requests,
+      requests: requests2,
       resume,
       accept: choice.action === "accept" ? acceptRequest(maintainerComments, record?.acceptedCommentId ?? 0) : void 0,
       workflowRuns: action === "implement" ? workflowRuns.get(task.number) : void 0,
@@ -36262,9 +38015,9 @@ async function select(services) {
     const { task, talk, record } = work;
     const profile2 = waiting.profile ?? "";
     const { ready: ready2, repositories, busy, unavailableUntil } = waiting;
-    const named = waiting.profile === void 0 ? "the top-level settings" : `profile \`${profile2}\``;
+    const named2 = waiting.profile === void 0 ? "the top-level settings" : `profile \`${profile2}\``;
     runtime2.info(
-      unavailableUntil ? `#${task.number} ${oneLine(task.title)}: waits; the provider of ${named} had no room for a pod, and is set aside until ${unavailableUntil.toISOString()}.` : busy === void 0 ? `#${task.number} ${oneLine(task.title)}: waits for ${waiting.tasks} tasks ready for profile \`${profile2}\`; ${ready2} ${ready2 === 1 ? "is" : "are"}, in ${repositories} ${repositories === 1 ? "repository" : "repositories"}.` : `#${task.number} ${oneLine(task.title)}: waits for a seat; the ${busy} instance(s) of ${named} that its \`concurrency\` allows are busy.`
+      unavailableUntil ? `#${task.number} ${oneLine(task.title)}: waits; the provider of ${named2} had no room for a pod, and is set aside until ${unavailableUntil.toISOString()}.` : busy === void 0 ? `#${task.number} ${oneLine(task.title)}: waits for ${waiting.tasks} tasks ready for profile \`${profile2}\`; ${ready2} ${ready2 === 1 ? "is" : "are"}, in ${repositories} ${repositories === 1 ? "repository" : "repositories"}.` : `#${task.number} ${oneLine(task.title)}: waits for a seat; the ${busy} instance(s) of ${named2} that its \`concurrency\` allows are busy.`
     );
     if (waiting.others) {
       runtime2.info(
@@ -36375,9 +38128,9 @@ function taskOutputs(task, run2, pool2) {
     "ledger-run": task.needsAgent ? run2 : ""
   };
 }
-function routing(labels, record, requests) {
+function routing(labels, record, requests2) {
   const state = fromStateOf(labels);
-  if (requests.some((request2) => request2.kind === "fix")) {
+  if (requests2.some((request2) => request2.kind === "fix")) {
     return { trigger: "fix", fallback: "code" };
   }
   if (record?.route?.stages.length === 0) {
@@ -36398,8 +38151,8 @@ function firstStage(labels) {
   return fromStateOf(labels) === "done" ? "code" : "design";
 }
 function fromStateOf(labels) {
-  const result = stateOf(labels);
-  return result.ok ? result.state : "new";
+  const result2 = stateOf(labels);
+  return result2.ok ? result2.state : "new";
 }
 function startMessage(t, task) {
   if (task.action === "route") return t.startRoute;
@@ -36522,9 +38275,9 @@ var Firestore = class _Firestore {
           writes.push(...more);
         }
       };
-      let result;
+      let result2;
       try {
-        result = await work(tx);
+        result2 = await work(tx);
       } catch (error3) {
         await this.#call("rollback", { transaction }).catch(() => void 0);
         throw error3;
@@ -36534,7 +38287,7 @@ var Firestore = class _Firestore {
           writes: writes.map((write) => this.#write(write)),
           transaction
         });
-        return result;
+        return result2;
       } catch (error3) {
         if (!(error3 instanceof Aborted)) throw error3;
         if (attempt >= attempts) {
@@ -36553,7 +38306,7 @@ var Firestore = class _Firestore {
       documents: [name],
       ...transaction ? { transaction } : {}
     });
-    const found = results.find((result) => result.found)?.found;
+    const found = results.find((result2) => result2.found)?.found;
     return found && this.#document(found);
   }
   async #query(path, query = {}, transaction) {
@@ -36577,7 +38330,7 @@ var Firestore = class _Firestore {
       { structuredQuery, ...transaction ? { transaction } : {} },
       parent
     );
-    return results.flatMap((result) => result.document ? [this.#document(result.document)] : []);
+    return results.flatMap((result2) => result2.document ? [this.#document(result2.document)] : []);
   }
   #write(write) {
     const name = this.#name(write.path, "document");
@@ -36881,8 +38634,8 @@ function toCommandProperties(annotationProperties) {
 }
 
 // node_modules/@actions/core/lib/command.js
-function issueCommand(command, properties, message) {
-  const cmd = new Command(command, properties, message);
+function issueCommand(command2, properties, message) {
+  const cmd = new Command(command2, properties, message);
   process.stdout.write(cmd.toString() + os.EOL);
 }
 function issue(name, message = "") {
@@ -36890,11 +38643,11 @@ function issue(name, message = "") {
 }
 var CMD_STRING = "::";
 var Command = class {
-  constructor(command, properties, message) {
-    if (!command) {
-      command = "missing.command";
+  constructor(command2, properties, message) {
+    if (!command2) {
+      command2 = "missing.command";
     }
-    this.command = command;
+    this.command = command2;
     this.properties = properties;
     this.message = message;
   }
@@ -36932,10 +38685,10 @@ function escapeProperty(s) {
 import * as crypto from "crypto";
 import * as fs from "fs";
 import * as os2 from "os";
-function issueFileCommand(command, message) {
-  const filePath = process.env[`GITHUB_${command}`];
+function issueFileCommand(command2, message) {
+  const filePath = process.env[`GITHUB_${command2}`];
   if (!filePath) {
-    throw new Error(`Unable to find environment variable for file command ${command}`);
+    throw new Error(`Unable to find environment variable for file command ${command2}`);
   }
   if (!fs.existsSync(filePath)) {
     throw new Error(`Missing file at path: ${filePath}`);
@@ -37060,8 +38813,8 @@ var __awaiter2 = function(thisArg, _arguments, P, generator) {
         reject(e);
       }
     }
-    function step(result) {
-      result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected);
+    function step(result2) {
+      result2.done ? resolve(result2.value) : adopt(result2.value).then(fulfilled, rejected);
     }
     step((generator = generator.apply(thisArg, _arguments || [])).next());
   });
@@ -37689,8 +39442,8 @@ var __awaiter3 = function(thisArg, _arguments, P, generator) {
         reject(e);
       }
     }
-    function step(result) {
-      result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected);
+    function step(result2) {
+      result2.done ? resolve(result2.value) : adopt(result2.value).then(fulfilled, rejected);
     }
     step((generator = generator.apply(thisArg, _arguments || [])).next());
   });
@@ -37740,8 +39493,8 @@ var __awaiter4 = function(thisArg, _arguments, P, generator) {
         reject(e);
       }
     }
-    function step(result) {
-      result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected);
+    function step(result2) {
+      result2.done ? resolve(result2.value) : adopt(result2.value).then(fulfilled, rejected);
     }
     step((generator = generator.apply(thisArg, _arguments || [])).next());
   });
@@ -37829,8 +39582,8 @@ var __awaiter5 = function(thisArg, _arguments, P, generator) {
         reject(e);
       }
     }
-    function step(result) {
-      result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected);
+    function step(result2) {
+      result2.done ? resolve(result2.value) : adopt(result2.value).then(fulfilled, rejected);
     }
     step((generator = generator.apply(thisArg, _arguments || [])).next());
   });
@@ -38010,8 +39763,8 @@ var Summary = class {
    *
    * @returns {Summary} summary instance
    */
-  addDetails(label, content) {
-    const element = this.wrap("details", this.wrap("summary", label) + content);
+  addDetails(label2, content) {
+    const element = this.wrap("details", this.wrap("summary", label2) + content);
     return this.addRaw(element).addEOL();
   }
   /**
@@ -38128,8 +39881,8 @@ var __awaiter6 = function(thisArg, _arguments, P, generator) {
         reject(e);
       }
     }
-    function step(result) {
-      result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected);
+    function step(result2) {
+      result2.done ? resolve(result2.value) : adopt(result2.value).then(fulfilled, rejected);
     }
     step((generator = generator.apply(thisArg, _arguments || [])).next());
   });

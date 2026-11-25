@@ -1,0 +1,120 @@
+---
+status: completed
+created_at: 2026-11-23T14:10:00-03:00
+updated_at: 2026-11-24T14:30:00-03:00
+commit: cf237a6
+---
+
+# Estimate the fit before creating a pod
+
+## Goal
+
+Before `open-key` creates a pod, it estimates from the model's configuration and the GPU's memory whether the engine's K/V cache can hold the requests the pod must serve, for vLLM and Ollama alike. When the estimate is clearly short, no pod is created, and the run fails with the same levers the gateway's fit message gives.
+
+## Context
+
+### What a fit costs today
+
+The gateway decides the fit inside the pod, after vLLM starts ([memory](../settings/vllm.md#memory), [`src/gateway/vllm.ts`](../../src/gateway/vllm.ts)). That stays the authority, since only vLLM measures its own memory. But a pod that does not fit is billed for its whole start:
+
+- The pod check's `unfit` case, on 2026-11-06, ran an RTX A4000 for 1,147 seconds, about $0.08, to fail with "the K/V cache holds 33.59 of the 256 requests" ([the e2e plan](2026-11-04-run-e2e-on-github-runners.md#progress)).
+- A vLLM pod takes about 8 minutes to serve on a fresh host, and a fit can take 3 or 4 starts ([without `max-model-len`](../settings/vllm.md#without-max-model-len)). A large model on an expensive GPU multiplies both.
+
+### What `open-key` already knows before creating a pod
+
+| Fact | Where it comes from now |
+| --- | --- |
+| The weights' bytes | Hugging Face's API, `GET /api/models/<id>?blobs=true`, summed over safetensors files ([`huggingface.ts`](../../src/inference/huggingface.ts)); it sets the disk |
+| The model's `config.json` | Read already, at `main`, for its vision tower ([`HuggingFace.vision`](../../src/inference/huggingface.ts)) |
+| The GPU's memory | `pods.memory(gpuType)`: Runpod's API, or a Salad class's name, such as `(24 GB)` ([`gpu.ts`](../../src/inference/gpu.ts)) |
+| `max-num-seqs`, `max-model-len`, `gpu-memory-utilization`, `kv-cache-dtype`, `language-model-only` | The pod's `vllm` settings, `max-num-seqs` derived from the profile's tasks when absent ([accepted keys](../settings/vllm.md#accepted-keys)) |
+
+So the estimate needs no new request for vLLM: only more fields of the `config.json` it already reads.
+
+### The estimate
+
+```text
+available  = GPU memory (GiB) × gpu-memory-utilization − weights − overhead
+per token  = 2 × layers with attention × K/V heads × head dimension × bytes of the cache's dtype
+needed     = max-num-seqs × context × per token
+```
+
+- **Context:** `max-model-len` when set; otherwise the floor, `min(64000, the model's own)`, the least the gateway accepts ([`floorContext`](../../src/gateway/fit.ts)).
+- **Per token:** from `config.json`: `num_hidden_layers`, `num_key_value_heads` (else `num_attention_heads`), `head_dim` (else `hidden_size ÷ num_attention_heads`), and the dtype: `kv-cache-dtype` when it is `fp8`, else the model's `torch_dtype` or `dtype`. This is how vLLM 0.32.0 counts a full-attention layer ([`config/model.py`](../web/vllm/vllm-config-model-py-at-v0-32-0.md), [`kv_cache_utils.py`](../web/vllm/vllm-v1-core-kv-cache-utils-py-at-v0-32-0.md)).
+- **No estimate** for a model it cannot count: sliding windows, hybrid or linear attention, multi-head latent attention, a configuration nested under `text_config` without the fields above, or an unknown GPU memory. Those pods start as today.
+- **Overhead:** activations, CUDA graphs and the CUDA context, which vLLM measures by profiling. The two pods of the e2e plan calibrate it, with Qwen2.5-0.5B's 12,288 bytes per token:
+
+| GPU | Memory × 0.92 | Weights | K/V cache vLLM reported | Left for the overhead |
+| --- | --- | --- | --- | --- |
+| RTX A4000, 16 GiB | 14.72 GiB | 0.93 GiB | 1,100,677 tokens, 12.60 GiB | 1.19 GiB |
+| RTX A5000, 24 GiB | 22.08 GiB | 0.93 GiB | 1,775,312 tokens, 20.32 GiB | 0.83 GiB |
+
+The `unfit` case asked 256 × 32,768 × 12,288 bytes, 96 GiB: about 7 times what the A4000 holds, far beyond any error of the estimate.
+
+### Ollama (decision 3 (b))
+
+| Fact | Where it comes from |
+| --- | --- |
+| The weights' bytes | The model's manifest in Ollama's registry, `GET https://registry.ollama.ai/v2/<namespace>/<model>/manifests/<tag>`: the sizes of its `application/vnd.ollama.image.model` and `.projector` layers ([server/images.go](../web/ollama/server-images-go-at-v0-40-10.md)) |
+| The architecture | The GGUF header of the first model layer, by a ranged read of its blob, `GET …/blobs/<digest>` with `Range: bytes=0-262143`: the same keys `/api/show`'s `model_info` gives ([fs/gguf/gguf.go](../web/ollama/fs-gguf-gguf-go-at-v0-40-10.md), [server/download.go](../web/ollama/server-download-go-at-v0-40-10.md)) |
+| Context, parallel requests, K/V type, overhead | The pod's `ollama` settings, `num-parallel` derived from the profile's tasks; one request for the families Ollama serves one at a time |
+
+```text
+room      = GPU memory − weights − llama.cpp's fit margin (1 GiB) − `gpu-overhead`
+needed    = parallel × context × per token (`kvBytesPerToken`, the gateway's own)
+```
+
+- **Context:** `context-length` when set; otherwise the floor, `min(64000, the model's own)`.
+- **No estimate** for a model on another registry (such as `hf.co/…`), a manifest list, a layer that is not GGUF, a header whose keys do not fit the first 256 KiB, a sliding window, or an unknown GPU memory: those pods start as today, and the gateway fits them.
+- **The registry is the one each pod already pulls the model from,** without a token: no new host, and the blob's first 256 KiB only, against the hundreds of megabytes the pod downloads.
+
+## Decisions
+
+Answered by the maintainer on 2026-11-24: 1 (a), 2 (a), 3 (b), 4 (a) and 5 (a). Ollama gets the estimate too, so that both engines behave alike.
+
+1. **What `open-key` does when the estimate is clearly short.**
+   - **(a) Fail the run before creating the pod (recommended),** with the gateway's levers: lower `max-model-len` or `max-num-seqs`, `kv-cache-dtype: fp8`, `language-model-only: true`, or a GPU with more memory. The settings name the GPU type, and its price; Codeman should not change it.
+   - (b) Pick a larger GPU type itself. It changes the cost the settings chose, and needs a list of GPU types per provider.
+2. **When the estimate is "clearly short".** It must never refuse a pod that would have fitted.
+   - **(a) An optimistic bound (recommended):** count no overhead at all, and refuse only when even that falls short. It catches gross mistakes, such as the `unfit` case, and nothing near the edge, which the gateway still decides.
+   - (b) A calibrated overhead, about 1.5 GiB, and a margin of 10%. It catches more, but the overhead changes with the model, the engine's version and the GPU, and a wrong refusal blocks a pod that works.
+3. **Whether Ollama gets it too.**
+   - **(a) vLLM only (recommended).** Ollama lowers the context itself down to the floor, so it fails only when even the floor does not fit, and its model's architecture is in the GGUF file, which needs the registry's manifest and a ranged read of the blob: new third-party APIs.
+   - (b) Both. Adds Ollama's registry to `docs/web/` and to the audit.
+4. **Where the estimate lives.**
+   - **(a) In `open-key`'s checks before creation (recommended),** beside the CUDA and model checks ([before the pod is created](../settings/vllm.md#before-the-pod-is-created)), as a pure function next to the gateway's fit code, so the gateway and the launcher share the floor and the per-token count. Joining a pod checks nothing, as today.
+   - (b) In the gateway only, at its start: the pod is created anyway, and only the download and vLLM's start are saved.
+5. **What the pod check's `unfit` case expects then.**
+   - **(a) The refusal before creation, with no pod and no cost (recommended).** The gateway's own fit message stays covered by the e2e suite's `failures/fit-vllm-explicit` scenario.
+   - (b) Keep a case that passes the estimate and fails in the pod: it needs a configuration near the edge, which is fragile across GPUs.
+
+## Steps
+
+1. **Save the sources.** vLLM 0.32.0's `vllm/v1/worker/gpu_worker.py`, `vllm/v1/worker/utils.py` and `vllm/utils/mem_utils.py`, which say what `gpu-memory-utilization` covers; the `config.json` of the e2e model is already in [`docs/web/hugging-face/`](../web/hugging-face/qwen-qwen2-5-0-5b-instruct-at-7ae5576.md). With decision 3 (b), Ollama 0.40.10's model names, manifest pull, ranged blob downloads and GGUF reader, and the registry's audit in [dependencies](../development/dependencies.md). Done when the web documentation's tests pass, and these pages confirm or correct the formulas above.
+2. **The estimate.** Pure functions from the model's `config.json` or GGUF header, the weights' bytes, the GPU's memory and the engine's settings to the K/V cache's need and the optimistic room, or undefined when they cannot count. Done when unit tests cover Qwen2.5-0.5B's 12,288 bytes per token, the two pods above, `fp8`, a model with `head_dim`, Ollama's `qwen2.5:0.5b`, and each case without an estimate.
+3. **Ollama's registry.** A reader of the manifest and the GGUF header, with unit tests on a fake `fetch`, that gives nothing rather than fail. Done when its tests cover a model, a manifest list, another registry, a header beyond its read, and the registry failing.
+4. **The check in `open-key`.** `HuggingFace` returns the model's `config.json`; the launcher runs the estimate after the model's check and before `create`, for both engines, and fails with the levers. Done when the launcher's tests cover a refusal with no pod created, a pass, and a model without an estimate, for each engine, and [vLLM's](../settings/vllm.md#before-the-pod-is-created) and [Ollama's](../settings/ollama.md) settings pages have the messages.
+5. **The pod check.** `unfit` expects the refusal before creation, as `blocked` does. Done when its unit tests pass and a dispatch of `unfit` passes with no pod, recorded here.
+
+## Out of scope
+
+- Choosing the context before the pod starts: the gateway and the [cache of fits](../settings/pod-engines.md#the-cache-of-fits) keep doing it.
+- Changing the GPU type the settings name.
+- Speculative decoding's draft model and multimodal towers beyond `language-model-only`: only their weights count, not their cache or activations, which keeps the estimate optimistic.
+
+## Progress
+
+On the branch `features/fit-estimate`, from `features/multi-service-pods` at `4130b58`; `dist/` is rebuilt when it merges.
+
+- Step 1, `85c3d19`: vLLM 0.32.0's `gpu_worker.py`, `worker/utils.py` (in our own words) and `mem_utils.py` (in full) confirm the formula: the K/V cache gets at most the GPU's total memory × `gpu-memory-utilization`, less what the engine consumed, weights included. Ollama 0.40.10's `types/model/name.go`, `server/download.go` and `fs/gguf/gguf.go` in full, `server/images.go` and `manifest/manifest.go` in our own words. On 2026-11-24, `registry.ollama.ai` served `qwen2.5:0.5b`'s manifest, and its model blob answered a ranged read with `206 Partial Content`, after a redirect to its storage; the first 256 KiB held the architecture's keys, before the tokenizer, giving 12,288 bytes per token.
+- Step 2, `e3967e8`: `estimateVllm` and `estimateOllama` in [`src/gateway/estimate.ts`](../../src/gateway/estimate.ts). Ollama's budget also leaves out llama.cpp's fit margin (1 GiB) and `gpu-overhead`, which are rules of the engine, as `gpu-memory-utilization` is vLLM's, not overheads to estimate.
+- Step 3, `e3967e8`: `OllamaRegistry` and the GGUF reader, [`src/inference/ollama-registry.ts`](../../src/inference/ollama-registry.ts) and [`gguf.ts`](../../src/inference/gguf.ts).
+- Step 4, `205a483`: `open-key` throws `FitRefused`, a `PodStartFailure`, before `create`, and ends the registry document as a failed start. The e2e build tries no Ollama estimate without a fake of the registry, and its fake Hugging Face serves no `config.json`: the suite's scenarios, `failures/fit-floor` and `failures/fit-vllm-explicit` included, still reach the gateway's fit, as before.
+- Step 5, `59ed131`: the pod check's `unfit` passes on `FitRefused` with no pod. On 2026-11-24, the maintainer dispatched `check=pod pod-checks=unfit` at `3eb0279` on both providers, and both passed with `error=FitRefused pods=0` and no cost:
+
+  | Provider | GPU picked | Room the estimate left | Check's time |
+  | --- | --- | --- | --- |
+  | Runpod | RTX 4090, 24 GB | 21.16 GiB | 5.2 s |
+  | Salad | RTX 3080 Ti Laptop, 16 GB | 13.80 GiB | 1.8 s |
+
+  The K/V cache needed 96.00 GiB on each, against about $0.08 and 1,147 seconds for the same case on 2026-11-06.

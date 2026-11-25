@@ -1,8 +1,8 @@
 /**
  * Fitting the pod's model to its GPU (plan for fitting Ollama to the GPU): which contexts the
  * gateway tries, a first estimate from the model's architecture and the GPU's memory, the search
- * among them, and the check of where Ollama put the model. Ollama 0.35.1 never lowers a context it
- * is given; llama.cpp's fit puts layers on the CPU instead (docs/web/ollama/,
+ * among them, and the check of where Ollama put the model. Ollama 0.40.10, as 0.35.1, never lowers
+ * a context it is given; llama.cpp's fit puts layers on the CPU instead (docs/web/ollama/,
  * docs/web/llama-cpp/). See docs/settings/ollama.md#memory.
  */
 
@@ -179,7 +179,7 @@ export function placementOf(ps: unknown, model: string, digest?: string): Placem
 
 /**
  * Whether the model is wholly on the GPU: Ollama reports `size` equal to `size_vram` exactly when
- * every layer is (docs/web/ollama/llm-llama-server-go-at-v0-35-1.md#what-it-reports).
+ * every layer is (docs/web/ollama/llm-llama-server-go-at-v0-40-10.md#what-it-reports).
  */
 export function onGpu(placement: Placement | undefined): placement is Placement {
   return placement !== undefined && placement.sizeVram > 0 && placement.sizeVram >= placement.size;

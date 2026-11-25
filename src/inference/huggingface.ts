@@ -22,6 +22,11 @@ export interface ModelHub {
    * and does not say to serve its language model only. Throws when it cannot tell, saying why.
    */
   vision(id: string): Promise<boolean>;
+  /**
+   * The model's `config.json` at `main`, which vLLM reads: its layers and heads, for the estimate
+   * of its fit. Throws when it cannot read it, saying why.
+   */
+  config?(id: string): Promise<Readonly<Record<string, unknown>>>;
 }
 
 /** The fields of the model's information Codeman reads (docs/web/hugging-face/). */
@@ -70,11 +75,21 @@ export class HuggingFace implements ModelHub {
     return checked(id, (await response.json()) as ModelInfo);
   }
 
+  /** From the model's `config.json`: whether it has a vision tower that vLLM serves. */
+  async vision(id: string): Promise<boolean> {
+    const config = await this.config(id);
+    return (
+      typeof config.vision_config === "object" &&
+      config.vision_config !== null &&
+      config.language_model_only !== true
+    );
+  }
+
   /**
-   * From the model's `config.json` at `main`, which vLLM downloads: one more public call (see
+   * The model's `config.json` at `main`, which vLLM downloads: one more public call (see
    * docs/web/hugging-face/unsloth-qwen3-8-27b-nvfp4-at-f0b7c9e.md).
    */
-  async vision(id: string): Promise<boolean> {
+  async config(id: string): Promise<Readonly<Record<string, unknown>>> {
     const path = repositoryPath(id);
     let response: Response;
     try {
@@ -87,14 +102,13 @@ export class HuggingFace implements ModelHub {
       );
     }
     if (!response.ok) throw new Error(`Hugging Face answered ${response.status}.`);
-    const config = (await response.json().catch(() => {
+    const config: unknown = await response.json().catch(() => {
       throw new Error("Its config.json is not JSON.");
-    })) as { vision_config?: unknown; language_model_only?: unknown } | null;
-    return (
-      typeof config?.vision_config === "object" &&
-      config.vision_config !== null &&
-      config.language_model_only !== true
-    );
+    });
+    if (typeof config !== "object" || config === null || Array.isArray(config)) {
+      throw new Error("Its config.json is not an object.");
+    }
+    return config as Record<string, unknown>;
   }
 }
 

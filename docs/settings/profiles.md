@@ -82,7 +82,7 @@ A profile that cannot serve a task now leaves it to the next one that holds, in 
 
 When `open-key` finds no room, the task goes back to its state, and the next run starts at once. That run's `select` sets the profile aside and serves the task with the next one.
 
-A mistake in the settings is not a reason to fall back: a model that does not fit the GPU, or an image that cannot serve, still fails the run, so that it shows.
+A mistake in the settings is not a reason to fall back: a model that does not fit the GPU, an image that cannot serve, or a release the [release policy](../security/release-policy.md) blocks still fails the run, so that it shows.
 
 ```yaml
 model: deepseek/deepseek-v4.1-flash   # planning, and the last fallback

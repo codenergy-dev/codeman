@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Fetch } from "../budget.ts";
+import { podBootstrap } from "../gateway/bootstrap.ts";
+import { TEST_BOOTSTRAP } from "../testing/fake-releases.ts";
 import { PodUnavailable } from "./gpu.ts";
-import { Runpod } from "./runpod.ts";
+import { describeProblem, Runpod } from "./runpod.ts";
 
 function near(actual: number | undefined, expected: number): void {
   assert.ok(actual !== undefined && Math.abs(actual - expected) < 1e-12, `${actual} ≉ ${expected}`);
@@ -433,4 +435,45 @@ test("a cloud without room, or a creation answered with 400, makes the pod unava
     new Runpod("rk", offered.fetch).pods.create({ ...spec, hosts: ["secure", "community"] }),
     (error) => !(error instanceof PodUnavailable),
   );
+});
+
+test("the bootstrap's command replaces the image's entry point and command, in exec form", async () => {
+  const bootstrap = podBootstrap(TEST_BOOTSTRAP);
+  const { fetch, calls } = fakeFetch([pod]);
+  await new Runpod("rk", fetch).pods.create({
+    ...spec,
+    image: "docker.io/ollama/ollama@sha256:1",
+    command: bootstrap.command,
+    env: bootstrap.env,
+  });
+  const body = JSON.parse(String(calls[0]?.[1]?.body));
+  assert.deepEqual(body.entrypoint, bootstrap.entrypoint);
+  assert.deepEqual(body.cmd, bootstrap.cmd);
+  assert.deepEqual([...body.entrypoint, ...body.cmd], bootstrap.command);
+  assert.equal(body.args, undefined, "never beside entrypoint and cmd");
+  assert.deepEqual(body.env, bootstrap.env);
+  // Without a command, the image's own runs.
+  const plain = fakeFetch([pod]);
+  await new Runpod("rk", plain.fetch).pods.create(spec);
+  const without = JSON.parse(String(plain.calls[0]?.[1]?.body));
+  assert.ok(!("entrypoint" in without) && !("cmd" in without));
+});
+
+test("a problem's validation errors are read as a list or by field", () => {
+  assert.equal(
+    describeProblem(JSON.stringify({ title: "Bad Request", errors: ["The image is not valid."] })),
+    "Bad Request — The image is not valid.",
+  );
+  assert.equal(
+    describeProblem(
+      JSON.stringify({
+        title: "One or more validation errors occurred.",
+        status: 400,
+        errors: { "container.image": ["Too long.", "Not valid."], "": ["Unreadable body."] },
+      }),
+    ),
+    "One or more validation errors occurred. — container.image: Too long. — container.image: Not valid. — Unreadable body.",
+  );
+  assert.equal(describeProblem(JSON.stringify({ errors: { replicas: 3 } })), undefined);
+  assert.equal(describeProblem("<html>Bad Request</html>"), undefined);
 });

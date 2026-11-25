@@ -126,9 +126,10 @@ export class Session {
       { service: "runner", image: RUNNER_IMAGE },
       ...options.profiles.map((profile) => POD_IMAGES[profile]),
     ];
-    // The pod images hold the e2e bundle's gateway (decision 11), and the job image the runner's
-    // Node: each is built again every session, from the cache when nothing changed, so a changed
-    // Dockerfile never leaves a stale image behind.
+    // The pod images hold the tee, from the fakes' sources, and their gateway is the e2e bundle's,
+    // which each pod downloads; the job image holds the runner's Node. Each is built again every
+    // session, from the cache when nothing changed, so a changed Dockerfile never leaves a stale
+    // image behind.
     const missing: string[] = [];
     for (const { service, image } of images) {
       if (options.build || !(await imageExists(image))) missing.push(service);
@@ -169,6 +170,8 @@ export class Session {
       salad: await client("salad", 8080),
       npm: await client("npm", 8080),
       huggingface: await client("huggingface", 8080),
+      osv: await client("osv", 8080),
+      nodejs: await client("nodejs", 443, true),
       firestore: `http://${await compose.port("firestore", 8080)}`,
     };
     const github = new RemoteGitHub(fakes.github, { server: INTERNAL.github, caFile });
@@ -232,12 +235,9 @@ export class Session {
     let run: ScenarioRun | undefined;
     let store: Firestore | undefined;
     try {
-      const world = await buildWorld(
-        scenario,
-        this.github,
-        this.fakes,
-        scenario.runner === "act" ? { codemanFiles: codemanAction() } : {},
-      );
+      const world = await buildWorld(scenario, this.github, this.fakes, {
+        codemanFiles: scenario.runner === "act" ? codemanAction() : codemanGateway(),
+      });
       timeline.add(
         "world",
         `Firestore project ${world.project}; Codeman at ${world.codemanSha.slice(0, 7)}`,
@@ -436,6 +436,8 @@ export class Session {
       llm: ["turns", "violations", "requests"],
       npm: ["requests"],
       huggingface: ["requests"],
+      osv: ["requests"],
+      nodejs: ["requests"],
     };
     for (const [fake, names] of Object.entries(lists)) {
       fakes[fake] = {};
@@ -475,7 +477,7 @@ export class Session {
           else documents[path] = found;
         }
       }
-      for (const collection of ["contexts"]) {
+      for (const collection of ["contexts", "releaseChecks"]) {
         const found = await safely(() => store.query(collection));
         if (Array.isArray(found))
           for (const document of found) documents[document.path] = document.fields;
@@ -553,7 +555,14 @@ export class Session {
       // The token goes through the environment, so no command line holds it.
       const script = `fetch(${JSON.stringify(url)}, { headers: process.env.E2E_ADMIN ? { authorization: "Bearer " + process.env.E2E_ADMIN } : {} }).then((r) => r.text()).then((t) => process.stdout.write(t), (e) => { process.stderr.write(String(e)); process.exit(1); })`;
       const result = await docker(
-        ["exec", ...(token ? ["-e", "E2E_ADMIN"] : []), container, "node", "-e", script],
+        [
+          "exec",
+          ...(token ? ["-e", "E2E_ADMIN"] : []),
+          container,
+          "/opt/codeman-e2e/node",
+          "-e",
+          script,
+        ],
         { timeoutMs: 20_000, ...(token ? { env: { E2E_ADMIN: token } } : {}) },
       );
       return result.exitCode === 0 ? result.stdout : undefined;
@@ -643,13 +652,23 @@ export function bundleBuilt(): boolean {
 }
 
 /**
+ * The gateway in Codeman's repository at `CODEMAN_COMMIT_SHA`: the e2e bundle's, which a pod's
+ * bootstrap downloads from the fake's raw.githubusercontent.com, and whose SHA-256 Codeman takes
+ * from its own checkout's copy of the same file (src/action.ts, `gatewayArtifact`).
+ */
+function codemanGateway(): Record<string, string> {
+  return { "dist/gateway.js": readFileSync(join(BUILD, "gateway.js"), "utf8") };
+}
+
+/**
  * Codeman's repository as act checks it out at `CODEMAN_COMMIT_SHA` (`uses: ./.codeman/action`):
- * `action.yml`, the e2e bundle as `dist/index.js`, and the files the bundle reads beside it, as the
- * simulator's executor copies them into its checkout.
+ * `action.yml`, the e2e bundles as `dist/index.js` and `dist/gateway.js`, and the files the bundle
+ * reads beside them, as the simulator's executor copies them into its checkout.
  */
 function codemanAction(): Record<string, string> {
   const read = (...path: string[]) => readFileSync(join(...path), "utf8");
   return {
+    ...codemanGateway(),
     "action.yml": read(ROOT, "action.yml"),
     "dist/index.js": read(BUILD, "index.js"),
     "AGENTS.md": read(ROOT, "AGENTS.md"),

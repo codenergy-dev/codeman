@@ -82,7 +82,7 @@ interface RunpodEndpoint {
  */
 export class Runpod implements GpuProvider {
   readonly name = "runpod";
-  readonly pods: Required<Omit<PodHost, "unservedImages">>;
+  readonly pods: Required<Omit<PodHost, "unservedImages" | "billedSince">>;
   readonly serverless: ServerlessHost;
   readonly #apiKey: string;
   readonly #fetch: Fetch;
@@ -253,6 +253,9 @@ export class Runpod implements GpuProvider {
     const pod = (await this.#request("/pods", "POST", {
       name: spec.name,
       image: spec.image,
+      // The command in exec form, its program as the entry point
+      // (docs/web/runpod/runpod-rest-api.md#the-containers-command).
+      ...(spec.command ? { entrypoint: spec.command.slice(0, 1), cmd: spec.command.slice(1) } : {}),
       gpu: {
         id: spec.gpuType,
         count: 1,
@@ -424,9 +427,10 @@ function window(start: Date, end: Date): string {
 }
 
 /**
- * What an RFC 9457 error says: its title, detail and validation errors, on one line. Runpod's
- * requests carry no secret (pods' environments hold only hashes and public values), and other
- * bodies are left out.
+ * What an RFC 9457 error says: its title, detail and validation errors, on one line. Validation
+ * errors come as a list, or as messages by field (`{"container.image": ["..."]}`, as Salad's
+ * 400s may give them), each then named by its field. Runpod's requests carry no secret (pods'
+ * environments hold only hashes and public values), and other bodies are left out.
  */
 export function describeProblem(body: string): string | undefined {
   let problem: unknown;
@@ -437,12 +441,23 @@ export function describeProblem(body: string): string | undefined {
   }
   if (typeof problem !== "object" || problem === null) return undefined;
   const { title, detail, errors } = problem as Record<string, unknown>;
-  const parts = [title, detail, ...(Array.isArray(errors) ? errors : [])].filter(
+  const parts = [title, detail, ...validationErrors(errors)].filter(
     (part): part is string => typeof part === "string" && part.trim() !== "",
   );
   if (parts.length === 0) return undefined;
   const text = parts.join(" — ").replace(/\s+/g, " ").trim();
   return text.length > 500 ? `${text.slice(0, 499)}…` : text;
+}
+
+/** A problem's `errors`: a list of messages, or messages by field, each as `field: message`. */
+function validationErrors(errors: unknown): unknown[] {
+  if (Array.isArray(errors)) return errors;
+  if (typeof errors !== "object" || errors === null) return [];
+  return Object.entries(errors).flatMap(([field, messages]) =>
+    (Array.isArray(messages) ? messages : [messages])
+      .filter((message): message is string => typeof message === "string")
+      .map((message) => (field ? `${field}: ${message}` : message)),
+  );
 }
 
 function amount(value: unknown): number {

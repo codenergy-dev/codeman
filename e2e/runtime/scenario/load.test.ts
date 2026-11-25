@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { osvRecord } from "../world.ts";
 import { parseScenario, ScenarioError } from "./load.ts";
-import { ACTION_KINDS, type Action, RelativeTime } from "./schema.ts";
+import { ACTION_KINDS, type Action, type OsvAdvisory, RelativeTime } from "./schema.ts";
 
 const FILE = "e2e/scenarios/test/case.yaml";
 
@@ -530,4 +531,52 @@ test("wait takes a plain duration, or a condition with its timeout", () => {
     /either for/,
   );
   rejects(`${WORLD}actions:\n  - wait: { timeout: 5s }\n`, "actions[0].wait.until", /missing/);
+});
+
+test("the fake OSV.dev's advisories are checked, and become GitHub's records", () => {
+  const world = (osv: string) => `name: A case
+world:
+  repositories:
+    - { name: acme/app, fixture: node-small, maintainers: [alice] }
+  osv:
+${osv}actions:
+  - open-issue: { ref: i1, as: alice, title: Add a route }
+`;
+  const advisory = "{ id: GHSA-e2e0-test-0001, ecosystem: Go, package: m, severity: critical";
+  const scenario = parse(world(`    advisories: [${advisory}, fixed: "1.2.3" }]\n`));
+  const [parsed] = scenario.world.osv?.advisories ?? [];
+  assert.deepEqual(parsed, {
+    id: "GHSA-e2e0-test-0001",
+    ecosystem: "Go",
+    package: "m",
+    severity: "critical",
+    summary: undefined,
+    introduced: "0",
+    fixed: "1.2.3",
+  });
+  assert.deepEqual(osvRecord(parsed as OsvAdvisory), {
+    id: "GHSA-e2e0-test-0001",
+    database_specific: { severity: "CRITICAL" },
+    affected: [
+      {
+        package: { ecosystem: "Go", name: "m" },
+        ranges: [{ type: "ECOSYSTEM", events: [{ introduced: "0" }, { fixed: "1.2.3" }] }],
+      },
+    ],
+  });
+  rejects(
+    world(`    advisories: [${advisory.replace("critical", "severe")} }]\n`),
+    "world.osv.advisories[0].severity",
+    /one of critical, high, moderate, low/,
+  );
+  rejects(
+    world(`    advisories: [${advisory} }, ${advisory} }]\n`),
+    "world.osv.advisories[1].id",
+    /declared twice/,
+  );
+  rejects(
+    world(`    advisories: [${advisory}, cvss: 9 }]\n`),
+    "world.osv.advisories[0].cvss",
+    /unknown field/,
+  );
 });

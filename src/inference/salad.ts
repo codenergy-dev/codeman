@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type { Fetch } from "../budget.ts";
+import { SALAD_COMMAND_LIMITS } from "../gateway/bootstrap.ts";
 import {
   DEFAULT_HOSTS,
   type GpuAccount,
@@ -40,7 +41,7 @@ const STATUS: Record<string, PodStatus> = {
 };
 
 /** The fields of Salad's `GpuClass` that Codeman reads. See docs/web/salad/list-the-gpu-classes.md. */
-interface SaladGpuClass {
+export interface SaladGpuClass {
   id: string;
   name: string;
   gpu_class_type?: string;
@@ -86,6 +87,8 @@ export class Salad implements GpuProvider {
   readonly #project: string;
   /** The organization's GPU classes, read once; a failed read is not kept. */
   #classes: Promise<SaladGpuClass[]> | undefined;
+  /** What this process saw of each group's instance, for when Salad began billing it. */
+  readonly #nodes = new NodeWatch();
 
   constructor(account: GpuAccount, fetchFn: Fetch = fetch) {
     if (!account.organization || !account.project) {
@@ -107,6 +110,7 @@ export class Salad implements GpuProvider {
       list: (env) => this.#list(env),
       terminate: (id) => this.#terminate(id),
       url: (id) => this.#url(id),
+      billedSince: (id) => this.#billedSince(id),
     };
   }
 
@@ -150,50 +154,11 @@ export class Salad implements GpuProvider {
     return found;
   }
 
-  /**
-   * `POST .../containers`: a group of one replica that starts at once, never restarts its
-   * container, and is reached through the Container Gateway, which the gateway's run tokens guard.
-   */
+  /** `POST .../containers`, with `containerGroupRequest`'s body. */
   async #create(spec: PodSpec): Promise<Pod> {
-    const priority = spec.priority ?? "high";
     const gpu = await this.#class(spec.gpuType, spec.hosts ?? DEFAULT_HOSTS);
-    price(gpu, priority);
-    if (spec.diskGb > MAX_DISK_GB) {
-      throw new Error(
-        `A Salad container has ${MAX_DISK_GB} GB of disk at most, and this pod needs ${spec.diskGb} GB.`,
-      );
-    }
-    const group = (await this.#request(this.#containers(), "POST", {
-      name: `codeman-${randomBytes(8).toString("hex")}`,
-      display_name: displayName(spec.name),
-      container: {
-        image: spec.image,
-        environment_variables: environment(spec.env),
-        priority,
-        resources: {
-          cpu: within(VCPU, gpu.min_vcpu, gpu.max_vcpu),
-          memory: within(MEMORY_MB, gpu.min_ram, gpu.max_ram),
-          gpu_classes: [gpu.id],
-          storage_amount: within(spec.diskGb * GB, gpu.min_storage, gpu.max_storage),
-          ...(spec.sharedMemoryGb ? { shm_size: spec.sharedMemoryGb * 1024 } : {}),
-        },
-      },
-      replicas: 1,
-      // A pod that exits is done: Salad must not start it again, here or on another node.
-      restart_policy: "never",
-      autostart_policy: true,
-      networking: {
-        protocol: "http",
-        port: spec.port,
-        // The Container Gateway's own authentication takes the account key; the gateway's run
-        // tokens guard the pod instead.
-        auth: false,
-        load_balancer: "least_number_of_connections",
-        single_connection_limit: false,
-        client_request_timeout: 100_000,
-        server_response_timeout: 100_000,
-      },
-    })) as SaladGroup;
+    const body = containerGroupRequest(spec, gpu, `codeman-${randomBytes(8).toString("hex")}`);
+    const group = (await this.#request(this.#containers(), "POST", body)) as SaladGroup;
     return this.#toPod(group);
   }
 
@@ -214,16 +179,41 @@ export class Salad implements GpuProvider {
    * not list its instances.
    */
   async #allocated(id: string): Promise<boolean | undefined> {
+    const states = await this.#instanceStates(id);
+    if (!states) return undefined;
+    return states.some(
+      (state) => state === "downloading" || state === "creating" || state === "running",
+    );
+  }
+
+  /**
+   * The states of the group's instances, each instance with its machine recorded in `#nodes`;
+   * undefined when Salad does not list them (docs/web/salad/list-container-group-instances.md).
+   */
+  async #instanceStates(id: string): Promise<string[] | undefined> {
     const listed = (await this.#request(
       `${this.#containers(id)}/instances`,
       "GET",
       undefined,
       [404],
-    )) as { instances?: { state?: string }[] } | undefined;
-    if (!listed) return undefined;
-    return (listed.instances ?? []).some(
-      ({ state }) => state === "downloading" || state === "creating" || state === "running",
+    )) as { instances?: { state?: unknown }[] } | undefined;
+    if (listed === undefined) return undefined;
+    this.#nodes.record(id, parseInstances(listed), Date.now());
+    return (listed.instances ?? []).flatMap(({ state }) =>
+      typeof state === "string" ? [state] : [],
     );
+  }
+
+  /**
+   * When Salad began billing the group: its instance's start of `running`, as this process has
+   * seen it, on one machine, from every read of its instances (decision 5 of the plan for Salad
+   * pods, answered again on 2026-11-24). Undefined when it cannot tell: no instance runs, the
+   * pod moved or ran again, or its time is unreadable.
+   */
+  async #billedSince(id: string): Promise<Date | undefined> {
+    await this.#instanceStates(id).catch(() => undefined);
+    const billed = this.#nodes.billed(id);
+    return billed && billed.to === undefined ? new Date(billed.from) : undefined;
   }
 
   /** `GET .../containers`, which returns the project's groups in one page of up to 100. */
@@ -309,6 +299,58 @@ export class Salad implements GpuProvider {
   }
 }
 
+/**
+ * `POST .../containers`'s body for a pod on a GPU class: a group of one replica that starts at
+ * once, never restarts its container, and is reached through the Container Gateway, which the
+ * gateway's run tokens guard (docs/web/salad/create-container-group.md). Throws when the class
+ * lists no price at the pod's priority, or the pod needs more disk than a container has.
+ */
+export function containerGroupRequest(
+  spec: PodSpec,
+  gpu: SaladGpuClass,
+  name: string,
+): Record<string, unknown> {
+  const priority = spec.priority ?? "high";
+  price(gpu, priority);
+  if (spec.diskGb > MAX_DISK_GB) {
+    throw new Error(
+      `A Salad container has ${MAX_DISK_GB} GB of disk at most, and this pod needs ${spec.diskGb} GB.`,
+    );
+  }
+  return {
+    name,
+    display_name: displayName(spec.name),
+    container: {
+      image: spec.image,
+      ...(spec.command ? { command: command(spec.command) } : {}),
+      environment_variables: environment(spec.env),
+      priority,
+      resources: {
+        cpu: within(VCPU, gpu.min_vcpu, gpu.max_vcpu),
+        memory: within(MEMORY_MB, gpu.min_ram, gpu.max_ram),
+        gpu_classes: [gpu.id],
+        storage_amount: within(spec.diskGb * GB, gpu.min_storage, gpu.max_storage),
+        ...(spec.sharedMemoryGb ? { shm_size: spec.sharedMemoryGb * 1024 } : {}),
+      },
+    },
+    replicas: 1,
+    // A pod that exits is done: Salad must not start it again, here or on another node.
+    restart_policy: "never",
+    autostart_policy: true,
+    networking: {
+      protocol: "http",
+      port: spec.port,
+      // The Container Gateway's own authentication takes the account key; the gateway's run
+      // tokens guard the pod instead.
+      auth: false,
+      load_balancer: "least_number_of_connections",
+      single_connection_limit: false,
+      client_request_timeout: 100_000,
+      server_response_timeout: 100_000,
+    },
+  };
+}
+
 /** The kind of host of a GPU class; a class that does not say counts as community, the least trusted. */
 function hostOf(gpu: SaladGpuClass): HostKind {
   return gpu.gpu_class_type && isHostKind(gpu.gpu_class_type) ? gpu.gpu_class_type : "community";
@@ -347,6 +389,28 @@ function displayName(name: string): string {
 }
 
 /**
+ * The container's command, which replaces its image's entry point and command
+ * (docs/web/salad/specifying-a-command.md): Salad takes at most 100 items of 1 to 1,000
+ * characters, so a command beyond them stops the creation rather than be cut.
+ */
+function command(items: readonly string[]): string[] {
+  const { items: most, itemCharacters } = SALAD_COMMAND_LIMITS;
+  if (items.length > most) {
+    throw new Error(
+      `Salad takes a command of ${most} items at most; this one has ${items.length}.`,
+    );
+  }
+  for (const [index, item] of items.entries()) {
+    if (item.length === 0 || item.length > itemCharacters) {
+      throw new Error(
+        `Salad takes command items of 1 to ${itemCharacters.toLocaleString("en-US")} characters; item ${index} has ${item.length}.`,
+      );
+    }
+  }
+  return [...items];
+}
+
+/**
  * The container's environment: Salad takes values of 1 to 1,000 characters, so empty ones are
  * left out, and a longer one stops the creation rather than be cut.
  */
@@ -362,4 +426,86 @@ function environment(env: Record<string, string>): Record<string, string> {
     kept[name] = value;
   }
   return kept;
+}
+
+/** A group's instance as Codeman reads it: its machine, its state, and since when, in ms. */
+export interface SeenInstance {
+  machine: string;
+  state: string;
+  /** `update_time`: when the instance last changed its state; undefined when unreadable. */
+  since?: number | undefined;
+}
+
+/** A group's instances, as `GET .../instances` lists them; none when the answer lists none. */
+export function parseInstances(listed: unknown): SeenInstance[] {
+  const items = (listed as { instances?: unknown } | undefined)?.instances;
+  if (!Array.isArray(items)) return [];
+  return items.flatMap((item: { machine_id?: unknown; state?: unknown; update_time?: unknown }) => {
+    const { machine_id, state, update_time } = item ?? {};
+    if (typeof machine_id !== "string" || typeof state !== "string") return [];
+    const since = typeof update_time === "string" ? Date.parse(update_time) : Number.NaN;
+    return [{ machine: machine_id, state, since: Number.isFinite(since) ? since : undefined }];
+  });
+}
+
+/** The time Salad bills a pod for, in ms since the epoch: `to` is unset while it runs. */
+export interface BilledSpan {
+  from: number;
+  to?: number | undefined;
+}
+
+/**
+ * What was seen of each group's instance, over the reads of one process: the pod check's, or
+ * one key job's.
+ *
+ * - **Its machines.** A group of one replica whose instance is seen on a second machine moved:
+ *   Salad lost the first node and placed the pod on another, which a pod's own exit does not
+ *   cause, its group never restarting it (`restart_policy: never`; risk 1 of the plan for Salad
+ *   pods). A node lost with no replacement seen yet is not told apart.
+ * - **When it ran.** Salad bills an instance per second while it is `running`, not while it is
+ *   allocated, downloads its image or is created (docs/web/salad/saladcloud-pricing.md,
+ *   "Billing"). A running instance's `update_time` is when it started running; the first read that
+ *   no longer shows it running ends it, at a `stopping` instance's `update_time`, else at that
+ *   read. Its billed time is unknown when it moved, ran on two instances at once, ran again after
+ *   it stopped, or was never seen running with a readable time.
+ */
+export class NodeWatch {
+  readonly #machines = new Map<string, Set<string>>();
+  readonly #runs = new Map<string, { from?: number; to?: number; unclear: boolean }>();
+
+  /** Records one read of a group's instances, made at `at`. */
+  record(id: string, seen: readonly SeenInstance[], at: number): void {
+    const machines = this.#machines.get(id) ?? new Set<string>();
+    for (const { machine, state } of seen) {
+      if (state !== "allocating") machines.add(machine);
+    }
+    this.#machines.set(id, machines);
+
+    const run = this.#runs.get(id) ?? { unclear: false };
+    this.#runs.set(id, run);
+    const running = seen.filter((one) => one.state === "running");
+    const [instance] = running;
+    if (
+      running.length > 1 ||
+      (instance && (instance.since === undefined || run.to !== undefined))
+    ) {
+      run.unclear = true;
+    } else if (instance?.since !== undefined) {
+      run.from = Math.min(run.from ?? instance.since, instance.since);
+    } else if (run.from !== undefined && run.to === undefined) {
+      const stopping = seen.find((one) => one.state === "stopping" && one.since !== undefined);
+      run.to = Math.max(run.from, stopping?.since ?? at);
+    }
+  }
+
+  moved(id: string): boolean {
+    return (this.#machines.get(id)?.size ?? 0) > 1;
+  }
+
+  /** The time Salad bills the group for, as far as the reads saw it; undefined when unknown. */
+  billed(id: string): BilledSpan | undefined {
+    const run = this.#runs.get(id);
+    if (!run || run.unclear || run.from === undefined || this.moved(id)) return undefined;
+    return { from: run.from, to: run.to };
+  }
 }

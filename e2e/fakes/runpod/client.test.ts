@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import { redirects } from "../../../src/e2e.ts";
+import { podBootstrap } from "../../../src/gateway/bootstrap.ts";
 import { RunpodQueue } from "../../../src/gateway/queue.ts";
 import { waitUntilReady } from "../../../src/inference/gpu.ts";
 import { Runpod } from "../../../src/inference/runpod.ts";
+import { TEST_BOOTSTRAP } from "../../../src/testing/fake-releases.ts";
 import { MemoryLauncher } from "./memory-launcher.ts";
 import { RunpodFake } from "./runpod.ts";
 
@@ -56,9 +58,11 @@ test("Codeman's client creates, finds, reaches and terminates a pod on the fake"
   await assert.rejects(pods.price("RTX A6000"), /has no GPU type "RTX A6000"/);
 
   const env = { CODEMAN_NONCE: "n1", CODEMAN_POOL: "acme", CODEMAN_ADMIN_SHA256: "ab".repeat(32) };
+  const { command } = podBootstrap(TEST_BOOTSTRAP);
   const created = await pods.create({
     name: "codeman-acme-settings",
-    image: "ghcr.io/codenergy-dev/codeman-pod@sha256:1234",
+    image: "docker.io/ollama/ollama@sha256:1234",
+    command,
     env,
     port: 8000,
     gpuType: "NVIDIA RTX A6000",
@@ -67,6 +71,8 @@ test("Codeman's client creates, finds, reaches and terminates a pod on the fake"
   });
   assert.equal(created.status, "starting");
   assert.deepEqual(launcher.launched.at(-1)?.env, env);
+  // The bootstrap's command reaches the launcher, from Runpod's `entrypoint` and `cmd`.
+  assert.deepEqual(launcher.launched.at(-1)?.command, command);
 
   const url = await pods.url(created.id, 8000);
   const ready = await waitUntilReady(

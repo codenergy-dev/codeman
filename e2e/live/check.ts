@@ -1,0 +1,1731 @@
+import { createHash, randomBytes } from "node:crypto";
+import { ACTION_ROOT, type GatewayArtifact, gatewayArtifact } from "../../src/action.ts";
+import { BOOTSTRAP_VARIABLES, bootstrapCommand } from "../../src/gateway/bootstrap.ts";
+import { GATEWAY_VERSION } from "../../src/gateway/gateway.ts";
+import type { FitReport } from "../../src/gateway/pod.ts";
+import type { VllmFitReport } from "../../src/gateway/vllm.ts";
+import type { InferenceEngine } from "../../src/inference/engine.ts";
+import { ENGINES } from "../../src/inference/engines.ts";
+import {
+  FitRefused,
+  type GpuAccount,
+  type GpuProvider,
+  type Pod,
+  type PodHost,
+  type PodSpec,
+  PodStartFailure,
+  PodUnavailable,
+} from "../../src/inference/gpu.ts";
+import { ENGINE_RELEASES, NODE_RELEASE, podImage } from "../../src/inference/images.ts";
+import { Osv } from "../../src/inference/osv.ts";
+import { type OpenedRun, OpenFailure, ProfileUnavailable } from "../../src/inference/provider.ts";
+import { isBlocking, MemoryReleaseCheckCache } from "../../src/inference/release-policy.ts";
+import { type PodReleases, ReleaseBlocked } from "../../src/inference/resolution.ts";
+import { describeProblem, Runpod } from "../../src/inference/runpod.ts";
+import {
+  adminToken,
+  type PodHandle,
+  PodInference,
+  type PodSettings,
+} from "../../src/inference/selfhosted.ts";
+import { checkedVllm, isHuggingFaceId, VLLM_MIN_CUDA } from "../../src/inference/vllm.ts";
+import type { Pool } from "../../src/pool.ts";
+import type { Log } from "../../src/runtime/runtime.ts";
+import { MemoryStore } from "../../src/store/memory.ts";
+import { type Fields, Report } from "./report.ts";
+import {
+  type BilledSpan,
+  type ProbeAnswer,
+  type ProbeOutcome,
+  SALAD_NAME,
+  saladProvider,
+} from "./salad.ts";
+
+/**
+ * The pod check (steps 3 to 5 of the plan to run the e2e suite on GitHub's runners): Codeman's real
+ * self-hosted path, `PodInference` with the real `Runpod` or `Salad` and the real release policy,
+ * starts a pod on a real GPU from each engine's official image through the bootstrap, checks it,
+ * and terminates it. It runs from the sources with Node, so no redirect of the e2e build applies, and
+ * keeps its pod registry in memory. See docs/development/e2e/suite.md#the-pod-check.
+ */
+
+/**
+ * The organization the check's pods name in `CODEMAN_ORGANIZATION`, which no real organization
+ * uses: Codeman's sweep and `--cleanup` touch only pods that carry it.
+ */
+export const OWNER = "codeman-pod-check";
+
+/** The GPU clouds the check runs on, through Codeman's adapters. */
+export const PROVIDERS = ["runpod", "salad"] as const;
+export type ProviderName = (typeof PROVIDERS)[number];
+export const DEFAULT_PROVIDER: ProviderName = "runpod";
+
+/** The kinds of host a pod may run on: Codeman's (src/inference/gpu.ts), Runpod's clouds. */
+export type Cloud = "secure" | "community";
+
+/**
+ * The VRAM of each GPU type the check may use, in GB, by Runpod's GPU ID
+ * (docs/web/runpod/gpu-types.md): 16 to 24 GB, Ampere or Ada, enough for a 0.5B model and not
+ * much more; none of 48 GB or more. An ID Runpod's catalog does not know answers 404, and is
+ * skipped. Only `NVIDIA GeForce RTX 4090` is in docs/web/runpod/; `NVIDIA RTX A5000` answered the
+ * catalog in a dispatch; the others follow Runpod's naming, unconfirmed.
+ */
+export const GPU_MEMORY_GB: Readonly<Record<string, number>> = {
+  "NVIDIA RTX A4000": 16,
+  "NVIDIA RTX 2000 Ada Generation": 16,
+  "NVIDIA RTX A4500": 20,
+  "NVIDIA RTX 4000 Ada Generation": 20,
+  "NVIDIA RTX A5000": 24,
+  "NVIDIA GeForce RTX 3090": 24,
+  "NVIDIA L4": 24,
+  "NVIDIA GeForce RTX 4090": 24,
+};
+const SMALL_GPUS = Object.keys(GPU_MEMORY_GB);
+
+/**
+ * About the K/V cache `UNFIT_VLLM` asks, in GB: 256 requests of 32,768 tokens, at Qwen2.5-0.5B's
+ * 12,288 bytes per token (24 layers, 2 K/V heads of 64 dimensions, 2 bytes each, keys and values).
+ */
+export const UNFIT_KV_GB = (256 * 32_768 * 12_288) / 1e9;
+/**
+ * The most VRAM the `unfit` check takes, in GB: below half of `UNFIT_KV_GB`, so the overload
+ * surely does not fit. A GPU type the catalog lists with more is skipped.
+ */
+export const UNFIT_MAX_GB = 48;
+
+/**
+ * The GPU types each check that creates a pod tries with `--gpu=auto`, cheapest with room first,
+ * on Secure Cloud, or Community Cloud too.
+ */
+export const CANDIDATES: Readonly<Record<"ollama" | "vllm" | "unfit", readonly string[]>> = {
+  // qwen2.5:0.5b with its 32,768-token context uses about 1.2 GB: any of them holds it.
+  ollama: SMALL_GPUS,
+  // Qwen/Qwen2.5-0.5B-Instruct's 1 GB of weights, and vLLM's K/V cache in 90% of the rest: any of
+  // them. Their hosts must offer CUDA 13.0 (`VLLM_MIN_CUDA`), which the catalog read filters on.
+  vllm: SMALL_GPUS,
+  // 24 GB at most, against about 103 GB of K/V cache asked: a 24 GB GPU holds about 52 of the 256
+  // requests, so the fit surely fails. Same CUDA floor as `vllm`.
+  unfit: SMALL_GPUS.filter((gpu) => (GPU_MEMORY_GB[gpu] ?? Infinity) < UNFIT_MAX_GB),
+};
+
+/** The Runpod GPU types `--gpu=<id>` may name: those of the lists. On Salad, only `auto`. */
+export const GPU_TYPES: readonly string[] = [...new Set(Object.values(CANDIDATES).flat())];
+export const DEFAULT_GPU = "auto";
+/** With `--gpu=auto`, the GPU types a check tries before it gives up for lack of room. */
+export const MAX_ATTEMPTS = 3;
+
+/** Runpod's REST API, as the adapter calls it (src/inference/runpod.ts). */
+const RUNPOD_API = "https://api.runpod.io/v2";
+
+/**
+ * The most one run may cost, in USD: what its pods cost so far, and the GPUs' prices of the pods
+ * running and the next one for the run's remaining time.
+ */
+export const MAX_RUN_USD = 1;
+/** The run's time bound, in minutes: when reached, it stops and terminates its pods. */
+export const DEFAULT_MINUTES = 60;
+const MIN_MINUTES = 15;
+
+/**
+ * What the check can run: a pod that serves on Ollama, one on vLLM, a release the policy blocks
+ * (no pod), a vLLM pod whose model does not fit the GPU (step 4 of the plan), and, on Salad only,
+ * a probe of what its API refuses in the Ollama pod's creation, which starts no instance.
+ */
+export const CHECKS = ["ollama", "vllm", "blocked", "unfit", "probe"] as const;
+export type CheckName = (typeof CHECKS)[number];
+export const DEFAULT_CHECKS: readonly CheckName[] = ["ollama", "vllm"];
+
+/** The tiny public models of the e2e suite. */
+export const DEFAULT_MODELS = { ollama: "qwen2.5:0.5b", vllm: "Qwen/Qwen2.5-0.5B-Instruct" };
+/** vLLM's tool call parser for Qwen2.5, as the e2e suite's vLLM scenarios set it. */
+const TOOL_CALL_PARSER = "hermes";
+/**
+ * vLLM settings no GPU of `CANDIDATES.unfit` holds: about `UNFIT_KV_GB` of K/V cache. Codeman's
+ * estimate refuses them before creating a pod (docs/plans/2026-11-23-estimate-the-fit-before-creating-a-pod.md).
+ */
+const UNFIT_VLLM = { "max-model-len": "32768", "max-num-seqs": "256" };
+
+/** Ollama's model names: `name`, `namespace/name`, each with an optional `:tag`. */
+const OLLAMA_MODEL =
+  /^[a-z0-9][a-z0-9._-]{0,62}(\/[a-z0-9][a-z0-9._-]{0,62})?(:[A-Za-z0-9][A-Za-z0-9._-]{0,62})?$/;
+const FULL_SHA = /^[0-9a-f]{40}$/;
+/** A Runpod or Salad API key, as far as the check needs to tell: printable, without spaces. */
+const API_KEY = /^[\x21-\x7e]{16,512}$/;
+
+/** Each option, as `--<name>=<value>` or in its environment variable; the argument wins. */
+const OPTIONS = {
+  provider: "CODEMAN_POD_CHECK_PROVIDER",
+  gpu: "CODEMAN_POD_CHECK_GPU",
+  checks: "CODEMAN_POD_CHECK_CHECKS",
+  "ollama-model": "CODEMAN_POD_CHECK_OLLAMA_MODEL",
+  "vllm-model": "CODEMAN_POD_CHECK_VLLM_MODEL",
+  "max-minutes": "CODEMAN_POD_CHECK_MAX_MINUTES",
+  community: "CODEMAN_POD_CHECK_COMMUNITY",
+} as const;
+type Option = keyof typeof OPTIONS;
+
+export interface Inputs {
+  provider: ProviderName;
+  /** `auto`, or one GPU type of `GPU_TYPES` on Runpod. */
+  gpu: string;
+  /** Whether pods may run on community hosts too: Runpod's Community Cloud, or Salad's. */
+  community: boolean;
+  checks: CheckName[];
+  ollamaModel: string;
+  vllmModel: string;
+  maxMinutes: number;
+  /** Only terminate every pod that names `OWNER`, as a workflow's last step does. */
+  cleanup: boolean;
+}
+
+/**
+ * The check's inputs, each checked against a strict pattern before use. A problem never repeats
+ * the value given: an input could hold anything, workflow commands included.
+ */
+export function parseInputs(
+  argv: readonly string[],
+  env: Readonly<Record<string, string | undefined>>,
+): { inputs: Inputs } | { problem: string } {
+  const given = new Map<Option, string>();
+  let cleanup = false;
+  for (const arg of argv) {
+    if (arg === "--cleanup") {
+      cleanup = true;
+      continue;
+    }
+    const match = /^--([a-z-]+)=([\s\S]*)$/.exec(arg);
+    const name = match?.[1] as Option | undefined;
+    if (!match || !name || !(name in OPTIONS) || given.has(name)) {
+      return {
+        problem: `Unknown or repeated argument; the options are --cleanup, ${Object.keys(OPTIONS)
+          .map((option) => `--${option}=`)
+          .join(", ")}.`,
+      };
+    }
+    given.set(name, match[2] as string);
+  }
+  const value = (name: Option): string | undefined => {
+    const text = given.get(name) ?? env[OPTIONS[name]];
+    return text === undefined || text.trim() === "" ? undefined : text.trim();
+  };
+  const provider = value("provider") ?? DEFAULT_PROVIDER;
+  if (!(PROVIDERS as readonly string[]).includes(provider)) {
+    return { problem: `The provider must be one of: ${PROVIDERS.join(", ")}.` };
+  }
+  const gpu = value("gpu") ?? DEFAULT_GPU;
+  if (gpu !== "auto" && !GPU_TYPES.includes(gpu)) {
+    return { problem: `The GPU type must be auto, or one of: ${GPU_TYPES.join(", ")}.` };
+  }
+  if (provider === "salad" && gpu !== "auto") {
+    return { problem: "On Salad, the GPU type must be auto (decision 15)." };
+  }
+  const community = value("community") ?? "true";
+  if (community !== "true" && community !== "false") {
+    return { problem: "Community must be true or false." };
+  }
+  if (provider === "salad" && community === "false") {
+    return { problem: "On Salad, community must be true: its hosts are community ones." };
+  }
+  const listed = value("checks")
+    ?.split(",")
+    .map((check) => check.trim()) ?? [...DEFAULT_CHECKS];
+  if (
+    listed.length === 0 ||
+    new Set(listed).size !== listed.length ||
+    !listed.every((check) => (CHECKS as readonly string[]).includes(check))
+  ) {
+    return { problem: `The checks must be a list of ${CHECKS.join(", ")}, each once.` };
+  }
+  if (listed.includes("probe") && provider !== "salad") {
+    return { problem: "The probe check runs on Salad only." };
+  }
+  const ollamaModel = value("ollama-model") ?? DEFAULT_MODELS.ollama;
+  if (!OLLAMA_MODEL.test(ollamaModel)) {
+    return { problem: "The Ollama model must be an Ollama name, such as qwen2.5:0.5b." };
+  }
+  const vllmModel = value("vllm-model") ?? DEFAULT_MODELS.vllm;
+  if (vllmModel.length > 96 || !isHuggingFaceId(vllmModel)) {
+    return {
+      problem: "The vLLM model must be a Hugging Face ID, such as Qwen/Qwen2.5-0.5B-Instruct.",
+    };
+  }
+  const minutes = value("max-minutes") ?? String(DEFAULT_MINUTES);
+  const maxMinutes = Number(minutes);
+  if (!/^\d{1,3}$/.test(minutes) || maxMinutes < MIN_MINUTES || maxMinutes > DEFAULT_MINUTES) {
+    return {
+      problem: `The max minutes must be a whole number from ${MIN_MINUTES} to ${DEFAULT_MINUTES}.`,
+    };
+  }
+  return {
+    inputs: {
+      provider: provider as ProviderName,
+      gpu,
+      community: community === "true",
+      checks: listed as CheckName[],
+      ollamaModel,
+      vllmModel,
+      maxMinutes,
+      cleanup,
+    },
+  };
+}
+
+/**
+ * The commit whose gateway the pods download: `GITHUB_SHA` in GitHub Actions, which is the commit
+ * `actions/checkout` checks out, and so the one `actionCommit` reads in Codeman's own jobs; else
+ * the checkout's `HEAD`. Undefined when neither is a full SHA.
+ */
+export function runCommit(
+  env: Readonly<Record<string, string | undefined>>,
+  git: () => string,
+): string | undefined {
+  let commit = env.GITHUB_SHA?.trim() ?? "";
+  if (commit === "") {
+    try {
+      commit = git().trim();
+    } catch {
+      return undefined;
+    }
+  }
+  return FULL_SHA.test(commit) ? commit : undefined;
+}
+
+export interface CheckOptions {
+  argv: readonly string[];
+  env: Readonly<Record<string, string | undefined>>;
+  /** Writes one line to the standard output. */
+  write: (line: string) => void;
+  /** `git rev-parse HEAD`, when `GITHUB_SHA` is unset. */
+  git: () => string;
+  fetch?: typeof fetch;
+  /** Stops the run, as SIGINT and SIGTERM do: its pods are terminated all the same. */
+  signal?: AbortSignal;
+  now?: () => Date;
+  wait?: (ms: number) => Promise<void>;
+  /** Codeman's checkout, whose `dist/gateway.js` the pods download from the commit. */
+  root?: string;
+}
+
+/** A GPU type on a cloud, as its provider lists it now. */
+export interface Candidate {
+  gpu: string;
+  cloud: Cloud;
+  /** USD per hour for one GPU. */
+  hourly: number;
+  memoryGb: number | undefined;
+  /** Whether the provider lists room for one pod now. */
+  room: boolean;
+  /** The provider's own words on that room, printed after the price. */
+  roomFields: Fields;
+}
+
+/** What the check needs of a GPU cloud, beside Codeman's adapter's pods. */
+export interface CheckProvider {
+  name: ProviderName;
+  host: PodHost;
+  /** The account the adapter uses: its key derives the gateways' admin tokens. */
+  account: GpuAccount;
+  /** The pods' priority, as Codeman's `priority` setting names it; the provider's default if unset. */
+  priority?: string;
+  /** The kind of host a pod names when no GPU type is read, as for `blocked`. */
+  cloud: Cloud;
+  /**
+   * The GPU types a check may take, read now, each on each kind of host the inputs allow;
+   * undefined where the provider does not know or offer one, or could not be read.
+   */
+  read(
+    check: "ollama" | "vllm" | "unfit",
+    engine: "ollama" | "vllm",
+  ): Promise<(Candidate | undefined)[]>;
+  /** Records the node a pod's instance runs on, at each read of its state. */
+  observe?(id: string): Promise<void>;
+  /** Whether a pod moved to another node while the check watched it: the provider lost its node. */
+  moved?(id: string): Promise<boolean>;
+  /**
+   * The time the provider bills a pod for, from what `observe` saw, when that is narrower than the
+   * pod's life and known: Salad's alone, which bills only while its instance runs.
+   */
+  billed?(id: string): BilledSpan | undefined;
+  /**
+   * Sends variants of the creation's body for this pod, each stopped so that nothing is billed,
+   * and deletes each group created, to find what in its command the provider refuses: Salad's
+   * alone. `wait` paces the requests.
+   */
+  probe?(
+    spec: PodSpec,
+    hide: (value: string) => void,
+    wait: (ms: number) => Promise<void>,
+  ): Promise<ProbeOutcome>;
+}
+
+/** How a check ended: `infrastructure` when the provider lost the pod's node, not Codeman. */
+type Outcome = "pass" | "fail" | "infrastructure";
+
+/** Runs the pod check, and gives its exit code: 0 when every check and the cleanup pass. */
+export async function podCheck(options: CheckOptions): Promise<number> {
+  const { env } = options;
+  const report = new Report(options.write, env.GITHUB_ACTIONS === "true");
+  // Masked before anything else, though GitHub masks a secret already. Salad's organization and
+  // project are no secret, but name the account.
+  for (const name of [
+    "CODEMAN_RUNPOD_API_KEY",
+    "CODEMAN_SALAD_API_KEY",
+    "CODEMAN_SALAD_ORGANIZATION",
+    "CODEMAN_SALAD_PROJECT",
+  ]) {
+    report.hide(env[name]?.trim() || undefined);
+  }
+  const parsed = parseInputs(options.argv, env);
+  if ("problem" in parsed) {
+    report.line("inputs", { result: "fail", reason: parsed.problem });
+    return 2;
+  }
+  const { inputs } = parsed;
+  const fetchFn = options.fetch ?? fetch;
+  const now = options.now ?? (() => new Date());
+  const wait = options.wait ?? ((ms: number) => new Promise((done) => setTimeout(done, ms)));
+  const provider = checkProvider(inputs, env, fetchFn, now);
+  if ("problem" in provider) {
+    report.line("inputs", { result: "fail", reason: provider.problem });
+    return 2;
+  }
+  if (inputs.cleanup) return cleanupAll(report, provider.host);
+  const key = provider.account.key;
+  report.line("inputs", {
+    result: "pass",
+    provider: inputs.provider,
+    gpu: inputs.gpu,
+    community: inputs.community,
+    checks: inputs.checks.join(","),
+    max_minutes: inputs.maxMinutes,
+  });
+
+  const commit = runCommit(env, options.git);
+  if (!commit) {
+    report.line("gateway", {
+      result: "fail",
+      reason: "The run's commit is unknown: set GITHUB_SHA, or run from a git checkout.",
+    });
+    return 1;
+  }
+  const gateway = await servedGateway(fetchFn, options.root ?? ACTION_ROOT, commit);
+  report.line("gateway", { result: gateway.ok ? "pass" : "fail", commit, reason: gateway.reason });
+  if (!gateway.ok) return 1;
+
+  const started = now().getTime();
+  const deadline = new AbortController();
+  const timer = setTimeout(() => deadline.abort(), inputs.maxMinutes * 60_000);
+  const signal = options.signal
+    ? AbortSignal.any([options.signal, deadline.signal])
+    : deadline.signal;
+  const tag = runTag(env);
+  const pods = new TrackedPods(provider, report, signal, now, wait);
+  const context: Context = {
+    report,
+    say: (event, fields) => {
+      if (!signal.aborted) report.line(event, fields);
+    },
+    key,
+    provider,
+    inputs,
+    gateway: gateway.artifact,
+    pods,
+    store: new MemoryStore(),
+    pool: { id: `${OWNER}-${tag}`, members: [OWNER] },
+    releases: {
+      gateway: () => gateway.artifact,
+      osv: new Osv(fetchFn),
+      cache: new MemoryReleaseCheckCache(),
+    },
+    fetch: fetchFn,
+    now,
+    wait: options.wait,
+    deadlineAt: started + inputs.maxMinutes * 60_000,
+    runId: tag,
+  };
+  const results: Outcome[] = [];
+  try {
+    for (const check of inputs.checks) {
+      if (signal.aborted) break;
+      try {
+        results.push(await untilStopped(runCheck(context, check), signal));
+      } catch (error) {
+        results.push("fail");
+        if (error instanceof Stopped) {
+          report.line(check, {
+            result: "stopped",
+            reason: deadline.signal.aborted
+              ? "The run reached its max minutes."
+              : "The run was interrupted.",
+          });
+          break;
+        }
+        report.line(check, { result: "fail", ...failure(report, error) });
+      }
+    }
+  } finally {
+    clearTimeout(timer);
+    const cleanup = await pods.cleanup(context.pool.id);
+    report.line("cleanup", {
+      result: cleanup.ok ? "pass" : "fail",
+      pods: cleanup.pods,
+      leftover_pods: cleanup.leftovers,
+    });
+    results.push(cleanup.ok ? "pass" : "fail");
+  }
+  const complete = results.length > inputs.checks.length;
+  const passed = complete && results.every((result) => result === "pass");
+  const infrastructure = complete && !passed && results.every((result) => result !== "fail");
+  const end = now().getTime();
+  // On Salad, which bills only while an instance runs: the run's pods for that time, where the
+  // check saw it, else for their whole life.
+  const billed = provider.billed ? pods.costUsd(end, provider.billed) : undefined;
+  report.line("done", {
+    result: passed ? "pass" : infrastructure ? "infrastructure" : "fail",
+    total_s: seconds(started, end),
+    ...(billed ? { cost_usd: usd(billed.usd), cost_basis: billed.basis } : {}),
+    // What the run's pods cost at their listed prices over their whole life, from before their
+    // creation to their termination: an upper bound, which the run's cap counts.
+    pods_cost_usd: usd(pods.spentUsd(end)),
+  });
+  return passed ? 0 : 1;
+}
+
+/**
+ * The provider the inputs name, with its account from the environment, each value checked against
+ * a pattern; a problem never repeats one.
+ */
+function checkProvider(
+  inputs: Inputs,
+  env: Readonly<Record<string, string | undefined>>,
+  fetchFn: typeof fetch,
+  now: () => Date,
+): CheckProvider | { problem: string } {
+  if (inputs.provider === "salad") {
+    const key = env.CODEMAN_SALAD_API_KEY?.trim() ?? "";
+    const organization = env.CODEMAN_SALAD_ORGANIZATION?.trim() ?? "";
+    const project = env.CODEMAN_SALAD_PROJECT?.trim() ?? "";
+    if (!API_KEY.test(key)) {
+      return { problem: "CODEMAN_SALAD_API_KEY must hold a Salad API key." };
+    }
+    if (!SALAD_NAME.test(organization) || !SALAD_NAME.test(project)) {
+      return {
+        problem:
+          "CODEMAN_SALAD_ORGANIZATION and CODEMAN_SALAD_PROJECT must hold Salad's names of an organization and a project.",
+      };
+    }
+    return saladProvider({ key, organization, project }, fetchFn, () => now().getTime());
+  }
+  const key = env.CODEMAN_RUNPOD_API_KEY ?? "";
+  if (!API_KEY.test(key)) {
+    return { problem: "CODEMAN_RUNPOD_API_KEY must hold a Runpod API key." };
+  }
+  const runpod = new Runpod(key, fetchFn, now);
+  return {
+    name: "runpod",
+    host: runpod.pods,
+    account: { key },
+    cloud: "secure",
+    read: async (check, engine) => {
+      const gpus = inputs.gpu === "auto" ? CANDIDATES[check] : [inputs.gpu];
+      const clouds: Cloud[] = inputs.community ? ["secure", "community"] : ["secure"];
+      const read: (Candidate | undefined)[] = [];
+      for (const gpu of gpus) {
+        for (const cloud of clouds) read.push(await catalogRead(fetchFn, key, gpu, cloud, engine));
+      }
+      return read;
+    },
+  };
+}
+
+/** What one check needs. */
+interface Context {
+  report: Report;
+  /** Prints a line, unless the run was stopped: work that lost the race prints nothing. */
+  say: (event: string, fields: Fields) => void;
+  key: string;
+  provider: CheckProvider;
+  inputs: Inputs;
+  gateway: GatewayArtifact;
+  pods: TrackedPods;
+  store: MemoryStore;
+  pool: Pool;
+  releases: PodReleases;
+  fetch: typeof fetch;
+  now: () => Date;
+  wait: ((ms: number) => Promise<void>) | undefined;
+  /** When the run stops at its max minutes. */
+  deadlineAt: number;
+  runId: string;
+}
+
+function runCheck(context: Context, check: CheckName): Promise<Outcome> {
+  switch (check) {
+    case "ollama":
+    case "vllm":
+      return serveCheck(context, check);
+    case "blocked":
+      return blockedCheck(context);
+    case "unfit":
+      return unfitCheck(context);
+    case "probe":
+      return probeCheck(context);
+  }
+}
+
+/** What Codeman logs: nothing is printed, since its lines name pods. */
+const SILENT: Log = { info: () => {}, warning: () => {}, error: () => {} };
+
+/** The run each check opens: one task, with a limit the gateway will not reach. */
+function runRequest(context: Context) {
+  return {
+    task: "1",
+    runId: context.runId,
+    limit: MAX_RUN_USD,
+    reservationMs: context.inputs.maxMinutes * 60_000,
+  };
+}
+
+/** Codeman's self-hosted inference on a pod of the engine, as `open-key` builds it. */
+function podInference(
+  context: Context,
+  engine: "ollama" | "vllm",
+  on: { gpu: string; cloud: Cloud },
+  vllm: Record<string, string> = {},
+  releases: PodReleases = context.releases,
+  gpu: GpuProvider = context.pods.provider,
+): PodInference {
+  const settings: PodSettings = {
+    model: engine === "ollama" ? context.inputs.ollamaModel : context.inputs.vllmModel,
+    engine: ENGINES[engine] as InferenceEngine,
+    pods: [],
+    gpuType: on.gpu,
+    image: podImage(engine),
+    reuse: "run",
+    parallel: 1,
+    // Codeman's `hosts` setting: the provider creates the pod on that kind of host alone.
+    hosts: [on.cloud],
+    ...(context.provider.priority ? { priority: context.provider.priority } : {}),
+    ...(engine === "vllm"
+      ? { vllm: checkedVllm({ "tool-call-parser": TOOL_CALL_PARSER, ...vllm }) }
+      : {}),
+  };
+  return new PodInference(settings, {
+    repository: { owner: OWNER, name: "pod-check" },
+    gpu,
+    account: context.provider.account,
+    store: context.store,
+    pool: context.pool,
+    now: context.now,
+    fetch: context.fetch,
+    ...(context.wait ? { wait: context.wait } : {}),
+    releases,
+  });
+}
+
+/**
+ * A pod that serves: its start, then that the bootstrap verified Node.js and the gateway, the
+ * gateway's health, the fit against the GPU, one chat answer through the provider's proxy (Runpod's,
+ * or Salad's Container Gateway), and its end.
+ */
+async function serveCheck(context: Context, engine: "ollama" | "vllm"): Promise<Outcome> {
+  const { say } = context;
+  const model = engine === "ollama" ? context.inputs.ollamaModel : context.inputs.vllmModel;
+  const before = context.pods.count;
+  const started = await startPod(context, engine, engine);
+  if (started.kind === "none") return "fail";
+  const { candidate, start, attempt } = started;
+  if (started.kind === "failed") {
+    say(`${engine}.start`, {
+      ...startFailure(context.report, started.error, candidate),
+      engine,
+      model,
+      attempt,
+      ...candidateFields(candidate),
+      pods: context.pods.count,
+    });
+    return interrupted(context, `${engine}.start`, context.pods.idsSince(before));
+  }
+  const { opened, inference } = started;
+  context.report.hide(opened.credential);
+  const handle = JSON.parse(opened.handle) as PodHandle;
+  context.report.hide(handle.podId);
+  context.report.hide(handle.url);
+  context.report.hide(handle.nonce);
+  const serving = context.now().getTime();
+  const created = context.pods.createdAt(handle.nonce) ?? start;
+  say(`${engine}.start`, {
+    result: "pass",
+    engine,
+    model,
+    attempt,
+    ...candidateFields(candidate),
+    create_s: seconds(start, created),
+    serve_s: seconds(created, serving),
+  });
+  const results: boolean[] = [];
+  let moved = false;
+  const { observe } = context.provider;
+  // While it serves, its instance runs: when it started running is when the provider bills from.
+  if (observe) await observe(handle.podId).catch(() => undefined);
+  try {
+    const status = await adminStatus(context, handle).catch(() => undefined);
+    const bootstrap = bootstrapFields(context, handle.nonce, engine, status);
+    say(`${engine}.bootstrap`, bootstrap);
+    results.push(bootstrap.result === "pass");
+    const health = await healthFields(context, handle);
+    say(`${engine}.health`, health);
+    results.push(health.result === "pass");
+    const fit = fitFields(engine, status, candidate.memoryGb);
+    say(`${engine}.fit`, fit);
+    results.push(fit.result === "pass");
+    const chat = await chatFields(context, opened, model);
+    say(`${engine}.chat`, chat);
+    results.push(chat.result === "pass");
+    // Before the pod ends, while the provider still lists its instance.
+    if (!results.every(Boolean)) {
+      moved = (await interrupted(context, engine, [handle.podId])) === "infrastructure";
+    }
+  } finally {
+    try {
+      if (observe) await observe(handle.podId).catch(() => undefined);
+      const usage = await inference.close(opened.handle, SILENT);
+      const billed = context.provider.billed
+        ? context.pods.costUsd(context.now().getTime(), context.provider.billed, [handle.podId])
+        : undefined;
+      say(`${engine}.end`, {
+        result: "pass",
+        // Codeman's cost of the run; on Salad, what Salad bills the pod for so far, and Codeman's
+        // own estimate of the run beside it, which counts from the pod's creation.
+        cost_usd: billed ? usd(billed.usd) : usage.cost,
+        ...(billed ? { cost_basis: billed.basis, estimate_usd: usage.cost } : {}),
+        total_s: seconds(start, context.now().getTime()),
+      });
+      results.push(true);
+    } catch (error) {
+      say(`${engine}.end`, failure(context.report, error));
+      results.push(false);
+    }
+  }
+  return results.every(Boolean) ? "pass" : moved ? "infrastructure" : "fail";
+}
+
+/** Why a check failed when the provider moved its pod to another node. */
+const MOVED =
+  "The provider moved the pod to another node meanwhile: its node was lost, which is the infrastructure's failure, not Codeman's.";
+
+/**
+ * A failed check's outcome: `infrastructure`, printed on `<event>.infrastructure`, when the
+ * provider moved one of its pods to another node, else `fail`. Only Salad says.
+ */
+async function interrupted(
+  context: Context,
+  event: string,
+  ids: readonly string[],
+): Promise<Outcome> {
+  const { moved } = context.provider;
+  if (!moved) return "fail";
+  for (const id of ids) {
+    if (await moved(id).catch(() => false)) {
+      context.say(`${event}.infrastructure`, { result: "infrastructure", reason: MOVED });
+      return "infrastructure";
+    }
+  }
+  return "fail";
+}
+
+/**
+ * A blocked release starts no pod (step 4 of the plan): Ollama's pinned release without its
+ * exceptions, which OSV.dev's advisories then block. No pod may be created meanwhile.
+ */
+async function blockedCheck(context: Context): Promise<Outcome> {
+  const ollama = ENGINE_RELEASES.ollama;
+  if (!ollama) throw new Error("The catalog pins no Ollama release.");
+  const before = context.pods.count;
+  // The policy blocks before anything reads the GPU type, which is any.
+  const inference = podInference(
+    context,
+    "ollama",
+    { gpu: CANDIDATES.ollama[0] as string, cloud: context.provider.cloud },
+    {},
+    {
+      ...context.releases,
+      engines: { ...ENGINE_RELEASES, ollama: { ...ollama, exceptions: [] } },
+    },
+  );
+  let error: unknown;
+  try {
+    const opened = await inference.open(runRequest(context), SILENT);
+    await inference.close(opened.handle, SILENT).catch(() => undefined);
+  } catch (caught) {
+    error = caught;
+  }
+  const created = context.pods.count - before;
+  const blocked = causeOf(error) instanceof ReleaseBlocked;
+  const passed = blocked && created === 0;
+  const { result: _, ...found } =
+    error === undefined ? { result: "" } : failure(context.report, error);
+  context.say("blocked", {
+    result: passed ? "pass" : "fail",
+    ...found,
+    ...(blocked ? {} : { reason: "The release policy did not block the release." }),
+    pods: created,
+  });
+  return passed ? "pass" : "fail";
+}
+
+/**
+ * A model that does not fit fails with the fit's message (step 4 of the plan): a vLLM pod whose
+ * explicit settings no GPU of the list holds. Codeman's estimate refuses it before creating a
+ * pod, so it costs nothing; the gateway's own fit message stays with the e2e suite's
+ * `failures/fit-vllm-explicit`.
+ */
+async function unfitCheck(context: Context): Promise<Outcome> {
+  const before = context.pods.count;
+  const started = await startPod(context, "unfit", "vllm", UNFIT_VLLM);
+  if (started.kind === "none") return "fail";
+  const { candidate, start, attempt } = started;
+  let error: unknown;
+  if (started.kind === "opened") {
+    await started.inference.close(started.opened.handle, SILENT).catch(() => undefined);
+  } else {
+    error = started.error;
+  }
+  const cause = causeOf(error);
+  // Refused by Codeman's estimate, before any pod: no time is billed.
+  const fit = cause instanceof FitRefused && /does not fit the GPU/.test(cause.message);
+  const created = context.pods.count - before;
+  const passed = fit && created === 0;
+  const { result: _, ...found } =
+    error === undefined
+      ? { result: "", reason: "The pod served the model, which should not fit." }
+      : startFailure(context.report, error, candidate);
+  context.say("unfit", {
+    result: passed ? "pass" : "fail",
+    engine: "vllm",
+    model: context.inputs.vllmModel,
+    ...found,
+    attempt,
+    ...candidateFields(candidate),
+    pods: created,
+    total_s: seconds(start, context.now().getTime()),
+  });
+  if (passed) return "pass";
+  return interrupted(context, "unfit", context.pods.idsSince(before));
+}
+
+/** The pod's spec reached the provider's `create`, which the probe stops there. */
+class SpecCaught extends Error {}
+
+/**
+ * Salad's probe: the Ollama pod's spec as Codeman makes it, on the GPU class the `ollama` check
+ * would take, stopped before its creation; then the variants of its body (`probeBodies` in
+ * e2e/live/salad.ts), each stopped and deleted, with what Salad answered to each. Passes when
+ * Salad accepts the whole body.
+ */
+async function probeCheck(context: Context): Promise<Outcome> {
+  const { say, provider } = context;
+  if (!provider.probe) throw new Error("The probe check runs on Salad only.");
+  const [candidate] = await rankedCandidates(context, "ollama", "ollama", "probe");
+  if (!candidate) return "fail";
+  let caught: PodSpec | undefined;
+  const catching: GpuProvider = {
+    name: provider.name,
+    pods: {
+      ...(context.pods.provider.pods as PodHost),
+      create: async (spec) => {
+        const nonce = spec.env.CODEMAN_NONCE ?? "";
+        context.report.hide(adminToken(context.key, nonce));
+        context.report.hide(nonce);
+        caught = spec;
+        throw new SpecCaught("The probe stops before the creation.");
+      },
+    },
+  };
+  const inference = podInference(context, "ollama", candidate, {}, context.releases, catching);
+  try {
+    await inference.open(runRequest(context), SILENT);
+  } catch (error) {
+    if (!caught) {
+      say("probe.spec", { result: "fail", ...failure(context.report, error) });
+      return "fail";
+    }
+  }
+  if (!caught) throw new Error("The probe's pod was created.");
+  const { answers, cause, capped } = await provider.probe(
+    caught,
+    (value) => context.report.hide(value),
+    context.wait ?? ((ms) => new Promise((done) => setTimeout(done, ms))),
+  );
+  for (const answer of answers) say(`probe.${answer.variant}`, probeFields(context.report, answer));
+  const accepted = answers.filter((answer) => isAccepted(answer.status)).length;
+  const leftovers = answers.filter((answer) => answer.deleted === false).length;
+  const full = answers.find((answer) => answer.variant === "full");
+  const passed = isAccepted(full?.status) && leftovers === 0;
+  say("probe", {
+    result: passed ? "pass" : "fail",
+    accepted,
+    rejected: answers.length - accepted,
+    undeleted: leftovers,
+    ...cause,
+    capped: capped || undefined,
+    reason: passed
+      ? undefined
+      : leftovers > 0
+        ? "A probe's group could not be deleted: the cleanup deletes it."
+        : CAUSES[cause.cause],
+  });
+  return passed ? "pass" : "fail";
+}
+
+/** What each cause of the probe means, for its summary line. */
+const CAUSES: Readonly<Record<ProbeOutcome["cause"]["cause"], string>> = {
+  none: "Salad took the whole body.",
+  unknown: "Salad refused the creation, and the probe could not tell what in it.",
+  "any-command": "Salad refused every command, even /bin/sh -c :.",
+  "item-content":
+    "Salad refused command items alone: the items, their tokens and the words it refused are named.",
+  "total-chars": "Salad refused a command above a total size: the limit lies in the range.",
+  "item-count": "Salad refused a command of 60 items.",
+  "item-length": "Salad refused a command item of 1,000 characters.",
+  throttled: "Salad answered 429: the probe stopped.",
+};
+
+function isAccepted(status: number | undefined): boolean {
+  return status !== undefined && status >= 200 && status < 300;
+}
+
+/** A top-level key of a problem's body: a name, never a value. */
+const PROBLEM_KEY = /^[A-Za-z_][A-Za-z0-9_-]{0,40}$/;
+/**
+ * A problem's `traceId`: an opaque trace of Salad's servers, which its support can look up. Only
+ * a W3C `traceparent` or a run of hexadecimal digits and hyphens prints; anything else is withheld.
+ */
+const TRACE_ID = /^([0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}|[0-9a-f-]{16,64})$/;
+
+/**
+ * What a probe's answer may print: its status, the problem's text as `describeProblem` reads it,
+ * cleaned, the names of the body's top-level keys, its `type` when that is a URL, its `traceId`
+ * when that is one, its media type and size. Never another value of the body: `instance`, for one, names the organization and the
+ * project.
+ */
+function probeFields(report: Report, answer: ProbeAnswer): Fields {
+  if (answer.status === undefined) {
+    return { result: "fail", error: "Error", reason: "The request failed before an answer." };
+  }
+  const facts = answer.facts ?? {};
+  if (isAccepted(answer.status)) {
+    return { result: "pass", ...facts, http_status: answer.status, deleted: answer.deleted };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(answer.body);
+  } catch {
+    parsed = undefined;
+  }
+  const problem =
+    typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : undefined;
+  const described = describeProblem(answer.body);
+  const keys = problem ? Object.keys(problem).filter((key) => PROBLEM_KEY.test(key)) : [];
+  return {
+    result: "fail",
+    ...facts,
+    http_status: answer.status,
+    message: described ? report.cleanMessage(described) : undefined,
+    keys: keys.length > 0 ? keys.slice(0, 20).join(",") : undefined,
+    type: typeof problem?.type === "string" ? problem.type : undefined,
+    trace_id:
+      typeof problem?.traceId === "string"
+        ? TRACE_ID.test(problem.traceId)
+          ? problem.traceId
+          : "withheld"
+        : undefined,
+    content_type: answer.contentType?.split(";")[0]?.trim().toLowerCase(),
+    body_bytes: Buffer.byteLength(answer.body),
+  };
+}
+
+function candidateFields(candidate: Candidate): Fields {
+  return {
+    gpu: candidate.gpu,
+    cloud: candidate.cloud,
+    price_per_hour_usd: candidate.hourly,
+    memory_gb: candidate.memoryGb,
+    ...candidate.roomFields,
+  };
+}
+
+/** What `startPod` gives: a pod that serves, a start that failed, or no GPU to try. */
+type Started =
+  | {
+      kind: "opened";
+      opened: OpenedRun;
+      inference: PodInference;
+      candidate: Candidate;
+      start: number;
+      attempt: number;
+    }
+  | { kind: "failed"; error: unknown; candidate: Candidate; start: number; attempt: number }
+  | { kind: "none" };
+
+/**
+ * Starts the check's pod on the cheapest GPU type and cloud with room within the run's cost cap,
+ * and, with `--gpu=auto`, on the next ones when Runpod has no room after all, `MAX_ATTEMPTS` at
+ * most. Prints the choice, and each attempt that found no room; the caller prints the last one.
+ */
+async function startPod(
+  context: Context,
+  check: "ollama" | "vllm" | "unfit",
+  engine: "ollama" | "vllm",
+  vllm: Record<string, string> = {},
+): Promise<Started> {
+  const { say } = context;
+  const ranked = await rankedCandidates(context, check, engine);
+  const attempts = context.inputs.gpu === "auto" ? MAX_ATTEMPTS : 1;
+  let attempt = 0;
+  for (const candidate of ranked) {
+    if (attempt >= attempts) break;
+    if (!withinCap(context, candidate.hourly)) continue;
+    attempt++;
+    const inference = podInference(context, engine, candidate, vllm);
+    const start = context.now().getTime();
+    context.pods.allowCreate = true;
+    context.pods.pendingHourly = candidate.hourly;
+    try {
+      const opened = await inference.open(runRequest(context), SILENT);
+      return { kind: "opened", opened, inference, candidate, start, attempt };
+    } catch (error) {
+      const found = startFailure(context.report, error, candidate);
+      if (found.result !== "unavailable") {
+        return { kind: "failed", error, candidate, start, attempt };
+      }
+      say(`${check}.start`, {
+        ...found,
+        engine,
+        attempt,
+        ...candidateFields(candidate),
+        pods: context.pods.count,
+      });
+    } finally {
+      context.pods.allowCreate = false;
+    }
+  }
+  if (attempt === 0 && ranked.length > 0) {
+    say(`${check}.start`, {
+      result: "fail",
+      reason: `No GPU type with room fits the run's cost cap of ${MAX_RUN_USD} USD any more.`,
+    });
+  }
+  return { kind: "none" };
+}
+
+/**
+ * The check's GPU types on each allowed kind of host, as the provider lists them now: those with
+ * room within the run's cost cap, cheapest first, ties in the provider's order. Prints the
+ * cheapest, and how many were considered and skipped, on `<check>.gpu`.
+ */
+async function rankedCandidates(
+  context: Context,
+  check: "ollama" | "vllm" | "unfit",
+  engine: "ollama" | "vllm",
+  label: string = check,
+): Promise<Candidate[]> {
+  let read: (Candidate | undefined)[];
+  try {
+    read = await context.provider.read(check, engine);
+  } catch (error) {
+    context.say(`${label}.gpu`, { ...failure(context.report, error), result: "fail" });
+    return [];
+  }
+  let missing = 0;
+  let noRoom = 0;
+  let overCap = 0;
+  let tooLarge = 0;
+  const eligible: Candidate[] = [];
+  for (const candidate of read) {
+    if (!candidate) missing++;
+    else if (check === "unfit" && !((candidate.memoryGb ?? Infinity) < UNFIT_MAX_GB)) tooLarge++;
+    else if (!candidate.room) noRoom++;
+    else if (!withinCap(context, candidate.hourly)) overCap++;
+    else eligible.push(candidate);
+  }
+  // Stable: ties keep the list's order, Secure Cloud first.
+  eligible.sort((a, b) => a.hourly - b.hourly);
+  const [first] = eligible;
+  context.say(`${label}.gpu`, {
+    result: first ? "pass" : overCap > 0 ? "fail" : "unavailable",
+    ...(first ? candidateFields(first) : {}),
+    candidates: read.length,
+    eligible: eligible.length,
+    no_room: noRoom,
+    missing,
+    over_cap: overCap,
+    too_large: check === "unfit" ? tooLarge : undefined,
+    reason: first
+      ? undefined
+      : overCap > 0
+        ? `No GPU type with room fits the run's cost cap of ${MAX_RUN_USD} USD: lower the max minutes.`
+        : "No GPU type of the list has room now.",
+  });
+  return eligible;
+}
+
+/**
+ * Whether a pod at `hourly` keeps the run within `MAX_RUN_USD`: what its pods cost so far, and
+ * the pods still running and this one for the run's remaining time, its worst case.
+ */
+function withinCap(context: Context, hourly: number): boolean {
+  const now = context.now().getTime();
+  const hours = Math.max(0, context.deadlineAt - now) / 3_600_000;
+  const worst = context.pods.spentUsd(now) + (context.pods.runningHourly() + hourly) * hours;
+  return worst <= MAX_RUN_USD + 1e-9;
+}
+
+/** What the gateway says of itself, from `/admin/status` (src/gateway/gateway.ts). */
+interface GatewayStatus {
+  version?: unknown;
+  engine?: unknown;
+  ready?: unknown;
+  /** The Node.js the gateway runs on, and its own file's SHA-256: from pod gateways that say. */
+  node?: unknown;
+  gatewaySha256?: unknown;
+  fit?: FitReport | VllmFitReport;
+}
+
+/** The gateway's status, with the admin token the account key derives for the pod. */
+async function adminStatus(context: Context, handle: PodHandle): Promise<GatewayStatus> {
+  const response = await context.fetch(`${handle.url}/admin/status`, {
+    headers: { Authorization: `Bearer ${adminToken(context.key, handle.nonce)}` },
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!response.ok) {
+    await response.body?.cancel();
+    throw new Error(`The gateway answered ${response.status}.`);
+  }
+  return (await response.json()) as GatewayStatus;
+}
+
+/**
+ * That the bootstrap verified Node.js and the gateway: the gateway reports the Node.js it runs on
+ * and its own file's SHA-256 (`gatewayBuild` in src/gateway/gateway.ts), which must be
+ * `NODE_RELEASE`'s version and the gateway's at the run's commit. The bootstrap runs nothing
+ * whose SHA-256 differs, so they prove what it checked. Also checked: the pod was created with
+ * the bootstrap as its command, on the catalog's image, with `NODE_RELEASE`'s URL and SHA-256 and
+ * the gateway's at the run's commit; and the gateway answers with its version and engine.
+ */
+function bootstrapFields(
+  context: Context,
+  nonce: string,
+  engine: "ollama" | "vllm",
+  status: GatewayStatus | undefined,
+): Fields {
+  const spec = context.pods.spec(nonce);
+  const env = spec?.env ?? {};
+  const command = JSON.stringify(spec?.command) === JSON.stringify(bootstrapCommand());
+  const image = spec?.image === podImage(engine);
+  const nodeSpec =
+    env[BOOTSTRAP_VARIABLES.nodeUrl] === NODE_RELEASE.url &&
+    env[BOOTSTRAP_VARIABLES.nodeSha256] === NODE_RELEASE.sha256;
+  const gatewaySpec =
+    env[BOOTSTRAP_VARIABLES.gatewayUrl] === context.gateway.url &&
+    env[BOOTSTRAP_VARIABLES.gatewaySha256] === context.gateway.sha256;
+  const answered = status?.version === GATEWAY_VERSION && status.engine === engine;
+  const node = typeof status?.node === "string" ? status.node : undefined;
+  const nodeMatch = node === `v${NODE_RELEASE.release.version}`;
+  const gatewayMatch = status?.gatewaySha256 === context.gateway.sha256;
+  const passed = command && image && nodeSpec && gatewaySpec && answered && nodeMatch;
+  return {
+    result: passed && gatewayMatch ? "pass" : "fail",
+    node,
+    node_match: nodeMatch,
+    gateway_sha256_match: gatewayMatch,
+    command,
+    image,
+    node_spec: nodeSpec,
+    gateway_spec: gatewaySpec,
+    gateway_answered: answered,
+    gateway_version: typeof status?.version === "number" ? status.version : undefined,
+  };
+}
+
+/** `/health` through Runpod's proxy: ready. */
+async function healthFields(context: Context, handle: PodHandle): Promise<Fields> {
+  try {
+    const response = await context.fetch(`${handle.url}/health`, {
+      signal: AbortSignal.timeout(30_000),
+    });
+    const body = await jsonBody<{ ready?: unknown }>(response);
+    const ready = body?.ready === true;
+    return { result: ready ? "pass" : "fail", http_status: response.status, ready };
+  } catch (error) {
+    return { result: "fail", ...failure(context.report, error) };
+  }
+}
+
+/**
+ * How the model fits the GPU, from the gateway's status, against the GPU's memory as Runpod lists
+ * it. Ollama reports the bytes its model uses on the GPU (`/api/ps`'s `size_vram`); vLLM, the
+ * tokens its K/V cache holds.
+ */
+function fitFields(
+  engine: "ollama" | "vllm",
+  status: GatewayStatus | undefined,
+  gpu: number | undefined,
+): Fields {
+  const fit = status?.fit;
+  if (engine === "ollama") {
+    if (!fit || fit.engine !== undefined) {
+      return { result: "fail", reason: "The gateway reported no fit.", gpu_memory_gb: gpu };
+    }
+    const onGpu = fit.size > 0 && fit.sizeVram >= fit.size;
+    const within = gpu === undefined || fit.sizeVram <= gpu * 1e9;
+    return {
+      result: onGpu && within ? "pass" : "fail",
+      gpu_memory_gb: gpu,
+      size_gb: fit.size / 1e9,
+      vram_gb: fit.sizeVram / 1e9,
+      context: fit.contextLength,
+      parallel: fit.parallel,
+      requested_parallel: fit.requestedParallel,
+      source: fit.source,
+      loads: fit.loads,
+    };
+  }
+  if (fit?.engine !== "vllm") {
+    return { result: "fail", reason: "The gateway reported no fit.", gpu_memory_gb: gpu };
+  }
+  return {
+    result:
+      fit.concurrency >= fit.parallel && fit.cacheTokens >= fit.contextLength ? "pass" : "fail",
+    gpu_memory_gb: gpu,
+    context: fit.contextLength,
+    model_context: fit.modelContextLength,
+    cache_tokens: fit.cacheTokens,
+    concurrency: fit.concurrency,
+    parallel: fit.parallel,
+    source: fit.source,
+    loads: fit.loads,
+  };
+}
+
+/** A successful response's JSON body, never printed; undefined for another status. */
+async function jsonBody<T>(response: Response): Promise<T | undefined> {
+  if (!response.ok) {
+    await response.body?.cancel();
+    return undefined;
+  }
+  return (await response.json().catch(() => undefined)) as T | undefined;
+}
+
+/** One chat completion through Runpod's proxy, with the run's token: a status, never the body. */
+async function chatFields(context: Context, opened: OpenedRun, model: string): Promise<Fields> {
+  const start = context.now().getTime();
+  try {
+    const response = await context.fetch(`${opened.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${opened.credential}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "user", content: "Reply with one word: ready." }],
+        max_tokens: 16,
+      }),
+      // Runpod's proxy cuts a request at 100 seconds.
+      signal: AbortSignal.timeout(120_000),
+    });
+    const body = await jsonBody<{
+      choices?: { message?: { content?: unknown } }[];
+      usage?: { completion_tokens?: unknown };
+    }>(response);
+    const content = body?.choices?.[0]?.message?.content;
+    const answered = typeof content === "string" && content.trim() !== "";
+    const tokens = body?.usage?.completion_tokens;
+    return {
+      result: response.ok && answered ? "pass" : "fail",
+      http_status: response.status,
+      answered,
+      completion_tokens: typeof tokens === "number" ? tokens : undefined,
+      chat_s: seconds(start, context.now().getTime()),
+    };
+  } catch (error) {
+    return { result: "fail", ...failure(context.report, error) };
+  }
+}
+
+/**
+ * The gateway the pods download, checked before any pod: `gatewayArtifact`, as `open-key` gives
+ * it, at the run's commit, and its file on raw.githubusercontent.com, whose SHA-256 must be that
+ * of the checkout's `dist/gateway.js`. A commit not pushed, or a `dist/` changed since it, would
+ * fail every pod's bootstrap.
+ */
+async function servedGateway(
+  fetchFn: typeof fetch,
+  root: string,
+  commit: string,
+): Promise<
+  { ok: true; artifact: GatewayArtifact; reason?: undefined } | { ok: false; reason: string }
+> {
+  let artifact: GatewayArtifact;
+  try {
+    artifact = gatewayArtifact(root, commit);
+  } catch {
+    return { ok: false, reason: "The checkout has no dist/gateway.js to give the pods." };
+  }
+  try {
+    const response = await fetchFn(artifact.url, { signal: AbortSignal.timeout(60_000) });
+    if (!response.ok) {
+      await response.body?.cancel();
+      return {
+        ok: false,
+        reason: `raw.githubusercontent.com answered ${response.status} for the commit's dist/gateway.js: push the commit first.`,
+      };
+    }
+    const body = Buffer.from(await response.arrayBuffer());
+    if (createHash("sha256").update(body).digest("hex") !== artifact.sha256) {
+      return {
+        ok: false,
+        reason:
+          "The commit's dist/gateway.js differs from the checkout's: run from a clean checkout of the commit.",
+      };
+    }
+  } catch {
+    return { ok: false, reason: "raw.githubusercontent.com could not be reached." };
+  }
+  return { ok: true, artifact };
+}
+
+/**
+ * The provider's pods, as the check gives them to Codeman: it records every pod created, with the
+ * spec it was created with, refuses to create one outside a check that may, and registers each
+ * pod's ID, URL, nonce and admin token as hidden as soon as it exists. Each read of a pod's state
+ * also lets the provider see its node (`observe`).
+ */
+class TrackedPods {
+  readonly provider: GpuProvider;
+  /** Whether a check may create a pod now. */
+  allowCreate = false;
+  /** The listed price of the GPU the next pod is created on, in USD per hour. */
+  pendingHourly = 0;
+  /** Each pod this run created: its price per hour, and when it started and ended. */
+  readonly #costs = new Map<string, { hourly: number; from: number; to?: number }>();
+  readonly #host: PodHost;
+  readonly #report: Report;
+  readonly #key: string;
+  readonly #signal: AbortSignal;
+  readonly #now: () => Date;
+  readonly #wait: (ms: number) => Promise<void>;
+  /** The pods this run created, and when, by nonce. */
+  readonly #created = new Map<string, { id: string; at: number }>();
+  readonly #specs = new Map<string, PodSpec>();
+  /** Pods Codeman terminated that this run did not create: earlier runs' leftovers. */
+  readonly #leftovers = new Set<string>();
+  #closed = false;
+
+  constructor(
+    provider: CheckProvider,
+    report: Report,
+    signal: AbortSignal,
+    now: () => Date,
+    wait: (ms: number) => Promise<void>,
+  ) {
+    const { host } = provider;
+    this.#host = host;
+    this.#report = report;
+    this.#key = provider.account.key;
+    this.#signal = signal;
+    this.#now = now;
+    this.#wait = wait;
+    this.provider = {
+      name: provider.name,
+      pods: {
+        ...host,
+        get: async (id) => {
+          const pod = await host.get(id);
+          if (pod && provider.observe) await provider.observe(id).catch(() => undefined);
+          return pod;
+        },
+        create: (spec) => this.#create(spec),
+        terminate: async (id) => {
+          this.#report.hide(id);
+          if (![...this.#created.values()].some((pod) => pod.id === id)) this.#leftovers.add(id);
+          await this.#terminate(id);
+        },
+        url: async (id, port) => {
+          const url = await host.url(id, port);
+          this.#report.hide(url);
+          return url;
+        },
+      },
+    };
+  }
+
+  /** How many pods this run created. */
+  get count(): number {
+    return this.#created.size;
+  }
+
+  /** The IDs of the pods this run created after its first `count`, in order. */
+  idsSince(count: number): string[] {
+    return [...this.#created.values()].slice(count).map((pod) => pod.id);
+  }
+
+  createdAt(nonce: string): number | undefined {
+    return this.#created.get(nonce)?.at;
+  }
+
+  spec(nonce: string): PodSpec | undefined {
+    return this.#specs.get(nonce);
+  }
+
+  async #create(spec: PodSpec): Promise<Pod> {
+    if (this.#closed || !this.allowCreate || this.#signal.aborted) {
+      throw new Error("The pod check creates no pod now.");
+    }
+    const nonce = spec.env.CODEMAN_NONCE ?? "";
+    // Before the pod exists, and so before any request carries it.
+    this.#report.hide(adminToken(this.#key, nonce));
+    this.#report.hide(nonce);
+    this.#specs.set(nonce, spec);
+    // Counted from before its creation: it may be billed even when the answer is lost.
+    const from = this.#now().getTime();
+    const pending = `pending:${nonce}`;
+    this.#costs.set(pending, { hourly: this.pendingHourly, from });
+    let pod: Pod;
+    try {
+      pod = await this.#host.create(spec);
+    } catch (error) {
+      // Refused (4xx): no pod. Another failure, such as a lost answer, may hide one, whose cost
+      // then counts until the run's end.
+      if (error instanceof Error && /failed with 4\d\d/.test(error.message)) {
+        this.#costs.delete(pending);
+      }
+      throw error;
+    }
+    this.#costs.delete(pending);
+    this.#costs.set(pod.id, {
+      hourly: pod.pricePerSecond ? pod.pricePerSecond * 3600 : this.pendingHourly,
+      from,
+    });
+    this.#report.hide(pod.id);
+    this.#created.set(nonce, { id: pod.id, at: this.#now().getTime() });
+    if (this.#closed || this.#signal.aborted) {
+      await this.#terminate(pod.id).catch(() => undefined);
+      throw new Error("The pod check stopped.");
+    }
+    return pod;
+  }
+
+  /** What this run's pods cost so far, at their prices, in USD. */
+  spentUsd(now: number): number {
+    let spent = 0;
+    for (const { hourly, from, to } of this.#costs.values()) {
+      spent += (hourly * Math.max(0, (to ?? now) - from)) / 3_600_000;
+    }
+    return spent;
+  }
+
+  /**
+   * What this run's pods cost, in USD: each for the time `billed` gives, within its life, else for
+   * its whole life. `basis` says which: `billed` when every pod's time is known, `upper_bound` when
+   * none is, `mixed` otherwise. `ids` limits it to those pods.
+   */
+  costUsd(
+    now: number,
+    billed: (id: string) => BilledSpan | undefined,
+    ids?: readonly string[],
+  ): { usd: number; basis: "billed" | "upper_bound" | "mixed" } {
+    let usd = 0;
+    let known = 0;
+    let unknown = 0;
+    for (const [id, { hourly, from, to }] of this.#costs) {
+      if (ids && !ids.includes(id)) continue;
+      const end = to ?? now;
+      const span = id.startsWith("pending:") ? undefined : billed(id);
+      const start = span ? Math.max(from, span.from) : from;
+      const stop = span ? Math.min(end, span.to ?? end) : end;
+      usd += (hourly * Math.max(0, stop - start)) / 3_600_000;
+      if (span) known++;
+      else unknown++;
+    }
+    return { usd, basis: unknown === 0 ? "billed" : known === 0 ? "upper_bound" : "mixed" };
+  }
+
+  /** The prices per hour of this run's pods still running, or maybe running. */
+  runningHourly(): number {
+    let hourly = 0;
+    for (const cost of this.#costs.values()) if (cost.to === undefined) hourly += cost.hourly;
+    return hourly;
+  }
+
+  /** Terminates a pod, and stops counting its cost. */
+  async #terminate(id: string): Promise<void> {
+    await this.#host.terminate(id);
+    const cost = this.#costs.get(id);
+    if (cost && cost.to === undefined) cost.to = this.#now().getTime();
+  }
+
+  /**
+   * Terminates every pod of the run: those it created, and any other of its pool, such as one
+   * whose creation's answer was lost; then checks that each is gone. Creates none after.
+   */
+  async cleanup(pool: string): Promise<{ ok: boolean; pods: number; leftovers: number }> {
+    this.#closed = true;
+    let ok = true;
+    const ids = new Set([...this.#created.values()].map((pod) => pod.id));
+    try {
+      for (const pod of await this.#host.list({
+        CODEMAN_ORGANIZATION: OWNER,
+        CODEMAN_POOL: pool,
+      })) {
+        this.#report.hide(pod.id);
+        ids.add(pod.id);
+      }
+    } catch {
+      ok = false;
+    }
+    for (const id of ids) {
+      try {
+        await this.#terminate(id);
+      } catch {
+        ok = false;
+      }
+    }
+    for (const id of ids) ok = (await this.#gone(id)) && ok;
+    return { ok, pods: ids.size, leftovers: this.#leftovers.size };
+  }
+
+  /** Whether the provider says the pod is gone, asked up to 3 times. */
+  async #gone(id: string): Promise<boolean> {
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const pod = await this.#host.get(id);
+        if (!pod || pod.status === "terminated") return true;
+      } catch {
+        // Asked again.
+      }
+      if (attempt < 3) await this.#wait(2_000);
+    }
+    return false;
+  }
+}
+
+/**
+ * `--cleanup`: terminates every pod of the account that names `OWNER`, as a workflow's last step,
+ * `if: always()`, does after the check.
+ */
+async function cleanupAll(report: Report, host: PodHost): Promise<number> {
+  let pods: Pod[];
+  try {
+    pods = await host.list({ CODEMAN_ORGANIZATION: OWNER });
+  } catch (error) {
+    report.line("cleanup", { result: "fail", ...failure(report, error) });
+    return 1;
+  }
+  let ok = true;
+  for (const pod of pods) {
+    report.hide(pod.id);
+    if (pod.status === "terminated") continue;
+    try {
+      await host.terminate(pod.id);
+    } catch {
+      ok = false;
+    }
+  }
+  report.line("cleanup", { result: ok ? "pass" : "fail", pods: pods.length });
+  return ok ? 0 : 1;
+}
+
+/** The run stopped: interrupted, or at its max minutes. */
+class Stopped extends Error {}
+
+/** `work`, or a `Stopped` as soon as the signal aborts; `work` goes on, unheard. */
+function untilStopped<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+  work.catch(() => undefined);
+  if (signal.aborted) return Promise.reject(new Stopped());
+  return new Promise<T>((resolve, reject) => {
+    const stop = () => reject(new Stopped());
+    signal.addEventListener("abort", stop, { once: true });
+    work.then(resolve, reject).finally(() => signal.removeEventListener("abort", stop));
+  });
+}
+
+/** What an `open` failed with: the provider's error inside an `OpenFailure`. */
+function causeOf(error: unknown): unknown {
+  return error instanceof OpenFailure && error.cause !== undefined ? error.cause : error;
+}
+
+/** The levels of Runpod's availability; all but `NONE` mean some room. */
+const AVAILABILITY = new Set(["NONE", "LOW", "MEDIUM", "HIGH"]);
+
+/**
+ * A GPU type on a cloud, from Runpod's catalog: its price there, its memory and its room for one
+ * pod now, with vLLM's CUDA for a vLLM pod. The request the adapter makes before a creation on
+ * several clouds (`#availability` in src/inference/runpod.ts), private there, so repeated here
+ * (docs/web/runpod/get-a-gpu-type.md). Undefined when the catalog does not know the GPU type
+ * (404), does not offer it on that cloud, or cannot be read.
+ */
+async function catalogRead(
+  fetchFn: typeof fetch,
+  key: string,
+  gpu: string,
+  cloud: Cloud,
+  engine: "ollama" | "vllm",
+): Promise<Candidate | undefined> {
+  const cuda = engine === "vllm" ? `&minCudaVersion=${encodeURIComponent(VLLM_MIN_CUDA)}` : "";
+  try {
+    const response = await fetchFn(
+      `${RUNPOD_API}/catalog/gpus/${encodeURIComponent(gpu)}?include=AVAILABILITY&product=POD&cloud=${cloud.toUpperCase()}${cuda}`,
+      {
+        headers: { Authorization: `Bearer ${key}` },
+        signal: AbortSignal.timeout(30_000),
+      },
+    );
+    const body = await jsonBody<{
+      memory?: unknown;
+      secure?: unknown;
+      community?: unknown;
+      price?: { secure?: unknown; community?: unknown };
+      availability?: unknown;
+      dataCenters?: unknown;
+    }>(response);
+    const hourly = body?.price?.[cloud];
+    if (!body || body[cloud] === false || typeof hourly !== "number" || !(hourly > 0)) {
+      return undefined;
+    }
+    const level = typeof body.availability === "string" ? body.availability : "";
+    const centers = body.dataCenters;
+    const known = centers !== undefined && centers !== null && typeof centers === "object";
+    const levels = (Array.isArray(centers) ? centers : Object.values(centers ?? {})).map((one) =>
+      typeof one === "string" ? one : (one as { availability?: unknown } | null)?.availability,
+    );
+    const availability = AVAILABILITY.has(level) ? level : "unknown";
+    return {
+      gpu,
+      cloud,
+      hourly,
+      memoryGb: typeof body.memory === "number" && body.memory > 0 ? body.memory : undefined,
+      room: /^(LOW|MEDIUM|HIGH)$/.test(availability),
+      roomFields: {
+        availability,
+        data_centers: known ? levels.length : undefined,
+        data_centers_with_room: known
+          ? levels.filter(
+              (one) => typeof one === "string" && one !== "NONE" && AVAILABILITY.has(one),
+            ).length
+          : undefined,
+      },
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+/** Runpod's detail when it has no room: "There are no [longer any] instances available …". */
+const NO_INSTANCES = /\bno (longer any )?instances available\b/i;
+
+/**
+ * A start's failure, as `failure` gives it, but a creation Runpod refused with 400 while its
+ * catalog listed room is a failure, not a lack of room: Runpod gives no capacity no code of its
+ * own, and a request that breaks a rule answers 400 too (docs/web/runpod/create-a-pod.md#errors).
+ */
+function startFailure(report: Report, error: unknown, candidate: Candidate): Fields {
+  const found = failure(report, error);
+  if (found.result !== "unavailable" || !candidate.room || found.http_status !== 400) return found;
+  // Runpod's own words for no room, which can follow a catalog read that listed it, as on
+  // 2026-11-06: "There are no longer any instances available with the requested specifications."
+  if (typeof found.message === "string" && NO_INSTANCES.test(found.message)) return found;
+  return {
+    ...found,
+    result: "fail",
+    reason:
+      "Runpod refused the creation with 400 while its catalog listed room: likely a problem with the request.",
+  };
+}
+
+/**
+ * What a failure may print: its kind, an HTTP status it names, the fit's or the pod's start
+ * failure cleaned of every hidden value, and a few known reasons. Never another message: it may
+ * hold a pod's ID, or a response's body.
+ */
+function failure(report: Report, error: unknown): Fields {
+  const cause = causeOf(error);
+  if (cause instanceof ReleaseBlocked) {
+    return { result: "blocked", error: "ReleaseBlocked", advisories: blockingAdvisories(cause) };
+  }
+  const message = cause instanceof Error ? cause.message : String(cause);
+  const status = /\b(?:failed with|answered) (\d{3})\b/.exec(message)?.[1];
+  if (cause instanceof PodUnavailable || error instanceof ProfileUnavailable) {
+    return {
+      result: "unavailable",
+      error: "PodUnavailable",
+      http_status: status === undefined ? undefined : Number(status),
+      message: report.cleanMessage(message),
+    };
+  }
+  if (cause instanceof FitRefused) {
+    return { result: "fail", error: "FitRefused", message: report.cleanMessage(message) };
+  }
+  if (cause instanceof PodStartFailure) {
+    return {
+      result: "fail",
+      error: "PodStartFailure",
+      message: report.cleanMessage(message.replace(/^Pod \S+ did not serve \S+: /, "")),
+    };
+  }
+  const minutes = /was not ready within (\d+) minutes/.exec(message)?.[1];
+  const state = /^Pod \S+ is (failed|stopped|terminated)\.$/.exec(message)?.[1];
+  const name = cause instanceof Error ? cause.constructor.name : "Error";
+  return {
+    result: "fail",
+    error: /^[A-Za-z]{1,40}$/.test(name) ? name : "Error",
+    http_status: status === undefined ? undefined : Number(status),
+    // The provider's own text about a request, such as a 400's `detail`, cleaned of every hidden
+    // value; a Salad path, which names the organization and the project, is left out.
+    message: /^(Runpod|Salad) /.test(message)
+      ? report.cleanMessage(message.replace(/^(Salad [A-Z]+) \/\S*/, "$1"))
+      : undefined,
+    reason: minutes
+      ? `The pod did not serve within ${minutes} minutes.`
+      : state
+        ? `The pod was ${state} before it served.`
+        : /no longer exists/.test(message)
+          ? "The pod no longer exists."
+          : /^Runpod offers no host .* CUDA/.test(message)
+            ? "Runpod offers no host of this GPU type with the CUDA version vLLM needs."
+            : /^Runpod has no GPU type/.test(message)
+              ? "Runpod has no such GPU type."
+              : undefined,
+  };
+}
+
+/** The advisories that blocked a release: blocking ones no exception accepted. */
+function blockingAdvisories(blocked: ReleaseBlocked): string | undefined {
+  const ids = blocked.check.artifacts.flatMap((artifact) =>
+    artifact.advisories
+      .filter((advisory) => isBlocking(advisory.severity) && !advisory.acceptedBecause)
+      .map((advisory) => advisory.id),
+  );
+  return ids.length > 0 ? [...new Set(ids)].slice(0, 20).join(",") : undefined;
+}
+
+/** The run's tag in its pool's ID: GitHub's run and attempt, else random. */
+function runTag(env: Readonly<Record<string, string | undefined>>): string {
+  const run = env.GITHUB_RUN_ID ?? "";
+  const attempt = env.GITHUB_RUN_ATTEMPT ?? "1";
+  return /^\d{1,20}$/.test(run) && /^\d{1,4}$/.test(attempt)
+    ? `${run}-${attempt}`
+    : randomBytes(4).toString("hex");
+}
+
+/** USD, to the hundredth of a cent. */
+function usd(amount: number): number {
+  return Math.round(amount * 10_000) / 10_000;
+}
+
+function seconds(from: number, to: number): number {
+  return Math.round((to - from) / 100) / 10;
+}

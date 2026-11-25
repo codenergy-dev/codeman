@@ -1,0 +1,120 @@
+{
+  "engine": "dg845/tiny-random-stable-diffusion",
+  "format": "model-files",
+  "resolvedAt": "2026-10-30T14:29:43.311Z",
+  "artifacts": [
+    {
+      "name": "model_index.json",
+      "version": "af67c4fb4c7a3153cbabb98a478207e792628eb2",
+      "url": "https://huggingface.co/dg845/tiny-random-stable-diffusion/resolve/af67c4fb4c7a3153cbabb98a478207e792628eb2/model_index.json",
+      "sha256": "b9df7ec56924a16092cb66690f3967e5a61c13c14ca66b4680e4cedd17645408",
+      "size": 516,
+      "publishedAt": "2023-10-29T05:51:21.000Z",
+      "path": "model_index.json"
+    },
+    {
+      "name": "scheduler/scheduler_config.json",
+      "version": "af67c4fb4c7a3153cbabb98a478207e792628eb2",
+      "url": "https://huggingface.co/dg845/tiny-random-stable-diffusion/resolve/af67c4fb4c7a3153cbabb98a478207e792628eb2/scheduler/scheduler_config.json",
+      "sha256": "3970c3806291a8e2a965668c556ef365904fcd1e63851d4e11f96db9071b6ea2",
+      "size": 477,
+      "publishedAt": "2023-10-29T05:51:21.000Z",
+      "path": "scheduler/scheduler_config.json"
+    },
+    {
+      "name": "text_encoder/config.json",
+      "version": "af67c4fb4c7a3153cbabb98a478207e792628eb2",
+      "url": "https://huggingface.co/dg845/tiny-random-stable-diffusion/resolve/af67c4fb4c7a3153cbabb98a478207e792628eb2/text_encoder/config.json",
+      "sha256": "73be238fbc3f05dadafe1f043341997adf12bd142bf91dab9883cc6cfdacf208",
+      "size": 536,
+      "publishedAt": "2023-10-29T05:51:21.000Z",
+      "path": "text_encoder/config.json"
+    },
+    {
+      "name": "text_encoder/model.safetensors",
+      "version": "af67c4fb4c7a3153cbabb98a478207e792628eb2",
+      "url": "https://huggingface.co/dg845/tiny-random-stable-diffusion/resolve/af67c4fb4c7a3153cbabb98a478207e792628eb2/text_encoder/model.safetensors",
+      "sha256": "5edffee1c2ae276b4ecf6e6fc290c2da8224cda3a5a57d1d86a468e8d7e70b62",
+      "size": 246416,
+      "publishedAt": "2023-10-29T05:51:21.000Z",
+      "path": "text_encoder/model.safetensors"
+    },
+    {
+      "name": "tokenizer/merges.txt",
+      "version": "af67c4fb4c7a3153cbabb98a478207e792628eb2",
+      "url": "https://huggingface.co/dg845/tiny-random-stable-diffusion/resolve/af67c4fb4c7a3153cbabb98a478207e792628eb2/tokenizer/merges.txt",
+      "sha256": "38e3006b0c2382dc853454c0643ce3d6f62544c7d6ded433d8d15dab639f0b5b",
+      "size": 4780,
+      "publishedAt": "2023-10-29T05:51:21.000Z",
+      "path": "tokenizer/merges.txt"
+    },
+    {
+      "name": "tokenizer/special_tokens_map.json",
+      "version": "af67c4fb4c7a3153cbabb98a478207e792628eb2",
+      "url": "https://huggingface.co/dg845/tiny-random-stable-diffusion/resolve/af67c4fb4c7a3153cbabb98a478207e792628eb2/tokenizer/special_tokens_map.json",
+      "sha256": "6a757fc443f84ad1def3b893aac3858178f2a1513e3cf97b35ff131b5d88edd5",
+      "size": 586,
+      "publishedAt": "2023-10-29T05:51:21.000Z",
+      "path": "tokenizer/special_tokens_map.json"
+    },
+    {
+      "name": "tokenizer/tokenizer_config.json",
+      "version": "af67c4fb4c7a3153cbabb98a478207e792628eb2",
+      "url": "https://huggingface.co/dg845/tiny-random-stable-diffusion/resolve/af67c4fb4c7a3153cbabb98a478207e792628eb2/tokenizer/tokenizer_config.json",
+      "sha256": "e29eed29895d16ba3e85932c7be459ced63d98cdf77ea0d10a5bffe1f6f71c01",
+      "size": 696,
+      "publishedAt": "2023-10-29T05:51:21.000Z",
+      "path": "tokenizer/tokenizer_config.json"
+    },
+    {
+      "name": "tokenizer/vocab.json",
+      "version": "af67c4fb4c7a3153cbabb98a478207e792628eb2",
+      "url": "https://huggingface.co/dg845/tiny-random-stable-diffusion/resolve/af67c4fb4c7a3153cbabb98a478207e792628eb2/tokenizer/vocab.json",
+      "sha256": "f27915ca8a787e651ea25684f581739403b46354a9a5be29a5afad0112d60d46",
+      "size": 15554,
+      "publishedAt": "2023-10-29T05:51:21.000Z",
+      "path": "tokenizer/vocab.json"
+    },
+    {
+      "name": "unet/config.json",
+      "version": "af67c4fb4c7a3153cbabb98a478207e792628eb2",
+      "url": "https://huggingface.co/dg845/tiny-random-stable-diffusion/resolve/af67c4fb4c7a3153cbabb98a478207e792628eb2/unet/config.json",
+      "sha256": "e1acd675759d8934e3a2c43aa46a40ebc1737d0c562bef77cb848273fb1fa6b7",
+      "size": 1650,
+      "publishedAt": "2023-10-29T05:51:21.000Z",
+      "path": "unet/config.json"
+    },
+    {
+      "name": "unet/diffusion_pytorch_model.safetensors",
+      "version": "af67c4fb4c7a3153cbabb98a478207e792628eb2",
+      "url": "https://huggingface.co/dg845/tiny-random-stable-diffusion/resolve/af67c4fb4c7a3153cbabb98a478207e792628eb2/unet/diffusion_pytorch_model.safetensors",
+      "sha256": "8f2a2ce8d55801238ff2bb5280338ed494b8256a5208af6e70ec39cf38625d46",
+      "size": 96000,
+      "publishedAt": "2023-10-29T05:51:21.000Z",
+      "path": "unet/diffusion_pytorch_model.safetensors"
+    },
+    {
+      "name": "vae/config.json",
+      "version": "af67c4fb4c7a3153cbabb98a478207e792628eb2",
+      "url": "https://huggingface.co/dg845/tiny-random-stable-diffusion/resolve/af67c4fb4c7a3153cbabb98a478207e792628eb2/vae/config.json",
+      "sha256": "697630fd128b92e91828a2d09b41749666f0f31b4f6763b4507419f3ec536166",
+      "size": 482,
+      "publishedAt": "2023-10-29T05:51:21.000Z",
+      "path": "vae/config.json"
+    },
+    {
+      "name": "vae/diffusion_pytorch_model.safetensors",
+      "version": "af67c4fb4c7a3153cbabb98a478207e792628eb2",
+      "url": "https://huggingface.co/dg845/tiny-random-stable-diffusion/resolve/af67c4fb4c7a3153cbabb98a478207e792628eb2/vae/diffusion_pytorch_model.safetensors",
+      "sha256": "b023ca2edc02c318f3c46b7c8c05d21c188724d40b51855065fec0f91bf950ef",
+      "size": 59772,
+      "publishedAt": "2023-10-29T05:51:21.000Z",
+      "path": "vae/diffusion_pytorch_model.safetensors"
+    }
+  ],
+  "checks": {
+    "commit": "af67c4fb4c7a3153cbabb98a478207e792628eb2",
+    "license": "apache-2.0",
+    "pickleFilesSkipped": true
+  }
+}

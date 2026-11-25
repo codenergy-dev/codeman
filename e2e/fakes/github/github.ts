@@ -5,6 +5,7 @@ import { type FakeRequest, FakeServer, HttpError, json, type ListenOptions } fro
 import { registerArtifacts } from "./artifacts.ts";
 import { GitHubError, type Permissions } from "./auth.ts";
 import { registerGraphql } from "./graphql.ts";
+import { registerRaw } from "./raw.ts";
 import { Api, answer, registerRest } from "./rest.ts";
 import { registerSmartHttp } from "./smarthttp.ts";
 import {
@@ -99,6 +100,8 @@ export class GitHubFake {
     registerGraphql(this.server, this.world);
     registerSmartHttp(this.server, this.world);
     this.#controls();
+    // Last: its pattern matches any path of four segments or more, the control API's included.
+    registerRaw(this.server, this.world);
     this.server.onReset(() => this.world.clear());
   }
 

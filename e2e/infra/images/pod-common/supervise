@@ -1,35 +1,54 @@
 #!/bin/bash
 # The entry point of the e2e pod images (pod-ollama, pod-vllm): the tee on the engine's port, in
-# front of the real engine moved one port up by the image's wrapper, and Codeman's gateway, its
-# e2e bundle e2e/.build/gateway.js (decision 11): the code of dist/gateway.js, with the e2e build's
-# redirects. The gateway starts and restarts the engine itself, as on a real pod,
-# so the engine's exits during the fit are not failures: this script watches the gateway and the
-# tee, and stops both, with the first one's status, when either one exits.
+# front of the real engine moved one port up by the image's wrapper, then the pod's command, its
+# arguments: Runpod's `entrypoint` and `cmd`, or Salad's `command`, which the launcher passes. That
+# command is Codeman's bootstrap (src/gateway/bootstrap.ts): it downloads Node.js and the gateway,
+# checks them, and runs the gateway, which starts and restarts the engine itself, as on a real pod.
+# So the engine's exits during the fit are not failures: this script watches the tee and the
+# command, and stops both, with the first one's status, when either one exits.
 #
-# The image sets E2E_TEE_PORT and E2E_ENGINE_PORT. The tee takes TEE_MODEL or TEE_SCRIPTS, and
-# optionally TEE_VRAM_BYTES, TEE_MAX_TOKENS, TEE_CONTROL_PORT (9091) and FAKE_CONTROL_TOKEN
-# (e2e/fakes/llm/tee.ts); TEE_HOST, 0.0.0.0 by default, is where the tee listens, so the runtime
-# can read the engine's own routes through it. Without TEE_VRAM_BYTES, the virtual VRAM is the
-# GPU's memory the pod was created with, CODEMAN_GPU_MEMORY_GB in GiB, as the gateway's fit reads
-# it (src/gateway/fit.ts).
+# Before both, it adds the session's test CA, when one is mounted, to the system's store, which
+# the bootstrap's curl, wget, python3 or openssl read: the jobs network sends nodejs.org and
+# raw.githubusercontent.com to the fakes, whose certificate that CA signs. Node.js reads it from
+# NODE_EXTRA_CA_CERTS, which the image sets.
+#
+# The image sets E2E_TEE_PORT and E2E_ENGINE_PORT. The tee runs on the suite's own Node.js, off the
+# PATH, and takes TEE_MODEL or TEE_SCRIPTS, and optionally TEE_VRAM_BYTES, TEE_MAX_TOKENS,
+# TEE_CONTROL_PORT (9091) and FAKE_CONTROL_TOKEN (e2e/fakes/llm/tee.ts); TEE_HOST, 0.0.0.0 by
+# default, is where the tee listens, so the runtime can read the engine's own routes through it.
+# Without TEE_VRAM_BYTES, the virtual VRAM is the GPU's memory the pod was created with,
+# CODEMAN_GPU_MEMORY_GB in GiB, as the gateway's fit reads it (src/gateway/fit.ts).
 set -u
 
+node=/opt/codeman-e2e/node
+if [ "$#" -eq 0 ]; then
+  echo "[e2e] The pod has no command: Codeman starts every pod with its bootstrap." >&2
+  exit 1
+fi
+
+ca=/etc/codeman-e2e/ca.crt
+store=/etc/ssl/certs/ca-certificates.crt
+if [ -s "$ca" ] && ! grep -qF "$(sed -n 2p "$ca")" "$store" 2>/dev/null; then
+  mkdir -p "$(dirname "$store")"
+  cat "$ca" >>"$store"
+fi
+
 if [ -z "${TEE_VRAM_BYTES:-}" ] && [ -n "${CODEMAN_GPU_MEMORY_GB:-}" ]; then
-  TEE_VRAM_BYTES=$(node -e 'process.stdout.write(String(Math.floor(Number(process.argv[1]) * 2 ** 30)))' "$CODEMAN_GPU_MEMORY_GB")
+  TEE_VRAM_BYTES=$("$node" -e 'process.stdout.write(String(Math.floor(Number(process.argv[1]) * 2 ** 30)))' "$CODEMAN_GPU_MEMORY_GB")
   export TEE_VRAM_BYTES
 fi
 
 PORT=$E2E_TEE_PORT HOST=${TEE_HOST:-0.0.0.0} TEE_ENGINE=http://127.0.0.1:$E2E_ENGINE_PORT \
-  node /opt/codeman-e2e/e2e/fakes/main.ts tee &
+  "$node" /opt/codeman-e2e/e2e/fakes/main.ts tee &
 tee=$!
-node /opt/codeman/gateway.js &
-gateway=$!
+"$@" &
+pod=$!
 
-stop() { kill -TERM "$tee" "$gateway" 2>/dev/null; }
+stop() { kill -TERM "$tee" "$pod" 2>/dev/null; }
 trap stop TERM INT
-wait -n "$tee" "$gateway"
+wait -n "$tee" "$pod"
 status=$?
-if kill -0 "$gateway" 2>/dev/null; then first=tee; else first=gateway; fi
+if kill -0 "$pod" 2>/dev/null; then first=tee; else first="pod's command"; fi
 stop
 wait
 echo "[e2e] The $first exited with $status: the pod stops." >&2

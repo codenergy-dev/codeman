@@ -3,8 +3,9 @@ import { test } from "node:test";
 import { resolveSettings, type Settings } from "../settings.ts";
 import { MemoryStore } from "../store/memory.ts";
 import { FakeGateways, FakeGpu } from "../testing/fake-gpu.ts";
+import { fakeReleases } from "../testing/fake-releases.ts";
 import { FakeRuntime } from "../testing/fake-runtime.ts";
-import { POD_IMAGES } from "./images.ts";
+import { podImage } from "./images.ts";
 import {
   choicePool,
   gpuAccount,
@@ -302,6 +303,7 @@ test("a vLLM pod's choice reaches its pod: the vLLM image, its settings and max-
         gpu,
         fetch: gateways.fetch,
         hub: { model: async (id) => ({ id, weightsBytes: 1e9 }), vision: async () => false },
+        releases: fakeReleases(),
       },
     );
     await provider.open(
@@ -320,7 +322,7 @@ test("a vLLM pod's choice reaches its pod: the vLLM image, its settings and max-
   const runtime = new FakeRuntime({
     inputs: { inference: JSON.stringify(choice), "gpu-key": "rk", "pod-image": "x@sha256:1" },
   });
-  if (POD_IMAGES.vllm === "") {
+  if (podImage("vllm") === "") {
     await assert.rejects(
       inferenceProvider(runtime, () => new MemoryStore()).open(
         { task: "7", runId: "300", limit: 1, reservationMs: 2 * 3_600_000 },

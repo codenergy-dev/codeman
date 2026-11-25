@@ -20,6 +20,7 @@ test("runs belong to the lowercase organization, by workflow run, attempt and ta
   assert.equal(LAYOUT.boardEntry("a+b", "A/Repo"), "pools/a+b/board/a%2Frepo");
   assert.equal(LAYOUT.batch("a+b", "300-1-0"), "pools/a+b/batches/300-1-0");
   assert.equal(LAYOUT.context("k1"), "contexts/k1");
+  assert.equal(LAYOUT.releaseCheck("k2"), "releaseChecks/k2");
   assert.equal(LAYOUT.organizationPods("Codenergy"), "organizations/codenergy/pods");
   assert.equal(repositoryName({ owner: "Codenergy", name: "Codeman.JS" }), "codenergy/codeman.js");
   assert.ok(isLedgerRunId("300-2-7"));

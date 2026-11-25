@@ -74,6 +74,7 @@ interface CreateGroup {
   display_name?: string;
   container: {
     image: string;
+    command?: string[];
     environment_variables?: Record<string, string>;
     priority?: string | null;
     resources: {
@@ -291,6 +292,7 @@ export class SaladFake {
         id: create.name,
         name: create.display_name ?? create.name,
         image: create.container.image,
+        ...(create.container.command ? { command: [...create.container.command] } : {}),
         env: { ...(create.container.environment_variables ?? {}) },
         ports: networking ? [{ port: networking.port, protocol: networking.protocol }] : [],
         gpu: { id: gpu.name, count: 1, memoryGb: memoryOf(gpu.name) },
@@ -372,6 +374,7 @@ export class SaladFake {
       project_name: this.#setup.project ?? "",
       container: {
         image: request.container.image,
+        ...(request.container.command ? { command: [...request.container.command] } : {}),
         environment_variables: { ...(request.container.environment_variables ?? {}) },
         priority: request.container.priority ?? "high",
         resources: { ...request.container.resources },
@@ -510,6 +513,19 @@ function createErrors(value: unknown): string[] {
       !PRIORITIES.includes(container.priority as string)
     ) {
       errors.push("$.container.priority: must be high, medium, low or batch");
+    }
+    // At most 100 items of 1 to 1,000 characters (docs/web/salad/create-container-group.md).
+    const command = container.command;
+    if (command !== undefined) {
+      if (!Array.isArray(command) || command.length > 100) {
+        errors.push("$.container.command: expected an array of at most 100 strings");
+      } else {
+        command.forEach((item, index) => {
+          if (typeof item !== "string" || item.length < 1 || item.length > 1000) {
+            errors.push(`$.container.command[${index}]: expected 1 to 1000 characters`);
+          }
+        });
+      }
     }
     const env = container.environment_variables;
     if (env !== undefined) {
