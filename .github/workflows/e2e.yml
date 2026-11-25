@@ -54,7 +54,7 @@ jobs:
   suite:
     name: Suite (${{ matrix.group }})
     if: inputs.check == 'suite'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     # Under GitHub's limit of 6 hours, and above the suite's step, so its report still uploads.
     timeout-minutes: 330
     strategy:
@@ -138,7 +138,7 @@ jobs:
   pod:
     name: Pod check
     if: inputs.check == 'pod'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     environment: E2E
     # One at a time: a run's cleanup terminates every pod the check tagged, another run's too.
     concurrency:

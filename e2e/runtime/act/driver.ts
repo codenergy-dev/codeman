@@ -39,7 +39,7 @@ export const ACT_STATE = {
 };
 
 /** The runner label act maps to the job image: the templates' (docs/installation/setup.md). */
-const PLATFORM = "ubuntu-24.04";
+const PLATFORM = "ubuntu-26.04";
 
 /** Names the working directory may hold: act copies it into each job. */
 const WORKDIR_ENTRIES = [".github"];

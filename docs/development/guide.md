@@ -66,7 +66,7 @@ Tests sit next to the code they test, as `*.test.ts`. Most run everywhere. These
 
 ## What CI checks
 
-[`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) runs on every push to `main` and every pull request. Its one job, `check`, has `contents: read` and 10 minutes, on `ubuntu-24.04`:
+[`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) runs on every push to `main` and every pull request. Its one job, `check`, has `contents: read` and 10 minutes, on `ubuntu-26.04`:
 
 1. Check out the repository, without keeping its credentials.
 2. Set up the Node.js version of `.nvmrc`, with no package cache.
@@ -76,8 +76,6 @@ Tests sit next to the code they test, as `*.test.ts`. Most run everywhere. These
 6. `npm test`, with `CODEMAN_SANDBOX_TEST=1`, so the sandbox test runs.
 7. `npm run build`.
 8. Fail when `dist/` differs from what the build wrote: "dist/ is out of date. Run 'npm run build' and commit the result."
-
-A second job, `check-ubuntu-26-04`, runs the same steps on `ubuntu-26.04` while Codeman's sandbox is reviewed there ([the review](../plans/2026-11-05-review-codeman-on-ubuntu-26-04.md)). Its failures show what differs from Ubuntu 24.04; the templates and the e2e workflow stay on `ubuntu-24.04` until the review moves them.
 
 CI has no Firestore emulator, so the emulator's tests are skipped there.
 
@@ -173,7 +171,7 @@ The gateway has its own entry point, [`src/gateway/main.ts`](../../src/gateway/m
 | `templates/` | The files that target repositories copy; see [template version](#template-version) |
 | `firebase/firestore.rules` | The backend's security rules, which deny every client. [Installation](../installation/setup.md#4-set-up-the-backend) publishes them |
 | `scripts/scan-image.sh` | Scans an image with Trivy before it is pinned; see [pin a new engine version](../security/release-policy.md#pin-a-new-engine-version) |
-| `docker/runner/`, `scripts/runner.sh` | A local stand-in for GitHub's `ubuntu-24.04` runner, and the script that runs a command in it; see [running Actions locally](local-actions.md) |
+| `docker/runner/`, `scripts/runner.sh` | A local stand-in for GitHub's `ubuntu-26.04` runner, and the script that runs a command in it; see [running Actions locally](local-actions.md) |
 | `e2e/` | The [end-to-end suite](e2e/suite.md): its fakes, runtime, infrastructure, fixtures and scenarios. `e2e/.build/` and `e2e/.out/` are ignored |
 | `docs/web/` | The documentation of the third-party services Codeman uses |
 
