@@ -1,7 +1,7 @@
 ---
-status: in progress
+status: completed
 created_at: 2026-11-05T16:50:00-03:00
-updated_at: 2026-11-25T17:05:00-03:00
+updated_at: 2026-11-25T18:30:00-03:00
 commit: 4d89540
 ---
 
@@ -132,4 +132,6 @@ Next: step 4, the local images on Ubuntu 26.04. Their `cp` and `dd` should match
 
 - **Step 6, done on the branch (`2a7af34`),** with its [upgrading](../installation/upgrading.md#runner-label-moved-to-ubuntu-2604) entry. Locally, lint, types and every unit test pass (1,181 tests, 8 skipped), and `dist/` is unchanged. Done when CI passes on the branch.
 
-Next: CI on the branch, then the e2e suite again, with the workflow's jobs and act's label on `ubuntu-26.04`, when the maintainer decides to run it, before the pull request.
+- **Step 6, done.** The maintainer opened the pull request from `features/ubuntu-26-04-images` at `5788843`: CI passed on `ubuntu-26.04`, and the e2e suite passed again, the workflow's jobs and act's label on `ubuntu-26.04` this time.
+
+Every step is done.
