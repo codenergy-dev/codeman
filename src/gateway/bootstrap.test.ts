@@ -125,7 +125,10 @@ before(async () => {
       handler,
     );
     servers.push(server);
-    await new Promise<void>((resolve) => server.listen(0, "localhost", resolve));
+    // On 127.0.0.1, which localhost resolves to everywhere. In a Docker container, /etc/hosts also
+    // maps localhost to ::1, which Node would listen on, while openssl, with no IPv6 address but
+    // the loopback's, connects to 127.0.0.1 only.
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     https = `https://localhost:${(server.address() as AddressInfo).port}`;
   }
   fixture = { root, files, requests, http, https, certificate, node, gateway };
