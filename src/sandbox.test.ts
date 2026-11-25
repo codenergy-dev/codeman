@@ -8,6 +8,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -712,4 +713,91 @@ test("the agent cannot run a command outside its jail through the system's servi
     sealAgentSandbox(worktree);
     asRoot("/usr/bin/rm", "-rf", "--", escaped, `${AGENT_HOME}/.ssh`, `${AGENT_HOME}/sftp.batch`);
   }
+});
+
+// Ubuntu 26.04's AppArmor lets /usr/bin/bwrap create user namespaces and mount in them, which 24.04
+// denied (docs/web/ubuntu/etc-apparmor-d-bwrap-userns-restrict-in-apparmor-5-0-2-0ubuntu1-26-04-1-amd64-de.md);
+// what bwrap runs keeps no capability. Inside a user namespace, the jail's mounts stay locked: none
+// can be unmounted to reveal what it hides, nor made writable again.
+test("the agent cannot undo its jail from a user namespace", {
+  skip: !enabled,
+  timeout: 120_000,
+}, async (t) => {
+  const token = `codeman-hidden-${process.pid}`;
+  // In the runner's /tmp, which the jail hides under a tmpfs of its own.
+  const hidden = mkdtempSync("/tmp/codeman-hidden-");
+  chmodSync(hidden, 0o755);
+  writeFileSync(join(hidden, "token"), `${token}\n`, { mode: 0o644 });
+  // A directory GitHub's images leave writable by every user, read-only in the jail.
+  const probe = `/usr/local/bin/codeman-userns-${process.pid}`;
+  const asRoot = (...args: string[]) =>
+    spawnSync("/usr/bin/sudo", ["-n", "--", ...args], { encoding: "utf8" });
+  createAgentUser();
+  const worktree = `${AGENT_HOME}/work`;
+  asRoot("/usr/bin/mkdir", "-p", worktree);
+  asRoot("/usr/bin/chown", `${AGENT_USER}:${AGENT_USER}`, worktree);
+  try {
+    const userns = "unshare --user --map-root-user --mount";
+    const script = [
+      // Prints the route, then whether its program is missing, or its exit code and last line.
+      "attempt() {",
+      "  local route=$1 name=$2; shift 2",
+      '  if ! command -v "$name" >/dev/null; then echo "route $route: $name is missing"; return; fi',
+      '  local out; out=$("$@" 2>&1 </dev/null); local code=$?',
+      '  echo "route $route: exit $code: $(printf %s "$out" | tail -n 1)"',
+      "}",
+      // Whether each program may create a user namespace at all.
+      "attempt unshare unshare unshare --user --map-root-user true",
+      "attempt bwrap bwrap bwrap --unshare-user --dev-bind / / true",
+      // Unmounting the jail's tmpfs over /tmp, or over /run/dbus, would reveal the runner's.
+      `attempt unshare-tmp unshare ${userns} sh -c 'umount -l /tmp; cat ${hidden}/token'`,
+      `attempt unshare-bus unshare ${userns} sh -c 'umount -l /run/dbus; test -S /run/dbus/system_bus_socket && echo bus-revealed'`,
+      `attempt bwrap-tmp bwrap bwrap --unshare-user --dev-bind / / -- sh -c 'umount -l /tmp; cat ${hidden}/token'`,
+      // Making a read-only mount writable again would let the agent change the runner's files.
+      `attempt unshare-rw unshare ${userns} sh -c 'mount -o remount,bind,rw /usr/local/bin && touch ${probe}'`,
+      `attempt bwrap-rw bwrap bwrap --unshare-user --dev-bind / / --bind /usr/local/bin /usr/local/bin -- touch ${probe}`,
+      "exit 0",
+    ].join("\n");
+    const runtime = new FakeRuntime();
+    const run = await runAsAgent(
+      { file: "/bin/bash", args: ["-c", script], env: {} },
+      worktree,
+      60_000,
+      runtime,
+    );
+    assertRan(run, runtime);
+    const lines = runtime.logged("info").map((line) => line.replace(/^│ /, ""));
+    for (const line of lines.filter((line) => line.startsWith("route "))) t.diagnostic(line);
+    assert.ok(!lines.some((line) => line.includes(token)), "the runner's /tmp stays hidden");
+    assert.ok(!lines.some((line) => line.includes("bus-revealed")), "the system bus stays hidden");
+    assert.ok(!existsSync(probe), "the runner's read-only mounts stay read-only");
+  } finally {
+    sealAgentSandbox(worktree);
+    asRoot("/usr/bin/rm", "-rf", "--", hidden, probe);
+  }
+});
+
+// What the review of each Ubuntu release reads from the runner: which sudo and coreutils it ships,
+// and whether AppArmor restricts user namespaces (docs/plans/2026-11-05-review-codeman-on-ubuntu-26-04.md).
+test("the runner's sudo, coreutils and AppArmor are reported", { skip: !enabled }, (t) => {
+  const firstLine = (file: string, ...args: string[]) =>
+    existsSync(file)
+      ? (spawnSync(file, args, { encoding: "utf8" }).stdout ?? "").split("\n")[0]
+      : "missing";
+  for (const program of ["/usr/bin/sudo", "/usr/bin/cp", "/usr/bin/dd", "/usr/bin/bwrap"]) {
+    const path = existsSync(program) ? realpathSync(program) : "missing";
+    t.diagnostic(`${program}: ${path}, ${firstLine(program, "--version")}`);
+  }
+  const sysctl = "/proc/sys/kernel/apparmor_restrict_unprivileged_userns";
+  t.diagnostic(
+    `${sysctl}: ${existsSync(sysctl) ? readFileSync(sysctl, "utf8").trim() : "missing"}`,
+  );
+  const profiles =
+    spawnSync(
+      "/usr/bin/sudo",
+      ["-n", "--", "/usr/bin/cat", "/sys/kernel/security/apparmor/profiles"],
+      { encoding: "utf8" },
+    ).stdout ?? "";
+  const userns = profiles.split("\n").filter((line) => /bwrap|userns/.test(line));
+  t.diagnostic(`AppArmor's user namespace profiles: ${userns.join(", ") || "none loaded"}`);
 });
