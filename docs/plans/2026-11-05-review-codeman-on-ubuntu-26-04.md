@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-11-05T16:50:00-03:00
-updated_at: 2026-11-25T16:20:00-03:00
+updated_at: 2026-11-25T16:45:00-03:00
 commit: 4d89540
 ---
 
@@ -128,4 +128,4 @@ Next: step 4, the local images on Ubuntu 26.04. Their `cp` and `dd` should match
 
 - **Step 5, done.** The maintainer ran the e2e workflow on GitHub at `0828ded`, `check=suite` with no selectors, on 2026-11-25: 49 scenarios passed, none failed (none 31, ollama 16, vllm 2). Each scenario's jobs ran under act in the e2e job image built on `ubuntu:resolute-20261105.1`, whose build checked `sudo`, `cp` and `dd`; the workflow's own jobs still ran on `ubuntu-24.04` (image 20261116.133.1), and act's label is still `ubuntu-24.04`.
 
-Next: step 6, the move to `ubuntu-26.04`, once the maintainer approves it, since it changes CI.
+- **Step 6, approved by the maintainer on 2026-11-25,** on the same branch: the templates, CI's `check` and the e2e workflow move to `ubuntu-26.04`, and act's label with them; CI's second job ends with the review. On arm64, setup names `ubuntu-26.04-arm`, which GitHub lists ([runners](../web/github/github-hosted-runners-reference.md)), still untested (out of scope).

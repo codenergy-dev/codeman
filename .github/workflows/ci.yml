@@ -10,36 +10,6 @@ permissions:
 
 jobs:
   check:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version-file: .nvmrc
-          package-manager-cache: false
-      - run: npm ci
-      - run: npm run lint
-      - run: npm run typecheck
-      - run: npm test
-        env:
-          # Runs the sandbox test, which creates a system user with sudo.
-          CODEMAN_SANDBOX_TEST: "1"
-      - run: npm run build
-      - name: Check that dist/ matches the source
-        run: |
-          if [ -n "$(git status --porcelain -- dist/)" ]; then
-            echo "::error::dist/ is out of date. Run 'npm run build' and commit the result."
-            git status --short -- dist/
-            exit 1
-          fi
-
-  # The same steps on Ubuntu 26.04, while Codeman's sandbox is reviewed there: its failures list
-  # what differs from Ubuntu 24.04. Step 6 of docs/plans/2026-11-05-review-codeman-on-ubuntu-26-04.md
-  # moves `check` there and removes this job. Its steps stay equal to `check`'s (a test says so).
-  check-ubuntu-26-04:
     runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:

@@ -9,7 +9,7 @@
 # Only Node.js's files are used: the version pods download (NODE_RELEASE, src/inference/images.ts).
 FROM node:24.22.1-bookworm-slim@sha256:be8204d4bd327363357f532187b752ff62759c31bedf98e9e18fc08c9cbd605c AS node
 
-# CI's second job runs on ubuntu-26.04, where the templates move after the review
+# The templates, CI and the e2e workflow run on ubuntu-26.04
 # (docs/plans/2026-11-05-review-codeman-on-ubuntu-26-04.md).
 FROM ubuntu:resolute-20261105.1@sha256:d66b366dac61b575bee2aef07e9c26e8070096fbe84a3d4d3eb0da069b5d76db
 

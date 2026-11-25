@@ -8,7 +8,7 @@ This page is for whoever changes code that depends on GitHub's Ubuntu runner, su
 
 | What | In the image | Source |
 | --- | --- | --- |
-| The system | Ubuntu 26.04, by digest | CI's job `check-ubuntu-26-04` runs on `ubuntu-26.04`, where the templates move after [the review](../plans/2026-11-05-review-codeman-on-ubuntu-26-04.md); they run on `ubuntu-24.04` until then ([setup](../installation/setup.md#what-you-need)) |
+| The system | Ubuntu 26.04, by digest | The templates, CI and the e2e workflow run on `ubuntu-26.04` since [the review](../plans/2026-11-05-review-codeman-on-ubuntu-26-04.md) ([setup](../installation/setup.md#what-you-need)) |
 | The runner's user | `runner`, uid 1001, with passwordless `sudo` | [Administrative privileges](../web/github/github-hosted-runners-reference.md#administrative-privileges) |
 | Node.js | 24.22.1, in `/opt/hostedtoolcache/node/24.22.1/x64`, marked complete, where `actions/setup-node` finds a cached version | `.nvmrc`, and the version [pods download](dependencies.md#nodejs-for-pods) |
 | World-writable trees | `/opt` and `/usr/share`, recursively, with `/opt/pipx_bin` and the tool cache; `/usr/local/bin`, `/usr/local/lib/node_modules` and `/usr/local/.ghcup` | [`configure-system.sh`](../web/github/runner-images-configure-system-sh-at-3556d77.md), [`install-nodejs.sh`](../web/github/runner-images-install-nodejs-sh-at-3556d77.md), [`install-haskell.sh`](../web/github/runner-images-install-haskell-sh-at-3556d77.md) |

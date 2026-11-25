@@ -66,7 +66,7 @@ Tests sit next to the code they test, as `*.test.ts`. Most run everywhere. These
 
 ## What CI checks
 
-[`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) runs on every push to `main` and every pull request. Its one job, `check`, has `contents: read` and 10 minutes, on `ubuntu-24.04`:
+[`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) runs on every push to `main` and every pull request. Its one job, `check`, has `contents: read` and 10 minutes, on `ubuntu-26.04`:
 
 1. Check out the repository, without keeping its credentials.
 2. Set up the Node.js version of `.nvmrc`, with no package cache.
@@ -76,8 +76,6 @@ Tests sit next to the code they test, as `*.test.ts`. Most run everywhere. These
 6. `npm test`, with `CODEMAN_SANDBOX_TEST=1`, so the sandbox test runs.
 7. `npm run build`.
 8. Fail when `dist/` differs from what the build wrote: "dist/ is out of date. Run 'npm run build' and commit the result."
-
-A second job, `check-ubuntu-26-04`, runs the same steps on `ubuntu-26.04` while Codeman's sandbox is reviewed there ([the review](../plans/2026-11-05-review-codeman-on-ubuntu-26-04.md)). Its failures show what differs from Ubuntu 24.04; the templates and the e2e workflow stay on `ubuntu-24.04` until the review moves them.
 
 CI has no Firestore emulator, so the emulator's tests are skipped there.
 
