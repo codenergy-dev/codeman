@@ -173,7 +173,7 @@ The gateway has its own entry point, [`src/gateway/main.ts`](../../src/gateway/m
 | `templates/` | The files that target repositories copy; see [template version](#template-version) |
 | `firebase/firestore.rules` | The backend's security rules, which deny every client. [Installation](../installation/setup.md#4-set-up-the-backend) publishes them |
 | `scripts/scan-image.sh` | Scans an image with Trivy before it is pinned; see [pin a new engine version](../security/release-policy.md#pin-a-new-engine-version) |
-| `docker/runner/`, `scripts/runner.sh` | A local stand-in for GitHub's `ubuntu-24.04` runner, and the script that runs a command in it; see [running Actions locally](local-actions.md) |
+| `docker/runner/`, `scripts/runner.sh` | A local stand-in for GitHub's `ubuntu-26.04` runner, and the script that runs a command in it; see [running Actions locally](local-actions.md) |
 | `e2e/` | The [end-to-end suite](e2e/suite.md): its fakes, runtime, infrastructure, fixtures and scenarios. `e2e/.build/` and `e2e/.out/` are ignored |
 | `docs/web/` | The documentation of the third-party services Codeman uses |
 
