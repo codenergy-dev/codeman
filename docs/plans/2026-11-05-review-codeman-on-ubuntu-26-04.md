@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-11-05T16:50:00-03:00
-updated_at: 2026-11-25T15:00:00-03:00
+updated_at: 2026-11-25T13:55:00-03:00
 commit: 4d89540
 ---
 
@@ -111,3 +111,17 @@ What the sources show, which the first CI run on `ubuntu-26.04` must confirm or 
 - **Step 3, done (`3c6f722`).** Both jobs pass every test. On `ubuntu-26.04`, `dd` is uutils' 0.10.0 (`/usr/lib/cargo/bin/coreutils/dd`), and the live read's unit test passes with it; `ubuntu-24.04`'s is GNU's 9.4. The other rows read as in the run before.
 
 Next: step 4, the local images on Ubuntu 26.04. Their `cp` and `dd` should match the runner's mix, GNU's `cp` and uutils' `dd`, and their `sudo` be sudo-rs.
+
+- **Step 4, on the branch `features/ubuntu-26-04-images`, from `main` at `3bc562d`.** The local runner image, and so the e2e job image built on it, is on Ubuntu 26.04:
+  - The base: `ubuntu:resolute-20261105.1` by its index digest ([the image](../web/docker-hub/ubuntu-resolute-20261105-1.md)), the newest 26.04 tag, 9 days old: past the 7-day minimum age of the [release policy](../security/release-policy.md), which the audit of Node.js 24.22.1 applied to this image too. The audit is in [dependencies](../development/dependencies.md#audit-log).
+  - GitHub's sources: `actions/runner-images` at `3556d77`, the commit of the release tag `ubuntu26/20261116.202`, image 20261116.202.1. `configure-system.sh`, `install-nodejs.sh`, `install-haskell.sh` and `install-python.sh` are as at `82d1b86`; `configure-environment.sh` adds only Azure's swap guard and, on 26.04, `/tmp` kept on the root disk. `ImageOS` is `ubuntu26` (`locals.ubuntu.pkr.hcl`). The `PATH` is 24.04's: `build.ubuntu-26_04.pkr.hcl` runs the same scripts that prepend to it, in the same order, and drops only `install-miniconda.sh`, `install-pulumi.sh` and `install-julia.sh`, none of which changes it.
+  - The mix of coreutils comes from Ubuntu, not from GitHub's scripts: the base image's `coreutils-from-uutils` links `cp`, `mv`, `rm`, `df` and `true` to GNU's and the rest, `dd` among them, to uutils' ([`coreutils-from`](../web/ubuntu/coreutils-from-0-0-0-ubuntu25-source-package.md)). So the table above was wrong on `cp` and `rm`: they are GNU's on 26.04.
+  - `sudo` with `--no-install-recommends` leaves `/usr/bin/sudo` to sudo 1.9.17p2; the image installs `sudo-rs` too, whose alternative wins, as on the runner. It adds `bubblewrap`, which the runner has through other packages. The build fails unless `sudo`, `cp` and `dd` are the runner's.
+  - The e2e job image's Dockerfile has nothing specific to 24.04: it builds, and its entry point adds a test CA to the system store with sudo-rs and uutils' `install`.
+  - `scripts/runner.sh`: every sandbox test passes, and the report reads as CI's for `sudo`, `cp`, `dd` and `bwrap`. The container has no AppArmor, so `unshare` and `bwrap` both create a user namespace in the jail, and its mounts hold: `/tmp` and the bus stay hidden, `/usr/local/bin` read-only ([the differences](../development/local-actions.md#how-far-it-is-from-githubs-runner)).
+  - One test outside the sandbox failed there, on 24.04's image as on 26.04's: `with only openssl, it downloads over HTTPS without redirects, and checks with openssl`. Docker's `/etc/hosts` maps `localhost` to `::1` too, which Node listened on, while `openssl s_client` connected to `127.0.0.1` only. Its HTTPS fixture now listens on `127.0.0.1`.
+  - Until step 6, act runs the jobs' `ubuntu-24.04` label in this 26.04 image (`PLATFORM` in `e2e/runtime/act/driver.ts`).
+
+- **Step 4, done.** `scripts/runner.sh` in the new image: 1,182 tests, 1,160 passed, 22 skipped, none failed. Every sandbox test passed; the skipped ones need curl, wget or Firestore's emulator, which the image lacks.
+
+Next: step 5, the e2e suite on Ubuntu 26.04, when the maintainer decides to run it, and where.
