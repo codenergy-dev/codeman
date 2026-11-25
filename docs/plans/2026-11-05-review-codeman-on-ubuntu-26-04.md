@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-11-05T16:50:00-03:00
-updated_at: 2026-11-25T13:55:00-03:00
+updated_at: 2026-11-25T16:20:00-03:00
 commit: 4d89540
 ---
 
@@ -124,4 +124,8 @@ Next: step 4, the local images on Ubuntu 26.04. Their `cp` and `dd` should match
 
 - **Step 4, done.** `scripts/runner.sh` in the new image: 1,182 tests, 1,160 passed, 22 skipped, none failed. Every sandbox test passed; the skipped ones need curl, wget or Firestore's emulator, which the image lacks.
 
-Next: step 5, the e2e suite on Ubuntu 26.04, when the maintainer decides to run it, and where.
+- **Step 4, reviewed by the maintainer on 2026-11-25:** the base image's 7-day minimum age, and the HTTPS fixture on `127.0.0.1`, are kept.
+
+- **Step 5, done.** The maintainer ran the e2e workflow on GitHub at `0828ded`, `check=suite` with no selectors, on 2026-11-25: 49 scenarios passed, none failed (none 31, ollama 16, vllm 2). Each scenario's jobs ran under act in the e2e job image built on `ubuntu:resolute-20261105.1`, whose build checked `sudo`, `cp` and `dd`; the workflow's own jobs still ran on `ubuntu-24.04` (image 20261116.133.1), and act's label is still `ubuntu-24.04`.
+
+Next: step 6, the move to `ubuntu-26.04`, once the maintainer approves it, since it changes CI.
