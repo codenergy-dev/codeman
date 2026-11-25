@@ -84,6 +84,7 @@ flowchart TD
 | 2026-10-29 | [Profiles fall back in the list's order](#profiles-fall-back-in-the-lists-order) | `3a0ac54` to `79859a4` | Settings where several profiles, or a profile and a top-level `model`, serve one stage | Reorder the profiles if needed | No: tasks may run on a later profile instead of waiting |
 | 2026-10-30 | [Pods start from official images](#pods-start-from-official-images) | `07994f0` to `9e1182e` | Pod profiles, and a `pod-image` input | Check three things | No |
 | 2026-11-05 | [Runner label pinned](#runner-label-pinned) | `f54a771` | Every installation | Change `runs-on` to `ubuntu-24.04`, or copy both templates | No |
+| 2026-11-25 | [Runner label moved to Ubuntu 26.04](#runner-label-moved-to-ubuntu-2604) | `2a7af34` | Every installation | Change `runs-on` to `ubuntu-26.04`, or copy both templates | No |
 
 The [older versions](#older-versions) entries say what Codeman does with tasks, pod images and records from before some of these changes.
 
@@ -362,6 +363,22 @@ The agent's time is now the `agent-minutes` setting, and the `agent` job's timeo
 #### How to verify
 
 The `agent` step's log says "Running … for up to N minutes", N being your `agent-minutes`.
+
+### Runner label moved to Ubuntu 26.04
+
+- **Since:** 2026-11-25, `2a7af34` ([review of Ubuntu 26.04](../plans/2026-11-05-review-codeman-on-ubuntu-26-04.md)).
+- **Who is affected:** every installation, whose templates say `runs-on: ubuntu-24.04`, or `ubuntu-latest` from before the [label was pinned](#runner-label-pinned).
+- **Breaking:** no. Jobs keep running on Ubuntu 24.04 until the label changes.
+
+Codeman's sandbox has been reviewed on Ubuntu 26.04, so the templates now name `ubuntu-26.04`.
+
+#### What to do
+
+Change every `runs-on` in your copies of `codeman.yml` and `codeman-task.yml` to `runs-on: ubuntu-26.04`, or `ubuntu-26.04-arm` on arm64 ([setup](setup.md#what-you-need)), or copy both templates again, keeping the steps you added to the `agent` job. The template version does not change.
+
+#### How to verify
+
+Each job's **Set up job** step lists `Image: ubuntu-26.04` under **Runner Image**.
 
 ### Runner label pinned
 
