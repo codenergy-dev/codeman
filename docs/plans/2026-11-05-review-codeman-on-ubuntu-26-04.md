@@ -1,7 +1,7 @@
 ---
 status: in progress
 created_at: 2026-11-05T16:50:00-03:00
-updated_at: 2026-11-24T18:00:00-03:00
+updated_at: 2026-11-25T10:30:00-03:00
 commit: 4d89540
 ---
 
@@ -91,4 +91,8 @@ What the sources show, which the first CI run on `ubuntu-26.04` must confirm or 
   - Reproduced in the local runner image with a mount that has `x-gdu.hide`: the sandbox tests fail with the same message, and pass with `mount -n`.
   - The fix, `e98d12c`: every mount of the jail runs with `-n`. It reached `main` through pull request #5, and this branch merged `main`.
 
-Next: step 3 then goes on with the review of each row of the table above, since `check-ubuntu-26-04` found nothing failing. Steps 4 to 6 follow.
+- **Step 3, on the branch `features/ubuntu-26-04-review`, from `main` at `042d98c`.** Two sandbox tests answer the table's questions on both runners:
+  - `the agent cannot undo its jail from a user namespace`: as the agent, in the jail, `unshare` and `bwrap` each try to create a user namespace, to unmount the jail's tmpfs over `/tmp` and `/run/dbus`, and to make `/usr/local/bin` writable again. It passes when the runner's `/tmp` and system bus stay hidden and nothing is written; each route's result is printed. In the local runner image, which loads no AppArmor profile, `unshare` creates the namespace, and the jail's mounts stay locked: `/tmp` stays the jail's, and the remount fails with 32. That image has no `bwrap`.
+  - `the runner's sudo, coreutils and AppArmor are reported`: which `sudo`, `cp` and `bwrap` the runner has and their versions, `kernel.apparmor_restrict_unprivileged_userns`, and the AppArmor profiles loaded for user namespaces.
+
+Next: the maintainer pushes `features/ubuntu-26-04-review` and opens a pull request; both jobs' `npm test` logs answer the table's last column, recorded here. Step 3 is then done with the table's rows answered. Steps 4 to 6 follow.
