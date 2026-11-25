@@ -1,7 +1,7 @@
 ---
-status: in progress
+status: completed
 created_at: 2026-10-30T16:20:00-03:00
-updated_at: 2026-11-25T00:10:00-03:00
+updated_at: 2026-11-25T09:00:00-03:00
 commit: 0bbb10d
 ---
 
@@ -206,13 +206,9 @@ The decisions that waited on 2026-11-04 were answered on 2026-11-24 (decisions 1
 - `8b3ae41`: vLLM's tool-call probe outlasts a cold engine's first request, which caused the extra request in `parallel/vllm-two-seats`.
 - At 8b3ae41: lint, typecheck, build and unit tests pass (1,081 passed, 6 skipped), and the e2e suite passes, 49 of 49, in 134 minutes.
 
-### Done elsewhere, not yet merged
+### Done elsewhere
 
-The fix for Node on `main`, on the branch `fixes/node-24-22-1`, in the worktree `../codeman-node-fix`:
-- `0d8ab87`: Node 24.21.0 → 24.22.1;
-- `3dc42ad`: the e2e job image is built again every session.
-
-Its first e2e run failed every scenario on a stale job image, which `3dc42ad` fixes. It has not run again since.
+The fix for Node on `main` (`0d8ab87`, Node 24.21.0 → 24.22.1, and `3dc42ad`, the e2e job image built again every session) reached `main` on 2026-11-06, as item 1 of the list below says.
 
 ### Next
 
@@ -222,5 +218,6 @@ Its first e2e run failed every scenario on a stale job image, which `3dc42ad` fi
 4. Done in `540cdad`: the comment in `docker/runner/Dockerfile` names the Node.js that pods download.
 5. Step 12, without the e2e suite, passed on 2026-11-24: the build (`6497293` rebuilds `dist/`, stale since `0eb7e6a`), `biome ci` on the repository's directories, not `.`, while worktrees live under `.claude/`, the typecheck, and the unit tests (1,148 passed, 6 skipped). The e2e suite last passed at 8b3ae41. Since then, `f01aa55` changed the bootstrap's download lines and `08f35a3` the release policy: the maintainer decides whether it runs again, and where, before step 12 is done.
    - On 2026-11-24, the maintainer ran the suite on GitHub at `10bd17e`, after `main`'s merge: `none` passed its 31 scenarios and `vllm` its 2. `ollama` ran none: `seed-ollama` pulled `qwen2.5:0.5b` with Ollama 0.40.10, the first pull on a fresh volume since the seed moved from 0.35.1, and then checked the digest on the file Ollama 0.40 writes for older releases, whose bytes differ from the registry's. The registry still serves the pinned manifest. The seed now checks the manifest under `manifests-v2/`, which Ollama reads first, and lists the model after pulling it, so that `metadata/` exists before the pods mount the volume read-only ([the e2e models](../development/dependencies.md#the-e2e-models)). In Docker, on a fresh volume: the seed passes, a second run makes no request, and an Ollama with the volume read-only lists the model as `a8b0c5157701`. The `ollama` group runs again before step 12 is done.
+   - On 2026-11-25, the maintainer ran the suite on GitHub again at `17b06b4`: `none` passed 31 scenarios, `vllm` 2 and `ollama` 16, 49 of 49. Step 12 is done, and with it every step of this plan.
 6. On 2026-11-24, the worktrees `../codeman-node-fix` and `../codeman-e2e-actions` were removed, their branches being in `main`. The agents' worktrees under `.claude/worktrees/` hold work that is on this branch, not yet in `main`: they go once it merges.
 7. Hand over to the live test, then write part 2's plan.
