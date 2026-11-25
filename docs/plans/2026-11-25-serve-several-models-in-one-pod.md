@@ -61,7 +61,7 @@ The pod is healthy once its primary serves, within the [start timer](../inferenc
 | A new settings key that groups profiles on one pod | Public interface (`CODEMAN_SETTINGS`, `.codeman/settings.yml`) | Decision 3 |
 | The pod's document gains its manifest; the ledger's run gains its occupancy | Storage schema, additive | Steps 6 and 9 |
 | A `measure` check in the pod check, named in `e2e.yml`'s input | CI, and money: about $0.20 to $0.40 per dispatch | Decision 4 |
-| `proxy.golang.org`, to date Ollama's Go modules | New external service | Decision 2 |
+| `proxy.golang.org`, to date Ollama's Go modules | New external service | Decision 2, only with (b) |
 
 ## Decisions
 
@@ -75,7 +75,7 @@ The pod is healthy once its primary serves, within the [start timer](../inferenc
      - (a) Only the primary's engine: more models on the same engine. Ollama loads several models itself; vLLM runs one process per model.
      - (b) (a), plus Ollama as a secondary in a vLLM pod. Ollama's Linux release is downloaded at start, checked by SHA-256, and its Go modules are dated through `proxy.golang.org`: the first engine installed by package, with no Python.
      - (c) (b), plus vLLM as a secondary in an Ollama pod. It needs Python in Ollama's image, which is part 2b's.
-   - **Recommendation:** (b), with (b)'s own step (step 7) last, so it can be dropped without touching the rest. It proves decision 6 on a real secondary engine before part 2b depends on it.
+   - **Recommendation:** (a). It serves the consumer part 2a has now, stages on different models, without a new external service or the first engine installed by package. (b) proves decision 6 on a real secondary engine, which part 2b needs first anyway: it moves there. If (b) is chosen, step 7 does it, after the supervisor, so it can be dropped without touching the rest.
 3. **How the settings declare a pod's services.** This changes a public interface.
    - **Options:**
      - (a) A profile key, `pod: <name>`. Profiles with the same `pod` share one pod. They must agree on provider, `gpu` and `hosts`, or the run stops with an error naming them. The first profile of the group, in the list's order, is the primary. Profiles without the key behave as today.
@@ -110,8 +110,7 @@ Steps start once decisions 1 to 4 and 6 are answered. Decision 5 is answered at 
    - vLLM 0.32.0's sleep mode and its dev-mode routes;
    - Ollama 0.40.10's scheduling of several models (`OLLAMA_MAX_LOADED_MODELS`, `keep_alive`, `/api/ps`);
    - `nvidia-smi --query-compute-apps`;
-   - Ollama's Linux release assets and checksums;
-   - for decision 2 (b), the Go module proxy's `.info` and `go.mod` routes.
+   - only with decision 2 (b): Ollama's Linux release assets and checksums, and the Go module proxy's `.info` and `go.mod` routes.
 
    Done when the web documentation's tests pass.
 2. **Measure** (decision 4): the `measure` check, and its program. It measures:
@@ -133,7 +132,7 @@ Steps start once decisions 1 to 4 and 6 are answered. Decision 5 is answered at 
    - pods without a manifest match only exactly, as today.
 
    Done when `src/inference/registry.test.ts` and `src/inference/selfhosted.test.ts` cover a superset join, a full pod, a swapping pod and an old pod, and the [data layout](../backend/data-layout.md#pod-registry) says so.
-7. **Ollama as a secondary engine** (decision 2 (b)). `open-key` resolves Ollama's Linux release by URL and SHA-256 and applies the policy, with the minimum age over its Go modules. The pod's environment carries the URL and digest, and the supervisor downloads, checks and starts it. Done when the release policy's tests cover the Go modules' ages with fixtures, and a tampered download is refused in `src/gateway/` tests.
+7. **Ollama as a secondary engine,** only with decision 2 (b); otherwise it moves to part 2b. `open-key` resolves Ollama's Linux release by URL and SHA-256 and applies the policy, with the minimum age over its Go modules. The pod's environment carries the URL and digest, and the supervisor downloads, checks and starts it. Done when the release policy's tests cover the Go modules' ages with fixtures, and a tampered download is refused in `src/gateway/` tests.
 8. **The supervisor** in `src/gateway/`:
    - **Adapters:** Ollama with several models, and vLLM one process per model, swapping by decision 5.
    - **Routing** of requests by model.
@@ -163,7 +162,7 @@ Steps start once decisions 1 to 4 and 6 are answered. Decision 5 is answered at 
 
 ## Out of scope
 
-- Part 2b:
+- Part 2b, and with decision 2 (a), Ollama as a secondary engine:
   - Python secondary engines: `python-build-standalone`, wheel sets, the interpreter's `pip`, and the whole-tree check over them;
   - image and video generators, the tool the agent calls to generate, and the stages that use them.
 - Scanning OS packages at run time, for images people choose ([decision 4 of part 1](2026-10-30-start-pods-from-official-engine-images.md#decisions)).
