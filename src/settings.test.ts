@@ -331,6 +331,54 @@ test("output limits stay within bounds", () => {
   assert.ok(!parsed.ok && parsed.error.includes("from 1 to 4000"));
 });
 
+test("attachment limits: defaults, bounds, 0 where it turns something off, and files only", () => {
+  const top = resolveSettings({ model: "a/b" });
+  assert.ok(top.ok);
+  if (!top.ok) return;
+  assert.equal(top.value["max-attachments"], 50);
+  assert.equal(top.value["max-attachment-bytes"], 25 * 1024 * 1024);
+  assert.equal(top.value["max-attachment-total-bytes"], 100 * 1024 * 1024);
+  assert.equal(top.value["max-extracted-bytes"], 200 * 1024 * 1024);
+  assert.equal(top.value["max-extracted-files"], 1000);
+
+  assert.deepEqual(parseSetting("max-attachments", "0"), { ok: true, value: 0 });
+  assert.deepEqual(parseSetting("max-attachments", "201"), {
+    ok: false,
+    error: "`max-attachments` must be 0, which turns downloads off, or from 1 to 200.",
+  });
+  assert.deepEqual(parseSetting("max-extracted-bytes", "0"), { ok: true, value: 0 });
+  assert.equal(parseSetting("max-extracted-bytes", String(2 * 1024 ** 3 + 1)).ok, false);
+  assert.deepEqual(parseSetting("max-attachment-bytes", "0"), {
+    ok: false,
+    error: "`max-attachment-bytes` must be a positive whole number.",
+  });
+  assert.equal(parseSetting("max-attachment-bytes", String(100 * 1024 ** 2 + 1)).ok, false);
+  assert.equal(parseSetting("max-attachment-total-bytes", String(1024 ** 3 + 1)).ok, false);
+  assert.equal(parseSetting("max-extracted-files", "10001").ok, false);
+  assert.equal(parseSetting("max-extracted-files", "1.5").ok, false);
+
+  const parsed = parseSettings("max-attachments: 5\nmax-extracted-bytes: 0");
+  assert.deepEqual(parsed, {
+    ok: true,
+    value: { "max-attachments": 5, "max-extracted-bytes": 0 },
+  });
+  for (const name of [
+    "max-attachments",
+    "max-attachment-bytes",
+    "max-attachment-total-bytes",
+    "max-extracted-bytes",
+    "max-extracted-files",
+  ] as const) {
+    assert.ok(isSettingName(name), name);
+    assert.ok(!TASK_SETTINGS.has(name), `${name} is no command`);
+    assert.ok(!INPUT_SETTINGS.includes(name), `${name} is no input`);
+  }
+  const profile = parseSettings(
+    ["profiles:", "  - name: p", "    stages: [code]", "    max-attachments: 3"].join("\n"),
+  );
+  assert.ok(!profile.ok && profile.error.includes("a profile cannot set `max-attachments`"));
+});
+
 test("a run takes as many tasks as the profiles' counts allow, and one without them", () => {
   const counts = (...profiles: string[]) => {
     const file = parseSettings(["model: a/b", "profiles:", ...profiles].join("\n"));
