@@ -86,6 +86,7 @@ flowchart TD
 | 2026-11-05 | [Runner label pinned](#runner-label-pinned) | `f54a771` | Every installation | Change `runs-on` to `ubuntu-24.04`, or copy both templates | No |
 | 2026-11-25 | [Runner label moved to Ubuntu 26.04](#runner-label-moved-to-ubuntu-2604) | `2a7af34` | Every installation | Change `runs-on` to `ubuntu-26.04`, or copy both templates | No |
 | 2026-11-26 | [Attachments reach the agent](#attachments-reach-the-agent) | `6b20bf5` | Every installation | Copy both templates | Yes: template version 4 |
+| 2026-11-26 | [Release assets reach the agent](#release-assets-reach-the-agent) | `50c20d2` | Private repositories whose issues attach files | Give such files through a release | No |
 
 The [older versions](#older-versions) entries say what Codeman does with tasks, pod images and records from before some of these changes.
 
@@ -365,6 +366,22 @@ The agent's time is now the `agent-minutes` setting, and the `agent` job's timeo
 
 The `agent` step's log says "Running … for up to N minutes", N being your `agent-minutes`.
 
+### Release assets reach the agent
+
+- **Since:** 2026-11-26, in `50c20d2` ([plan for release assets](../plans/2026-11-26-download-attachments-from-releases.md)).
+- **Who is affected:** private repositories whose issues attach files that are not images. GitHub does not let workflows download those.
+- **Breaking:** no. The templates do not change: the `agent` job's `contents: read` reads releases.
+
+Each agent run also downloads the release assets linked in the issue and the maintainers' comments, and every asset of a linked release. When GitHub refuses an issue's attachment, the run comment says why, and points to releases ([give files through a release](../tasks/attachments.md#give-files-through-a-release)).
+
+#### What to do
+
+Nothing. On a private repository, give the agent files that are not images through a published release.
+
+#### How to verify
+
+On a private repository, publish a prerelease with a small CSV file, and link the release in a task's issue. The `agent` job's log lists the file under **Download the attachments**, and the agent finds it in `.codeman/attachments/`.
+
 ### Attachments reach the agent
 
 - **Since:** 2026-11-26: template version 4 in `6b20bf5` ([plan for the issue's attachments](../plans/2026-11-26-give-the-agent-the-issue-attachments.md)).
@@ -380,7 +397,7 @@ Each agent run downloads the files maintainers attach to the issue, its comments
 
 #### How to verify
 
-Attach a small CSV file to a task's issue. The `agent` job's log lists it under **Download the attachments**, and the agent finds it in `.codeman/attachments/`.
+Attach a small CSV file to a task's issue, on a public repository; on a private one, attach an image. The `agent` job's log lists it under **Download the attachments**, and the agent finds it in `.codeman/attachments/`.
 
 ### Runner label moved to Ubuntu 26.04
 

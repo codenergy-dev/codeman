@@ -151,7 +151,7 @@ Jobs that do not apply to a task are skipped:
 | `select` | App token: issues write; contents, pull requests, actions and metadata read | Yes, for the [backend](../backend/backend.md) |
 | `dispatch` | App token for that owner, limited to that repository, `actions: write` and `metadata: read`, revoked when its step ends. No permission for its `GITHUB_TOKEN`, and no checkout. | No |
 | `open-key` | — | Yes |
-| `agent` | `GITHUB_TOKEN` with contents, actions, issues and pull requests read, for workflow results and [attachments](../tasks/attachments.md). The agent never sees it. | No |
+| `agent` | `GITHUB_TOKEN` with contents, actions, issues and pull requests read, for workflow results, [attachments](../tasks/attachments.md) and release assets. The agent never sees it. | No |
 | `close-key` | — | Yes |
 | `apply` | App token: contents, issues and pull requests write. For `accept` only, a second token with contents and workflows write. | No |
 | `release-pod` | — | Yes |

@@ -19,7 +19,7 @@ The workflow is [`templates/codeman.yml`](../../templates/codeman.yml). It runs 
 | [Key encryption secret](#key-encryption-secret) | `open-key`, Codeman's step in `agent` | No | Yes, with the `agent` job as the template has it | The task keys in the run logs, decrypted |
 | [The run's task key or run token](#the-runs-task-key-or-run-token) | The agent, in `agent` | Yes: it is the agent's own | Partly | What remains of the task's budget, until the run ends |
 | [GitHub's OIDC token and the backend's tokens](#githubs-oidc-token-and-the-backends-tokens) | `select`, `open-key`, `close-key`, `release-pod` | No: `agent` never gets one | Yes | All of the project's Firestore data, for an hour |
-| [The jobs' `GITHUB_TOKEN`](#the-jobs-github_token) | Every job, with its own permissions | No | Yes | Reading the repository, its runs and the conversation's attachments (`agent`), or starting workflows (`forward-review`, `next-run`) |
+| [The jobs' `GITHUB_TOKEN`](#the-jobs-github_token) | Every job, with its own permissions | No | Yes | Reading the repository, its runs, the conversation's attachments and the release assets it links (`agent`), or starting workflows (`forward-review`, `next-run`) |
 | [The repository's own secrets](#the-repositorys-own-secrets) | The repository's other workflows | Indirectly ([risk 1](risks.md#1-code-the-agent-wrote-runs-with-the-repositorys-secrets)) | Depends on those workflows | Whatever those workflows expose |
 
 ## Permissions each job requests
@@ -154,7 +154,7 @@ Each job's permissions are in [permissions each job requests](#permissions-each-
 
 | Jobs | Permissions | Used for | Why it is safe | Gap |
 | --- | --- | --- | --- | --- |
-| `agent` | `contents: read`, `actions: read`, `issues: read`, `pull-requests: read` | The repository's checkout, the commit check, and Codeman's step, which downloads the results of workflows and the conversation's [attachments](../tasks/attachments.md). It sends the token to `github.com` only | The agent never sees it: it has the [key encryption secret](#key-encryption-secret)'s isolation. It can only read | The encryption secret's, with its mitigation |
+| `agent` | `contents: read`, `actions: read`, `issues: read`, `pull-requests: read` | The repository's checkout, the commit check, and Codeman's step, which downloads the results of workflows, the conversation's [attachments](../tasks/attachments.md) and the release assets it links. It sends the token to `github.com` and `api.github.com` only | The agent never sees it: it has the [key encryption secret](#key-encryption-secret)'s isolation. It can only read | The encryption secret's, with its mitigation |
 | `forward-review`, `next-run` | `actions: write` | Starting the Codeman workflow with `gh workflow run` | They check out nothing. Values reach the command through environment variables, not the script | None known |
 | The other jobs | None, besides `id-token: write` where the job asks for it | The commit check, on Codeman's public repository | It can do nothing else | — |
 

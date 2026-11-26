@@ -1,7 +1,7 @@
 ---
-status: pending
+status: completed
 created_at: 2026-11-26T18:52:00-03:00
-updated_at: 2026-11-26T18:52:00-03:00
+updated_at: 2026-11-26T19:40:00-03:00
 commit: b3f3c82
 ---
 
@@ -28,36 +28,27 @@ Maintainers of a private repository can give the agent any file, such as a ZIP o
 1. **Approach.** Keep downloading the issue's attachments, which works for images and on public repositories, and also download release assets.
 2. **Documentation.** Explain to maintainers, step by step, how to give the agent files through a release.
 3. **Warning.** The run comment warns, with a link to a GitHub community discussion, that the issue's attachments cannot be downloaded through GitHub's API.
-
-### Open
-
-1. **Draft releases.**
-   - (a) **Published releases only**, prereleases included. No permission changes. A draft asset's link is reported as refused, with a hint to publish the release. *Recommended*: drafts would need `contents: write` on the agent job, which could then push to the repository.
-   - (b) Drafts too, with `contents: write` on the agent job and template version 5.
-2. **When the warning appears.**
-   - (a) **When at least one attachment of the issue was refused**, as in the reported run: the line of that file says why, then one note explains GitHub's limit, links the discussion, and points to releases. *Recommended*: it appears exactly when it helps.
-   - (b) On every run whose texts link an issue attachment that is not an image, downloaded or not. On a public repository, it would warn about files that did download.
-   - (c) On every run of a private repository, even without attachments.
-3. **Which release links.**
-   - (a) **Links to one asset**: `…/releases/download/<tag>/<name>` and `…/releases/latest/download/<name>`. *Recommended*: each file is listed in the text, as attachments are.
-   - (b) Also a link to a whole release, `…/releases/tag/<tag>`, which downloads all its assets, within `max-attachments`. Convenient for many files, but every link would no longer be one file.
+4. **Draft releases.** Options: (a) published releases only, prereleases included, with no permission change; (b) drafts too, with `contents: write` on the agent job and template version 5. **Answer: (a).** A draft asset's link is reported as refused, with a hint to publish the release.
+5. **When the warning appears.** Options: (a) when at least one attachment of the issue was refused; (b) on every run whose texts link an issue attachment that is not an image; (c) on every run of a private repository. **Answer: (a).** The line of each refused file says why, then one note explains the platform's limit, links the discussion, and points to releases.
+6. **Which release links.** Options: (a) links to one asset; (b) also a link to a whole release, which downloads all its assets. **Answer: (b).** Each asset of a linked release counts against `max-attachments`, as a linked asset does.
 
 ### Choices made in this work
 
 1. **Same limits.** Release assets count against the same settings as attachments: `max-attachments`, `max-attachment-bytes`, `max-attachment-total-bytes`, and archives against the extraction limits. No new setting.
-2. **The task's repository through the API.** A link to a release of the task's repository is resolved through the API with the job's token. A link to another repository's release is downloaded like an attachment, from the link itself: it works when that repository is public.
-3. **The token.** Sent to `github.com` and `api.github.com` only, never on a redirect to another host.
-4. **The reference.** The warning links [the community discussion #162417](https://github.com/orgs/community/discussions/162417), whose question is this one: an issue's file of a private repository, refused with a fine-grained token.
+2. **Every release through the API.** A release link is resolved through the API with the job's token, whatever its repository: the token reads the task's repository, and public ones. Another private repository's release is refused.
+3. **Links.** `https://github.com/<owner>/<repo>/releases/download/<tag>/<name>` and `…/releases/latest/download/<name>` are one asset. `…/releases/tag/<tag>` and `…/releases/latest` are a whole release, expanded into its assets before any download, in the release's order. An asset linked twice, alone and through its release, is downloaded once.
+4. **The token.** Sent to `github.com` and `api.github.com` only, never on a redirect to another host.
+5. **The reference.** The warning links [the community discussion #162417](https://github.com/orgs/community/discussions/162417), whose question is this one: an issue's file of a private repository, refused with a fine-grained token.
 
 ## Steps
 
-1. **Recognize release links.** The GitHub adapter finds asset links in the texts, beside the attachment links. Done when tests cover tags with `/`, `latest`, encoded names, and links that are not assets.
-2. **Download release assets.** For the task's repository: find the release by tag, or the latest, find the asset by name, and download it through the API, following redirects by hand. Missing release, missing asset, and a draft's `untagged-` tag are refusals with a detail. Done when tests with a fake fetch cover each case, and that the token goes nowhere else.
-3. **The warning.** A new message in English and Portuguese, in the run comment, under the problems, and in the job's log, as the open decision 2 says. Done when a flow test checks it.
-4. **The prompt and the index.** The index names a release asset's source as "a release asset". Done when tests check it.
-5. **Documentation.** In [attachments](../tasks/attachments.md): a section on giving files through a release, step by step, with its costs and how to clean up; the private-repository section points to it; the table of what the run comment says gains the new warning. Update [platforms](../development/platforms.md) and [secrets](../security/secrets.md) where they describe the downloads. Done when `src/docs.test.ts` passes.
-6. **Checks.** `npm run check`, and `dist/index.js` rebuilt. Done when everything passes, but the known failure of `src/gateway/bootstrap.test.ts` on macOS.
-7. **On real repositories.** The responsible person runs a task on a private repository with a release asset. Done when it reaches the agent.
+1. **Recognize release links.** The GitHub adapter finds asset and release links in the texts, beside the attachment links, and each link says what it is: a conversation attachment, a release asset, or a release. Done when tests cover tags with `/`, `latest`, encoded names, and release pages that are not links to assets or releases. **Done** in `50c20d2`.
+2. **Download release assets.** Find the release by tag, or the latest, find the asset by name, and download it through the API, following redirects by hand. A missing release, a missing asset, and a draft's `untagged-` tag are refusals with a detail. Done when tests with a fake fetch cover each case, and that the token goes to `github.com` and `api.github.com` only. **Done** in `50c20d2`.
+3. **Expand release links.** `gatherAttachments` replaces each release link with its assets' links before numbering them, and reports a release it could not read. The index says through which release link each asset came. Done when tests cover expansion, duplicates, limits and a refused release. **Done** in `50c20d2`.
+4. **The warning.** A refused conversation attachment carries the platform's reference. The run comment adds one note, in English and Portuguese, after the per-file lines: the platform's limit, the reference, and a link to the docs on releases, as plain URLs, since the run comment turns Markdown links into text. The job's log says the same. Done when a flow test checks it. **Done** in `50c20d2`.
+5. **Documentation.** In [attachments](../tasks/attachments.md): a section on giving files through a release, step by step, with its costs and how to clean up; the private-repository section points to it; the table of what the run comment says gains the new warning. Update [platforms](../development/platforms.md) and [secrets](../security/secrets.md) where they describe the downloads. Done when `src/docs.test.ts` passes. **Done**, with an entry in [upgrading](../installation/upgrading.md#release-assets-reach-the-agent).
+6. **Checks.** `npm run check`, and `dist/index.js` rebuilt. Done when everything passes, but the known failure of `src/gateway/bootstrap.test.ts` on macOS. **Done**: 1206 tests pass, 8 skipped, and only that known failure; `tsc` and Biome are clean. The end-to-end suite was not run.
+7. **On real repositories.** The responsible person runs a task on a private repository with a release asset. Done when it reaches the agent. Left to the responsible person, after the merge.
 
 ## Out of scope
 

@@ -24,7 +24,7 @@ New to Codeman? Read the [README](../README.md), then follow [Installation](inst
 | [Stages](tasks/stages.md) | Know what each stage does, and how routing chooses them |
 | [Commands](tasks/commands.md) | Steer a task with `/codeman` commands |
 | [Comments](tasks/comments.md) | Read the status, decisions and run comments |
-| [Attachments](tasks/attachments.md) | Give the agent files, such as CSV data, by attaching them to the issue |
+| [Attachments](tasks/attachments.md) | Give the agent files, such as CSV data, by attaching them to the issue or linking a release |
 
 ## Configure
 

@@ -51,7 +51,7 @@ Codeman's step downloads these with the job's `GITHUB_TOKEN`, before the agent s
 | Directory | What | Where it is described |
 | --- | --- | --- |
 | `.codeman/results/` | The results of the workflows the agent asked for | [Results](changes.md#results) |
-| `.codeman/attachments/` | The files maintainers attached to the issue, its comments and reviews, with archives extracted, and an index | [Attachments](../tasks/attachments.md) |
+| `.codeman/attachments/` | The files maintainers attached to the issue, its comments and reviews, and the release assets they linked, with archives extracted, and an index | [Attachments](../tasks/attachments.md) |
 
 Archives are extracted by Codeman's own code, which writes only regular files inside their directory ([archives](../tasks/attachments.md#archives)). The agent never sees the token.
 
