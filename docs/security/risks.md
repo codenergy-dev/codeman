@@ -55,7 +55,7 @@ The agent follows text it reads. Delimiters and instructions to treat text as da
 ### What reaches the agent
 
 - Codeman gives it only the title and body of issues opened by [maintainers](../glossary.md#maintainer), and only comments and reviews by maintainers. See [untrusted input](#untrusted-input).
-- The agent still reads other text: third-party text that a maintainer quotes, the repository's files, the dependencies it installs, and the results of workflows.
+- The agent still reads other text: third-party text that a maintainer quotes, files maintainers attach ([attachments](../tasks/attachments.md)), the repository's files, the dependencies it installs, and the results of workflows.
 
 ### What a manipulated agent can do
 
@@ -70,7 +70,7 @@ The web [stage](../glossary.md#stage) brings third-party pages into the reposito
 
 ### How to protect (risk 2)
 
-- Open issues in your own words. Do not paste a third party's text as the task.
+- Open issues in your own words. Do not paste a third party's text as the task, nor attach files you have not looked at.
 - Review the pull request, as in [risk 1](#1-code-the-agent-wrote-runs-with-the-repositorys-secrets).
 - There is no network restriction yet: [roadmap](overview.md#roadmap) item 1.
 
@@ -91,7 +91,7 @@ It can read the job's secrets from the runner's memory, among them:
 - the key encryption secret, with which it can also decrypt the task keys in the run logs;
 - the run's [task key](../glossary.md#task-key), which reaches the job encrypted with that secret, and which Codeman's step decrypts and holds;
 - the Serverless key (`CODEMAN_RUNPOD_SERVERLESS_KEY`);
-- the job's `GITHUB_TOKEN`.
+- the job's `GITHUB_TOKEN`, which reads the repository, its runs, issues and pull requests.
 
 ### What an added step can change
 

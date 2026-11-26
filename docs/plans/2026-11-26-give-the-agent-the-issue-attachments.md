@@ -1,7 +1,7 @@
 ---
-status: in progress
+status: completed
 created_at: 2026-11-26T13:15:10-03:00
-updated_at: 2026-11-26T13:45:00-03:00
+updated_at: 2026-11-26T13:56:05-03:00
 commit: 3fc6d2d
 ---
 
@@ -79,21 +79,29 @@ Observed on 2026-11-26 on public issues of public repositories, without a token,
 2. **How attachments download.** Record the URL forms and redirects of public attachments, and what is known of private ones. Done when the table above is filled.
    - **Done on 2026-11-26,** on public issues only: the responsible person checks private repositories after the merge (step 9).
 3. **Settings.** Failing tests in `src/settings.test.ts` for the five settings: defaults, bounds, `0` where allowed, and where they may be set. Then add them to `src/settings.ts` and `templates/settings.yml`. Done when the tests pass.
+   - **Done on 2026-11-26,** in `20d6233`. `ZERO_MEANS` in `src/settings.ts` now holds what `0` means for `wrap-up-minutes`, `max-attachments` and `max-extracted-bytes`.
 4. **Archives.** Failing tests in a new `src/archives.test.ts`, with archives built in the test: files and directories extracted; links, `..` and absolute paths skipped; the byte and file limits, including a deflate bomb; a bad CRC; a nested archive kept as a file. Then `src/archives.ts`. Done when the tests pass.
+   - **Done on 2026-11-26,** in `28d6fa6`. Plain `.tar` files are extracted too. The test archives are built by `src/testing/archives.ts`.
 5. **Attachments.**
    - An `Attachments` interface in `src/platform/platform.ts`, a service in `src/services.ts`, and `FakeAttachments` with its own link format.
    - The GitHub adapter in `src/platform/github/attachments.ts`, with tests on a fake `fetch` and Octokit: links found, the token only on `github.com`, redirects checked, the `body_html` fallback, the size limit while reading.
    - `src/attachments.ts`, with tests: the texts of the task, limits, names, the index, extraction, and the problems reported.
 
    Done when the tests pass.
+   - **Done on 2026-11-26,** in `4a85576`, with step 6. Review comments gained their `id`, optional, to read them again. A ZIP entry's data is inflated up to the size it declares, so a bomb that claims less is skipped as corrupt. The adapter's tests fake `fetch` and the rendered HTML; `renderedHtml`, which reads it through Octokit, is checked by the type checker only.
 6. **The agent job and the run comment.** `agentJob` downloads into a directory of its own and copies it to `.codeman/attachments/`. `src/prompt.ts` gets the section, `Manifest` gets the problems, and `apply` lists them in the run comment, in English and Portuguese. Tests in `src/prompt.test.ts`, `src/steps/apply.test.ts` and `src/i18n/i18n.test.ts`. Done when they pass.
+   - **Done on 2026-11-26,** in `4a85576`. The run comment's test is in `src/steps/flow.test.ts`, which runs `apply` with a manifest. `finish` in `apply` adds the attachment lines to every run comment, whatever the outcome.
 7. **Templates.** `issues: read` and `pull-requests: read` for the agent job's token, `TEMPLATE_VERSION` 4, and `template-version: 4` in every step of both templates. Done when `src/templates.test.ts` and `src/action.test.ts` pass.
+   - **Done on 2026-11-26,** in `6b20bf5`, with `dist/index.js`. `codeman.yml` grants `codeman-task.yml` the two permissions too, since a called workflow's jobs get at most what the caller grants.
 8. **Docs.** Done when `npm run check` passes:
    - a new page, `docs/tasks/attachments.md`, linked from `docs/README.md`;
    - `docs/runs/agent.md`, `docs/settings/reference.md`, `docs/security/risks.md`, `docs/security/secrets.md`, `docs/installation/setup.md` and `docs/development/platforms.md`;
    - an entry in `docs/installation/upgrading.md` for template version 4.
+   - **Done on 2026-11-26.** `docs/runs/runs-and-jobs.md` changed too. `npm run check` passes but for `src/gateway/bootstrap.test.ts`'s test "without curl or wget, python3 downloads and checks", which fails on macOS on `main` as well: its `PATH` has no `bash`. `npm run build` was run on its own.
 9. **Check on real repositories.** After the merge, the responsible person runs tasks with attachments on public and private repositories. If something fails, the plan is reopened.
+   - **Left to the responsible person**, as agreed on 2026-11-26. The e2e suite was not run.
 10. **Commits.** On `features/issue-attachments`, as authorized on 2026-11-26 until the plan is done. The responsible person opens the pull request and merges it.
+    - **Done on 2026-11-26.**
 
 ## Out of scope
 

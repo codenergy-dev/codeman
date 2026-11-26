@@ -10,6 +10,7 @@ The steps reach the platform and the runtime only through interfaces. GitHub and
 | --- | --- | --- | --- |
 | `Platform` ([`src/platform/platform.ts`](../../src/platform/platform.ts)) | Tasks and their state labels, comments on issues and on change requests, change requests and their reviews, who is a [maintainer](../glossary.md#maintainer), the account Codeman writes as, files and commits, links and references | [`src/platform/github/platform.ts`](../../src/platform/github/platform.ts), on the REST and GraphQL APIs, with the App's token | `FakePlatform` ([`src/testing/fake-platform.ts`](../../src/testing/fake-platform.ts)): one repository in memory |
 | `CiResults` ([`src/platform/platform.ts`](../../src/platform/platform.ts)) | Runs of CI on a commit, their jobs, logs and artifacts | [`src/platform/github/ci.ts`](../../src/platform/github/ci.ts), on GitHub Actions | `FakeCi` ([`src/testing/fake-platform.ts`](../../src/testing/fake-platform.ts)): results kept in memory |
+| `Attachments` ([`src/platform/platform.ts`](../../src/platform/platform.ts)) | The attachment links in a text, and their download, read only | [`src/platform/github/attachments.ts`](../../src/platform/github/attachments.ts), with the job's token on `github.com` only, and signed addresses from the text's rendered HTML when the token is refused | `FakeAttachments` ([`src/testing/fake-platform.ts`](../../src/testing/fake-platform.ts)): `attachment://<name>` links, files kept in memory |
 | `Conventions` ([`src/platform/conventions.ts`](../../src/platform/conventions.ts)) | The Markdown dialect (mentions and references to break), the comment size limit, where CI configuration lives, the rules that protect it, and what the agent is told about writing and reviewing it | [`src/platform/github/conventions.ts`](../../src/platform/github/conventions.ts) | `FAKE_CONVENTIONS` ([`src/testing/fake-platform.ts`](../../src/testing/fake-platform.ts)) |
 | `Runtime` ([`src/runtime/runtime.ts`](../../src/runtime/runtime.ts)) | Inputs and outputs of a step, logs, the run's summary, secret masking, the workspace, the run's ID, attempt and link, the repository, and the job's OIDC token | [`src/runtime/github-actions.ts`](../../src/runtime/github-actions.ts) | `FakeRuntime` ([`src/testing/fake-runtime.ts`](../../src/testing/fake-runtime.ts)): keeps what a step reports |
 
@@ -26,15 +27,17 @@ flowchart LR
   GS --> S["Services"]
   S --> P["platform: GitHubPlatform<br/>github-token or workflow-token"]
   S --> CI["ci: GitHubActionsResults"]
+  S --> AT["attachments: GitHubAttachments"]
   S --> CV["conventions: GITHUB"]
   S --> INF["inference, accounts"]
   S --> ST["store, ledger"]
   S --> RUN["run: the template version check,<br/>then the step of STEPS"]
-  T["Tests"] -.-> F["fakeServices in src/testing/:<br/>FakePlatform, FakeCi, FakeRuntime,<br/>FakeInference, a memory store"] -.-> RUN
+  T["Tests"] -.-> F["fakeServices in src/testing/:<br/>FakePlatform, FakeCi, FakeAttachments,<br/>FakeRuntime, FakeInference, a memory store"] -.-> RUN
 ```
 
 - **`src/index.ts`** creates the runtime, builds the services with `gitHubServices`, and calls `run`.
 - **`platform`** uses the `github-token` input, or `workflow-token` for `workflows` access.
+- **`ci`** and **`attachments`** use the `github-token` input, read only: in the `agent` job, its `GITHUB_TOKEN`.
 - **`run`** checks the [template version](../glossary.md#template-version), then runs the step its `step` input names.
 - **Nothing else picks a platform.** The members are listed in [source layout](guide.md#entry-points-and-steps).
 
