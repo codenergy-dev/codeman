@@ -1,5 +1,6 @@
 import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { RELEASES_DOCS_URL, refusedReference } from "../attachments.ts";
 import { MIN_RUN_BUDGET, runLimit } from "../budget.ts";
 import type { Change } from "../collect.ts";
 import {
@@ -1398,7 +1399,10 @@ function readJson(file: string): unknown {
 function attachmentWarnings(io: Io, t: Messages): string[] {
   const manifest = readJson(join(io.resultDir, "manifest.json"));
   if (!isManifest(manifest)) return [];
-  return missingAttachmentsOf(manifest).map(({ name, url, problem }) =>
-    t.missingAttachment(name, url, problem),
-  );
+  const missing = missingAttachmentsOf(manifest);
+  const reference = refusedReference(missing.map(({ problem }) => problem));
+  return [
+    ...missing.map(({ name, url, problem }) => t.missingAttachment(name, url, problem)),
+    ...(reference ? [t.refusedAttachments(reference, RELEASES_DOCS_URL)] : []),
+  ];
 }

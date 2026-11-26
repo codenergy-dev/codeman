@@ -9,6 +9,8 @@ import {
   describeProblem,
   gatherAttachments,
   missingAttachments,
+  RELEASES_DOCS_URL,
+  refusedReference,
 } from "../attachments.ts";
 import {
   collectChanges,
@@ -293,7 +295,14 @@ async function downloadAttachments(
     for (const entry of entries) {
       const name = oneLine(entry.file ?? entry.url);
       if (entry.problem) runtime.warning(`Attachment ${name}: ${describeProblem(entry.problem)}.`);
+      else if (entry.empty) runtime.info(`Release ${name}: no assets.`);
       else runtime.info(`Attachment ${name}: ${entry.bytes} bytes.`);
+    }
+    const reference = refusedReference(entries.flatMap(({ problem }) => problem ?? []));
+    if (reference) {
+      runtime.warning(
+        `The platform does not let workflows download the files attached to a private repository's issues and comments (${reference}). Upload them to a published release of the repository, and link the assets or the release instead: ${RELEASES_DOCS_URL}`,
+      );
     }
     return entries;
   } catch (error) {

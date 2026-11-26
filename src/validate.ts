@@ -75,7 +75,10 @@ export function missingAttachmentsOf(manifest: Manifest): MissingAttachment[] {
       typeof url === "string" &&
       typeof problem === "object" &&
       problem !== null &&
-      PROBLEM_KINDS.includes(problem.kind)
+      PROBLEM_KINDS.includes(problem.kind) &&
+      (problem.kind !== "refused" ||
+        problem.reference === undefined ||
+        (typeof problem.reference === "string" && problem.reference.startsWith("https://")))
     );
   });
 }

@@ -501,6 +501,46 @@ test("the run comment lists the attachments the agent did not get whole", async 
   );
   assert.match(comment, /The attachment 02-logs\.zip .* 2 of its entries were skipped/);
   assert.doesNotMatch(comment, /The attachment x /);
+  assert.doesNotMatch(comment, /does not let workflows/);
+});
+
+test("the run comment explains the platform's refusal once, and points to releases", async () => {
+  const platform = new FakePlatform({ ".codeman/settings.yml": "model: a/b\n" });
+  platform.maintainers.add("alice");
+  const issue = platform.openIssue(
+    "alice",
+    "Chart the data",
+    "attachment://a.csv attachment://b.zip",
+  );
+  const { planPath } = readTask(await selectStep(platform));
+  const refused = (name: string, reference: string) => ({
+    name,
+    url: `attachment://${name}`,
+    problem: { kind: "refused" as const, detail: "HTTP 404", reference },
+  });
+  agentResult(
+    { [planPath]: "# Plan\n" },
+    { summary: "Charts it.", decisions: [] },
+    {
+      timedOut: false,
+      attachments: [
+        refused("a.csv", "https://example.com/why"),
+        refused("b.zip", "https://example.com/why"),
+        // Not an https address: left out.
+        refused("c.txt", "javascript:alert(1)"),
+      ],
+    },
+  );
+  await applyStep(platform);
+  const comment = platform.botComments(issue).find((body) => isRunComment(body)) ?? "";
+  assert.match(comment, /The attachment a\.csv .* refused it \(HTTP 404\)\./);
+  assert.match(comment, /The attachment b\.zip /);
+  assert.doesNotMatch(comment, /c\.txt|javascript/);
+  assert.equal(comment.match(/does not let workflows/g)?.length, 1);
+  assert.match(
+    comment,
+    /\(see https:\/\/example\.com\/why\)\. .*published release.*: https:\/\/github\.com\/codenergy-dev\/codeman\/blob\/main\/docs\/tasks\/attachments\.md#give-files-through-a-release\n/,
+  );
 });
 
 test("a review while decisions are pending waits for them, and then counts", async () => {

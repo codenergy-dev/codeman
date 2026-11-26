@@ -211,6 +211,11 @@ export interface Messages {
   droppedChange(path: string, reason: DropReason): string;
   /** An attachment the agent did not get whole, named by its file or link's name. */
   missingAttachment(name: string, url: string, problem: AttachmentProblem): string;
+  /**
+   * After the attachments the platform refused for a limit of its own: why, with `reference`,
+   * and how to give the agent such files through a release, with `docs`.
+   */
+  refusedAttachments(reference: string, docs: string): string;
   outOfTime: string;
   outOfTimeWrappedUp: string;
   partial: string;

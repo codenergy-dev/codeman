@@ -115,8 +115,13 @@ export interface Platform {
   closingReference(issue: number): string;
 }
 
-/** An attachment link in a text, as the platform recognizes it. */
+/**
+ * An attachment link in a text, as the platform recognizes it: a file attached to the
+ * conversation, an asset of a release of a repository, or a whole release, whose assets
+ * `Attachments.expand` lists.
+ */
 export interface AttachmentLink {
+  kind: "attachment" | "release-asset" | "release";
   /** The URL, as the text has it. */
   url: string;
   /** What identifies the file on the platform, such as GitHub's file ID or asset UUID. */
@@ -137,12 +142,34 @@ export type DownloadProblem = "too-large" | "refused" | "failed";
 
 export type Download =
   | { ok: true; data: Buffer; name?: string | undefined }
-  | { ok: false; problem: DownloadProblem; detail?: string | undefined };
+  | {
+      ok: false;
+      problem: DownloadProblem;
+      detail?: string | undefined;
+      /**
+       * A page that explains why the platform refuses this kind of file, when it is a limit of
+       * the platform rather than of this file.
+       */
+      reference?: string | undefined;
+    };
 
-/** Files attached to the conversation: issues, comments and reviews. Read only. */
+/** A release's assets, or why they could not be listed. */
+export type Expansion =
+  | { ok: true; links: AttachmentLink[] }
+  | { ok: false; problem: "refused" | "failed"; detail?: string | undefined };
+
+/**
+ * Files attached to the conversation (issues, comments and reviews), and the release assets it
+ * links to. Read only.
+ */
 export interface Attachments {
   /** The attachment links in a text, in order, each once. Links to anything else are not. */
   find(text: string): AttachmentLink[];
+  /**
+   * The links to a release's assets, in the release's order, for a `release` link; any other
+   * link alone. Never throws.
+   */
+  expand(link: AttachmentLink, signal: AbortSignal): Promise<Expansion>;
   /**
    * Downloads one attachment of the text `where`, of at most `maxBytes`. Never throws: a
    * failure is a problem, and `signal` aborting it is `failed`.
