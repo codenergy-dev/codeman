@@ -115,6 +115,46 @@ export interface Platform {
   closingReference(issue: number): string;
 }
 
+/** An attachment link in a text, as the platform recognizes it. */
+export interface AttachmentLink {
+  /** The URL, as the text has it. */
+  url: string;
+  /** What identifies the file on the platform, such as GitHub's file ID or asset UUID. */
+  id: string;
+  /** The file's name, when the link has one. */
+  name?: string | undefined;
+}
+
+/** A text of the conversation, so that an adapter can read it again, as the platform renders it. */
+export type TextRef =
+  | { kind: "issue"; number: number }
+  | { kind: "comment"; id: number }
+  | { kind: "review"; changeRequest: number; id: number }
+  | { kind: "review-comment"; id: number };
+
+/** Why a download failed: over its size limit, refused by the platform, or anything else. */
+export type DownloadProblem = "too-large" | "refused" | "failed";
+
+export type Download =
+  | { ok: true; data: Buffer; name?: string | undefined }
+  | { ok: false; problem: DownloadProblem; detail?: string | undefined };
+
+/** Files attached to the conversation: issues, comments and reviews. Read only. */
+export interface Attachments {
+  /** The attachment links in a text, in order, each once. Links to anything else are not. */
+  find(text: string): AttachmentLink[];
+  /**
+   * Downloads one attachment of the text `where`, of at most `maxBytes`. Never throws: a
+   * failure is a problem, and `signal` aborting it is `failed`.
+   */
+  download(
+    link: AttachmentLink,
+    where: TextRef,
+    maxBytes: number,
+    signal: AbortSignal,
+  ): Promise<Download>;
+}
+
 /** The results of a repository's CI: runs on a commit, their jobs, logs and artifacts. */
 export interface CiResults {
   runsForCommit(sha: string): Promise<CiRun[]>;

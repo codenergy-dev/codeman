@@ -2,7 +2,7 @@ import type { ProviderAccounts } from "./inference/budget.ts";
 import type { InferenceProvider } from "./inference/provider.ts";
 import type { Ledger } from "./ledger.ts";
 import type { Conventions } from "./platform/conventions.ts";
-import type { CiResults, Platform } from "./platform/platform.ts";
+import type { Attachments, CiResults, Platform } from "./platform/platform.ts";
 import type { Pool } from "./pool.ts";
 import type { Runtime } from "./runtime/runtime.ts";
 import type { Store } from "./store/store.ts";
@@ -21,6 +21,8 @@ export interface Services {
   platform(access?: "default" | "workflows"): Platform;
   /** The CI's results, with read-only credentials. */
   ci(): CiResults;
+  /** Files attached to the conversation, with read-only credentials. */
+  attachments(): Attachments;
   /** Where agent runs get their model, with the key jobs' credentials. */
   inference(): InferenceProvider;
   /** The providers' accounts that the budgets read, with the key jobs' credentials. */

@@ -57,6 +57,7 @@ export interface GitHubReview {
 }
 
 export interface GitHubReviewComment {
+  id?: number;
   pull_request_review_id: number | null;
   path: string;
   line?: number | null;
@@ -109,6 +110,7 @@ export function toReview(review: GitHubReview): Review {
 
 export function toReviewComment(comment: GitHubReviewComment): ReviewComment {
   return {
+    ...(comment.id !== undefined ? { id: comment.id } : {}),
     reviewId: comment.pull_request_review_id,
     path: comment.path,
     line: comment.line ?? comment.original_line ?? null,

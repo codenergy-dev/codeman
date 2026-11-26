@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { lstatSync, mkdirSync, rmSync, type Stats, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { MissingAttachment } from "./attachments.ts";
 import { AGENT_USER, program, sudo, sudoCapture } from "./sandbox.ts";
 
 export interface Change {
@@ -25,6 +26,8 @@ export interface Manifest {
   /** How long the harness ran, measured outside the sandbox. */
   durationMs?: number;
   changes: Change[];
+  /** The attachments the agent did not get whole, for the run comment. */
+  attachments?: MissingAttachment[];
 }
 
 /**

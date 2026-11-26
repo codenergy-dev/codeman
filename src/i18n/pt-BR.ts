@@ -258,6 +258,33 @@ export const ptBR: Messages = {
     }[reason.kind];
     return `Mudança em ${path} descartada: ${why}.`;
   },
+  missingAttachment: (name, url, problem) => {
+    const bytes = (max: number) => `${number(0).format(max)} bytes`;
+    const detail = (text?: string) => (text ? ` (${text})` : "");
+    const why = (() => {
+      switch (problem.kind) {
+        case "too-many":
+          return `não foi baixado: uma rodada baixa no máximo ${problem.max} anexos (\`max-attachments\`)`;
+        case "too-large":
+          return `não foi baixado: é maior que ${bytes(problem.max)} (\`max-attachment-bytes\`)`;
+        case "over-total":
+          return `não foi baixado: os anexos da rodada juntos passariam de ${bytes(problem.max)} (\`max-attachment-total-bytes\`)`;
+        case "refused":
+          return `não foi baixado: a plataforma recusou o download${detail(problem.detail)}`;
+        case "failed":
+          return `não pôde ser baixado${detail(problem.detail)}`;
+        case "timed-out":
+          return "não foi baixado: o tempo para os anexos acabou";
+        case "not-extracted":
+          return problem.reason === "invalid"
+            ? `foi baixado, mas não extraído: ${problem.detail ?? "não é um arquivo compactado válido"}`
+            : `foi baixado, mas não extraído: o conteúdo passaria de \`${problem.reason === "too-large" ? "max-extracted-bytes" : "max-extracted-files"}\``;
+        case "partly-extracted":
+          return `foi extraído, mas ${problem.skipped} das suas entradas foram ignoradas: links, arquivos especiais ou caminhos inseguros`;
+      }
+    })();
+    return `O anexo ${name} (${url}) ${why}.`;
+  },
   outOfTime: "O tempo do agente acabou. O trabalho feito até aqui foi commitado.",
   outOfTimeWrappedUp:
     "O tempo do agente acabou. Uma rodada de fechamento deixou o trabalho consistente, e ele foi commitado.",

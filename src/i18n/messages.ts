@@ -1,3 +1,4 @@
+import type { AttachmentProblem } from "../attachments.ts";
 import type { ProviderName } from "../inference/providers.ts";
 import type { DropReason } from "../policy.ts";
 import type { CommandProblem } from "../problems.ts";
@@ -208,6 +209,8 @@ export interface Messages {
   /** A text of the agent's output was too long: `length` characters, cut to `max`. */
   cutText(field: string, length: number, max: number): string;
   droppedChange(path: string, reason: DropReason): string;
+  /** An attachment the agent did not get whole, named by its file or link's name. */
+  missingAttachment(name: string, url: string, problem: AttachmentProblem): string;
   outOfTime: string;
   outOfTimeWrappedUp: string;
   partial: string;

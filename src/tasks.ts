@@ -81,7 +81,8 @@ export interface TaskReview {
   author: string;
   verdict: ReviewVerdict;
   body: string;
-  comments: { path: string; line: number | null; body: string }[];
+  /** Its line comments; `id` where the platform gives one, to read a comment again. */
+  comments: { id?: number; path: string; line: number | null; body: string }[];
 }
 
 /** Human commenters, whose permission on the repository decides whether their comments count. */
@@ -141,7 +142,12 @@ export function authorizedReviews(
       body: review.body,
       comments: comments
         .filter((comment) => comment.reviewId === review.id)
-        .map(({ path, line, body }) => ({ path, line, body })),
+        .map(({ id, path, line, body }) => ({
+          ...(id !== undefined ? { id } : {}),
+          path,
+          line,
+          body,
+        })),
     }));
 }
 
@@ -381,6 +387,11 @@ export interface TaskContext {
   accept?: TaskComment | undefined;
   /** Finished runs of the workflows the agent waited for, whose results it gets. */
   workflowRuns?: CiRun[] | undefined;
+  /**
+   * Set by the agent job, never by `select`: the attachments it downloaded into
+   * `ATTACHMENTS_DIR` (`src/attachments.ts`), which the prompt tells the agent of.
+   */
+  attachments?: { files: number; missing: number } | undefined;
   /** For `implement`: Codeman's earlier run comments on the task, oldest first. */
   history?: TaskComment[] | undefined;
   fromState: State | "new";

@@ -57,7 +57,7 @@ import type { State } from "../state.ts";
 import { decisionsUrl, renderDecisions, renderRun, renderStatus, reportUrl } from "../status.ts";
 import { commandsAfter, type TaskContext } from "../tasks.ts";
 import { oneLine, safeMarkdown, truncate } from "../text.ts";
-import { checkPlanResult, decodeText, isManifest } from "../validate.ts";
+import { checkPlanResult, decodeText, isManifest, missingAttachmentsOf } from "../validate.ts";
 import {
   frontMatter,
   isWebPath,
@@ -1226,7 +1226,11 @@ async function finish(
   }
   const t = say(task, record);
   const problems = task.action === "record" ? [] : task.problems;
-  const errors = [...problems.map((error) => commandError(t, error)), ...(view.errors ?? [])];
+  const errors = [
+    ...problems.map((error) => commandError(t, error)),
+    ...(view.errors ?? []),
+    ...attachmentWarnings(io, t),
+  ];
   // Workflows the agent wrote that wait for a maintainer, as they are on the branch now. The
   // record keeps each listed file's blob: an accept moves only those versions.
   const stagedFiles =
@@ -1388,4 +1392,13 @@ function readJson(file: string): unknown {
   } catch {
     return undefined;
   }
+}
+
+/** The attachments the agent did not get whole, from the agent job's manifest, if it has one. */
+function attachmentWarnings(io: Io, t: Messages): string[] {
+  const manifest = readJson(join(io.resultDir, "manifest.json"));
+  if (!isManifest(manifest)) return [];
+  return missingAttachmentsOf(manifest).map(({ name, url, problem }) =>
+    t.missingAttachment(name, url, problem),
+  );
 }

@@ -1,3 +1,4 @@
+import type { AttachmentProblem, MissingAttachment } from "./attachments.ts";
 import type { Manifest } from "./collect.ts";
 import type { Parsed } from "./output.ts";
 
@@ -49,4 +50,32 @@ export function isManifest(value: unknown): value is Manifest {
         ["added", "modified", "deleted"].includes(change.status),
     )
   );
+}
+
+const PROBLEM_KINDS: readonly AttachmentProblem["kind"][] = [
+  "too-many",
+  "too-large",
+  "over-total",
+  "refused",
+  "failed",
+  "timed-out",
+  "not-extracted",
+  "partly-extracted",
+];
+
+/** The manifest's missing attachments that have the expected shape; others are left out. */
+export function missingAttachmentsOf(manifest: Manifest): MissingAttachment[] {
+  const listed: unknown = manifest.attachments;
+  if (!Array.isArray(listed)) return [];
+  return listed.filter((item): item is MissingAttachment => {
+    if (typeof item !== "object" || item === null) return false;
+    const { name, url, problem } = item as Partial<MissingAttachment>;
+    return (
+      typeof name === "string" &&
+      typeof url === "string" &&
+      typeof problem === "object" &&
+      problem !== null &&
+      PROBLEM_KINDS.includes(problem.kind)
+    );
+  });
 }
