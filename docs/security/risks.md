@@ -55,7 +55,7 @@ The agent follows text it reads. Delimiters and instructions to treat text as da
 ### What reaches the agent
 
 - Codeman gives it only the title and body of issues opened by [maintainers](../glossary.md#maintainer), and only comments and reviews by maintainers. See [untrusted input](#untrusted-input).
-- The agent still reads other text: third-party text that a maintainer quotes, files maintainers attach ([attachments](../tasks/attachments.md)), the repository's files, the dependencies it installs, and the results of workflows.
+- The agent still reads other text: third-party text that a maintainer quotes, files maintainers attach or link in releases ([attachments](../tasks/attachments.md)), the repository's files, the dependencies it installs, and the results of workflows.
 
 ### What a manipulated agent can do
 

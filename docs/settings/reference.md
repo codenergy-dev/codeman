@@ -136,7 +136,7 @@ No setting is required. A provider may require some of its own settings ([provid
 
 | Setting | Type | Default | Allowed values | Meaning |
 | --- | --- | --- | --- | --- |
-| `max-attachments` | Whole number | `50` | `0`, or 1 to 200 | Attachments one agent run downloads. `0` turns downloads off |
+| `max-attachments` | Whole number | `50` | `0`, or 1 to 200 | Attachments and release assets one agent run downloads. `0` turns downloads off |
 | `max-attachment-bytes` | Whole number, bytes | `26214400` (25 MiB) | 1 to 104857600 (100 MiB) | Size limit of each attachment |
 | `max-attachment-total-bytes` | Whole number, bytes | `104857600` (100 MiB) | 1 to 1073741824 (1 GiB) | Size limit of one run's attachments together |
 | `max-extracted-bytes` | Whole number, bytes | `209715200` (200 MiB) | `0`, or 1 to 2147483648 (2 GiB) | Size limit of everything extracted from one run's archives. `0` turns extraction off |

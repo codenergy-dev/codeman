@@ -10,6 +10,7 @@ import {
   describeProblem,
   gatherAttachments,
   missingAttachments,
+  refusedReference,
 } from "./attachments.ts";
 import type { TaskRecord } from "./record.ts";
 import { DEFAULTS } from "./settings.ts";
@@ -300,4 +301,106 @@ test("each problem reads as a short reason", () => {
     describeProblem({ kind: "not-extracted", reason: "too-many-files" }),
     "not extracted: it would be over what is left of max-extracted-files",
   );
+});
+
+test("a linked release stands for its assets, each once, within the limits", async () => {
+  const fake = new FakeAttachments();
+  fake.releases.set("release://v1", ["a.csv", "b.csv", "c.csv"]);
+  fake.releases.set("release://v2", []);
+  fake.releases.set("release://private", "refused");
+  fake.files.set("asset://v1/a.csv", Buffer.from("a"));
+  fake.files.set("asset://v1/b.csv", Buffer.from("b"));
+  fake.files.set("asset://v1/c.csv", Buffer.from("c"));
+  const out = dir();
+  const entries = await gatherAttachments(
+    fake,
+    [
+      {
+        where: { kind: "issue", number: 1 },
+        label: "the issue's body",
+        text: "asset://v1/b.csv release://v1 release://v2 release://private",
+      },
+    ],
+    out,
+    { ...limits, "max-attachments": 2 },
+    signal(),
+  );
+  assert.deepEqual(
+    entries.map(({ url, via, file, empty, problem }) => ({ url, via, file, empty, problem })),
+    [
+      {
+        url: "asset://v1/b.csv",
+        via: undefined,
+        file: "01-b.csv",
+        empty: undefined,
+        problem: undefined,
+      },
+      {
+        url: "asset://v1/a.csv",
+        via: "release://v1",
+        file: "02-a.csv",
+        empty: undefined,
+        problem: undefined,
+      },
+      {
+        url: "asset://v1/c.csv",
+        via: "release://v1",
+        file: undefined,
+        empty: undefined,
+        problem: { kind: "too-many", max: 2 },
+      },
+      { url: "release://v2", via: undefined, file: undefined, empty: true, problem: undefined },
+      {
+        url: "release://private",
+        via: undefined,
+        file: undefined,
+        empty: undefined,
+        problem: { kind: "refused" },
+      },
+    ],
+  );
+  const index = readFileSync(join(out, "README.md"), "utf8");
+  assert.match(
+    index,
+    /- `02-a\.csv` \(1 bytes\): asset:\/\/v1\/a\.csv, through release:\/\/v1, in the issue's body\./,
+  );
+  assert.match(index, /- release:\/\/v2, in the issue's body: a release without assets\./);
+  assert.match(
+    index,
+    /- release:\/\/private, in the issue's body: not downloaded: the platform refused it\./,
+  );
+  assert.deepEqual(
+    missingAttachments(entries).map(({ name }) => name),
+    ["c.csv", "private"],
+  );
+});
+
+test("a refused attachment carries the platform's reference; a refused asset does not", async () => {
+  const fake = new FakeAttachments();
+  fake.reference = "https://example.com/why";
+  const entries = await gatherAttachments(
+    fake,
+    [
+      {
+        where: { kind: "issue", number: 1 },
+        label: "the issue's body",
+        text: "attachment://data.zip asset://v1/data.csv",
+      },
+    ],
+    dir(),
+    limits,
+    signal(),
+  );
+  assert.deepEqual(
+    entries.map(({ problem }) => problem),
+    [
+      { kind: "refused", detail: "not found", reference: "https://example.com/why" },
+      { kind: "refused", detail: "not found" },
+    ],
+  );
+  assert.equal(
+    refusedReference(entries.flatMap(({ problem }) => problem ?? [])),
+    "https://example.com/why",
+  );
+  assert.equal(refusedReference([{ kind: "refused", detail: "HTTP 404" }]), undefined);
 });

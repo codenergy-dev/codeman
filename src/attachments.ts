@@ -1,5 +1,6 @@
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { CODEMAN_REPOSITORY } from "./action.ts";
 import { archiveKind, type ExtractBudget, extractArchive, extractedDirectory } from "./archives.ts";
 import type { AttachmentLink, Attachments, TextRef } from "./platform/platform.ts";
 import { safeName } from "./results.ts";
@@ -15,6 +16,8 @@ import type { TaskContext } from "./tasks.ts";
 export const ATTACHMENTS_DIR = ".codeman/attachments";
 /** How long downloads and extraction may take, in minutes, within the agent job's own time. */
 export const ATTACHMENT_MINUTES = 4;
+/** Codeman's docs on giving the agent files through a release, which the run comment links. */
+export const RELEASES_DOCS_URL = `https://github.com/${CODEMAN_REPOSITORY}/blob/main/docs/tasks/attachments.md#give-files-through-a-release`;
 
 export type AttachmentLimits = Pick<
   Settings,
@@ -41,8 +44,11 @@ export type AttachmentProblem =
   | { kind: "too-large"; max: number }
   /** Over what was left of `max-attachment-total-bytes`. */
   | { kind: "over-total"; max: number }
-  /** The platform refused the download. */
-  | { kind: "refused"; detail?: string | undefined }
+  /**
+   * The platform refused the download. `reference` explains it, when it is a limit of the
+   * platform, such as GitHub's on a private repository's attachments.
+   */
+  | { kind: "refused"; detail?: string | undefined; reference?: string | undefined }
   | { kind: "failed"; detail?: string | undefined }
   /** `ATTACHMENT_MINUTES` ran out first. */
   | { kind: "timed-out" }
@@ -63,6 +69,10 @@ export interface MissingAttachment {
 export interface AttachmentEntry {
   url: string;
   label: string;
+  /** The release link it came through, for an asset of a linked release. */
+  via?: string;
+  /** A linked release without assets. */
+  empty?: true;
   /** Its file in the attachments directory, when downloaded. */
   file?: string;
   bytes?: number;
@@ -101,8 +111,9 @@ export function attachmentTexts(task: TaskContext): AttachmentText[] {
 
 /**
  * Downloads the attachments of `texts` into `dir`, which it empties first, extracts archives
- * beside them, and writes the index, `README.md`. Never throws for a download: each problem is in
- * the entries it returns. Nothing is written when there are no links, or downloads are off.
+ * beside them, and writes the index, `README.md`. A linked release stands for its assets. Never
+ * throws for a download: each problem is in the entries it returns. Nothing is written when there
+ * are no links, or downloads are off.
  */
 export async function gatherAttachments(
   attachments: Attachments,
@@ -121,17 +132,52 @@ export async function gatherAttachments(
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
 
-  const entries: AttachmentEntry[] = [];
+  // Each entry, in the texts' order; those with a link are still to download.
+  const items: { entry: AttachmentEntry; link?: AttachmentLink; where?: TextRef }[] = [];
+  const seen = new Set<string>();
+  for (const { link, text } of links.values()) {
+    if (link.kind !== "release") {
+      if (seen.has(link.url)) continue;
+      seen.add(link.url);
+      items.push({ entry: { url: link.url, label: text.label }, link, where: text.where });
+      continue;
+    }
+    const release: AttachmentEntry = { url: link.url, label: text.label };
+    if (signal.aborted) {
+      items.push({ entry: { ...release, problem: { kind: "timed-out" } } });
+      continue;
+    }
+    const expansion = await attachments.expand(link, signal);
+    if (!expansion.ok) {
+      items.push({
+        entry: { ...release, problem: problemOf(expansion, signal) },
+      });
+      continue;
+    }
+    if (expansion.links.length === 0) items.push({ entry: { ...release, empty: true } });
+    for (const asset of expansion.links) {
+      if (seen.has(asset.url) || links.has(asset.url)) continue;
+      seen.add(asset.url);
+      items.push({
+        entry: { url: asset.url, label: text.label, via: link.url },
+        link: asset,
+        where: text.where,
+      });
+    }
+  }
+
   let left = limits["max-attachment-total-bytes"];
   const extraction: ExtractBudget = {
     bytes: limits["max-extracted-bytes"],
     files: limits["max-extracted-files"],
   };
-  const width = Math.max(2, String(Math.min(links.size, limits["max-attachments"])).length);
-  for (const [index, { link, text }] of [...links.values()].entries()) {
-    const entry: AttachmentEntry = { url: link.url, label: text.label };
-    entries.push(entry);
-    if (index >= limits["max-attachments"]) {
+  const count = items.filter((item) => item.link).length;
+  const width = Math.max(2, String(Math.min(count, limits["max-attachments"])).length);
+  let position = 0;
+  for (const { entry, link, where } of items) {
+    if (!link || !where) continue;
+    position += 1;
+    if (position > limits["max-attachments"]) {
       entry.problem = { kind: "too-many", max: limits["max-attachments"] };
       continue;
     }
@@ -140,23 +186,19 @@ export async function gatherAttachments(
       continue;
     }
     const perFile = limits["max-attachment-bytes"];
-    const download = await attachments.download(link, text.where, Math.min(perFile, left), signal);
+    const download = await attachments.download(link, where, Math.min(perFile, left), signal);
     if (!download.ok) {
+      const { problem } = download;
       entry.problem =
-        download.problem === "too-large"
+        problem === "too-large"
           ? left < perFile
             ? { kind: "over-total", max: limits["max-attachment-total-bytes"] }
             : { kind: "too-large", max: perFile }
-          : signal.aborted
-            ? { kind: "timed-out" }
-            : {
-                kind: download.problem,
-                ...(download.detail ? { detail: download.detail } : {}),
-              };
+          : problemOf({ ...download, problem }, signal);
       continue;
     }
     const name = safeName(download.name ?? link.name ?? link.id);
-    const file = `${String(index + 1).padStart(width, "0")}-${name}`;
+    const file = `${String(position).padStart(width, "0")}-${name}`;
     writeFileSync(join(dir, file), download.data);
     left -= download.data.length;
     entry.file = file;
@@ -165,8 +207,26 @@ export async function gatherAttachments(
       extract(entry, file, name, download.data, dir, extraction);
     }
   }
+  const entries = items.map((item) => item.entry);
   writeFileSync(join(dir, "README.md"), index(entries, limits));
   return entries;
+}
+
+/** A refused or failed download or expansion, as a problem: out of time when the time ran out. */
+function problemOf(
+  failure: {
+    problem: "refused" | "failed";
+    detail?: string | undefined;
+    reference?: string | undefined;
+  },
+  signal: AbortSignal,
+): AttachmentProblem {
+  if (signal.aborted) return { kind: "timed-out" };
+  return {
+    kind: failure.problem,
+    ...(failure.detail ? { detail: failure.detail } : {}),
+    ...(failure.problem === "refused" && failure.reference ? { reference: failure.reference } : {}),
+  };
 }
 
 /** Extracts an archive beside its file, `name` being the name it was attached with. */
@@ -208,6 +268,14 @@ export function missingAttachments(entries: readonly AttachmentEntry[]): Missing
   );
 }
 
+/** The page that explains why the platform refused attachments, when one of them was. */
+export function refusedReference(problems: readonly AttachmentProblem[]): string | undefined {
+  for (const problem of problems) {
+    if (problem.kind === "refused" && problem.reference) return problem.reference;
+  }
+  return undefined;
+}
+
 /** A problem in a few words, in English, for the index and the job's log. */
 export function describeProblem(problem: AttachmentProblem): string {
   const detail = (text?: string) => (text ? ` (${text})` : "");
@@ -243,7 +311,13 @@ function index(entries: readonly AttachmentEntry[], limits: AttachmentLimits): s
     "",
   ];
   for (const entry of entries) {
-    const where = `${entry.url}, in ${entry.label}`;
+    const where = entry.via
+      ? `${entry.url}, through ${entry.via}, in ${entry.label}`
+      : `${entry.url}, in ${entry.label}`;
+    if (entry.empty) {
+      lines.push(`- ${where}: a release without assets.`);
+      continue;
+    }
     if (!entry.file) {
       lines.push(
         `- ${where}: ${entry.problem ? describeProblem(entry.problem) : "not downloaded"}.`,

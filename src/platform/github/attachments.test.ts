@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { TextRef } from "../platform.ts";
-import { GitHubAttachments, isGitHubHost, signedAddresses } from "./attachments.ts";
+import {
+  GitHubAttachments,
+  isGitHubHost,
+  PRIVATE_ATTACHMENTS_REFERENCE,
+  releaseRef,
+  signedAddresses,
+} from "./attachments.ts";
 
 const UUID = "a33d8f86-f1b5-4362-ae4a-d1c7f3680193";
 const FILE = "https://github.com/user-attachments/files/25195600/data.csv";
@@ -11,6 +17,7 @@ const ISSUE: TextRef = { kind: "issue", number: 7 };
 interface Call {
   url: string;
   authorization: string | undefined;
+  accept?: string;
 }
 
 /** A fetch that answers from a table of URL prefixes, and records what it was asked. */
@@ -19,7 +26,12 @@ function fakeFetch(routes: Record<string, () => Response>): { fetch: typeof fetc
   const fake = async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
     const headers = new Headers(init?.headers);
-    calls.push({ url, authorization: headers.get("authorization") ?? undefined });
+    const accept = headers.get("accept");
+    calls.push({
+      url,
+      authorization: headers.get("authorization") ?? undefined,
+      ...(accept ? { accept } : {}),
+    });
     assert.equal(init?.redirect, "manual", "redirects are followed by hand");
     const route = Object.keys(routes).find((prefix) => url.startsWith(prefix));
     return route ? (routes[route] as () => Response)() : new Response("", { status: 404 });
@@ -61,20 +73,45 @@ test("finds GitHub's attachment links, in order, once each, and nothing else", (
     `Again: ${FILE}, and an older one https://github.com/o/r/files/123/old%20log.txt`,
     "https://github.com/o/r/assets/42/0b9a6b51-1c4a-4f58-9c8e-2c2b1a0e1d11",
     "https://user-images.githubusercontent.com/1/77-shot.png",
+    "Releases: https://github.com/o/r/releases/download/v1.0/data%20set.csv,",
+    "[all](https://github.com/o/r/releases/tag/feature/x) https://github.com/o/r/releases/latest.",
+    "https://github.com/o/r/releases/latest/download/a.zip",
     "Not these: https://github.com/o/r/issues/1 https://example.com/user-attachments/files/1/x.csv",
+    "https://github.com/o/r/releases https://github.com/o/r/releases/edit/v1",
   ].join("\n");
   assert.deepEqual(subject.find(text), [
-    { url: FILE, id: "25195600", name: "data.csv" },
-    { url: ASSET, id: UUID },
-    { url: "https://github.com/o/r/files/123/old%20log.txt", id: "123", name: "old log.txt" },
+    { kind: "attachment", url: FILE, id: "25195600", name: "data.csv" },
+    { kind: "attachment", url: ASSET, id: UUID },
     {
+      kind: "attachment",
+      url: "https://github.com/o/r/files/123/old%20log.txt",
+      id: "123",
+      name: "old log.txt",
+    },
+    {
+      kind: "attachment",
       url: "https://github.com/o/r/assets/42/0b9a6b51-1c4a-4f58-9c8e-2c2b1a0e1d11",
       id: "0b9a6b51-1c4a-4f58-9c8e-2c2b1a0e1d11",
     },
     {
+      kind: "attachment",
       url: "https://user-images.githubusercontent.com/1/77-shot.png",
       id: "77-shot.png",
       name: "77-shot.png",
+    },
+    {
+      kind: "release-asset",
+      url: "https://github.com/o/r/releases/download/v1.0/data%20set.csv",
+      id: "o/r@v1.0/data set.csv",
+      name: "data set.csv",
+    },
+    { kind: "release", url: "https://github.com/o/r/releases/tag/feature/x", id: "o/r@feature/x" },
+    { kind: "release", url: "https://github.com/o/r/releases/latest", id: "o/r@latest" },
+    {
+      kind: "release-asset",
+      url: "https://github.com/o/r/releases/latest/download/a.zip",
+      id: "o/r@latest/a.zip",
+      name: "a.zip",
     },
   ]);
 });
@@ -136,6 +173,7 @@ test("a refused link without a signed address stays refused", async () => {
     ok: false,
     problem: "refused",
     detail: "HTTP 404",
+    reference: PRIVATE_ATTACHMENTS_REFERENCE,
   });
 });
 
@@ -155,6 +193,7 @@ test("never leaves GitHub's hosts, and a sign-in page is a refusal", async () =>
     ok: false,
     problem: "refused",
     detail: "GitHub asked to sign in",
+    reference: PRIVATE_ATTACHMENTS_REFERENCE,
   });
 
   const plain = attachments({ [FILE]: redirect("http://objects.githubusercontent.com/x") });
@@ -213,6 +252,8 @@ test("other failures are reported, not thrown", async () => {
 test("GitHub's hosts, and the addresses in rendered HTML", () => {
   assert.ok(isGitHubHost("github.com"));
   assert.ok(isGitHubHost("objects.githubusercontent.com"));
+  assert.ok(isGitHubHost("api.github.com"));
+  assert.ok(isGitHubHost("release-assets.githubusercontent.com"));
   assert.ok(isGitHubHost("github-production-user-asset-6210df.s3.amazonaws.com"));
   assert.ok(!isGitHubHost("evil-s3.amazonaws.com"));
   assert.ok(!isGitHubHost("github.com.evil.example"));
@@ -222,4 +263,147 @@ test("GitHub's hosts, and the addresses in rendered HTML", () => {
     ),
     ["https://objects.githubusercontent.com/a?b=1&c=2"],
   );
+});
+
+const API = "https://api.github.com/repos/o/r";
+const STORAGE = "https://release-assets.githubusercontent.com/github-production-release-asset/1/x";
+
+function asset(id: number, name: string, size: number, tag = "v1.0") {
+  return {
+    id,
+    name,
+    size,
+    url: `${API}/releases/assets/${id}`,
+    browser_download_url: `https://github.com/o/r/releases/download/${tag}/${encodeURIComponent(name)}`,
+  };
+}
+
+const json = (body: unknown) => () =>
+  new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
+
+test("a release asset downloads through the API, with the token on GitHub's API only", async () => {
+  const { subject, calls } = attachments({
+    [`${API}/releases/tags/v1.0`]: json({
+      tag_name: "v1.0",
+      assets: [asset(5, "data set.csv", 4), asset(6, "b.txt", 1)],
+    }),
+    [`${API}/releases/assets/5`]: redirect(`${STORAGE}?X-Amz-Expires=300`),
+    [`${API}/releases/assets/6`]: file("b"),
+    [STORAGE]: file("x,y\n"),
+  });
+  const [first, second] = subject.find(
+    "https://github.com/o/r/releases/download/v1.0/data%20set.csv https://github.com/o/r/releases/download/v1.0/b.txt",
+  );
+  assert.ok(first && second);
+  assert.deepEqual(await subject.download(first, ISSUE, 100, signal()), {
+    ok: true,
+    data: Buffer.from("x,y\n"),
+    name: "data set.csv",
+  });
+  assert.deepEqual(await subject.download(second, ISSUE, 100, signal()), {
+    ok: true,
+    data: Buffer.from("b"),
+    name: "b.txt",
+  });
+  assert.deepEqual(calls, [
+    {
+      url: `${API}/releases/tags/v1.0`,
+      authorization: "Bearer job-token",
+      accept: "application/vnd.github+json",
+    },
+    {
+      url: `${API}/releases/assets/5`,
+      authorization: "Bearer job-token",
+      accept: "application/octet-stream",
+    },
+    { url: `${STORAGE}?X-Amz-Expires=300`, authorization: undefined },
+    {
+      url: `${API}/releases/assets/6`,
+      authorization: "Bearer job-token",
+      accept: "application/octet-stream",
+    },
+  ]);
+});
+
+test("a release link expands into its assets; the latest release, and tags with slashes", async () => {
+  const { subject, calls } = attachments({
+    [`${API}/releases/latest`]: json({ tag_name: "v2", assets: [asset(7, "a.zip", 3, "v2")] }),
+    [`${API}/releases/tags/%40scope%2Fpkg%401.0`]: json({ tag_name: "@scope/pkg@1.0", assets: [] }),
+  });
+  const [latest, scoped, plain] = subject.find(
+    "https://github.com/o/r/releases/latest https://github.com/o/r/releases/tag/%40scope/pkg%401.0 https://github.com/o/r/files/1/x.txt",
+  );
+  assert.ok(latest && scoped && plain);
+  assert.deepEqual(await subject.expand(latest, signal()), {
+    ok: true,
+    links: [
+      {
+        kind: "release-asset",
+        url: "https://github.com/o/r/releases/download/v2/a.zip",
+        id: "7",
+        name: "a.zip",
+      },
+    ],
+  });
+  assert.deepEqual(await subject.expand(scoped, signal()), { ok: true, links: [] });
+  assert.deepEqual(await subject.expand(plain, signal()), { ok: true, links: [plain] });
+  assert.equal(calls.length, 2);
+});
+
+test("drafts, missing releases and assets are refused, and an asset over the limit is not read", async () => {
+  const { subject, calls } = attachments({
+    [`${API}/releases/tags/v1.0`]: json({ tag_name: "v1.0", assets: [asset(5, "big.bin", 500)] }),
+  });
+  const [draft, missing, gone, big] = subject.find(
+    [
+      "https://github.com/o/r/releases/download/untagged-1a2b3c/a.csv",
+      "https://github.com/o/r/releases/tag/v9",
+      "https://github.com/o/r/releases/download/v1.0/gone.csv",
+      "https://github.com/o/r/releases/download/v1.0/big.bin",
+    ].join(" "),
+  );
+  assert.ok(draft && missing && gone && big);
+  assert.deepEqual(await subject.download(draft, ISSUE, 100, signal()), {
+    ok: false,
+    problem: "refused",
+    detail: "the release untagged-1a2b3c is a draft, which the job cannot read: publish it",
+  });
+  assert.deepEqual(await subject.expand(missing, signal()), {
+    ok: false,
+    problem: "refused",
+    detail: "no published release the job can read: the release v9 of o/r (HTTP 404)",
+  });
+  assert.deepEqual(await subject.download(gone, ISSUE, 100, signal()), {
+    ok: false,
+    problem: "refused",
+    detail: "the release v1.0 has no asset named gone.csv",
+  });
+  assert.deepEqual(await subject.download(big, ISSUE, 100, signal()), {
+    ok: false,
+    problem: "too-large",
+  });
+  assert.deepEqual(
+    calls.map(({ url }) => url),
+    [`${API}/releases/tags/v9`, `${API}/releases/tags/v1.0`],
+  );
+});
+
+test("a release link names its repository, its tag or the latest, and its asset", () => {
+  assert.deepEqual(releaseRef("https://github.com/o/r/releases/download/a/b/c.txt"), {
+    owner: "o",
+    repo: "r",
+    tag: "a/b",
+    asset: "c.txt",
+  });
+  assert.deepEqual(releaseRef("https://github.com/o/r/releases/latest/download/c.txt"), {
+    owner: "o",
+    repo: "r",
+    asset: "c.txt",
+  });
+  assert.equal(releaseRef("https://github.com/o/r/releases/download/c.txt"), undefined);
+  assert.equal(releaseRef("https://github.com/o/r/releases/tag/"), undefined);
+  assert.equal(releaseRef("https://example.com/o/r/releases/latest"), undefined);
 });

@@ -276,6 +276,8 @@ export const en: Messages = {
     })();
     return `The attachment ${name} (${url}) ${why}.`;
   },
+  refusedAttachments: (reference, docs) =>
+    `The platform does not let workflows download the files attached to a private repository's issues and comments, whatever their token (see ${reference}). To give the agent such a file, upload it to a published release of the repository, and link the asset, or the release, in the issue: ${docs}`,
   outOfTime: "The agent ran out of time. Its work so far is committed.",
   outOfTimeWrappedUp:
     "The agent ran out of time. A wrap-up left its work consistent, and it is committed.",

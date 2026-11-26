@@ -285,6 +285,8 @@ export const ptBR: Messages = {
     })();
     return `O anexo ${name} (${url}) ${why}.`;
   },
+  refusedAttachments: (reference, docs) =>
+    `A plataforma não deixa workflows baixarem os arquivos anexados a issues e comentários de um repositório privado, seja qual for o token (veja ${reference}). Para dar um desses arquivos ao agente, envie-o para um release publicado do repositório e coloque na issue o link do asset, ou do release: ${docs}`,
   outOfTime: "O tempo do agente acabou. O trabalho feito até aqui foi commitado.",
   outOfTimeWrappedUp:
     "O tempo do agente acabou. Uma rodada de fechamento deixou o trabalho consistente, e ele foi commitado.",

@@ -9,6 +9,7 @@ import type {
   CiResults,
   Download,
   DownloadProblem,
+  Expansion,
   Platform,
   TextRef,
 } from "../platform/platform.ts";
@@ -448,17 +449,55 @@ export class FakeCi implements CiResults {
  * Attachments as `attachment://<name>` links, unlike GitHub's, served from memory: a file, or the
  * problem its download has. A link it does not hold is refused.
  */
+/**
+ * Attachments as `attachment://<name>` links, and releases as `release://<name>` links, whose
+ * assets are `asset://<release>/<name>` links.
+ */
 export class FakeAttachments implements Attachments {
   readonly files = new Map<string, Buffer | DownloadProblem>();
+  /** Each release's asset names, or why it cannot be read. */
+  readonly releases = new Map<string, string[] | "refused" | "failed">();
   readonly downloads: { url: string; where: TextRef; maxBytes: number }[] = [];
+  /** What a refused attachment, not an asset, points to. */
+  reference: string | undefined;
 
   find(text: string): AttachmentLink[] {
     const links = new Map<string, AttachmentLink>();
-    for (const match of text.matchAll(/attachment:\/\/([\w-]+(?:\.[\w-]+)*)/g)) {
-      const name = match[1] ?? "";
-      links.set(match[0], { url: match[0], id: name, name });
+    for (const match of text.matchAll(
+      /(attachment|release|asset):\/\/((?:[\w-]+\/)?[\w-]+(?:\.[\w-]+)*)/g,
+    )) {
+      const name = match[2] ?? "";
+      const kind =
+        match[1] === "attachment"
+          ? "attachment"
+          : match[1] === "asset"
+            ? "release-asset"
+            : "release";
+      links.set(match[0], {
+        kind,
+        url: match[0],
+        id: name,
+        ...(kind === "release" ? {} : { name: name.split("/").pop() }),
+      });
     }
     return [...links.values()];
+  }
+
+  async expand(link: AttachmentLink, signal: AbortSignal): Promise<Expansion> {
+    if (link.kind !== "release") return { ok: true, links: [link] };
+    if (signal.aborted) return { ok: false, problem: "failed", detail: "out of time" };
+    const assets = this.releases.get(link.url);
+    if (assets === undefined) return { ok: false, problem: "refused", detail: "no such release" };
+    if (typeof assets === "string") return { ok: false, problem: assets };
+    return {
+      ok: true,
+      links: assets.map((name) => ({
+        kind: "release-asset",
+        url: `asset://${link.id}/${name}`,
+        id: `${link.id}/${name}`,
+        name,
+      })),
+    };
   }
 
   async download(
@@ -470,8 +509,14 @@ export class FakeAttachments implements Attachments {
     this.downloads.push({ url: link.url, where, maxBytes });
     if (signal.aborted) return { ok: false, problem: "failed", detail: "out of time" };
     const file = this.files.get(link.url);
-    if (file === undefined) return { ok: false, problem: "refused", detail: "not found" };
-    if (typeof file === "string") return { ok: false, problem: file };
+    const reference =
+      link.kind === "attachment" && this.reference ? { reference: this.reference } : {};
+    if (file === undefined) {
+      return { ok: false, problem: "refused", detail: "not found", ...reference };
+    }
+    if (typeof file === "string") {
+      return { ok: false, problem: file, ...(file === "refused" ? reference : {}) };
+    }
     if (file.length > maxBytes) return { ok: false, problem: "too-large" };
     return { ok: true, data: file, name: link.name };
   }
