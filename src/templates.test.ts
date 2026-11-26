@@ -135,6 +135,8 @@ test("each job keeps the secrets it had before parallel tasks, and the agent job
   const read = new Map([
     ["contents", "read"],
     ["actions", "read"],
+    ["issues", "read"],
+    ["pull-requests", "read"],
   ]);
   assert.deepEqual(
     entries(caller, ["jobs", "task", "permissions"]),
@@ -296,6 +298,8 @@ test("the dispatch job wakes each repository with a token for it alone, that may
     new Map([
       ["contents", "read"],
       ["actions", "read"],
+      ["issues", "read"],
+      ["pull-requests", "read"],
     ]),
   );
   assert.equal(
@@ -427,10 +431,18 @@ test("checking Codeman out changes no job's permissions", () => {
     [caller, "forward-review", '[["actions","write"]]'],
     [caller, "select", '[["id-token","write"]]'],
     [caller, "dispatch", "{}"],
-    [caller, "task", '[["contents","read"],["actions","read"],["id-token","write"]]'],
+    [
+      caller,
+      "task",
+      '[["contents","read"],["actions","read"],["issues","read"],["pull-requests","read"],["id-token","write"]]',
+    ],
     [caller, "next-run", '[["actions","write"]]'],
     [task, "open-key", '[["id-token","write"]]'],
-    [task, "agent", '[["contents","read"],["actions","read"]]'],
+    [
+      task,
+      "agent",
+      '[["contents","read"],["actions","read"],["issues","read"],["pull-requests","read"]]',
+    ],
     [task, "close-key", '[["id-token","write"]]'],
     [task, "apply", "none"],
     [task, "release-pod", '[["id-token","write"]]'],

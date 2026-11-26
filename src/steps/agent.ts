@@ -2,6 +2,15 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync }
 import { join } from "node:path";
 import { actionPathIn } from "../action.ts";
 import {
+  ATTACHMENT_MINUTES,
+  ATTACHMENTS_DIR,
+  type AttachmentEntry,
+  attachmentTexts,
+  describeProblem,
+  gatherAttachments,
+  missingAttachments,
+} from "../attachments.ts";
+import {
   collectChanges,
   copyLiveAgentFile,
   copySealedAgentFile,
@@ -104,12 +113,27 @@ async function agentJob(services: Services, reached: () => void): Promise<void> 
     copyToAgent(results, `${worktree}/${RESULTS_DIR}`);
     runtime.endGroup();
   }
+  const attachments = await downloadAttachments(services, task);
+  const missing = missingAttachments(attachments);
+  if (attachments.length > 0) {
+    copyToAgent(join(workdir(runtime), "attachments"), `${worktree}/${ATTACHMENTS_DIR}`);
+  }
+  const told: TaskContext =
+    attachments.length > 0
+      ? {
+          ...task,
+          attachments: {
+            files: attachments.filter((entry) => entry.file).length,
+            missing: missing.length,
+          },
+        }
+      : task;
   const prompt =
-    task.action === "implement"
-      ? stagePrompt(task, minutes, conventions)
-      : task.action === "route"
-        ? routePrompt(task, conventions)
-        : planPrompt(task, conventions);
+    told.action === "implement"
+      ? stagePrompt(told, minutes, conventions)
+      : told.action === "route"
+        ? routePrompt(told, conventions)
+        : planPrompt(told, conventions);
   writeAsAgent(`${worktree}/${TASK_FILE}`, prompt);
   if (task.action === "implement" && task.stage === "web") {
     writeAsAgent(`${worktree}/${WEB_TOOL_PATH}`, readFileSync(GENERIC_TOOL, "utf8"));
@@ -230,6 +254,7 @@ async function agentJob(services: Services, reached: () => void): Promise<void> 
     ...(wrappedUp ? { wrappedUp } : {}),
     durationMs,
     changes,
+    ...(missing.length > 0 ? { attachments: missing } : {}),
   };
   writeFileSync(join(out, "manifest.json"), JSON.stringify(manifest, null, 2));
 
@@ -244,6 +269,41 @@ async function agentJob(services: Services, reached: () => void): Promise<void> 
   if (access.stopped?.aborted) runtime.fail(`The run stopped: ${stopReason(access.stopped)}`);
   else if (run.timedOut) runtime.fail(`The agent did not finish within ${minutes} minutes.`);
   else if (run.exitCode !== 0) runtime.fail(`The agent exited with code ${run.exitCode}.`);
+}
+
+/**
+ * Downloads the conversation's attachments into the job's own directory, within
+ * ATTACHMENT_MINUTES, and logs each one. A failure costs the run its attachments, never the run.
+ */
+async function downloadAttachments(
+  services: Services,
+  task: TaskContext,
+): Promise<AttachmentEntry[]> {
+  const { runtime } = services;
+  runtime.startGroup("Download the attachments");
+  try {
+    const entries = await gatherAttachments(
+      services.attachments(),
+      attachmentTexts(task),
+      join(workdir(runtime), "attachments"),
+      task.settings,
+      AbortSignal.timeout(ATTACHMENT_MINUTES * 60_000),
+    );
+    if (entries.length === 0) runtime.info("No attachments to download.");
+    for (const entry of entries) {
+      const name = oneLine(entry.file ?? entry.url);
+      if (entry.problem) runtime.warning(`Attachment ${name}: ${describeProblem(entry.problem)}.`);
+      else runtime.info(`Attachment ${name}: ${entry.bytes} bytes.`);
+    }
+    return entries;
+  } catch (error) {
+    runtime.warning(
+      `Could not download the attachments: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return [];
+  } finally {
+    runtime.endGroup();
+  }
 }
 
 /**

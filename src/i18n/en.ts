@@ -249,6 +249,33 @@ export const en: Messages = {
     }[reason.kind];
     return `Dropped the change to ${path}: ${why}.`;
   },
+  missingAttachment: (name, url, problem) => {
+    const bytes = (max: number) => `${number(0).format(max)} bytes`;
+    const detail = (text?: string) => (text ? ` (${text})` : "");
+    const why = (() => {
+      switch (problem.kind) {
+        case "too-many":
+          return `was not downloaded: a run downloads at most ${problem.max} attachments (\`max-attachments\`)`;
+        case "too-large":
+          return `was not downloaded: it is larger than ${bytes(problem.max)} (\`max-attachment-bytes\`)`;
+        case "over-total":
+          return `was not downloaded: the run's attachments together would be larger than ${bytes(problem.max)} (\`max-attachment-total-bytes\`)`;
+        case "refused":
+          return `was not downloaded: the platform refused it${detail(problem.detail)}`;
+        case "failed":
+          return `could not be downloaded${detail(problem.detail)}`;
+        case "timed-out":
+          return "was not downloaded: the time for attachments ran out";
+        case "not-extracted":
+          return problem.reason === "invalid"
+            ? `was downloaded, but not extracted: ${problem.detail ?? "it is not a valid archive"}`
+            : `was downloaded, but not extracted: its content would be over \`${problem.reason === "too-large" ? "max-extracted-bytes" : "max-extracted-files"}\``;
+        case "partly-extracted":
+          return `was extracted, but ${problem.skipped} of its entries were skipped: links, special files or unsafe paths`;
+      }
+    })();
+    return `The attachment ${name} (${url}) ${why}.`;
+  },
   outOfTime: "The agent ran out of time. Its work so far is committed.",
   outOfTimeWrappedUp:
     "The agent ran out of time. A wrap-up left its work consistent, and it is committed.",

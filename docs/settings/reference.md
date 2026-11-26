@@ -132,6 +132,18 @@ No setting is required. A provider may require some of its own settings ([provid
 | A [routed stage's](../glossary.md#routed-stage) agent runs in a row that end without finishing it: partial, or out of time | `/codeman fix` or `/codeman continue` |
 | Review's rounds in a row asking for changes | `/codeman fix`, `/codeman continue`, or a review that passes |
 
+### Attachments
+
+| Setting | Type | Default | Allowed values | Meaning |
+| --- | --- | --- | --- | --- |
+| `max-attachments` | Whole number | `50` | `0`, or 1 to 200 | Attachments one agent run downloads. `0` turns downloads off |
+| `max-attachment-bytes` | Whole number, bytes | `26214400` (25 MiB) | 1 to 104857600 (100 MiB) | Size limit of each attachment |
+| `max-attachment-total-bytes` | Whole number, bytes | `104857600` (100 MiB) | 1 to 1073741824 (1 GiB) | Size limit of one run's attachments together |
+| `max-extracted-bytes` | Whole number, bytes | `209715200` (200 MiB) | `0`, or 1 to 2147483648 (2 GiB) | Size limit of everything extracted from one run's archives. `0` turns extraction off |
+| `max-extracted-files` | Whole number | `1000` | 1 to 10000 | Files extracted from one run's archives |
+
+See [attachments](../tasks/attachments.md).
+
 ### Agent time
 
 | Setting | Type | Default | Allowed values | Meaning |
@@ -185,7 +197,7 @@ These limits are what the agent is told. See [agent output](../runs/agent.md#age
 | `organization-monthly-budget`, `pool` | Yes | Error | Error | No | No |
 | `language` | Yes | Yes | Error | No | Yes |
 | `agent-minutes`, `wrap-up-minutes`, `concurrency` | Yes | Yes | Yes | No | No |
-| `max-files`, `max-file-bytes`, the agent output limits | Yes | Yes | Error | No | No |
+| `max-files`, `max-file-bytes`, the attachment limits, the agent output limits | Yes | Yes | Error | No | No |
 
 - **Error:** setting it there stops the run with an error.
 - **No:** the workflow has no such input, or `/codeman set` reports it as an invalid command.

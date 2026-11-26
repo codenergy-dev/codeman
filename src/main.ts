@@ -3,6 +3,7 @@ import { E2E } from "./e2e.ts";
 import { inferenceProvider, providerAccounts } from "./inference/index.ts";
 import type { InferenceProvider } from "./inference/provider.ts";
 import { Ledger } from "./ledger.ts";
+import { GitHubAttachments, renderedHtml } from "./platform/github/attachments.ts";
 import { GitHubActionsResults } from "./platform/github/ci.ts";
 import { GITHUB } from "./platform/github/conventions.ts";
 import { GitHubPlatform, octokit } from "./platform/github/platform.ts";
@@ -53,6 +54,11 @@ export function gitHubServices(runtime: Runtime): Services {
         { appSlug: runtime.input("app-slug") || undefined },
       ),
     ci: () => new GitHubActionsResults(client("github-token"), runtime.repository),
+    attachments: () =>
+      new GitHubAttachments({
+        token: runtime.input("github-token", { required: true }),
+        html: renderedHtml(client("github-token"), runtime.repository),
+      }),
     inference,
     accounts: () => providerAccounts(runtime),
     store: theStore,

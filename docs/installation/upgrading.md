@@ -85,6 +85,7 @@ flowchart TD
 | 2026-10-30 | [Pods start from official images](#pods-start-from-official-images) | `07994f0` to `9e1182e` | Pod profiles, and a `pod-image` input | Check three things | No |
 | 2026-11-05 | [Runner label pinned](#runner-label-pinned) | `f54a771` | Every installation | Change `runs-on` to `ubuntu-24.04`, or copy both templates | No |
 | 2026-11-25 | [Runner label moved to Ubuntu 26.04](#runner-label-moved-to-ubuntu-2604) | `2a7af34` | Every installation | Change `runs-on` to `ubuntu-26.04`, or copy both templates | No |
+| 2026-11-26 | [Attachments reach the agent](#attachments-reach-the-agent) | `6b20bf5` | Every installation | Copy both templates | Yes: template version 4 |
 
 The [older versions](#older-versions) entries say what Codeman does with tasks, pod images and records from before some of these changes.
 
@@ -363,6 +364,23 @@ The agent's time is now the `agent-minutes` setting, and the `agent` job's timeo
 #### How to verify
 
 The `agent` step's log says "Running … for up to N minutes", N being your `agent-minutes`.
+
+### Attachments reach the agent
+
+- **Since:** 2026-11-26: template version 4 in `6b20bf5` ([plan for the issue's attachments](../plans/2026-11-26-give-the-agent-the-issue-attachments.md)).
+- **Who is affected:** every installation: the templates are version 4.
+- **Breaking:** yes. Until the templates are copied again, every job fails saying the files are template version 3.
+
+Each agent run downloads the files maintainers attach to the issue, its comments and reviews, into `.codeman/attachments/` ([attachments](../tasks/attachments.md)). The `agent` job's `GITHUB_TOKEN` now also reads issues and pull requests, and `codeman.yml` grants `codeman-task.yml` those two permissions. Five optional settings bound the downloads; their defaults need nothing set ([settings](../settings/reference.md#attachments)).
+
+#### What to do
+
+1. **Copy both templates again**, keeping the steps you added to the `agent` job.
+2. **To turn downloads off**, set `max-attachments: 0` in `.codeman/settings.yml` or the organization's settings.
+
+#### How to verify
+
+Attach a small CSV file to a task's issue. The `agent` job's log lists it under **Download the attachments**, and the agent finds it in `.codeman/attachments/`.
 
 ### Runner label moved to Ubuntu 26.04
 

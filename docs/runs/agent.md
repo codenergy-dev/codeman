@@ -21,7 +21,7 @@ The agent reads text that may be hostile (see [security](../security/risks.md)) 
 ```mermaid
 flowchart LR
   user["Create codeman-agent,<br/>close the runner's home"] --> copy["Copy the checkout,<br/>without .codeman/action"]
-  copy --> files["Write the task file,<br/>the rules, workflow results"]
+  copy --> files["Write the task file, the rules,<br/>workflow results, attachments"]
   files --> run["Run the harness in the jail,<br/>up to agent-minutes"]
   run --> check{"Output invalid,<br/>and 2 minutes left?"}
   check -->|yes| fix["Resume the session once,<br/>with the problems"]
@@ -43,6 +43,17 @@ flowchart LR
 - The agent's environment is rebuilt from an allowlist: its own `HOME` and XDG directories, `TMPDIR` set to `/tmp` (outside its working tree, for scratch work), the job's `PATH` without entries in the runner's home, and the harness's variables.
 - Nothing else from the runner passes, including what `sudo`'s PAM session adds from `/etc/environment`.
 - Its credential is the run's OpenRouter key, or its token for a self-hosted gateway. It reaches the agent only through its environment, and it is the only credential the agent holds.
+
+### What the agent gets besides the checkout
+
+Codeman's step downloads these with the job's `GITHUB_TOKEN`, before the agent starts, and copies them into the agent's copy, under `.codeman/`, which is never collected:
+
+| Directory | What | Where it is described |
+| --- | --- | --- |
+| `.codeman/results/` | The results of the workflows the agent asked for | [Results](changes.md#results) |
+| `.codeman/attachments/` | The files maintainers attached to the issue, its comments and reviews, with archives extracted, and an index | [Attachments](../tasks/attachments.md) |
+
+Archives are extracted by Codeman's own code, which writes only regular files inside their directory ([archives](../tasks/attachments.md#archives)). The agent never sees the token.
 
 ### The jail
 

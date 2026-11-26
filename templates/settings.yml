@@ -122,6 +122,16 @@ max-runs: 3
 max-files: 300
 max-file-bytes: 1048576
 
+# Limits on the files maintainers attach to the issue and its comments, which each agent run
+# downloads into .codeman/attachments/. max-attachments: 0 turns downloads off.
+max-attachments: 50
+max-attachment-bytes: 26214400
+max-attachment-total-bytes: 104857600
+# Limits on what is extracted from attached archives (.zip, .tar.gz, .tgz, .gz), all together.
+# max-extracted-bytes: 0 turns extraction off.
+max-extracted-bytes: 209715200
+max-extracted-files: 1000
+
 # Limits on what the agent writes for the maintainers, as it is told them.
 # Texts may be up to twice as long before Codeman cuts them.
 max-decisions: 10

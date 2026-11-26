@@ -3,7 +3,15 @@ import type { ProviderAccounts } from "../inference/budget.ts";
 import type { InferenceProvider } from "../inference/provider.ts";
 import { Ledger } from "../ledger.ts";
 import type { Conventions } from "../platform/conventions.ts";
-import type { CiResults, Platform } from "../platform/platform.ts";
+import type {
+  AttachmentLink,
+  Attachments,
+  CiResults,
+  Download,
+  DownloadProblem,
+  Platform,
+  TextRef,
+} from "../platform/platform.ts";
 import type {
   ChangeRequest,
   CiArtifact,
@@ -436,6 +444,39 @@ export class FakeCi implements CiResults {
   }
 }
 
+/**
+ * Attachments as `attachment://<name>` links, unlike GitHub's, served from memory: a file, or the
+ * problem its download has. A link it does not hold is refused.
+ */
+export class FakeAttachments implements Attachments {
+  readonly files = new Map<string, Buffer | DownloadProblem>();
+  readonly downloads: { url: string; where: TextRef; maxBytes: number }[] = [];
+
+  find(text: string): AttachmentLink[] {
+    const links = new Map<string, AttachmentLink>();
+    for (const match of text.matchAll(/attachment:\/\/([\w-]+(?:\.[\w-]+)*)/g)) {
+      const name = match[1] ?? "";
+      links.set(match[0], { url: match[0], id: name, name });
+    }
+    return [...links.values()];
+  }
+
+  async download(
+    link: AttachmentLink,
+    where: TextRef,
+    maxBytes: number,
+    signal: AbortSignal,
+  ): Promise<Download> {
+    this.downloads.push({ url: link.url, where, maxBytes });
+    if (signal.aborted) return { ok: false, problem: "failed", detail: "out of time" };
+    const file = this.files.get(link.url);
+    if (file === undefined) return { ok: false, problem: "refused", detail: "not found" };
+    if (typeof file === "string") return { ok: false, problem: file };
+    if (file.length > maxBytes) return { ok: false, problem: "too-large" };
+    return { ok: true, data: file, name: link.name };
+  }
+}
+
 /** Services over a fake platform, CI and inference, for one step with this runtime. */
 export function fakeServices(
   platform: FakePlatform,
@@ -444,12 +485,14 @@ export function fakeServices(
   inference: InferenceProvider = new FakeInference(),
   accounts: ProviderAccounts = new FakeAccounts(),
   store: Store = new MemoryStore(),
+  attachments: Attachments = new FakeAttachments(),
 ): Services {
   return {
     runtime,
     conventions: FAKE_CONVENTIONS,
     platform: () => platform,
     ci: () => ci,
+    attachments: () => attachments,
     inference: () => inference,
     accounts: () => accounts,
     store: () => store,

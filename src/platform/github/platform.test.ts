@@ -61,13 +61,14 @@ test("maps review states to verdicts", () => {
 test("a line comment keeps its original line when the diff moved", () => {
   assert.deepEqual(
     toReviewComment({
+      id: 12,
       pull_request_review_id: 5,
       path: "src/b.ts",
       line: null,
       original_line: 9,
       body: "Nit.",
     }),
-    { reviewId: 5, path: "src/b.ts", line: 9, body: "Nit." },
+    { id: 12, reviewId: 5, path: "src/b.ts", line: 9, body: "Nit." },
   );
 });
 

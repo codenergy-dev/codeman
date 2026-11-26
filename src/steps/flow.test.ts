@@ -35,7 +35,7 @@ async function selectStep(platform: FakePlatform): Promise<FakeRuntime> {
 function agentResult(
   files: Record<string, string | null>,
   output: unknown,
-  run: Pick<Manifest, "timedOut" | "wrappedUp"> = { timedOut: false },
+  run: Pick<Manifest, "timedOut" | "wrappedUp" | "attachments"> = { timedOut: false },
 ): void {
   const dir = join(workdir, "result");
   rmSync(dir, { recursive: true, force: true });
@@ -465,6 +465,42 @@ test("a fix posted while decisions are pending is reported in the run comment", 
   assert.deepEqual([runtime.outputs.action, runtime.outputs.stage], ["route", "route"]);
   assert.deepEqual(readTask(runtime).route, { trigger: "decisions", fallback: "design" });
   assert.deepEqual(readTask(runtime).requests, []);
+});
+
+test("the run comment lists the attachments the agent did not get whole", async () => {
+  const platform = new FakePlatform({ ".codeman/settings.yml": "model: a/b\n" });
+  platform.maintainers.add("alice");
+  const issue = platform.openIssue("alice", "Chart the data", "Use attachment://data.csv.");
+  const { planPath } = readTask(await selectStep(platform));
+  agentResult(
+    { [planPath]: "# Plan\n" },
+    { summary: "Charts it.", decisions: [] },
+    {
+      timedOut: false,
+      attachments: [
+        {
+          name: "data.csv",
+          url: "attachment://data.csv",
+          problem: { kind: "refused", detail: "HTTP 404" },
+        },
+        {
+          name: "02-logs.zip",
+          url: "attachment://logs.zip",
+          problem: { kind: "partly-extracted", skipped: 2 },
+        },
+        // Not the expected shape: left out.
+        { name: "x", url: "y", problem: { kind: "unknown" } } as never,
+      ],
+    },
+  );
+  await applyStep(platform);
+  const comment = platform.botComments(issue).find((body) => isRunComment(body)) ?? "";
+  assert.match(
+    comment,
+    /The attachment data\.csv \(attachment:\/\/data\.csv\) was not downloaded: the platform refused it \(HTTP 404\)\./,
+  );
+  assert.match(comment, /The attachment 02-logs\.zip .* 2 of its entries were skipped/);
+  assert.doesNotMatch(comment, /The attachment x /);
 });
 
 test("a review while decisions are pending waits for them, and then counts", async () => {

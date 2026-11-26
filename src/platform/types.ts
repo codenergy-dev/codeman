@@ -61,6 +61,8 @@ export interface Review {
 
 /** A review's comment on a line of the diff. */
 export interface ReviewComment {
+  /** Its own ID, where the platform gives one. */
+  id?: number | undefined;
   /** The review it belongs to, if any. */
   reviewId: number | null;
   path: string;

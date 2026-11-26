@@ -68,6 +68,16 @@ export interface Settings {
   "max-question-chars": number;
   "max-label-chars": number;
   "max-summary-chars": number;
+  /**
+   * Limits on the attachments the agent job downloads and extracts for the agent; see
+   * `src/attachments.ts`. `max-attachments: 0` turns downloads off, `max-extracted-bytes: 0`
+   * extraction.
+   */
+  "max-attachments": number;
+  "max-attachment-bytes": number;
+  "max-attachment-total-bytes": number;
+  "max-extracted-bytes": number;
+  "max-extracted-files": number;
   /** How long an agent run has, in minutes, before Codeman stops it. */
   "agent-minutes": number;
   /**
@@ -130,6 +140,11 @@ export const DEFAULTS: Omit<Settings, "model"> = {
   "max-question-chars": 600,
   "max-label-chars": 150,
   "max-summary-chars": 2000,
+  "max-attachments": 50,
+  "max-attachment-bytes": 25 * 1024 * 1024,
+  "max-attachment-total-bytes": 100 * 1024 * 1024,
+  "max-extracted-bytes": 200 * 1024 * 1024,
+  "max-extracted-files": 1000,
   "agent-minutes": 50,
   "wrap-up-minutes": 10,
   concurrency: 1,
@@ -154,6 +169,11 @@ export const LIMIT_BOUNDS: Readonly<Partial<Record<SettingName, { min: number; m
   "max-question-chars": { min: 1, max: 1500 },
   "max-label-chars": { min: 1, max: 300 },
   "max-summary-chars": { min: 1, max: 4000 },
+  "max-attachments": { min: 1, max: 200 },
+  "max-attachment-bytes": { min: 1, max: 100 * 1024 * 1024 },
+  "max-attachment-total-bytes": { min: 1, max: 1024 * 1024 * 1024 },
+  "max-extracted-bytes": { min: 1, max: 2 * 1024 * 1024 * 1024 },
+  "max-extracted-files": { min: 1, max: 10_000 },
   "agent-minutes": { min: 5, max: 300 },
   "wrap-up-minutes": { min: 2, max: 30 },
   concurrency: { min: 1, max: MAX_TASKS },
@@ -229,6 +249,11 @@ const NAMES: readonly SettingName[] = [
   "max-question-chars",
   "max-label-chars",
   "max-summary-chars",
+  "max-attachments",
+  "max-attachment-bytes",
+  "max-attachment-total-bytes",
+  "max-extracted-bytes",
+  "max-extracted-files",
   "agent-minutes",
   "wrap-up-minutes",
   "concurrency",
@@ -320,7 +345,8 @@ export function parseSetting(name: SettingName, text: string): Parsed<string | n
   }
   const value = Number(text);
   const integer = settingKind(name) === "integer";
-  if (name === "wrap-up-minutes" && text !== "" && value === 0) return { ok: true, value };
+  const zero = ZERO_MEANS[name];
+  if (zero && text !== "" && value === 0) return { ok: true, value };
   if (
     text === "" ||
     !Number.isFinite(value) ||
@@ -334,11 +360,18 @@ export function parseSetting(name: SettingName, text: string): Parsed<string | n
   }
   const bounds = LIMIT_BOUNDS[name];
   if (bounds && (value < bounds.min || value > bounds.max)) {
-    const off = name === "wrap-up-minutes" ? "0, which turns the wrap-up off, or " : "";
+    const off = zero ? `0, which ${zero}, or ` : "";
     return { ok: false, error: `\`${name}\` must be ${off}from ${bounds.min} to ${bounds.max}.` };
   }
   return { ok: true, value };
 }
+
+/** Settings that take 0 besides their bounds, and what 0 means. */
+const ZERO_MEANS: Readonly<Partial<Record<SettingName, string>>> = {
+  "wrap-up-minutes": "turns the wrap-up off",
+  "max-attachments": "turns downloads off",
+  "max-extracted-bytes": "turns extraction off",
+};
 
 /** Settings a profile may change: where the model is served, and which model. */
 export const PROFILE_SETTINGS: readonly SettingName[] = [
